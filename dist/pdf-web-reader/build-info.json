@@ -1,0 +1,8 @@
+{
+  "pluginId": "pdf-web-reader",
+  "pluginVersion": "0.1.1",
+  "pdfjsForkCommit": "c80e5a952",
+  "sourceBranch": "windows",
+  "artifact": "vendor/pdfjs-generic-legacy",
+  "vendorFileCount": 402
+}

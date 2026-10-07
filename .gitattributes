@@ -1,0 +1,4 @@
+* text=auto eol=lf
+vendor/** -text
+dist/** -text
+tests/fixtures/** -text
