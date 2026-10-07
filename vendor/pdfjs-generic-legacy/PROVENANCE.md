@@ -12,3 +12,13 @@ CMaps, ICC profiles, standard fonts, images, and WASM decoders. The build is
 frozen here so packaging never builds in or writes to the original repository.
 
 The upstream PDF.js code is licensed under Apache-2.0; see `LICENSE`.
+
+## Audited local correction: plugin 0.1.3
+
+The display bundle's underline-selection path now collects rectangles from
+selected text nodes, clipped to the original selection ranges. A browser range
+spanning complete text-layer spans can also return inline container rectangles
+with different line heights; interpreting both as underline quads produced
+parallel strokes. Highlight selection and the core/Worker, saved annotation
+format, and existing annotations are unchanged. `SHA256SUMS.json` pins this
+corrected snapshot; the original checkout is not modified.

@@ -9599,7 +9599,7 @@ class AnnotationEditorUIManager {
     const text = selection.toString();
     const anchorElement = this.#getAnchorElementForSelection(selection);
     const textLayer = anchorElement.closest(".textLayer");
-    const boxes = this.getSelectionBoxes(textLayer);
+    const boxes = this.getSelectionBoxes(textLayer, this.#mode === AnnotationEditorType.UNDERLINE);
     if (!boxes) {
       return;
     }
@@ -10739,7 +10739,7 @@ class AnnotationEditorUIManager {
   get imageManager() {
     return shadow(this, "imageManager", new ImageManager());
   }
-  getSelectionBoxes(textLayer) {
+  getSelectionBoxes(textLayer, textOnly = false) {
     if (!textLayer) {
       return null;
     }
@@ -10791,11 +10791,7 @@ class AnnotationEditorUIManager {
         break;
     }
     const boxes = [];
-    for (let i = 0, ii = selection.rangeCount; i < ii; i++) {
-      const range = selection.getRangeAt(i);
-      if (range.collapsed) {
-        continue;
-      }
+    const addBoxes = range => {
       for (const {
         x,
         y,
@@ -10806,6 +10802,36 @@ class AnnotationEditorUIManager {
           continue;
         }
         boxes.push(rotator(x, y, width, height));
+      }
+    };
+    for (let i = 0, ii = selection.rangeCount; i < ii; i++) {
+      const range = selection.getRangeAt(i);
+      if (range.collapsed) {
+        continue;
+      }
+      if (!textOnly) {
+        addBoxes(range);
+        continue;
+      }
+      // A Range spanning complete text-layer spans can include both the
+      // span's inline box and its text-node box. Their different line heights
+      // produce parallel underline strokes. Underline only the selected text
+      // nodes so the span container boxes are never included.
+      const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!range.intersectsNode(node)) {
+          continue;
+        }
+        const start = range.startContainer === node ? range.startOffset : 0;
+        const end = range.endContainer === node ? range.endOffset : node.length;
+        if (start >= end) {
+          continue;
+        }
+        const textRange = document.createRange();
+        textRange.setStart(node, start);
+        textRange.setEnd(node, end);
+        addBoxes(textRange);
       }
     }
     return boxes.length === 0 ? null : boxes;

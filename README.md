@@ -63,6 +63,12 @@ bytes have not changed since the last read/save. Closing, unloading, or
 reloading is not a substitute for saving. Standalone Viewer file picking and
 drag-and-drop replacement are intercepted so saves cannot target another PDF.
 
+Version 0.1.3 fixes parallel/double underline strokes when a selection spans
+complete text-layer spans. Underlines now use only selected text-node rectangles,
+not the additional inline container rectangles returned by browser ranges.
+Highlight selection is unchanged. Previously saved underline geometry is not
+rewritten automatically; delete and redraw an affected annotation if needed.
+
 ## Development
 
 All new development lives in
