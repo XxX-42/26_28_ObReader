@@ -35,6 +35,11 @@ resources are trimmed for this release.
 
 The supported desktop baseline is Obsidian **1.14.4**. Mobile is not supported.
 
+For macOS and iOS/iPadOS development continuation, read
+[the complete Apple-platform handoff](MACOS_HANDOFF.md). It records the 0.1.4
+baseline, architecture, verified fixes, platform audit and implementation order;
+it does not claim Apple-platform compatibility has already been completed.
+
 ## Open and edit PDFs
 
 While enabled, ordinary PDF file opens in Obsidian use this viewer. The command
