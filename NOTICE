@@ -1,0 +1,12 @@
+PDF Web Reader
+Copyright 2026 XxX-42 and contributors
+
+This plugin bundles a modified Mozilla PDF.js runtime (Apache-2.0),
+snapshot commit c80e5a952 on branch windows, with underline and square
+annotation editors and the 1-5 tool shortcuts.
+PDF.js is Copyright Mozilla Foundation and its contributors.
+
+All PDF.js, font, character-map, image-decoder and colour-library license
+texts shipped in vendor/pdfjs-generic-legacy are preserved in the embedded
+Viewer payload and in the extracted runtime resources. Consult those
+individual license texts for their terms and attribution notices.

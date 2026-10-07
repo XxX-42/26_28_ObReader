@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 XxX-42 and contributors
+ * SPDX-License-Identifier: Apache-2.0
+ * Bundled third-party notices are preserved in the embedded viewer resources.
+ */
 const {
   EditableFileView,
   Notice,
@@ -6,6 +11,11 @@ const {
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
+
+/* BUILD:ASSET_RUNTIME_REQUIRE */ const {
+  ensureViewerAssets,
+} = require("./asset-runtime.cjs");
+/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
@@ -142,6 +152,7 @@ class PdfReaderView extends EditableFileView {
     this.saving = false;
     this.openRequest = 0;
     this.resourcePromise = null;
+    this._assetCache = null;
     this.iframe = null;
     this.statusEl = null;
     this.messageListener = (event) => this.onMessage(event);
@@ -157,6 +168,10 @@ class PdfReaderView extends EditableFileView {
 
   getIcon() {
     return "file-text";
+  }
+
+  get assetCache() {
+    return this._assetCache;
   }
 
   getState() {
@@ -272,16 +287,18 @@ class PdfReaderView extends EditableFileView {
 
   async createViewerDocument() {
     if (!this.resourcePromise) {
-      this.resourcePromise = this.loadViewerDocument();
+      this.resourcePromise = this.loadViewerDocument().catch((error) => {
+        this.resourcePromise = null;
+        throw error;
+      });
     }
     return this.resourcePromise;
   }
 
   async loadViewerDocument() {
-    const pluginRoot = normalizePath(
-      `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`,
-    );
-    const webRoot = normalizePath(`${pluginRoot}/viewer/web`);
+    const assets = await this.plugin.ensureViewerAssets();
+    this._assetCache = Object.freeze({ ...assets });
+    const webRoot = assets.webRoot;
     const viewerHtmlPath = `${webRoot}/viewer.html`;
     const viewerCssPath = `${webRoot}/viewer.css`;
     const bridgeCssPath = `${webRoot}/bridge.css`;
@@ -581,7 +598,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   onunload() {
     restorePdfOpenRouting(this.pdfOpenRouting);
     this.pdfOpenRouting = null;
+    this.viewerAssetsPromise = null;
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+  }
+
+  ensureViewerAssets() {
+    if (!this.viewerAssetsPromise) {
+      const pluginRoot = normalizePath(
+        `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
+      );
+      const pending = Promise.resolve()
+        .then(() =>
+          ensureViewerAssets(
+            this.app.vault.adapter,
+            pluginRoot,
+            VIEWER_ASSET_PAYLOAD,
+          ),
+        )
+        .finally(() => {
+          if (this.viewerAssetsPromise === pending) {
+            this.viewerAssetsPromise = null;
+          }
+        });
+      this.viewerAssetsPromise = pending;
+    }
+    return this.viewerAssetsPromise;
   }
 
   async openPdf(file) {

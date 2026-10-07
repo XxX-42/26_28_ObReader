@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { createReadStream, existsSync } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
+import {
+  createDiskAdapter,
+  createTempRoot,
+  loadBundledPlugin,
+  pluginRoot,
+  readBuiltMain,
+  readPayloadFromMain,
+  removeTempRoot,
+  root,
+} from "./bundled-plugin-test-utils.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const output = path.join(root, "dist", "pdf-web-reader");
+const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const browserPath =
   process.env.PDF_READER_CHROME ||
@@ -18,6 +26,27 @@ const browserPath =
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
   ].find((candidate) => candidate && existsSync(candidate));
 
+if (!browserPath) {
+  throw new Error(
+    "Chrome or Edge was not found. Set PDF_READER_CHROME to its executable path.",
+  );
+}
+
+assert.deepEqual(
+  (await readdir(dist)).sort(),
+  ["main.js", "manifest.json", "styles.css"],
+  "Offline smoke must start from the three-file release output only",
+);
+const temp = await createTempRoot("offline-three-file-");
+const adapter = createDiskAdapter(temp);
+const mainSource = await readBuiltMain();
+const payload = readPayloadFromMain(mainSource);
+const harness = loadBundledPlugin(mainSource, adapter);
+await harness.load();
+const logicalAssetRoot = `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
+const output = adapter.resolve(logicalAssetRoot);
+let browser;
+let server;
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".ftl", "text/plain; charset=utf-8"],
@@ -31,11 +60,9 @@ const mimeTypes = new Map([
 ]);
 let apiRequestCount = 0;
 
-const server = createServer(async (request, response) => {
+server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
-  if (url.pathname.startsWith("/api/")) {
-    apiRequestCount += 1;
-  }
+  if (url.pathname.startsWith("/api/")) apiRequestCount += 1;
   if (url.pathname === "/") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(
@@ -51,13 +78,16 @@ const server = createServer(async (request, response) => {
   let target;
   if (url.pathname === "/fixtures/tracemonkey.pdf") {
     target = fixture;
-  } else if (url.pathname.startsWith("/")) {
-    const relative = decodeURIComponent(url.pathname.slice(1));
+  } else if (url.pathname.startsWith("/viewer/")) {
+    const relative = decodeURIComponent(url.pathname.slice("/viewer/".length));
     target = path.resolve(output, relative);
     if (!target.startsWith(`${output}${path.sep}`)) {
       response.writeHead(403).end("forbidden");
       return;
     }
+  } else {
+    response.writeHead(404).end("not found");
+    return;
   }
 
   try {
@@ -79,26 +109,28 @@ const server = createServer(async (request, response) => {
   }
 });
 
-await access(path.join(output, "viewer", "web", "viewer.html")).catch(() => {
-  throw new Error("Build output is missing. Run `npm run build` first.");
-});
-await access(path.join(output, "viewer", "web", "obsidian-bridge.js")).catch(
-  () => {
-    throw new Error("Viewer bridge is missing. Run `npm run build` first.");
-  },
-);
-if (!browserPath) {
-  throw new Error(
-    "Chrome or Edge was not found. Set PDF_READER_CHROME to its executable path.",
-  );
-}
-
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 const baseUrl = `http://127.0.0.1:${address.port}`;
-let browser;
 
 try {
+  adapter.getResourcePath = (vaultPath) => {
+    const prefix = `${logicalAssetRoot}/`;
+    assert.ok(
+      vaultPath.startsWith(prefix),
+      `Unexpected viewer resource: ${vaultPath}`,
+    );
+    return new URL(`viewer/${vaultPath.slice(prefix.length)}`, `${baseUrl}/`)
+      .href;
+  };
+  const testView = harness.createView();
+  const viewerDocument = await testView.createViewerDocument();
+  assert.match(viewerDocument, /data-pdf-reader="viewer"/);
+  assert.match(viewerDocument, /obsidian-bridge\.js/);
+  const viewerDocumentLiteral = JSON.stringify(viewerDocument).replaceAll(
+    "<",
+    "\\u003c",
+  );
   browser = await puppeteer.launch({
     executablePath: browserPath,
     headless: true,
@@ -134,9 +166,10 @@ try {
     <iframe name="pdf-reader" title="PDF Web Reader"
       sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-same-origin allow-scripts"></iframe>
     <script>
+      const viewerDocument = ${viewerDocumentLiteral};
       (() => {
         const channel = 'pdf-web-reader';
-        const token = 'offline-smoke-token';
+        const token = ${JSON.stringify(testView.token)};
         const documentId = 'fixtures/tracemonkey.pdf';
         const iframe = document.querySelector('iframe');
         const state = window.__hostState = {
@@ -222,23 +255,7 @@ try {
             if (!r.ok) throw new Error('fixture fetch failed');
             return r.arrayBuffer();
           });
-          const viewerUrl = new URL('/viewer/web/', location.href);
-          const html = await fetch(new URL('viewer.html', viewerUrl)).then(r => r.text());
-          const [viewerCssText, bridgeCssText] = await Promise.all([
-            fetch(new URL('viewer.css', viewerUrl)).then(r => r.text()),
-            fetch(new URL('bridge.css', viewerUrl)).then(r => r.text()),
-          ]);
-          const inlineCss = css => '<style>' +
-            css.replace(/<\\/style/gi, '<\\\\/style') + '</style>';
-          const styledHtml = html.replace(
-            /<link\\b(?=[^>]*href=["']viewer\\.css["'])[^>]*>/i,
-            inlineCss(viewerCssText) + inlineCss(bridgeCssText)
-          );
-          if (styledHtml === html) throw new Error('Could not inline viewer stylesheet');
-          const injection = '<base href="' + viewerUrl.href + '">' +
-            '<script src="' + new URL('obsidian-bridge.js', viewerUrl).href + '"' +
-            ' data-channel="' + channel + '" data-token="' + token + '"><\\/script>';
-          iframe.srcdoc = styledHtml.replace(/<head\\b[^>]*>/i, match => match + injection);
+          iframe.srcdoc = viewerDocument;
         })().catch(error => state.errors.push(error.message));
       })();
     <\/script>
@@ -610,7 +627,7 @@ try {
   console.log("All five editors created.");
 
   await page.evaluate(() => window.__sendSpoofedSource());
-  await viewer.evaluate(() => {
+  await viewer.evaluate((validToken) => {
     window.parent.postMessage(
       {
         channel: "pdf-web-reader",
@@ -626,14 +643,14 @@ try {
       {
         channel: "pdf-web-reader",
         type: "save",
-        token: "offline-smoke-token",
+        token: validToken,
         documentId: "another/document.pdf",
         requestId: "wrong-document",
         data: new ArrayBuffer(1),
       },
       "*",
     );
-  });
+  }, testView.token);
   await page.waitForFunction(() => {
     const state = window.__hostState;
     return (
@@ -811,4 +828,5 @@ try {
 } finally {
   await browser?.close();
   await new Promise((resolve) => server.close(resolve));
+  await removeTempRoot(temp);
 }

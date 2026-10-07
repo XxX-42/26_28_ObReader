@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
 
 function createHarness() {
   const notices = [];
@@ -124,9 +126,9 @@ function createHarness() {
   const source = awaitSource;
   new Function("require", "module", "exports", source)(
     (name) => {
-      if (name !== "obsidian")
-        throw new Error(`Unexpected dependency: ${name}`);
-      return obsidian;
+      if (name === "obsidian") return obsidian;
+      if (name === "./asset-runtime.cjs") return sourceRequire(name);
+      throw new Error(`Unexpected dependency: ${name}`);
     },
     moduleObject,
     moduleObject.exports,

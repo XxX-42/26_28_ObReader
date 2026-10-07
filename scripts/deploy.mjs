@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { cp, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +40,16 @@ assert.equal(target, resolvedTarget, "Deployment target path is unexpected");
 await stat(source).catch(() => {
   throw new Error("Build output is missing. Run `npm run build` first.");
 });
+const releaseEntries = await readdir(source, { withFileTypes: true });
+assert.deepEqual(
+  releaseEntries.map((entry) => entry.name).sort(),
+  ["main.js", "manifest.json", "styles.css"],
+  "Refusing to deploy a package that is not exactly the three community release assets",
+);
+assert.ok(
+  releaseEntries.every((entry) => entry.isFile()),
+  "The community release output must not include runtime subdirectories",
+);
 await stat(configDir).catch(() => {
   throw new Error(`Obsidian config directory does not exist: ${configDir}`);
 });

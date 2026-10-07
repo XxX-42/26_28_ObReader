@@ -5,8 +5,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs",
+    "test:release": "npm run build && npm test && npm run test:offline",
     "test:offline": "node tests/offline-smoke.mjs",
     "test:native": "node tests/native-obsidian-smoke.mjs && node tests/native-default-routing.mjs",
+    "test:native:background": "node tests/native-background.mjs",
+    "test:native:release": "node tests/native-threefile-release.mjs",
     "deploy": "node scripts/deploy.mjs"
   },
   "devDependencies": {

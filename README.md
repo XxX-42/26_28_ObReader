@@ -1,217 +1,187 @@
 # PDF Web Reader for Obsidian
 
-This project packages the modified PDF.js viewer as a desktop-only Obsidian
-plugin. The plugin opens a vault PDF in its own view, transfers the PDF bytes
-to the bundled viewer, and writes saved bytes back to that same vault file.
-It does not require the Windows launcher or the PDF.js development server.
+An offline, desktop-only Obsidian plugin containing the modified Mozilla
+PDF.js Viewer. It opens PDFs from the vault and saves standard PDF annotations
+back to the same file. No local web server, Windows launcher, external browser,
+Python, separately installed Node.js, or network service is needed at runtime.
 
-## Development layout
+## Install: exactly three release files
 
-- `plugin/` contains the Obsidian plugin shell.
-- `viewer-adapter/` contains the host-to-viewer message bridge.
-- `vendor/pdfjs-generic-legacy/` is the frozen viewer/runtime snapshot from
-  PDF.js fork commit `c80e5a952` on `windows`.
-- `scripts/` contains build and deployment commands.
-- `dist/pdf-web-reader/` is the complete installable plugin output.
+Download these files from a matching GitHub Release:
 
-All project code and generated output live in this directory. The original
-PDF.js repository is only the historical source for the frozen vendor build;
-the build command reads the vendored snapshot and does not compile or modify
-that repository.
+- `main.js`
+- `manifest.json`
+- `styles.css`
 
-## Build
+Put only those three files into
+`<vault>/<configDir>/plugins/pdf-web-reader/` and enable **PDF Web Reader**.
+The default configuration directory is `.obsidian`, but the plugin uses
+Obsidian's actual `Vault.configDir` rather than assuming that name.
 
-Run from this directory:
+The complete Viewer is compressed and embedded in `main.js`. On first PDF
+open, the plugin verifies and extracts its own resources into a content-hash
+versioned directory under its plugin folder using Obsidian's Adapter API.
+Missing or corrupted resource files are restored from the shipped payload;
+no files are fetched from the network. Existing version directories are not
+deleted automatically. A completed extraction is marked only after all files
+have been verified. A failed extraction can be retried.
+
+**Three files is the distribution constraint, not a permanent disk-file-count
+constraint.** Runtime extraction creates the local Viewer files and a
+completion marker. The full resource payload includes the Worker, CMaps,
+standard fonts, ICC profile, WASM decoders, all translations and images, the
+scripting sandbox, debug/sample assets, and their license texts. No Viewer
+resources are trimmed for this release.
+
+The supported desktop baseline is Obsidian **1.14.4**. Mobile is not supported.
+
+## Open and edit PDFs
+
+While enabled, ordinary PDF file opens in Obsidian use this viewer. The command
+palette action **在 PDF 阅读器中打开当前 PDF** and PDF context-menu action
+**使用 PDF 阅读器打开** remain available. A built-in PDF tab already open before
+enabling is not forcibly replaced; close and reopen it. Markdown inline PDF
+embeds still use Obsidian's built-in rendering. This plugin does not change
+Windows' system-wide PDF file association.
+
+| Key | Tool               |
+| --- | ------------------ |
+| `1` | Underline / 下划线 |
+| `2` | Rectangle / 矩形框 |
+| `3` | Highlight / 荧光笔 |
+| `4` | Ink / 自由画笔     |
+| `5` | Text box / 文字框  |
+
+Both the number row and numeric keypad are supported. Press the active tool's
+key again or backquote to leave it. Typing digits inside an input or editable
+text does not switch tools.
+
+Saving is **manual**: press `Ctrl+S` or use **保存到仓库** in the secondary
+toolbar. Wait for success before closing the tab or disabling/reloading the
+plugin. Save overwrites the current vault PDF after checking that its on-disk
+bytes have not changed since the last read/save. Closing, unloading, or
+reloading is not a substitute for saving. Standalone Viewer file picking and
+drag-and-drop replacement are intercepted so saves cannot target another PDF.
+
+## Development
+
+All new development lives in
+`D:\\Documents\\Codes\\2026_7_PdfWebReader\\2026_7.1_Mozilla_fork-ob`.
+The original PDF.js checkout is not modified.
+
+- `plugin/`: Obsidian host and embedded-resource runtime source.
+- `viewer-adapter/`: host/Viewer message bridge and iframe styles.
+- `vendor/pdfjs-generic-legacy/`: complete frozen PDF.js Viewer snapshot.
+- `scripts/`: deterministic packaging and safe deployment.
+- `tests/`: packaging, host, offline browser, and native Obsidian checks.
+- `dist/pdf-web-reader/`: generated three-file release package.
+
+The frozen snapshot came from fork commit `c80e5a952` on branch `windows`;
+the fork retains underline and square editor/serialization support. Its
+SHA-256 inventory is verified before packaging. The upstream core/display
+runtime and Worker must remain matching versions; Obsidian's private internal
+PDF.js runtime is not used as a replacement.
 
 ```powershell
-npm install
+npm ci
 npm run build
-```
-
-The build verifies the SHA-256 manifest for the frozen Viewer before copying
-`plugin/main.js`, `plugin/manifest.json`, and
-`plugin/styles.css`, the viewer runtime, and the bridge into
-`dist/pdf-web-reader/`. The runtime includes its worker, CMaps, ICC profiles,
-fonts, locale data, images, and WASM decoders for offline use. PDF.js is
-licensed under Apache-2.0; the license and snapshot provenance are included
-with the vendor files.
-
-## Automated browser checks
-
-Install Google Chrome or Microsoft Edge, build the runtime, then run:
-
-```powershell
-npm run build
+npm test
 npm run test:offline
 ```
 
-Set `PDF_READER_CHROME` to a browser executable if it is not found in the
-standard Windows locations. The test starts a temporary static-file server
-for the built bundle only; it has no PDF.js API, port-8888 service, or remote
-network dependency. It opens a copied fixture through the same `srcdoc`
-bridge protocol as the plugin, checks all five editor modes, annotation save
-and reopen, and message validation.
+Node/npm and `puppeteer-core` are development/test dependencies only. At
+runtime the desktop plugin uses Obsidian/Electron's built-in facilities.
+The offline browser harness may create a temporary local test server to serve
+the extracted artifacts; that server is not part of the installed plugin.
 
-## Install into the test vault
-
-Build first, then run:
+## Test-vault deployment
 
 ```powershell
 npm run deploy
 ```
 
-By default deployment targets
-`D:\Documents\Obsidian\测试插件\.obsidian\plugins\pdf-web-reader`. Set
-`OBSIDIAN_VAULT_PATH` to another vault only when intentionally testing there.
-If this plugin folder already exists, deployment saves a timestamped backup
-under this development directory's `.deploy-backups/` before replacing it.
-The backup stays outside Obsidian's plugin scan. Deployment does not alter
-other vault files.
+The default target is
+`D:\\Documents\\Obsidian\\测试插件\\.obsidian\\plugins\\pdf-web-reader`.
+Deployment installs only the three release files. An existing plugin folder
+is moved to a timestamped backup under this project's `.deploy-backups/`,
+outside Obsidian's plugin scan. Save all open PDFs and disable the plugin
+before replacing it. Do not deploy over unsaved edits.
 
-In Obsidian, enable **PDF 阅读器**, then use the command palette action
-**在 PDF 阅读器中打开当前 PDF** or the PDF file context-menu action
-**使用 PDF 阅读器打开**. After enabling the plugin, PDFs opened normally from
-the file browser also use this viewer. A PDF already open in the built-in
-viewer is not replaced automatically.
-
-## Obsidian packaging and distribution status
-
-### Local full-folder installation
-
-The current `dist/pdf-web-reader/` output is a complete local plugin folder:
-`main.js`, `manifest.json`, and `styles.css` are at its root, while the
-modified PDF.js runtime, worker, locale and other resources are under
-`viewer/`. `npm run deploy` copies the **whole folder** into
-`.obsidian/plugins/pdf-web-reader/`; the plugin ID and folder name match.
-This full-folder copy is the supported way to test the current build.
-
-The extra `viewer/` directory is plugin-owned runtime data, not another
-Obsidian plugin. The host reads hidden plugin resources through
-`Vault.configDir` and the public adapter resource APIs, while PDF contents are
-read and written with the Vault binary-file APIs. Obsidian documents that
-hidden configuration files are accessed through the Adapter API, and exposes
-`configDir`, `readBinary`, `modifyBinary`, and resource-path methods in its
-public API. See [Vault and adapter guidance](https://docs.obsidian.md/Plugins/Vault)
-and the [Vault API reference](https://docs.obsidian.md/Reference/TypeScript%2BAPI/App/vault).
-Consequently, copying only the three root files while omitting `viewer/` is
-not a valid installation of this particular plugin.
-
-The plugin shell uses the public `Plugin`, `EditableFileView`, workspace,
-command, event-registration, and Vault APIs. Its PDF reader is a standard
-file view derived from `EditableFileView`; it uses the file-view lifecycle and
-file/path state rather than a generic `ItemView`. The view and listeners are
-registered in `onload()` and cleaned up on unload. See the official
-[Obsidian API declarations](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
-for `EditableFileView`. `isDesktopOnly:
-true` is set because this embedded runtime is currently supported only in
-Obsidian Desktop. The `main.js` entry is a CommonJS module exporting the plugin
-class.
-
-### Official Community Plugins directory: not ready for one-click install
-
-The current package must **not** be described as directly installable from the
-official Community Plugins directory. The official release workflow says the
-installer downloads the release attachments `main.js`, `manifest.json`, and
-`styles.css` (when present); it does not recursively install the repository or
-an arbitrary nested `viewer/` directory. This plugin's `main.js` requires that
-directory at runtime, so a release containing only the documented three files
-would be incomplete. A manual installation of the entire `dist/pdf-web-reader`
-folder works; that is different from one-click Community Plugins installation.
-See [Submit your plugin](https://docs.obsidian.md/plugins/releasing/submit-plugin)
-and the official [Obsidian releases repository](https://github.com/obsidianmd/obsidian-releases).
-
-This source tree also is not yet submission-ready: it has the manifest under
-`plugin/manifest.json` rather than at repository root, and has no root-level
-license for the new plugin code (`viewer/LICENSE` covers the PDF.js snapshot,
-not this plugin). The official submission guide calls for a root README,
-`LICENSE`, and `manifest.json`, plus a GitHub release tagged to the manifest
-version with the required individual assets. No packaging redesign or
-Community Plugins submission is included in this migration.
-
-### Manifest and default-open notes
-
-The current manifest has a well-formed ID (`pdf-web-reader`), semantic version
-(`0.1.1`), `minAppVersion`, and `isDesktopOnly`. Before public submission:
-
-- Replace the Chinese display name **PDF 阅读器**: the current official
-  manifest guidance asks for Basic Latin characters in plugin names.
-- Replace `author: "Local development"` with the actual maintainer name.
-- Update the description to satisfy the directory's current style rules; in
-  particular, it currently ends in Chinese punctuation rather than the
-  required ASCII period.
-- Verify `minAppVersion: "1.5.0"` against the oldest Obsidian build actually
-  supported. The public APIs used here predate that version, but this migration
-  was tested only on the current desktop build, not on Obsidian 1.5.0.
-
-See the official [Manifest reference](https://docs.obsidian.md/Reference/Manifest)
-and [plugin submission requirements](https://docs.obsidian.md/community-directory/submission-requirements-for-plugins).
-
-While enabled, the plugin routes ordinary PDF file opens in Obsidian—including
-opens initiated from the file browser or ordinary file links—to this viewer by
-default. It does not take over embedded PDFs, and it does not change Windows'
-system-wide `.pdf` file association. A built-in PDF view that was already open
-before the plugin was enabled is not switched automatically; close and reopen
-the file to use this viewer. This avoids replacing a view that might contain
-unsaved form input. The reader uses manual save: save to the vault before
-closing its tab or disabling/reloading the plugin.
-
-`Plugin.registerExtensions(extensions, viewType)` is a public API
-([official API declarations](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)),
-but it is not a safe way to replace Obsidian's built-in PDF registration in the
-current tested app: the built-in `pdf` view is already registered, duplicate
-registration throws, and unregistering only removes that registry entry
-rather than restoring the core viewer. The plugin therefore leaves the core
-PDF registration untouched and routes an ordinary open request for a workspace
-leaf through a reversible wrapper around the public
-`WorkspaceLeaf.setViewState()` method. This wrapper is a monkey patch, **not an
-official extension point for replacing core view behavior**. It is scoped to
-the plugin's `app`, is disabled on unload, and restores the original method
-only if the wrapper is still installed. Other plugins that patch the same
-method, or future Obsidian changes to the file-opening path, may conflict;
-revalidate this behavior after Obsidian upgrades. In the current tested
-version, ordinary file-browser PDF opens reach `setViewState()`.
-
-## Obsidian 使用说明（最小迁移版）
-
-插件 ID 为 `pdf-web-reader`，Obsidian 中显示名称为 **PDF 阅读器**。
-可在命令面板运行 **在 PDF 阅读器中打开当前 PDF**，或在 PDF 文件右键菜单中选
-**使用 PDF 阅读器打开**。PDF 使用插件内置的 PDF.js Viewer 与 Worker 打开，不依赖
-`localhost:8888` 服务。
-
-五个工具快捷键如下，主键盘与数字小键盘都可使用：
-
-| 按键 | 工具     |
-| ---- | -------- |
-| `1`  | 下划线   |
-| `2`  | 矩形框   |
-| `3`  | 荧光笔   |
-| `4`  | 自由画笔 |
-| `5`  | 文字框   |
-
-再次按当前工具的快捷键或按反引号（`）退出工具。输入框和可编辑文本里的数字
-不会切换工具；快捷键切换也不会自动展开参数面板。
-
-**MVP 目前是手动保存。** 修改后请先点 Viewer 次级工具栏里的“保存到仓库”
-（标题提示“保存 PDF 到仓库（覆盖当前文件）”），或使用 `Ctrl+S`，
-待状态提示确认保存完成后再关闭该标签页或禁用/重载插件。Obsidian 自定义视图的关闭流程不能阻止
-用户丢弃未保存编辑，因此关闭标签页或禁用/重载插件都不会替代保存。
-
-### 当前 Windows 测试仓库
-
-本机验证仅针对外层测试仓库 `D:\Documents\Obsidian\测试插件`，Vault ID 为
-`d9f81db5f3fef6ee`。完整构建与部署后，可只重载这个插件并运行原生应用测试：
+`OBSIDIAN_VAULT_PATH` can select a different vault only when intentional.
+Native testing here is scoped to the outer test vault, ID
+`d9f81db5f3fef6ee`, not its nested vault or other user vaults.
 
 ```powershell
-npm run build
-npm run deploy
-& 'D:\Applications\Obsidian\Obsidian.com' 'vault=d9f81db5f3fef6ee' 'plugin:reload' 'id=pdf-web-reader'
 npm run test:native
 ```
 
-原生测试会在该 Vault 的 `PDF迁移测试/` 下新建一份带时间戳的 PDF 副本，并通过
-Obsidian CLI/CDP 验证默认打开、快捷键、五种批注创建、保存和重新打开、颜色修改、
-删除及本地文件打开拦截；第二阶段会在验证所有现存 Viewer 文件均已保存后，测试插件
-禁用时使用 Obsidian 内置 PDF 视图、重新启用后恢复默认 Viewer，并确认 Markdown、图片及
-嵌入 PDF 不被误接管。测试 PDF、Markdown 和图片副本都会保留，便于手工复查；机器可读
-结果与截图写到 `tests/artifacts/native-*-<timestamp>.{json,png}`。脚本不会删除其他 Vault
-内容，也不会触碰原始 PDF.js 仓库。
+Native tests use the user's enabled official Obsidian CLI/CDP. They create
+timestamped PDF and other fixture copies under `PDF迁移测试/` and retain them.
+JSON results and screenshots are under ignored `tests/artifacts/`. Tests
+must refuse to unload/replace views with unsaved user changes.
+
+For a clean-install release acceptance check, first save and close existing
+Reader tabs, disable the plugin and deploy the three-file output, then run:
+
+```powershell
+npm run test:native:release
+npm run test:native
+```
+
+Keep the Obsidian test window visible (not minimized or hidden in the tray):
+PDF.js intentionally defers rendering while its document is hidden. When hot
+deploying a different manifest version into an already-running Obsidian,
+refresh the plugin's cached manifest once with the official CLI
+`plugin:reload id=pdf-web-reader`, then disable it again before the clean-install
+test. The installed disk files, manifest map and running instance must agree.
+
+To run the functional/native-routing tests without bringing Obsidian to the
+system foreground, use `npm run test:native:background`. The development-only
+wrapper temporarily enables CDP `Emulation.setFocusEmulationEnabled` in the
+explicit test-vault renderer, runs the real PDF.js tools and save/reopen tests,
+and disables focus emulation in `finally`. Its report identifies this as
+background focus-emulated testing, not an OS-foreground test. It does not
+change PDF permissions, browser security settings, or production plugin code.
+
+The clean-install check refuses a pre-existing extracted cache. It verifies
+first-use extraction of all 404 assets, a real Worker, five enabled tools,
+offline operation with HTTP/WebSocket requests temporarily blocked, and
+recovery of a deliberately corrupted test-owned cache icon. It leaves the
+plugin enabled, the test PDF intact, and closes only its own saved test tab.
+
+## Release and compatibility notes
+
+The complete pre-migration source and full-folder artifact are preserved by
+Git tag `full-viewer-0.1.1`. New releases contain exactly the three files
+listed above, while the repository retains the complete vendor resources and
+readable extraction/build code. See the official
+[release workflow](https://docs.obsidian.md/plugins/releasing/submit-plugin).
+
+Three-file delivery alone is **not a guarantee of admission to the Community
+Plugins directory**. Official developer policies prohibit self-installing or
+self-updating plugins/dependencies. This plugin never downloads, installs or
+updates code from the internet; it materializes resources already shipped in
+its own release. Community review still needs to assess that implementation
+and the other submission requirements. It has not been submitted or approved.
+See [developer policies](https://docs.obsidian.md/community-directory/developer-policies)
+and [manifest guidance](https://docs.obsidian.md/Reference/Manifest).
+
+The custom reader extends the public `EditableFileView`. Default PDF opens
+are routed by a reversible, app-scoped wrapper of
+`WorkspaceLeaf.setViewState()`; the built-in PDF extension registration is
+not removed. This wrapper is a monkey patch, **not an official dedicated API
+for replacing core PDF behavior**. Other plugins wrapping the same method
+or later Obsidian versions can conflict. Revalidate after Obsidian upgrades.
+Disable restores the original method if it is still the active wrapper;
+otherwise the old wrapper becomes an inactive pass-through.
+
+PDF document scripting and remote AI/alt-text model downloads are disabled.
+The complete resource snapshot is nevertheless retained.
+
+## License
+
+New plugin code is Apache-2.0; see `LICENSE` and `NOTICE`.
+Bundled Mozilla PDF.js is Apache-2.0. Fonts, CMaps, colour libraries and image
+decoders also carry their original license texts in the vendor snapshot and
+embedded payload. Packaging preserves those notices; it does not relicense
+third-party assets.

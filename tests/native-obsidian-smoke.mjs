@@ -30,6 +30,27 @@ const escapedPath = JSON.stringify(relativePath);
 const viewLookup = `app.workspace.getLeavesOfType('pdf-web-reader-view')
   .find(leaf => leaf.view?.requestedPath === ${escapedPath})?.view`;
 
+const preflight = evalJson(`JSON.stringify({
+  vault: app.vault.adapter.basePath,
+  visibility: document.visibilityState,
+  enabled: app.plugins.enabledPlugins.has('pdf-web-reader'),
+})`);
+assert.equal(
+  path.resolve(preflight.vault),
+  path.resolve(vault),
+  "CLI must target only the outer test vault",
+);
+assert.equal(
+  preflight.enabled,
+  true,
+  "PDF Web Reader must be enabled before creating the test PDF",
+);
+assert.equal(
+  preflight.visibility,
+  "visible",
+  "Obsidian is not visibly rendering; run through the background wrapper or bring the app forward. No test PDF was created",
+);
+
 await mkdir(artifacts, { recursive: true });
 await mkdir(path.dirname(absolutePath), { recursive: true });
 await copyFile(fixture, absolutePath, constants.COPYFILE_EXCL);
@@ -41,7 +62,7 @@ const result = {
   expectedVaultPath: vault,
   testPdf: relativePath,
   screenshot: path.relative(root, screenshotPath),
-  checks: {},
+  checks: { preflight },
   saves: [],
 };
 
@@ -194,6 +215,8 @@ async function activeViewer() {
       path: view?.requestedPath || null,
       ready: !!view?.ready,
       saving: !!view?.saving,
+      visible: document.visibilityState === 'visible' &&
+        frame?.document?.visibilityState === 'visible',
       pages: pdf?.numPages || 0,
       mode: editor?.annotationEditorMode ?? null,
       textSpans: frame?.document?.querySelectorAll('.textLayer span').length || 0,
@@ -622,6 +645,7 @@ try {
     activeViewer,
     (state) =>
       state.ready &&
+      state.visible &&
       state.path === relativePath &&
       state.pages > 0 &&
       state.textSpans > 0 &&
@@ -807,12 +831,18 @@ try {
   runtime(`(() => ${viewLookup}.iframe.contentWindow.PDFViewerApplication.eventBus
     .dispatch('switchannotationeditormode', { mode: 5 }))()`);
   await waitFor(
-    "reopened editable annotation layer",
+    "visible reopened editable annotation layer",
     async () =>
-      evalJson(`JSON.stringify(
-    ${viewLookup}.iframe.contentDocument.querySelectorAll('.inkEditor').length
-  )`),
-    (count) => count >= 3,
+      evalJson(`JSON.stringify((() => {
+        const frame = ${viewLookup}.iframe.contentWindow;
+        return {
+          visible: document.visibilityState === 'visible' &&
+            frame.document.visibilityState === 'visible',
+          count: frame.document.querySelectorAll('.inkEditor').length,
+        };
+      })())`),
+    (state) => state.visible && state.count >= 3,
+    90_000,
   );
   runtime(`(() => {
     const frame = ${viewLookup}.iframe.contentWindow;
@@ -893,6 +923,19 @@ try {
     "Native embedded viewer should not use an external/API service",
   );
   result.checks.externalOrApiRequests = services;
+
+  runtime(`(() => ${viewLookup}.iframe.contentWindow.PDFViewerApplication.eventBus
+    .dispatch('switchannotationeditormode', { mode: 0 }))()`);
+  const finalViewer = await waitFor(
+    "saved native smoke Viewer with annotation tools exited",
+    activeViewer,
+    (state) =>
+      state.visible &&
+      state.path === relativePath &&
+      state.mode === 0 &&
+      state.saving === false,
+  );
+  result.checks.finalViewer = finalViewer;
 
   runtime(`(() => {
     if (globalThis.__nativePdfWriteOriginal) {
