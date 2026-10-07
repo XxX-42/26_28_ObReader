@@ -21855,7 +21855,8 @@ class PDFViewer {
     if (!this.#annotationEditorUIManager) {
       throw new Error(`The AnnotationEditor is not enabled.`);
     }
-    if (this.#annotationEditorMode === mode) {
+    const isSameMode = this.#annotationEditorMode === mode;
+    if (isSameMode && !(editId && (mustEnterInEditMode || editComment))) {
       return;
     }
     if (!isValidAnnotationEditorMode(mode)) {
@@ -21870,10 +21871,15 @@ class PDFViewer {
       pdfDocument
     } = this;
     const updater = async () => {
-      this.#cleanupSwitchAnnotationEditorMode();
-      this.#annotationEditorMode = mode;
+      if (!isSameMode) {
+        this.#cleanupSwitchAnnotationEditorMode();
+        this.#annotationEditorMode = mode;
+      }
       await this.#annotationEditorUIManager.updateMode(mode, editId, true, isFromKeyboard, mustEnterInEditMode, editComment, createNewEditor);
       if (mode !== this.#annotationEditorMode || pdfDocument !== this.pdfDocument) {
+        return;
+      }
+      if (isSameMode) {
         return;
       }
       eventBus.dispatch("annotationeditormodechanged", {

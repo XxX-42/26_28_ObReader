@@ -22,3 +22,13 @@ with different line heights; interpreting both as underline quads produced
 parallel strokes. Highlight selection and the core/Worker, saved annotation
 format, and existing annotations are unchanged. `SHA256SUMS.json` pins this
 corrected snapshot; the original checkout is not modified.
+
+## Audited local correction: plugin 0.1.4
+
+The display bundle and viewer distinguish creation-priority hit testing from
+explicit object editing. Existing editor bodies and drawing overlays yield to
+the active text-selection or creation tool; explicit double-click editing,
+focused FreeText input, toolbars, comments, and erasing remain separate paths.
+Same-mode explicit editing requests are no longer discarded. These are local
+interaction changes to `build/pdf.mjs`, `web/viewer.mjs`, and `web/viewer.css`;
+the PDF Worker and serialized annotation format are unchanged.

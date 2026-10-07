@@ -3962,6 +3962,23 @@ body.editorEraserMode .annotationEditorLayer{
     pointer-events:auto;
   }
 
+.annotationEditorLayer.creationPriority :is(.freeTextEditor,.inkEditor,.stampEditor,.signatureEditor,.highlightEditor),
+.annotationEditorLayer.creationPriority :is(.freeTextEditor,.inkEditor,.stampEditor,.signatureEditor,.highlightEditor) > .internal,
+.annotationEditorLayer.creationPriority .freeTextEditor > .overlay,
+.annotationEditorLayer.creationPriority :is(.draw,.highlight,.highlightOutline),
+.annotationEditorLayer.creationPriority .draw > .internal{
+  pointer-events:none !important;
+}
+
+.annotationEditorLayer.creationPriority:not(.drawing) :is(.freeTextEditor,.inkEditor,.stampEditor,.signatureEditor,.highlightEditor).explicitlyEditing.selectedEditor,
+.annotationEditorLayer.creationPriority:not(.drawing) .draw.explicitlyEditing.selectedEditor{
+  pointer-events:auto !important;
+}
+
+.annotationEditorLayer.creationPriority:not(.drawing) .freeTextEditor.selectedEditor > .internal[contenteditable="true"]:focus{
+  pointer-events:auto !important;
+}
+
 .annotationEditorLayer.freetextEditing{
   cursor:var(--editorFreeText-editing-cursor);
 }

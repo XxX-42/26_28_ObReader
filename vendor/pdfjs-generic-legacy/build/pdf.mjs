@@ -10131,6 +10131,26 @@ class AnnotationEditorUIManager {
   }
   async updateMode(mode, editId = null, isFromUser = false, isFromKeyboard = false, mustEnterInEditMode = false, editComment = false, createNewEditor = true) {
     if (this.#mode === mode) {
+      for (const editor of this.#allEditors.values()) {
+        editor.div?.classList.remove("explicitlyEditing");
+      }
+      if (editId) {
+        for (const editor of this.#allEditors.values()) {
+          if (editor.uid !== editId) {
+            continue;
+          }
+          editor.div?.classList.toggle("explicitlyEditing", mustEnterInEditMode);
+          this.setSelected(editor);
+          if (editComment) {
+            editor.editComment();
+          } else if (mustEnterInEditMode) {
+            editor.enterInEditMode();
+          } else {
+            editor.focus();
+          }
+          break;
+        }
+      }
       return;
     }
     if (this.#updateModeCapability) {
@@ -10146,6 +10166,9 @@ class AnnotationEditorUIManager {
     }
     this.#commentManager?.destroyPopup();
     this.#mode = mode;
+    for (const editor of this.#allEditors.values()) {
+      editor.div?.classList.remove("explicitlyEditing");
+    }
     if (mode === AnnotationEditorType.NONE) {
       this.setEditingState(false);
       this.#disableAll();
@@ -10210,6 +10233,7 @@ class AnnotationEditorUIManager {
     }
     for (const editor of this.#allEditors.values()) {
       if (editor.uid === editId) {
+        editor.div?.classList.toggle("explicitlyEditing", mustEnterInEditMode);
         this.setSelected(editor);
         if (editComment) {
           editor.editComment();
@@ -10231,6 +10255,9 @@ class AnnotationEditorUIManager {
   }
   updateToolbar(options) {
     if (options.mode === this.#mode) {
+      if (options.editId && options.mustEnterInEditMode) {
+        this.updateMode(options.mode, options.editId, false, false, true, options.editComment);
+      }
       return;
     }
     this._eventBus.dispatch("switchannotationeditormode", {
@@ -13085,6 +13112,7 @@ class AnnotationEditor {
     }
   }
   unselect() {
+    this.div?.classList.remove("explicitlyEditing");
     if (!this.isSelected) {
       return;
     }
@@ -13125,7 +13153,8 @@ class AnnotationEditor {
     this.enterInEditMode();
     this.parent.updateToolbar({
       mode: this.constructor._editorType,
-      editId: this.uid
+      editId: this.uid,
+      mustEnterInEditMode: true
     });
   }
   getElementForAltText() {
@@ -33175,6 +33204,7 @@ class AnnotationEditorLayer {
   }
   updateMode(mode = this.#uiManager.getMode()) {
     this.#cleanup();
+    this.div.classList.toggle("creationPriority", mode === AnnotationEditorType.FREETEXT || mode === AnnotationEditorType.HIGHLIGHT || mode === AnnotationEditorType.UNDERLINE || mode === AnnotationEditorType.SQUARE || mode === AnnotationEditorType.INK);
     switch (mode) {
       case AnnotationEditorType.NONE:
         this.div.classList.toggle("nonEditing", true);
@@ -33289,6 +33319,7 @@ class AnnotationEditorLayer {
     this.#isDisabling = true;
     this.div.tabIndex = -1;
     this.togglePointerEvents(false);
+    this.div.classList.remove("creationPriority");
     this.div.classList.toggle("nonEditing", true);
     if (this.#textLayer && !this.#textLayerDblClickAC) {
       this.#textLayerDblClickAC = new AbortController();
@@ -33803,6 +33834,7 @@ class AnnotationEditorLayer {
     this.#currentEditorType.onScaleChangingWhenDrawing(this);
   }
   destroy() {
+    this.div.classList.remove("creationPriority");
     this.commitOrRemove();
     if (this.#uiManager.getActive()?.parent === this) {
       this.#uiManager.commitOrRemove();

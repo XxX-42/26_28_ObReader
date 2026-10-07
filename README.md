@@ -56,6 +56,12 @@ Both the number row and numeric keypad are supported. Press the active tool's
 key again or backquote to leave it. Typing digits inside an input or editable
 text does not switch tools.
 
+Version 0.1.4 gives the active creation tool priority over existing annotation
+bodies: underline/highlight can select the PDF text beneath them, and drawing
+tools can start inside an existing annotation. Leave the tool, then double-click
+an annotation to explicitly edit its object. Toolbars, comments, the eraser,
+and an actively focused text-box input retain their own interactions.
+
 Saving is **manual**: press `Ctrl+S` or use **保存到仓库** in the secondary
 toolbar. Wait for success before closing the tab or disabling/reloading the
 plugin. Save overwrites the current vault PDF after checking that its on-disk
