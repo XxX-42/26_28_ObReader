@@ -2,3 +2,4 @@
 vendor/** -text
 dist/** -text
 tests/fixtures/** -text
+test-vault/测试插件/** -text

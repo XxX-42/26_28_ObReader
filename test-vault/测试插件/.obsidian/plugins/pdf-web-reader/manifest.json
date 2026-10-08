@@ -1,0 +1,9 @@
+{
+  "id": "pdf-web-reader",
+  "name": "PDF Web Reader",
+  "version": "0.1.4",
+  "minAppVersion": "1.14.4",
+  "description": "Read vault PDFs and edit underline, rectangle, highlight, ink, and text annotations offline.",
+  "author": "XxX-42",
+  "isDesktopOnly": true
+}

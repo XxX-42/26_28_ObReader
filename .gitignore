@@ -4,3 +4,7 @@ tests/output/
 tests/artifacts/
 .deploy-backups/
 *.log
+test-vault/**/.asset-cache/
+test-vault/**/.trash/
+test-vault/**/.DS_Store
+test-vault/**/.obsidian/workspace-mobile.json

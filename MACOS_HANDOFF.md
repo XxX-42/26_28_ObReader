@@ -49,6 +49,8 @@
 
 0.1.4 已推送 `origin/main`。本次交接不以创建 GitHub Release 或新标签为前提；不要把 Git 推送、插件版本号、Git 标签和 GitHub Release 混为一谈。
 
+2026 年 10 月 8 日补充了 `test-vault/测试插件/` 测试库快照。60 个文件包括原配置、已安装 0.1.4、38 份测试 PDF、笔记、图片及历史内层欢迎库；原 `.asset-cache` 未复制，内嵌资源会在首次打开时重建。阅读 `test-vault/README.md` 和 `test-vault/SNAPSHOT.json`，将外层测试库复制到 Mac 用户指定的独立位置使用，不要误开内层同名文件夹。快照不包含未保存编辑或应用账号状态，也不表示 Apple 原生验收已完成。
+
 ## 当前功能合同
 
 插件 ID 是 `pdf-web-reader`，自定义 View 类型是 `pdf-web-reader-view`。当前 manifest 的最低 Obsidian 版本为 `1.14.4`，`isDesktopOnly` 为 `true`；这是已使用的桌面基线，不是已确定的 Apple 最低系统版本。

@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "capturedOn": "2026-10-08",
+  "timeZone": "Asia/Shanghai",
+  "vaultDirectory": "测试插件",
+  "sourceVault": "D:\\Documents\\Obsidian\\测试插件",
+  "pluginVersion": "0.1.4",
+  "fileCount": 60,
+  "totalBytes": 44931378,
+  "excluded": ["**/.asset-cache/**"],
+  "pdfFixturePrefixCheck": {
+    "bytes": 65536,
+    "matchingFiles": 38,
+    "reference": "tests/fixtures/tracemonkey.pdf",
+    "scope": "prefix match identifies fixture origin; not a full PDF content or annotation audit"
+  },
+  "files": [
+    {
+      "path": ".obsidian/app.json",
+      "size": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "path": ".obsidian/appearance.json",
+      "size": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "path": ".obsidian/community-plugins.json",
+      "size": 22,
+      "sha256": "6c153d80c0e447cd1d11db669461cbdc021f0fea2367b5b7c4a660b27fdc612a"
+    },
+    {
+      "path": ".obsidian/core-plugins.json",
+      "size": 666,
+      "sha256": "79985eff638a8a3f7fe2946dca1ed0872116d31028bb1498b0efb7ac4e11077b"
+    },
+    {
+      "path": ".obsidian/plugins/pdf-web-reader/main.js",
+      "size": 6214515,
+      "sha256": "9a0ef78a8c40978bd26e90161ebe20d15069952658516f291322e2a67aed627f"
+    },
+    {
+      "path": ".obsidian/plugins/pdf-web-reader/manifest.json",
+      "size": 268,
+      "sha256": "593bea82e1666669d51d7a0e9a538596f33423f6ee1399e10cd8e7f1398b2ae9"
+    },
+    {
+      "path": ".obsidian/plugins/pdf-web-reader/styles.css",
+      "size": 506,
+      "sha256": "d80514b4642ac1e8dc0b1f7a9d00684fe9aca5c389ec40bacaee037f87480d0d"
+    },
+    {
+      "path": ".obsidian/workspace.json",
+      "size": 6227,
+      "sha256": "b3079a0dc9d9da2f83ecb9c1b079e8d49c7fafb828841741ba6b5961586a4252"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007091146969.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007091209040.pdf",
+      "size": 1020581,
+      "sha256": "9a2ba759d23424aab62c81b7b2c94bc2d7d693f357beab4eeb67563182805d66"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007091850943.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092024560.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092057244.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092233146.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092544818.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092759897.pdf",
+      "size": 1031280,
+      "sha256": "fb4ba0650d66cad1f2cd8b753d3d885f184e186671db2d9328fa5133d76666ec"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092850815.pdf",
+      "size": 1020614,
+      "sha256": "dd3ac4378ed3300767ba3180ab3ae25ec5a3a82cf2aa67cadc12d825f22b440f"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007092934610.pdf",
+      "size": 1020615,
+      "sha256": "ab491eb834910ec4f3ddcf80fd54629e605db54258af67dd0e49547c372e6126"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007093013059.pdf",
+      "size": 1021490,
+      "sha256": "9b232324606ab2fcb4697a4de89b05ee7f305b0d4ac8aa72cdb3675f56e3d49a"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007093149384.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007093514262.pdf",
+      "size": 1021489,
+      "sha256": "a691b2f82fd3d2f114005bedc225f6c4b9979c6b00a9182b07b68a7a5e07eee4"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007093634194.pdf",
+      "size": 1021827,
+      "sha256": "8f8d5e3d2b3c549310b52d9c5f414d6ffe82d552705a1b974b9f055019dccbb8"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007093718883.pdf",
+      "size": 1021832,
+      "sha256": "e9673a42626e490802262a38c9b8ed86e84a056e712f8cb2cfa3e509a4d1bbec"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007102828407.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007102944344.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007103258090.pdf",
+      "size": 1022169,
+      "sha256": "bb65cf77f1e1943a1d38f8878e4610ceb6cf3796a8d7032e4ad747731bdd1268"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007103450166.pdf",
+      "size": 1021816,
+      "sha256": "2e8ffc4cb823b5ca77cd96b916506aef2b64f25e730069fbd2e30732da7392b2"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007111728959.pdf",
+      "size": 1020606,
+      "sha256": "586400ccd57e869e37a443de94ed9232413f8f9c42986ac22845c670e8e373ae"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007113352223.pdf",
+      "size": 1021817,
+      "sha256": "7c0912842b5b152212d5e2b6c5ce3126ed63125087938bfa62e5ec9072e222f5"
+    },
+    {
+      "path": "PDF迁移测试/native-20261007113715490.pdf",
+      "size": 1021817,
+      "sha256": "9e2f35c6209eb2dbbcd16348c60cb7a741d972d619c5e975a1912fd81639b526"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103522505-disabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103522505-enabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103522505-image.png",
+      "size": 68,
+      "sha256": "a003172922ab7880a1d39825fbd2ad48bea3f0f163ca16707364e6298839795c"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103522505-note.md",
+      "size": 92,
+      "sha256": "4efa6a08c60676e65b8d0a6342c85ba0cf77186d18895d4fbc5b38a4b94ab617"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103522505-reenabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103550206-disabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103550206-enabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103550206-image.png",
+      "size": 68,
+      "sha256": "a003172922ab7880a1d39825fbd2ad48bea3f0f163ca16707364e6298839795c"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103550206-note.md",
+      "size": 92,
+      "sha256": "d527944a832e455deb24e4738b6e70de633301f05b38f4a9160f03958754e3f2"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007103550206-reenabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113423063-disabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113423063-enabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113423063-image.png",
+      "size": 68,
+      "sha256": "a003172922ab7880a1d39825fbd2ad48bea3f0f163ca16707364e6298839795c"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113423063-note.md",
+      "size": 92,
+      "sha256": "8c3ed37aeb50722d64b0169d29d113ce7d4e80313fad3a518b9c469a69d8046e"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113423063-reenabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113746468-disabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113746468-enabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113746468-image.png",
+      "size": 68,
+      "sha256": "a003172922ab7880a1d39825fbd2ad48bea3f0f163ca16707364e6298839795c"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113746468-note.md",
+      "size": 92,
+      "sha256": "88782bfb1137992abd43b98589e1f2005293c3e00a0b462477adfa528803da98"
+    },
+    {
+      "path": "PDF迁移测试/native-default-20261007113746468-reenabled.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-threefile-20261007110533259.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-threefile-20261007110808933.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/native-threefile-20261007111654488.pdf",
+      "size": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+    },
+    {
+      "path": "PDF迁移测试/五工具测试.pdf",
+      "size": 1022166,
+      "sha256": "9c0234ec76e8991d9f7f63d8de3e6eceb59457f14a7cf98ad34b7fb8f219c323"
+    },
+    {
+      "path": "测试插件/.obsidian/app.json",
+      "size": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "path": "测试插件/.obsidian/appearance.json",
+      "size": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "path": "测试插件/.obsidian/core-plugins.json",
+      "size": 666,
+      "sha256": "79985eff638a8a3f7fe2946dca1ed0872116d31028bb1498b0efb7ac4e11077b"
+    },
+    {
+      "path": "测试插件/.obsidian/graph.json",
+      "size": 493,
+      "sha256": "89b1b8c279c3229a13509a0fad866ef90a7a70a6536f78d542e9c0960aec3d77"
+    },
+    {
+      "path": "测试插件/.obsidian/workspace.json",
+      "size": 5465,
+      "sha256": "dab21dfc18b8879738fadb1594b79683215dad7dc927af05059eec1294b9252d"
+    },
+    {
+      "path": "测试插件/欢迎.md",
+      "size": 223,
+      "sha256": "8ad9a6a4b22d9c16f12ff868e54639dc2e0b8a74ded1ed0c484932e846a020f0"
+    }
+  ]
+}

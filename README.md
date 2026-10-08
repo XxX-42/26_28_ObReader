@@ -113,6 +113,13 @@ the extracted artifacts; that server is not part of the installed plugin.
 
 ## Test-vault deployment
 
+The Windows test-vault snapshot is included under
+[`test-vault/测试插件`](test-vault/README.md), with configuration, the 0.1.4
+plugin, saved test PDFs and a SHA-256 inventory. Copy it to a separate test
+location before opening it in Obsidian. Generated Viewer caches are excluded;
+the three-file plugin regenerates them locally. See the snapshot guide before
+using it on macOS; mobile support has not been implemented.
+
 ```powershell
 npm run deploy
 ```
