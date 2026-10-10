@@ -29524,7 +29524,7 @@ class FreeTextEditor extends AnnotationEditor {
       return;
     }
     super.commit();
-    this.disableEditMode();
+    if (!this._savingWithoutBlur) this.disableEditMode();
     const savedText = this.#content;
     const newText = this.#content = this.#extractText().trimEnd();
     if (savedText === newText) {
@@ -29553,6 +29553,42 @@ class FreeTextEditor extends AnnotationEditor {
   }
   shouldGetKeyboardEvents() {
     return this.isInEditMode();
+  }
+  commitForSave() {
+    const selection = this.editorDiv?.contains(document.activeElement) ? window.getSelection() : null;
+    const offset = (node, position) => {
+      const range = document.createRange();
+      range.selectNodeContents(this.editorDiv);
+      range.setEnd(node, position);
+      return range.toString().length;
+    };
+    const bookmark = selection?.rangeCount && this.editorDiv.contains(selection.anchorNode) && this.editorDiv.contains(selection.focusNode)
+      ? [offset(selection.anchorNode, selection.anchorOffset), offset(selection.focusNode, selection.focusOffset)] : null;
+    this._savingWithoutBlur = true;
+    try {
+      this.commit();
+    } finally {
+      delete this._savingWithoutBlur;
+    }
+    if (bookmark && !this.isEmpty()) {
+      this.editorDiv.focus({ preventScroll: true });
+      const locate = position => {
+        const walker = document.createTreeWalker(this.editorDiv, NodeFilter.SHOW_TEXT);
+        let node, last;
+        while ((node = walker.nextNode())) {
+          last = node;
+          if (position <= node.length) return [node, position];
+          position -= node.length;
+        }
+        return last ? [last, last.length] : [this.editorDiv, 0];
+      };
+      selection.setBaseAndExtent(...locate(bookmark[0]), ...locate(bookmark[1]));
+    }
+  }
+  moveInDOM() {
+    // A content-only save must not schedule DOM reordering, which resets the
+    // caret after the synchronous commit has already restored the selection.
+    if (!this._savingWithoutBlur) super.moveInDOM();
   }
   enterInEditMode() {
     this.enableEditMode();

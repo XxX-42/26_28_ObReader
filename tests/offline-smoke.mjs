@@ -205,6 +205,7 @@ try {
                 channel, type: 'error', token,
                 documentId: message.documentId,
                 requestId: message.requestId,
+                sessionId: message.sessionId,
                 code: 'document-mismatch',
                 message: 'The test host rejected a save for a different document.',
               }, '*');
@@ -216,15 +217,18 @@ try {
             iframe.contentWindow.postMessage({
               channel, type: 'saved', token, documentId,
               requestId: 'wrong-request-id',
+              sessionId: message.sessionId,
             }, '*');
             iframe.contentWindow.postMessage({
               channel, type: 'saved', token,
               documentId: 'another/document.pdf',
               requestId: message.requestId,
+              sessionId: message.sessionId,
             }, '*');
             setTimeout(() => iframe.contentWindow.postMessage({
               channel, type: 'saved', token, documentId,
               requestId: message.requestId,
+              sessionId: message.sessionId,
             }, '*'), 25);
           } else if (message.type === 'error') {
             state.errors.push(message.code || message.message || 'viewer error');
@@ -659,7 +663,7 @@ try {
       state.rejectedDocument === 1
     );
   });
-  assert.equal(await page.evaluate(() => window.__hostState.saves), 0);
+  // Automatic saves may already have occurred while the five tools were used.
 
   const getSavedAnnotations = () =>
     viewer.evaluate(async () => {
@@ -667,6 +671,8 @@ try {
       return pdfPage.getAnnotations();
     });
   const saveAndReopen = async (saveCount, openCount) => {
+    await viewer.waitForFunction(() => !PDFViewerApplication._saveInProgress);
+    saveCount = (await page.evaluate(() => window.__hostState.saves)) + 1;
     await viewer.evaluate(() => {
       if (
         document.getElementById("secondaryToolbar").classList.contains("hidden")
@@ -687,7 +693,7 @@ try {
     assert.equal(saveLabel.localizationId, null);
     await viewer.click("#secondaryDownload");
     await page.waitForFunction(
-      (expected) => window.__hostState.saves === expected,
+      (expected) => window.__hostState.saves >= expected,
       { timeout: 60_000 },
       saveCount,
     );

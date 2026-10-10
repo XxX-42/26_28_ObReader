@@ -45,6 +45,13 @@
     localOpenAbortController: null,
     startupTimer: null,
     startupFailed: false,
+    sessionId: null,
+    savedFingerprint: null,
+    autoTimer: null,
+    autoPaused: false,
+    pointers: new Set(),
+    composing: false,
+    activityAbort: null,
   };
 
   function postToHost(type, fields = {}, transfer = []) {
@@ -217,7 +224,14 @@
     return `save-${Date.now().toString(36)}-${state.saveSequence.toString(36)}`;
   }
 
-  function waitForHostSave({ data, documentId, filename, requestId }) {
+  function waitForHostSave({
+    data,
+    documentId,
+    filename,
+    requestId,
+    sessionId,
+    automatic,
+  }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (state.pendingSave?.requestId !== requestId) {
@@ -230,6 +244,7 @@
       state.pendingSave = {
         documentId,
         requestId,
+        sessionId,
         resolve: () => {
           clearTimeout(timeout);
           state.pendingSave = null;
@@ -243,7 +258,11 @@
       };
 
       if (
-        !postToHost("save", { data, documentId, filename, requestId }, [data])
+        !postToHost(
+          "save",
+          { data, documentId, filename, requestId, sessionId, automatic },
+          [data],
+        )
       ) {
         clearTimeout(timeout);
         state.pendingSave = null;
@@ -252,7 +271,69 @@
     });
   }
 
-  async function requestSave() {
+  function fingerprint() {
+    return (
+      state.app?.pdfDocument?.annotationStorage?.serializable?.hash || "empty"
+    );
+  }
+
+  function prepareContent(preserveFocus) {
+    const manager =
+      state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    manager?.currentLayer?.endDrawingSession?.(false);
+    const active = manager?.getActive?.();
+    if (preserveFocus && active?.commitForSave) {
+      active.commitForSave();
+    } else {
+      manager?.commitOrRemove?.();
+    }
+  }
+
+  function scheduleAutoSave() {
+    clearTimeout(state.autoTimer);
+    if (
+      state.disposed ||
+      state.readOnly ||
+      !state.activeDocumentId ||
+      state.autoPaused
+    )
+      return;
+    state.autoTimer = setTimeout(async () => {
+      state.autoTimer = null;
+      if (state.pointers.size || state.composing) return;
+      prepareContent(true);
+      if (fingerprint() === state.savedFingerprint) {
+        if (!state.savePromise) {
+          state.app.pdfDocument.annotationStorage?.resetModified?.();
+          restoreChanges(state.app, {
+            hadAnnotationChanges: false,
+            hadStructuralChanges: false,
+          });
+        }
+        return;
+      }
+      await requestSave({ automatic: true, preserveFocus: true });
+    }, 1000);
+  }
+
+  async function flushSave() {
+    clearTimeout(state.autoTimer);
+    state.autoTimer = null;
+    if (!state.activeDocumentId || state.readOnly) return true;
+    if (state.composing || state.pointers.size) return false;
+    prepareContent(false);
+    if (state.autoPaused) return false;
+    do {
+      if (state.savePromise && !(await state.savePromise)) return false;
+      if (fingerprint() === state.savedFingerprint) return true;
+      if (!(await requestSave({ automatic: true }))) return false;
+      prepareContent(false);
+    } while (!state.disposed);
+    return false;
+  }
+
+  async function requestSave(options = {}) {
+    const automatic = options.automatic === true;
     if (state.savePromise) {
       return state.savePromise;
     }
@@ -264,18 +345,22 @@
       return false;
     }
     if (state.readOnly) {
-      showStatus("This PDF is read-only.");
       return false;
     }
 
-    app.pdfViewer?._layerProperties?.annotationEditorUIManager?.commitOrRemove?.();
+    clearTimeout(state.autoTimer);
+    state.autoTimer = null;
+    if (!automatic) state.autoPaused = false;
+    prepareContent(options.preserveFocus === true);
     const revisionAtStart = state.revision;
+    const fingerprintAtStart = fingerprint();
+    const sessionId = state.sessionId;
     const dirtySnapshot = snapshotChanges(app);
     const requestId = makeSaveRequestId();
     state.savePromise = (async () => {
       let willSaveDispatched = false;
       app._saveInProgress = true;
-      app.appConfig?.appContainer?.classList.add("wait");
+      if (!automatic) app.appConfig?.appContainer?.classList.add("wait");
       app._updateOverwriteOriginalState?.();
 
       try {
@@ -314,13 +399,20 @@
           documentId,
           filename: state.activeFilename || "document.pdf",
           requestId,
+          sessionId,
+          automatic,
         });
 
         if (
           app.pdfDocument === pdfDocument &&
-          state.activeDocumentId === documentId
+          state.activeDocumentId === documentId &&
+          state.sessionId === sessionId
         ) {
-          if (state.revision === revisionAtStart) {
+          state.savedFingerprint = fingerprintAtStart;
+          if (
+            state.revision === revisionAtStart &&
+            fingerprint() === fingerprintAtStart
+          ) {
             pdfDocument.annotationStorage?.resetModified?.();
             restoreChanges(app, {
               hadAnnotationChanges: false,
@@ -335,29 +427,32 @@
         }
         return true;
       } catch (error) {
+        state.autoPaused = true;
+        console.error("PDF save failed; automatic retries paused:", error);
         if (willSaveDispatched) {
           try {
             await app.pdfScriptingManager?.dispatchDidSave?.();
           } catch {
-            // Keep the original save error as the user-visible failure.
+            // Preserve the original save failure for diagnostics.
           }
         }
         if (app.pdfDocument === pdfDocument) {
           restoreChanges(app, {
             hadAnnotationChanges:
               dirtySnapshot.hadAnnotationChanges ||
-              state.revision !== revisionAtStart,
+              state.revision !== revisionAtStart ||
+              fingerprint() !== state.savedFingerprint,
             hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
           });
         }
         if (!error?.fromHost) {
-          sendError(error?.message || "Could not save the PDF.", {
+          postToHost("error", {
             documentId,
             requestId,
+            sessionId,
+            message: error?.message || "Could not save the PDF.",
             code: "save-failed",
           });
-        } else {
-          showStatus(error.message || "Obsidian could not save the PDF.");
         }
         return false;
       } finally {
@@ -368,6 +463,12 @@
       }
     })().finally(() => {
       state.savePromise = null;
+      if (
+        !state.autoPaused &&
+        (state.revision !== revisionAtStart ||
+          fingerprint() !== state.savedFingerprint)
+      )
+        scheduleAutoSave();
     });
 
     return state.savePromise;
@@ -385,8 +486,8 @@
     }
     const previousOnModified = storage.onModified;
     const wrappedOnModified = () => {
-      state.revision += 1;
       previousOnModified?.();
+      scheduleAutoSave();
     };
     storage.onModified = wrappedOnModified;
     state.storageCleanup = () => {
@@ -451,6 +552,11 @@
 
     try {
       state.activeDocumentId = null;
+      clearTimeout(state.autoTimer);
+      state.autoPaused = false;
+      state.pointers.clear();
+      state.composing = false;
+      state.sessionId = message.sessionId || documentId;
       state.activeFilename = null;
       state.readOnly = false;
       state.revision = 0;
@@ -475,12 +581,17 @@
       app._contentDispositionFilename = filename;
       app.setTitle(filename);
       observeAnnotationStorage(app.pdfDocument?.annotationStorage);
+      state.savedFingerprint = fingerprint();
       setReadOnlyState(state.readOnly);
 
       if (state.activeDocumentId !== documentId || state.disposed) {
         return;
       }
-      postToHost("opened", { documentId, filename });
+      postToHost("opened", {
+        documentId,
+        filename,
+        sessionId: state.sessionId,
+      });
     } catch (error) {
       cleanupStorageObserver();
       state.activeDocumentId = null;
@@ -596,12 +707,39 @@
       return;
     }
 
+    if (message.type === "flush-save") {
+      if (
+        message.documentId !== state.activeDocumentId ||
+        message.sessionId !== state.sessionId
+      )
+        return;
+      void flushSave()
+        .then((success) =>
+          postToHost("flush-result", {
+            documentId: message.documentId,
+            sessionId: message.sessionId,
+            requestId: message.requestId,
+            success,
+          }),
+        )
+        .catch(() =>
+          postToHost("flush-result", {
+            documentId: message.documentId,
+            sessionId: message.sessionId,
+            requestId: message.requestId,
+            success: false,
+          }),
+        );
+      return;
+    }
+
     if (message.type === "saved" || message.type === "error") {
       const pending = state.pendingSave;
       if (
         !pending ||
         message.requestId !== pending.requestId ||
-        message.documentId !== pending.documentId
+        message.documentId !== pending.documentId ||
+        message.sessionId !== pending.sessionId
       ) {
         return;
       }
@@ -620,6 +758,42 @@
 
   function installAppHooks(app) {
     state.app = app;
+    state.activityAbort = new AbortController();
+    const activity = (event) => {
+      if (!state.activeDocumentId) return;
+      if (event.type === "pointerdown") state.pointers.add(event.pointerId);
+      if (event.type === "pointerup" || event.type === "pointercancel")
+        state.pointers.delete(event.pointerId);
+      if (event.type === "compositionstart") state.composing = true;
+      if (event.type === "compositionend") state.composing = false;
+      if (event.type === "input" && event.target?.closest?.(".freeTextEditor"))
+        state.revision += 1;
+      scheduleAutoSave();
+    };
+    for (const type of [
+      "pointerdown",
+      "pointerup",
+      "pointercancel",
+      "input",
+      "change",
+      "keyup",
+      "compositionstart",
+      "compositionend",
+      "focusout",
+    ]) {
+      window.addEventListener(type, activity, {
+        capture: true,
+        signal: state.activityAbort.signal,
+      });
+    }
+    window.addEventListener(
+      "blur",
+      () => {
+        state.pointers.clear();
+        scheduleAutoSave();
+      },
+      { signal: state.activityAbort.signal },
+    );
 
     // Retain PDF.js's loader for documents explicitly supplied by Obsidian,
     // but prevent the Viewer file picker/drop path from changing the document
@@ -823,6 +997,8 @@
     window.removeEventListener("unload", dispose);
     clearTimeout(state.statusTimer);
     clearTimeout(state.startupTimer);
+    clearTimeout(state.autoTimer);
+    state.activityAbort?.abort();
     cleanupStorageObserver();
     state.eventAbortController?.abort();
     state.eventAbortController = null;

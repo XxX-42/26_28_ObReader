@@ -61,18 +61,45 @@ Both the number row and numeric keypad are supported. Press the active tool's
 key again or backquote to leave it. Typing digits inside an input or editable
 text does not switch tools.
 
+Version 0.1.6 uses a six-sector tool wheel centered on the pointer. Hold the
+middle button to preview a sector and release to select it, or release at the
+center and then left-click a sector. Moving between sectors while held does not
+switch tools; the sector under the pointer at release is selected.
+The top sector closes the wheel without changing the tool; counterclockwise
+from its left are tools 1–5. Escape or an outside click also closes the wheel.
+Selecting an already active tool keeps it active. Right-button dragging uses
+the eraser temporarily and restores the previous tool on release. Movement
+under 4 CSS pixels counts as click jitter; an ordinary right-click leaves the
+default context menu available and does not erase. Right-drag erasing supports
+Undo and replaces the former right-button temporary highlighting behavior.
+
 Version 0.1.4 gives the active creation tool priority over existing annotation
 bodies: underline/highlight can select the PDF text beneath them, and drawing
 tools can start inside an existing annotation. Leave the tool, then double-click
 an annotation to explicitly edit its object. Toolbars, comments, the eraser,
 and an actively focused text-box input retain their own interactions.
 
-Saving is **manual**: press `Ctrl+S` or use **保存到仓库** in the secondary
-toolbar. Wait for success before closing the tab or disabling/reloading the
-plugin. Save overwrites the current vault PDF after checking that its on-disk
-bytes have not changed since the last read/save. Closing, unloading, or
-reloading is not a substitute for saving. Standalone Viewer file picking and
-drag-and-drop replacement are intercepted so saves cannot target another PDF.
+Version 0.1.7 enables **automatic saving** to the original vault PDF after one
+second without editing. Drawing, dragging and IME composition postpone saving;
+text-box saving keeps the text input and caret active. Creation, content and
+parameter changes, erasing, deletion, Undo and Redo are saved. Opening a PDF,
+selecting an object or switching tools alone does not write it.
+
+`Ctrl+S` and **保存到仓库** still save immediately. Ordinary tab closing and
+PDF replacement wait for pending changes to save; a failure retains the view.
+Saving is silent: no status text, toolbar indicator or success/failure notices
+are displayed. Failures are recorded only in diagnostic logs.
+If the on-disk PDF changed since the last read/save, saving stops rather than
+overwriting external changes. Other failures also pause automatic retries;
+use manual save to retry after resolving the error. Never reopen or reload to
+resolve a conflict before preserving the current unsaved edits.
+
+Automatic saving modifies the original PDF, including subsequent Undo/Redo.
+Forced application termination, plugin unloading/reloading and crashes cannot
+guarantee a final save. Ordinary close retains the view if saving fails; resolve
+the failure and use manual save before retrying. Standalone
+Viewer file picking and drag-and-drop replacement remain intercepted so saves
+cannot target another PDF.
 
 Version 0.1.3 fixes parallel/double underline strokes when a selection spans
 complete text-layer spans. Underlines now use only selected text-node rectangles,
@@ -143,6 +170,11 @@ Native tests use the user's enabled official Obsidian CLI/CDP. They create
 timestamped PDF and other fixture copies under `PDF迁移测试/` and retain them.
 JSON results and screenshots are under ignored `tests/artifacts/`. Tests
 must refuse to unload/replace views with unsaved user changes.
+
+`npm run test:native:autosave` checks automatic writes, idle write suppression,
+close-time flushing, save/reopen and external-change conflicts in a separate
+test-owned PDF copy. It uses background focus emulation and does not move the
+Obsidian window to the OS foreground. The copied PDF and JSON report are retained.
 
 For a clean-install release acceptance check, first save and close existing
 Reader tabs, disable the plugin and deploy the three-file output, then run:

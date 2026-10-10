@@ -32,3 +32,25 @@ focused FreeText input, toolbars, comments, and erasing remain separate paths.
 Same-mode explicit editing requests are no longer discarded. These are local
 interaction changes to `build/pdf.mjs`, `web/viewer.mjs`, and `web/viewer.css`;
 the PDF Worker and serialized annotation format are unchanged.
+
+## Local interaction addition: plugin 0.1.5
+
+The viewer module and stylesheet add a middle-button six-sector tool wheel,
+replacing only middle-button temporary highlighting. Right-button highlighting,
+the PDF Worker and annotation serialization remain unchanged. Resources remain
+embedded in the same three-file release and pinned by SHA256SUMS.json.
+
+## Local interaction update: plugin 0.1.6
+
+Middle-button movement previews a sector; selection is committed only on
+release. Right-button dragging activates the existing annotation eraser with
+the previous tool restored on release or cancellation. Simple right-clicks
+retain the context menu. The old temporary highlight gesture handlers are
+removed. The PDF Worker and annotation serialization are unchanged.
+
+## Local save support: plugin 0.1.7
+
+The display bundle exposes FreeText `commitForSave()` to capture edited text
+without disabling edit mode or moving focus and the caret. Automatic scheduling,
+content comparison, failure handling and host-mediated writes live in the
+Obsidian bridge; the PDF Worker and standard annotation format are unchanged.

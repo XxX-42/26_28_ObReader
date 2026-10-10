@@ -90,6 +90,21 @@ try {
     if (oldManifest.id !== manifest.id) {
       throw new Error(`Refusing to replace a different plugin at ${target}`);
     }
+    // Open iframe views still reference the extracted, content-addressed assets.
+    // Keep them available after deployment, including CSS-only live updates.
+    const existingCache = path.join(target, ".asset-cache");
+    const cacheInfo = await lstat(existingCache).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (cacheInfo) {
+      if (!cacheInfo.isDirectory() || cacheInfo.isSymbolicLink()) {
+        throw new Error("Refusing to copy a non-directory runtime asset cache");
+      }
+      await cp(existingCache, path.join(staging, ".asset-cache"), {
+        recursive: true,
+      });
+    }
     await mkdir(path.dirname(backup), { recursive: true });
     await rename(target, backup);
     movedExisting = true;

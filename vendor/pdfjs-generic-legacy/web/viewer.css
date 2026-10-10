@@ -8912,3 +8912,59 @@ dialog :link{
     display:none;
   }
 }
+
+.pdfToolWheel {
+  position: fixed;
+  z-index: 100000;
+  border-radius: 50%;
+  color: #fff;
+  font:
+    12px system-ui,
+    sans-serif;
+  font-size: calc(12px * var(--tool-wheel-scale, 1));
+  user-select: none;
+  touch-action: none;
+  filter: drop-shadow(0 4px 12px #0008);
+}
+.pdfToolWheel svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.pdfToolWheel path {
+  fill: #30343bee;
+  stroke: #aeb5c0;
+  stroke-width: 1;
+}
+.pdfToolWheel path.active {
+  fill: #346da8;
+}
+.pdfToolWheel button {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 0;
+  white-space: nowrap;
+  font: inherit;
+  cursor: pointer;
+}
+.pdfToolWheelIcon {
+  display: block;
+  font-size: calc(22px * var(--tool-wheel-scale, 1));
+  line-height: 1.2;
+}
+.pdfToolWheelCenter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #20242c;
+  border: 1px solid #aeb5c0;
+  box-sizing: border-box;
+}

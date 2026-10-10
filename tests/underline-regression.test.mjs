@@ -265,7 +265,7 @@ test(
             } else if (message.type === 'save') {
               state.saves += 1;
               state.savedData = message.data.slice(0);
-              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId}, '*');
+              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId, sessionId:message.sessionId}, '*');
             }
           });
           window.__reopenSavedData = () => {

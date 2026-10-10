@@ -11470,6 +11470,9 @@ var es_iterator_find = __webpack_require__(4059);
 
 const ERASABLE_EDITOR_SELECTOR = [".freeTextEditor", ".highlightEditor", ".inkEditor", ".stampEditor", ".signatureEditor"].join(",");
 class PDFAnnotationEraser {
+  #rightSession = null;
+  #rightUndoDocument = null;
+  #suppressContextMenuUntil = 0;
   #erasedEditorIds = new Set();
   #eventBus;
   #isEnabled = false;
@@ -11488,13 +11491,21 @@ class PDFAnnotationEraser {
     viewerContainer.addEventListener("pointerdown", this.#pointerDown.bind(this), {
       capture: true
     });
-    viewerContainer.addEventListener("pointermove", this.#pointerMove.bind(this), {
+    window.addEventListener("pointermove", this.#pointerMove.bind(this), {
       capture: true
     });
     window.addEventListener("pointerup", this.#pointerUp.bind(this), {
       capture: true
     });
     window.addEventListener("keydown", this.#keyDown.bind(this));
+    window.addEventListener("pointercancel", () => this.cancelTemporaryStroke(), { capture: true });
+    window.addEventListener("blur", () => this.cancelTemporaryStroke());
+    window.addEventListener("contextmenu", event => {
+      if (this.#rightSession?.activated || performance.now() < this.#suppressContextMenuUntil) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, { capture: true });
   }
   get #uiManager() {
     return this.#pdfViewer._layerProperties.annotationEditorUIManager;
@@ -11508,6 +11519,47 @@ class PDFAnnotationEraser {
       this.#pointerId = null;
       this.#erasedEditorIds.clear();
     }
+    if (this.#isEnabled && this.#rightSession?.activated) {
+      this.#startRightStroke();
+    }
+  }
+  #startRightStroke() {
+    const session = this.#rightSession;
+    if (!session || session.ready) return;
+    session.ready = true;
+    if (!session.cancelled && this.#pdfViewer.pdfDocument === session.document) {
+      this.#erasedEditorIds.clear();
+      if (!session.ending) this.#viewerContainer.setPointerCapture?.(session.pointerId);
+      this.#eraseAt(session.start);
+      this.#eraseAt(session.last);
+    }
+    if (session.ending) this.#finishRightStroke();
+  }
+  #finishRightStroke() {
+    const session = this.#rightSession;
+    if (!session) return;
+    session.ending = true;
+    if (this.#viewerContainer.hasPointerCapture?.(session.pointerId)) {
+      this.#viewerContainer.releasePointerCapture(session.pointerId);
+    }
+    if (session.activated && !session.ready) return;
+    if (session.activated && this.#erasedEditorIds.size && this.#pdfViewer.pdfDocument === session.document) this.#rightUndoDocument = session.document;
+    this.#rightSession = null;
+    this.#erasedEditorIds.clear();
+    if (session.activated && this.#pdfViewer.pdfDocument === session.document && this.#pdfViewer.annotationEditorMode !== session.originalMode) {
+      this.#eventBus.dispatch("switchannotationeditormode", {
+        source: this, mode: session.originalMode, isTemporary: true, createNewEditor: false
+      });
+    }
+  }
+  cancelTemporaryStroke() {
+    if (!this.#rightSession) return;
+    this.#rightSession.cancelled = true;
+    this.#finishRightStroke();
+  }
+  resetTemporaryState() {
+    this.cancelTemporaryStroke();
+    this.#rightUndoDocument = null;
   }
   #getEditorElement(clientX, clientY) {
     const directEditor = document.elementsFromPoint(clientX, clientY).map(element => element.closest(ERASABLE_EDITOR_SELECTOR)).find(Boolean);
@@ -11540,6 +11592,14 @@ class PDFAnnotationEraser {
     return true;
   }
   #pointerDown(event) {
+    if (event.button === 2 && event.pointerType === "mouse" && this.#pdfViewer.pdfDocument && this.#pdfViewer.annotationEditorMode !== AnnotationEditorType.DISABLE && !event.target.closest?.("input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=dialog]")) {
+      if (this.#rightSession) return;
+      this.#suppressContextMenuUntil = 0;
+      this.#rightSession = { pointerId: event.pointerId, start: event, last: event,
+        originalMode: this.#pdfViewer.annotationEditorMode, document: this.#pdfViewer.pdfDocument,
+        activated: false, ready: false, ending: false, cancelled: false };
+      return;
+    }
     if (!this.#isEnabled || event.button !== 0) {
       return;
     }
@@ -11551,6 +11611,26 @@ class PDFAnnotationEraser {
     this.#eraseAt(event);
   }
   #pointerMove(event) {
+    const session = this.#rightSession;
+    if (session && event.pointerId === session.pointerId && !session.ending) {
+      if (!(event.buttons & 2)) {
+        this.#finishRightStroke();
+        return;
+      }
+      session.last = event;
+      if (!session.activated && Math.hypot(event.clientX - session.start.clientX, event.clientY - session.start.clientY) < 4) return;
+      if (!session.activated) {
+        session.activated = true;
+        this.#pdfViewer.focus();
+        this.#eventBus.dispatch("hideannotationeditorparams", { source: this });
+        if (this.#isEnabled) this.#startRightStroke();
+        else this.#eventBus.dispatch("switchannotationeditormode", { source: this, mode: AnnotationEditorType.ERASER, isTemporary: true, createNewEditor: false });
+      } else if (session.ready) this.#eraseAt(event);
+      this.#suppressContextMenuUntil = performance.now() + 500;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     if (!this.#isEnabled || event.pointerId !== this.#pointerId) {
       return;
     }
@@ -11559,6 +11639,18 @@ class PDFAnnotationEraser {
     this.#eraseAt(event);
   }
   #pointerUp(event) {
+    if (event.button === 2 && event.pointerId === this.#rightSession?.pointerId) {
+      const session = this.#rightSession;
+      session.last = event;
+      if (session.activated) {
+        if (session.ready) this.#eraseAt(event);
+        this.#suppressContextMenuUntil = performance.now() + 500;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      this.#finishRightStroke();
+      return;
+    }
     if (event.pointerId !== this.#pointerId) {
       return;
     }
@@ -11567,6 +11659,23 @@ class PDFAnnotationEraser {
     this.#erasedEditorIds.clear();
   }
   #keyDown(event) {
+    // NONE normally removes the editor keyboard listener. Keep history usable
+    // after a temporary right-button erasure without selecting another tool.
+    if (this.#rightUndoDocument && this.#rightUndoDocument === this.#pdfViewer.pdfDocument && this.#pdfViewer.annotationEditorMode === AnnotationEditorType.NONE && (event.ctrlKey || event.metaKey) && !event.altKey && !event.target.closest?.("input,textarea,select,[contenteditable]:not([contenteditable=false])")) {
+      const key = event.key.toLowerCase();
+      if (key === "z" || key === "y") {
+        if (key === "y" || event.shiftKey) this.#uiManager?.redo();
+        else this.#uiManager?.undo();
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+    }
+    if (this.#rightSession && event.key === "Escape") {
+      this.cancelTemporaryStroke();
+      event.preventDefault();
+      return;
+    }
     if (!this.#isEnabled || event.key !== "Escape") {
       return;
     }
@@ -25062,6 +25171,8 @@ const PDFViewerApplication = {
   },
   async close() {
     this._unblockDocumentLoadEvent();
+    closeToolWheel.call(this);
+    this.pdfAnnotationEraser?.resetTemporaryState();
     this._hideViewBookmark();
     if (!this.pdfLoadingTask) {
       return;
@@ -25872,30 +25983,51 @@ const PDFViewerApplication = {
     window.addEventListener("click", onClick.bind(this), {
       signal
     });
-    window.addEventListener("pointerdown", onTemporaryHighlightStart.bind(this), {
+    window.addEventListener("pointerdown", onToolWheelDown.bind(this), {
       capture: true,
-      signal
+      signal,
     });
-    window.addEventListener("pointermove", onTemporaryHighlightMove.bind(this), {
+    window.addEventListener("pointermove", onToolWheelMove.bind(this), {
       capture: true,
-      signal
+      signal,
     });
-    window.addEventListener("pointerup", onTemporaryHighlightEnd.bind(this), {
+    window.addEventListener("pointerup", onToolWheelUp.bind(this), {
       capture: true,
-      signal
+      signal,
     });
-    window.addEventListener("pointercancel", onTemporaryHighlightCancel.bind(this), {
-      capture: true,
-      signal
+    window.addEventListener("pointercancel", () => closeToolWheel.call(this), {
+      signal,
     });
-    window.addEventListener("contextmenu", onTemporaryHighlightContextMenu.bind(this), {
-      capture: true,
-      signal
+    window.addEventListener("blur", () => closeToolWheel.call(this), {
+      signal,
     });
-    window.addEventListener("auxclick", onTemporaryHighlightAuxClick.bind(this), {
-      capture: true,
-      signal
+    window.addEventListener("resize", () => closeToolWheel.call(this), {
+      signal,
     });
+    window.addEventListener(
+      "keydown",
+      (evt) => {
+        if (this._toolWheel && evt.key === "Escape") {
+          closeToolWheel.call(this);
+          evt.preventDefault();
+          evt.stopImmediatePropagation();
+        }
+      },
+      { capture: true, signal },
+    );
+    window.addEventListener(
+      "auxclick",
+      (evt) => {
+        if (
+          evt.button === 1 &&
+          performance.now() < (this._toolWheelSuppressUntil || 0)
+        ) {
+          evt.preventDefault();
+          evt.stopImmediatePropagation();
+        }
+      },
+      { capture: true, signal },
+    );
     window.addEventListener("keydown", onKeyDown.bind(this), {
       signal
     });
@@ -25987,6 +26119,7 @@ const PDFViewerApplication = {
     this._eventBusAbortController = null;
   },
   unbindWindowEvents() {
+    closeToolWheel.call(this);
     this._windowAbortController?.abort();
     this._windowAbortController = null;
     this._touchManager = null;
@@ -26372,170 +26505,171 @@ function onBeforeUnload(evt) {
   }
   return true;
 }
-function getTextPositionAtPoint(x, y) {
-  let node, offset;
-  if (document.caretPositionFromPoint) {
-    const position = document.caretPositionFromPoint(x, y);
-    node = position?.offsetNode;
-    offset = position?.offset;
-  } else {
-    const range = document.caretRangeFromPoint?.(x, y);
-    node = range?.startContainer;
-    offset = range?.startOffset;
-  }
-  if (node?.nodeType !== Node.TEXT_NODE) {
-    return null;
-  }
-  if (!node.parentElement?.closest(".textLayer")) {
-    return null;
-  }
-  return {
-    node,
-    offset
-  };
+// Clockwise screen coordinates, starting at the top. Labels follow 1–5
+// counterclockwise; the center is deliberately not a selectable sector.
+const TOOL_WHEEL_ITEMS = [
+  { label: "退出", icon: "×", mode: null },
+  { label: "5 文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
+  { label: "4 自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
+  { label: "3 荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
+  { label: "2 矩形框", icon: "□", mode: AnnotationEditorType.SQUARE },
+  { label: "1 下划线", icon: "U̲", mode: AnnotationEditorType.UNDERLINE },
+];
+function closeToolWheel() {
+  this._toolWheel?.element.remove();
+  this._toolWheel = null;
 }
-function setTemporaryHighlightSelection(start, end) {
-  const selection = document.getSelection();
-  if (!selection) {
-    return false;
+function toolWheelSector(wheel, evt) {
+  const dx = evt.clientX - wheel.x,
+    dy = evt.clientY - wheel.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 24 || distance > wheel.radius) {
+    return -1;
   }
-  try {
-    selection.setBaseAndExtent(start.node, start.offset, end.node, end.offset);
-  } catch {
-    return false;
-  }
-  return !selection.isCollapsed;
+  return Math.floor(
+    ((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI / 6 + Math.PI * 2) %
+      (Math.PI * 2)) /
+      (Math.PI / 3),
+  );
 }
-function onTemporaryHighlightStart(evt) {
-  if (![1, 2].includes(evt.button) || this._temporaryHighlightSession) {
+function selectToolWheel(index) {
+  const item = TOOL_WHEEL_ITEMS[index];
+  closeToolWheel.call(this);
+  if (
+    item.mode === null ||
+    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
+  ) {
     return;
   }
-  const isMiddleButton = evt.button === 1;
-  if (isMiddleButton ? !(evt.target instanceof Node) || !this.appConfig.mainContainer.contains(evt.target) : !(evt.target instanceof Element) || !evt.target.closest(".textLayer")) {
+  this.eventBus.dispatch("hideannotationeditorparams", { source: window });
+  this.eventBus.dispatch("switchannotationeditormode", {
+    source: window,
+    mode: item.mode,
+    isFromKeyboard: true,
+    createNewEditor: false,
+  });
+}
+function onToolWheelDown(evt) {
+  if (this._toolWheel && evt.button !== 1) {
+    const index = toolWheelSector(this._toolWheel, evt);
+    evt.preventDefault();
+    evt.stopImmediatePropagation();
+    if (evt.button === 0 && index >= 0) {
+      selectToolWheel.call(this, index);
+    } else if (
+      index < 0 &&
+      Math.hypot(
+        evt.clientX - this._toolWheel.x,
+        evt.clientY - this._toolWheel.y,
+      ) > this._toolWheel.radius
+    ) {
+      closeToolWheel.call(this);
+    }
     return;
   }
-  const start = getTextPositionAtPoint(evt.clientX, evt.clientY);
-  const originalMode = this.pdfViewer.annotationEditorMode;
-  if (!isMiddleButton && !start || originalMode === AnnotationEditorType.DISABLE) {
+  if (
+    evt.button !== 1 ||
+    evt.pointerType !== "mouse" ||
+    !this.pdfDocument ||
+    this.overlayManager.active ||
+    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE ||
+    !(evt.target instanceof Element) ||
+    !this.pdfViewer.container.contains(evt.target) ||
+    evt.target.closest(
+      "input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=dialog]",
+    )
+  ) {
     return;
   }
-  const {
-    eventBus
-  } = this;
-  let modeReady = Promise.resolve();
-  if (originalMode !== AnnotationEditorType.HIGHLIGHT) {
-    modeReady = new Promise(resolve => {
-      const onModeChanged = ({
-        mode
-      }) => {
-        if (mode !== AnnotationEditorType.HIGHLIGHT) {
-          return;
-        }
-        eventBus._off("annotationeditormodechanged", onModeChanged);
-        resolve();
-      };
-      eventBus._on("annotationeditormodechanged", onModeChanged, {
-        signal: this._windowAbortController.signal
-      });
-    });
+  closeToolWheel.call(this);
+  evt.preventDefault();
+  evt.stopImmediatePropagation();
+  this._toolWheelPointer = evt.pointerId;
+  this._toolWheelSuppressUntil = performance.now() + 1000;
+  const radius = Math.min(
+    120,
+    evt.clientX,
+    evt.clientY,
+    window.innerWidth - evt.clientX,
+    window.innerHeight - evt.clientY,
+  );
+  if (radius < 48) {
+    return;
   }
-  this._temporaryHighlightSession = {
-    button: evt.button,
+  const element = document.createElement("div");
+  element.className = "pdfToolWheel";
+  element.setAttribute("role", "menu");
+  element.setAttribute("aria-label", "批注工具圆盘");
+  element.style.cssText = `left:${evt.clientX - radius}px;top:${evt.clientY - radius}px;width:${radius * 2}px;height:${radius * 2}px;--tool-wheel-scale:${radius / 120}`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "-120 -120 240 240");
+  const sectors = [];
+  TOOL_WHEEL_ITEMS.forEach((item, index) => {
+    const start = ((index * 60 - 120) * Math.PI) / 180;
+    const end = start + Math.PI / 3;
+    const sector = document.createElementNS(svg.namespaceURI, "path");
+    sector.setAttribute(
+      "d",
+      `M 0 0 L ${120 * Math.cos(start)} ${120 * Math.sin(start)} A 120 120 0 0 1 ${120 * Math.cos(end)} ${120 * Math.sin(end)} Z`,
+    );
+    svg.append(sector);
+    sectors.push(sector);
+    const label = document.createElement("button");
+    label.type = "button";
+    label.tabIndex = -1;
+    label.setAttribute("role", "menuitem");
+    label.setAttribute("aria-label", item.label);
+    label.dataset.sector = index;
+    const angle = ((index * 60 - 90) * Math.PI) / 180;
+    label.style.left = `${50 + 32 * Math.cos(angle)}%`;
+    label.style.top = `${50 + 32 * Math.sin(angle)}%`;
+    const icon = document.createElement("span");
+    icon.className = "pdfToolWheelIcon";
+    icon.textContent = item.icon;
+    label.append(icon, document.createTextNode(item.label));
+    element.append(label);
+  });
+  element.prepend(svg);
+  const center = document.createElement("span");
+  center.className = "pdfToolWheelCenter";
+  element.append(center);
+  document.body.append(element);
+  this.pdfViewer.focus();
+  this._toolWheel = {
+    element,
+    sectors,
+    x: evt.clientX,
+    y: evt.clientY,
+    radius,
     pointerId: evt.pointerId,
-    start,
-    moved: false,
-    originalMode,
-    restoreMode: evt.button === 1 ? AnnotationEditorType.NONE : originalMode,
-    modeReady
+    held: true,
   };
-  document.getSelection()?.removeAllRanges();
-  eventBus.dispatch("hideannotationeditorparams", {
-    source: window
-  });
-  if (originalMode !== AnnotationEditorType.HIGHLIGHT) {
-    eventBus.dispatch("switchannotationeditormode", {
-      source: window,
-      mode: AnnotationEditorType.HIGHLIGHT,
-      isTemporary: true
-    });
+}
+function onToolWheelMove(evt) {
+  const wheel = this._toolWheel;
+  if (!wheel || evt.pointerId !== wheel.pointerId) {
+    return;
+  }
+  const index = toolWheelSector(wheel, evt);
+  wheel.sectors.forEach((sector, i) =>
+    sector.classList.toggle("active", i === index),
+  );
+  evt.preventDefault();
+  evt.stopImmediatePropagation();
+}
+function onToolWheelUp(evt) {
+  if (evt.button !== 1 || evt.pointerId !== this._toolWheelPointer) {
+    return;
+  }
+  this._toolWheelPointer = null;
+  this._toolWheelSuppressUntil = performance.now() + 1000;
+  if (this._toolWheel) {
+    const index = toolWheelSector(this._toolWheel, evt);
+    if (index >= 0) selectToolWheel.call(this, index);
+    else this._toolWheel.held = false;
   }
   evt.preventDefault();
-}
-function onTemporaryHighlightMove(evt) {
-  const session = this._temporaryHighlightSession;
-  if (!session || evt.pointerId !== session.pointerId) {
-    return;
-  }
-  const end = getTextPositionAtPoint(evt.clientX, evt.clientY);
-  if (!end) {
-    return;
-  }
-  if (!session.start) {
-    session.start = end;
-    document.getSelection()?.removeAllRanges();
-    evt.preventDefault();
-    return;
-  }
-  session.moved = setTemporaryHighlightSelection(session.start, end);
-  evt.preventDefault();
-}
-function finishTemporaryHighlight(session, createHighlight) {
-  session.modeReady.then(() => {
-    if (createHighlight && !document.getSelection()?.isCollapsed) {
-      this.eventBus.dispatch("editingaction", {
-        source: window,
-        name: "highlightSelection"
-      });
-    } else {
-      document.getSelection()?.removeAllRanges();
-    }
-    if (session.restoreMode !== AnnotationEditorType.HIGHLIGHT) {
-      this.eventBus.dispatch("switchannotationeditormode", {
-        source: window,
-        mode: session.restoreMode,
-        isTemporary: true
-      });
-    }
-  });
-}
-function onTemporaryHighlightEnd(evt) {
-  const session = this._temporaryHighlightSession;
-  if (!session || evt.pointerId !== session.pointerId || evt.button !== session.button) {
-    return;
-  }
-  const end = getTextPositionAtPoint(evt.clientX, evt.clientY);
-  if (session.start && end) {
-    session.moved = setTemporaryHighlightSelection(session.start, end);
-  }
-  this._temporaryHighlightSession = null;
-  if (session.button === 2 && session.moved) {
-    this._rightDragHighlightContextMenuUntil = performance.now() + 500;
-  }
-  if (session.button === 1) {
-    this._middleDragHighlightAuxClickUntil = performance.now() + 500;
-  }
-  if (session.moved || session.button === 1) {
-    evt.preventDefault();
-  }
-  finishTemporaryHighlight.call(this, session, session.moved);
-}
-function onTemporaryHighlightCancel(evt) {
-  const session = this._temporaryHighlightSession;
-  if (!session || evt.pointerId !== session.pointerId) {
-    return;
-  }
-  this._temporaryHighlightSession = null;
-  finishTemporaryHighlight.call(this, session, false);
-}
-function onTemporaryHighlightContextMenu(evt) {
-  if (this._temporaryHighlightSession?.moved || performance.now() < (this._rightDragHighlightContextMenuUntil || 0)) {
-    evt.preventDefault();
-  }
-}
-function onTemporaryHighlightAuxClick(evt) {
-  if (evt.button === 1 && performance.now() < (this._middleDragHighlightAuxClickUntil || 0)) {
-    evt.preventDefault();
-  }
+  evt.stopImmediatePropagation();
 }
 function onClick(evt) {
   closeSecondaryToolbar.call(this, evt);

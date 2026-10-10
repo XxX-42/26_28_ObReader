@@ -48,11 +48,22 @@ function installPdfOpenRouting(plugin) {
     plugin,
     prototype,
     originalSetViewState: prototype.setViewState,
+    originalDetach: prototype.detach,
     setViewStateWrapper: null,
   };
 
-  routing.setViewStateWrapper = function (viewState, eState) {
+  routing.setViewStateWrapper = async function (viewState, eState) {
     const activePlugin = routing.plugin;
+    const nextPath = viewState?.state?.file ?? viewState?.state?.path;
+    if (
+      routing.active &&
+      this.app === activePlugin?.app &&
+      this.view instanceof PdfReaderView &&
+      (viewState?.type !== VIEW_TYPE ||
+        (nextPath && nextPath !== this.view.requestedPath))
+    ) {
+      if (!(await this.view.flushBeforeLeave())) return;
+    }
     if (
       !routing.active ||
       !activePlugin ||
@@ -80,6 +91,19 @@ function installPdfOpenRouting(plugin) {
   };
 
   prototype.setViewState = routing.setViewStateWrapper;
+  if (typeof routing.originalDetach === "function") {
+    routing.detachWrapper = async function (...args) {
+      if (
+        routing.active &&
+        this.app === routing.plugin?.app &&
+        this.view instanceof PdfReaderView
+      ) {
+        if (!(await this.view.flushBeforeLeave())) return;
+      }
+      return routing.originalDetach.apply(this, args);
+    };
+    prototype.detach = routing.detachWrapper;
+  }
   return routing;
 }
 
@@ -92,6 +116,11 @@ function restorePdfOpenRouting(routing) {
   if (routing.prototype.setViewState === routing.setViewStateWrapper) {
     routing.prototype.setViewState = routing.originalSetViewState;
   }
+  if (
+    routing.detachWrapper &&
+    routing.prototype.detach === routing.detachWrapper
+  )
+    routing.prototype.detach = routing.originalDetach;
 }
 
 function escapeAttribute(value) {
@@ -154,8 +183,9 @@ class PdfReaderView extends EditableFileView {
     this.resourcePromise = null;
     this._assetCache = null;
     this.iframe = null;
-    this.statusEl = null;
     this.messageListener = (event) => this.onMessage(event);
+    this.sessionId = null;
+    this.flushPending = null;
   }
 
   getViewType() {
@@ -186,6 +216,13 @@ class PdfReaderView extends EditableFileView {
 
   async setState(state, result) {
     const file = resolvePdfFile(this.plugin, state?.file ?? state?.path);
+    if (
+      file &&
+      this.requestedPath &&
+      file.path !== this.requestedPath &&
+      !(await this.flushBeforeLeave())
+    )
+      return;
     if (!file && (this.requestedPath || this.file)) {
       return;
     }
@@ -220,6 +257,7 @@ class PdfReaderView extends EditableFileView {
       this.pendingBytes = null;
       this.originalBytes = null;
       this.requestedPath = null;
+      this.sessionId = null;
       this.navigationState = {};
     }
   }
@@ -229,10 +267,6 @@ class PdfReaderView extends EditableFileView {
     this.contentEl.empty();
     this.contentEl.addClass("pdf-web-reader-content");
 
-    this.statusEl = this.contentEl.createDiv({
-      cls: "pdf-web-reader-status",
-      text: "正在加载 PDF 阅读器…",
-    });
     this.iframe = this.contentEl.createEl("iframe", {
       cls: "pdf-web-reader-frame",
       attr: {
@@ -266,6 +300,7 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     await super.onClose();
+    this.flushPending?.finish(false);
     window.removeEventListener("message", this.messageListener);
     if (this.bridgeTimeout) {
       window.clearTimeout(this.bridgeTimeout);
@@ -281,6 +316,7 @@ class PdfReaderView extends EditableFileView {
     this.pendingBytes = null;
     this.originalBytes = null;
     this.requestedPath = null;
+    this.sessionId = null;
     this.navigationState = {};
     this.contentEl.removeClass("pdf-web-reader-content");
   }
@@ -360,6 +396,7 @@ class PdfReaderView extends EditableFileView {
     }
     const request = ++this.openRequest;
     this.requestedPath = file.path;
+    this.sessionId = makeToken();
     this.pendingBytes = null;
     try {
       const bytes = await this.app.vault.readBinary(file);
@@ -370,7 +407,6 @@ class PdfReaderView extends EditableFileView {
       // buffer can then be transferred to the viewer without another copy.
       this.originalBytes = new Uint8Array(bytes.slice(0));
       this.pendingBytes = bytes;
-      this.setStatus(`正在打开：${file.path}`);
       if (this.ready) {
         this.sendPendingDocument();
       }
@@ -397,6 +433,7 @@ class PdfReaderView extends EditableFileView {
     if (message.documentId && message.documentId !== this.requestedPath) {
       return;
     }
+    if (message.sessionId && message.sessionId !== this.sessionId) return;
 
     switch (message.type) {
       case "ready":
@@ -407,16 +444,28 @@ class PdfReaderView extends EditableFileView {
         }
         this.sendPendingDocument();
         break;
-      case "opened":
-        if (message.documentId !== this.requestedPath) {
-          return;
-        }
-        this.setStatus(this.file ? `已打开：${this.file.path}` : "");
-        break;
       case "save":
-        void this.saveFile(message.data, message.documentId, message.requestId);
+        if (message.sessionId !== this.sessionId) return;
+        void this.saveFile(
+          message.data,
+          message.documentId,
+          message.requestId,
+          message.sessionId,
+          message.automatic === true,
+        );
+        break;
+      case "flush-result":
+        if (
+          message.sessionId === this.sessionId &&
+          message.requestId === this.flushPending?.requestId
+        )
+          this.flushPending.finish(message.success === true);
         break;
       case "error":
+        if (message.requestId) {
+          this.lastSaveError = { code: message.code, message: message.message };
+          return;
+        }
         this.showError(message.message || "PDF 阅读器报告了错误。");
         break;
     }
@@ -435,6 +484,7 @@ class PdfReaderView extends EditableFileView {
       data,
       documentId: this.file.path,
       readOnly: false,
+      sessionId: this.sessionId,
     };
     try {
       this.iframe.contentWindow.postMessage(message, "*", [data]);
@@ -463,7 +513,42 @@ class PdfReaderView extends EditableFileView {
     return true;
   }
 
-  async saveFile(value, documentId, requestId) {
+  flushBeforeLeave() {
+    if (!this.ready || !this.requestedPath || !this.iframe)
+      return Promise.resolve(true);
+    if (this.flushPending) return this.flushPending.promise;
+    const requestId = makeToken();
+    let finish;
+    const promise = new Promise((resolve) => {
+      finish = (success) => {
+        clearTimeout(timer);
+        this.flushPending = null;
+        resolve(success);
+      };
+    });
+    const timer = setTimeout(() => finish(false), 125000);
+    this.flushPending = { requestId, promise, finish };
+    if (
+      !this.postToViewer({
+        channel: CHANNEL,
+        type: "flush-save",
+        token: this.token,
+        documentId: this.requestedPath,
+        sessionId: this.sessionId,
+        requestId,
+      })
+    )
+      finish(false);
+    return promise;
+  }
+
+  async saveFile(
+    value,
+    documentId,
+    requestId,
+    sessionId = this.sessionId,
+    automatic = false,
+  ) {
     if (this.saving) {
       this.postToViewer({
         channel: CHANNEL,
@@ -473,11 +558,14 @@ class PdfReaderView extends EditableFileView {
         message: "已有保存操作正在进行，请稍后重试。",
         documentId,
         requestId,
+        sessionId,
       });
       return;
     }
     this.saving = true;
+    this.lastSaveError = null;
     const iframe = this.iframe;
+    const openRequest = this.openRequest;
     try {
       const file = this.file;
       const originalBytes = this.originalBytes;
@@ -509,8 +597,18 @@ class PdfReaderView extends EditableFileView {
 
       const data = toArrayBuffer(value);
       const savedBytes = new Uint8Array(data.slice(0));
+      if (
+        openRequest !== this.openRequest ||
+        sessionId !== this.sessionId ||
+        iframe !== this.iframe
+      )
+        throw new Error("PDF 保存会话已失效。");
       await this.app.vault.modifyBinary(latestFile, data);
-      if (this.file?.path === latestFile.path) {
+      if (
+        this.file?.path === latestFile.path &&
+        this.openRequest === openRequest &&
+        this.sessionId === sessionId
+      ) {
         this.file = latestFile;
         this.originalBytes = savedBytes;
       }
@@ -521,11 +619,10 @@ class PdfReaderView extends EditableFileView {
           token: this.token,
           documentId: latestFile.path,
           requestId,
+          sessionId,
         },
         "*",
       );
-      this.setStatus(`已保存：${latestFile.path}`);
-      new Notice(`已保存 ${latestFile.basename}`);
     } catch (error) {
       iframe?.contentWindow?.postMessage(
         {
@@ -536,28 +633,21 @@ class PdfReaderView extends EditableFileView {
           message: error.message,
           documentId,
           requestId,
+          sessionId,
         },
         "*",
       );
-      if (iframe && this.iframe === iframe) {
-        this.setStatus(error.message);
-      }
-      new Notice(`PDF 保存失败：${error.message}`, 8000);
+      this.lastSaveError = {
+        code: error.code || "save-failed",
+        message: error.message,
+      };
+      console.error("PDF save failed:", error);
     } finally {
       this.saving = false;
     }
   }
 
-  setStatus(message) {
-    if (!this.statusEl) {
-      return;
-    }
-    this.statusEl.setText(message);
-    this.statusEl.toggleClass("is-hidden", !message);
-  }
-
   showError(message) {
-    this.setStatus(message);
     new Notice(message, 8000);
   }
 }

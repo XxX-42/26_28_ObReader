@@ -1,22 +1,11 @@
-.pdf-web-reader-content {
+.workspace-leaf-content .view-content.pdf-web-reader-content {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 0;
+  /* Override Obsidian/theme view padding so the Viewer fills the content area. */
+  padding: 0 !important;
   overflow: hidden;
-}
-
-.pdf-web-reader-status {
-  flex: 0 0 auto;
-  padding: 0.45em 0.75em;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  overflow-wrap: anywhere;
-}
-
-.pdf-web-reader-status.is-hidden {
-  display: none;
 }
 
 .pdf-web-reader-frame {

@@ -212,7 +212,7 @@ test(
             } else if(message.type==='opened') state.opened+=1;
             else if(message.type==='save'){
               state.saves+=1; state.savedData=message.data.slice(0);
-              iframe.contentWindow.postMessage({channel,type:'saved',token,documentId,requestId:message.requestId},'*');
+              iframe.contentWindow.postMessage({channel,type:'saved',token,documentId,requestId:message.requestId,sessionId:message.sessionId},'*');
             }
           });
           window.__reopenSavedData=()=>{
@@ -245,6 +245,184 @@ test(
       await viewer.waitForFunction(
         () => !document.getElementById("editorUnderlineButton").disabled,
       );
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      assert.equal(
+        await page.evaluate(() => window.__hostState.saves),
+        0,
+        "Opening alone must not write the PDF",
+      );
+      // Real mouse events inside the packaged srcdoc viewer, not synthetic
+      // DOM dispatch: this also exercises capture and the middle-button mask.
+      const wheelCenter = { x: 700, y: 500 };
+      const wheelMode = () =>
+        viewer.evaluate(
+          () => PDFViewerApplication.pdfViewer.annotationEditorMode,
+        );
+      const openWheel = async () => {
+        await page.mouse.move(wheelCenter.x, wheelCenter.y);
+        await page.mouse.down({ button: "middle" });
+        await viewer.waitForSelector(".pdfToolWheel");
+      };
+      const wheelModes = [null, 3, 15, 9, 5, 10];
+      for (let index = 1; index < 6; index++) {
+        await openWheel();
+        if (index === 1) {
+          await page.screenshot({
+            path: path.join(artifacts, `tool-wheel-${captureId}.png`),
+          });
+        }
+        const angle = ((index * 60 - 90) * Math.PI) / 180;
+        const previousMode = await wheelMode();
+        await page.mouse.move(700, 580);
+        assert.equal(
+          await wheelMode(),
+          previousMode,
+          "Crossing another sector only previews",
+        );
+        await page.mouse.move(
+          wheelCenter.x + 80 * Math.cos(angle),
+          wheelCenter.y + 80 * Math.sin(angle),
+        );
+        assert.ok(
+          await viewer.$(".pdfToolWheel"),
+          "Held movement only previews",
+        );
+        assert.equal(
+          await wheelMode(),
+          previousMode,
+          "Tool must not change until release",
+        );
+        await page.mouse.up({ button: "middle" });
+        await viewer.waitForFunction(
+          () => !document.querySelector(".pdfToolWheel"),
+        );
+        await viewer.waitForFunction(
+          (mode) =>
+            PDFViewerApplication.pdfViewer.annotationEditorMode === mode,
+          {},
+          wheelModes[index],
+        );
+      }
+      assert.equal(await wheelMode(), 10);
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await page.mouse.click(631, 460);
+      assert.equal(
+        await wheelMode(),
+        10,
+        "Selecting active tool does not toggle it off",
+      );
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      await openWheel();
+      await page.mouse.move(700, 420);
+      assert.ok(await viewer.$(".pdfToolWheel"), "Exit also waits for release");
+      await page.mouse.up({ button: "middle" });
+      await viewer.waitForFunction(
+        () => !document.querySelector(".pdfToolWheel"),
+      );
+      assert.equal(await wheelMode(), 10, "Exit preserves selected underline");
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await page.mouse.move(700, 580);
+      assert.ok(
+        await viewer.$(".pdfToolWheel"),
+        "Released wheel must not select on hover",
+      );
+      assert.equal(await wheelMode(), 10);
+      await page.mouse.click(700, 580);
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 9,
+      );
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      await openWheel();
+      await page.mouse.move(631, 460);
+      assert.equal(
+        await wheelMode(),
+        9,
+        "Returning from a sector to the center must not select",
+      );
+      await page.mouse.move(705, 505);
+      assert.ok(await viewer.$(".pdfToolWheel"), "Center dead zone");
+      await page.mouse.up({ button: "middle" });
+      await page.keyboard.press("Escape");
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      assert.equal(await wheelMode(), 9, "Escape only closes wheel");
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await page.mouse.click(930, 500);
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      assert.equal(await wheelMode(), 9);
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await viewer.evaluate(() => window.dispatchEvent(new Event("blur")));
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      await page.mouse.move(20, 500);
+      await page.mouse.down({ button: "middle" });
+      await page.mouse.up({ button: "middle" });
+      assert.equal(
+        await viewer.$(".pdfToolWheel"),
+        null,
+        "Insufficient edge space",
+      );
+      await page.mouse.move(70, 500);
+      await page.mouse.down({ button: "middle" });
+      assert.equal(
+        await viewer.$eval(
+          ".pdfToolWheel",
+          (el) => el.getBoundingClientRect().width,
+        ),
+        140,
+        "Wheel shrinks at edge without moving its center",
+      );
+      await page.mouse.up({ button: "middle" });
+      await page.mouse.move(700, 500);
+      await page.mouse.down({ button: "middle" });
+      assert.equal(
+        await viewer.$eval(
+          ".pdfToolWheel",
+          (el) => el.getBoundingClientRect().width,
+        ),
+        240,
+        "Second middle press recenters wheel",
+      );
+      await page.mouse.up({ button: "middle" });
+      await viewer.evaluate(() =>
+        window.dispatchEvent(new PointerEvent("pointercancel")),
+      );
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      await viewer.evaluate(() => {
+        const input = document.createElement("input");
+        input.id = "wheel-test-input";
+        input.style.cssText =
+          "position:fixed;left:600px;top:450px;width:200px;height:40px;z-index:10000";
+        PDFViewerApplication.pdfViewer.container.append(input);
+      });
+      await page.mouse.click(650, 470, { button: "middle" });
+      assert.equal(
+        await viewer.$(".pdfToolWheel"),
+        null,
+        "Inputs must not trigger wheel",
+      );
+      // Input middle-click retains browser behavior; dismiss Chrome's native
+      // autoscroll before resuming PDF-area pointer assertions.
+      await page.keyboard.press("Escape");
+      await viewer.evaluate(() =>
+        document.getElementById("wheel-test-input").remove(),
+      );
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await viewer.evaluate(() => window.dispatchEvent(new Event("resize")));
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
+      await page.mouse.move(700, 500);
+      await page.keyboard.press("Backquote");
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
+      );
+      results.push({
+        scenario:
+          "middle-button wheel: five held selections, exit, persistent click, dead zone, Escape, outside, blur, edge",
+        passed: true,
+      });
       await viewer.evaluate(() => {
         window.__interactionEvents = [];
         const describe = (element) => {
@@ -622,24 +800,52 @@ test(
         );
         await new Promise((resolve) => setTimeout(resolve, 250));
       };
-      const saveAndReopen = async () => {
-        const expectedSave = (await saveCount()) + 1;
-        await viewer.evaluate(() => {
-          if (
-            document
-              .getElementById("secondaryToolbar")
-              .classList.contains("hidden")
-          ) {
-            document.getElementById("secondaryToolbarToggleButton").click();
-          }
-        });
-        await viewer.waitForSelector("#secondaryToolbar:not(.hidden)");
-        await viewer.click("#secondaryDownload");
+      const waitAutoSave = async (previous) => {
         await page.waitForFunction(
-          (count) => window.__hostState.saves === count,
-          { timeout: 60_000 },
-          expectedSave,
+          (count) => window.__hostState.saves > count,
+          { timeout: 15000 },
+          previous,
         );
+        await viewer.waitForFunction(
+          () => !PDFViewerApplication._saveInProgress,
+        );
+        const status = await viewer.evaluate(() => {
+          const element = document.getElementById("pdfReaderSaveStatus");
+          return {
+            text: element?.textContent,
+            toolbar: !!element?.closest("#toolbarViewer"),
+            width: element?.getBoundingClientRect().width,
+            popup:
+              document.getElementById("pdfReaderBridgeStatus")?.textContent ||
+              "",
+          };
+        });
+        assert.equal(status.text, undefined);
+        assert.equal(status.toolbar, false);
+        assert.doesNotMatch(status.popup, /^(待保存|保存中|已保存)$/);
+      };
+      const saveAndReopen = async (automatic = false) => {
+        const expectedSave = (await saveCount()) + 1;
+        if (automatic) {
+          await waitAutoSave(expectedSave - 1);
+        } else {
+          await viewer.evaluate(() => {
+            if (
+              document
+                .getElementById("secondaryToolbar")
+                .classList.contains("hidden")
+            ) {
+              document.getElementById("secondaryToolbarToggleButton").click();
+            }
+          });
+          await viewer.waitForSelector("#secondaryToolbar:not(.hidden)");
+          await viewer.click("#secondaryDownload");
+          await page.waitForFunction(
+            (count) => window.__hostState.saves >= count,
+            { timeout: 60_000 },
+            expectedSave,
+          );
+        }
         await viewer.waitForFunction(
           () => !PDFViewerApplication._saveInProgress,
           { timeout: 60_000 },
@@ -651,6 +857,147 @@ test(
         await reopenSavedData();
         return { byteLength, save: expectedSave };
       };
+      const rightDrag = await phraseGeometry();
+      await setMode(5);
+      const initialSquares = (await storageCounts())[5];
+      await mouseMove(
+        { x: rightDrag.rect.x - 3, y: rightDrag.rect.y - 3 },
+        { x: rightDrag.rect.right + 3, y: rightDrag.rect.bottom + 3 },
+      );
+      await waitForNewAnnotation(5, initialSquares);
+      const beforeRightDrag = await storageCounts();
+      await viewer.evaluate(() => {
+        window.__rightMenus = [];
+        document.addEventListener("contextmenu", (event) =>
+          window.__rightMenus.push({ prevented: event.defaultPrevented }),
+        );
+      });
+      await setMode(10);
+      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
+        button: "right",
+      });
+      assert.equal(await wheelMode(), 10, "Right-click must not change tools");
+      assert.deepEqual(
+        await storageCounts(),
+        beforeRightDrag,
+        "Right-click does not erase",
+      );
+      assert.ok(
+        await viewer.evaluate(() =>
+          window.__rightMenus.some((event) => !event.prevented),
+        ),
+        "Ordinary contextmenu stays available",
+      );
+      await page.keyboard.press("Escape");
+      for (const originalMode of [0, 3, 5, 9, 10, 15, 17]) {
+        await setMode(originalMode);
+        await page.mouse.move(rightDrag.start.x, rightDrag.start.y);
+        await page.mouse.down({ button: "right" });
+        await page.mouse.move(rightDrag.start.x + 2, rightDrag.start.y);
+        assert.equal(
+          await wheelMode(),
+          originalMode,
+          "Tiny click jitter must not activate temporary eraser",
+        );
+        await page.mouse.move(rightDrag.end.x, rightDrag.end.y, { steps: 10 });
+        await viewer.waitForFunction(
+          () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
+        );
+        await page.mouse.up({ button: "right" });
+        await viewer.waitForFunction(
+          (mode) =>
+            PDFViewerApplication.pdfViewer.annotationEditorMode === mode,
+          {},
+          originalMode,
+        );
+        assert.equal(
+          (await storageCounts())[5],
+          initialSquares,
+          "Right-drag erases square",
+        );
+        assert.equal(
+          (await storageCounts())[9],
+          beforeRightDrag[9],
+          "Right-drag no longer creates highlights",
+        );
+        await page.keyboard.down("Control");
+        await page.keyboard.press("z");
+        await page.keyboard.up("Control");
+        await viewer.waitForFunction(
+          (count) =>
+            [
+              ...(PDFViewerApplication.pdfDocument.annotationStorage.serializable.map?.values() ||
+                []),
+            ].filter((entry) => entry.annotationType === 5 && !entry.deleted)
+              .length === count,
+          {},
+          beforeRightDrag[5],
+        );
+        if (originalMode === 0) {
+          await page.keyboard.down("Control");
+          await page.keyboard.press("y");
+          await page.keyboard.up("Control");
+          assert.equal(
+            (await storageCounts())[5],
+            initialSquares,
+            "Redo reapplies erasure without changing NONE",
+          );
+          await page.keyboard.down("Control");
+          await page.keyboard.press("z");
+          await page.keyboard.up("Control");
+          assert.equal((await storageCounts())[5], beforeRightDrag[5]);
+        }
+      }
+      await setMode(10);
+      await page.mouse.move(rightDrag.start.x, rightDrag.start.y);
+      await page.mouse.down({ button: "right" });
+      await page.mouse.move(rightDrag.end.x, rightDrag.end.y, { steps: 10 });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
+      );
+      await viewer.evaluate(() => window.dispatchEvent(new Event("blur")));
+      await page.mouse.up({ button: "right" });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 10,
+      );
+      await page.keyboard.down("Control");
+      await page.keyboard.press("z");
+      await page.keyboard.up("Control");
+      assert.equal(
+        (await storageCounts())[5],
+        beforeRightDrag[5],
+        "Cancellation restores tool and keeps erasure undoable",
+      );
+      const menuCount = await viewer.evaluate(() => window.__rightMenus.length);
+      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
+        button: "right",
+      });
+      assert.ok(
+        await viewer.evaluate(
+          (count) => window.__rightMenus.length > count,
+          menuCount,
+        ),
+        "New right-click after drag is not suppressed",
+      );
+      await page.keyboard.press("Escape");
+      assert.equal(
+        await viewer.$(".pdfToolWheel"),
+        null,
+        "Right-drag does not open wheel",
+      );
+      await openWheel();
+      await page.mouse.up({ button: "middle" });
+      await reopenFixture();
+      assert.equal(
+        await viewer.$(".pdfToolWheel"),
+        null,
+        "Document replacement cleans up persistent wheel",
+      );
+      results.push({
+        scenario:
+          "right-click retains contextmenu; drag erases with undo and restores all five tools, NONE and ERASER; reopening cleans up wheel",
+        passed: true,
+      });
       const createSquareAroundText = async (phrase) => {
         const target = await phraseGeometry(phrase);
         const before = await storageCounts();
@@ -764,7 +1111,7 @@ test(
       const baseSquare = await createSquareAroundText(
         "Dynamic languages such as JavaScript",
       );
-      const baseSquareSave = await saveAndReopen();
+      const baseSquareSave = await saveAndReopen(true);
       await setMode(5);
       await viewer.waitForFunction(
         () =>
@@ -796,7 +1143,7 @@ test(
       });
       await persistProgress();
       assertTextSelectionWasPrioritized(underlineOnSquare, 10);
-      const underlineSave = await saveAndReopen();
+      const underlineSave = await saveAndReopen(true);
       const pdfAfterUnderlineSave = await pdfSubtypeCounts();
       results.at(-1).save = underlineSave;
       results.at(-1).pdfAfterSave = pdfAfterUnderlineSave;
@@ -863,6 +1210,7 @@ test(
       // receive the actual pointer and create a new stroke.
       await setMode(15);
       const inkBefore = await storageCounts();
+      const inkAutoBefore = await saveCount();
       const inkStartSquare = (await squareEditors())[0];
       await clearProbe();
       await mouseInkStroke(inkStartSquare.rect);
@@ -876,9 +1224,7 @@ test(
         "Ink should enter the drawing session while the mouse is held",
       );
       assert.equal(inkGestureEvents.mode, 15);
-      // Ink intentionally supports multiple strokes in one session: mouseup
-      // ends a stroke, while Escape commits the drawing as one editor.
-      await page.keyboard.press("Escape");
+      // Idle automatic saving commits the drawing without leaving Ink mode.
       try {
         await waitForNewAnnotation(15, inkBefore[15]);
       } catch (error) {
@@ -922,6 +1268,13 @@ test(
       results.push({ scenario: "ink-inside-saved-square", inkInSquare });
       await persistProgress();
       assertDrawingWasPrioritized(inkInSquare, 15);
+      await waitAutoSave(inkAutoBefore);
+      assert.equal(
+        await wheelMode(),
+        15,
+        "Autosave must not leave the Ink tool",
+      );
+      results.push({ scenario: "ink-autosave", saves: await saveCount() });
 
       // Discard that branch and use the saved two-Square document to create a
       // FreeText box over old markup with the real mouse.
@@ -938,10 +1291,12 @@ test(
       await viewer.waitForSelector(
         '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
       );
+      const textAutoBefore = await saveCount();
       await viewer.type(
         '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
         "12345",
       );
+      await waitAutoSave(textAutoBefore);
       const freeTextBeforeCommit = await viewer.evaluate(() => {
         const internal = document.querySelector(
           '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
@@ -953,7 +1308,20 @@ test(
         };
       });
       assert.equal(freeTextBeforeCommit.contentEditable, "true");
+      assert.equal(
+        freeTextBeforeCommit.active,
+        true,
+        "Autosave must retain text input focus",
+      );
       assert.match(freeTextBeforeCommit.text, /12345/);
+      await page.keyboard.type("6");
+      const secondTextSave = await saveCount();
+      await waitAutoSave(secondTextSave);
+      assert.equal(
+        await viewer.evaluate(() => document.activeElement?.textContent),
+        "123456",
+        "Typing continues at the same caret after automatic save",
+      );
       await page.keyboard.press("Escape");
       await waitForNewAnnotation(3, freeTextBefore[3]);
       const freeTextOnSquare = {
@@ -1008,7 +1376,7 @@ test(
       });
       await persistProgress();
       assertTextSelectionWasPrioritized(highlightOnMarkup, 9);
-      const highlightSave = await saveAndReopen();
+      const highlightSave = await saveAndReopen(true);
       results.at(-1).save = highlightSave;
       await persistProgress();
       const highlightOverHighlight = await createTextMarkup(9);

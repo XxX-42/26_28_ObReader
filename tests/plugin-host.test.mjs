@@ -92,6 +92,9 @@ function createHarness() {
       if (!leaves.includes(this)) leaves.push(this);
       return this.view;
     }
+    detach() {
+      this.detached = true;
+    }
   }
 
   class Plugin {
@@ -166,6 +169,7 @@ function createHarness() {
     notices,
     plugin,
     TFile,
+    WorkspaceLeaf,
     createView() {
       const leaf = { app };
       return viewFactory(leaf);
@@ -199,19 +203,80 @@ test("different PDF paths receive distinct leaves and reopening reuses its file 
   assert.equal(harness.leaves[1].view.requestedPath, second.path);
 });
 
+test("close and view replacement wait for flush and preserve the original view on failure", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/close.pdf");
+  h.files.set(file.path, file);
+  await h.plugin.openPdf(file);
+  const leaf = h.leaves[0];
+  const original = leaf.view;
+  let resolveFlush;
+  original.flushBeforeLeave = () =>
+    new Promise((resolve) => {
+      resolveFlush = resolve;
+    });
+  const closing = leaf.detach();
+  assert.equal(leaf.detached, undefined);
+  resolveFlush(false);
+  await closing;
+  assert.equal(leaf.detached, undefined);
+  const replacing = leaf.setViewState({
+    type: "markdown",
+    state: { file: "note.md" },
+  });
+  assert.equal(leaf.view, original);
+  resolveFlush(false);
+  await replacing;
+  assert.equal(leaf.view, original);
+  const successfulClose = leaf.detach();
+  resolveFlush(true);
+  await successfulClose;
+  assert.equal(leaf.detached, true);
+  h.plugin.onunload();
+});
+
+test("host rejects stale same-path sessions and automatic saves do not notify success", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/session.pdf");
+  h.files.set(file.path, file);
+  const view = h.createView();
+  const replies = [];
+  const frame = { postMessage: (message) => replies.push(message) };
+  Object.assign(view, {
+    iframe: { contentWindow: frame },
+    file,
+    requestedPath: file.path,
+    sessionId: "new-session",
+    originalBytes: file.bytes.slice(),
+  });
+  const message = {
+    channel: "pdf-web-reader",
+    token: view.token,
+    type: "save",
+    documentId: file.path,
+    requestId: "save-1",
+    sessionId: "old-session",
+    data: Uint8Array.from([4]).buffer,
+  };
+  view.onMessage({ source: frame, data: message });
+  assert.equal(file.writes, 0);
+  await view.saveFile(message.data, file.path, "valid", "new-session", true);
+  assert.equal(file.writes, 1);
+  assert.equal(replies.at(-1).sessionId, "new-session");
+  assert.equal(h.notices.length, 0);
+  h.plugin.onunload();
+});
+
 test("host ignores stale source, token, and document messages", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const view = harness.createView();
   const frame = {};
-  const status = [];
   view.iframe = { contentWindow: frame };
   view.token = "current-token";
   view.requestedPath = "current.pdf";
-  view.statusEl = {
-    setText: (message) => status.push(message),
-    toggleClass() {},
-  };
   const base = {
     channel: "pdf-web-reader",
     token: "current-token",
@@ -223,7 +288,7 @@ test("host ignores stale source, token, and document messages", async () => {
   view.onMessage({ source: frame, data: { ...base, token: "stale-token" } });
   view.onMessage({ source: frame, data: { ...base, documentId: "stale.pdf" } });
 
-  assert.deepEqual(status, []);
+  assert.deepEqual(harness.notices, []);
   assert.equal(view.ready, false);
 });
 
@@ -241,10 +306,6 @@ test("host refuses mismatched/conflicting saves and acknowledges a valid write",
   view.file = file;
   view.requestedPath = file.path;
   view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.statusEl = {
-    setText() {},
-    toggleClass() {},
-  };
   const incoming = Uint8Array.from([4, 5, 6]).buffer;
 
   await view.saveFile(incoming, "Books/other.pdf", "request-mismatch");
@@ -268,4 +329,9 @@ test("host refuses mismatched/conflicting saves and acknowledges a valid write",
   assert.equal(replies.at(-1).type, "saved");
   assert.equal(replies.at(-1).documentId, file.path);
   assert.equal(replies.at(-1).requestId, "request-success");
+  assert.equal(
+    harness.notices.length,
+    0,
+    "Neither save errors nor success should display notices",
+  );
 });
