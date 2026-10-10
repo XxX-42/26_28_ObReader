@@ -9,7 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vault = "D:\\Documents\\Obsidian\\测试插件";
 const cli = "D:\\Applications\\Obsidian\\Obsidian.com";
 const relativePath = `PDF迁移测试/native-autosave-${Date.now()}.pdf`;
-const absolutePath = path.join(vault, relativePath);
+let diskPath = relativePath;
+let absolutePath = path.join(vault, diskPath);
 const quote = JSON.stringify;
 const report = {
   version: "0.1.7",
@@ -194,8 +195,28 @@ try {
         `${view}.iframe.contentDocument.querySelectorAll('.inkEditor').length`,
       ) > 0,
   );
+  const renameSession = evaluate(`${view}.sessionId`);
+  const preRenameHash = sha(await readFile(absolutePath));
+  diskPath = relativePath.replace(/\.pdf$/, "-renamed.pdf");
+  evaluate(`app.fileManager.renameFile(${view}.file,${quote(diskPath)})`);
+  absolutePath = path.join(vault, diskPath);
+  assert.equal(evaluate(`${view}.requestedPath`), relativePath);
+  assert.equal(evaluate(`${view}.sessionId`), renameSession);
+  assert.equal(evaluate(`${view}.getState().file`), diskPath);
+  setColor("#00ff00");
+  await until(
+    "automatic save after native rename",
+    async () =>
+      sha(await readFile(absolutePath)) !== preRenameHash &&
+      json(
+        `!${view}.saving && !${pdf}._saveInProgress && !${pdf}._hasChanges()`,
+      ),
+  );
+  assert.equal(evaluate(`${view}.lastSaveError`), null);
+  report.checks.renamePreservesSessionAndAutosave = true;
+  report.renamedPath = diskPath;
   evaluate(
-    `(async()=>{const f=app.vault.getAbstractFileByPath(${quote(relativePath)});globalThis.__autosaveTestOriginal=await app.vault.readBinary(f);const a=new Uint8Array(globalThis.__autosaveTestOriginal);const b=new Uint8Array(a.length+1);b.set(a);b[a.length]=10;await app.vault.modifyBinary(f,b.buffer);})()`,
+    `(async()=>{const f=app.vault.getAbstractFileByPath(${quote(diskPath)});globalThis.__autosaveTestOriginal=await app.vault.readBinary(f);const a=new Uint8Array(globalThis.__autosaveTestOriginal);const b=new Uint8Array(a.length+1);b.set(a);b[a.length]=10;await app.vault.modifyBinary(f,b.buffer);})()`,
   );
   setColor("#0000ff");
   await until(
@@ -220,11 +241,48 @@ try {
   );
   report.checks.conflictRetainsViewAndStopsRetry = true;
   evaluate(
-    `(async()=>{const f=app.vault.getAbstractFileByPath(${quote(relativePath)});await app.vault.modifyBinary(f,globalThis.__autosaveTestOriginal);delete globalThis.__autosaveTestOriginal;return await ${pdf}.save();})()`,
+    `(async()=>{const f=app.vault.getAbstractFileByPath(${quote(diskPath)});await app.vault.modifyBinary(f,globalThis.__autosaveTestOriginal);delete globalThis.__autosaveTestOriginal;return await ${pdf}.save();})()`,
   );
   evaluate(`(${lookup}).detach()`);
   assert.equal(evaluate(`!!(${lookup})`), false);
   report.checks.manualRetryRecovers = true;
+  const concurrentPath = relativePath.replace(/\.pdf$/, "-concurrent.pdf");
+  const concurrentResult = evaluate(`(async()=>{
+    const original=await app.vault.readBinary(app.vault.getAbstractFileByPath(${quote(diskPath)}));
+    const f=await app.vault.createBinary(${quote(concurrentPath)},original);
+    const leaves=[];
+    globalThis.__pdfReaderConcurrentTestLeaves=leaves;
+    for(let n=0;n<2;n++){
+      const l=app.workspace.getLeaf(true);
+      await l.setViewState({type:'pdf-web-reader-view',state:{file:f.path},active:false});
+      leaves.push(l);
+    }
+    if(leaves[0]===leaves[1] || leaves[0].view===leaves[1].view)throw Error('Expected distinct native views');
+    return true;
+  })()`);
+  assert.equal(concurrentResult, true);
+  await until("two native views loaded", () =>
+    json(
+      `globalThis.__pdfReaderConcurrentTestLeaves.every(l=>l.view.ready && l.view.originalBytes && l.view.iframe?.contentWindow.PDFViewerApplication.pdfDocument)`,
+    ),
+  );
+  const concurrentProof = JSON.parse(
+    evaluate(`(async()=>{
+    const views=globalThis.__pdfReaderConcurrentTestLeaves.map(l=>l.view);
+    const make=(v,n)=>{const tail=new TextEncoder().encode('\\n% concurrent-view-'+n+'\\n'),a=v.originalBytes;
+      const b=new Uint8Array(a.length+tail.length);b.set(a);b.set(tail,a.length);return b.buffer;};
+    await Promise.all(views.map((v,n)=>v.saveFile(make(v,n),v.requestedPath,'native-concurrent-'+n)));
+    const bytes=new Uint8Array(await app.vault.readBinary(views[0].file));
+    return JSON.stringify({errors:views.map(v=>v.lastSaveError?.code||null),tail:new TextDecoder().decode(bytes.slice(-80))});
+  })()`),
+  );
+  assert.deepEqual(concurrentProof.errors, [null, "conflict"]);
+  assert.ok(concurrentProof.tail.includes("% concurrent-view-0"));
+  assert.ok(!concurrentProof.tail.includes("% concurrent-view-1"));
+  report.checks.sameFileConcurrentSaveConflicts = true;
+  evaluate(
+    `(async()=>{for(const l of globalThis.__pdfReaderConcurrentTestLeaves)await l.detach();delete globalThis.__pdfReaderConcurrentTestLeaves;})()`,
+  );
   report.status = "passed";
 } catch (error) {
   report.status = "failed";

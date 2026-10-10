@@ -89,6 +89,9 @@ selecting an object or switching tools alone does not write it.
 PDF replacement wait for pending changes to save; a failure retains the view.
 Saving is silent: no status text, toolbar indicator or success/failure notices
 are displayed. Failures are recorded only in diagnostic logs.
+Views of the same PDF share a file-level check-and-write queue: a stale view
+receives a conflict instead of overwriting another view's save. Renaming an open
+PDF preserves its editing session and writes to the file's current vault path.
 If the on-disk PDF changed since the last read/save, saving stops rather than
 overwriting external changes. Other failures also pause automatic retries;
 use manual save to retry after resolving the error. Never reopen or reload to

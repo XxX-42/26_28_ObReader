@@ -20,6 +20,22 @@ const {
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
 
+// All views of a TFile share one check-and-write queue. The object identity
+// survives renames; a path-keyed queue would split during a rename.
+const vaultSaveQueues = new WeakMap();
+async function withFileSaveLock(vault, file, operation) {
+  let queues = vaultSaveQueues.get(vault);
+  if (!queues) vaultSaveQueues.set(vault, (queues = new WeakMap()));
+  const previous = queues.get(file) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(operation);
+  queues.set(file, pending);
+  try {
+    return await pending;
+  } finally {
+    if (queues.get(file) === pending) queues.delete(file);
+  }
+}
+
 function isPdfFile(file) {
   return file instanceof TFile && file.extension.toLowerCase() === "pdf";
 }
@@ -60,7 +76,7 @@ function installPdfOpenRouting(plugin) {
       this.app === activePlugin?.app &&
       this.view instanceof PdfReaderView &&
       (viewState?.type !== VIEW_TYPE ||
-        (nextPath && nextPath !== this.view.requestedPath))
+        (nextPath && resolvePdfFile(activePlugin, nextPath) !== this.view.file))
     ) {
       if (!(await this.view.flushBeforeLeave())) return;
     }
@@ -173,6 +189,7 @@ class PdfReaderView extends EditableFileView {
     this.plugin = plugin;
     this.token = makeToken();
     this.file = null;
+    this.documentFile = null;
     this.requestedPath = null;
     this.navigationState = {};
     this.originalBytes = null;
@@ -206,7 +223,7 @@ class PdfReaderView extends EditableFileView {
 
   getState() {
     const baseState = super.getState();
-    const path = this.requestedPath ?? this.file?.path ?? null;
+    const path = this.file?.path ?? this.requestedPath ?? null;
     return {
       ...baseState,
       ...this.navigationState,
@@ -219,7 +236,7 @@ class PdfReaderView extends EditableFileView {
     if (
       file &&
       this.requestedPath &&
-      file.path !== this.requestedPath &&
+      file !== this.file &&
       !(await this.flushBeforeLeave())
     )
       return;
@@ -245,18 +262,20 @@ class PdfReaderView extends EditableFileView {
       file: file.path,
       path: file.path,
     };
-    if (this.requestedPath !== file.path) {
+    if (this.documentFile !== file) {
       await this.openFile(file);
     }
   }
 
   async onUnloadFile(file) {
+    const unloadingDocument = this.documentFile === file;
     await super.onUnloadFile(file);
-    if (this.requestedPath === file.path) {
+    if (unloadingDocument) {
       this.openRequest += 1;
       this.pendingBytes = null;
       this.originalBytes = null;
       this.requestedPath = null;
+      this.documentFile = null;
       this.sessionId = null;
       this.navigationState = {};
     }
@@ -395,6 +414,8 @@ class PdfReaderView extends EditableFileView {
       throw new Error("Only PDF files can be opened in this view.");
     }
     const request = ++this.openRequest;
+    this.documentFile = file;
+    // Stable bridge identity for this open session, not the current disk path.
     this.requestedPath = file.path;
     this.sessionId = makeToken();
     this.pendingBytes = null;
@@ -482,7 +503,7 @@ class PdfReaderView extends EditableFileView {
       type: "open",
       token: this.token,
       data,
-      documentId: this.file.path,
+      documentId: this.requestedPath,
       readOnly: false,
       sessionId: this.sessionId,
     };
@@ -572,57 +593,67 @@ class PdfReaderView extends EditableFileView {
       if (!file || !originalBytes) {
         throw new Error("当前没有打开的 PDF 文件。");
       }
-      if (documentId !== file.path || documentId !== this.requestedPath) {
+      if (documentId !== this.requestedPath) {
         const mismatch = new Error(
           "保存请求对应的 PDF 与当前打开的文件不一致。",
         );
         mismatch.code = "document-mismatch";
         throw mismatch;
       }
-      const latestFile = this.app.vault.getAbstractFileByPath(file.path);
-      if (!isPdfFile(latestFile)) {
-        throw new Error("原 PDF 已不在当前仓库中。");
-      }
+      await withFileSaveLock(this.app.vault, file, async () => {
+        const assertCurrentSession = () => {
+          if (
+            openRequest !== this.openRequest ||
+            sessionId !== this.sessionId ||
+            iframe !== this.iframe ||
+            this.file !== file
+          ) {
+            throw new Error("PDF 保存会话已失效。");
+          }
+        };
+        assertCurrentSession();
+        const latestFile = this.app.vault.getAbstractFileByPath(file.path);
+        if (!isPdfFile(latestFile) || latestFile !== file) {
+          throw new Error("原 PDF 已不在当前仓库中。");
+        }
 
-      const latestBytes = new Uint8Array(
-        await this.app.vault.readBinary(latestFile),
-      );
-      if (!bytesEqual(latestBytes, originalBytes)) {
-        const conflict = new Error(
-          "PDF 在打开后已被其他操作修改。请重新打开文件后再保存，以免覆盖新内容。",
+        const latestBytes = new Uint8Array(
+          await this.app.vault.readBinary(latestFile),
         );
-        conflict.code = "conflict";
-        throw conflict;
-      }
+        if (!bytesEqual(latestBytes, originalBytes)) {
+          const conflict = new Error(
+            "PDF 在打开后已被其他操作修改。请重新打开文件后再保存，以免覆盖新内容。",
+          );
+          conflict.code = "conflict";
+          throw conflict;
+        }
 
-      const data = toArrayBuffer(value);
-      const savedBytes = new Uint8Array(data.slice(0));
-      if (
-        openRequest !== this.openRequest ||
-        sessionId !== this.sessionId ||
-        iframe !== this.iframe
-      )
-        throw new Error("PDF 保存会话已失效。");
-      await this.app.vault.modifyBinary(latestFile, data);
-      if (
-        this.file?.path === latestFile.path &&
-        this.openRequest === openRequest &&
-        this.sessionId === sessionId
-      ) {
-        this.file = latestFile;
-        this.originalBytes = savedBytes;
-      }
-      iframe?.contentWindow?.postMessage(
-        {
-          channel: CHANNEL,
-          type: "saved",
-          token: this.token,
-          documentId: latestFile.path,
-          requestId,
-          sessionId,
-        },
-        "*",
-      );
+        const data = toArrayBuffer(value);
+        const savedBytes = new Uint8Array(data.slice(0));
+        assertCurrentSession();
+        if (this.app.vault.getAbstractFileByPath(file.path) !== file)
+          throw new Error("原 PDF 已不在当前仓库中。");
+        await this.app.vault.modifyBinary(latestFile, data);
+        if (
+          this.file?.path === latestFile.path &&
+          this.openRequest === openRequest &&
+          this.sessionId === sessionId
+        ) {
+          this.file = latestFile;
+          this.originalBytes = savedBytes;
+        }
+        iframe?.contentWindow?.postMessage(
+          {
+            channel: CHANNEL,
+            type: "saved",
+            token: this.token,
+            documentId,
+            requestId,
+            sessionId,
+          },
+          "*",
+        );
+      });
     } catch (error) {
       iframe?.contentWindow?.postMessage(
         {

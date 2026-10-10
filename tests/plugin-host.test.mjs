@@ -182,6 +182,159 @@ const awaitSource = await readFile(
   "utf8",
 );
 
+test("same-file concurrent views must not both overwrite the same baseline", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/shared.pdf", [1, 2, 3]);
+  h.files.set(file.path, file);
+  const replies = [];
+  const views = [h.createView(), h.createView()];
+  for (const view of views) {
+    view.file = file;
+    view.requestedPath = file.path;
+    view.originalBytes = Uint8Array.from([1, 2, 3]);
+    view.iframe = {
+      contentWindow: { postMessage: (message) => replies.push(message) },
+    };
+  }
+  // Both readBinary calls capture the same disk revision before either writes.
+  await Promise.all(
+    views.map((view, index) =>
+      view.saveFile(
+        Uint8Array.from([index + 4]).buffer,
+        file.path,
+        `concurrent-${index}`,
+      ),
+    ),
+  );
+  h.plugin.onunload();
+  assert.equal(
+    replies.filter((message) => message.type === "saved").length,
+    1,
+    `Only one stale-baseline save may succeed; replies=${JSON.stringify(replies)}, final=${[...file.bytes]}`,
+  );
+  assert.equal(
+    replies.filter((message) => message.code === "conflict").length,
+    1,
+  );
+});
+
+test("renaming an open PDF must preserve its active save session", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/before.pdf", [1, 2, 3]);
+  h.files.set(file.path, file);
+  const view = h.createView();
+  const documentId = file.path;
+  const replies = [];
+  view.file = file;
+  view.requestedPath = documentId;
+  view.originalBytes = Uint8Array.from([1, 2, 3]);
+  view.iframe = {
+    contentWindow: { postMessage: (message) => replies.push(message) },
+  };
+  h.files.delete(documentId);
+  file.path = "Books/after.pdf";
+  h.files.set(file.path, file);
+  // Obsidian retains the TFile identity when its path changes.
+  await view.saveFile(Uint8Array.from([4]).buffer, documentId, "after-rename");
+  h.plugin.onunload();
+  assert.equal(replies.at(-1).type, "saved", JSON.stringify(replies.at(-1)));
+  assert.equal(
+    replies.at(-1).documentId,
+    documentId,
+    "Save acknowledgement must retain the bridge session identity after rename",
+  );
+  assert.equal(view.getState().file, file.path);
+  assert.equal(file.writes, 1);
+});
+
+test("rename state updates do not reopen or discard the current document", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/rename.pdf");
+  h.files.set(file.path, file);
+  await h.plugin.openPdf(file);
+  const view = h.leaves[0].view;
+  const oldId = view.requestedPath,
+    session = view.sessionId;
+  h.files.delete(oldId);
+  file.path = "Books/renamed.pdf";
+  h.files.set(file.path, file);
+  view.flushBeforeLeave = () => {
+    throw new Error("Rename must not flush or navigate");
+  };
+  await h.leaves[0].setViewState({
+    type: "pdf-web-reader-view",
+    state: { file: file.path },
+  });
+  await view.onLoadFile(file);
+  assert.equal(view.requestedPath, oldId);
+  assert.equal(view.sessionId, session);
+  assert.equal(file.reads, 1);
+  assert.equal(view.getState().file, file.path);
+  await view.onUnloadFile(file);
+  assert.equal(view.requestedPath, null);
+  assert.equal(view.documentFile, null);
+  h.plugin.onunload();
+});
+
+test("file save queue survives rename and releases after write failure", async () => {
+  const h = createHarness();
+  await h.plugin.onload();
+  const file = new h.TFile("Books/queue.pdf", [1]);
+  h.files.set(file.path, file);
+  const oldId = file.path;
+  const replies = [];
+  const views = [h.createView(), h.createView()];
+  for (const view of views) {
+    view.file = file;
+    view.requestedPath = oldId;
+    view.originalBytes = Uint8Array.from([1]);
+    view.sessionId = "session";
+    view.iframe = {
+      contentWindow: { postMessage: (message) => replies.push(message) },
+    };
+  }
+  let release, started;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise((resolve) => {
+    started = resolve;
+  });
+  const modify = h.app.vault.modifyBinary;
+  h.app.vault.modifyBinary = async (...args) => {
+    started();
+    await gate;
+    return modify(...args);
+  };
+  const first = views[0].saveFile(Uint8Array.from([2]).buffer, oldId, "first");
+  await entered;
+  h.files.delete(oldId);
+  file.path = "Books/queue-renamed.pdf";
+  h.files.set(file.path, file);
+  const second = views[1].saveFile(
+    Uint8Array.from([3]).buffer,
+    oldId,
+    "second",
+  );
+  release();
+  await Promise.all([first, second]);
+  assert.equal(file.writes, 1);
+  assert.equal(replies.find((r) => r.requestId === "second").code, "conflict");
+  h.app.vault.modifyBinary = async () => {
+    throw new Error("Injected write failure");
+  };
+  await views[0].saveFile(Uint8Array.from([4]).buffer, oldId, "failed");
+  assert.equal(replies.at(-1).code, "save-failed");
+  h.app.vault.modifyBinary = modify;
+  await views[0].saveFile(Uint8Array.from([5]).buffer, oldId, "retry");
+  assert.equal(replies.at(-1).type, "saved");
+  assert.deepEqual([...file.bytes], [5]);
+  h.plugin.onunload();
+});
+
 test("different PDF paths receive distinct leaves and reopening reuses its file leaf", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

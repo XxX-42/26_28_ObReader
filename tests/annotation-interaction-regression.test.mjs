@@ -889,6 +889,55 @@ test(
         "Ordinary contextmenu stays available",
       );
       await page.keyboard.press("Escape");
+      // Give native selectionchange callbacks time to run after right-button
+      // release; an immediate storage snapshot can miss delayed annotations.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
+          button: "right",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.deepEqual(
+          await storageCounts(),
+          beforeRightDrag,
+          `Right-click ${attempt + 1} must not create delayed annotations`,
+        );
+        assert.equal(await wheelMode(), 10);
+        await page.keyboard.press("Escape");
+      }
+      // Some platforms select the word under a context-menu click only after
+      // pointerup. Replay that native default-action timing deterministically.
+      await viewer.evaluate(() => {
+        document.addEventListener(
+          "contextmenu",
+          () => {
+            setTimeout(() => {
+              const text = document.querySelector(
+                ".page .textLayer span",
+              )?.firstChild;
+              if (!text)
+                throw new Error("Missing text for context selection probe");
+              const range = document.createRange();
+              range.setStart(text, 0);
+              range.setEnd(text, Math.min(6, text.length));
+              const selection = document.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }, 0);
+          },
+          { once: true },
+        );
+      });
+      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
+        button: "right",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.deepEqual(
+        await storageCounts(),
+        beforeRightDrag,
+        "Delayed context-menu text selection must not create underline",
+      );
+      await viewer.evaluate(() => document.getSelection().removeAllRanges());
+      await page.keyboard.press("Escape");
       for (const originalMode of [0, 3, 5, 9, 10, 15, 17]) {
         await setMode(originalMode);
         await page.mouse.move(rightDrag.start.x, rightDrag.start.y);

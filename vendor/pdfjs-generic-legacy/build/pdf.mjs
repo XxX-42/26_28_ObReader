@@ -9143,6 +9143,7 @@ class AnnotationEditorUIManager {
   #idManager = new IdManager();
   #isEnabled = false;
   #isPointerDown = false;
+  #selectionPointerButton = null;
   #isWaiting = false;
   #keyboardManagerAC = null;
   #lastActiveElement = null;
@@ -9258,8 +9259,9 @@ class AnnotationEditorUIManager {
     eventBus._on("switchannotationeditorparams", evt => this.updateParams(evt.type, evt.value), {
       signal
     });
-    window.addEventListener("pointerdown", () => {
-      this.#isPointerDown = true;
+    window.addEventListener("pointerdown", event => {
+      this.#selectionPointerButton = event.button;
+      this.#isPointerDown = event.button === 0;
     }, {
       capture: true,
       signal
@@ -9270,6 +9272,12 @@ class AnnotationEditorUIManager {
       capture: true,
       signal
     });
+    window.addEventListener("keydown", event => {
+      if (event.key === "Shift" || /^(Arrow|Home$|End$|PageUp$|PageDown$)/.test(event.key) ||
+          (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        this.#selectionPointerButton = null;
+      }
+    }, { capture: true, signal });
     window.addEventListener("beforeunload", this.#beforeUnload.bind(this), {
       capture: true,
       signal
@@ -9682,6 +9690,11 @@ class AnnotationEditorUIManager {
     }
   }
   #selectionChange() {
+    // Context-menu default actions may select a word asynchronously *after*
+    // pointerup. Pointerup's button guard alone cannot protect this path.
+    if (this.#selectionPointerButton !== null && this.#selectionPointerButton !== 0) {
+      return;
+    }
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed) {
       if (this.#selectedTextNode) {
@@ -9752,6 +9765,9 @@ class AnnotationEditorUIManager {
     }
   }
   #onSelectEnd(methodOfCreation = "") {
+    if (this.#selectionPointerButton !== null && this.#selectionPointerButton !== 0) {
+      return;
+    }
     if (this.#mode === AnnotationEditorType.HIGHLIGHT || this.#mode === AnnotationEditorType.UNDERLINE) {
       this.highlightSelection(methodOfCreation);
     } else if (this.#enableHighlightFloatingButton) {

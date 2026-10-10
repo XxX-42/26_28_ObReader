@@ -54,3 +54,11 @@ The display bundle exposes FreeText `commitForSave()` to capture edited text
 without disabling edit mode or moving focus and the caret. Automatic scheduling,
 content comparison, failure handling and host-mediated writes live in the
 Obsidian bridge; the PDF Worker and standard annotation format are unchanged.
+
+## Local selection correction for context menus
+
+The display bundle tracks the pointer button that owns text selection. Selection
+changes caused by right or middle clicks cannot automatically create underline
+or highlight annotations, including delayed context-menu word selection after
+pointer release. Primary-pointer and keyboard text selection remain enabled.
+The PDF Worker and serialized annotation format are unchanged.
