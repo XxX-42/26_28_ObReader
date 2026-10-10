@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { access, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
+import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -19,14 +20,7 @@ import {
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
-const browserPath =
-  process.env.PDF_READER_CHROME ||
-  process.env.PDFJS_CHROME ||
-  [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].find((candidate) => candidate && existsSync(candidate));
+const browserPath = resolveBrowserPath();
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -259,22 +253,22 @@ test(
             if (!message || message.channel !== channel || message.token !== token) return;
             if (message.type === 'ready') {
               const data = fixtureBytes.slice(0);
-              iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+              iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false, autoSave:false}, '*', [data]);
             } else if (message.type === 'opened') {
               state.opened += 1;
             } else if (message.type === 'save') {
               state.saves += 1;
               state.savedData = message.data.slice(0);
-              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId}, '*');
+              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId, revision:message.revision}, '*');
             }
           });
           window.__reopenSavedData = () => {
             const data = state.savedData.slice(0);
-            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false, autoSave:false}, '*', [data]);
           };
           window.__reopenFixture = () => {
             const data = fixtureBytes.slice(0);
-            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false, autoSave:false}, '*', [data]);
           };
           (async () => {
             fixtureBytes = await fetch('/fixtures/tracemonkey.pdf').then(response => {
@@ -582,6 +576,23 @@ test(
         selectAndCreateAnnotation({ ...options, mode: 10, annotationType: 10 });
 
       const reopenFixture = async (openCount) => {
+        if (await viewer.evaluate(() => PDFViewerApplication._hasChanges())) {
+          const expectedSave = await page.evaluate(
+            () => window.__hostState.saves + 1,
+          );
+          await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+          await page.waitForFunction(
+            (expected) => window.__hostState.saves === expected,
+            { timeout: 60_000 },
+            expectedSave,
+          );
+          await viewer.waitForFunction(
+            () =>
+              !PDFViewerApplication._hasChanges() &&
+              !PDFViewerApplication._saveInProgress,
+            { timeout: 60_000 },
+          );
+        }
         await page.evaluate(() => window.__reopenFixture());
         await page.waitForFunction(
           (expected) => window.__hostState.opened === expected,
@@ -662,6 +673,10 @@ test(
         );
         await viewer.waitForFunction(
           () => !PDFViewerApplication._saveInProgress,
+          { timeout: 60_000 },
+        );
+        await viewer.waitForFunction(
+          () => !PDFViewerApplication._hasChanges(),
           { timeout: 60_000 },
         );
         await page.evaluate(() => window.__reopenSavedData());

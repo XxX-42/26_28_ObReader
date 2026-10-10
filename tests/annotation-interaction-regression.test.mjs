@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
+import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -19,14 +20,7 @@ import {
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
-const browserPath =
-  process.env.PDF_READER_CHROME ||
-  process.env.PDFJS_CHROME ||
-  [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].find((candidate) => candidate && existsSync(candidate));
+const browserPath = resolveBrowserPath();
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -73,6 +67,7 @@ test(
     const captureId = payload.contentHash.slice(0, 12);
     const results = [];
     const errors = [];
+    const consoleErrors = [];
     const externalRequests = [];
     let apiRequestCount = 0;
     let browser;
@@ -94,6 +89,7 @@ test(
             apiRequestCount,
             externalRequests,
             errors,
+            consoleErrors,
           },
           null,
           2,
@@ -181,6 +177,11 @@ test(
       const page = await browser.newPage();
       await page.setViewport({ width: 1400, height: 1000 });
       page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          consoleErrors.push(message.text());
+        }
+      });
       page.on("request", (request) => {
         if (new URL(request.url()).origin !== baseUrl) {
           externalRequests.push(request.url());
@@ -200,28 +201,36 @@ test(
           const channel='pdf-web-reader', token=${JSON.stringify(view.token)};
           const documentId='fixtures/tracemonkey.pdf';
           const iframe=document.querySelector('iframe');
-          const state=window.__hostState={opened:0,saves:0,savedData:null};
+          const state=window.__hostState={opened:0,saves:0,savedData:null,received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
           let fixtureBytes;
+          const sendOpen=(data,label)=>{
+            state.opensSent.push({label,documentId,byteLength:data.byteLength,openRequest:null,rendererGeneration:state.readyGenerations.at(-1)??null});
+            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false,autoSave:false},'*',[data]);
+          };
           window.addEventListener('message',event=>{
             if(event.source!==iframe.contentWindow)return;
             const message=event.data;
             if(!message||message.channel!==channel||message.token!==token)return;
+            state.received.push({type:message.type,documentId:message.documentId??null,requestId:message.requestId??null,revision:message.revision??null,openRequest:message.openRequest??null,rendererGeneration:message.rendererGeneration??null,code:message.code??null,message:message.type==='error'?message.message:undefined});
             if(message.type==='ready'){
+              state.readyGenerations.push(message.rendererGeneration??null);
               const data=fixtureBytes.slice(0);
-              iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
-            } else if(message.type==='opened') state.opened+=1;
+              sendOpen(data,'initial-ready');
+            } else if(message.type==='opened') { state.opened+=1; state.openedMessages.push({documentId:message.documentId??null,openRequest:message.openRequest??null,revision:message.revision??null,confirmedRevision:message.confirmedRevision??null,dirty:message.dirty??null,restorePaused:message.restorePaused??null}); }
+            else if(message.type==='error') state.errors.push({documentId:message.documentId??null,requestId:message.requestId??null,code:message.code??null,message:message.message??null});
             else if(message.type==='save'){
               state.saves+=1; state.savedData=message.data.slice(0);
-              iframe.contentWindow.postMessage({channel,type:'saved',token,documentId,requestId:message.requestId},'*');
+              iframe.contentWindow.postMessage({channel,type:'saved',token,documentId,requestId:message.requestId,revision:message.revision},'*');
+              state.saveAcks.push({documentId,requestId:message.requestId,revision:message.revision});
             }
           });
           window.__reopenSavedData=()=>{
             const data=state.savedData.slice(0);
-            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
+            sendOpen(data,'reopen-saved-data');
           };
           window.__reopenFixture=()=>{
             const data=fixtureBytes.slice(0);
-            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
+            sendOpen(data,'reopen-fixture');
           };
           (async()=>{
             fixtureBytes=await fetch('/fixtures/tracemonkey.pdf').then(response=>{
@@ -246,6 +255,22 @@ test(
         () => !document.getElementById("editorUnderlineButton").disabled,
       );
       await viewer.evaluate(() => {
+        window.__pdfLifecycleEvents = [];
+        for (const type of ["documentloaded", "documenterror"]) {
+          PDFViewerApplication.eventBus.on(type, (event) => {
+            window.__pdfLifecycleEvents.push({
+              time: performance.now(),
+              type,
+              message: event.message ?? null,
+              reason:
+                event.reason instanceof Error
+                  ? event.reason.message
+                  : event.reason ?? null,
+              pdfLoaded: Boolean(PDFViewerApplication.pdfDocument),
+              loadingTaskActive: Boolean(PDFViewerApplication.pdfLoadingTask),
+            });
+          });
+        }
         window.__interactionEvents = [];
         const describe = (element) => {
           if (!element) return null;
@@ -255,8 +280,39 @@ test(
             className:
               typeof element.className === "string" ? element.className : "",
             text: (element.textContent || "").trim().slice(0, 80),
+            contentEditable:
+              element.getAttribute?.("contenteditable") || null,
+            connected: element.isConnected,
           };
         };
+        window.__annotationModeEvents = [];
+        window.__realKeydownEvents = [];
+        PDFViewerApplication.eventBus.on(
+          "annotationeditormodechanged",
+          (event) => {
+            window.__annotationModeEvents.push({
+              time: performance.now(),
+              mode: event.mode,
+              isFromKeyboard: event.isFromKeyboard,
+              isTemporary: event.isTemporary,
+            });
+          },
+        );
+        document.addEventListener(
+          "keydown",
+          (event) => {
+            if (!event.isTrusted) return;
+            window.__realKeydownEvents.push({
+              time: performance.now(),
+              key: event.key,
+              code: event.code,
+              target: describe(event.target),
+              activeElement: describe(document.activeElement),
+              defaultPrevented: event.defaultPrevented,
+            });
+          },
+          true,
+        );
         for (const type of [
           "pointerdown",
           "pointermove",
@@ -283,10 +339,33 @@ test(
               const layer = document.querySelector(
                 '.page[data-page-number="1"] .annotationEditorLayer',
               );
+              const selectedFreeTextEditor = layer?.querySelector(
+                ".freeTextEditor.selectedEditor",
+              );
               window.__interactionEvents.push({
+                time: performance.now(),
                 type,
+                trusted: event.isTrusted,
                 target: describe(event.target),
                 hit: describe(hit),
+                hitInSelectedFreeTextInternal: Boolean(
+                  (() => {
+                    const internal = layer?.querySelector(
+                      ".freeTextEditor.selectedEditor .internal",
+                    );
+                    return internal && (hit === internal || internal.contains(hit));
+                  })(),
+                ),
+                targetInSelectedFreeTextEditor: Boolean(
+                  selectedFreeTextEditor &&
+                    (event.target === selectedFreeTextEditor ||
+                      selectedFreeTextEditor.contains(event.target)),
+                ),
+                hitInSelectedFreeTextEditor: Boolean(
+                  selectedFreeTextEditor &&
+                    (hit === selectedFreeTextEditor ||
+                      selectedFreeTextEditor.contains(hit)),
+                ),
                 point: { x: event.clientX, y: event.clientY },
                 buttons: event.buttons,
                 pointerId: event.pointerId,
@@ -310,6 +389,38 @@ test(
             true,
           );
         }
+        for (const type of [
+          "focusin",
+          "focusout",
+          "keydown",
+          "keyup",
+          "beforeinput",
+          "input",
+        ]) {
+          document.addEventListener(
+            type,
+            (event) => {
+              const target =
+                event.target instanceof Element
+                  ? event.target
+                  : event.target?.parentElement;
+              if (!target?.closest(".annotationEditorLayer")) return;
+              window.__interactionEvents.push({
+                time: performance.now(),
+                type,
+                trusted: event.isTrusted,
+                target: describe(target),
+                activeElement: describe(document.activeElement),
+                relatedTarget: describe(event.relatedTarget),
+                key: event.key || null,
+                data: event.data ?? null,
+                inputType: event.inputType || null,
+                defaultPrevented: event.defaultPrevented,
+              });
+            },
+            true,
+          );
+        }
         document.addEventListener(
           "selectionchange",
           () => {
@@ -317,6 +428,7 @@ test(
             const text = selection?.toString() || "";
             if (text) {
               window.__interactionEvents.push({
+                time: performance.now(),
                 type: "selectionchange",
                 text,
                 anchor: describe(selection?.anchorNode?.parentElement),
@@ -366,17 +478,139 @@ test(
         await page.mouse.up({ button: "left" });
       };
       const setMode = async (mode) => {
-        await viewer.evaluate((value) => {
-          PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
-            mode: value,
-          });
-        }, mode);
-        await viewer.waitForFunction(
-          (value) =>
-            PDFViewerApplication.pdfViewer.annotationEditorMode === value,
-          { timeout: 8_000 },
-          mode,
-        );
+        let stage = "target-ready";
+        try {
+          await viewer.waitForFunction(() => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            const pageView = app?.pdfViewer?.getPageView(0);
+            const layer = pageView?.annotationEditorLayer?.div;
+            const manager =
+              app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+            const squareButton = document.getElementById("editorSquareButton");
+            return (
+              app?.pdfDocument &&
+              page?.dataset.loaded === "true" &&
+              !page.classList.contains("loading") &&
+              !page.classList.contains("loadingIcon") &&
+              pageView?.pdfPage &&
+              pageView.renderingState === 3 &&
+              pageView.textLayer?.div?.isConnected &&
+              layer?.isConnected &&
+              manager &&
+              squareButton?.isConnected &&
+              !squareButton.disabled
+            );
+          }, { timeout: 8_000 });
+          stage = "mode-change";
+          await viewer.evaluate((value) => {
+            PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+              mode: value,
+            });
+          }, mode);
+          await viewer.waitForFunction(
+            (value) =>
+              PDFViewerApplication.pdfViewer.annotationEditorMode === value,
+            { timeout: 8_000 },
+            mode,
+          );
+        } catch (error) {
+          const renderer = await viewer.evaluate((requestedMode) => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            const pageView = app?.pdfViewer?.getPageView(0);
+            const layer = pageView?.annotationEditorLayer?.div;
+            const squareButton = document.getElementById("editorSquareButton");
+            const buttonRect = squareButton?.getBoundingClientRect();
+            const buttonHit = buttonRect
+              ? document.elementFromPoint(
+                  buttonRect.x + buttonRect.width / 2,
+                  buttonRect.y + buttonRect.height / 2,
+                )
+              : null;
+            return {
+              requestedMode,
+              currentMode: app?.pdfViewer?.annotationEditorMode ?? null,
+              pdfLoaded: Boolean(app?.pdfDocument),
+              page: {
+                loaded: page?.dataset.loaded ?? null,
+                className: page?.className ?? null,
+                renderState: pageView?.renderingState ?? null,
+                pageReady: Boolean(pageView?.pdfPage),
+                textLayerConnected: Boolean(pageView?.textLayer?.div?.isConnected),
+                editorLayerConnected: Boolean(layer?.isConnected),
+              },
+              editorManagerReady: Boolean(
+                app?.pdfViewer?._layerProperties?.annotationEditorUIManager,
+              ),
+              squareButton: squareButton
+                ? {
+                    disabled: squareButton.disabled,
+                    connected: squareButton.isConnected,
+                    rect: buttonRect
+                      ? {
+                          x: buttonRect.x,
+                          y: buttonRect.y,
+                          width: buttonRect.width,
+                          height: buttonRect.height,
+                        }
+                      : null,
+                    hit: buttonHit
+                      ? {
+                          tag: buttonHit.tagName,
+                          id: buttonHit.id || "",
+                          className:
+                            typeof buttonHit.className === "string"
+                              ? buttonHit.className
+                              : "",
+                        }
+                      : null,
+                  }
+                : null,
+              modeEvents: window.__annotationModeEvents?.slice(-20) ?? [],
+              realKeydowns: window.__realKeydownEvents?.slice(-20) ?? [],
+              recentPointerOrInputEvents:
+                window.__interactionEvents
+                  ?.filter((event) =>
+                    ["pointerdown", "pointerup", "click", "keydown", "input"].includes(
+                      event.type,
+                    ),
+                  )
+                  .slice(-30) ?? [],
+              activeElement: {
+                tag: document.activeElement?.tagName ?? null,
+                id: document.activeElement?.id ?? null,
+                className:
+                  typeof document.activeElement?.className === "string"
+                    ? document.activeElement.className
+                    : "",
+              },
+            };
+          }, mode);
+          const host = await page.evaluate(() => ({
+            opened: window.__hostState?.opened,
+            saves: window.__hostState?.saves,
+            savedDataByteLength:
+              window.__hostState?.savedData?.byteLength ?? null,
+            errors: window.__hostState?.errors ?? [],
+          }));
+          const diagnostic = {
+            scenario: "annotation-mode-change-failure",
+            stage,
+            renderer,
+            host,
+            message: error.message,
+          };
+          results.push(diagnostic);
+          await persistProgress();
+          throw new Error(
+            `${error.message}; mode diagnostic: ${JSON.stringify(diagnostic)}`,
+          );
+        }
       };
       const storageCounts = async () =>
         viewer.evaluate(() => {
@@ -515,6 +749,34 @@ test(
               };
             });
         });
+      const waitForSquareHitReady = async (square) => {
+        const point = {
+          x: square.rect.x + square.rect.width / 2,
+          y: square.rect.y + square.rect.height / 2,
+          uid: square.uid,
+        };
+        await viewer.waitForFunction(
+          ({ x, y, uid }) => {
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            if (
+              !page ||
+              page.classList.contains("loading") ||
+              page.classList.contains("loadingIcon")
+            ) {
+              return false;
+            }
+            const annotation = [
+              ...page.querySelectorAll(".annotationLayer .squareAnnotation"),
+            ].find((element) => element.id.endsWith(uid));
+            const hit = document.elementFromPoint(x, y);
+            return !!annotation && hit?.closest(".squareAnnotation") === annotation;
+          },
+          { timeout: 30_000 },
+          point,
+        );
+      };
       const getTextDragPoints = async (
         phrase = "Dynamic languages such as JavaScript",
       ) => {
@@ -593,34 +855,152 @@ test(
         page.evaluate(() => window.__hostState.opened);
       const saveCount = async () =>
         page.evaluate(() => window.__hostState.saves);
-      const reopenFixture = async () => {
-        const expected = (await openCount()) + 1;
-        await page.evaluate(() => window.__reopenFixture());
+      const waitForOpenCount = async (expected, context) => {
+        try {
+          await page.waitForFunction(
+            (count) => window.__hostState.opened === count,
+            { timeout: 60_000 },
+            expected,
+          );
+        } catch (error) {
+          const host = await page.evaluate(() => {
+            const state = window.__hostState;
+            return {
+              opened: state.opened,
+              saves: state.saves,
+              savedDataByteLength: state.savedData?.byteLength || 0,
+              readyGenerations: state.readyGenerations,
+              opensSent: state.opensSent,
+              openedMessages: state.openedMessages,
+              saveAcks: state.saveAcks,
+              received: state.received.slice(-20),
+              errors: state.errors,
+            };
+          });
+          const renderer = await viewer.evaluate(() => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            return {
+              title: document.title,
+              pdfLoaded: Boolean(app?.pdfDocument),
+              pageCount: app?.pdfDocument?.numPages ?? null,
+              loadingTaskActive: Boolean(app?.pdfLoadingTask),
+              loadingPercent: app?.loadingBar?.percent ?? null,
+              hasChanges: app?._hasChanges?.() ?? null,
+              saveInProgress: app?._saveInProgress ?? null,
+              overwriteInProgress: app?._overwriteInProgress ?? null,
+              documentEvents: window.__pdfLifecycleEvents?.slice(-20) ?? [],
+              bridgeStatus: document.getElementById("pdfReaderBridgeStatus")?.textContent ?? null,
+              errorWrapper: document.getElementById("errorWrapper")?.textContent?.trim() ?? null,
+              bridgeScript: (() => {
+                const script = document.querySelector("script[data-renderer-generation]");
+                return script ? {
+                  rendererGeneration: script.dataset.rendererGeneration,
+                  channel: script.dataset.channel,
+                  tokenPresent: Boolean(script.dataset.token),
+                } : null;
+              })(),
+              pageClass: page?.className ?? null,
+              pageLoaded: page?.dataset.loaded ?? null,
+              selectedEditorCount: document.querySelectorAll(
+                ".annotationEditorLayer .selectedEditor",
+              ).length,
+              activeElement: {
+                tag: document.activeElement?.tagName ?? null,
+                id: document.activeElement?.id ?? null,
+                className:
+                  typeof document.activeElement?.className === "string"
+                    ? document.activeElement.className
+                    : "",
+              },
+            };
+          });
+          const diagnostic = {
+            scenario: "open-ack-timeout-diagnostic",
+            context,
+            expectedOpened: expected,
+            host,
+            renderer,
+            pageErrors: errors.slice(-20),
+            consoleErrors: consoleErrors.slice(-20),
+          };
+          results.push(diagnostic);
+          await persistProgress();
+          throw new Error(
+            `${error.message}; open diagnostic: ${JSON.stringify(diagnostic)}`,
+          );
+        }
+      };
+      const saveDirtySessionBeforeOpen = async () => {
+        const dirty = await viewer.evaluate(
+          () => PDFViewerApplication._hasChanges(),
+        );
+        if (!dirty) return;
+        const expectedSave = (await saveCount()) + 1;
+        await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
         await page.waitForFunction(
-          (count) => window.__hostState.opened === count,
+          (count) => window.__hostState.saves === count,
           { timeout: 60_000 },
-          expected,
+          expectedSave,
         );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .textLayer span',
+        await viewer.waitForFunction(
+          () =>
+            !PDFViewerApplication._hasChanges() &&
+            !PDFViewerApplication._saveInProgress,
+          { timeout: 60_000 },
         );
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      };
+      const waitForCurrentPageRendered = async () =>
+        viewer.waitForFunction(
+          async () => {
+            const application = window.PDFViewerApplication;
+            const pdfDocument = application?.pdfDocument;
+            if (
+              !pdfDocument ||
+              pdfDocument === window.__previousPdfDocument
+            ) {
+              return false;
+            }
+            const page = await pdfDocument.getPage(1);
+            const pageView = application.pdfViewer.getPageView(0);
+            const pageElement = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            return (
+              pageView?.pdfPage === page &&
+              pageView.renderingState === 3 &&
+              pageView.div === pageElement &&
+              pageElement?.dataset.loaded === "true" &&
+              !pageElement.classList.contains("loading") &&
+              !pageElement.classList.contains("loadingIcon") &&
+              pageView.textLayer?.div?.isConnected &&
+              pageView.textLayer.div.querySelector(".endOfContent") &&
+              pageView.annotationEditorLayer?.div?.isConnected
+            );
+          },
+          { timeout: 60_000 },
+        );
+      const reopenFixture = async () => {
+        await saveDirtySessionBeforeOpen();
+        const expected = (await openCount()) + 1;
+        await viewer.evaluate(() => {
+          window.__previousPdfDocument = PDFViewerApplication.pdfDocument;
+        });
+        await page.evaluate(() => window.__reopenFixture());
+        await waitForOpenCount(expected, "fixture");
+        await waitForCurrentPageRendered();
       };
       const reopenSavedData = async () => {
+        await saveDirtySessionBeforeOpen();
         const expected = (await openCount()) + 1;
+        await viewer.evaluate(() => {
+          window.__previousPdfDocument = PDFViewerApplication.pdfDocument;
+        });
         await page.evaluate(() => window.__reopenSavedData());
-        await page.waitForFunction(
-          (count) => window.__hostState.opened === count,
-          { timeout: 60_000 },
-          expected,
-        );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .textLayer span',
-        );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .annotationEditorLayer',
-        );
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        await waitForOpenCount(expected, "saved-data");
+        await waitForCurrentPageRendered();
       };
       const saveAndReopen = async () => {
         const expectedSave = (await saveCount()) + 1;
@@ -642,6 +1022,10 @@ test(
         );
         await viewer.waitForFunction(
           () => !PDFViewerApplication._saveInProgress,
+          { timeout: 60_000 },
+        );
+        await viewer.waitForFunction(
+          () => !PDFViewerApplication._hasChanges(),
           { timeout: 60_000 },
         );
         const byteLength = await page.evaluate(
@@ -935,25 +1319,358 @@ test(
         iframeBox.y + freeTextSquare.rect.y + freeTextSquare.rect.height / 2,
         { button: "left" },
       );
-      await viewer.waitForSelector(
-        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
+      const freeTextReadySelector =
+        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal';
+      await viewer.waitForFunction(
+        (selector) => {
+          const page = document.querySelector(
+            '.page[data-page-number="1"]',
+          );
+          const internal = document.querySelector(selector);
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const editorRect = editor?.getBoundingClientRect();
+          const pointerdown = window.__interactionEvents.some(
+            (event) =>
+              event.type === "pointerdown" &&
+              event.targetInEditorLayer &&
+              event.mode === 3,
+          );
+          return (
+            page?.dataset.loaded === "true" &&
+            !page.classList.contains("loading") &&
+            !page.classList.contains("loadingIcon") &&
+            PDFViewerApplication.pdfViewer.annotationEditorMode === 3 &&
+            pointerdown &&
+            internal?.isConnected &&
+            internal.getAttribute("contenteditable") === "true" &&
+            document.activeElement === internal &&
+            editorRect?.width > 0 &&
+            editorRect?.height > 0
+          );
+        },
+        { timeout: 15_000 },
+        freeTextReadySelector,
       );
-      await viewer.type(
-        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
-        "12345",
-      );
-      const freeTextBeforeCommit = await viewer.evaluate(() => {
-        const internal = document.querySelector(
-          '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
+      const freeTextBeforeFocusClick = await viewer.evaluate((selector) => {
+        const internal = document.querySelector(selector);
+        const rect = internal?.getBoundingClientRect();
+        const editor = internal?.closest(
+          ".freeTextEditor.selectedEditor",
         );
+        const editorRect = editor?.getBoundingClientRect();
+        return {
+          time: performance.now(),
+          id: internal?.id || null,
+          contentEditable: internal?.getAttribute("contenteditable"),
+          active: document.activeElement === internal,
+          connected: Boolean(internal?.isConnected),
+          selected: Boolean(
+            internal?.closest(".freeTextEditor.selectedEditor"),
+          ),
+          rect: rect
+            ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            : null,
+          editorRect: editorRect
+            ? {
+                x: editorRect.x,
+                y: editorRect.y,
+                width: editorRect.width,
+                height: editorRect.height,
+              }
+            : null,
+          activeElement: internal?.ownerDocument
+            ? {
+                tag: document.activeElement?.tagName || null,
+                id: document.activeElement?.id || null,
+                className:
+                  typeof document.activeElement?.className === "string"
+                    ? document.activeElement.className
+                    : "",
+              }
+            : null,
+          pointerdown: window.__interactionEvents.find(
+            (event) =>
+              event.type === "pointerdown" &&
+              event.targetInEditorLayer &&
+              event.mode === 3,
+          ),
+          recentFocusEvents: window.__interactionEvents
+            .filter((event) => event.type === "focusin" || event.type === "focusout")
+            .slice(-8),
+        };
+      }, freeTextReadySelector);
+      const freeTextFocusEvidence = {
+        scenario: "freetext-focus-probe",
+        beforeClick: freeTextBeforeFocusClick,
+      };
+      results.push(freeTextFocusEvidence);
+      await persistProgress();
+      assert.ok(
+        freeTextBeforeFocusClick.editorRect?.width > 0 &&
+          freeTextBeforeFocusClick.editorRect?.height > 0,
+        "The selected FreeText outer editor must provide a real mouse hit target even when its empty internal has zero width",
+      );
+      const freeTextClickPoint = {
+        x:
+          freeTextBeforeFocusClick.editorRect.x +
+          freeTextBeforeFocusClick.editorRect.width / 2,
+        y:
+          freeTextBeforeFocusClick.editorRect.y +
+          freeTextBeforeFocusClick.editorRect.height / 2,
+      };
+      const freeTextHitBeforeClick = await viewer.evaluate(
+        ({ selector, point }) => {
+          const internal = document.querySelector(selector);
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const hit = document.elementFromPoint(point.x, point.y);
+          return {
+            time: performance.now(),
+            hit: hit
+              ? {
+                  tag: hit.tagName,
+                  id: hit.id || "",
+                  className:
+                    typeof hit.className === "string" ? hit.className : "",
+                }
+              : null,
+            insideInternal: Boolean(
+              internal && hit && (hit === internal || internal.contains(hit)),
+            ),
+            insideEditor: Boolean(
+              editor && hit && (hit === editor || editor.contains(hit)),
+            ),
+          };
+        },
+        { selector: freeTextReadySelector, point: freeTextClickPoint },
+      );
+      freeTextFocusEvidence.hitBeforeRefocus = freeTextHitBeforeClick;
+      await persistProgress();
+      const refocusWithMouse = !freeTextBeforeFocusClick.active;
+      freeTextFocusEvidence.focusPath = refocusWithMouse
+        ? "real-mouse-refocus"
+        : "focused-by-real-creation-pointerdown";
+      assert.equal(
+        freeTextBeforeFocusClick.pointerdown?.trusted,
+        true,
+        "The FreeText editor must have been created by a trusted pointerdown",
+      );
+      if (refocusWithMouse) {
+        assert.equal(
+          freeTextHitBeforeClick.insideEditor,
+          true,
+          "A blurred FreeText editor can only be refocused by a real click that hits the selected editor",
+        );
+        await page.mouse.click(
+          iframeBox.x + freeTextClickPoint.x,
+          iframeBox.y + freeTextClickPoint.y,
+          { button: "left" },
+        );
+        try {
+          await viewer.waitForFunction(
+            ({ selector, point }) => {
+              const internal = document.querySelector(selector);
+              const click = [...window.__interactionEvents]
+                .reverse()
+                .find((event) => event.type === "click");
+              const hitExpectedPoint =
+                Math.abs((click?.point?.x ?? Infinity) - point.x) <= 1 &&
+                Math.abs((click?.point?.y ?? Infinity) - point.y) <= 1;
+              return (
+                internal?.isConnected &&
+                internal.getAttribute("contenteditable") === "true" &&
+                internal.closest(".freeTextEditor.selectedEditor") !== null &&
+                document.activeElement === internal &&
+                click?.trusted &&
+                hitExpectedPoint &&
+                click.targetInSelectedFreeTextEditor &&
+                click.hitInSelectedFreeTextEditor
+              );
+            },
+            { timeout: 10_000 },
+            { selector: freeTextReadySelector, point: freeTextClickPoint },
+          );
+        } catch (error) {
+          freeTextFocusEvidence.focusClickFailure = {
+            time: await viewer.evaluate(() => performance.now()),
+            message: error.message,
+            eventTail: await viewer.evaluate(() =>
+              window.__interactionEvents.slice(-40),
+            ),
+          };
+          await persistProgress();
+          throw error;
+        }
+      }
+      const freeTextFocusBeforeTyping = await viewer.evaluate(
+        ({ selector, point }) => {
+          const internal = document.querySelector(selector);
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const rect = internal?.getBoundingClientRect();
+          const editorRect = editor?.getBoundingClientRect();
+          const hit = editorRect
+            ? document.elementFromPoint(
+                editorRect.x + editorRect.width / 2,
+                editorRect.y + editorRect.height / 2,
+              )
+            : null;
+          const click = [...window.__interactionEvents]
+            .reverse()
+            .find(
+              (event) =>
+                event.type === "click" &&
+                Math.abs((event.point?.x ?? Infinity) - point.x) <= 1 &&
+                Math.abs((event.point?.y ?? Infinity) - point.y) <= 1,
+            );
+          return {
+            time: performance.now(),
+            id: internal?.id || null,
+            contentEditable: internal?.getAttribute("contenteditable"),
+            active: document.activeElement === internal,
+            connected: Boolean(internal?.isConnected),
+            selected: Boolean(
+              internal?.closest(".freeTextEditor.selectedEditor"),
+            ),
+            internalRect: rect
+              ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+              : null,
+            editorRect: editorRect
+              ? {
+                  x: editorRect.x,
+                  y: editorRect.y,
+                  width: editorRect.width,
+                  height: editorRect.height,
+                }
+              : null,
+            actualElementFromPoint: hit
+              ? {
+                  tag: hit.tagName,
+                  id: hit.id || "",
+                  className:
+                    typeof hit.className === "string" ? hit.className : "",
+                }
+              : null,
+            actualElementFromPointInsideInternal: Boolean(
+              internal && hit && (hit === internal || internal.contains(hit)),
+            ),
+            actualElementFromPointInsideEditor: Boolean(
+              editor && hit && (hit === editor || editor.contains(hit)),
+            ),
+            realClick: click || null,
+            recentFocusEvents: window.__interactionEvents
+              .filter(
+                (event) => event.type === "focusin" || event.type === "focusout",
+              )
+              .slice(-10),
+          };
+        },
+        { selector: freeTextReadySelector, point: freeTextClickPoint },
+      );
+      freeTextFocusEvidence.afterClick = freeTextFocusBeforeTyping;
+      await persistProgress();
+      if (
+        freeTextFocusBeforeTyping.contentEditable !== "true" ||
+        !freeTextFocusBeforeTyping.active ||
+        !freeTextFocusBeforeTyping.connected ||
+        !freeTextFocusBeforeTyping.selected ||
+        (refocusWithMouse &&
+          !freeTextFocusBeforeTyping.actualElementFromPointInsideEditor)
+      ) {
+        results.push({
+          scenario: "freetext-focus-after-real-click-failure",
+          beforeClick: freeTextBeforeFocusClick,
+          hitBeforeRefocus: freeTextHitBeforeClick,
+          afterClick: freeTextFocusBeforeTyping,
+          eventTail: await viewer.evaluate(() =>
+            window.__interactionEvents.slice(-40),
+          ),
+        });
+        await persistProgress();
+      }
+      assert.equal(freeTextFocusBeforeTyping.contentEditable, "true");
+      assert.equal(freeTextFocusBeforeTyping.active, true);
+      assert.equal(freeTextFocusBeforeTyping.connected, true);
+      assert.equal(freeTextFocusBeforeTyping.selected, true);
+      if (refocusWithMouse) {
+        assert.equal(
+          freeTextFocusBeforeTyping.actualElementFromPointInsideEditor,
+          true,
+        );
+      }
+      await page.keyboard.type("12345");
+      await viewer.waitForFunction(
+        (internalId) => {
+          const internal = document.getElementById(internalId);
+          const inputEvents = window.__interactionEvents.filter(
+            (event) =>
+              event.type === "input" && event.target?.id === internalId,
+          );
+          const keyEvents = window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "keydown" &&
+                event.target?.id === internalId &&
+                /^[1-5]$/.test(event.key || ""),
+            );
+          return (
+            internal?.isConnected &&
+            internal.closest(".freeTextEditor.selectedEditor") !== null &&
+            document.activeElement === internal &&
+            internal.textContent.includes("12345") &&
+            inputEvents.length >= 5 &&
+            inputEvents.every((event) => event.trusted) &&
+            keyEvents.length === 5 &&
+            keyEvents.map((event) => event.key).join("") === "12345" &&
+            keyEvents.every((event) => event.trusted)
+          );
+        },
+        { timeout: 15_000 },
+        freeTextFocusBeforeTyping.id,
+      );
+      const freeTextBeforeCommit = await viewer.evaluate((internalId) => {
+        const internal = document.getElementById(internalId);
         return {
           text: internal?.textContent || "",
           contentEditable: internal?.getAttribute("contenteditable"),
           active: document.activeElement === internal,
+          connected: Boolean(internal?.isConnected),
+          selected: Boolean(
+            internal?.closest(".freeTextEditor.selectedEditor"),
+          ),
+          keyEvents: window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "keydown" &&
+                event.target?.id === internalId &&
+                /^[1-5]$/.test(event.key || ""),
+            )
+            .map((event) => ({ key: event.key, trusted: event.trusted })),
+          inputEvents: window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "input" && event.target?.id === internalId,
+            )
+            .map((event) => ({ data: event.data, trusted: event.trusted })),
         };
-      });
+      }, freeTextFocusBeforeTyping.id);
       assert.equal(freeTextBeforeCommit.contentEditable, "true");
+      assert.equal(freeTextBeforeCommit.active, true);
+      assert.equal(freeTextBeforeCommit.selected, true);
       assert.match(freeTextBeforeCommit.text, /12345/);
+      assert.deepEqual(
+        freeTextBeforeCommit.keyEvents.map((event) => event.key),
+        ["1", "2", "3", "4", "5"],
+      );
+      assert.ok(freeTextBeforeCommit.keyEvents.every((event) => event.trusted));
+      assert.ok(
+        freeTextBeforeCommit.inputEvents.length >= 5 &&
+          freeTextBeforeCommit.inputEvents.every((event) => event.trusted),
+      );
       await page.keyboard.press("Escape");
       await waitForNewAnnotation(3, freeTextBefore[3]);
       const freeTextOnSquare = {
@@ -1071,6 +1788,7 @@ test(
         (editor) => editor.id !== firstSquare.id,
       );
       await setMode(0);
+      await waitForSquareHitReady(firstSquare);
       await clearProbe();
       await page.mouse.click(
         iframeBox.x + firstSquare.rect.x + firstSquare.rect.width / 2,
@@ -1085,6 +1803,18 @@ test(
               '.page[data-page-number="1"] .annotationEditorLayer .explicitlyEditing',
             ),
           { timeout: 8_000 },
+        );
+        const editEvents = await eventSummary();
+        const firstPointerDown = editEvents.events.find(
+          (event) => event.type === "pointerdown",
+        );
+        assert.ok(
+          firstPointerDown?.stack?.some(
+            (element) =>
+              element.className === "squareAnnotation" &&
+              element.id.endsWith(firstSquare.uid),
+          ),
+          "The genuine double-click must land on the intended rendered Square",
         );
       } catch (error) {
         const failure = {

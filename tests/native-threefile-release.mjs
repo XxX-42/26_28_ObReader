@@ -9,18 +9,20 @@ import {
   readdir,
   writeFile,
 } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertNativeVaultIdentity,
+  invokeNativeCli,
+  nativeConfig,
+} from "./native-config.mjs";
 
 // Native acceptance test for a community release containing only main.js,
 // manifest.json, and styles.css. It intentionally refuses to clean old cache
 // data or overwrite existing vault files; use a fresh three-file installation.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = path.join(root, "dist", "pdf-web-reader");
-const vault = "D:\\Documents\\Obsidian\\测试插件";
-const vaultId = "d9f81db5f3fef6ee";
-const cli = "D:\\Applications\\Obsidian\\Obsidian.com";
+const { vault, vaultSelector: vaultId, cli, configDir } = nativeConfig;
 const pluginId = "pdf-web-reader";
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
@@ -64,7 +66,8 @@ await mkdir(artifacts, { recursive: true });
 
 const result = {
   startedAt: new Date().toISOString(),
-  app: cli,
+  app: nativeConfig.cdpUrl || cli,
+  driver: nativeConfig.cdpUrl ? "isolated-cdp" : "obsidian-cli-cdp",
   appVaultId: vaultId,
   expectedVaultPath: vault,
   releaseDirectory: path.relative(root, releaseRoot),
@@ -73,19 +76,7 @@ const result = {
 };
 
 function invokeCli(args, timeout = 20_000) {
-  const processResult = spawnSync(cli, [`vault=${vaultId}`, ...args], {
-    encoding: "utf8",
-    timeout,
-    windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (processResult.error) throw processResult.error;
-  if (processResult.status !== 0) {
-    throw new Error(
-      `Obsidian CLI failed (${processResult.status}): ${processResult.stderr || processResult.stdout}`,
-    );
-  }
-  return processResult.stdout.trim();
+  return invokeNativeCli(args, timeout);
 }
 
 function cdp(method, params = {}, timeout = 20_000) {
@@ -732,11 +723,10 @@ let failure = null;
 
 try {
   const initial = await snapshot();
-  assert.equal(
-    path.resolve(initial.vaultPath),
-    path.resolve(vault),
-    "CLI must target only the explicit Obsidian test vault",
-  );
+  assertNativeVaultIdentity({
+    vault: initial.vaultPath,
+    configDir: initial.configDir,
+  });
   result.checks.preflight = {
     ...initial,
     releaseRoot,
@@ -747,7 +737,7 @@ try {
     "Obsidian is hidden; refusing to create a test PDF until the target vault window is visible",
   );
   assert.equal(initial.hidden, false);
-  assert.equal(initial.configDir, ".obsidian");
+  assert.equal(initial.configDir, configDir);
   assert.equal(
     initial.enabled,
     false,
@@ -925,8 +915,8 @@ try {
     sentinelSha256: sha256(corruptionBytes),
   };
 
-  // Obsidian unload detaches this plugin's Reader leaves. Only proceed when
-  // every current Reader leaf is an already-registered test PDF and byte-clean.
+  // Prove the owned PDF is byte-clean and finish its controlled close before
+  // disabling. Plugin unload can bypass asynchronous leaf teardown protection.
   const beforeDisable = await inspectReaderViews(
     await registeredTestPdfPaths(),
   );
@@ -937,6 +927,7 @@ try {
   );
   assert.equal(beforeDisable[0].path, testPdf);
   result.checks.savedBeforeRepairReload = beforeDisable;
+  await detachExactSavedTestViews(beforeDisable, "detachedBeforeRepairReload");
   pluginDisabledByTest = true;
   invokeCli(["plugin:disable", `id=${pluginId}`], 60_000);
   await waitFor(

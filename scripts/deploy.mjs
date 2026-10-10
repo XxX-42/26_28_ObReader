@@ -5,36 +5,40 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertSafeDeploymentPreflight,
+  nativeConfig,
+  nativeEvalJson,
+  nativeIdentityExpression,
+} from "../tests/native-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = path.join(root, "dist", "pdf-web-reader");
-const vault =
-  process.env.OBSIDIAN_VAULT_PATH || "D:\\Documents\\Obsidian\\测试插件";
-const configDir = path.join(vault, ".obsidian");
-const pluginsDir = path.join(configDir, "plugins");
-const target = path.join(pluginsDir, "pdf-web-reader");
+const { vault, configDir } = nativeConfig;
+const configPath = path.join(vault, configDir);
+const pluginsDir = path.join(configPath, "plugins");
+const target = path.join(configPath, "plugins", nativeConfig.pluginId);
 const backupRoot = path.join(root, ".deploy-backups");
 
 const resolvedVault = path.resolve(vault);
-const resolvedConfig = path.resolve(resolvedVault, ".obsidian");
+const resolvedConfig = path.resolve(configPath);
 const resolvedPlugins = path.resolve(resolvedConfig, "plugins");
-const resolvedTarget = path.resolve(resolvedPlugins, "pdf-web-reader");
-assert.equal(
-  configDir,
-  resolvedConfig,
-  "Vault path must resolve to its .obsidian folder",
-);
-assert.equal(
-  pluginsDir,
-  resolvedPlugins,
-  "Plugin path must remain inside this vault",
-);
+const resolvedTarget = path.resolve(resolvedPlugins, nativeConfig.pluginId);
+const isWithin = (base, candidate) => {
+  const relative = path.relative(path.resolve(base), path.resolve(candidate));
+  return relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+};
+assert.ok(resolvedConfig !== resolvedVault && isWithin(resolvedVault, resolvedConfig));
+assert.ok(isWithin(resolvedConfig, resolvedPlugins));
+assert.equal(path.resolve(pluginsDir), resolvedPlugins);
 assert.equal(target, resolvedTarget, "Deployment target path is unexpected");
 
 await stat(source).catch(() => {
@@ -50,21 +54,77 @@ assert.ok(
   releaseEntries.every((entry) => entry.isFile()),
   "The community release output must not include runtime subdirectories",
 );
-await stat(configDir).catch(() => {
-  throw new Error(`Obsidian config directory does not exist: ${configDir}`);
+const vaultMetadata = await lstat(vault).catch(() => {
+  throw new Error(`Obsidian test vault does not exist: ${vault}`);
 });
+assert.ok(vaultMetadata.isDirectory() && !vaultMetadata.isSymbolicLink());
+const actualVaultPath = await realpath(vault);
+assert.equal(actualVaultPath, resolvedVault, "Test vault must not resolve through a symlink");
+const configMetadata = await lstat(configPath).catch(() => {
+  throw new Error(`Obsidian config directory does not exist: ${configPath}`);
+});
+assert.ok(configMetadata.isDirectory() && !configMetadata.isSymbolicLink());
+assert.ok(isWithin(actualVaultPath, await realpath(configPath)));
 const manifest = JSON.parse(
   await readFile(path.join(source, "manifest.json"), "utf8"),
 );
-assert.equal(manifest.id, "pdf-web-reader");
+assert.equal(manifest.id, nativeConfig.pluginId);
 
-await mkdir(pluginsDir, { recursive: true });
+const preflight = nativeEvalJson(nativeIdentityExpression(`
+  pluginEnabled: app.plugins.enabledPlugins.has(${JSON.stringify(nativeConfig.pluginId)}),
+  readerViews: (() => {
+    const rows = [];
+    app.workspace.iterateAllLeaves(leaf => {
+      if (leaf.view?.getViewType?.() === 'pdf-web-reader-view') {
+        rows.push({
+          path: leaf.view.requestedPath || leaf.view.file?.path || null,
+          saving: !!leaf.view.saving,
+          pending: !!leaf.view.pendingBytes,
+        });
+      }
+    });
+    return rows;
+  })(),
+`));
+assertSafeDeploymentPreflight(preflight);
+
+const pluginsMetadata = await lstat(pluginsDir).catch((error) => {
+  if (error.code === "ENOENT") return null;
+  throw error;
+});
+if (pluginsMetadata) {
+  assert.ok(
+    pluginsMetadata.isDirectory() && !pluginsMetadata.isSymbolicLink(),
+    `Refusing to deploy through a non-directory or symlink plugins folder: ${pluginsDir}`,
+  );
+} else {
+  await mkdir(pluginsDir);
+}
+const backupMetadata = await lstat(backupRoot).catch((error) => {
+  if (error.code === "ENOENT") return null;
+  throw error;
+});
+if (backupMetadata) {
+  assert.ok(
+    backupMetadata.isDirectory() && !backupMetadata.isSymbolicLink(),
+    `Refusing to write deployment backups through a non-directory or symlink: ${backupRoot}`,
+  );
+}
+if (!backupMetadata) await mkdir(backupRoot);
 const stamp = new Date()
   .toISOString()
   .replaceAll(":", "-")
   .replaceAll(".", "-");
 const staging = path.join(pluginsDir, `.pdf-web-reader-staging-${process.pid}`);
 const backup = path.join(backupRoot, stamp, "pdf-web-reader");
+await lstat(staging).then(
+  () => {
+    throw new Error(`Refusing to reuse a pre-existing deployment staging path: ${staging}`);
+  },
+  (error) => {
+    if (error.code !== "ENOENT") throw error;
+  },
+);
 let movedExisting = false;
 
 try {
@@ -91,6 +151,18 @@ try {
       throw new Error(`Refusing to replace a different plugin at ${target}`);
     }
     await mkdir(path.dirname(backup), { recursive: true });
+    const backupParent = await lstat(path.dirname(backup));
+    if (!backupParent.isDirectory() || backupParent.isSymbolicLink()) {
+      throw new Error(`Refusing to back up through a non-directory or symlink: ${path.dirname(backup)}`);
+    }
+    await lstat(backup).then(
+      () => {
+        throw new Error(`Refusing to overwrite a pre-existing deployment backup: ${backup}`);
+      },
+      (error) => {
+        if (error.code !== "ENOENT") throw error;
+      },
+    );
     await rename(target, backup);
     movedExisting = true;
   }

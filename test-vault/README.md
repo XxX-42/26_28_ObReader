@@ -5,7 +5,7 @@
 ## 包含内容
 
 - `测试插件/.obsidian/`：原测试库配置、工作区状态和第三方插件列表。
-- `测试插件/.obsidian/plugins/pdf-web-reader/`：0.1.4 的 `main.js`、`manifest.json` 和 `styles.css`，与项目 `dist/pdf-web-reader/` 完全一致。
+- `测试插件/.obsidian/plugins/pdf-web-reader/`：0.1.4 的 `main.js`、`manifest.json` 和 `styles.css`，在快照捕获时与项目 `dist/pdf-web-reader/` 完全一致；快照保持 0.1.4，不随候选版本更新。
 - `测试插件/PDF迁移测试/`：38 份 PDF、4 份路由测试笔记和 4 张测试图片，保留原文件名和已经保存到文件的批注。
 - `测试插件/测试插件/`：历史上已经存在的内层欢迎库，原样保留，不是本项目主要测试库。
 
@@ -18,7 +18,7 @@
 1. 克隆或更新仓库的最新 `main`，先阅读根目录 `MACOS_HANDOFF.md`。
 2. 将整个 `test-vault/测试插件` 文件夹复制到用户指定的独立测试位置，包括隐藏的 `.obsidian`。建议使用仓库外的副本，避免正常 Obsidian 使用不断修改已跟踪的 workspace/config/PDF。
 3. 在 Obsidian 中以“打开文件夹作为仓库”打开这份副本。目标是含 `.obsidian` 和 `PDF迁移测试` 的外层 `测试插件`，不要误开其中同名的内层文件夹。
-4. 按用户自己的安全设置启用 `PDF Web Reader`。工作区或插件启用列表不能代替首次加载确认；当前 0.1.4 仍是 desktop-only，尚未在 macOS 原生验收，也不支持 iOS/iPadOS。
+4. 按用户自己的安全设置启用 `PDF Web Reader`。工作区或插件启用列表不能代替首次加载确认；快照中的 0.1.4 仍是 desktop-only；本阶段仅开展 macOS 适配，原生证据见 `MACOS_ACCEPTANCE.md`，不支持 iOS/iPadOS。
 5. 点击 `PDF迁移测试/五工具测试.pdf` 或一份 native 测试副本，验证打开、工具 `1–5`、二次批注和保存重开。不要对快照以外的用户 PDF 原件做写入验收。
 
 首次打开 PDF 会从插件内嵌载荷生成版本化 `.asset-cache`。不需要 Windows EXE、本地端口服务或外部浏览器。省略原机器缓存不等于省略 Viewer 资源。
@@ -27,6 +27,6 @@
 
 - 仅包含磁盘上已经保存的内容，不包含窗口中的未保存批注、应用账号状态、全局 Vault ID 或内存会话。
 - `workspace.json` 原样保留用于识别原测试场景；另一台机器是否恢复相同标签页，需要由实际 Obsidian 启动验证。
-- `tests/native-*.mjs` 的 Windows CLI、Vault 路径和 ID 尚未参数化；本快照存在不表示原生脚本可以直接在 Mac 运行。
+- 原生测试及部署入口现已参数化，并在每次操作前核对目标 Vault 路径及配置目录。Mac 仅允许独立测试库 `/Users/jiajia/Documents/ObReader-Apple-Test`。
 - `.asset-cache`、运行时 `.trash`、macOS `.DS_Store` 和新生成的移动工作区文件不应加入版本历史。它们已在项目忽略规则中排除。
 - 后续插件更新需要先保存并安全关闭测试视图，再按交接说明替换副本内的三个发布文件。本快照不是插件自动更新机制。

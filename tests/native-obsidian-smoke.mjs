@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertNativeVaultIdentity,
+  invokeNativeCli,
+  nativeConfig,
+} from "./native-config.mjs";
+import { nativeVirtualKeyCode } from "./native-keycodes.mjs";
 import { createHash } from "node:crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,9 +18,7 @@ const expectedPluginVersion = JSON.parse(
     "utf8",
   ),
 ).version;
-const vault = "D:\\Documents\\Obsidian\\测试插件";
-const vaultId = "d9f81db5f3fef6ee";
-const cli = "D:\\Applications\\Obsidian\\Obsidian.com";
+const { vault, vaultSelector: vaultId, cli } = nativeConfig;
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
@@ -29,17 +32,19 @@ const resultPath = path.join(artifacts, `native-obsidian-smoke-${stamp}.json`);
 const escapedPath = JSON.stringify(relativePath);
 const viewLookup = `app.workspace.getLeavesOfType('pdf-web-reader-view')
   .find(leaf => leaf.view?.requestedPath === ${escapedPath})?.view`;
+let originalAutoSaveSetting;
 
 const preflight = evalJson(`JSON.stringify({
   vault: app.vault.adapter.basePath,
+  configDir: app.vault.configDir,
   visibility: document.visibilityState,
   enabled: app.plugins.enabledPlugins.has('pdf-web-reader'),
+  readerViews: app.workspace.getLeavesOfType('pdf-web-reader-view').map(leaf => ({
+    path: leaf.view?.requestedPath || leaf.view?.file?.path || null,
+    dirty: !!leaf.view?.iframe?.contentWindow?.PDFViewerApplication?._hasChanges?.(),
+  })),
 })`);
-assert.equal(
-  path.resolve(preflight.vault),
-  path.resolve(vault),
-  "CLI must target only the outer test vault",
-);
+assertNativeVaultIdentity(preflight);
 assert.equal(
   preflight.enabled,
   true,
@@ -50,6 +55,11 @@ assert.equal(
   "visible",
   "Obsidian is not visibly rendering; run through the background wrapper or bring the app forward. No test PDF was created",
 );
+assert.deepEqual(
+  preflight.readerViews,
+  [],
+  "Close existing Reader tabs before the manual-save smoke fixture changes the global autosave setting.",
+);
 
 await mkdir(artifacts, { recursive: true });
 await mkdir(path.dirname(absolutePath), { recursive: true });
@@ -57,7 +67,8 @@ await copyFile(fixture, absolutePath, constants.COPYFILE_EXCL);
 
 const result = {
   startedAt: new Date().toISOString(),
-  app: "D:\\Applications\\Obsidian\\Obsidian.com",
+  app: nativeConfig.cdpUrl || cli,
+  driver: nativeConfig.cdpUrl ? "isolated-cdp" : "obsidian-cli-cdp",
   appVaultId: vaultId,
   expectedVaultPath: vault,
   testPdf: relativePath,
@@ -67,19 +78,7 @@ const result = {
 };
 
 function invokeCli(args, timeout = 20_000) {
-  const processResult = spawnSync(cli, [`vault=${vaultId}`, ...args], {
-    encoding: "utf8",
-    timeout,
-    windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (processResult.error) throw processResult.error;
-  if (processResult.status !== 0) {
-    throw new Error(
-      `Obsidian CLI failed (${processResult.status}): ${processResult.stderr || processResult.stdout}`,
-    );
-  }
-  return processResult.stdout.trim();
+  return invokeNativeCli(args, timeout);
 }
 
 function cdp(method, params = {}, timeout = 20_000) {
@@ -165,7 +164,7 @@ async function pressKey(key, code, virtualKeyCode, location = 0) {
     code,
     location,
     windowsVirtualKeyCode: virtualKeyCode,
-    nativeVirtualKeyCode: virtualKeyCode,
+    nativeVirtualKeyCode: nativeVirtualKeyCode(nativeConfig.platform, code, virtualKeyCode),
   };
   const keyDown = { type: "keyDown", ...common };
   if (key.length === 1 && !["`"].includes(key)) {
@@ -442,12 +441,19 @@ async function saveAndReopen(stage, expectedSubtypes) {
   assert.equal(saveButton.label.localizationId, null);
   assert.equal(saveButton.statusPointerEvents, "none");
   if (stage === "initial-five-tools") {
+    const modifier = nativeConfig.platform === "darwin"
+      ? {
+        key: "Meta", code: "MetaLeft", keyCode: 91,
+        nativeKeyCode: nativeVirtualKeyCode(nativeConfig.platform, "MetaLeft", 91),
+        mask: 4,
+      }
+      : { key: "Control", code: "ControlLeft", keyCode: 17, nativeKeyCode: 17, mask: 2 };
     cdpJson("Input.dispatchKeyEvent", {
       type: "keyDown",
-      key: "Control",
-      code: "ControlLeft",
-      windowsVirtualKeyCode: 17,
-      nativeVirtualKeyCode: 17,
+      key: modifier.key,
+      code: modifier.code,
+      windowsVirtualKeyCode: modifier.keyCode,
+      nativeVirtualKeyCode: modifier.nativeKeyCode,
     });
     cdpJson("Input.dispatchKeyEvent", {
       type: "keyDown",
@@ -455,24 +461,24 @@ async function saveAndReopen(stage, expectedSubtypes) {
       code: "KeyS",
       text: "s",
       unmodifiedText: "s",
-      modifiers: 2,
+      modifiers: modifier.mask,
       windowsVirtualKeyCode: 83,
-      nativeVirtualKeyCode: 83,
+      nativeVirtualKeyCode: nativeVirtualKeyCode(nativeConfig.platform, "KeyS", 83),
     });
     cdpJson("Input.dispatchKeyEvent", {
       type: "keyUp",
       key: "s",
       code: "KeyS",
-      modifiers: 2,
+      modifiers: modifier.mask,
       windowsVirtualKeyCode: 83,
-      nativeVirtualKeyCode: 83,
+      nativeVirtualKeyCode: nativeVirtualKeyCode(nativeConfig.platform, "KeyS", 83),
     });
     cdpJson("Input.dispatchKeyEvent", {
       type: "keyUp",
-      key: "Control",
-      code: "ControlLeft",
-      windowsVirtualKeyCode: 17,
-      nativeVirtualKeyCode: 17,
+      key: modifier.key,
+      code: modifier.code,
+      windowsVirtualKeyCode: modifier.keyCode,
+      nativeVirtualKeyCode: modifier.nativeKeyCode,
     });
   } else {
     await mouse("mouseMoved", saveButton.x, saveButton.y);
@@ -487,16 +493,34 @@ async function saveAndReopen(stage, expectedSubtypes) {
       clickCount: 1,
     });
   }
-  await waitFor(
-    `${stage} host save`,
+  const afterShortcut = await waitFor(
+    `${stage} Reader save state to settle`,
     async () =>
       evalJson(`JSON.stringify({
     writes: globalThis.__nativePdfWriteCount || 0,
     saving: ${viewLookup}?.saving || false,
   })`),
-    (value) => value.writes > beforeWrites && !value.saving,
+    (value) => !value.saving,
     60_000,
   );
+  if (stage === "repeat-save-without-edits") {
+    assert.equal(
+      afterShortcut.writes,
+      beforeWrites,
+      "A clean Cmd+S must not issue an unnecessary host write.",
+    );
+  } else {
+    await waitFor(
+      `${stage} host save`,
+      async () =>
+        evalJson(`JSON.stringify({
+      writes: globalThis.__nativePdfWriteCount || 0,
+      saving: ${viewLookup}?.saving || false,
+    })`),
+      (value) => value.writes > beforeWrites && !value.saving,
+      60_000,
+    );
+  }
   if (stage === "initial-five-tools") {
     result.checks.controlSSave = true;
   }
@@ -540,7 +564,7 @@ async function saveAndReopen(stage, expectedSubtypes) {
   );
   result.saves.push({
     stage,
-    hostWrites: beforeWrites + 1,
+    hostWrites: beforeWrites + (stage === "repeat-save-without-edits" ? 0 : 1),
     pdfSha256: savedHash,
     annotations,
   });
@@ -557,6 +581,21 @@ async function captureNativeScreenshot() {
 }
 
 try {
+  originalAutoSaveSetting = evalJson(`JSON.stringify(
+    app.plugins.plugins['pdf-web-reader']?.settings?.autoSave !== false
+  )`);
+  const manualSaveFixture = evalJson(`(async () => {
+    const plugin = app.plugins.plugins['pdf-web-reader'];
+    if (!plugin) throw new Error('PDF Web Reader plugin is not loaded.');
+    await plugin.setAutoSaveEnabled(false);
+    const persisted = await plugin.loadData();
+    return JSON.stringify({ enabled: plugin.settings.autoSave,
+      persisted: persisted?.autoSave ?? null });
+  })()`);
+  assert.equal(manualSaveFixture.enabled, false);
+  assert.equal(manualSaveFixture.persisted, false);
+  result.checks.manualSaveFixture = manualSaveFixture;
+
   const appIdentity = evalJson(`JSON.stringify({
     vault: app.vault.adapter.basePath,
     name: app.vault.getName?.(),
@@ -966,6 +1005,18 @@ try {
     })()`);
   } catch (restoreError) {
     result.restoreError = restoreError.message;
+  }
+  if (originalAutoSaveSetting !== undefined) {
+    try {
+      runtime(`(async () => {
+        const plugin = app.plugins.plugins['pdf-web-reader'];
+        await plugin.setAutoSaveEnabled(${JSON.stringify(originalAutoSaveSetting)});
+        return true;
+      })()`);
+      result.autoSaveRestored = originalAutoSaveSetting;
+    } catch (restoreError) {
+      result.autoSaveRestoreError = restoreError.message;
+    }
   }
   result.finishedAt = new Date().toISOString();
   await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`);

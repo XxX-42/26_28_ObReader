@@ -142,7 +142,25 @@ function createHarness() {
     }
 
     addCommand() {}
+    addSettingTab() {}
     registerEvent() {}
+    async loadData() { return null; }
+    async saveData() {}
+  }
+
+  class PluginSettingTab {
+    constructor(app, plugin) {
+      this.app = app;
+      this.plugin = plugin;
+      this.containerEl = { empty() {} };
+    }
+  }
+
+  class Setting {
+    constructor() {}
+    setName() { return this; }
+    setDesc() { return this; }
+    addToggle() { return this; }
   }
 
   const obsidian = {
@@ -155,6 +173,8 @@ function createHarness() {
       }
     },
     Plugin,
+    PluginSettingTab,
+    Setting,
     TFile,
     WorkspaceLeaf,
     normalizePath: (value) => value.replaceAll("\\", "/"),
@@ -164,10 +184,8 @@ function createHarness() {
   new Function("require", "module", "exports", source)(
     (name) => {
       if (name === "./asset-runtime.cjs") return sourceRequire(name);
-      if (name !== "obsidian") {
-        throw new Error(`Unexpected dependency: ${name}`);
-      }
-      return obsidian;
+      if (name === "obsidian") return obsidian;
+      return sourceRequire(name);
     },
     moduleObject,
     moduleObject.exports,

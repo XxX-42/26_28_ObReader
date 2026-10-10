@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { createReadStream, existsSync } from "node:fs";
-import { access, readdir, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { access, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
+import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -17,14 +18,7 @@ import {
 
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
-const browserPath =
-  process.env.PDF_READER_CHROME ||
-  process.env.PDFJS_CHROME ||
-  [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].find((candidate) => candidate && existsSync(candidate));
+const browserPath = resolveBrowserPath();
 
 if (!browserPath) {
   throw new Error(
@@ -139,6 +133,7 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
   const errors = [];
+  const consoleErrors = [];
   const externalRequests = [];
   page.on("pageerror", (error) => {
     errors.push(error.message);
@@ -146,6 +141,7 @@ try {
   });
   page.on("console", (message) => {
     if (message.type() === "error") {
+      consoleErrors.push(message.text());
       console.error("Browser console error:", message.text());
     }
   });
@@ -175,16 +171,23 @@ try {
         const state = window.__hostState = {
           ready: false, opened: 0, saves: 0, ignoredSource: 0,
           ignoredToken: 0, rejectedDocument: 0, savedData: null,
-          invalidAcksSent: 0, errors: [],
+          invalidAcksSent: 0, errors: [], inbound: [],
         };
         let fixtureBytes;
 
         window.addEventListener('message', event => {
+          const message = event.data;
+          state.inbound.push({
+            sourceIsViewer: event.source === iframe.contentWindow,
+            type: message?.type || null,
+            channelMatches: message?.channel === channel,
+            tokenMatches: message?.token === token,
+            documentId: message?.documentId || null,
+          });
           if (event.source !== iframe.contentWindow) {
             state.ignoredSource += 1;
             return;
           }
-          const message = event.data;
           if (!message || message.channel !== channel || message.token !== token) {
             state.ignoredToken += 1;
             return;
@@ -194,7 +197,7 @@ try {
             const data = fixtureBytes.slice(0);
             iframe.contentWindow.postMessage({
               channel, type: 'open', token, data,
-              documentId, readOnly: false,
+              documentId, readOnly: false, autoSave: false,
             }, '*', [data]);
           } else if (message.type === 'opened') {
             state.opened += 1;
@@ -204,7 +207,7 @@ try {
               iframe.contentWindow.postMessage({
                 channel, type: 'error', token,
                 documentId: message.documentId,
-                requestId: message.requestId,
+                requestId: message.requestId, revision: message.revision,
                 code: 'document-mismatch',
                 message: 'The test host rejected a save for a different document.',
               }, '*');
@@ -220,11 +223,11 @@ try {
             iframe.contentWindow.postMessage({
               channel, type: 'saved', token,
               documentId: 'another/document.pdf',
-              requestId: message.requestId,
+              requestId: message.requestId, revision: message.revision,
             }, '*');
             setTimeout(() => iframe.contentWindow.postMessage({
               channel, type: 'saved', token, documentId,
-              requestId: message.requestId,
+              requestId: message.requestId, revision: message.revision,
             }, '*'), 25);
           } else if (message.type === 'error') {
             state.errors.push(message.code || message.message || 'viewer error');
@@ -240,13 +243,17 @@ try {
           });
           spoof.srcdoc = '<script>parent.postMessage(' + payload + ', "*")<' + '/script>';
           document.body.append(spoof);
-          setTimeout(() => spoof.remove(), 50);
+          window.__spoofSourceFrame = spoof;
+        };
+        window.__removeSpoofedSourceFrame = () => {
+          window.__spoofSourceFrame?.remove();
+          window.__spoofSourceFrame = null;
         };
         window.__reopenSavedData = () => {
           const data = state.savedData.slice(0);
           iframe.contentWindow.postMessage({
             channel, type: 'open', token, data,
-            documentId, readOnly: false,
+            documentId, readOnly: false, autoSave: false,
           }, '*', [data]);
         };
 
@@ -277,6 +284,22 @@ try {
   const viewer = page.frames().find((frame) => frame.name() === "pdf-reader");
   assert.ok(viewer, "Expected the isolated viewer frame");
   await viewer.waitForSelector(".textLayer span");
+  await viewer.evaluate(() => {
+    const app = window.PDFViewerApplication;
+    window.__offlineOpenEvents = [];
+    for (const type of ["documentloaded", "documenterror", "pagesloaded"]) {
+      app?.eventBus?.on?.(type, (event) => {
+        window.__offlineOpenEvents.push({
+          type,
+          at: performance.now(),
+          message: event?.message || null,
+          reason: event?.reason || null,
+          hasDocument: Boolean(app.pdfDocument),
+          pageCount: app.pdfDocument?.numPages ?? null,
+        });
+      });
+    }
+  });
   await viewer.waitForFunction(
     () => !document.getElementById("editorUnderlineButton").disabled,
   );
@@ -651,14 +674,65 @@ try {
       "*",
     );
   }, testView.token);
-  await page.waitForFunction(() => {
-    const state = window.__hostState;
-    return (
-      state.ignoredSource === 1 &&
-      state.ignoredToken === 1 &&
-      state.rejectedDocument === 1
-    );
-  });
+  try {
+    await page.waitForFunction(() => {
+      const state = window.__hostState;
+      return (
+        state.ignoredSource === 1 &&
+        state.ignoredToken === 1 &&
+        state.rejectedDocument === 1
+      );
+    });
+  } catch (error) {
+    const snapshot = await page.evaluate(() => {
+      const iframe = document.querySelector('iframe[name="pdf-reader"]');
+      const child = iframe?.contentWindow;
+      let viewer = null;
+      try {
+        const app = child?.PDFViewerApplication;
+        viewer = {
+          location: child?.location?.href || null,
+          readyState: child?.document?.readyState || null,
+          parentIsHost: child?.parent === window,
+          bridgeScripts: Array.from(child?.document?.scripts || [])
+            .filter((script) => script.dataset.channel === 'pdf-web-reader')
+            .map((script) => ({
+              src: script.src,
+              generation: script.dataset.rendererGeneration || null,
+            })),
+          initialized: app?.initialized ?? null,
+          hasPdfDocument: Boolean(app?.pdfDocument),
+          pageCount: app?.pdfDocument?.numPages ?? null,
+        };
+      } catch (diagnosticError) {
+        viewer = { error: diagnosticError?.message || String(diagnosticError) };
+      }
+      return {
+        counters: {
+          ready: window.__hostState?.ready,
+          opened: window.__hostState?.opened,
+          saves: window.__hostState?.saves,
+          ignoredSource: window.__hostState?.ignoredSource,
+          ignoredToken: window.__hostState?.ignoredToken,
+          rejectedDocument: window.__hostState?.rejectedDocument,
+          errors: window.__hostState?.errors,
+        },
+        inbound: window.__hostState?.inbound,
+        iframe: {
+          connected: iframe?.isConnected ?? false,
+          srcdocLength: iframe?.srcdoc?.length ?? null,
+        },
+        spoofFrame: {
+          connected: window.__spoofSourceFrame?.isConnected ?? false,
+          readyState: window.__spoofSourceFrame?.contentDocument?.readyState || null,
+        },
+        viewer,
+      };
+    });
+    error.message = `${error.message}\nOffline message-auth snapshot: ${JSON.stringify(snapshot)}`;
+    throw error;
+  }
+  await page.evaluate(() => window.__removeSpoofedSourceFrame?.());
   assert.equal(await page.evaluate(() => window.__hostState.saves), 0);
 
   const getSavedAnnotations = () =>
@@ -666,7 +740,10 @@ try {
       const pdfPage = await PDFViewerApplication.pdfDocument.getPage(1);
       return pdfPage.getAnnotations();
     });
-  const saveAndReopen = async (saveCount, openCount) => {
+  const saveAndReopen = async (_historicalSaveCount, openCount) => {
+    const before = await page.evaluate(() => window.__hostState.saves);
+    const dirty = await viewer.evaluate(() => PDFViewerApplication._hasChanges());
+    const saveCount = before + (dirty ? 1 : 0);
     await viewer.evaluate(() => {
       if (
         document.getElementById("secondaryToolbar").classList.contains("hidden")
@@ -699,12 +776,103 @@ try {
         () => window.__hostState.savedData instanceof ArrayBuffer,
       ),
     );
-    await page.evaluate(() => window.__reopenSavedData());
-    await page.waitForFunction(
-      (expected) => window.__hostState.opened === expected,
-      { timeout: 120_000 },
+    await page.evaluate(
+      (expected) => {
+        window.__expectedOfflineOpenCount = expected;
+      },
       openCount,
     );
+    await page.evaluate(() => window.__reopenSavedData());
+    try {
+      await page.waitForFunction(
+        (expected) => window.__hostState.opened === expected,
+        { timeout: 120_000 },
+        openCount,
+      );
+    } catch (error) {
+      let snapshot = null;
+      try {
+        snapshot = await page.evaluate(() => {
+          const iframe = document.querySelector('iframe[name="pdf-reader"]');
+          const child = iframe?.contentWindow;
+          let renderer = null;
+          try {
+            const app = child?.PDFViewerApplication;
+            renderer = {
+              location: child?.location?.href || null,
+              readyState: child?.document?.readyState || null,
+              parentIsHost: child?.parent === window,
+              initialized: app?.initialized ?? null,
+              initializedPromise: app?.initializedPromise
+                ? "present"
+                : null,
+              hasPdfDocument: Boolean(app?.pdfDocument),
+              pageCount: app?.pdfDocument?.numPages ?? null,
+              hasLoadingTask: Boolean(app?.pdfLoadingTask),
+              loadingTaskDestroyed:
+                app?.pdfLoadingTask?.destroyed ?? null,
+              loadingPercent: app?.progress ?? null,
+              hasChanges: app?._hasChanges?.() ?? null,
+              documentTitle: child?.document?.title || null,
+              bridgeScripts: Array.from(child?.document?.scripts || [])
+                .filter((script) =>
+                  script.dataset.channel === "pdf-web-reader",
+                )
+                .map((script) => ({
+                  src: script.src,
+                  generation: script.dataset.rendererGeneration || null,
+                })),
+              documentEvents: child?.__offlineOpenEvents || null,
+            };
+          } catch (diagnosticError) {
+            renderer = { error: diagnosticError?.message || String(diagnosticError) };
+          }
+          return {
+            expectedOpened: window.__expectedOfflineOpenCount ?? null,
+            counters: {
+              ready: window.__hostState?.ready,
+              opened: window.__hostState?.opened,
+              saves: window.__hostState?.saves,
+              savedDataByteLength: window.__hostState?.savedData?.byteLength ?? null,
+              inbound: window.__hostState?.inbound,
+              errors: window.__hostState?.errors,
+            },
+            iframe: {
+              connected: iframe?.isConnected ?? false,
+              src: iframe?.getAttribute("src") || null,
+              srcdocLength: iframe?.srcdoc?.length ?? null,
+            },
+            renderer,
+          };
+        });
+      } catch (snapshotError) {
+        snapshot = { snapshotError: snapshotError?.message || String(snapshotError) };
+      }
+      const artifact = {
+        test: "offline smoke saved-data reopen",
+        result: "failed while waiting for the exact opened acknowledgement",
+        capturedAt: new Date().toISOString(),
+        expectedOpened: openCount,
+        savesBeforeReopen: before,
+        latestSaveExpected: saveCount,
+        savedDataByteLength: await page
+          .evaluate(() => window.__hostState?.savedData?.byteLength ?? null)
+          .catch(() => null),
+        pageErrors: errors,
+        consoleErrors,
+        snapshot,
+      };
+      const artifactPath = path.join(
+        root,
+        "tests",
+        "artifacts",
+        `mac-offline-reopen-timeout-${Date.now()}.json`,
+      );
+      await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
+      console.error(`Offline reopen diagnostic saved: ${artifactPath}`);
+      error.message = `${error.message}\nOffline reopen snapshot: ${JSON.stringify(artifact)}`;
+      throw error;
+    }
     await viewer.waitForSelector(".textLayer span");
   };
 
@@ -807,7 +975,7 @@ try {
   );
   assert.equal(
     await page.evaluate(() => window.__hostState.invalidAcksSent),
-    8,
+    2 * await page.evaluate(() => window.__hostState.saves),
     "The bridge must ignore mismatched save request and document IDs",
   );
   assert.equal(

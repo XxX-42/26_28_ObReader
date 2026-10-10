@@ -8,9 +8,13 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertNativeVaultIdentity,
+  invokeNativeCli,
+  nativeConfig,
+} from "./native-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const expectedPluginVersion = JSON.parse(
@@ -19,9 +23,7 @@ const expectedPluginVersion = JSON.parse(
     "utf8",
   ),
 ).version;
-const vault = "D:\\Documents\\Obsidian\\测试插件";
-const vaultId = "d9f81db5f3fef6ee";
-const cli = "D:\\Applications\\Obsidian\\Obsidian.com";
+const { vault, vaultSelector: vaultId, cli } = nativeConfig;
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
@@ -39,31 +41,11 @@ const resultPath = path.join(artifacts, `native-default-routing-${stamp}.json`);
 const absolute = (relativePath) => path.join(vault, ...relativePath.split("/"));
 
 await mkdir(artifacts, { recursive: true });
-await mkdir(path.dirname(absolute(enabledPdfPath)), { recursive: true });
-for (const relativePath of [
-  enabledPdfPath,
-  disabledPdfPath,
-  reenabledPdfPath,
-]) {
-  await copyFile(fixture, absolute(relativePath), constants.COPYFILE_EXCL);
-}
-await writeFile(
-  absolute(notePath),
-  `# Default PDF routing test\n\nEmbedded PDF: ![[${path.basename(enabledPdfPath)}]]\n`,
-  { flag: "wx" },
-);
-await writeFile(
-  absolute(imagePath),
-  Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=",
-    "base64",
-  ),
-  { flag: "wx" },
-);
 
 const result = {
   startedAt: new Date().toISOString(),
-  app: cli,
+  app: nativeConfig.cdpUrl || cli,
+  driver: nativeConfig.cdpUrl ? "isolated-cdp" : "obsidian-cli-cdp",
   appVaultId: vaultId,
   expectedVaultPath: vault,
   manifestVersion: expectedPluginVersion,
@@ -79,19 +61,7 @@ const result = {
 };
 
 function invokeCli(args, timeout = 20_000) {
-  const processResult = spawnSync(cli, [`vault=${vaultId}`, ...args], {
-    encoding: "utf8",
-    timeout,
-    windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (processResult.error) throw processResult.error;
-  if (processResult.status !== 0) {
-    throw new Error(
-      `Obsidian CLI failed (${processResult.status}): ${processResult.stderr || processResult.stdout}`,
-    );
-  }
-  return processResult.stdout.trim();
+  return invokeNativeCli(args, timeout);
 }
 
 function cdp(method, params = {}, timeout = 20_000) {
@@ -214,6 +184,8 @@ async function snapshotPluginAndLeaves() {
       });
     });
     return {
+      vaultPath: app.vault.adapter.basePath,
+      configDir: app.vault.configDir,
       enabled: app.plugins.enabledPlugins.has('pdf-web-reader'),
       version: app.plugins.plugins['pdf-web-reader']?.manifest?.version || null,
       activePath: app.workspace.getActiveFile()?.path || null,
@@ -392,15 +364,36 @@ let failure = null;
 
 try {
   const initial = await snapshotPluginAndLeaves();
-  assert.equal(
-    path.resolve(evalJson("JSON.stringify(app.vault.adapter.basePath)")),
-    path.resolve(vault),
-    "CLI must target only the outer test vault",
-  );
+  assertNativeVaultIdentity({
+    vault: initial.vaultPath,
+    configDir: initial.configDir,
+  });
   assert.equal(initial.enabled, true, "The target plugin must start enabled");
   assert.equal(initial.version, expectedPluginVersion);
   result.obsidianVersion = invokeCli(["version"]);
   result.initial = initial;
+
+  await mkdir(path.dirname(absolute(enabledPdfPath)), { recursive: true });
+  for (const relativePath of [
+    enabledPdfPath,
+    disabledPdfPath,
+    reenabledPdfPath,
+  ]) {
+    await copyFile(fixture, absolute(relativePath), constants.COPYFILE_EXCL);
+  }
+  await writeFile(
+    absolute(notePath),
+    `# Default PDF routing test\n\nEmbedded PDF: ![[${path.basename(enabledPdfPath)}]]\n`,
+    { flag: "wx" },
+  );
+  await writeFile(
+    absolute(imagePath),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lS8AAAAASUVORK5CYII=",
+      "base64",
+    ),
+    { flag: "wx" },
+  );
 
   for (const relativePath of result.testFiles) {
     await waitFor(`Obsidian to register ${relativePath}`, async () =>
