@@ -16,6 +16,8 @@ const {
 } = require("obsidian");
 
 /* BUILD:ASSET_RUNTIME_REQUIRE */ const { ensureViewerAssets, sha256Bytes } = require("./asset-runtime.cjs");
+/* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require('./pdf-merge-client.cjs');
+/* BUILD:PDF_SYNC_HOST_REQUIRE */ const { createPdfSyncHost } = require('./pdf-sync-host.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -760,6 +762,10 @@ class PdfReaderView extends EditableFileView {
     this.requestedPath = null;
     this.navigationState = {};
     this.originalBytes = null;
+    this.loadedBaseBytes = null;
+    this.annotationSyncState = null;
+    this.syncRequests = new Map();
+    this.startupTimings = {};
     this.pendingBytes = null;
     this.currentRevision = 0;
     this.confirmedRevision = 0;
@@ -802,6 +808,7 @@ class PdfReaderView extends EditableFileView {
     this.bridgeTimeoutWindow = null;
     this.bridgeTimeoutDeadline = null;
     this.messageListener = (event) => this.onMessage(event);
+    this.syncForegroundListener = () => this.plugin.pdfSync?.schedule(this.documentFile || this.file, "reader-focus");
   }
 
   getViewType() {
@@ -846,6 +853,7 @@ class PdfReaderView extends EditableFileView {
       this.navigationState = { ...normalizedState };
     }
     await super.setState(normalizedState, result);
+    if (file) this.plugin.pdfSync?.schedule(file, "activate");
   }
 
   async onLoadFile(file) {
@@ -893,6 +901,7 @@ class PdfReaderView extends EditableFileView {
       this.openRequest += 1;
       this.pendingBytes = null;
       this.originalBytes = null;
+      this.loadedBaseBytes = null;
       this.currentRevision = 0;
       this.confirmedRevision = 0;
       this.latestRecoveryDraft = null;
@@ -935,12 +944,14 @@ class PdfReaderView extends EditableFileView {
       const documentHtml = await this.createViewerDocument();
       if (this.iframe === iframe) {
         this.viewerDocumentHtml = documentHtml;
+        this.viewerBootStartedAt = Date.now();
         iframe.srcdoc = documentHtml;
         this.bridgeTimeoutDeadline = Date.now() + 20000;
         this.scheduleBridgeTimeout();
       }
     } catch (error) {
       if (this.iframe === iframe) {
+        this.plugin.invalidateViewerAssets();
         if (this.plugin.isMobileRuntime) {
           if (this.mobileRuntime.stage !== "resource-failed") {
             this.mobileRuntime.resourceFailureCount += 1;
@@ -960,6 +971,7 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
+    this.plugin.pdfSync?.closeView(this);
     const closingPath = this.requestedPath || this.documentFile?.path || null;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
     if (!closeWasPrepared) {
@@ -993,6 +1005,7 @@ class PdfReaderView extends EditableFileView {
     this.openRequest += 1;
     this.pendingBytes = null;
     this.originalBytes = null;
+    this.loadedBaseBytes = null;
     this.currentRevision = 0;
     this.confirmedRevision = 0;
     this.latestRecoveryDraft = null;
@@ -1103,6 +1116,7 @@ class PdfReaderView extends EditableFileView {
   }
 
   rotateRendererGeneration() {
+    this.plugin.pdfSync?.closeView(this, "renderer-replaced");
     const currentHtml = this.viewerDocumentHtml;
     const currentAttribute = `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`;
     if (typeof currentHtml !== "string" || !currentHtml.includes(currentAttribute)) {
@@ -1219,6 +1233,7 @@ class PdfReaderView extends EditableFileView {
     this.ownerWindow = nextWindow;
     this.ownerWindowMessageSender = createOwnerWindowMessageSender(nextWindow);
     this.ownerWindow?.addEventListener("message", this.messageListener);
+    this.ownerWindow?.addEventListener("focus", this.syncForegroundListener);
     this.plugin.registerPopoutCloseProtection(this, this.ownerWindow);
     if (this.bridgeTimeoutDeadline !== null && !this.ready) {
       this.scheduleBridgeTimeout();
@@ -1231,6 +1246,7 @@ class PdfReaderView extends EditableFileView {
   unbindOwnerWindow() {
     this.plugin.unregisterPopoutCloseProtection(this);
     this.ownerWindow?.removeEventListener("message", this.messageListener);
+    this.ownerWindow?.removeEventListener("focus", this.syncForegroundListener);
     this.ownerWindow = null;
     this.ownerWindowMessageSender = null;
   }
@@ -1325,6 +1341,7 @@ class PdfReaderView extends EditableFileView {
       return true;
     }
     if (message.type === "mobile-loader-failed") {
+      this.plugin.invalidateViewerAssets();
       const code = safeDiagnosticCode(message.code);
       this.mobileRuntime.resourceFailureCount += 1;
       this.mobileRuntime.lastError = {
@@ -1418,6 +1435,7 @@ class PdfReaderView extends EditableFileView {
       this.bridgeTimeoutWindow = null;
       this.bridgeTimeoutDeadline = null;
       if (this.iframe === iframe && !this.ready) {
+        this.plugin.invalidateViewerAssets();
         if (this.plugin.isMobileRuntime) {
           this.mobileRuntime.resourceFailureCount += 1;
           this.mobileRuntime.lastError = {
@@ -1733,8 +1751,11 @@ class PdfReaderView extends EditableFileView {
   }
 
   async loadViewerDocument() {
+    const started = Date.now();
     if (this.plugin.isMobileRuntime) this.setMobileLoaderStage("assets-loading");
     const assets = await this.plugin.ensureViewerAssets();
+    this.startupTimings.resourcesMs = Date.now() - started;
+    this.startupTimings.resources = assets.metrics || null;
     this._assetCache = Object.freeze({ ...assets });
     this.mobileRuntime.assetCount = Array.isArray(VIEWER_ASSET_PAYLOAD?.files)
       ? VIEWER_ASSET_PAYLOAD.files.length
@@ -1747,9 +1768,9 @@ class PdfReaderView extends EditableFileView {
     const viewerCssPath = `${webRoot}/viewer.css`;
     const bridgeCssPath = `${webRoot}/bridge.css`;
     const [viewerHtml, viewerCss, bridgeCss] = await Promise.all([
-      this.app.vault.adapter.read(viewerHtmlPath),
-      this.app.vault.adapter.read(viewerCssPath),
-      this.app.vault.adapter.read(bridgeCssPath),
+      this.plugin.readVerifiedAssetText("web/viewer.html"),
+      this.plugin.readVerifiedAssetText("web/viewer.css"),
+      this.plugin.readVerifiedAssetText("web/bridge.css"),
     ]);
     const viewerUrl = this.app.vault.adapter.getResourcePath(viewerHtmlPath);
     const webBase = new URL("./", viewerUrl).href;
@@ -1844,8 +1865,7 @@ class PdfReaderView extends EditableFileView {
           });
         }
         const fullPath = `${assets.rootPath}/${relativePath}`;
-        const raw = await adapter.readBinary(fullPath);
-        const bytes = new Uint8Array(toArrayBuffer(raw));
+        const bytes = await this.plugin.readVerifiedAsset(relativePath);
         if (
           bytes.byteLength !== manifestEntry.size ||
           sha256Bytes(bytes) !== manifestEntry.sha256
@@ -1989,6 +2009,7 @@ class PdfReaderView extends EditableFileView {
       this.rendererStateUnknown = false;
     }
     const request = ++this.openRequest;
+    this.openStartedAt = Date.now();
     this.documentFile = file;
     this.requestedPath = file.path;
     this.pendingBytes = null;
@@ -2000,6 +2021,9 @@ class PdfReaderView extends EditableFileView {
       // Keep a private copy for overwrite conflict detection. The original
       // buffer can then be transferred to the viewer without another copy.
       this.originalBytes = new Uint8Array(bytes.slice(0));
+      this.loadedBaseBytes = new Uint8Array(this.originalBytes);
+      this.annotationSyncState = await this.plugin.pdfSync?.initializeView(this, this.originalBytes);
+      if (request !== this.openRequest) return;
       this.pendingBytes = bytes;
       this.plugin.setDocumentBaseline(file.path, this.originalBytes);
       this.setStatus(`正在打开：${file.path}`);
@@ -2037,6 +2061,7 @@ class PdfReaderView extends EditableFileView {
       return;
     }
     if (this.handleMobileRuntimeMessage(message)) return;
+    if (this.plugin.pdfSync?.handleMessage(this, message)) return;
     if (message.type === "close-prepared") {
       const request = this.flushRequests.get(message.id);
       if (!request) return;
@@ -2072,6 +2097,7 @@ class PdfReaderView extends EditableFileView {
           return;
         }
         this.ready = true;
+        this.startupTimings.modulesMs = this.viewerBootStartedAt ? Date.now() - this.viewerBootStartedAt : null;
         this.setMobileLoaderStage("ready");
         this.clearBridgeTimeout();
         this.sendPendingDocument();
@@ -2108,7 +2134,20 @@ class PdfReaderView extends EditableFileView {
           this.rendererStateUnknown = false;
         }
         this.setStatus(this.file ? `已打开：${this.file.path}` : "");
+        this.startupTimings.openMs = this.openStartedAt ? Date.now() - this.openStartedAt : null;
+        this.startupTimings.viewer = message.startupTimings || null;
+        this.plugin.pdfSync?.schedule(this.documentFile || this.file, "opened");
         break;
+      case "startup-timings": {
+        if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId || message.openRequest !== this.openRequest) return;
+        const timings = { ...(this.startupTimings.viewer || {}) };
+        for (const key of ["pdfParseMs", "firstPageAnnotationLayerMs", "toolsUsableMs"]) {
+          const value = message.timings?.[key];
+          if (Number.isFinite(value) && value >= 0) timings[key] = value;
+        }
+        this.startupTimings.viewer = timings;
+        break;
+      }
       case "save":
         void this.saveFile(
           message.data,
@@ -2116,6 +2155,7 @@ class PdfReaderView extends EditableFileView {
           message.requestId,
           message.revision,
           message.origin,
+          message,
         );
         break;
       case "recover":
@@ -2125,6 +2165,7 @@ class PdfReaderView extends EditableFileView {
           message.requestId,
           message.revision,
           message.reason,
+          message,
         );
         break;
       case "flushed": {
@@ -2173,8 +2214,10 @@ class PdfReaderView extends EditableFileView {
       restoreDirty: restore?.restoreDirty === true,
       restorePaused: restore?.restorePaused === true,
       readOnly: false,
+      syncState: this.annotationSyncState,
     };
     if (!this.postToViewer(message, [data])) return;
+    this.loadedBaseBytes = new Uint8Array(sourceBytes).slice();
     this.lastOpenSentRequest = this.openRequest;
     if (restore) {
       restore.sent = true;
@@ -2184,6 +2227,7 @@ class PdfReaderView extends EditableFileView {
   }
 
   postToViewer(message, transfer = [], iframe = this.iframe) {
+    message = { rendererGeneration: this.rendererGeneration, ...message };
     const target = iframe?.contentWindow;
     if (!target) {
       return false;
@@ -2226,6 +2270,8 @@ class PdfReaderView extends EditableFileView {
       file,
       documentPath: this.requestedPath,
       openRequest: this.openRequest,
+      rendererGeneration: this.rendererGeneration,
+      loadedBaseBytes: this.loadedBaseBytes ? new Uint8Array(this.loadedBaseBytes) : null,
       originalBytes: this.originalBytes
         ? new Uint8Array(this.originalBytes)
         : null,
@@ -2234,7 +2280,7 @@ class PdfReaderView extends EditableFileView {
     };
   }
 
-  async saveFile(value, documentId, requestId, revision = null, origin = "manual") {
+  async saveFile(value, documentId, requestId, revision = null, origin = "manual", annotationSync = null) {
     const saveOrigin = origin === "auto" ? "auto" : "manual";
     const saveRequest = this.captureSaveRequest();
     const iframe = saveRequest.iframe;
@@ -2254,6 +2300,10 @@ class PdfReaderView extends EditableFileView {
         this.currentRevision = Math.max(this.currentRevision, revision);
       }
       const data = toArrayBuffer(value);
+      if (annotationSync?.actorId && this.plugin.pdfSync) {
+        await this.plugin.pdfSync.save(this, saveRequest, { ...annotationSync, data, documentId, requestId, revision, origin: saveOrigin });
+        return;
+      }
       const savedBytes = new Uint8Array(data.slice(0));
       await this.plugin.enqueueSave(async () => {
         const record = await this.plugin.writeRecoveryCandidate({
@@ -2409,6 +2459,7 @@ class PdfReaderView extends EditableFileView {
         this.documentId === saveRequest.documentId
       ) {
         this.setStatus(error.message);
+        if (annotationSync?.actorId) this.plugin.pdfSync?.showFailure(this, error.message);
       }
       if (!this.failureNoticeShown) {
         this.failureNoticeShown = true;
@@ -2422,7 +2473,7 @@ class PdfReaderView extends EditableFileView {
     }
   }
 
-  async recoverFile(value, documentId, requestId, revision, reason) {
+  async recoverFile(value, documentId, requestId, revision, reason, annotationSync = null) {
     const recoveryRequest = this.captureSaveRequest();
     this.pendingSaves += 1;
     try {
@@ -2449,8 +2500,17 @@ class PdfReaderView extends EditableFileView {
         invalid.code = "invalid-recovery-request";
         throw invalid;
       }
-      const data = toArrayBuffer(value);
+      let data = toArrayBuffer(value);
       await this.plugin.enqueueSave(async () => {
+        if (annotationSync?.actorId && this.plugin.pdfSync) {
+          try {
+            const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data }, recoveryRequest);
+            data = new Uint8Array(prepared.bytes).slice().buffer;
+          } catch {
+            // Unsupported merge metadata must never prevent recovery of the
+            // frozen writer's valid draft; this path does not overwrite PDF.
+          }
+        }
         const record = await this.plugin.writeRecoveryCandidate({
           view: this,
           documentId: recoveryRequest.documentId,
@@ -2534,6 +2594,7 @@ class PdfReaderView extends EditableFileView {
         (this.documentFile || this.file) === request.file &&
         this.documentId === request.documentId &&
         this.openRequest === request.openRequest &&
+        (!request.rendererGeneration || this.rendererGeneration === request.rendererGeneration) &&
         normalizePath(this.requestedPath || "") ===
           normalizePath(request.file.path),
     );
@@ -2550,6 +2611,7 @@ class PdfReaderView extends EditableFileView {
       path: file.path,
     };
     this.plugin.moveDocumentBaseline(oldPath, file.path);
+    this.plugin.pdfSync?.renamed(file, oldPath);
     this.postToViewer({
       channel: CHANNEL,
       type: "rename",
@@ -2600,6 +2662,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.isUnloading = false;
     this.documentBaselines = new Map();
     this.saveQueue = Promise.resolve();
+    this.verifiedAssetBytes = new Map();
+    this.verifiedAssetTexts = new Map();
+    this.pdfSync = createPdfSyncHost(this, {
+      createPdfMergeClient, sha256Bytes, normalizePath, isPdfFile,
+      bytesEqual, toArrayBuffer, makeToken, ensureAdapterDirectory, Notice,
+    });
     this.recoveryDirectory = normalizePath(
       `${this.app.vault.configDir}/plugins/${this.manifest.id}/.recovery`,
     );
@@ -2649,6 +2717,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     );
     if (typeof this.app.vault.on === "function") {
       this.registerEvent(
+        this.app.vault.on("modify", (file) => this.pdfSync.schedule(file, "modify")),
+      );
+      this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
           if (!isPdfFile(file)) return;
           const normalizedOldPath = normalizePath(oldPath);
@@ -2659,6 +2730,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
     }
     if (typeof this.app.workspace.on === "function") {
+      this.registerEvent(
+        this.app.workspace.on("active-leaf-change", () => this.pdfSync.checkOpenViews("active")),
+      );
       this.registerEvent(
         this.app.workspace.on("layout-change", () => {
           for (const view of this.views) view.bindOwnerWindow();
@@ -2672,10 +2746,33 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         }),
       );
     }
+    const warm = () => {
+      if (this.isUnloading) return;
+      this.prewarmTimer = globalThis.setTimeout(() => {
+        this.prewarmTimer = null;
+        if (!this.isUnloading) void this.ensureViewerAssets().then(async () => {
+          await Promise.all(["web/viewer.html", "web/viewer.css", "web/bridge.css"].map((path) => this.readVerifiedAssetText(path)));
+          if (this.isMobileRuntime && !this.isUnloading) await Promise.all(Object.values(MOBILE_RESOURCE_SCRIPT_PATHS).map((path) => this.readVerifiedAsset(path)));
+        }).catch(() => {});
+      }, 0);
+    };
+    if (typeof this.app.workspace.onLayoutReady === "function") this.app.workspace.onLayoutReady(warm);
+    const foreground = () => {
+      if (globalThis.document?.visibilityState !== "hidden") this.pdfSync.checkOpenViews("foreground");
+    };
+    if (typeof this.registerDomEvent === "function" && globalThis.window?.addEventListener) {
+      this.registerDomEvent(globalThis.window, "focus", foreground);
+      if (globalThis.document?.addEventListener) this.registerDomEvent(globalThis.document, "visibilitychange", foreground);
+    }
   }
 
   onunload() {
     this.isUnloading = true;
+    if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
+    this.pdfSync?.dispose();
+    this.viewerAssetsResult = null;
+    this.verifiedAssetBytes?.clear();
+    this.verifiedAssetTexts?.clear();
     for (const gate of [...(this.popoutCloseGates?.values() || [])]) {
       this.disposePopoutCloseGate(gate);
     }
@@ -3249,6 +3346,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           code: safeDiagnosticCode(lastError.code),
         },
         input: pointerSnapshots[index] || null,
+        startupTimings: Object.fromEntries(Object.entries({ ...(view.startupTimings || {}), ...(view.startupTimings?.viewer || {}) }).filter(([key, value]) => /Ms$/.test(key) && typeof value === "number" && Number.isFinite(value) && value >= 0)),
       };
     });
     const diagnostic = {
@@ -3424,19 +3522,27 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return outputPath;
   }
 
-  ensureViewerAssets() {
+  ensureViewerAssets({ forceVerify = false } = {}) {
+    const pluginRoot = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
+    const adapter = this.app.vault.adapter;
+    const result = this.viewerAssetsResult;
+    if (!forceVerify && result && result.adapter === adapter && result.pluginRoot === pluginRoot && result.contentHash === VIEWER_ASSET_PAYLOAD?.contentHash) {
+      return Promise.resolve({ ...result.assets, metrics: { ...result.assets.metrics, cacheHit: true, checkedFiles: 0, verificationReads: 0, decodedFiles: 0, repairedFiles: 0, decodedBytes: 0, bytesWritten: 0, elapsedMs: 0 } });
+    }
+    if (forceVerify) this.invalidateViewerAssets();
     if (!this.viewerAssetsPromise) {
-      const pluginRoot = normalizePath(
-        `${this.app.vault.configDir}/plugins/${this.manifest.id}`,
-      );
       const pending = Promise.resolve()
         .then(() =>
           ensureViewerAssets(
-            this.app.vault.adapter,
+            adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
           ),
         )
+        .then((assets) => {
+          if (!this.isUnloading) this.viewerAssetsResult = { adapter, pluginRoot, contentHash: VIEWER_ASSET_PAYLOAD?.contentHash, assets };
+          return assets;
+        }, (error) => { this.invalidateViewerAssets(); throw error; })
         .finally(() => {
           if (this.viewerAssetsPromise === pending) {
             this.viewerAssetsPromise = null;
@@ -3445,6 +3551,37 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.viewerAssetsPromise = pending;
     }
     return this.viewerAssetsPromise;
+  }
+
+  invalidateViewerAssets() {
+    this.viewerAssetsResult = null;
+    this.verifiedAssetBytes?.clear();
+    this.verifiedAssetTexts?.clear();
+  }
+
+  async readVerifiedAsset(relativePath) {
+    if (this.verifiedAssetBytes.has(relativePath)) return this.verifiedAssetBytes.get(relativePath);
+    const pending = (async () => {
+      const entry = VIEWER_ASSET_PAYLOAD?.files?.find((file) => file.path === relativePath);
+      if (!entry) throw new Error(`Missing bundled resource: ${relativePath}`);
+      const assets = await this.ensureViewerAssets();
+      const path = `${assets.rootPath}/${relativePath}`;
+      let raw;
+      try { raw = await this.app.vault.adapter.readBinary(path); }
+      catch { raw = new TextEncoder().encode(await this.app.vault.adapter.read(path)); }
+      const bytes = new Uint8Array(toArrayBuffer(raw));
+      if (bytes.length !== entry.size || sha256Bytes(bytes) !== entry.sha256) throw new Error(`Resource verification failed: ${relativePath}`);
+      return bytes;
+    })().catch((error) => { this.invalidateViewerAssets(); throw error; });
+    this.verifiedAssetBytes.set(relativePath, pending);
+    return pending;
+  }
+
+  async readVerifiedAssetText(relativePath) {
+    if (!this.verifiedAssetTexts.has(relativePath)) {
+      this.verifiedAssetTexts.set(relativePath, this.readVerifiedAsset(relativePath).then((bytes) => new TextDecoder().decode(bytes)));
+    }
+    return this.verifiedAssetTexts.get(relativePath);
   }
 
   async openPdf(file) {

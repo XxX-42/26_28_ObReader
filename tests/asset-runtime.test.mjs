@@ -17,7 +17,7 @@ import {
   root,
 } from "./bundled-plugin-test-utils.mjs";
 
-async function expectedPayloadPaths() {
+async function expectedVendorPaths() {
   const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
   const files = [];
   async function walk(directory, prefix = "") {
@@ -31,8 +31,22 @@ async function expectedPayloadPaths() {
   }
   await walk(path.join(vendor, "build"), "build");
   await walk(path.join(vendor, "web"), "web");
-  files.push("LICENSE", "web/obsidian-bridge.js", "web/bridge.css");
+  files.push("LICENSE");
   return [...new Set(files)].sort();
+}
+
+async function assertPayloadIncludesExpectedResources(payload) {
+  const vendorPaths = await expectedVendorPaths();
+  assert.equal(vendorPaths.length, 402, "the frozen PDF.js runtime files and license are unchanged");
+  const payloadPaths = new Set(payload.files.map(({ path: name }) => name));
+  for (const vendorPath of vendorPaths) {
+    assert.ok(payloadPaths.has(vendorPath), `payload omits vendor file ${vendorPath}`);
+  }
+  assert.ok(payloadPaths.has("web/obsidian-bridge.js"));
+  assert.ok(payloadPaths.has("web/bridge.css"));
+  assert.ok(payloadPaths.has("web/pdf-merge-worker.js"));
+  assert.ok(payloadPaths.has("web/pdf-merge-worker-LICENSE.txt"));
+  assert.ok(payload.files.length >= vendorPaths.length + 4);
 }
 
 function adapterFilePath(adapter, rootPath, relative) {
@@ -51,12 +65,13 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-test("three-file built main extracts 404 assets once, serializes concurrent requests, repairs cache and isolates versions", async () => {
+test("built main extracts every manifest asset once, serializes concurrent requests, repairs cache and isolates versions", async () => {
   const temp = await createTempRoot("asset-roundtrip-");
   try {
     const adapter = createDiskAdapter(temp);
     const source = await readBuiltMain();
     const payload = readPayloadFromMain(source);
+    await assertPayloadIncludesExpectedResources(payload);
     const harness = loadBundledPlugin(source, adapter);
     await harness.load();
     assert.equal("Buffer" in harness.runtimeContext, false);
@@ -77,14 +92,14 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
     assert.equal(first.contentHash, payload.contentHash);
     assert.equal(
       adapter.writeCount,
-      404,
-      "Concurrent first-use should write 404 assets exactly once",
+      payload.files.length,
+      "Concurrent first-use should write each manifest asset exactly once",
     );
 
     const actualFiles = await listDiskFiles(adapter.resolve(first.rootPath));
     assert.deepEqual(
       actualFiles.map(({ path: name }) => name).sort(),
-      [...(await expectedPayloadPaths()), ".complete.json"].sort(),
+      [...payload.files.map(({ path: name }) => name), ".complete.json"].sort(),
     );
     const viewerCssPath = adapterFilePath(
       adapter,
@@ -102,11 +117,12 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
     );
     await adapter.remove(bridgeCssPath);
 
-    const repaired = await harness.plugin.ensureViewerAssets();
-    assert.deepEqual(repaired, first);
+    const writesBeforeRepair = adapter.writeCount;
+    const repaired = await harness.plugin.ensureViewerAssets({ forceVerify: true });
+    assert.equal(repaired.rootPath, first.rootPath);
     assert.equal(
       adapter.writeCount,
-      407,
+      writesBeforeRepair + 2,
       "Only the corrupted and missing assets should be repaired",
     );
 
@@ -128,6 +144,7 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
     const isolatedSource = replacePayloadInMain(source, isolatedPayload);
     const isolatedHarness = loadBundledPlugin(isolatedSource, adapter);
     await isolatedHarness.load();
+    const writesBeforeIsolated = adapter.writeCount;
     const isolated = await isolatedHarness.plugin.ensureViewerAssets();
     assert.notEqual(isolated.rootPath, first.rootPath);
     assert.equal(isolated.version, payload.id);
@@ -136,7 +153,7 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
     assert.ok(await adapter.exists(`${isolated.rootPath}/.complete.json`));
     assert.equal(
       adapter.writeCount,
-      811,
+      writesBeforeIsolated + payload.files.length,
       "A different payload version gets an isolated full cache",
     );
   } finally {
@@ -215,8 +232,8 @@ test("interrupted extraction leaves no completion marker and succeeds on retry",
     assert.equal(await adapter.exists(`${expectedRoot}/.complete.json`), true);
     assert.equal(
       (await listDiskFiles(adapter.resolve(expectedRoot))).length,
-      405,
-      "A successful retry leaves 404 assets and a completion marker",
+      payload.files.length + 1,
+      "A successful retry leaves every manifest asset and a completion marker",
     );
   } finally {
     await removeTempRoot(temp);

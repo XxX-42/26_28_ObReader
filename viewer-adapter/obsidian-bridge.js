@@ -121,6 +121,22 @@
     manualSaveRequestedDuringFlight: false,
     pendingSave: null,
     pendingRecovery: null,
+    syncState: null,
+    syncActorId: null,
+    annotationUuidByRuntimeId: new Map(),
+    annotationRefByRuntimeId: new Map(),
+    annotationUuidByPdfRef: new Map(),
+    annotationSnapshot: new Map(),
+    annotationOperations: [],
+    syncClockTimestamp: 0,
+    syncClockLogical: 0,
+    syncOperationSequence: 0,
+    syncCheckpointInProgress: false,
+    syncCheckpointPromise: null,
+    syncCheckpointRequests: new Set(),
+    syncApplyControl: null,
+    syncApplyInertState: null,
+    openStartupObserverCleanup: null,
     closeControl: null,
     closeInertState: null,
     lastRecoveredDocumentId: null,
@@ -149,7 +165,7 @@
     }
     try {
       window.parent.postMessage(
-        { channel, type, token, ...fields },
+        { channel, type, token, rendererGeneration, ...fields },
         "*",
         transfer,
       );
@@ -651,6 +667,1164 @@
     );
   }
 
+  function makeSyncUuid() {
+    const cryptoApi = window.crypto || globalThis.crypto;
+    if (typeof cryptoApi?.randomUUID === "function") {
+      return cryptoApi.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    cryptoApi?.getRandomValues?.(bytes);
+    if (!bytes.some((value) => value !== 0)) {
+      throw new Error("Secure random UUID generation is unavailable.");
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+  }
+
+  function normalizeSyncKind(value) {
+    const numericKinds = new Map([
+      [3, "FreeText"],
+      [5, "Square"],
+      [9, "Highlight"],
+      [10, "Underline"],
+      [15, "Ink"],
+    ]);
+    if (numericKinds.has(value)) {
+      return numericKinds.get(value);
+    }
+    if (typeof value !== "string") {
+      return "Unknown";
+    }
+    const lower = value.toLowerCase();
+    return (
+      {
+        freetext: "FreeText",
+        square: "Square",
+        highlight: "Highlight",
+        underline: "Underline",
+        ink: "Ink",
+      }[lower] || value
+    );
+  }
+
+  function normalizeSyncValue(value, seen = new Set()) {
+    if (value === null || typeof value === "string" || typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : String(value);
+    }
+    if (typeof value === "undefined" || typeof value === "function") {
+      return undefined;
+    }
+    if (value instanceof ArrayBuffer) {
+      return { $type: "ArrayBuffer", values: Array.from(new Uint8Array(value)) };
+    }
+    if (ArrayBuffer.isView(value)) {
+      return {
+        $type: value.constructor?.name || "TypedArray",
+        values: Array.from(value),
+      };
+    }
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      const result = value.map((item) => normalizeSyncValue(item, seen));
+      seen.delete(value);
+      return result;
+    }
+    if (value instanceof Map) {
+      const result = [...value.entries()]
+        .map(([key, item]) => [String(key), normalizeSyncValue(item, seen)])
+        .sort(([left], [right]) => left.localeCompare(right));
+      seen.delete(value);
+      return { $type: "Map", entries: result };
+    }
+    const result = {};
+    for (const key of Object.keys(value).sort()) {
+      const normalized = normalizeSyncValue(value[key], seen);
+      if (typeof normalized !== "undefined") {
+        result[key] = normalized;
+      }
+    }
+    seen.delete(value);
+    return result;
+  }
+
+  function canonicalPdfAnnotationRef(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const pdfJsMatch = /^(\d+)R(\d+)?$/.exec(value);
+    if (pdfJsMatch) {
+      return `${pdfJsMatch[1]}R${pdfJsMatch[2] || ""}`;
+    }
+    const pdfLibMatch = /^(\d+)\s+(\d+)\s+R$/.exec(value);
+    if (pdfLibMatch) {
+      return `${pdfLibMatch[1]}R${pdfLibMatch[2] === "0" ? "" : pdfLibMatch[2]}`;
+    }
+    return null;
+  }
+
+  function pdfAnnotationRefKey(value) {
+    const canonical = canonicalPdfAnnotationRef(value);
+    if (!canonical) {
+      return null;
+    }
+    const match = /^(\d+)R(\d+)?$/.exec(canonical);
+    return `${match[1]}:${match[2] || "0"}`;
+  }
+
+  function getPdfAnnotationRef(value) {
+    for (const candidate of [
+      value?.annotationElementId,
+      value?.annotationId,
+      value?.ref,
+      value?.id,
+    ]) {
+      const canonical = canonicalPdfAnnotationRef(candidate);
+      if (canonical) {
+        return canonical;
+      }
+    }
+    return null;
+  }
+
+  function getAnnotationStorageRows(app = state.app) {
+    const storageMap = app?.pdfDocument?.annotationStorage?.serializable?.map;
+    if (!(storageMap instanceof Map)) {
+      return new Map();
+    }
+    const rows = new Map();
+    for (const [rawRuntimeId, rawValue] of storageMap) {
+      if (rawValue === null || typeof rawValue !== "object") {
+        continue;
+      }
+      const runtimeId = String(rawRuntimeId);
+      const value = normalizeSyncValue(rawValue);
+      const editor = app.pdfViewer?._layerProperties
+        ?.annotationEditorUIManager?.getEditor?.(runtimeId);
+      const annotationElementId = getPdfAnnotationRef(value);
+      const reference = annotationElementId ||
+        state.annotationRefByRuntimeId.get(runtimeId) || null;
+      const referenceKey = pdfAnnotationRefKey(reference);
+      const runtimeUuid = state.annotationUuidByRuntimeId.get(runtimeId);
+      const identity = state.syncState?.identities?.find(
+        (candidate) => candidate?.uuid === runtimeUuid ||
+          (referenceKey && pdfAnnotationRefKey(candidate?.ref) === referenceKey),
+      );
+      const canonicalReference = canonicalPdfAnnotationRef(identity?.ref) ||
+        canonicalPdfAnnotationRef(reference) || null;
+      const pageIndex = Number.isSafeInteger(value?.pageIndex)
+        ? value.pageIndex
+        : Number.isSafeInteger(editor?.pageIndex)
+          ? editor.pageIndex
+          : Number.isSafeInteger(value?.pageNumber) && value.pageNumber > 0
+            ? value.pageNumber - 1
+            : Number.isSafeInteger(identity?.pageIndex)
+              ? identity.pageIndex
+              : null;
+      const kind = normalizeSyncKind(
+        value?.annotationType ?? value?.type ?? editor?.editorType ??
+          identity?.kind,
+      );
+      let uuid = runtimeUuid || null;
+      if (!uuid && referenceKey) {
+        uuid = state.annotationUuidByPdfRef.get(referenceKey) || null;
+      }
+      if (!uuid && identity?.uuid) {
+        uuid = identity.uuid;
+      }
+      if (!uuid) {
+        uuid = makeSyncUuid();
+      }
+      state.annotationUuidByRuntimeId.set(runtimeId, uuid);
+      if (canonicalReference) {
+        state.annotationRefByRuntimeId.set(runtimeId, canonicalReference);
+        state.annotationUuidByPdfRef.set(
+          pdfAnnotationRefKey(canonicalReference),
+          uuid,
+        );
+      }
+      rows.set(runtimeId, {
+        runtimeId,
+        uuid,
+        reference: canonicalReference,
+        operationReference: canonicalPdfAnnotationRef(annotationElementId),
+        annotationElementId,
+        pageIndex,
+        kind,
+        deleted: value?.deleted === true,
+        value,
+        signature: JSON.stringify(value),
+      });
+    }
+    return rows;
+  }
+
+  function seedSyncClock(syncState) {
+    const clockRows = [
+      ...(Array.isArray(syncState?.ledger?.entries)
+        ? syncState.ledger.entries
+        : []),
+      ...(Array.isArray(syncState?.ledger?.annotations)
+        ? syncState.ledger.annotations
+        : []),
+      ...(Array.isArray(syncState?.identities) ? syncState.identities : []),
+    ];
+    for (const row of clockRows) {
+      if (!Number.isSafeInteger(row?.timestamp) || row.timestamp < 0) {
+        continue;
+      }
+      const logical = Number.isSafeInteger(row.logical) && row.logical >= 0
+        ? row.logical
+        : 0;
+      const currentTime = state.syncClockTimestamp;
+      const rowTime = row.timestamp;
+      if (
+        rowTime > currentTime ||
+        (rowTime === currentTime && logical > state.syncClockLogical)
+      ) {
+        state.syncClockTimestamp = rowTime;
+        state.syncClockLogical = logical;
+      }
+    }
+    const ledgerClockTimestamp = syncState?.ledger?.clock?.timestamp;
+    const ledgerClockLogical = syncState?.ledger?.clock?.logical;
+    if (
+      Number.isSafeInteger(ledgerClockTimestamp) &&
+      ledgerClockTimestamp >= 0 &&
+      (ledgerClockTimestamp > state.syncClockTimestamp ||
+        (ledgerClockTimestamp === state.syncClockTimestamp &&
+          Number.isSafeInteger(ledgerClockLogical) &&
+          ledgerClockLogical > state.syncClockLogical))
+    ) {
+      state.syncClockTimestamp = ledgerClockTimestamp;
+      state.syncClockLogical = Number.isSafeInteger(ledgerClockLogical) &&
+          ledgerClockLogical >= 0
+        ? ledgerClockLogical
+        : 0;
+    }
+  }
+
+  function normalizeSyncState(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const actorId = typeof value.actorId === "string" && value.actorId.length > 0
+      ? value.actorId
+      : null;
+    const identities = Array.isArray(value.identities)
+      ? value.identities.filter(
+          (row) => row && typeof row === "object" &&
+            typeof row.uuid === "string" && row.uuid.length > 0,
+        )
+      : [];
+    return {
+      version: Number.isSafeInteger(value.version) ? value.version : 1,
+      ...(actorId ? { actorId } : {}),
+      identities,
+      ledger: value.ledger && typeof value.ledger === "object"
+        ? value.ledger
+        : null,
+    };
+  }
+
+  function applySyncIdentities(value, { reset = false } = {}) {
+    const syncState = normalizeSyncState(value);
+    if (reset) {
+      state.annotationUuidByRuntimeId.clear();
+      state.annotationRefByRuntimeId.clear();
+      state.annotationUuidByPdfRef.clear();
+      state.annotationOperations = [];
+      state.annotationSnapshot = new Map();
+      state.syncOperationSequence = 0;
+      state.syncClockTimestamp = 0;
+      state.syncClockLogical = 0;
+      state.syncState = null;
+    }
+    if (!syncState) {
+      if (reset) {
+        state.syncActorId = makeSyncUuid();
+        state.syncState = {
+          version: 1,
+          actorId: state.syncActorId,
+          identities: [],
+          ledger: null,
+        };
+        seedSyncClock(state.syncState);
+      }
+      return;
+    }
+    const mergedIdentityByUuid = new Map(
+      (!reset && Array.isArray(state.syncState?.identities)
+        ? state.syncState.identities
+        : []).map((identity) => [identity.uuid, identity]),
+    );
+    for (const identity of syncState.identities) {
+      mergedIdentityByUuid.set(identity.uuid, {
+        ...mergedIdentityByUuid.get(identity.uuid),
+        ...identity,
+      });
+    }
+    const mergedSyncState = {
+      ...(!reset && state.syncState ? state.syncState : {}),
+      ...syncState,
+      identities: [...mergedIdentityByUuid.values()],
+      ledger: syncState.ledger || (!reset ? state.syncState?.ledger : null) || null,
+    };
+    for (const identity of mergedSyncState.identities) {
+      const uuid = identity.uuid;
+      if (typeof identity.runtimeId === "string" && identity.runtimeId) {
+        state.annotationUuidByRuntimeId.set(identity.runtimeId, uuid);
+        const reference = canonicalPdfAnnotationRef(identity.ref);
+        if (reference) {
+          state.annotationRefByRuntimeId.set(identity.runtimeId, reference);
+        }
+      }
+      const reference = canonicalPdfAnnotationRef(identity.ref);
+      if (reference) {
+        state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(reference), uuid);
+      }
+    }
+    const referenceByUuid = new Map(
+      mergedSyncState.identities
+        .filter((identity) => typeof identity.uuid === "string")
+        .map((identity) => [
+          identity.uuid,
+          canonicalPdfAnnotationRef(identity.ref),
+        ])
+        .filter(([, reference]) => reference),
+    );
+    state.syncActorId = mergedSyncState.actorId || state.syncActorId || makeSyncUuid();
+    state.syncState = {
+      ...mergedSyncState,
+      actorId: state.syncActorId,
+    };
+    seedSyncClock(state.syncState);
+    const currentRows = getAnnotationStorageRows();
+    state.annotationSnapshot = currentRows;
+    const currentRowsByUuid = new Map(
+      [...currentRows.values()].map((row) => [row.uuid, row]),
+    );
+    for (const entry of state.annotationOperations) {
+      const operation = entry.operation;
+      const currentRow = currentRowsByUuid.get(operation.uuid);
+      if (currentRow && !currentRow.deleted) {
+        // PDF.js still serializes this editor from the original loaded base.
+        // Keep a live id:null editor as a new annotation on every save.
+        operation.ref = currentRow.operationReference || null;
+        continue;
+      }
+      const reference = currentRow?.reference ||
+        referenceByUuid.get(operation.uuid);
+      if (reference) {
+        operation.ref = reference;
+      }
+    }
+  }
+
+  function makeSyncStamp() {
+    const actorId = state.syncActorId || (state.syncActorId = makeSyncUuid());
+    const now = Date.now();
+    const prior = state.syncClockTimestamp;
+    if (now > prior) {
+      state.syncClockTimestamp = now;
+      state.syncClockLogical = 0;
+    } else {
+      state.syncClockLogical += 1;
+    }
+    state.syncOperationSequence += 1;
+    return {
+      timestamp: state.syncClockTimestamp,
+      logical: state.syncClockLogical,
+      actorId,
+      operationId: `${actorId}:${state.syncClockTimestamp}:${state.syncClockLogical}:${state.syncOperationSequence}`,
+    };
+  }
+
+  function refreshAnnotationOperations(revision = state.revision) {
+    const current = getAnnotationStorageRows();
+    const previous = state.annotationSnapshot;
+    const changed = new Map();
+    const runtimeIds = new Set([...previous.keys(), ...current.keys()]);
+    for (const runtimeId of runtimeIds) {
+      const before = previous.get(runtimeId) || null;
+      const after = current.get(runtimeId) || null;
+      if (before?.signature === after?.signature) {
+        continue;
+      }
+      const row = after || before;
+      if (!row) {
+        continue;
+      }
+      changed.set(row.uuid, { before, after, row });
+    }
+    for (const { before, after, row } of changed.values()) {
+      const currentRow = after || row;
+      const deleted = !after || after.deleted;
+      const operationReference = after
+        ? after.deleted
+          ? after.reference || after.operationReference
+          : after.operationReference
+        : before?.reference || before?.operationReference;
+      const stamp = makeSyncStamp();
+      const operation = {
+        uuid: currentRow.uuid,
+        ref: operationReference || null,
+        pageIndex: currentRow.pageIndex ?? before?.pageIndex ?? null,
+        kind: currentRow.kind || before?.kind || "Unknown",
+        deleted,
+        action: deleted ? "delete" : "upsert",
+        ...stamp,
+        ...(deleted
+          ? { serialized: { deleted: true } }
+          : { serialized: currentRow.value }),
+      };
+      const existingIndex = state.annotationOperations.findIndex(
+        (entry) => entry.operation.uuid === operation.uuid,
+      );
+      if (existingIndex >= 0) {
+        state.annotationOperations.splice(existingIndex, 1);
+      }
+      state.annotationOperations.push({
+        revision,
+        operation,
+      });
+    }
+    state.annotationSnapshot = current;
+  }
+
+  function captureSyncOperations(revision = state.revision) {
+    return state.annotationOperations
+      .map(({ operation }) => ({ ...operation }));
+  }
+
+  function captureNewSyncAnnotations() {
+    const rows = getAnnotationStorageRows();
+    const result = [];
+    let order = 0;
+    for (const row of rows.values()) {
+      if (row.annotationElementId || row.deleted) {
+        continue;
+      }
+      result.push({
+        runtimeId: row.runtimeId,
+        uuid: row.uuid,
+        pageIndex: Number.isSafeInteger(row.pageIndex) ? row.pageIndex : 0,
+        kind: row.kind,
+        order: order++,
+      });
+    }
+    return result;
+  }
+
+  function captureSyncViewState(app = state.app) {
+    const viewer = app?.pdfViewer;
+    const container = document.getElementById("viewerContainer");
+    const mode = viewer?.annotationEditorMode;
+    return {
+      pageNumber: Number.isSafeInteger(viewer?.currentPageNumber)
+        ? viewer.currentPageNumber
+        : 1,
+      zoom: typeof viewer?.currentScaleValue === "string" ||
+          typeof viewer?.currentScaleValue === "number"
+        ? viewer.currentScaleValue
+        : "auto",
+      rotation: Number.isSafeInteger(viewer?.pagesRotation)
+        ? viewer.pagesRotation
+        : 0,
+      scroll: {
+        top: Number.isFinite(container?.scrollTop) ? container.scrollTop : 0,
+        left: Number.isFinite(container?.scrollLeft) ? container.scrollLeft : 0,
+      },
+      tool: Number.isSafeInteger(mode) ? mode : state.editorMode,
+    };
+  }
+
+  async function restoreSyncViewState(app, viewState, session) {
+    if (!viewState || !app?.pdfViewer) {
+      return;
+    }
+    const viewer = app.pdfViewer;
+    const pdfDocument = app.pdfDocument;
+    const pageCount = pdfDocument?.numPages || 0;
+    const pageNumber = Number.isSafeInteger(viewState.pageNumber)
+      ? Math.min(Math.max(viewState.pageNumber, 1), Math.max(pageCount, 1))
+      : 1;
+    const rotation = Number.isSafeInteger(viewState.rotation)
+      ? ((viewState.rotation % 360) + 360) % 360
+      : 0;
+    viewer.pagesRotation = rotation;
+    if (typeof viewState.zoom === "string" || typeof viewState.zoom === "number") {
+      viewer.currentScaleValue = viewState.zoom;
+    }
+    viewer.currentPageNumber = pageNumber;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (
+      session?.signal.aborted ||
+      state.openSession !== session ||
+      state.app !== app ||
+      app.pdfDocument !== pdfDocument
+    ) {
+      return;
+    }
+    const container = document.getElementById("viewerContainer");
+    if (container && viewState.scroll && typeof viewState.scroll === "object") {
+      if (Number.isFinite(viewState.scroll.top)) {
+        container.scrollTop = viewState.scroll.top;
+      }
+      if (Number.isFinite(viewState.scroll.left)) {
+        container.scrollLeft = viewState.scroll.left;
+      }
+    }
+    if (Number.isSafeInteger(viewState.tool)) {
+      state.editorMode = viewState.tool;
+      app.eventBus?.dispatch("switchannotationeditormode", {
+        source: window,
+        mode: viewState.tool,
+        isFromKeyboard: true,
+        createNewEditor: false,
+      });
+    }
+  }
+
+  function getConnectedFirstPageAnnotationLayer(app) {
+    const firstPageView = app?.pdfViewer?.getPageView?.(0);
+    const candidates = [
+      {
+        kind: "annotationLayer",
+        element: firstPageView?.annotationLayer?.div ||
+          firstPageView?.div?.querySelector?.(".annotationLayer"),
+      },
+      {
+        kind: "annotationEditorLayer",
+        element: firstPageView?.annotationEditorLayer?.div ||
+          firstPageView?.annotationEditorLayer?.annotationEditorLayer?.div ||
+          firstPageView?.div?.querySelector?.(".annotationEditorLayer"),
+      },
+    ];
+    return candidates.find(({ element }) => element?.isConnected) || null;
+  }
+
+  function captureOpenStartupTimings({
+    startedAt,
+    parseStartedAt,
+    parsedAt,
+    app,
+    pdfDocument,
+  }) {
+    const timings = {};
+    if (Number.isFinite(parseStartedAt) && Number.isFinite(parsedAt)) {
+      timings.pdfParseMs = Math.max(0, parsedAt - parseStartedAt);
+    }
+    const annotationLayer = getConnectedFirstPageAnnotationLayer(app);
+    if (
+      Number.isFinite(startedAt) &&
+      app?.pdfDocument === pdfDocument &&
+      app?.pdfViewer?.pdfDocument === pdfDocument &&
+      annotationLayer
+    ) {
+      timings.firstPageAnnotationLayerMs = Math.max(
+        0,
+        performance.now() - startedAt,
+      );
+      timings.firstPageAnnotationLayerKind = annotationLayer.kind;
+    }
+    const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const toolButtons = [
+      "editorUnderlineButton",
+      "editorSquareButton",
+      "editorHighlightButton",
+      "editorInkButton",
+      "editorFreeTextButton",
+    ].map((id) => document.getElementById(id));
+    if (
+      Number.isFinite(startedAt) &&
+      app?.pdfDocument === pdfDocument &&
+      app?.pdfViewer?.pdfDocument === pdfDocument &&
+      manager &&
+      !state.readOnly &&
+      toolButtons.every((button) => button && !button.disabled)
+    ) {
+      timings.toolsUsableMs = Math.max(0, performance.now() - startedAt);
+    }
+    return timings;
+  }
+
+  function stopOpenStartupObserver() {
+    const cleanup = state.openStartupObserverCleanup;
+    state.openStartupObserverCleanup = null;
+    cleanup?.();
+  }
+
+  function observeOpenStartupStages({
+    startedAt,
+    app,
+    pdfDocument,
+    session,
+    documentId,
+    openRequest,
+    reportedTimings = {},
+  }) {
+    stopOpenStartupObserver();
+    const completed = new Set(Object.keys(reportedTimings));
+    const toolsExpected = !state.readOnly;
+    if (!toolsExpected) {
+      completed.add("toolsUsableMs");
+    }
+    if (
+      typeof MutationObserver !== "function" ||
+      !document.getElementById("viewerContainer") ||
+      !document.getElementById("editorModeButtons")
+    ) {
+      return;
+    }
+
+    let observer = null;
+    let stopped = false;
+    const cleanup = () => {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
+      observer?.disconnect();
+      session.signal.removeEventListener("abort", cleanup);
+      if (state.openStartupObserverCleanup === cleanup) {
+        state.openStartupObserverCleanup = null;
+      }
+    };
+    const isCurrentSession = () => !!(
+      !stopped &&
+      !session.signal.aborted &&
+      !state.disposed &&
+      session.id === state.openSessionSequence &&
+      state.app === app &&
+      app.pdfDocument === pdfDocument &&
+      app.pdfViewer?.pdfDocument === pdfDocument &&
+      state.activeDocumentId === documentId &&
+      state.activeOpenRequest === openRequest
+    );
+    const check = () => {
+      if (!isCurrentSession()) {
+        cleanup();
+        return;
+      }
+      const timings = {};
+      const annotationLayer = getConnectedFirstPageAnnotationLayer(app);
+      if (
+        !completed.has("firstPageAnnotationLayerMs") &&
+        annotationLayer
+      ) {
+        timings.firstPageAnnotationLayerMs = Math.max(
+          0,
+          performance.now() - startedAt,
+        );
+        timings.firstPageAnnotationLayerKind = annotationLayer.kind;
+        completed.add("firstPageAnnotationLayerMs");
+      }
+      if (!completed.has("toolsUsableMs")) {
+        const manager = app.pdfViewer?._layerProperties
+          ?.annotationEditorUIManager;
+        const toolButtons = [
+          "editorUnderlineButton",
+          "editorSquareButton",
+          "editorHighlightButton",
+          "editorInkButton",
+          "editorFreeTextButton",
+        ].map((id) => document.getElementById(id));
+        if (
+          toolsExpected &&
+          manager &&
+          toolButtons.every((button) => button && !button.disabled)
+        ) {
+          timings.toolsUsableMs = Math.max(0, performance.now() - startedAt);
+          completed.add("toolsUsableMs");
+        }
+      }
+      if (Object.keys(timings).length > 0) {
+        postToHost("startup-timings", {
+          documentId,
+          openRequest,
+          timings,
+        });
+      }
+      if (
+        completed.has("firstPageAnnotationLayerMs") &&
+        completed.has("toolsUsableMs")
+      ) {
+        cleanup();
+      }
+    };
+
+    observer = new MutationObserver(check);
+    state.openStartupObserverCleanup = cleanup;
+    session.signal.addEventListener("abort", cleanup, { once: true });
+    observer.observe(document.getElementById("viewerContainer"), {
+      childList: true,
+      subtree: true,
+    });
+    observer.observe(document.getElementById("editorModeButtons"), {
+      attributes: true,
+      attributeFilter: ["disabled"],
+      childList: true,
+      subtree: true,
+    });
+    check();
+  }
+
+  function validSyncRequest(message) {
+    return !!(
+      message &&
+      typeof message.id === "string" &&
+      message.id.length > 0 &&
+      message.id.length <= 128 &&
+      typeof message.documentId === "string" &&
+      Number.isSafeInteger(message.openRequest) &&
+      message.openRequest >= 0 &&
+      message.rendererGeneration === rendererGeneration
+    );
+  }
+
+  function hasCompatibleHostAckGeneration(message) {
+    return !Object.prototype.hasOwnProperty.call(message, "rendererGeneration") ||
+      message.rendererGeneration === rendererGeneration;
+  }
+
+  function postSyncCheckpointRejected(message, reason) {
+    return postToHost("sync-checkpoint-rejected", {
+      id: message.id,
+      documentId: message.documentId,
+      openRequest: message.openRequest,
+      revision: state.revision,
+      ok: false,
+      reason: String(reason || "checkpoint-rejected"),
+    });
+  }
+
+  async function serializeSyncCheckpoint(message) {
+    const app = state.app;
+    const pdfDocument = app?.pdfDocument;
+    const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
+    if (
+      !app ||
+      !pdfDocument ||
+      !documentId ||
+      documentId !== message.documentId ||
+      openRequest !== message.openRequest
+    ) {
+      return postSyncCheckpointRejected(message, "document-session-changed");
+    }
+    if (state.savePromise || state.pendingSave || state.pendingRecovery) {
+      return postSyncCheckpointRejected(message, "save-in-progress");
+    }
+    state.syncCheckpointInProgress = true;
+    clearAutoSaveTimer();
+    const boundaryReached = await waitForInputBoundary(110000);
+    if (!boundaryReached) {
+      return postSyncCheckpointRejected(message, "input-boundary-timeout");
+    }
+    if (
+      state.disposed ||
+      state.activeDocumentId !== documentId ||
+      state.activeOpenRequest !== openRequest ||
+      state.app?.pdfDocument !== pdfDocument
+    ) {
+      return postSyncCheckpointRejected(message, "document-session-changed");
+    }
+    if (
+      Number.isSafeInteger(message.expectedRevision) &&
+      message.expectedRevision !== state.revision
+    ) {
+      return postSyncCheckpointRejected(message, "revision-changed");
+    }
+    if (state.pendingInkCommit) {
+      state.committingInkForSave = true;
+      try {
+        app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+      } finally {
+        state.committingInkForSave = false;
+        state.pendingInkCommit = false;
+      }
+    }
+    prepareContentForSave();
+    const revisionAtStart = state.revision;
+    if (
+      Number.isSafeInteger(message.expectedRevision) &&
+      message.expectedRevision !== revisionAtStart
+    ) {
+      return postSyncCheckpointRejected(message, "revision-changed-at-boundary");
+    }
+    const dirtySnapshot = snapshotChanges(app);
+    let willSaveDispatched = false;
+    app._saveInProgress = true;
+    app._updateOverwriteOriginalState?.();
+    let data = null;
+    let error = null;
+    try {
+      await app.pdfScriptingManager?.dispatchWillSave?.();
+      willSaveDispatched = true;
+      if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
+        throw new Error("Page reordering cannot be included in a sync checkpoint.");
+      }
+      const bytes = dirtySnapshot.hadAnnotationChanges || state.dirty ||
+          app._annotationStorageModified
+        ? await pdfDocument.saveDocument()
+        : await pdfDocument.getData();
+      if (!bytes) {
+        throw new Error("PDF.js did not produce checkpoint data.");
+      }
+      if (willSaveDispatched) {
+        await app.pdfScriptingManager?.dispatchDidSave?.();
+        willSaveDispatched = false;
+      }
+      if (
+        state.disposed ||
+        state.activeDocumentId !== documentId ||
+        state.activeOpenRequest !== openRequest ||
+        app.pdfDocument !== pdfDocument ||
+        state.revision !== revisionAtStart
+      ) {
+        throw new Error("The PDF changed while creating the sync checkpoint.");
+      }
+      data = makeArrayBuffer(bytes);
+    } catch (caught) {
+      error = caught;
+    } finally {
+      if (willSaveDispatched) {
+        try {
+          await app.pdfScriptingManager?.dispatchDidSave?.();
+        } catch {
+          // Preserve the checkpoint serialization error.
+        }
+      }
+      if (app.pdfDocument === pdfDocument) {
+        restoreChanges(app, {
+          hadAnnotationChanges:
+            dirtySnapshot.hadAnnotationChanges ||
+            state.dirty ||
+            state.revision !== revisionAtStart,
+          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+        });
+      }
+      app._saveInProgress = false;
+      app._updateOverwriteOriginalState?.();
+      app.setTitle?.();
+    }
+    if (error) {
+      return postSyncCheckpointRejected(message, error.message);
+    }
+    const fields = {
+      id: message.id,
+      documentId,
+      openRequest,
+      revision: revisionAtStart,
+      confirmedRevision: state.confirmedRevision,
+      dirty: isDirty(),
+      ok: true,
+      data,
+      operations: captureSyncOperations(revisionAtStart),
+      newAnnotations: captureNewSyncAnnotations(),
+      actorId: state.syncActorId,
+      viewState: captureSyncViewState(app),
+    };
+    const posted = postToHost("sync-checkpoint-ready", fields, [data]);
+    if (!posted) {
+      postSyncCheckpointRejected(message, "checkpoint-message-failed");
+    }
+    return posted;
+  }
+
+  function handleSyncCheckpoint(message) {
+    if (!validSyncRequest(message)) {
+      return;
+    }
+    if (state.syncCheckpointRequests.has(message.id)) {
+      postSyncCheckpointRejected(message, "duplicate-request-id");
+      return;
+    }
+    if (
+      state.activeDocumentId !== message.documentId ||
+      state.activeOpenRequest !== message.openRequest ||
+      !state.app?.pdfDocument
+    ) {
+      postSyncCheckpointRejected(message, "document-session-changed");
+      return;
+    }
+    if (state.syncApplyControl) {
+      postSyncCheckpointRejected(message, "sync-apply-prepared");
+      return;
+    }
+    state.syncCheckpointRequests.add(message.id);
+    const operation = serializeSyncCheckpoint(message);
+    state.syncCheckpointPromise = operation;
+    void operation
+      .catch((error) => {
+        postSyncCheckpointRejected(message, error?.message || "checkpoint-failed");
+      })
+      .finally(() => {
+      state.syncCheckpointInProgress = false;
+      state.syncCheckpointRequests.delete(message.id);
+      if (state.syncCheckpointPromise === operation) {
+        state.syncCheckpointPromise = null;
+      }
+      if (
+        !state.disposed &&
+        state.autoSaveEnabled &&
+        !state.autoSavePaused &&
+        isDirty()
+      ) {
+        scheduleAutoSave();
+      }
+      runQueuedManualSave();
+    });
+  }
+
+  function postSyncApplyRejected(message, reason) {
+    return postToHost("sync-apply-rejected", {
+      id: message.id,
+      documentId: message.documentId,
+      openRequest: Number.isSafeInteger(message.previousOpenRequest)
+        ? message.previousOpenRequest
+        : state.activeOpenRequest,
+      previousOpenRequest: message.previousOpenRequest,
+      newOpenRequest: message.newOpenRequest,
+      revision: state.revision,
+      ok: false,
+      prepared: false,
+      reason: String(reason || "apply-rejected"),
+    });
+  }
+
+  function setSyncApplyInert(control) {
+    if (state.syncApplyControl !== control || control.cancelled) {
+      return false;
+    }
+    const element = state.app?.appConfig?.appContainer;
+    if (!element) {
+      return false;
+    }
+    const wasInert = element.hasAttribute("inert");
+    state.syncApplyInertState = { element, wasInert };
+    if (!wasInert) {
+      element.setAttribute("inert", "");
+    }
+    control.phase = "prepared";
+    return true;
+  }
+
+  function clearSyncApplyControl(control = state.syncApplyControl) {
+    if (!control || state.syncApplyControl !== control) {
+      return false;
+    }
+    control.cancelled = true;
+    if (state.syncApplyInertState) {
+      const { element, wasInert } = state.syncApplyInertState;
+      if (!wasInert) {
+        element.removeAttribute("inert");
+      }
+      state.syncApplyInertState = null;
+    }
+    state.syncApplyControl = null;
+    if (
+      state.autoSaveEnabled &&
+      !state.autoSavePaused &&
+      isDirty()
+    ) {
+      scheduleAutoSave();
+    }
+    return true;
+  }
+
+  function postSyncApplyPrepared(control, ok, reason = null) {
+    const fields = {
+      id: control.id,
+      documentId: control.documentId,
+      openRequest: control.openRequest,
+      revision: state.revision,
+      ok,
+      prepared: ok,
+      ...(reason ? { reason } : {}),
+    };
+    postToHost(ok ? "sync-apply-prepared" : "sync-apply-rejected", fields);
+  }
+
+  async function handleSyncApplyPrepare(message) {
+    if (
+      !validSyncRequest(message) ||
+      !Number.isSafeInteger(message.expectedRevision) ||
+      message.expectedRevision < 0
+    ) {
+      return;
+    }
+    const reject = (reason) => {
+      postSyncApplyPrepared(
+        {
+          id: message.id,
+          documentId: message.documentId,
+          openRequest: message.openRequest,
+        },
+        false,
+        reason,
+      );
+    };
+    if (
+      state.activeDocumentId !== message.documentId ||
+      state.activeOpenRequest !== message.openRequest ||
+      !state.app?.pdfDocument
+    ) {
+      reject("document-session-changed");
+      return;
+    }
+    if (state.syncApplyControl) {
+      if (
+        state.syncApplyControl.id === message.id &&
+        state.syncApplyControl.documentId === message.documentId &&
+        state.syncApplyControl.openRequest === message.openRequest &&
+        state.syncApplyControl.revision === message.expectedRevision &&
+        state.syncApplyControl.phase === "prepared"
+      ) {
+        postSyncApplyPrepared(state.syncApplyControl, true);
+      } else {
+        reject("another-sync-apply-is-prepared");
+      }
+      return;
+    }
+    if (
+      state.closeControl ||
+      state.savePromise ||
+      state.pendingSave ||
+      state.pendingRecovery ||
+      state.syncCheckpointPromise ||
+      state.app._saveInProgress
+    ) {
+      reject("document-operation-in-progress");
+      return;
+    }
+    if (state.revision !== message.expectedRevision) {
+      reject("revision-changed");
+      return;
+    }
+    const control = {
+      id: message.id,
+      documentId: message.documentId,
+      openRequest: message.openRequest,
+      revision: message.expectedRevision,
+      phase: "preparing",
+      cancelled: false,
+    };
+    state.syncApplyControl = control;
+    const boundaryReached = await waitForInputBoundary(110000);
+    if (
+      state.syncApplyControl !== control ||
+      control.cancelled
+    ) {
+      return;
+    }
+    if (!boundaryReached) {
+      clearSyncApplyControl(control);
+      reject("input-boundary-timeout");
+      return;
+    }
+    if (
+      state.disposed ||
+      state.activeDocumentId !== control.documentId ||
+      state.activeOpenRequest !== control.openRequest ||
+      state.revision !== control.revision ||
+      isEditBoundaryBusy() ||
+      state.savePromise ||
+      state.pendingSave ||
+      state.app?._saveInProgress
+    ) {
+      clearSyncApplyControl(control);
+      reject("revision-or-boundary-changed");
+      return;
+    }
+    if (!setSyncApplyInert(control)) {
+      clearSyncApplyControl(control);
+      reject("could-not-freeze-input");
+      return;
+    }
+    postSyncApplyPrepared(control, true);
+  }
+
+  async function applySyncSnapshot(message) {
+    if (message?.rendererGeneration !== rendererGeneration) {
+      return;
+    }
+    const control = state.syncApplyControl;
+    const valid = !!(
+      control &&
+      control.phase === "prepared" &&
+      control.id === message.id &&
+      control.documentId === message.documentId &&
+      control.openRequest === message.previousOpenRequest &&
+      control.revision === message.expectedRevision &&
+      state.activeDocumentId === control.documentId &&
+      state.activeOpenRequest === control.openRequest &&
+      state.revision === control.revision &&
+      Number.isSafeInteger(message.newOpenRequest) &&
+      message.newOpenRequest === message.previousOpenRequest + 1 &&
+      message.data instanceof ArrayBuffer &&
+      message.syncState &&
+      Number.isSafeInteger(message.syncState.version)
+    );
+    if (!valid) {
+      if (control?.id === message.id) {
+        clearSyncApplyControl(control);
+      }
+      postSyncApplyRejected(message, "prepared-revision-or-payload-mismatch");
+      return;
+    }
+    control.phase = "applying";
+    const openMessage = {
+      documentId: control.documentId,
+      documentPath: state.activeDocumentPath,
+      filename: state.activeFilename || "document.pdf",
+      openRequest: message.newOpenRequest,
+      revision: control.revision,
+      confirmedRevision: control.revision,
+      restoreDirty: false,
+      restorePaused: false,
+      autoSave: state.autoSaveEnabled,
+      syncState: message.syncState,
+      viewState: message.viewState,
+      data: message.data,
+      syncApplyControlId: control.id,
+    };
+    state.requestedOpenRequest = message.newOpenRequest;
+    let opened = false;
+    let openError = null;
+    try {
+      opened = await openDocument(openMessage);
+    } catch (error) {
+      openError = error;
+    }
+    if (opened) {
+      postToHost("sync-applied", {
+        id: message.id,
+        documentId: control.documentId,
+        previousOpenRequest: control.openRequest,
+        newOpenRequest: message.newOpenRequest,
+        openRequest: message.newOpenRequest,
+        revision: state.revision,
+        ok: true,
+        viewState: captureSyncViewState(),
+      });
+    } else {
+      postSyncApplyRejected(
+        message,
+        openError?.message || "merged-pdf-open-failed",
+      );
+    }
+    clearSyncApplyControl(control);
+  }
+
   function waitForInputBoundary(timeoutMs = 110000, closeControl = null) {
     if (!isEditBoundaryBusy()) {
       return Promise.resolve(true);
@@ -933,6 +2107,7 @@
       return;
     }
     state.revision += 1;
+    refreshAnnotationOperations(state.revision);
     state.dirty = true;
     state.lastRecoveredDocumentId = null;
     state.lastRecoveredRevision = null;
@@ -963,6 +2138,8 @@
       state.closeControl ||
       !state.activeDocumentId ||
       state.readOnly ||
+      state.syncCheckpointInProgress ||
+      state.syncApplyControl ||
       state.isComposing ||
       hasActivePointerInteraction()
     ) {
@@ -989,6 +2166,8 @@
       !state.autoSaveEnabled ||
       state.autoSavePaused ||
       state.closeControl ||
+      state.syncCheckpointInProgress ||
+      state.syncApplyControl ||
       !state.activeDocumentId ||
       state.readOnly ||
       isInputBusy()
@@ -1098,12 +2277,12 @@
 
   function makeSaveRequestId() {
     state.saveSequence += 1;
-    return `save-${Date.now().toString(36)}-${state.saveSequence.toString(36)}`;
+    return `save-${rendererGeneration || "legacy"}-${Date.now().toString(36)}-${state.saveSequence.toString(36)}`;
   }
 
   function makeRecoveryRequestId() {
     state.recoverySequence += 1;
-    return `recovery-${Date.now().toString(36)}-${state.recoverySequence.toString(36)}`;
+    return `recovery-${rendererGeneration || "legacy"}-${Date.now().toString(36)}-${state.recoverySequence.toString(36)}`;
   }
 
   function waitForHostSave({
@@ -1114,6 +2293,10 @@
     requestId,
     revision,
     origin,
+    openRequest,
+    operations,
+    newAnnotations,
+    actorId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -1129,10 +2312,11 @@
         requestId,
         revision,
         origin,
-        resolve: () => {
+        openRequest,
+        resolve: (syncState) => {
           clearTimeout(timeout);
           state.pendingSave = null;
-          resolve();
+          resolve(syncState);
         },
         reject: (error) => {
           clearTimeout(timeout);
@@ -1152,6 +2336,10 @@
             requestId,
             revision,
             origin,
+            openRequest,
+            operations,
+            newAnnotations,
+            actorId,
           },
           [data],
         )
@@ -1172,6 +2360,10 @@
     requestId,
     revision,
     timeoutMs,
+    openRequest,
+    operations,
+    newAnnotations,
+    actorId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -1186,6 +2378,7 @@
         documentId,
         requestId,
         revision,
+        openRequest,
         resolve: () => {
           clearTimeout(timeout);
           state.pendingRecovery = null;
@@ -1209,6 +2402,10 @@
             reason,
             requestId,
             revision,
+            openRequest,
+            operations,
+            newAnnotations,
+            actorId,
           },
           [data],
         )
@@ -1234,6 +2431,9 @@
 
     const revisionAtStart = state.revision;
     const dirtySnapshot = snapshotChanges(app);
+    const operationsAtStart = captureSyncOperations(revisionAtStart);
+    const newAnnotationsAtStart = captureNewSyncAnnotations();
+    const actorIdAtStart = state.syncActorId;
     if (!isDirty(app)) {
       return true;
     }
@@ -1312,6 +2512,10 @@
         requestId,
         revision: revisionAtStart,
         origin,
+        openRequest: state.activeOpenRequest,
+        operations: operationsAtStart,
+        newAnnotations: newAnnotationsAtStart,
+        actorId: actorIdAtStart,
       });
       if (
         app.pdfDocument === pdfDocument &&
@@ -1444,6 +2648,9 @@
       }
 
       const revisionAtStart = state.revision;
+      const operationsAtStart = captureSyncOperations(revisionAtStart);
+      const newAnnotationsAtStart = captureNewSyncAnnotations();
+      const actorIdAtStart = state.syncActorId;
       const dirtySnapshot = snapshotChanges(app);
       let willSaveDispatched = false;
       app._saveInProgress = true;
@@ -1494,6 +2701,10 @@
           requestId,
           revision: revisionAtStart,
           timeoutMs,
+          openRequest: state.activeOpenRequest,
+          operations: operationsAtStart,
+          newAnnotations: newAnnotationsAtStart,
+          actorId: actorIdAtStart,
         });
         if (
           state.disposed ||
@@ -1547,6 +2758,21 @@
       return false;
     }
     origin = origin === "auto" ? "auto" : "manual";
+    if (state.syncCheckpointPromise) {
+      const checkpoint = state.syncCheckpointPromise;
+      try {
+        await checkpoint;
+      } catch {
+        // The checkpoint reply already reports its own failure.
+      }
+      if (state.disposed) {
+        return false;
+      }
+      return requestSave(origin);
+    }
+    if (state.syncApplyControl) {
+      return false;
+    }
     if (
       origin === "manual" &&
       (isInputBusy() ||
@@ -3758,10 +4984,27 @@
 
   async function openDocument(message) {
     if (state.disposed) {
-      return;
+      return false;
     }
+    const startedAt = performance.now();
     const { app } = state;
     const documentId = message.documentId;
+    const syncApplyControl = state.syncApplyControl;
+    const isSyncApply = !!(
+      syncApplyControl &&
+      syncApplyControl.phase === "applying" &&
+      syncApplyControl.id === message.syncApplyControlId &&
+      syncApplyControl.documentId === documentId &&
+      syncApplyControl.openRequest === state.activeOpenRequest &&
+      message.openRequest === syncApplyControl.openRequest + 1
+    );
+    if (state.syncApplyControl && !isSyncApply) {
+      sendError("A synchronized PDF update is being applied.", {
+        documentId: state.activeDocumentId,
+        code: "open-blocked-by-sync-apply",
+      });
+      return false;
+    }
     const documentPath =
       typeof message.documentPath === "string" ? message.documentPath : null;
     const filename =
@@ -3789,13 +5032,13 @@
         documentId: state.activeDocumentId,
         code: "open-blocked-by-close-preparation",
       });
-      return;
+      return false;
     }
 
     const previousSession = captureAutoSaveSession();
     // A same-view file switch must finish the previous session before PDF.js
     // replaces its document and the bridge drops the old revision observer.
-    if (state.activeDocumentId) {
+    if (state.activeDocumentId && !isSyncApply) {
       clearAutoSaveTimer();
       const recoveredDirtySessionCanSwitch = !!(
         isDirty() &&
@@ -3879,17 +5122,18 @@
         }
       }
     }
-    if (state.closeControl?.phase === "prepared") {
+    if (!isSyncApply && state.closeControl?.phase === "prepared") {
       clearCloseControl(state.closeControl, { resume: false });
     }
     if (state.disposed) {
-      return;
+      return false;
     }
+    stopOpenStartupObserver();
     const session = createOpenSession(documentId);
     state.openSession = session;
     try {
       if (session.signal.aborted || state.disposed) {
-        return;
+        return false;
       }
       clearScheduledWork();
       cleanupStorageObserver();
@@ -3914,6 +5158,7 @@
       if (typeof state.pdfJsOpen !== "function") {
         throw new Error("PDF.js open handler is unavailable.");
       }
+      const parseStartedAt = performance.now();
       await waitForOpenSession(
         state.pdfJsOpen.call(app, {
           data,
@@ -3924,10 +5169,11 @@
         }),
         session,
       );
+      const parsedAt = performance.now();
 
-      await waitForDocumentLoaded(app, session);
+      const { pdfDocument } = await waitForDocumentLoaded(app, session);
       if (session.signal.aborted || state.disposed) {
-        return;
+        return false;
       }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
@@ -3938,9 +5184,11 @@
         : null;
       state.readOnly = message.readOnly === true;
       state.dirty = restoreDirty;
-      state.revision = restoredRevision;
-      state.confirmedRevision = restoredConfirmedRevision;
+      state.revision = isSyncApply ? 0 : restoredRevision;
+      state.confirmedRevision = isSyncApply ? 0 : restoredConfirmedRevision;
       state.autoSavePaused = restorePaused;
+      applySyncIdentities(message.syncState, { reset: true });
+      state.annotationSnapshot = getAnnotationStorageRows(app);
       const loadedSnapshot = snapshotChanges(app);
       restoreChanges(app, {
         hadAnnotationChanges:
@@ -3954,22 +5202,49 @@
       observeAccessibilityManagers(app);
       setReadOnlyState(state.readOnly);
 
-      if (state.activeDocumentId !== documentId || state.disposed) {
-        return;
+      if (isSyncApply) {
+        await restoreSyncViewState(app, message.viewState, session);
       }
-      postToHost("opened", {
-        documentId,
-        documentPath,
-        filename,
-        openRequest: state.activeOpenRequest,
-        revision: state.revision,
-        confirmedRevision: state.confirmedRevision,
-        dirty: isDirty(),
-        restorePaused: state.autoSavePaused,
-      });
+
+      if (state.activeDocumentId !== documentId || state.disposed) {
+        return false;
+      }
+      if (!isSyncApply) {
+        const startupTimings = captureOpenStartupTimings({
+          startedAt,
+          parseStartedAt,
+          parsedAt,
+          app,
+          pdfDocument,
+        });
+        const openedPosted = postToHost("opened", {
+          documentId,
+          documentPath,
+          filename,
+          openRequest: state.activeOpenRequest,
+          revision: state.revision,
+          confirmedRevision: state.confirmedRevision,
+          dirty: isDirty(),
+          restorePaused: state.autoSavePaused,
+          syncState: state.syncState,
+          startupTimings,
+        });
+        if (openedPosted) {
+          observeOpenStartupStages({
+            startedAt,
+            app,
+            pdfDocument,
+            session,
+            documentId,
+            openRequest: state.activeOpenRequest,
+            reportedTimings: startupTimings,
+          });
+        }
+      }
+      return true;
     } catch (error) {
       if (session.signal.aborted || state.disposed) {
-        return;
+        return false;
       }
       cleanupStorageObserver();
       state.activeDocumentId = null;
@@ -3982,10 +5257,14 @@
       state.confirmedRevision = 0;
       state.autoSavePaused = false;
       setReadOnlyState(false);
+      if (isSyncApply) {
+        throw error;
+      }
       sendError(error?.message || "Could not open the PDF.", {
         documentId,
         code: "open-failed",
       });
+      return false;
     } finally {
       if (state.openSession === session) {
         state.openSession = null;
@@ -4081,6 +5360,8 @@
     if (message.type === "open") {
       if (
         typeof message.documentId !== "string" ||
+        (message.rendererGeneration != null &&
+          message.rendererGeneration !== rendererGeneration) ||
         !(message.data instanceof ArrayBuffer)
       ) {
         sendError("The host sent an invalid PDF open request.", {
@@ -4142,6 +5423,36 @@
       return;
     }
 
+    if (message.type === "sync-checkpoint") {
+      handleSyncCheckpoint(message);
+      return;
+    }
+
+    if (message.type === "sync-apply-prepare") {
+      void handleSyncApplyPrepare(message);
+      return;
+    }
+
+    if (message.type === "sync-apply-cancel") {
+      const control = state.syncApplyControl;
+      if (
+        message.rendererGeneration === rendererGeneration &&
+        control &&
+        control.id === message.id &&
+        control.documentId === message.documentId &&
+        control.openRequest === message.openRequest &&
+        control.phase !== "applying"
+      ) {
+        clearSyncApplyControl(control);
+      }
+      return;
+    }
+
+    if (message.type === "sync-apply") {
+      void applySyncSnapshot(message);
+      return;
+    }
+
     if (message.type === "prepare-close") {
       handlePrepareClose(message);
       return;
@@ -4157,7 +5468,8 @@
       if (
         !pending ||
         message.requestId !== pending.requestId ||
-        message.documentId !== pending.documentId
+        message.documentId !== pending.documentId ||
+        !hasCompatibleHostAckGeneration(message)
       ) {
         return;
       }
@@ -4180,7 +5492,9 @@
       if (
         recovery &&
         message.requestId === recovery.requestId &&
-        message.documentId === recovery.documentId
+        message.documentId === recovery.documentId &&
+        message.revision === recovery.revision &&
+        hasCompatibleHostAckGeneration(message)
       ) {
         const error = new Error(
           message.message || "Obsidian could not save the PDF recovery copy.",
@@ -4194,7 +5508,9 @@
       if (
         !pending ||
         message.requestId !== pending.requestId ||
-        message.documentId !== pending.documentId
+        message.documentId !== pending.documentId ||
+        message.revision !== pending.revision ||
+        !hasCompatibleHostAckGeneration(message)
       ) {
         return;
       }
@@ -4205,7 +5521,23 @@
           );
           return;
         }
-        pending.resolve();
+        if (
+          Number.isSafeInteger(message.openRequest) &&
+          message.openRequest !== pending.openRequest
+        ) {
+          pending.reject(
+            new Error("Obsidian acknowledged a different PDF open request."),
+          );
+          return;
+        }
+        if (
+          message.syncState &&
+          state.activeDocumentId === pending.documentId &&
+          state.activeOpenRequest === pending.openRequest
+        ) {
+          applySyncIdentities(message.syncState);
+        }
+        pending.resolve(message.syncState);
       } else {
         const error = new Error(
           message.message || "Obsidian could not save the PDF.",
@@ -4524,6 +5856,7 @@
     }
     postLifecycleToHost("renderer-unloaded");
     state.disposed = true;
+    stopOpenStartupObserver();
     state.openSession?.controller.abort();
     if (state.closeControl) {
       clearCloseControl(state.closeControl, { resume: false });

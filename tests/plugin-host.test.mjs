@@ -219,7 +219,9 @@ function createHarness() {
     }
   }
 
-  class EditableFileView extends FileView {}
+  class EditableFileView extends FileView {
+    syncState() {}
+  }
 
   class WorkspaceLeaf {
     constructor(app) {
@@ -614,6 +616,14 @@ async function settleMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+test("merge metadata preserves the Obsidian EditableFileView syncState method", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const view = harness.createView();
+  assert.equal(typeof view.syncState, "function");
+  assert.equal(Object.hasOwn(view, "syncState"), false);
+});
 
 test("different PDF paths receive distinct leaves and reopening reuses its file leaf", async () => {
   const harness = createHarness();
@@ -1306,6 +1316,7 @@ test("recovery protocol persists a draft without writing the original PDF", asyn
     documentId: view.documentId,
     requestId: "recover-disabled-autosave",
     revision: 17,
+    rendererGeneration: view.rendererGeneration,
   });
   const [candidate] = await harness.plugin.listRecoveryCandidates();
   assert.equal(candidate.metadata.status, "draft");

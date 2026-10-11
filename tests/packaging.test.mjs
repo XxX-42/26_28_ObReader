@@ -4,6 +4,7 @@ import { gunzipSync } from "node:zlib";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { verifyVendorHashes } from "../scripts/hash-vendor.mjs";
 
@@ -58,6 +59,10 @@ async function readEmbeddedPayload() {
 }
 
 async function expectedAssetFiles() {
+  const license = await readFile(path.join(root, "node_modules/pdf-lib/LICENSE.md"), "utf8");
+  const worker = await build({ entryPoints: [path.join(root, "plugin/pdf-merge-worker.mjs")],
+    bundle: true, format: "iife", platform: "browser", target: ["es2022"],
+    legalComments: "inline", banner: { js: `/* pdf-lib 1.17.1 MIT License\n${license.replaceAll("*/", "* /")}*/` }, write: false });
   return [
     ...(await listFiles(path.join(vendor, "build"), "build")),
     ...(await listFiles(path.join(vendor, "web"), "web")),
@@ -70,6 +75,8 @@ async function expectedAssetFiles() {
       absolute: path.join(adapters, "bridge.css"),
       path: "web/bridge.css",
     },
+    { licenseCheck: true, path: "web/pdf-merge-worker-LICENSE.txt" },
+    { bytes: worker.outputFiles[0].contents, path: "web/pdf-merge-worker.js" },
   ].sort((left, right) =>
     left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
   );
@@ -120,7 +127,7 @@ test("community release output is exactly the three installer assets", async () 
     await readFile(path.join(root, "versions.json"), "utf8"),
   );
   assert.equal(manifest.id, "pdf-web-reader");
-  assert.equal(manifest.version, "0.4.0");
+  assert.equal(manifest.version, "0.5.0");
   assert.equal(manifest.isDesktopOnly, false);
   assert.deepEqual(manifest, rootManifest);
   assert.deepEqual(manifest, sourceManifest);
@@ -142,7 +149,9 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
 
   const expected = await expectedAssetFiles();
   assert.equal(payload.files.length, expected.length);
-  assert.equal(payload.files.length, 404);
+  assert.equal(payload.files.length, 406);
+  assert.ok(payload.files.some((file) => file.path === "web/pdf-merge-worker.js"));
+  assert.ok(payload.files.some((file) => file.path === "web/pdf-merge-worker-LICENSE.txt"));
   assert.deepEqual(
     payload.files.map(({ path: name }) => name),
     expected.map(({ path: name }) => name),
@@ -151,8 +160,17 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
 
   for (let index = 0; index < expected.length; index += 1) {
     const entry = payload.files[index];
-    const sourceBytes = await readFile(expected[index].absolute);
     const decoded = gunzipSync(Buffer.from(entry.gzipBase64, "base64"));
+    let sourceBytes;
+    if (expected[index].licenseCheck) {
+      const notices = decoded.toString("utf8");
+      for (const [name, licensePath] of [["pdf-lib", "LICENSE.md"], ["@pdf-lib/standard-fonts", "LICENSE.md"], ["@pdf-lib/upng", "LICENSE"], ["pako", "LICENSE"], ["tslib", "LICENSE.txt"], ["@noble/hashes", "LICENSE"]]) {
+        assert.ok(notices.includes(name), `Missing notice name: ${name}`);
+        assert.ok(notices.includes(await readFile(path.join(root, "node_modules", name, licensePath), "utf8")), `Missing full license: ${name}`);
+      }
+      assert.ok(notices.includes("pako /lib/zlib Zlib notice"));
+      sourceBytes = decoded;
+    } else sourceBytes = expected[index].bytes ? Buffer.from(expected[index].bytes) : await readFile(expected[index].absolute);
     assert.equal(entry.size, sourceBytes.byteLength, `${entry.path}: size`);
     assert.equal(
       entry.sha256,

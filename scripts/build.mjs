@@ -21,7 +21,7 @@ const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
 const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork";
-const bundledRuntimeFileCount = 404;
+const bundledRuntimeFileCount = 406;
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
@@ -114,6 +114,10 @@ for (const file of [
   path.join(adapters, "obsidian-bridge.js"),
   path.join(adapters, "bridge.css"),
   path.join(pluginSource, "asset-runtime.cjs"),
+  path.join(pluginSource, "pdf-merge-core.cjs"),
+  path.join(pluginSource, "pdf-merge-worker.mjs"),
+  path.join(pluginSource, "pdf-merge-client.cjs"),
+  path.join(pluginSource, "pdf-sync-host.cjs"),
 ]) {
   try {
     await access(file);
@@ -150,6 +154,58 @@ const vendorFileCount = await verifyVendorHashes();
 assert.equal(vendorFileCount, 402, "The frozen PDF.js vendor set changed");
 await verifyViewer();
 
+const pdfLibPackage = JSON.parse(
+  await readFile(path.join(root, "node_modules", "pdf-lib", "package.json"), "utf8"),
+);
+assert.equal(pdfLibPackage.version, "1.17.1", "Unexpected pinned pdf-lib version");
+const pdfLibLicense = await readFile(path.join(root, "node_modules", "pdf-lib", "LICENSE.md"), "utf8");
+
+async function readBundledDependencyLicense(packageName, candidates) {
+  const packageDir = path.join(root, "node_modules", ...packageName.split("/"));
+  const metadata = JSON.parse(await readFile(path.join(packageDir, "package.json"), "utf8"));
+  let licenseFile = null;
+  for (const candidate of candidates) {
+    try {
+      licenseFile = path.join(packageDir, candidate);
+      await access(licenseFile);
+      break;
+    } catch {
+      licenseFile = null;
+    }
+  }
+  if (!licenseFile) throw new Error(`Missing license text for bundled dependency ${packageName}`);
+  const text = await readFile(licenseFile, "utf8");
+  return `\n\n===== ${packageName} ${metadata.version} (${metadata.license}) =====\n\n${text.trim()}\n`;
+}
+
+const mergeWorkerLicense = [
+  "pdf-lib: PDF modification and copying",
+  await readBundledDependencyLicense("pdf-lib", ["LICENSE.md", "LICENSE"]),
+  await readBundledDependencyLicense("@pdf-lib/standard-fonts", ["LICENSE.md", "LICENSE"]),
+  await readBundledDependencyLicense("@pdf-lib/upng", ["LICENSE", "LICENSE.md"]),
+  await readBundledDependencyLicense("pako", ["LICENSE", "LICENSE.md"]),
+  // pako's /lib/zlib files are distributed under the separate Zlib license;
+  // the bundled worker contains this code through pdf-lib's compression path.
+  "\n\n===== pako /lib/zlib Zlib notice =====\n\n" +
+    "Copyright (C) 1995-2013 Jean-loup Gailly and Mark Adler\n" +
+    "Copyright (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin\n\n" +
+    "This software is provided 'as-is', without any express or implied\n" +
+    "warranty. In no event will the authors be held liable for any damages\n" +
+    "arising from the use of this software.\n\n" +
+    "Permission is granted to anyone to use this software for any purpose,\n" +
+    "including commercial applications, and to alter it and redistribute it\n" +
+    "freely, subject to the following restrictions:\n\n" +
+    "1. The origin of this software must not be misrepresented; you must not\n" +
+    "   claim that you wrote the original software. If you use this software\n" +
+    "   in a product, an acknowledgment in the product documentation would be\n" +
+    "   appreciated but is not required.\n" +
+    "2. Altered source versions must be plainly marked as such, and must not be\n" +
+    "   misrepresented as being the original software.\n" +
+    "3. This notice may not be removed or altered from any source distribution.\n",
+  await readBundledDependencyLicense("tslib", ["LICENSE.txt", "LICENSE"]),
+  await readBundledDependencyLicense("@noble/hashes", ["LICENSE", "LICENSE.md"]),
+].join("");
+
 const runtimeInputs = [
   ...(await listFiles(path.join(vendor, "build"), "build")),
   ...(await listFiles(path.join(vendor, "web"), "web")),
@@ -166,6 +222,47 @@ const runtimeInputs = [
   left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
 );
 
+const mergeWorkerBundle = await buildBundle({
+  entryPoints: [path.join(pluginSource, "pdf-merge-worker.mjs")],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: ["es2022"],
+  legalComments: "inline",
+  metafile: true,
+  banner: {
+    js: `/* pdf-lib ${pdfLibPackage.version} MIT License\n${pdfLibLicense.replaceAll("*/", "* /")}*/`,
+  },
+  write: false,
+});
+assert.equal(mergeWorkerBundle.outputFiles.length, 1);
+for (const packageName of [
+  "pdf-lib",
+  "@pdf-lib/standard-fonts",
+  "@pdf-lib/upng",
+  "pako",
+  "tslib",
+  "@noble/hashes",
+]) {
+  assert.ok(
+    Object.keys(mergeWorkerBundle.metafile.inputs).some((input) =>
+      (`/${input}`).includes(`/node_modules/${packageName}/`),
+    ),
+    `Expected the merge worker to bundle ${packageName}`,
+  );
+}
+runtimeInputs.push({
+  bytes: Buffer.from(mergeWorkerBundle.outputFiles[0].contents),
+  path: "web/pdf-merge-worker.js",
+});
+runtimeInputs.push({
+  bytes: Buffer.from(mergeWorkerLicense, "utf8"),
+  path: "web/pdf-merge-worker-LICENSE.txt",
+});
+runtimeInputs.sort((left, right) =>
+  left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+);
+
 for (let index = 1; index < runtimeInputs.length; index += 1) {
   assert.notEqual(
     runtimeInputs[index - 1].path,
@@ -177,7 +274,7 @@ for (let index = 1; index < runtimeInputs.length; index += 1) {
 const schema = 1;
 const files = [];
 for (const input of runtimeInputs) {
-  const data = await readFile(input.absolute);
+  const data = input.bytes || await readFile(input.absolute);
   const compressed = gzipSync(data, { level: 9, mtime: 0 });
   // Normalize the RFC 1952 timestamp and OS fields across Node/platform builds.
   compressed.writeUInt32LE(0, 4);
@@ -198,13 +295,17 @@ const payload = {
 assert.equal(
   files.length,
   bundledRuntimeFileCount,
-  "The frozen viewer and bridge runtime must contain 404 files",
+  "The frozen viewer, bridge, merge worker, and required licenses must contain 406 files",
 );
 
 const requireMarker =
   /\/\* BUILD:ASSET_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*ensureViewerAssets\s*,\s*(?:sha256Bytes\s*,?\s*)?\}\s*=\s*require\((["'])\.\/asset-runtime\.cjs\1\);/s;
 const payloadMarker =
   "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
+const mergeClientMarker =
+  /\/\* BUILD:PDF_MERGE_CLIENT_REQUIRE \*\/\s*const\s*\{\s*createPdfMergeClient\s*\}\s*=\s*require\((['"])\.\/pdf-merge-client\.cjs\1\);/s;
+const syncHostMarker =
+  /\/\* BUILD:PDF_SYNC_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfSyncHost\s*\}\s*=\s*require\((['"])\.\/pdf-sync-host\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
 assert.equal(
   [...sourceMain.matchAll(new RegExp(requireMarker.source, "gs"))].length,
@@ -215,6 +316,16 @@ assert.equal(
   sourceMain.split(payloadMarker).length - 1,
   1,
   "Expected exactly one viewer-payload build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(mergeClientMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one PDF merge client build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(syncHostMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one PDF sync host build marker in plugin/main.js",
 );
 const noblePackage = JSON.parse(
   await readFile(path.join(root, "node_modules", "@noble", "hashes", "package.json"), "utf8"),
@@ -243,13 +354,41 @@ const inlinedHelper =
   runtimeBundle.outputFiles[0].text
     .trimEnd() +
   "\n  return __PDFReaderAssetRuntime;\n})();";
+async function inlineModule(entry, globalName, exportName) {
+  const bundle = await buildBundle({
+    entryPoints: [path.join(pluginSource, entry)],
+    bundle: true,
+    format: "iife",
+    globalName,
+    platform: "browser",
+    target: ["es2022"],
+    legalComments: "none",
+    write: false,
+  });
+  assert.equal(bundle.outputFiles.length, 1, `Expected one bundle for ${entry}`);
+  return `const { ${exportName} } = (() => {\n${bundle.outputFiles[0].text.trimEnd()}\n  return ${globalName};\n})();`;
+}
+const inlinedMergeClient = await inlineModule(
+  "pdf-merge-client.cjs",
+  "__PDFReaderMergeClient",
+  "createPdfMergeClient",
+);
+const inlinedSyncHost = await inlineModule(
+  "pdf-sync-host.cjs",
+  "__PDFReaderSyncHost",
+  "createPdfSyncHost",
+);
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
+  .replace(mergeClientMarker, inlinedMergeClient)
+  .replace(syncHostMarker, inlinedSyncHost)
   .replace(
     payloadMarker,
     `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
   );
 assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
+assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
+assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
 const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
   (match) => match[2],

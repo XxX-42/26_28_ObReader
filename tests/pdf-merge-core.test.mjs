@@ -1,0 +1,697 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFHexString,
+  PDFName,
+  PDFNumber,
+  PDFRawStream,
+  PDFRef,
+} from "pdf-lib";
+import mergeCore from "../plugin/pdf-merge-core.cjs";
+
+const { prepareLocal, merge, inspect } = mergeCore;
+const text = (value) => PDFHexString.fromText(value);
+
+function numberArray(doc, values) {
+  const array = PDFArray.withContext(doc.context);
+  for (const value of values) array.push(PDFNumber.of(value));
+  return array;
+}
+
+function annotsFor(doc, page) {
+  let annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+  if (!annots) {
+    annots = PDFArray.withContext(doc.context);
+    page.node.set(PDFName.of("Annots"), annots);
+  }
+  return annots;
+}
+
+function addAppearance(doc, annotation, label) {
+  const streamDictionary = PDFDict.withContext(doc.context);
+  streamDictionary.set(PDFName.of("Type"), PDFName.of("XObject"));
+  streamDictionary.set(PDFName.of("Subtype"), PDFName.of("Form"));
+  streamDictionary.set(PDFName.of("FormType"), PDFNumber.of(1));
+  streamDictionary.set(PDFName.of("BBox"), numberArray(doc, [0, 0, 80, 30]));
+  streamDictionary.set(PDFName.of("Resources"), PDFDict.withContext(doc.context));
+  const streamRef = doc.context.register(
+    PDFRawStream.of(streamDictionary, new TextEncoder().encode(`q\n% ${label}\nQ\n`)),
+  );
+  const appearance = PDFDict.withContext(doc.context);
+  appearance.set(PDFName.of("N"), streamRef);
+  annotation.set(PDFName.of("AP"), appearance);
+  return streamRef;
+}
+
+function addPopup(doc, page, parentRef, label = "popup") {
+  const popup = PDFDict.withContext(doc.context);
+  popup.set(PDFName.of("Type"), PDFName.of("Annot"));
+  popup.set(PDFName.of("Subtype"), PDFName.of("Popup"));
+  popup.set(PDFName.of("Rect"), numberArray(doc, [180, 180, 290, 260]));
+  popup.set(PDFName.of("Parent"), parentRef);
+  popup.set(PDFName.of("P"), page.ref);
+  popup.set(PDFName.of("Contents"), text(label));
+  const ref = doc.context.register(popup);
+  page.node.lookup(PDFName.of("Annots"), PDFArray).push(ref);
+  return ref;
+}
+
+function addAnnotation(doc, pageIndex, { subtype = "FreeText", nm = `NM-${subtype}`, contents = "initial", rect = [20, 30, 120, 70], popup = false, irt = null, appearance = null, structParent = null } = {}) {
+  const page = doc.getPages()[pageIndex];
+  const annotation = PDFDict.withContext(doc.context);
+  annotation.set(PDFName.of("Type"), PDFName.of("Annot"));
+  annotation.set(PDFName.of("Subtype"), PDFName.of(subtype));
+  annotation.set(PDFName.of("Rect"), numberArray(doc, rect));
+  annotation.set(PDFName.of("NM"), text(nm));
+  annotation.set(PDFName.of("Contents"), text(contents));
+  annotation.set(PDFName.of("T"), text("fixture author"));
+  if (structParent !== null) annotation.set(PDFName.of("StructParent"), PDFNumber.of(structParent));
+  if (appearance) addAppearance(doc, annotation, appearance);
+  const ref = doc.context.register(annotation);
+  annotsFor(doc, page).push(ref);
+  if (popup) {
+    const popupRef = addPopup(doc, page, ref, `${contents} popup`);
+    annotation.set(PDFName.of("Popup"), popupRef);
+  }
+  if (irt) annotation.set(PDFName.of("IRT"), irt);
+  return ref;
+}
+
+async function makeBase({ annotations = [], taggedRoot = false } = {}) {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([420, 540]);
+  page.drawText("Stable page body for merge tests", { x: 24, y: 500, size: 12 });
+  if (taggedRoot) {
+    const root = PDFDict.withContext(doc.context);
+    root.set(PDFName.of("Type"), PDFName.of("StructTreeRoot"));
+    root.set(PDFName.of("K"), PDFArray.withContext(doc.context));
+    doc.catalog.set(PDFName.of("StructTreeRoot"), doc.context.register(root));
+  }
+  const refs = [];
+  for (const annotation of annotations) refs.push(addAnnotation(doc, 0, annotation));
+  return { bytes: await doc.save({ useObjectStreams: false }), refs };
+}
+
+async function editBranch(baseBytes, ref, changes = {}, extraAnnotations = []) {
+  const doc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const page = doc.getPages()[0];
+  if (ref) {
+    const dict = doc.context.lookup(ref, PDFDict);
+    if (changes.contents !== undefined) dict.set(PDFName.of("Contents"), text(changes.contents));
+    if (changes.appearance !== undefined) addAppearance(doc, dict, changes.appearance);
+    if (changes.remove) {
+      const annots = page.node.lookup(PDFName.of("Annots"), PDFArray);
+      for (let index = annots.size() - 1; index >= 0; index -= 1) {
+        const item = annots.get(index);
+        if (item instanceof PDFRef && item.toString() === ref.toString()) annots.remove(index);
+      }
+    }
+  }
+  const extraRefs = extraAnnotations.map((annotation) => addAnnotation(doc, 0, annotation));
+  return { bytes: await doc.save({ useObjectStreams: false }), extraRefs };
+}
+
+function operation({ uuid, ref = null, kind = "freetext", timestamp, actorId = "actor-device-01", operationId, action = "upsert", pageIndex = 0 }) {
+  return { uuid, ref, pageIndex, kind, deleted: action === "delete", action, timestamp, logical: 0, actorId, operationId };
+}
+
+function findIdentity(result, uuid) {
+  const identity = result.identities.find((item) => item.uuid === uuid);
+  assert.ok(identity, `Expected identity ${uuid}`);
+  return identity;
+}
+
+function refFromPdfJs(value) {
+  const match = /^(\d+)R(\d*)$/.exec(value);
+  assert.ok(match, `Expected a PDF.js indirect reference, got ${value}`);
+  return PDFRef.of(Number(match[1]), match[2] ? Number(match[2]) : 0);
+}
+
+async function getAnnotation(bytes, uuid) {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const inspected = await inspect({ bytes });
+  const identity = findIdentity(inspected, uuid);
+  const ref = refFromPdfJs(identity.ref);
+  return { doc, identity, ref, dict: doc.context.lookup(ref, PDFDict), page: doc.getPages()[identity.pageIndex] };
+}
+
+test("preparation binds all five editor kinds by storage order and preserves NM plus AP", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", nm: "Original Square NM", contents: "before" }] });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const existing = baseInfo.identities.find((item) => item.kind === "square");
+  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  const page = draft.getPages()[0];
+  const square = draft.context.lookup(refFromPdfJs(existing.ref), PDFDict);
+  square.set(PDFName.of("Contents"), text("edited existing square"));
+  const kinds = ["Underline", "Square", "Highlight", "Ink", "FreeText"];
+  const newAnnotations = [];
+  const operations = [operation({ uuid: existing.uuid, ref: existing.ref, kind: "square", timestamp: 50, operationId: "square-edit" })];
+  kinds.forEach((subtype, order) => {
+    const uuid = `new-${subtype.toLowerCase()}`;
+    addAnnotation(draft, 0, { subtype, nm: `Original NM ${subtype}`, contents: `new ${subtype}`, appearance: `appearance ${subtype}` });
+    newAnnotations.push({ runtimeId: `runtime-${order}`, uuid, pageIndex: 0, kind: subtype.toLowerCase(), order });
+    operations.push(operation({ uuid, kind: subtype.toLowerCase(), timestamp: 100 + order, operationId: `create-${order}` }));
+  });
+  const draftBytes = await draft.save({ useObjectStreams: false });
+  const prepared = await prepareLocal({ baseBytes: base.bytes, draftBytes, operations, newAnnotations, actorId: "actor-device-01" });
+  const loaded = await PDFDocument.load(prepared.bytes, { updateMetadata: false });
+  const identityData = await inspect({ bytes: prepared.bytes });
+  assert.equal(identityData.identities.filter((item) => ["underline", "square", "highlight", "ink", "freetext"].includes(item.kind)).length, 6);
+  assert.match(findIdentity(prepared, "new-underline").ref, /^\d+R(?:\d+)?$/);
+  assert.equal(findIdentity(prepared, "new-underline").runtimeId, "runtime-0");
+  for (const subtype of kinds) {
+    const identity = findIdentity(prepared, `new-${subtype.toLowerCase()}`);
+    const annotationRef = refFromPdfJs(identity.ref);
+    const dict = loaded.context.lookup(annotationRef, PDFDict);
+    assert.equal(dict.lookup(PDFName.of("NM"), PDFHexString).decodeText(), `Original NM ${subtype}`);
+    assert.equal(dict.lookup(PDFName.of("ObReaderId"), PDFHexString).decodeText(), identity.uuid);
+    const ap = dict.lookup(PDFName.of("AP"), PDFDict);
+    assert.ok(ap.get(PDFName.of("N")) instanceof PDFRef, `${subtype} appearance should remain attached`);
+  }
+  const existingRef = refFromPdfJs(existing.ref);
+  assert.equal(loaded.context.lookup(existingRef, PDFDict).lookup(PDFName.of("NM"), PDFHexString).decodeText(), "Original Square NM");
+  assert.equal(prepared.stateDigest, identityData.stateDigest);
+  assert.equal(loaded.getPages().length, 1);
+});
+
+test("checkpoint UUIDs survive repeat-save, delete, tombstone carry-forward, and undo with null-ref upserts", async () => {
+  const base = await makeBase();
+  const uuid = "session-created-square";
+  const newAnnotation = [{ runtimeId: "runtime-square", uuid, pageIndex: 0, kind: "square", order: 0 }];
+  const firstDraft = await editBranch(base.bytes, null, {}, [{ subtype: "Square", nm: "stable NM", contents: "first save" }]);
+  const first = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: firstDraft.bytes,
+    operations: [operation({ uuid, kind: "square", timestamp: 100, operationId: "create-square" })],
+    newAnnotations: newAnnotation,
+    actorId: "actor-device-01",
+  });
+  const firstIdentity = findIdentity(first, uuid);
+  assert.equal(firstIdentity.deleted, false);
+
+  // PDF.js continues to serialize this session-created editor against its
+  // original loaded base, so the id-null upsert remains ref:null on later saves.
+  const secondDraftDoc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  // Force the draft's indirect object number to differ from the prior saved
+  // checkpoint, as can happen when PDF.js reserializes from its loaded base.
+  secondDraftDoc.context.register(PDFDict.withContext(secondDraftDoc.context));
+  addAnnotation(secondDraftDoc, 0, { subtype: "Square", nm: "stable NM", contents: "second save" });
+  const secondDraftBytes = await secondDraftDoc.save({ useObjectStreams: false });
+  const second = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: secondDraftBytes,
+    checkpointBytes: first.bytes,
+    operations: [operation({ uuid, kind: "square", timestamp: 200, operationId: "edit-square" })],
+    newAnnotations: newAnnotation,
+    actorId: "actor-device-01",
+  });
+  const secondIdentity = findIdentity(second, uuid);
+  assert.equal(secondIdentity.uuid, firstIdentity.uuid);
+  assert.notEqual(secondIdentity.ref, firstIdentity.ref, "the checkpoint binding must not depend on a previously saved indirect ref");
+  assert.equal(secondIdentity.deleted, false);
+  assert.equal(secondIdentity.timestamp, 200);
+  assert.equal((await getAnnotation(second.bytes, uuid)).dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "second save");
+
+  const deleteDraft = await editBranch(base.bytes, null, {}, []);
+  const deleted = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: deleteDraft.bytes,
+    checkpointBytes: second.bytes,
+    operations: [operation({ uuid, ref: secondIdentity.ref, kind: "square", timestamp: 300, operationId: "delete-square", action: "delete" })],
+    actorId: "actor-device-01",
+  });
+  const tombstone = findIdentity(deleted, uuid);
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.ref, secondIdentity.ref);
+
+  const unrelatedUuid = "session-created-underline";
+  const laterDraft = await editBranch(base.bytes, null, {}, [{ subtype: "Underline", contents: "later annotation" }]);
+  const later = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: laterDraft.bytes,
+    checkpointBytes: deleted.bytes,
+    operations: [operation({ uuid: unrelatedUuid, kind: "underline", timestamp: 400, operationId: "create-underline" })],
+    newAnnotations: [{ runtimeId: "runtime-underline", uuid: unrelatedUuid, pageIndex: 0, kind: "underline", order: 0 }],
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(later, uuid).deleted, true);
+  assert.equal(findIdentity(later, unrelatedUuid).deleted, false);
+
+  const undoDraft = await editBranch(base.bytes, null, {}, [{ subtype: "Square", nm: "stable NM", contents: "restored after undo" }]);
+  const undone = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: undoDraft.bytes,
+    checkpointBytes: deleted.bytes,
+    operations: [operation({ uuid, kind: "square", timestamp: 500, operationId: "undo-square" })],
+    newAnnotations: [{ ...newAnnotation[0], order: 0 }],
+    actorId: "actor-device-01",
+  });
+  const restored = findIdentity(undone, uuid);
+  assert.equal(restored.deleted, false);
+  assert.equal(restored.timestamp, 500);
+  assert.equal((await getAnnotation(undone.bytes, uuid)).dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "restored after undo");
+
+  const redoDraft = await editBranch(base.bytes, null, {}, []);
+  const redone = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: redoDraft.bytes,
+    checkpointBytes: undone.bytes,
+    operations: [operation({ uuid, ref: restored.ref, kind: "square", timestamp: 600, operationId: "redo-square", action: "delete" })],
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(redone, uuid).deleted, true);
+  assert.equal(findIdentity(redone, uuid).ref, restored.ref);
+});
+
+test("lossless checkpoint rewrite normalizes indirect stream lengths without weakening page-content lineage", async () => {
+  const baseBytes = new Uint8Array(await readFile(new URL("./fixtures/tracemonkey.pdf", import.meta.url)));
+  const firstDraft = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  addAnnotation(firstDraft, 0, { subtype: "Square", contents: "checkpoint stream regression" });
+  const first = await prepareLocal({
+    baseBytes,
+    draftBytes: await firstDraft.save({ useObjectStreams: false }),
+    operations: [operation({ uuid: "stream-checkpoint-square", kind: "square", timestamp: 100, operationId: "stream-create" })],
+    newAnnotations: [{ runtimeId: "stream-runtime", uuid: "stream-checkpoint-square", pageIndex: 0, kind: "square", order: 0 }],
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(first, "stream-checkpoint-square");
+
+  const deleted = await prepareLocal({
+    baseBytes,
+    // The Viewer draft is still based on the originally loaded PDF. The host's
+    // prepared checkpoint is the only input rewritten by pdf-lib here.
+    draftBytes: baseBytes,
+    checkpointBytes: first.bytes,
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, kind: "square", timestamp: 200, operationId: "stream-delete", action: "delete" })],
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(deleted, identity.uuid).deleted, true);
+
+  const changedPage = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  changedPage.getPages()[10].drawText("real page edit", { x: 20, y: 20, size: 11 });
+  await assert.rejects(
+    prepareLocal({
+      baseBytes,
+      draftBytes: await changedPage.save({ useObjectStreams: false }),
+      checkpointBytes: first.bytes,
+      operations: [operation({ uuid: identity.uuid, ref: identity.ref, kind: "square", timestamp: 201, operationId: "stream-delete-with-page-edit", action: "delete" })],
+      actorId: "actor-device-01",
+    }),
+    (error) => error.code === "PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED",
+  );
+});
+
+test("new annotation binding rejects a type/order mismatch instead of guessing a sole type match", async () => {
+  const base = await makeBase();
+  const draft = await editBranch(base.bytes, null, {}, [
+    { subtype: "Square", contents: "first in writer order" },
+    { subtype: "Ink", contents: "second in writer order" },
+  ]);
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: draft.bytes,
+      actorId: "actor-device-01",
+      newAnnotations: [
+        { runtimeId: "runtime-ink", uuid: "order-mismatch-ink", pageIndex: 0, kind: "ink", order: 0 },
+        { runtimeId: "runtime-square", uuid: "order-mismatch-square", pageIndex: 0, kind: "square", order: 1 },
+      ],
+      operations: [
+        operation({ uuid: "order-mismatch-ink", kind: "ink", timestamp: 100, operationId: "ink-create" }),
+        operation({ uuid: "order-mismatch-square", kind: "square", timestamp: 101, operationId: "square-create" }),
+      ],
+    }),
+    (error) => error.code === "PDF_MERGE_NEW_ANNOTATION_BINDING_FAILED",
+  );
+});
+
+test("new annotations of the same type bind by exact per-page writer order", async () => {
+  const base = await makeBase();
+  const draft = await editBranch(base.bytes, null, {}, [
+    { subtype: "Square", contents: "first writer entry" },
+    { subtype: "Square", contents: "second writer entry" },
+  ]);
+  const prepared = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: draft.bytes,
+    actorId: "actor-device-01",
+    newAnnotations: [
+      { runtimeId: "runtime-second", uuid: "square-second", pageIndex: 0, kind: "square", order: 1 },
+      { runtimeId: "runtime-first", uuid: "square-first", pageIndex: 0, kind: "square", order: 0 },
+    ],
+    operations: [
+      operation({ uuid: "square-first", kind: "square", timestamp: 100, operationId: "square-first-create" }),
+      operation({ uuid: "square-second", kind: "square", timestamp: 101, operationId: "square-second-create" }),
+    ],
+  });
+  assert.equal((await getAnnotation(prepared.bytes, "square-first")).dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "first writer entry");
+  assert.equal((await getAnnotation(prepared.bytes, "square-second")).dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "second writer entry");
+});
+
+test("an unsaved create-delete can leave a null-ref tombstone, but unknown saved refs are rejected", async () => {
+  const base = await makeBase();
+  const unsaved = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+    operations: [operation({ uuid: "never-saved", kind: "freetext", timestamp: 100, operationId: "create-delete", action: "delete" })],
+  });
+  const tombstone = findIdentity(unsaved, "never-saved");
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.ref, null);
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: base.bytes,
+      actorId: "actor-device-01",
+      operations: [operation({ uuid: "unknown-saved", ref: "99R", kind: "freetext", timestamp: 101, operationId: "unknown-delete", action: "delete" })],
+    }),
+    (error) => error.code === "PDF_MERGE_UNKNOWN_ANNOTATION_ID",
+  );
+});
+
+test("independent new annotations union, same-UUID LWW is deterministic, and merge is byte-idempotent", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", contents: "base" }] });
+  const baseInspection = await inspect({ bytes: base.bytes });
+  const existing = baseInspection.identities.find((item) => item.kind === "freetext");
+
+  const localDraft = await editBranch(base.bytes, refFromPdfJs(existing.ref), { contents: "local winner" });
+  const local = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: localDraft.bytes,
+    actorId: "actor-a",
+    operations: [operation({ uuid: existing.uuid, ref: existing.ref, timestamp: 300, actorId: "actor-a", operationId: "edit-local" })],
+  });
+
+  const remoteDraft = await editBranch(base.bytes, null, {}, [{ subtype: "Square", nm: "Remote NM", contents: "remote addition" }]);
+  const remote = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: remoteDraft.bytes,
+    actorId: "actor-b",
+    newAnnotations: [{ runtimeId: "new-square-runtime", uuid: "remote-new-square", pageIndex: 0, kind: "square", order: 0 }],
+    operations: [
+      operation({ uuid: "remote-new-square", ref: null, kind: "square", timestamp: 250, actorId: "actor-b", operationId: "create-square" }),
+    ],
+  });
+
+  const merged = await merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes: remote.bytes });
+  const mergedInfo = await inspect({ bytes: merged.bytes });
+  assert.equal(merged.changed, true);
+  assert.equal(findIdentity(mergedInfo, existing.uuid).timestamp, 300);
+  assert.ok(findIdentity(mergedInfo, "remote-new-square"));
+  const winning = await getAnnotation(merged.bytes, existing.uuid);
+  assert.equal(winning.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "local winner");
+  const repeat = await merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes: merged.bytes });
+  assert.equal(repeat.changed, false);
+  assert.deepEqual(repeat.bytes, merged.bytes);
+  assert.equal(repeat.stateDigest, merged.stateDigest);
+});
+
+test("newer delete wins over edit and remains as a durable tombstone", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", contents: "base" }] });
+  const identity = (await inspect({ bytes: base.bytes })).identities.find((item) => item.kind === "freetext");
+  const deletedDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { remove: true });
+  const localDelete = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: deletedDraft.bytes,
+    actorId: "actor-delete",
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 500, actorId: "actor-delete", operationId: "delete-newer", action: "delete" })],
+  });
+  const editedDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { contents: "older concurrent edit" });
+  const remoteEdit = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: editedDraft.bytes,
+    actorId: "actor-edit",
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 400, actorId: "actor-edit", operationId: "edit-older" })],
+  });
+  const merged = await merge({ baseBytes: base.bytes, localBytes: localDelete.bytes, remoteBytes: remoteEdit.bytes });
+  const info = await inspect({ bytes: merged.bytes });
+  const tombstone = findIdentity(info, identity.uuid);
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.timestamp, 500);
+  const doc = await PDFDocument.load(merged.bytes, { updateMetadata: false });
+  const annots = doc.getPages()[0].node.lookup(PDFName.of("Annots"), PDFArray);
+  const remaining = Array.from({ length: annots.size() }, (_, index) => annots.get(index));
+  assert.equal(remaining.some((ref) => ref instanceof PDFRef && ref.toString() === "7 0 R"), false);
+  const repeat = await merge({ baseBytes: base.bytes, localBytes: localDelete.bytes, remoteBytes: merged.bytes });
+  assert.equal(repeat.changed, false);
+  assert.deepEqual(repeat.bytes, merged.bytes);
+});
+
+test("newer edit wins over an older delete and reports the losing concurrent branch", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", contents: "base" }] });
+  const identity = (await inspect({ bytes: base.bytes })).identities.find((item) => item.kind === "freetext");
+  const deletedDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { remove: true });
+  const localDelete = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: deletedDraft.bytes,
+    actorId: "actor-delete",
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 100, actorId: "actor-delete", operationId: "delete-older", action: "delete" })],
+  });
+  const editDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { contents: "newer edit" });
+  const remoteEdit = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: editDraft.bytes,
+    actorId: "actor-edit",
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 200, actorId: "actor-edit", operationId: "edit-newer" })],
+  });
+  const merged = await merge({ baseBytes: base.bytes, localBytes: localDelete.bytes, remoteBytes: remoteEdit.bytes });
+  const winner = await getAnnotation(merged.bytes, identity.uuid);
+  assert.equal(winner.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "newer edit");
+  assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), identity.uuid).deleted, false);
+  assert.deepEqual(merged.conflicts, [{ uuid: identity.uuid, winner: "remote" }]);
+});
+
+test("semantic remote equality does not discard remote non-annotation metadata", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "base square" }] });
+  const identity = (await inspect({ bytes: base.bytes })).identities.find((item) => item.kind === "square");
+  const remoteDoc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  remoteDoc.setTitle("Remote title that must survive annotation sync");
+  const remoteBytes = await remoteDoc.save({ useObjectStreams: false });
+  const localDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { contents: "local square edit" });
+  const local = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: localDraft.bytes,
+    actorId: "actor-local",
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, kind: "square", timestamp: 100, actorId: "actor-local", operationId: "square-edit" })],
+  });
+  const merged = await merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes });
+  const mergedDoc = await PDFDocument.load(merged.bytes, { updateMetadata: false });
+  assert.equal(mergedDoc.getTitle(), "Remote title that must survive annotation sync");
+  const annotation = await getAnnotation(merged.bytes, identity.uuid);
+  assert.equal(annotation.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "local square edit");
+});
+
+test("copied winner preserves AP and NM while /P, popup /Parent and /IRT target destination refs", async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([420, 540]);
+  page.drawText("Stable page body for relationship test", { x: 24, y: 500, size: 12 });
+  const parentRef = addAnnotation(doc, 0, { subtype: "FreeText", nm: "Parent NM", contents: "parent", popup: true, appearance: "parent AP" });
+  const replyRef = addAnnotation(doc, 0, { subtype: "FreeText", nm: "Reply NM", contents: "reply base", irt: parentRef, appearance: "reply old AP" });
+  const baseBytes = await doc.save({ useObjectStreams: false });
+  const ids = await inspect({ bytes: baseBytes });
+  const replyIdentity = ids.identities.find((item) => item.ref === `${replyRef.objectNumber}R`);
+  assert.ok(replyIdentity);
+  const localDraft = await editBranch(baseBytes, replyRef, { contents: "reply local", appearance: "reply new AP" });
+  const local = await prepareLocal({
+    baseBytes,
+    draftBytes: localDraft.bytes,
+    actorId: "actor-local",
+    operations: [operation({ uuid: replyIdentity.uuid, ref: replyIdentity.ref, timestamp: 300, actorId: "actor-local", operationId: "reply-update" })],
+  });
+  const remoteDraft = await editBranch(baseBytes, null, {}, [{ subtype: "Highlight", nm: "Remote highlight", contents: "remote branch" }]);
+  const remote = await prepareLocal({
+    baseBytes,
+    draftBytes: remoteDraft.bytes,
+    actorId: "actor-remote",
+    newAnnotations: [{ runtimeId: "h1", uuid: "remote-highlight", pageIndex: 0, kind: "highlight", order: 0 }],
+    operations: [operation({ uuid: "remote-highlight", ref: null, kind: "highlight", timestamp: 250, actorId: "actor-remote", operationId: "create-highlight" })],
+  });
+  const merged = await merge({ baseBytes, localBytes: local.bytes, remoteBytes: remote.bytes });
+  const result = await PDFDocument.load(merged.bytes, { updateMetadata: false });
+  const pageRefInResult = result.getPages()[0].ref.toString();
+  const reply = await getAnnotation(merged.bytes, replyIdentity.uuid);
+  assert.equal(reply.dict.lookup(PDFName.of("NM"), PDFHexString).decodeText(), "Reply NM");
+  assert.equal(reply.dict.get(PDFName.of("P")).toString(), pageRefInResult);
+  const targetId = ids.identities.find((item) => item.ref === `${parentRef.objectNumber}R`).uuid;
+  const target = await getAnnotation(merged.bytes, targetId);
+  const popupRef = target.dict.get(PDFName.of("Popup"));
+  const popup = result.context.lookup(popupRef, PDFDict);
+  assert.equal(popup.get(PDFName.of("Parent")).toString(), target.ref.toString());
+  assert.equal(popup.get(PDFName.of("P")).toString(), pageRefInResult);
+  assert.equal(reply.dict.get(PDFName.of("IRT")).toString(), target.ref.toString());
+  const appearanceRef = reply.dict.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
+  const appearance = result.context.lookup(appearanceRef, PDFRawStream);
+  assert.match(new TextDecoder().decode(appearance.getContents()), /reply new AP/);
+});
+
+test("tagged annotation update is copied only when the structure-tree association is unchanged", async () => {
+  const base = await makeBase({
+    taggedRoot: true,
+    annotations: [
+      { subtype: "FreeText", contents: "tagged base", structParent: 4 },
+      { subtype: "Square", contents: "untagged peer" },
+    ],
+  });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const tagged = baseInfo.identities.find((item) => item.kind === "freetext");
+  const peer = baseInfo.identities.find((item) => item.kind === "square");
+  const localDraft = await editBranch(base.bytes, refFromPdfJs(tagged.ref), { contents: "tagged changed safely" });
+  const local = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: localDraft.bytes,
+    actorId: "actor-tagged",
+    operations: [operation({ uuid: tagged.uuid, ref: tagged.ref, timestamp: 300, actorId: "actor-tagged", operationId: "tagged-update" })],
+  });
+  const remoteDraft = await editBranch(base.bytes, refFromPdfJs(peer.ref), { contents: "peer remote change" });
+  const remote = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: remoteDraft.bytes,
+    actorId: "actor-peer",
+    operations: [operation({ uuid: peer.uuid, ref: peer.ref, kind: "square", timestamp: 250, actorId: "actor-peer", operationId: "peer-update" })],
+  });
+  const merged = await merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes: remote.bytes });
+  const mergedTagged = await getAnnotation(merged.bytes, tagged.uuid);
+  assert.equal(mergedTagged.dict.lookup(PDFName.of("StructParent"), PDFNumber).asNumber(), 4);
+  assert.equal(mergedTagged.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "tagged changed safely");
+
+  const changedTreeDoc = await PDFDocument.load(local.bytes, { updateMetadata: false });
+  changedTreeDoc.catalog.lookup(PDFName.of("StructTreeRoot"), PDFDict).set(PDFName.of("K"), numberArray(changedTreeDoc, [99]));
+  const changedTreeBytes = await changedTreeDoc.save({ useObjectStreams: false });
+  await assert.rejects(
+    merge({ baseBytes: base.bytes, localBytes: changedTreeBytes, remoteBytes: remote.bytes }),
+    (error) => error.code === "PDF_MERGE_TAGGED_STRUCTURE_TREE_UNSAFE",
+  );
+});
+
+test("new tagged annotation merge fails closed only when branches require a structure-tree merge", async () => {
+  const base = await makeBase();
+  const localDraftDoc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  localDraftDoc.catalog.set(PDFName.of("StructTreeRoot"), localDraftDoc.context.register(PDFDict.withContext(localDraftDoc.context)));
+  const taggedRef = addAnnotation(localDraftDoc, 0, { subtype: "FreeText", contents: "tagged new", structParent: 0 });
+  const localDraft = await localDraftDoc.save({ useObjectStreams: false });
+  const local = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: localDraft,
+    actorId: "actor-local",
+    newAnnotations: [{ runtimeId: "tagged-runtime", uuid: "tagged-new", pageIndex: 0, kind: "freetext", order: 0 }],
+    operations: [operation({ uuid: "tagged-new", ref: null, kind: "freetext", timestamp: 100, actorId: "actor-local", operationId: "tagged-create" })],
+  });
+  const remoteDraft = await editBranch(base.bytes, null, {}, [{ subtype: "Square", contents: "remote square" }]);
+  const remote = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: remoteDraft.bytes,
+    actorId: "actor-remote",
+    newAnnotations: [{ runtimeId: "square-runtime", uuid: "remote-square", pageIndex: 0, kind: "square", order: 0 }],
+    operations: [operation({ uuid: "remote-square", ref: null, kind: "square", timestamp: 101, actorId: "actor-remote", operationId: "square-create" })],
+  });
+  await assert.rejects(
+    merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes: remote.bytes }),
+    (error) => error.code === "PDF_MERGE_TAGGED_STRUCTURE_TREE_UNSAFE",
+  );
+  assert.ok(taggedRef instanceof PDFRef);
+});
+
+test("a concurrent tagged-annotation delete fails closed instead of leaving a dangling structure-tree item", async () => {
+  const base = await makeBase({
+    taggedRoot: true,
+    annotations: [
+      { subtype: "FreeText", contents: "tagged target", structParent: 4 },
+      { subtype: "Square", contents: "independent peer" },
+    ],
+  });
+  const identities = (await inspect({ bytes: base.bytes })).identities;
+  const tagged = identities.find((item) => item.kind === "freetext");
+  const peer = identities.find((item) => item.kind === "square");
+  const deleteDraft = await editBranch(base.bytes, refFromPdfJs(tagged.ref), { remove: true });
+  const localDelete = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: deleteDraft.bytes,
+    actorId: "actor-delete",
+    operations: [operation({ uuid: tagged.uuid, ref: tagged.ref, timestamp: 100, actorId: "actor-delete", operationId: "tagged-delete", action: "delete" })],
+  });
+  const remoteDraft = await editBranch(base.bytes, refFromPdfJs(peer.ref), { contents: "remote peer change" });
+  const remote = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: remoteDraft.bytes,
+    actorId: "actor-remote",
+    operations: [operation({ uuid: peer.uuid, ref: peer.ref, kind: "square", timestamp: 100, actorId: "actor-remote", operationId: "peer-update" })],
+  });
+  await assert.rejects(
+    merge({ baseBytes: base.bytes, localBytes: localDelete.bytes, remoteBytes: remote.bytes }),
+    (error) => error.code === "PDF_MERGE_TAGGED_STRUCTURE_TREE_UNSAFE" && /Keep the local checkpoint/.test(error.message),
+  );
+});
+
+test("delete operations must identify the loaded annotation reference, page, and kind", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", contents: "target" }] });
+  const identity = (await inspect({ bytes: base.bytes })).identities.find((item) => item.kind === "freetext");
+  const draft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { remove: true });
+  for (const changes of [
+    { ref: "999R" },
+    { pageIndex: 1 },
+    { kind: "square" },
+  ]) {
+    await assert.rejects(
+      prepareLocal({
+        baseBytes: base.bytes,
+        draftBytes: draft.bytes,
+        actorId: "actor-delete",
+        operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 100, actorId: "actor-delete", operationId: "delete-exact", action: "delete", ...changes })],
+      }),
+      (error) => ["PDF_MERGE_OPERATION_IDENTITY_MISMATCH", "PDF_MERGE_PAGE_MOVE_UNSUPPORTED"].includes(error.code),
+    );
+  }
+});
+
+test("legacy inspect is deterministic and page-content changes fail closed", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Underline", contents: "legacy" }] });
+  const first = await inspect({ bytes: base.bytes });
+  const second = await inspect({ bytes: base.bytes });
+  assert.equal(first.documentId, second.documentId);
+  assert.deepEqual(first.identities, second.identities);
+  assert.match(first.identities[0].uuid, /^legacy-[a-f0-9]{32}$/);
+
+  const changed = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  changed.getPages()[0].drawText("body changed", { x: 10, y: 10 });
+  await assert.rejects(
+    prepareLocal({ baseBytes: base.bytes, draftBytes: await changed.save({ useObjectStreams: false }), actorId: "actor" }),
+    (error) => error.code === "PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED",
+  );
+});
+
+test("creation stamps are mandatory and equal-clock ties use actor/op identity", async () => {
+  const base = await makeBase();
+  const draft = await editBranch(base.bytes, null, {}, [{ subtype: "Ink", contents: "new ink" }]);
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: draft.bytes,
+      actorId: "actor-a",
+      newAnnotations: [{ runtimeId: "ink-runtime", uuid: "ink-uuid", pageIndex: 0, kind: "ink", order: 0 }],
+      operations: [],
+    }),
+    (error) => error.code === "PDF_MERGE_MISSING_CREATION_OPERATION",
+  );
+
+  const original = await makeBase({ annotations: [{ subtype: "FreeText", contents: "base" }] });
+  const identity = (await inspect({ bytes: original.bytes })).identities.find((item) => item.kind === "freetext");
+  async function branch(content, actorId) {
+    const changed = await editBranch(original.bytes, refFromPdfJs(identity.ref), { contents: content });
+    return prepareLocal({
+      baseBytes: original.bytes,
+      draftBytes: changed.bytes,
+      actorId,
+      operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 200, actorId, operationId: "same-wall-op", })],
+    });
+  }
+  const local = await branch("actor a", "actor-a");
+  const remote = await branch("actor z", "actor-z");
+  const merged = await merge({ baseBytes: original.bytes, localBytes: local.bytes, remoteBytes: remote.bytes });
+  const winner = await getAnnotation(merged.bytes, identity.uuid);
+  assert.equal(winner.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "actor z");
+});

@@ -1,8 +1,16 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.4.0），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.0），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
 
-## 当前：0.1general 通用候选（插件 0.4.0）
+## 当前：0.1general 0.5.0 资源加速与跨端合并
+
+本轮从 `ad05bb1` 接续。布局就绪后预热资源，最多四项并行，已有缓存先校验，仅缺失或损坏资源解压；同一插件实例复用成功准备结果及已验证模块字节。冻结 Viewer 不裁剪，402 个 vendor 文件未变，运行时 406 项。只新增锁定 pdf-lib 1.17.1 与内嵌许可证，独立浏览器 Worker 按需处理合并，不引入运行时 Node/Electron。
+
+共用核心监听当前打开 PDF 的修改事件，并在前台及视图激活补查。本地未保存操作及已确认检查点均参与 UUID 合并；整条批注按有效编辑完成的时间戳、逻辑序号与设备／操作 ID 排序，删除记录写入 PDF。写前恢复、磁盘复核、写后验证和新修订保护保留。确认后在同一个 Viewer 刷新并恢复阅读状态和工具，撤销栈随文档替换重置。加密、页面结构变化、身份无法证明时暂停并恢复，不强行覆盖。
+
+最新验证、候选包、耗时及未解决项以 GENERAL_ACCEPTANCE.md 的 0.5.0 章节为准。仅使用指定独立测试库；Windows 与 iPad 实机仍待用户验收。保留 0.4.0 回滚包；不创建 Release、不部署主库、不继续扩展 Chrome teardown 调查。
+
+## 历史：0.1general 通用候选（插件 0.4.0）
 
 开发起点源码为 40b1f09，包含 Windows c52e522 与 macOS 1034e0e 的工作。Windows、macOS、iPadOS 共用核心和同一发布包；插件运行时只使用 Obsidian 与标准浏览器 API，不依赖 Node/Electron。冻结 PDF.js Viewer 的 402 个文件保持不变，运行时资源共 404 项。插件 onload 时根据 Obsidian 平台状态一次性选择桌面或移动入口：桌面入口使用资源 URL 与弹窗协调，移动入口使用 Blob 模块／Worker 路径且不安装桌面弹窗协调。保存、恢复、编辑和指针行为使用共享代码。该实现说明不构成实体设备兼容性证明；目前不声称 Windows 或 iPad 实机验收通过；当前候选、证据及哈希见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)。
 

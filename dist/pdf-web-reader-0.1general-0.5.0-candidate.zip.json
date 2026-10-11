@@ -1,0 +1,26 @@
+{
+  "artifact": "dist/pdf-web-reader-0.1general-0.5.0-candidate.zip",
+  "version": "0.5.0",
+  "isDesktopOnly": false,
+  "sha256": "32354f8dcb5f4dd271b7214781caffcb00d2a85dd9b2d9df0ebbf1178a3ef804",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6800445,
+      "sha256": "e81b82a978aa4936acf1f2424fa87956f7853c784033c61add6fef51933f7d3d"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "1d05c30ff4e4e09c509518df31be814d1e2b268a7f5236b702f1fdcb94fff464"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "verifiedExactThreeFiles": true,
+  "physicalWindowsValidated": false,
+  "physicalIpadValidated": false
+}

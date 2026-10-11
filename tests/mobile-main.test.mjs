@@ -236,12 +236,14 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
           contentHash: payload.contentHash,
         }) };
       }
+      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);
     },
     URL: TestURL,
     Blob,
     TextEncoder,
+    TextDecoder,
     setTimeout,
     clearTimeout,
     console,

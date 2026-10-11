@@ -6,27 +6,22 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.4.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The frozen complete default run finished with all product function assertions
-passing (133 total; 131 passed and 2 test-process cleanup statuses failed).
-The toolbar's external-signal cleanup and FreeText child exit code 2 are tracked
-as test-infrastructure anomalies and do not negate the functional result. The
-designated Mac test-vault functional checks are complete: the lifecycle suite
-passed 19/19, and all mobile-control feature assertions passed. That controls
-report remains marked `incomplete` because its final `emulateMobile(false)`
-cleanup returned `Promise was collected`; it is not reported as a fully passed
-script run. The candidate meets the revised functional acceptance gate, while
-Windows and iPad physical-device acceptance remain pending. Candidate ZIPs,
-hashes, and evidence are recorded in
-[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md#冻结默认全套与候选文件). It is
-approved for the normal push to `main`; no release or main-vault deployment is
-planned. The actual commit is recorded in Git history.
+Version 0.5.0 reuses validated Viewer resources across Readers and prepares them
+in the background after the workspace layout is ready. Open PDFs receive
+external modifications and reconcile local annotation operations before an
+in-place refresh. Validation, timings, limitations and candidate hashes are
+recorded in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md). Windows and iPad
+physical-device acceptance remain pending. The 0.4.0 package is retained for
+rollback; its historical cleanup anomalies remain recorded separately from
+product assertions. Delivery is limited to the designated test vault and a
+normal push to `main`, without a GitHub Release or main-vault deployment.
 
 ## Install: exactly three release files
 
@@ -44,13 +39,18 @@ Put only those three files into
 The default configuration directory is `.obsidian`, but the plugin uses
 Obsidian's actual `Vault.configDir` rather than assuming that name.
 
-The complete Viewer is compressed and embedded in `main.js`. On first PDF
-open, the plugin verifies and extracts its own resources into a content-hash
+The complete Viewer is compressed and embedded in `main.js`. After layout is
+ready, the plugin prepares its own resources without constructing background
+Reader views. Opening a PDF first joins the same task. Resources use a content-hash
 versioned directory under its plugin folder using Obsidian's Adapter API.
 Missing or corrupted resource files are restored from the shipped payload;
 no files are fetched from the network. Existing version directories are not
 deleted automatically. A completed extraction is marked only after all files
-have been verified. A failed extraction can be retried.
+have been verified. At most four resource operations run together. Valid disk
+files are checked before decompressing; only missing or damaged files are
+repaired. Successful preparation and verified HTML/CSS/mobile script bytes are
+reused for that plugin instance. Reloading the plugin validates disk resources
+again. A failed preparation invalidates the reusable result and can be retried.
 
 **Three files is the distribution constraint, not a permanent disk-file-count
 constraint.** Runtime extraction creates the local Viewer files and a
@@ -60,14 +60,15 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.4.0 candidate uses one source and one three-file package for Windows, macOS,
+0.5.0 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
 The desktop entry uses Obsidian resource URLs and popout coordination; the mobile
 entry uses blob-backed module and Worker paths without desktop popout
 coordination. Editing, save/recovery, and pointer logic are shared. The 402-file
-frozen Viewer is unchanged, and the packaged runtime contains 404 assets.
+frozen Viewer is unchanged, and the packaged runtime contains 406 assets,
+including the lazy browser merge Worker and its third-party notices.
 
 These implementation details do not establish physical-device acceptance.
 Windows and iPad device acceptance remain pending, and desktop mobile emulation
@@ -136,9 +137,27 @@ revision becomes clean; edits made during a save remain pending. Disabling auto-
 prevents new requests; host-accepted writes finish in order.
 
 The host checks the current disk bytes before overwriting and keeps a recovery
-candidate first. A conflict or failure pauses automatic overwrites. Use
+candidate first. Open PDFs react to Vault modification notifications, with
+foreground and Reader-activation checks for missed notifications. Local edits
+and already-saved local contributions are reconciled against the incoming PDF;
+different annotation UUIDs are retained, while the newest completed operation
+wins a same-UUID conflict. Timestamps use UTC milliseconds plus logical,
+device and operation identifiers. UUIDs and durable deletion records are stored
+inside the PDF; existing standard `/NM` fields are preserved. Device clock skew
+can affect the winner, although the ordering is deterministic.
+
+Drawing, dragging, erasing and composition finish before a checkpoint is taken.
+A newer revision cannot be replaced by an older merge. Refresh stays in the
+same Viewer and preserves page, zoom, rotation, scroll position and tool choice;
+the previous PDF object's undo history ends at this refresh. No local edits
+means a direct refresh, without writing migration metadata just for opening.
+Unsupported page/content changes, unproven identities, encrypted or damaged
+PDFs, and unsafe tagged-annotation transfers pause automatic merging. Local
+checkpoints are retained; newer records can also preserve a replaced local
+version. Disk comparison and writing are separate operations and still have a
+sync race window. A conflict or failure pauses automatic overwrites. Use
 **恢复最近的 PDF 自动保存副本** to recover into a separate PDF under
-`PDF Recovery/`; inspect and merge it yourself. Recovery requires a successful
+`PDF Recovery/`. Recovery requires a successful
 candidate write and cannot protect against process termination before that point.
 Renaming or moving an open PDF retains its document identity and updates its
 save target. A controlled close waits for automatic saves when enabled; disabled
@@ -178,7 +197,7 @@ Each plugin load selects one platform entry from Obsidian's platform state;
 changing the Mac mobile-emulation state requires reloading the plugin. The mobile
 entry does not install desktop popout coordination.
 
-- `plugin/`: Obsidian host and embedded-resource runtime source.
+- `plugin/`: Obsidian host, resource cache, sync coordinator and lazy PDF merge Worker/client.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
 - `vendor/pdfjs-generic-legacy/`: complete frozen PDF.js Viewer snapshot.
 - `scripts/`: deterministic packaging and safe deployment.
@@ -277,11 +296,14 @@ and disables focus emulation in `finally`. Its report identifies this as
 background focus-emulated testing, not an OS-foreground test. It does not
 change PDF permissions, browser security settings, or production plugin code.
 
-The clean-install check refuses a pre-existing extracted cache. It verifies
-first-use extraction of all 404 assets, a real Worker, five enabled tools,
+The historical 0.4.0 clean-install check refuses a pre-existing extracted cache. It verifies
+first-use extraction of its 404 assets, a real Worker, five enabled tools,
 offline operation with HTTP/WebSocket requests temporarily blocked, and
 recovery of a deliberately corrupted test-owned cache icon. It leaves the
 plugin enabled, the test PDF intact, and closes only its own saved test tab.
+The 0.5.0 cold/prewarmed/second-Reader and synchronization checks use the
+identity-guarded harness retained with the current evidence package; results
+and its 406-resource count are recorded in GENERAL_ACCEPTANCE.md.
 
 ## Release and compatibility notes
 

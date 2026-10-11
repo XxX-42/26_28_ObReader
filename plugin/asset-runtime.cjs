@@ -7,8 +7,28 @@ const { sha256 } = require("@noble/hashes/sha2");
 
 const MAX_FILE_SIZE = 128 * 1024 * 1024;
 const MAX_TOTAL_SIZE = 512 * 1024 * 1024;
+const MAX_CONCURRENT_ASSET_OPERATIONS = 4;
 const activeLocks = new WeakMap();
+const directoryLocks = new WeakMap();
 const encoder = new TextEncoder();
+let activeAssetOperations = 0;
+const waitingAssetOperations = [];
+
+async function withAssetOperationSlot(operation, shouldRun) {
+  if (activeAssetOperations >= MAX_CONCURRENT_ASSET_OPERATIONS) {
+    await new Promise((resolve) => waitingAssetOperations.push(resolve));
+  } else {
+    activeAssetOperations += 1;
+  }
+  try {
+    if (!shouldRun()) return;
+    return await operation();
+  } finally {
+    const next = waitingAssetOperations.shift();
+    if (next) next();
+    else activeAssetOperations -= 1;
+  }
+}
 
 function comparePaths(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -316,15 +336,64 @@ function assertAdapter(adapter) {
   }
 }
 
-async function ensureDirectory(adapter, directoryPath) {
-  const segments = directoryPath.split("/");
-  let currentPath = "";
-  for (const segment of segments) {
-    currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-    if (!(await adapter.exists(currentPath))) {
-      await adapter.mkdir(currentPath);
-    }
+function ensureDirectory(adapter, directoryPath) {
+  let adapterLocks = directoryLocks.get(adapter);
+  if (!adapterLocks) {
+    adapterLocks = new Map();
+    directoryLocks.set(adapter, adapterLocks);
   }
+  const pending = adapterLocks.get(directoryPath);
+  if (pending) return pending;
+
+  const separator = directoryPath.lastIndexOf("/");
+  const parentPath = separator < 0 ? "" : directoryPath.slice(0, separator);
+  const creation = Promise.resolve()
+    .then(async () => {
+      if (parentPath) await ensureDirectory(adapter, parentPath);
+      if (!(await adapter.exists(directoryPath))) {
+        await adapter.mkdir(directoryPath);
+      }
+    })
+    .finally(() => {
+      if (adapterLocks.get(directoryPath) === creation) {
+        adapterLocks.delete(directoryPath);
+      }
+      if (adapterLocks.size === 0) directoryLocks.delete(adapter);
+    });
+  adapterLocks.set(directoryPath, creation);
+  return creation;
+}
+
+async function forEachConcurrent(items, operation) {
+  let nextIndex = 0;
+  let firstError;
+  let hasError = false;
+  const workerCount = Math.min(
+    MAX_CONCURRENT_ASSET_OPERATIONS,
+    items.length,
+  );
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!hasError) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      try {
+        await withAssetOperationSlot(
+          () => operation(items[index], index),
+          () => !hasError,
+        );
+      } catch (error) {
+        if (!hasError) {
+          hasError = true;
+          firstError = error;
+        }
+      }
+    }
+  });
+  // Promise.all waits for every already-started operation. This is important
+  // before the caller removes the marker after a failed write.
+  await Promise.all(workers);
+  if (hasError) throw firstError;
 }
 
 async function fileMatches(adapter, fullPath, expected) {
@@ -358,37 +427,72 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
   const verifiedPayload = validatePayload(payload);
   const rootPath = `${pluginRoot}/.asset-cache/${verifiedPayload.id}/${verifiedPayload.contentHash}`;
   const markerPath = `${rootPath}/.complete.json`;
-
-  // Remove the marker before reading or repairing any asset. If decompression,
-  // a vault write, or final verification fails, the partial tree stays uncommitted.
-  if (await adapter.exists(markerPath)) {
-    await adapter.remove(markerPath);
-  }
+  const expectedMarker = markerContent(verifiedPayload);
+  const startedAt = Date.now();
+  const metrics = {
+    cacheHit: false,
+    checkedFiles: verifiedPayload.files.length,
+    verificationReads: 0,
+    decodedFiles: 0,
+    repairedFiles: 0,
+    decodedBytes: 0,
+    bytesWritten: 0,
+  };
 
   try {
-    for (const file of verifiedPayload.files) {
-      const bytes = await decodePayloadFile(file);
+    const markerExists = await adapter.exists(markerPath);
+    const markerIsCurrent =
+      markerExists && (await adapter.read(markerPath)) === expectedMarker;
+    const repair = new Array(verifiedPayload.files.length).fill(false);
+    await forEachConcurrent(verifiedPayload.files, async (file, index) => {
       const fullPath = `${rootPath}/${file.path}`;
-      const expected = { size: file.size, sha256: file.sha256 };
-      const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
-      await ensureDirectory(adapter, parentPath);
-      if (!(await fileMatches(adapter, fullPath, expected))) {
-        await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
-        if (!(await fileMatches(adapter, fullPath, expected))) {
-          throw new Error(
-            `Viewer asset failed verification after writing: ${file.path}`,
-          );
-        }
-      }
+      metrics.verificationReads += 1;
+      repair[index] = !(await fileMatches(adapter, fullPath, file));
+    });
+
+    if (markerIsCurrent && repair.every((isDamaged) => !isDamaged)) {
+      metrics.cacheHit = true;
+      metrics.elapsedMs = Date.now() - startedAt;
+      return {
+        rootPath,
+        webRoot: `${rootPath}/web`,
+        version: verifiedPayload.id,
+        contentHash: verifiedPayload.contentHash,
+        metrics,
+      };
     }
 
+    // Keep a completion marker only for a fully verified cache. A stale marker
+    // is removed before any repair begins, and any failure leaves it absent.
+    if (markerExists) await adapter.remove(markerPath);
+
+    await forEachConcurrent(verifiedPayload.files, async (file, index) => {
+      if (!repair[index]) return;
+      const bytes = await decodePayloadFile(file);
+      metrics.decodedFiles += 1;
+      metrics.decodedBytes += bytes.byteLength;
+      const fullPath = `${rootPath}/${file.path}`;
+      const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
+      await ensureDirectory(adapter, parentPath);
+      await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+      metrics.bytesWritten += bytes.byteLength;
+      metrics.repairedFiles += 1;
+      metrics.verificationReads += 1;
+      if (!(await fileMatches(adapter, fullPath, file))) {
+        throw new Error(
+          `Viewer asset failed verification after writing: ${file.path}`,
+        );
+      }
+    });
+
     // Recheck the complete tree before committing the completion marker.
-    for (const file of verifiedPayload.files) {
+    await forEachConcurrent(verifiedPayload.files, async (file) => {
+      metrics.verificationReads += 1;
       if (!(await fileMatches(adapter, `${rootPath}/${file.path}`, file))) {
         throw new Error(`Viewer asset is missing or damaged: ${file.path}`);
       }
-    }
-    await adapter.write(markerPath, markerContent(verifiedPayload));
+    });
+    await adapter.write(markerPath, expectedMarker);
   } catch (error) {
     // Some adapters may report a marker write error after creating the file.
     try {
@@ -401,11 +505,13 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
     throw error;
   }
 
+  metrics.elapsedMs = Date.now() - startedAt;
   return {
     rootPath,
     webRoot: `${rootPath}/web`,
     version: verifiedPayload.id,
     contentHash: verifiedPayload.contentHash,
+    metrics,
   };
 }
 
