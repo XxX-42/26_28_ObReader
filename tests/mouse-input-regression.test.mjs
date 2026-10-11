@@ -1,3 +1,4 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
@@ -9,12 +10,15 @@ import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   attachCleanupErrors,
   cleanupBrowserTestResources,
+  observeBrowserTestChildStderr,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
-const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
+const bridgePath = process.env.PDF_MOUSE_BRIDGE_SOURCE
+  ? path.resolve(process.env.PDF_MOUSE_BRIDGE_SOURCE)
+  : path.join(root, "viewer-adapter", "obsidian-bridge.js");
 const bridgeCssPath = path.join(root, "viewer-adapter", "bridge.css");
 const viewerHtmlPath = path.join(
   root,
@@ -189,13 +193,16 @@ test(
     let viewer;
     let primaryError;
     let cleanupReport;
+    let browserStderrObserver;
+    const artifactId = `${Date.now()}-${process.pid}`;
     try {
 
-    browser = await puppeteer.launch({
+    browser = await launchTestBrowser(puppeteer, {
       executablePath: browserPath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    });
+    }, { testName: "mouse-input-regression" });
+    browserStderrObserver = observeBrowserTestChildStderr(browser.process?.());
     page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 1000 });
     const pageErrors = [];
@@ -224,6 +231,7 @@ test(
     await viewer.evaluate(() => {
       window.__trustedMouseEvents = [];
       window.__keyboardFocusEvents = [];
+      window.__mouseAnnotationModeEvents = [];
       window.__pdfEditorMoveCalls = [];
       window.__pdfEditorMoveEvents = [];
       window.__mouseTestMilestones = {};
@@ -258,7 +266,16 @@ test(
             documentHasFocus:document.hasFocus(),
           };
           if (event.type === "focusout") {
-            sample.stack = new Error().stack?.split("\n").slice(1, 12) || [];
+            const previousStackTraceLimit = Error.stackTraceLimit;
+            Error.stackTraceLimit = 40;
+            try {
+              sample.stack = (new Error().stack?.split("\n").slice(1, 41) || []).filter(
+                (line, index) => index < 2 ||
+                  /pdf\.mjs|viewer\.mjs|obsidian-bridge\.js/.test(line),
+              );
+            } finally {
+              Error.stackTraceLimit = previousStackTraceLimit;
+            }
           }
           if (event.type === "keydown" || event.type === "keyup") {
             sample.keyCode = event.keyCode || 0;
@@ -302,9 +319,33 @@ test(
           }
         },
       );
+      window.PDFViewerApplication?.eventBus?.on?.(
+        "annotationeditormodechanged",
+        ({ mode, source, isFromKeyboard, isTemporary }) => {
+          const time = Math.round(performance.now());
+          const pending = window.__mousePendingAnnotationMode;
+          if (pending?.requestedMode === mode) {
+            pending.completed = true;
+            pending.completedAt = time;
+            pending.getterModeAtCompletion =
+              window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null;
+          }
+          window.__mouseAnnotationModeEvents.push({
+            time,
+            mode,
+            source:source?.constructor?.name || null,
+            isFromKeyboard:Boolean(isFromKeyboard),
+            isTemporary:Boolean(isTemporary),
+            pendingRequestId:pending?.requestedMode === mode ? pending.id : null,
+          });
+          if (window.__mouseAnnotationModeEvents.length > 64) {
+            window.__mouseAnnotationModeEvents.shift();
+          }
+        },
+      );
       window.__installPdfEditorMoveTrace = () => {
-        const editorLayer = window.PDFViewerApplication?.pdfViewer?._layerProperties
-          ?.annotationEditorUIManager?.currentLayer;
+        const pageView = window.PDFViewerApplication?.pdfViewer?.getPageView(0);
+        const editorLayer = pageView?.annotationEditorLayer?.annotationEditorLayer;
         const originalMoveEditorInDOM = editorLayer?.moveEditorInDOM;
         if (typeof originalMoveEditorInDOM !== "function") return false;
         if (originalMoveEditorInDOM.__mouseTestTraced) return true;
@@ -444,19 +485,69 @@ test(
         return bounds;
       }, includeHandle);
     const setSquareMode = async (mode) => {
-      const currentMode = await viewer.evaluate(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode,
-      );
-      if (currentMode === mode) return;
+      let state = await viewer.evaluate(() => ({
+        currentMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+        pending:window.__mousePendingAnnotationMode || null,
+      }));
+      if (state.pending && !state.pending.completed) {
+        await waitForAnnotationModeChange(
+          state.pending.requestedMode,
+          state.pending,
+          8_000,
+        );
+        state = await viewer.evaluate(() => ({
+          currentMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+          pending:window.__mousePendingAnnotationMode || null,
+        }));
+      }
+      if (state.currentMode === mode) return;
+      const currentMode = state.currentMode;
       if (![0, 5].includes(currentMode) || ![0, 5].includes(mode)) {
         throw new Error(`Unexpected annotation editor mode transition ${currentMode} → ${mode}`);
       }
+      const request = await beginAnnotationModeChange(mode);
       await click("#editorSquareButton");
+      await noteAnnotationModeClickReturned(request.id);
+      await waitForAnnotationModeChange(mode, request, 8_000);
+    };
+    const beginAnnotationModeChange = async (mode) => viewer.evaluate((requestedMode) => {
+      const request = {
+        id:(window.__mouseAnnotationModeRequestId || 0) + 1,
+        requestedMode,
+        startedAt:Math.round(performance.now()),
+        startMode:window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null,
+        eventCount:window.__mouseAnnotationModeEvents.length,
+        completed:false,
+      };
+      window.__mouseAnnotationModeRequestId = request.id;
+      window.__mousePendingAnnotationMode = request;
+      return { ...request };
+    }, mode);
+    const noteAnnotationModeClickReturned = async (requestId) => viewer.evaluate((id) => {
+      const request = window.__mousePendingAnnotationMode;
+      if (request?.id !== id) return;
+      request.clickReturnedAt = Math.round(performance.now());
+      request.getterModeAtClickReturn =
+        window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null;
+      request.completedAtClickReturn = request.completed;
+    }, requestId);
+    const waitForAnnotationModeChange = async (mode, request, timeout = 8_000) => {
       await viewer.waitForFunction(
-        (expectedMode) =>
-          PDFViewerApplication.pdfViewer.annotationEditorMode === expectedMode,
-        { timeout: 8_000 },
-        mode,
+        ({ expectedMode, requestId, priorEventCount }) => {
+          const pending = window.__mousePendingAnnotationMode;
+          return PDFViewerApplication.pdfViewer.annotationEditorMode === expectedMode &&
+            pending?.id === requestId && pending.completed === true &&
+            window.__mouseAnnotationModeEvents
+              .slice(priorEventCount)
+              .some((event) => event.mode === expectedMode &&
+                event.pendingRequestId === requestId);
+        },
+        { timeout },
+        {
+          expectedMode:mode,
+          requestId:request.id,
+          priorEventCount:request.eventCount,
+        },
       );
     };
     const layerBounds = () =>
@@ -586,10 +677,10 @@ test(
       const rect = wheel?.getBoundingClientRect();
       return rect && Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2) <= 1;
     });
+    const initialSquareModeRequest = await beginAnnotationModeChange(5);
     await click('.pdfReaderBridgeClickWheel [data-sector="4"]');
-    await viewer.waitForFunction(
-      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
-    );
+    await noteAnnotationModeClickReturned(initialSquareModeRequest.id);
+    await waitForAnnotationModeChange(5, initialSquareModeRequest);
     assert.ok(
       await viewer.evaluate(
         () => document.getElementById("editorSquareParamsToolbar").classList.contains("hidden"),
@@ -705,7 +796,7 @@ test(
     await page.mouse.click(
       offset.x + squareHit.x,
       offset.y + squareHit.y,
-      { clickCount:2, delay:80 },
+      { count:2, delay:80 },
     );
     await viewer.waitForFunction(
       () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5 &&
@@ -950,7 +1041,9 @@ test(
 
     // Exercise PDF.js's trusted browser middle-button wheel and center-release
     // state: release at the center leaves the wheel open for a subsequent
-    // real click on a sector. The wheel remains vendor-owned.
+    // real click on a sector. Start in None mode so selecting Square is a real
+    // completed PDF.js mode transition, not a no-op re-selection.
+    await setSquareMode(0);
     const viewerCenter = await viewer.evaluate(() => {
       const rect = document.getElementById("viewerContainer").getBoundingClientRect();
       return { x:rect.left + rect.width * 0.72, y:rect.top + rect.height * 0.55 };
@@ -967,19 +1060,15 @@ test(
       )),
       { timeout: 5_000 },
     );
+    const middleWheelModeRequest = await beginAnnotationModeChange(5);
     await click('.pdfToolWheel:not(.pdfReaderBridgeClickWheel) button[aria-label="2 矩形框"]');
-    await viewer.waitForFunction(
-      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
-      { timeout: 5_000 },
-    );
+    await noteAnnotationModeClickReturned(middleWheelModeRequest.id);
+    await waitForAnnotationModeChange(5, middleWheelModeRequest, 5_000);
 
     // Wheel input on a native parameter input remains isolated from the
     // middle-button tool wheel and does not change the active PDF.js tool.
-    await click("#editorSquareButton");
-    await viewer.waitForFunction(
-      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
-    );
-    await click("#editorSquareButton");
+    await setSquareMode(0);
+    await setSquareMode(5);
     await viewer.waitForFunction(
       () =>
         PDFViewerApplication.pdfViewer.annotationEditorMode === 5 &&
@@ -1072,22 +1161,757 @@ test(
         PDFViewerApplication.pdfViewer.currentPageNumber;
     });
 
+    const pdfEditorLifecycleTraceState = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const pageView = pdfViewer?.getPageView(0);
+      const builder = pageView?.annotationEditorLayer;
+      const pageLayer = builder?.annotationEditorLayer;
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+      if (!pageView || !builder || !pageLayer || !manager) {
+        throw new Error("The page 1 annotation editor lifecycle is unavailable before FreeText creation");
+      }
+
+      const trace = window.__mousePdfEditorLifecycleTrace = [];
+      const instrumentedEditors = new WeakSet();
+      const tracedMethodsByTarget = new WeakMap();
+      const restores = [];
+      const traceContexts = new WeakMap();
+      const objectIdentities = new WeakMap();
+      let nextObjectIdentity = 1;
+      const objectIdentity = (object) => {
+        if (!object || (typeof object !== "object" && typeof object !== "function")) return null;
+        let identity = objectIdentities.get(object);
+        if (!identity) {
+          identity = nextObjectIdentity++;
+          objectIdentities.set(object, identity);
+        }
+        return identity;
+      };
+      window.__mouseObjectIdentity = objectIdentity;
+      const initialTraceContext = { app, pdfViewer, pageView, builder, pageLayer, manager };
+      traceContexts.set(pageView, initialTraceContext);
+      traceContexts.set(builder, initialTraceContext);
+      traceContexts.set(pageLayer, initialTraceContext);
+      window.__mousePdfEditorLifecycleTraceEnabled = true;
+      const viewportSummary = (viewport) => viewport ? {
+        rotation:viewport.rotation ?? null,
+        scale:viewport.scale ?? null,
+        width:viewport.width ?? null,
+        height:viewport.height ?? null,
+        offsetX:viewport.offsetX ?? null,
+        offsetY:viewport.offsetY ?? null,
+        viewBox:viewport.viewBox ? Array.from(viewport.viewBox) : null,
+        transform:viewport.transform ? Array.from(viewport.transform) : null,
+      } : null;
+      const boolMethod = (editor, method) => {
+        try {
+          return typeof editor?.[method] === "function"
+            ? Boolean(editor[method]())
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      const captureStack = () => {
+        const previousLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 40;
+        try {
+          return (new Error().stack?.split("\n").slice(1, 41) || []).filter(
+            (line, index) => index < 2 ||
+              /pdf\.mjs|viewer\.mjs|obsidian-bridge\.js/.test(line),
+          );
+        } finally {
+          Error.stackTraceLimit = previousLimit;
+        }
+      };
+      const elementSummary = (element) => {
+        if (!(element instanceof Element)) return null;
+        const style = getComputedStyle(element);
+        return {
+          tag:element.tagName || "",
+          id:element.id || "",
+          className:typeof element.className === "string" ? element.className : "",
+          hidden:Boolean(element.hidden),
+          connected:Boolean(element.isConnected),
+          display:style.display,
+          visibility:style.visibility,
+          opacity:style.opacity,
+          pointerEvents:style.pointerEvents,
+        };
+      };
+      const record = (method, receiver, args, contextOverride = null) => {
+        if (!window.__mousePdfEditorLifecycleTraceEnabled) return;
+        const context = contextOverride || traceContexts.get(receiver) || initialTraceContext;
+        const {
+          app:traceApp,
+          pdfViewer:tracePdfViewer,
+          pageView:tracePageView,
+          builder:traceBuilder,
+          pageLayer:tracePageLayer,
+          manager:traceManager,
+        } = context;
+        const active = document.activeElement;
+        const activeEditorElement = active instanceof Element
+          ? active.closest(".freeTextEditor")
+          : null;
+        const activeEditor = activeEditorElement &&
+          traceManager.getEditor?.(activeEditorElement.id);
+        const targetEditor = receiver?.editorType
+          ? receiver
+          : args.find?.((argument) => argument?.editorType) || null;
+        const targetElement = targetEditor?.div;
+        const parameters = args[0];
+        trace.push({
+          time:Math.round(performance.now()),
+          method,
+          callArgs:method.startsWith("pageView.update")
+            ? {
+                scale:parameters?.scale ?? null,
+                rotation:parameters?.rotation ?? null,
+                drawingDelay:parameters?.drawingDelay ?? null,
+              }
+            : method.startsWith("pageView.reset")
+              ? { options:parameters || {} }
+              : method.startsWith("layer.pause")
+                ? { paused:Boolean(parameters) }
+              : null,
+          documentIdentity:objectIdentity(traceApp.pdfDocument),
+          pageViewIdentity:objectIdentity(tracePageView),
+          builderIdentity:objectIdentity(traceBuilder),
+          pageLayerIdentity:objectIdentity(tracePageLayer),
+          receiverIdentity:objectIdentity(receiver),
+          pageIndex:tracePageView.id - 1,
+          builderPageIndex:traceBuilder.pageIndex,
+          pageViewRenderingState:tracePageView.renderingState,
+          pageLayerConnected:Boolean(tracePageLayer.div?.isConnected),
+          pdfViewerScale:tracePdfViewer.currentScale ?? null,
+          pdfViewerRotation:tracePdfViewer.pagesRotation ?? null,
+          pageViewPresentation:viewportSummary(tracePageView.viewport),
+          pageViewElement:elementSummary(tracePageView.div),
+          builderElement:elementSummary(traceBuilder.div),
+          editorLayerElement:elementSummary(tracePageLayer.div),
+          documentVisibility:document.visibilityState,
+          documentHasFocus:document.hasFocus(),
+          managerCurrentPageIndex:traceManager.currentPageIndex ?? null,
+          managerCurrentLayerPageIndex:traceManager.currentLayer?.pageIndex ?? null,
+          managerCurrentLayerMatchesPage:Boolean(traceManager.currentLayer === tracePageLayer),
+          activeElement:active ? {
+            tag:active.tagName || "",
+            id:active.id || "",
+            className:typeof active.className === "string" ? active.className : "",
+            editable:Boolean(active.isContentEditable),
+          } : null,
+          activeEditor:activeEditor ? {
+            id:activeEditor.id,
+            pageIndex:activeEditor.pageIndex,
+            parentPageIndex:activeEditor.parent?.pageIndex ?? null,
+            parentMatchesPageLayer:activeEditor.parent === tracePageLayer,
+            attached:Boolean(activeEditor.isAttachedToDOM),
+            selected:Boolean(activeEditor.div?.classList.contains("selectedEditor")),
+            editing:boolMethod(activeEditor, "isInEditMode"),
+            empty:boolMethod(activeEditor, "isEmpty"),
+          } : null,
+          targetEditor:targetEditor ? {
+            id:targetEditor.id,
+            pageIndex:targetEditor.pageIndex,
+            parentPageIndex:targetEditor.parent?.pageIndex ?? null,
+            parentMatchesPageLayer:targetEditor.parent === tracePageLayer,
+            attached:Boolean(targetEditor.isAttachedToDOM),
+            selected:Boolean(targetElement?.classList.contains("selectedEditor")),
+            editing:boolMethod(targetEditor, "isInEditMode"),
+            empty:boolMethod(targetEditor, "isEmpty"),
+          } : null,
+          layerViewport:viewportSummary(
+            receiver?.viewport || receiver?.annotationEditorLayer?.viewport,
+          ),
+          pageViewport:viewportSummary(tracePageView.viewport),
+          requestedViewport:viewportSummary(parameters?.viewport),
+          requestedMode:typeof parameters === "number"
+            ? parameters
+            : parameters?.mode ?? null,
+          stack:captureStack(),
+        });
+        if (trace.length > 352) trace.splice(0, trace.length - 352);
+      };
+      const wrap = (
+        target,
+        method,
+        label,
+        beforeCall = null,
+        captureAfter = false,
+        contextForCall = null,
+      ) => {
+        const original = target?.[method];
+        if (!target || typeof original !== "function") return;
+        let tracedMethods = tracedMethodsByTarget.get(target);
+        if (!tracedMethods) {
+          tracedMethods = new Set();
+          tracedMethodsByTarget.set(target, tracedMethods);
+        }
+        if (tracedMethods.has(method)) return;
+        tracedMethods.add(method);
+        if (original.__mouseLifecycleTrace) return;
+        const traced = function (...args) {
+          beforeCall?.call(this, args);
+          const context = contextForCall?.(this, args) || null;
+          if (context?.pageLayer) traceContexts.set(context.pageLayer, context);
+          record(`${label}.begin`, this, args, context);
+          const result = original.apply(this, args);
+          if (captureAfter) record(`${label}.return`, this, args, context);
+          return result;
+        };
+        Object.defineProperty(traced, "__mouseLifecycleTrace", { value:true });
+        Object.defineProperty(traced, "__mouseLifecycleTraceTargetIdentity", {
+          value:objectIdentity(target),
+        });
+        target[method] = traced;
+        restores.push(() => {
+          if (target[method] === traced) target[method] = original;
+        });
+      };
+      const instrumentEditor = (editor) => {
+        if (!editor || instrumentedEditors.has(editor)) return;
+        instrumentedEditors.add(editor);
+        for (const method of [
+          "commitOrRemove",
+          "remove",
+          "focusout",
+          "moveInDOM",
+          "enterInEditMode",
+          "disableEditMode",
+        ]) {
+          wrap(editor, method, `editor.${method}`);
+        }
+      };
+
+      const instrumentedLayerUpdates = new WeakSet();
+      const instrumentedBuilderRenders = new WeakSet();
+      const instrumentedBuilderRenderPrototypes = new WeakSet();
+      const pageContextFor = (pageView) => {
+        const currentApp = window.PDFViewerApplication;
+        const currentPdfViewer = currentApp?.pdfViewer;
+        const currentBuilder = pageView?.annotationEditorLayer;
+        return {
+          app:currentApp,
+          pdfViewer:currentPdfViewer,
+          pageView,
+          builder:currentBuilder,
+          pageLayer:currentBuilder?.annotationEditorLayer ?? null,
+          manager:currentPdfViewer?._layerProperties?.annotationEditorUIManager,
+        };
+      };
+      const findPageViewForLayer = (receiver) => {
+        const pages = window.PDFViewerApplication?.pdfViewer?._pages || [];
+        return pages.find((candidate) =>
+          candidate?.annotationEditorLayer?.annotationEditorLayer === receiver,
+        ) || null;
+      };
+      const sameViewportPresentation = (left, right) => {
+        if (!left || !right) return false;
+        for (const key of [
+          "rotation", "scale", "width", "height", "offsetX", "offsetY",
+        ]) {
+          if (!Object.is(left[key], right[key])) return false;
+        }
+        for (const key of ["viewBox", "transform"]) {
+          const before = left[key];
+          const after = right[key];
+          if (!before && !after) continue;
+          if (!before || !after || before.length !== after.length ||
+            Array.from(before).some((value, index) => !Object.is(value, after[index]))) {
+            return false;
+          }
+        }
+        return true;
+      };
+      const recordAllLayerUpdate = (phase, receiver, args, commitCountBefore = null) => {
+        if (!window.__mousePdfEditorLifecycleTraceEnabled) return;
+        const actualPageView = findPageViewForLayer(receiver);
+        const currentApp = window.PDFViewerApplication;
+        const currentPdfViewer = currentApp?.pdfViewer;
+        const context = actualPageView ? pageContextFor(actualPageView) : {
+          app:currentApp,
+          pdfViewer:currentPdfViewer,
+          pageView:null,
+          builder:null,
+          pageLayer:receiver,
+          manager:currentPdfViewer?._layerProperties?.annotationEditorUIManager,
+        };
+        const active = document.activeElement;
+        const activeElement = active instanceof Element
+          ? active.closest(".freeTextEditor")
+          : null;
+        const activeEditor = activeElement &&
+          context.manager?.getEditor?.(activeElement.id);
+        const requestedViewport = args[0]?.viewport ?? null;
+        trace.push({
+          time:Math.round(performance.now()),
+          method:`allLayerUpdate.${phase}`,
+          receiverIdentity:objectIdentity(receiver),
+          receiverPageIndex:receiver?.pageIndex ?? null,
+          appIdentity:objectIdentity(context.app),
+          documentIdentity:objectIdentity(context.app?.pdfDocument),
+          pdfViewerIdentity:objectIdentity(context.pdfViewer),
+          pageViewIdentity:objectIdentity(actualPageView),
+          builderIdentity:objectIdentity(context.builder),
+          managerIdentity:objectIdentity(context.manager),
+          managerCurrentPageIndex:context.manager?.currentPageIndex ?? null,
+          managerCurrentLayerIdentity:objectIdentity(context.manager?.currentLayer),
+          managerCurrentLayerPageIndex:context.manager?.currentLayer?.pageIndex ?? null,
+          managerCurrentLayerMatchesReceiver:context.manager?.currentLayer === receiver,
+          receiverIsCurrentPageLayer:Boolean(
+            actualPageView && context.builder?.annotationEditorLayer === receiver,
+          ),
+          receiverConnected:Boolean(receiver?.div?.isConnected),
+          activeElementId:active?.id || "",
+          activeEditor:activeEditor ? {
+            id:activeEditor.id,
+            pageIndex:activeEditor.pageIndex,
+            parentLayerIdentity:objectIdentity(activeEditor.parent),
+            parentPageIndex:activeEditor.parent?.pageIndex ?? null,
+            parentMatchesReceiver:activeEditor.parent === receiver,
+            managerOwnsEditor:context.manager?.getEditor?.(activeEditor.id) === activeEditor,
+            attached:Boolean(activeEditor.isAttachedToDOM),
+            connected:Boolean(activeEditor.div?.isConnected),
+            editing:Boolean(activeEditor.isInEditMode?.()),
+            empty:Boolean(activeEditor.isEmpty?.()),
+          } : null,
+          layerViewport:viewportSummary(receiver?.viewport),
+          requestedViewport:viewportSummary(requestedViewport),
+          samePresentation:sameViewportPresentation(receiver?.viewport, requestedViewport),
+          managerCommitCountBefore:phase === "begin" ? commitCountBefore : null,
+          managerCommitCountAfter:phase === "return"
+            ? trace.filter((entry) => entry.method === "manager.commitOrRemove.begin").length
+            : null,
+          stack:captureStack(),
+        });
+        if (trace.length > 352) trace.splice(0, trace.length - 352);
+      };
+      const instrumentLayerUpdate = (layer) => {
+        if (!layer || instrumentedLayerUpdates.has(layer) ||
+          typeof layer.update !== "function") return;
+        instrumentedLayerUpdates.add(layer);
+        const originalUpdate = layer.update;
+        const observedUpdate = function (...args) {
+          const commitCountBefore = trace.filter(
+            (entry) => entry.method === "manager.commitOrRemove.begin",
+          ).length;
+          recordAllLayerUpdate("begin", this, args, commitCountBefore);
+          const result = originalUpdate.apply(this, args);
+          recordAllLayerUpdate("return", this, args, commitCountBefore);
+          return result;
+        };
+        Object.defineProperty(observedUpdate, "__mouseAllLayerUpdateTrace", { value:true });
+        Object.defineProperty(observedUpdate, "__mouseOriginalUpdate", {
+          value:originalUpdate,
+        });
+        layer.update = observedUpdate;
+        restores.push(() => {
+          if (layer.update === observedUpdate) layer.update = originalUpdate;
+        });
+      };
+      const hasBridgeUpdateWrapper = (method) => {
+        const seen = new Set();
+        while (typeof method === "function" && !seen.has(method)) {
+          if (method.name === "wrapped") return true;
+          seen.add(method);
+          method = method.__mouseOriginalUpdate;
+        }
+        return false;
+      };
+      window.__mouseHasBridgeUpdateWrapper = hasBridgeUpdateWrapper;
+      const instrumentBuilderRender = (target, property = "render") => {
+        if (!target || instrumentedBuilderRenders.has(target) ||
+          typeof target[property] !== "function") return;
+        instrumentedBuilderRenders.add(target);
+        const originalRender = target[property];
+        const observedRender = function (...args) {
+          instrumentLayerUpdate(this.annotationEditorLayer);
+          const result = originalRender.apply(this, args);
+          instrumentLayerUpdate(this.annotationEditorLayer);
+          return result;
+        };
+        target[property] = observedRender;
+        restores.push(() => {
+          if (target[property] === observedRender) target[property] = originalRender;
+        });
+      };
+      const instrumentBuilderRenderPrototype = (prototype) => {
+        if (!prototype || instrumentedBuilderRenderPrototypes.has(prototype) ||
+          typeof prototype.render !== "function") return;
+        instrumentedBuilderRenderPrototypes.add(prototype);
+        const originalRender = prototype.render;
+        const observedRender = function (...args) {
+          instrumentLayerUpdate(this.annotationEditorLayer);
+          const result = originalRender.apply(this, args);
+          instrumentLayerUpdate(this.annotationEditorLayer);
+          return result;
+        };
+        prototype.render = observedRender;
+        restores.push(() => {
+          if (prototype.render === observedRender) prototype.render = originalRender;
+        });
+      };
+
+      for (const candidatePageView of pdfViewer._pages || [pageView]) {
+        const context = pageContextFor(candidatePageView);
+        if (!context.builder) continue;
+        traceContexts.set(candidatePageView, context);
+        traceContexts.set(context.builder, context);
+        if (context.pageLayer) {
+          traceContexts.set(context.pageLayer, context);
+          instrumentLayerUpdate(context.pageLayer);
+        }
+        instrumentBuilderRender(context.builder);
+        instrumentBuilderRenderPrototype(Object.getPrototypeOf(context.builder));
+      }
+
+      window.__mousePdfEditorLifecycleTraceState = {
+        pageIndex:pageView.id - 1,
+        managerCurrentPageIndex:manager.currentPageIndex ?? null,
+        managerCurrentLayerPageIndex:manager.currentLayer?.pageIndex ?? null,
+        managerCurrentLayerMatchesPage:Boolean(manager.currentLayer === pageLayer),
+        bridgeMoveWrapperInstalled:pageLayer.moveEditorInDOM?.name === "wrapped",
+        bridgeUpdateWrapperInstalled:hasBridgeUpdateWrapper(pageLayer.update),
+        bridgePageLayerMatchesBuilder:Boolean(builder.annotationEditorLayer === pageLayer),
+        pageRenderingState:pageView.renderingState,
+      };
+      window.__mouseManualPauseResumeCalls = [];
+
+      for (const [target, method, label] of [
+        [pageView, "reset", "pageView.reset"],
+        [pageView, "update", "pageView.update"],
+        [pageView, "cssTransform", "pageView.cssTransform"],
+        [builder, "hide", "builder.hide"],
+        [builder, "show", "builder.show"],
+        [pageLayer, "pause", "layer.pause"],
+        [builder, "render", "builder.render"],
+        [pageLayer, "render", "layer.render"],
+        [pageLayer, "update", "layer.update"],
+        [pageLayer, "updateMode", "layer.updateMode"],
+        [pageLayer, "destroy", "layer.destroy"],
+        [manager, "updateMode", "manager.updateMode"],
+        [manager, "findClonesForPage", "manager.findClonesForPage"],
+        [manager, "commitOrRemove", "manager.commitOrRemove"],
+        [manager, "removeEditor", "manager.removeEditor"],
+      ]) {
+        wrap(target, method, label, null, true);
+      }
+      window.__mouseInstrumentPageLayer = (currentPageView, currentBuilder, currentPageLayer) => {
+        const currentApp = window.PDFViewerApplication;
+        const currentPdfViewer = currentApp?.pdfViewer;
+        const currentManager = currentPdfViewer?._layerProperties?.annotationEditorUIManager;
+        if (!currentApp || !currentPdfViewer || !currentPageView ||
+          !currentBuilder || !currentPageLayer || !currentManager) {
+          throw new Error("The current page annotation layer is unavailable for lifecycle tracing");
+        }
+        const context = {
+          app:currentApp,
+          pdfViewer:currentPdfViewer,
+          pageView:currentPageView,
+          builder:currentBuilder,
+          pageLayer:currentPageLayer,
+          manager:currentManager,
+        };
+        traceContexts.set(currentPageLayer, context);
+        wrap(currentPageLayer, "pause", "layer.pause", null, true, () => context);
+        return {
+          appIdentity:objectIdentity(currentApp),
+          pdfViewerIdentity:objectIdentity(currentPdfViewer),
+          documentIdentity:objectIdentity(currentApp.pdfDocument),
+          pageViewIdentity:objectIdentity(currentPageView),
+          builderIdentity:objectIdentity(currentBuilder),
+          pageLayerIdentity:objectIdentity(currentPageLayer),
+          managerIdentity:objectIdentity(currentManager),
+          pageIndex:currentPageView.id - 1,
+          builderPageIndex:currentBuilder.pageIndex,
+          layerConnected:Boolean(currentPageLayer.div?.isConnected),
+          currentLayerMatches:Boolean(currentManager.currentLayer === currentPageLayer),
+        };
+      };
+      wrap(pageLayer, "add", "layer.add", ([editor]) => instrumentEditor(editor));
+      const originalFocus = HTMLElement.prototype.focus;
+      if (typeof originalFocus === "function") {
+        const tracedFocus = function (...args) {
+          const relevant = this.closest?.(".freeTextEditor, .annotationEditorLayer") ||
+            this.matches?.(".pdfReaderBridgeControlButton");
+          if (relevant) record("element.focus.begin", this, args);
+          const result = originalFocus.apply(this, args);
+          if (relevant) record("element.focus.return", this, args);
+          return result;
+        };
+        Object.defineProperty(tracedFocus, "__mouseLifecycleTrace", { value:true });
+        HTMLElement.prototype.focus = tracedFocus;
+        restores.push(() => {
+          if (HTMLElement.prototype.focus === tracedFocus) {
+            HTMLElement.prototype.focus = originalFocus;
+          }
+        });
+      }
+      const lifecycleMutationObserver = new MutationObserver((mutations) => {
+        if (!window.__mousePdfEditorLifecycleTraceEnabled) return;
+        for (const mutation of mutations) {
+          trace.push({
+            time:Math.round(performance.now()),
+            method:"lifecycle.attributeMutation",
+            attributeName:mutation.attributeName,
+            oldValue:mutation.oldValue,
+            target:elementSummary(mutation.target),
+            pageViewRenderingState:pageView.renderingState,
+            pageViewPresentation:viewportSummary(pageView.viewport),
+            layerViewport:viewportSummary(pageLayer.viewport),
+            activeElement:elementSummary(document.activeElement),
+          });
+        }
+      });
+      for (const element of [pageView.div, builder.div]) {
+        if (element) {
+          lifecycleMutationObserver.observe(element, {
+            attributes:true,
+            attributeOldValue:true,
+            attributeFilter:["class", "hidden", "style"],
+          });
+        }
+      }
+      restores.push(() => lifecycleMutationObserver.disconnect());
+      window.__stopMousePdfEditorLifecycleTrace = () => {
+        window.__mousePdfEditorLifecycleTraceEnabled = false;
+        for (const restore of restores.reverse()) restore();
+        // Keep the read-only identity and bridge-wrapper inspectors available
+        // for the later saved-document/reopen probes. All method wrappers and
+        // observers above have already been restored here.
+      };
+      window.__mouseTestMilestones.pdfEditorLifecycleTraceState =
+        window.__mousePdfEditorLifecycleTraceState;
+      return window.__mousePdfEditorLifecycleTraceState;
+    });
+    assert.equal(
+      pdfEditorLifecycleTraceState.bridgeMoveWrapperInstalled,
+      true,
+      `The active page's PDF.js accessibility move guard must be installed before focus: ${JSON.stringify(pdfEditorLifecycleTraceState)}`,
+    );
+    assert.equal(
+      pdfEditorLifecycleTraceState.bridgeUpdateWrapperInstalled,
+      true,
+      `The active page's annotation update guard must be installed before focus: ${JSON.stringify(pdfEditorLifecycleTraceState)}`,
+    );
+
+    const modeActivationTraceState = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const pageView = pdfViewer?.getPageView(0);
+      const pageLayer = pageView?.annotationEditorLayer?.annotationEditorLayer;
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+      if (!app || !pdfViewer || !pageView || !pageLayer || !manager) {
+        throw new Error("PDF.js mode-transition diagnostics require the active page editor layer");
+      }
+      const trace = window.__mouseModeActivationTrace = [];
+      const restores = [];
+      window.__mouseModeActivationTraceEnabled = true;
+      const captureStack = () => {
+        const previousLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 40;
+        try {
+          return (new Error().stack?.split("\n").slice(1, 41) || []).filter(
+            (line, index) => index < 2 ||
+              /pdf\.mjs|viewer\.mjs|obsidian-bridge\.js/.test(line),
+          );
+        } finally {
+          Error.stackTraceLimit = previousLimit;
+        }
+      };
+      const activeEditorSummary = () => {
+        const active = document.activeElement;
+        const element = active instanceof Element
+          ? active.closest(".freeTextEditor")
+          : null;
+        const editor = element && manager.getEditor?.(element.id);
+        return editor ? {
+          id:editor.id,
+          pageIndex:editor.pageIndex,
+          parentPageIndex:editor.parent?.pageIndex ?? null,
+          parentMatchesPage:Boolean(editor.parent === pageLayer),
+          attached:Boolean(editor.isAttachedToDOM),
+          selected:Boolean(editor.div?.classList.contains("selectedEditor")),
+          editing:Boolean(editor.isInEditMode?.()),
+          empty:Boolean(editor.isEmpty?.()),
+          focused:Boolean(element.contains(active)),
+        } : null;
+      };
+      const record = (method, phase, args = [], error = null) => {
+        if (!window.__mouseModeActivationTraceEnabled) return;
+        trace.push({
+          time:Math.round(performance.now()),
+          method,
+          phase,
+          requestedMode:typeof args[0] === "number" ? args[0] : args[0]?.mode ?? null,
+          viewerMode:pdfViewer.annotationEditorMode,
+          managerMode:manager.getMode?.() ?? null,
+          pendingModeUpdates:window.__mouseModeUpdatesPending ?? 0,
+          activeEditor:activeEditorSummary(),
+          pageEditors:Array.from(manager.getEditors?.(0) || []).slice(0, 12).map((editor) => ({
+            id:editor.id,
+            pageIndex:editor.pageIndex,
+            attached:Boolean(editor.isAttachedToDOM),
+            selected:Boolean(editor.div?.classList.contains("selectedEditor")),
+            editing:Boolean(editor.isInEditMode?.()),
+            empty:Boolean(editor.isEmpty?.()),
+          })),
+          error:error?.message || null,
+          stack:phase === "begin" || phase === "throw" ? captureStack() : [],
+        });
+        if (trace.length > 96) trace.splice(0, trace.length - 96);
+      };
+      const wrap = (target, method, label, { trackPending = false } = {}) => {
+        const original = target?.[method];
+        if (typeof original !== "function") return false;
+        const wrapped = function (...args) {
+          if (trackPending) window.__mouseModeUpdatesPending =
+            (window.__mouseModeUpdatesPending || 0) + 1;
+          record(label, "begin", args);
+          let result;
+          try {
+            result = original.apply(this, args);
+          } catch (error) {
+            record(label, "throw", args, error);
+            if (trackPending) window.__mouseModeUpdatesPending -= 1;
+            throw error;
+          }
+          if (!result || typeof result.then !== "function") {
+            record(label, "return", args);
+            if (trackPending) window.__mouseModeUpdatesPending -= 1;
+            return result;
+          }
+          return Promise.resolve(result).then(
+            (value) => {
+              record(label, "resolved", args);
+              if (trackPending) window.__mouseModeUpdatesPending -= 1;
+              return value;
+            },
+            (error) => {
+              record(label, "rejected", args, error);
+              if (trackPending) window.__mouseModeUpdatesPending -= 1;
+              throw error;
+            },
+          );
+        };
+        target[method] = wrapped;
+        restores.push(() => {
+          if (target[method] === wrapped) target[method] = original;
+        });
+        return true;
+      };
+      const wrappedMethods = {
+        managerUpdateMode:wrap(manager, "updateMode", "manager.updateMode", {
+          trackPending:true,
+        }),
+        managerUnselectAll:wrap(manager, "unselectAll", "manager.unselectAll"),
+        pageLayerEnable:wrap(pageLayer, "enable", "pageLayer.enable"),
+        pageLayerUpdateMode:wrap(pageLayer, "updateMode", "pageLayer.updateMode"),
+        pageLayerUpdate:wrap(pageLayer, "update", "pageLayer.update"),
+      };
+      const onModeChanged = ({ mode } = {}) => {
+        record("event.annotationeditormodechanged", "complete", [{ mode }]);
+      };
+      app.eventBus?._on?.("annotationeditormodechanged", onModeChanged);
+      window.__mouseModeActivationTraceState = {
+        pageIndex:pageView.id - 1,
+        managerMode:manager.getMode?.() ?? null,
+        viewerMode:pdfViewer.annotationEditorMode,
+        wrappedMethods,
+      };
+      window.__stopMouseModeActivationTrace = () => {
+        window.__mouseModeActivationTraceEnabled = false;
+        for (const restore of restores.reverse()) restore();
+        app.eventBus?._off?.("annotationeditormodechanged", onModeChanged);
+      };
+      return window.__mouseModeActivationTraceState;
+    });
+    await viewer.evaluate((snapshot) => {
+      window.__mouseTestMilestones.modeActivationTraceState = snapshot;
+    }, modeActivationTraceState);
+
     // A text editor saved and reopened from real mouse input remains editable
     // through the native double-click path. Right-click inside its contenteditable
     // keeps the browser's native context menu available.
+    await viewer.evaluate(() => {
+      window.__mouseModeActivationTrace?.push({
+        time:Math.round(performance.now()),
+        method:"test.beforeToolWheelModeClick",
+        phase:"mark",
+      });
+    });
     await click('.pdfReaderBridgeControlButton[aria-label^="批注工具圆盘"]');
     await viewer.waitForSelector(".pdfReaderBridgeClickWheel:not([hidden])");
+    const freeTextModeRequest = await beginAnnotationModeChange(3);
     await click('.pdfReaderBridgeClickWheel [data-sector="1"]');
-    await viewer.waitForFunction(
-      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 3,
-      { timeout: 5_000 },
-    );
+    await noteAnnotationModeClickReturned(freeTextModeRequest.id);
+    await waitForAnnotationModeChange(3, freeTextModeRequest, 5_000);
+    await viewer.evaluate(() => {
+      window.__mouseModeActivationTrace?.push({
+        time:Math.round(performance.now()),
+        method:"test.modePropertyVisible",
+        phase:"mark",
+        viewerMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+        pendingModeUpdates:window.__mouseModeUpdatesPending ?? 0,
+      });
+      window.__mouseTestMilestones.modePropertyVisible = Math.round(performance.now());
+    });
     await viewer.evaluate(() => {
       window.__mouseTestMilestones.editorMoveTracingInstalled =
         window.__installPdfEditorMoveTrace();
       window.__pdfEditorMoveCalls.length = 0;
       window.__pdfEditorMoveEvents.length = 0;
     });
+    const inactivePagePrepared = await viewer.evaluate(async () => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const pageView = pdfViewer?.getPageView(1);
+      if (!app?.pdfDocument || !pageView) {
+        throw new Error("The second PDF page is unavailable for the cross-page editor lifecycle probe");
+      }
+      if (!pageView.pdfPage) {
+        pageView.setPdfPage(await app.pdfDocument.getPage(2));
+      }
+      let editorLayer = pageView.annotationEditorLayer?.annotationEditorLayer;
+      if (!editorLayer || !window.__mouseHasBridgeUpdateWrapper?.(editorLayer.update)) {
+        if (pageView.renderingState !== 0) pageView.reset();
+        await pageView.draw();
+        editorLayer = pageView.annotationEditorLayer?.annotationEditorLayer;
+      }
+      const state = {
+        documentIdentity:window.__mouseObjectIdentity?.(app.pdfDocument) ?? null,
+        pageViewIdentity:window.__mouseObjectIdentity?.(pageView) ?? null,
+        pageIndex:pageView.id - 1,
+        pageNumber:pageView.pdfPage?.pageNumber ?? null,
+        renderingState:pageView.renderingState,
+        documentMatchesViewer:app.pdfDocument === pdfViewer.pdfDocument,
+        builderPresent:Boolean(pageView.annotationEditorLayer),
+        builderIdentity:window.__mouseObjectIdentity?.(pageView.annotationEditorLayer) ?? null,
+        layerPresent:Boolean(editorLayer),
+        layerIdentity:window.__mouseObjectIdentity?.(editorLayer) ?? null,
+        layerConnected:Boolean(editorLayer?.div?.isConnected),
+        bridgeUpdateWrapperInstalled:Boolean(
+          editorLayer && window.__mouseHasBridgeUpdateWrapper?.(editorLayer.update),
+        ),
+        viewport:editorLayer?.viewport ? {
+          rotation:editorLayer.viewport.rotation,
+          scale:editorLayer.viewport.scale,
+          width:editorLayer.viewport.width,
+          height:editorLayer.viewport.height,
+        } : null,
+      };
+      window.__mouseTestMilestones.inactivePagePrepared = state;
+      return state;
+    });
+    assert.equal(inactivePagePrepared.pageIndex, 1, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.pageNumber, 2, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.documentMatchesViewer, true, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.builderPresent, true, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.layerPresent, true, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.layerConnected, true, JSON.stringify(inactivePagePrepared));
+    assert.equal(inactivePagePrepared.bridgeUpdateWrapperInstalled, true, JSON.stringify(inactivePagePrepared));
     const freeTextPoint = await viewer.evaluate(() => {
       const layer = document
         .querySelector('.page[data-page-number="1"] .annotationEditorLayer')
@@ -1105,11 +1929,45 @@ test(
         y:top + Math.min(160, (bottom - top) / 2),
       };
     });
+    await viewer.evaluate(() => {
+      window.__mouseModeActivationTrace?.push({
+        time:Math.round(performance.now()),
+        method:"test.beforeFirstFreeTextClick",
+        phase:"mark",
+        viewerMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+        pendingModeUpdates:window.__mouseModeUpdatesPending ?? 0,
+      });
+      window.__mouseTestMilestones.beforeFirstFreeTextClick = Math.round(performance.now());
+    });
     const offsetForText = await iframeOffset();
     await page.mouse.click(
       offsetForText.x + freeTextPoint.x,
       offsetForText.y + freeTextPoint.y,
     );
+    await viewer.evaluate(() => {
+      window.__mouseModeActivationTrace?.push({
+        time:Math.round(performance.now()),
+        method:"test.afterFirstFreeTextClick",
+        phase:"mark",
+        viewerMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+        pendingModeUpdates:window.__mouseModeUpdatesPending ?? 0,
+        activeEditor:(() => {
+          const manager = PDFViewerApplication.pdfViewer._layerProperties
+            ?.annotationEditorUIManager;
+          const element = document.activeElement?.closest?.(".freeTextEditor");
+          const editor = element && manager?.getEditor?.(element.id);
+          return editor ? {
+            id:editor.id,
+            pageIndex:editor.pageIndex,
+            parentPageIndex:editor.parent?.pageIndex ?? null,
+            attached:Boolean(editor.isAttachedToDOM),
+            selected:Boolean(editor.div?.classList.contains("selectedEditor")),
+            editing:Boolean(editor.isInEditMode?.()),
+            empty:Boolean(editor.isEmpty?.()),
+          } : null;
+        })(),
+      });
+    });
     await viewer.waitForSelector(
       ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
       { timeout: 8_000 },
@@ -1194,10 +2052,17 @@ test(
     }
     await viewer.waitForFunction(async () => {
       const snapshot = () => {
+        const app = window.PDFViewerApplication;
+        const pageView = app?.pdfViewer?.getPageView(0);
+        const manager = app?.pdfViewer?._layerProperties
+          ?.annotationEditorUIManager;
+        const pageLayer = pageView?.annotationEditorLayer
+          ?.annotationEditorLayer;
         const internal = document.querySelector(
           ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
         );
         const editor = internal?.closest(".freeTextEditor.selectedEditor");
+        const runtimeEditor = editor && manager?.getEditor?.(editor.id);
         const internalRect = internal?.getBoundingClientRect();
         const editorRect = editor?.getBoundingClientRect();
         const selection = window.getSelection();
@@ -1208,6 +2073,12 @@ test(
           ready:Boolean(
             internal?.isContentEditable && document.activeElement === internal &&
             internal.isConnected && editor && document.hasFocus() &&
+            runtimeEditor?.div === editor &&
+            runtimeEditor.parent === pageLayer &&
+            runtimeEditor.pageIndex === 0 &&
+            runtimeEditor.isAttachedToDOM &&
+            runtimeEditor.isInEditMode() &&
+            editor.classList.contains("selectedEditor") &&
             window.top.document.hasFocus() &&
             window.top.document.activeElement === window.frameElement &&
             selection?.rangeCount === 1 && selection.isCollapsed && anchor && focus &&
@@ -1220,6 +2091,18 @@ test(
           internalHeight:internalRect?.height ?? 0,
           editorWidth:editorRect?.width ?? 0,
           editorHeight:editorRect?.height ?? 0,
+          runtimeEditorId:runtimeEditor?.id ?? null,
+          managerOwnsEditor:Boolean(
+            runtimeEditor && manager?.getEditor?.(editor?.id) === runtimeEditor,
+          ),
+          editorParentMatchesPageLayer:runtimeEditor?.parent === pageLayer,
+          editorPageIndex:runtimeEditor?.pageIndex ?? null,
+          editorAttached:runtimeEditor?.isAttachedToDOM ?? false,
+          editorSelected:Boolean(editor?.classList.contains("selectedEditor")),
+          editorEditing:Boolean(runtimeEditor?.isInEditMode?.()),
+          editorEmpty:Boolean(runtimeEditor?.isEmpty?.()),
+          managerCurrentPageIndex:manager?.currentPageIndex ?? null,
+          currentLayerMatchesPageLayer:manager?.currentLayer === pageLayer,
         };
       };
       const first = snapshot();
@@ -1237,11 +2120,31 @@ test(
         state.editorHeight === first.editorHeight,
       );
     }, { timeout:8_000 });
+    const modeActivationBeforeTyping = await viewer.evaluate(() => {
+      const snapshot = {
+        viewerMode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+        pendingModeUpdates:window.__mouseModeUpdatesPending ?? 0,
+        trace:window.__mouseModeActivationTrace?.slice(-96) || [],
+      };
+      window.__mouseTestMilestones.modeActivationBeforeTyping = snapshot;
+      window.__stopMouseModeActivationTrace?.();
+      return snapshot;
+    });
+    if (process.env.PDF_MOUSE_MODE_TRACE === "1") {
+      console.log(`Mouse mode activation trace: ${JSON.stringify(modeActivationBeforeTyping)}`);
+    }
     const focusBeforeTyping = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(0);
+      const manager = app?.pdfViewer?._layerProperties
+        ?.annotationEditorUIManager;
+      const pageLayer = pageView?.annotationEditorLayer
+        ?.annotationEditorLayer;
       const internal = document.querySelector(
         ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
       );
       const editor = internal?.closest(".freeTextEditor.selectedEditor");
+      const runtimeEditor = editor && manager?.getEditor?.(editor.id);
       const rect = internal?.getBoundingClientRect();
       const editorRect = editor?.getBoundingClientRect();
       const selection = window.getSelection();
@@ -1273,6 +2176,16 @@ test(
         frameHasFocus:document.hasFocus(),
         topHasFocus:window.top.document.hasFocus(),
         topOwnsFrameFocus:window.top.document.activeElement === window.frameElement,
+        managerEditorFound:Boolean(runtimeEditor),
+        managerOwnsEditor:manager?.getEditor?.(editor?.id) === runtimeEditor,
+        editorParentMatchesPageLayer:runtimeEditor?.parent === pageLayer,
+        editorPageIndex:runtimeEditor?.pageIndex ?? null,
+        editorAttached:runtimeEditor?.isAttachedToDOM ?? false,
+        editorSelected:Boolean(editor?.classList.contains("selectedEditor")),
+        editorEditing:Boolean(runtimeEditor?.isInEditMode?.()),
+        editorEmpty:Boolean(runtimeEditor?.isEmpty?.()),
+        managerCurrentPageIndex:manager?.currentPageIndex ?? null,
+        currentLayerMatchesPageLayer:manager?.currentLayer === pageLayer,
         internalRect:rect ? { width:rect.width, height:rect.height } : null,
         editorRect:editorRect ? { width:editorRect.width, height:editorRect.height } : null,
         selectionCollapsed:!!selection?.isCollapsed,
@@ -1307,6 +2220,15 @@ test(
     assert.equal(focusBeforeTyping.frameHasFocus, true, JSON.stringify(focusBeforeTyping));
     assert.equal(focusBeforeTyping.topHasFocus, true, JSON.stringify(focusBeforeTyping));
     assert.equal(focusBeforeTyping.topOwnsFrameFocus, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.managerEditorFound, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.managerOwnsEditor, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorParentMatchesPageLayer, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorPageIndex, 0, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorAttached, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorSelected, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorEditing, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(focusBeforeTyping.editorEmpty, true, JSON.stringify(focusBeforeTyping));
+    assert.equal(modeActivationBeforeTyping.pendingModeUpdates, 0, JSON.stringify(modeActivationBeforeTyping));
     assert.equal(focusBeforeTyping.selectionCollapsed, true, JSON.stringify(focusBeforeTyping));
     assert.equal(focusBeforeTyping.selectionWithinInternal, true, JSON.stringify(focusBeforeTyping));
     assert.ok(
@@ -1327,17 +2249,22 @@ test(
     // it does not simulate an IME device or claim iPad hardware coverage.
     const deferredMoveProbe = await viewer.evaluate(async () => {
       const app = window.PDFViewerApplication;
-      const pageView = app?.pdfViewer?.getPageView(0);
+      const pdfViewer = app?.pdfViewer;
+      const pageView = pdfViewer?.getPageView(0);
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
       const accessibilityManager = pageView?._accessibilityManager;
       const internal = document.querySelector(
         ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
       );
       const editorElement = internal?.closest(".freeTextEditor");
-      const editorLayer = app?.pdfViewer?._layerProperties
-        ?.annotationEditorUIManager?.currentLayer;
-      const editor = editorElement && editorLayer?.getEditorByUID?.(editorElement.id);
+      const editorLayer = pageView?.annotationEditorLayer
+        ?.annotationEditorLayer;
+      const editor = editorElement && manager?.getEditor?.(editorElement.id);
       if (!internal || !editor || !accessibilityManager ||
-        typeof editor.parent?.moveEditorInDOM !== "function") {
+        editor.div !== editorElement ||
+        editor.parent !== editorLayer ||
+        editor.pageIndex !== pageView.id - 1 ||
+        typeof editorLayer?.moveEditorInDOM !== "function") {
         throw new Error("The focused FreeText editor is missing its PDF.js accessibility move path");
       }
       const originalAddPointer = accessibilityManager.addPointerInTextLayer;
@@ -1368,7 +2295,7 @@ test(
           return originalSetTimeout.call(this, callback, delay, ...rest);
         };
         try {
-          editor.parent.moveEditorInDOM(editor);
+          editorLayer.moveEditorInDOM(editor);
         } finally {
           window.setTimeout = originalSetTimeout;
         }
@@ -1404,7 +2331,9 @@ test(
         return {
           startTrusted,
           endTrusted,
-          parentLayerMatchesCurrent:editor.parent === editorLayer,
+          managerOwnsEditor:manager.getEditor?.(editor.id) === editor,
+          parentLayerMatchesPage:editor.parent === editorLayer,
+          currentLayerMatchesPage:manager.currentLayer === editorLayer,
           immediatelyAfterMove,
           afterCompositionEndWhileStillEditing,
         };
@@ -1419,7 +2348,9 @@ test(
     }, deferredMoveProbe);
     assert.equal(deferredMoveProbe.startTrusted, false);
     assert.equal(deferredMoveProbe.endTrusted, false);
-    assert.equal(deferredMoveProbe.parentLayerMatchesCurrent, true);
+    assert.equal(deferredMoveProbe.managerOwnsEditor, true);
+    assert.equal(deferredMoveProbe.parentLayerMatchesPage, true);
+    assert.equal(deferredMoveProbe.currentLayerMatchesPage, true);
     for (const state of [
       deferredMoveProbe.immediatelyAfterMove,
       deferredMoveProbe.afterCompositionEndWhileStillEditing,
@@ -1447,7 +2378,215 @@ test(
       1,
       "Ending composition while the same editor remains focused must not flush its DOM reorder",
     );
-    await page.keyboard.type("Mouse toolbar round trip");
+    const verifySameViewportUpdate = async (expectedText, expectedOffset, key) => {
+      const snapshot = await viewer.evaluate(async () => {
+        const app = window.PDFViewerApplication;
+        const pageView = app?.pdfViewer?.getPageView(0);
+        const layerBuilder = pageView?.annotationEditorLayer;
+        const editorLayer = layerBuilder?.annotationEditorLayer;
+        const internal = document.querySelector(
+          ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
+        );
+        const editorElement = internal?.closest(".freeTextEditor");
+        const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        const editor = editorElement && manager?.getEditor?.(editorElement.id);
+        if (!pageView || !layerBuilder || !editorLayer || !internal || !editor) {
+          throw new Error("The focused FreeText editor disappeared before its page update");
+        }
+        const viewport = pageView.viewport;
+        const viewportBefore = {
+          rotation:viewport.rotation,
+          scale:viewport.scale,
+          width:viewport.width,
+          height:viewport.height,
+          offsetX:viewport.offsetX,
+          offsetY:viewport.offsetY,
+        };
+        const selection = window.getSelection();
+        const anchorNode = selection?.anchorNode;
+        const focusNode = selection?.focusNode;
+        const anchorOffset = selection?.anchorOffset;
+        const focusOffset = selection?.focusOffset;
+        await layerBuilder.render({ viewport });
+        const updatedViewport = pageView.viewport;
+        const sameViewport = ["rotation", "scale", "width", "height", "offsetX", "offsetY"]
+          .every((field) => Object.is(viewportBefore[field], updatedViewport[field]));
+        return {
+          sameViewport,
+          layerConnected:editorLayer.div.isConnected,
+          active:document.activeElement === internal,
+          contentEditable:internal.isContentEditable,
+          selected:editorElement.classList.contains("selectedEditor"),
+          text:internal.textContent.replace(/\u200b/g, ""),
+          sameAnchor:selection?.anchorNode === anchorNode,
+          sameFocus:selection?.focusNode === focusNode,
+          sameOffsets:selection?.anchorOffset === anchorOffset &&
+            selection?.focusOffset === focusOffset,
+          caretOffset:selection?.rangeCount === 1
+            ? (() => {
+                const range = selection.getRangeAt(0);
+                if (range.startContainer !== internal && !internal.contains(range.startContainer)) {
+                  return null;
+                }
+                const prefix = document.createRange();
+                prefix.selectNodeContents(internal);
+                prefix.setEnd(range.startContainer, range.startOffset);
+                return prefix.toString().replace(/\u200b/g, "").length;
+              })()
+            : null,
+        };
+      });
+      await viewer.evaluate(({ snapshot:state, key:name }) => {
+        window.__mouseTestMilestones[name] = state;
+      }, { snapshot, key });
+      for (const field of [
+        "sameViewport",
+        "layerConnected",
+        "active",
+        "contentEditable",
+        "selected",
+        "sameAnchor",
+        "sameFocus",
+        "sameOffsets",
+      ]) {
+        assert.equal(snapshot[field], true, `${key}: ${JSON.stringify(snapshot)}`);
+      }
+      assert.equal(snapshot.text, expectedText, `${key}: ${JSON.stringify(snapshot)}`);
+      assert.equal(snapshot.caretOffset, expectedOffset, `${key}: ${JSON.stringify(snapshot)}`);
+      return snapshot;
+    };
+    await verifySameViewportUpdate("", 0, "sameViewportUpdateBeforeTyping");
+    const inactivePageUpdate = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+      const activeInternal = document.activeElement;
+      const activeElement = activeInternal instanceof Element
+        ? activeInternal.closest(".freeTextEditor")
+        : null;
+      const editor = activeElement && manager?.getEditor?.(activeElement.id);
+      const pageView = pdfViewer?.getPageView(1);
+      const layer = pageView?.annotationEditorLayer?.annotationEditorLayer;
+      if (!manager || !editor || !pageView || !layer ||
+        !activeInternal?.isContentEditable ||
+        !window.__mouseHasBridgeUpdateWrapper?.(layer.update)) {
+        throw new Error("The focused empty editor and current-document page 2 layer are required for the cross-page update probe");
+      }
+      const viewport = layer.viewport;
+      const before = {
+        editorId:editor.id,
+        identity:window.__mouseObjectIdentity?.(editor) ?? null,
+        editorPageIndex:editor.pageIndex,
+        parentPageIndex:editor.parent?.pageIndex ?? null,
+        parentIdentity:window.__mouseObjectIdentity?.(editor.parent) ?? null,
+        parentMatchesCurrentLayer:editor.parent === manager.currentLayer,
+        managerOwnsEditor:manager.getEditor(editor.id) === editor,
+        attached:Boolean(editor.isAttachedToDOM),
+        editing:Boolean(editor.isInEditMode?.()),
+        empty:Boolean(editor.isEmpty?.()),
+        focused:document.activeElement === editor.div?.querySelector(".internal"),
+        connected:Boolean(editor.div?.isConnected),
+        text:editor.div?.querySelector(".internal")?.textContent?.replace(/\u200b/g, "") ?? null,
+        bounds:editor.div?.getBoundingClientRect().toJSON?.() ?? null,
+      };
+      const sameViewport = layer.viewport === viewport &&
+        viewport.scale === pageView.viewport.scale &&
+        viewport.rotation === pageView.viewport.rotation &&
+        viewport.width === pageView.viewport.width &&
+        viewport.height === pageView.viewport.height;
+      // Re-run PDF.js's real layer.update with the exact current viewport from
+      // page 2 while page 1 owns an empty, focused FreeText editor. PDF.js
+      // update() commits through the shared UI manager even on a non-current
+      // layer, so this covers the cross-page render path without changing the
+      // active page, viewport, or edit mode.
+      layer.update({ viewport });
+      const currentEditor = manager.getEditor(before.editorId);
+      const currentInternal = currentEditor?.div?.querySelector(".internal");
+      const after = {
+        editorId:currentEditor?.id ?? null,
+        identity:window.__mouseObjectIdentity?.(currentEditor) ?? null,
+        editorPageIndex:currentEditor?.pageIndex ?? null,
+        parentPageIndex:currentEditor?.parent?.pageIndex ?? null,
+        parentIdentity:window.__mouseObjectIdentity?.(currentEditor?.parent) ?? null,
+        parentMatchesCurrentLayer:currentEditor?.parent === manager.currentLayer,
+        managerOwnsEditor:Boolean(
+          currentEditor && manager.getEditor(before.editorId) === currentEditor,
+        ),
+        attached:Boolean(currentEditor?.isAttachedToDOM),
+        editing:Boolean(currentEditor?.isInEditMode?.()),
+        empty:Boolean(currentEditor?.isEmpty?.()),
+        focused:document.activeElement === currentInternal,
+        connected:Boolean(currentEditor?.div?.isConnected),
+        text:currentInternal?.textContent?.replace(/\u200b/g, "") ?? null,
+        bounds:currentEditor?.div?.getBoundingClientRect().toJSON?.() ?? null,
+      };
+      const probe = {
+        documentIdentity:window.__mouseObjectIdentity?.(app.pdfDocument) ?? null,
+        activePageViewIdentity:window.__mouseObjectIdentity?.(pdfViewer.getPageView(0)) ?? null,
+        activePageLayerIdentity:window.__mouseObjectIdentity?.(manager.currentLayer) ?? null,
+        receiverPageViewIdentity:window.__mouseObjectIdentity?.(pageView) ?? null,
+        receiverBuilderIdentity:window.__mouseObjectIdentity?.(pageView.annotationEditorLayer) ?? null,
+        receiverLayerIdentity:window.__mouseObjectIdentity?.(layer) ?? null,
+        managerIdentity:window.__mouseObjectIdentity?.(manager) ?? null,
+        editorIdentity:window.__mouseObjectIdentity?.(editor) ?? null,
+        editorParentIdentity:window.__mouseObjectIdentity?.(editor.parent) ?? null,
+        receiverPageIndex:pageView.id - 1,
+        receiverLayerPageIndex:layer.pageIndex,
+        receiverIsCurrentLayer:manager.currentLayer === layer,
+        managerCurrentPageIndex:manager.currentPageIndex,
+        managerCurrentLayerPageIndex:manager.currentLayer?.pageIndex ?? null,
+        sameViewport,
+        bridgeUpdateWrapperInstalled:window.__mouseHasBridgeUpdateWrapper(layer.update),
+        before,
+        after,
+      };
+      window.__mouseTestMilestones.inactivePageUpdate = probe;
+      return probe;
+    });
+    assert.equal(inactivePageUpdate.receiverPageIndex, 1, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.receiverLayerPageIndex, 1, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.receiverIsCurrentLayer, false, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.managerCurrentPageIndex, 0, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.managerCurrentLayerPageIndex, 0, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.sameViewport, true, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.bridgeUpdateWrapperInstalled, true, JSON.stringify(inactivePageUpdate));
+    assert.ok(inactivePageUpdate.documentIdentity !== null, JSON.stringify(inactivePageUpdate));
+    assert.ok(inactivePageUpdate.activePageViewIdentity !== null, JSON.stringify(inactivePageUpdate));
+    assert.ok(inactivePageUpdate.receiverPageViewIdentity !== null, JSON.stringify(inactivePageUpdate));
+    assert.ok(inactivePageUpdate.managerIdentity !== null, JSON.stringify(inactivePageUpdate));
+    assert.notEqual(
+      inactivePageUpdate.receiverLayerIdentity,
+      inactivePageUpdate.activePageLayerIdentity,
+      JSON.stringify(inactivePageUpdate),
+    );
+    assert.equal(
+      inactivePageUpdate.editorParentIdentity,
+      inactivePageUpdate.activePageLayerIdentity,
+      JSON.stringify(inactivePageUpdate),
+    );
+    for (const field of [
+      "managerOwnsEditor",
+      "attached",
+      "editing",
+      "empty",
+      "focused",
+      "connected",
+    ]) {
+      assert.equal(inactivePageUpdate.before[field], true, `precondition ${field}: ${JSON.stringify(inactivePageUpdate)}`);
+      assert.equal(inactivePageUpdate.after[field], true, `cross-page update must preserve ${field}: ${JSON.stringify(inactivePageUpdate)}`);
+    }
+    assert.equal(inactivePageUpdate.before.editorPageIndex, 0, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.before.parentPageIndex, 0, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.before.parentMatchesCurrentLayer, true, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.before.text, "", JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.after.editorId, inactivePageUpdate.before.editorId, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.after.identity, inactivePageUpdate.before.identity, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.after.parentIdentity, inactivePageUpdate.before.parentIdentity, JSON.stringify(inactivePageUpdate));
+    assert.equal(inactivePageUpdate.after.text, "", JSON.stringify(inactivePageUpdate));
+    assert.ok(inactivePageUpdate.after.bounds?.width > 0 && inactivePageUpdate.after.bounds?.height > 0, JSON.stringify(inactivePageUpdate));
+    await page.keyboard.type("Mou");
+    await verifySameViewportUpdate("Mou", 3, "sameViewportUpdateDuringTyping");
+    await page.keyboard.type("se toolbar round trip");
     const typingEvents = await viewer.evaluate(() => window.__keyboardFocusEvents.slice());
     if (process.env.PDF_MOUSE_MOVE_TRACE === "1") {
       const moveTrace = await viewer.evaluate(() => ({
@@ -1519,8 +2658,196 @@ test(
     assert.equal(typedFreeText.active, true, JSON.stringify(typedFreeText));
     assert.equal(typedFreeText.contentEditable, true, JSON.stringify(typedFreeText));
     assert.equal(typedFreeText.caretAtEnd, true, JSON.stringify(typedFreeText));
+
+    // PDFPageView.reset hides a retained annotation editor layer before
+    // redrawing it. When the page presentation is unchanged, that hide must
+    // not blur and commit a live FreeText editor from transient zero geometry.
+    const pausedFreeText = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(0);
+      const builder = pageView?.annotationEditorLayer;
+      const pageLayer = builder?.annotationEditorLayer;
+      const internal = document.querySelector(
+        ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
+      );
+      const editorElement = internal?.closest(".freeTextEditor");
+      const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+      const editor = editorElement && manager?.getEditor?.(editorElement.id);
+      const button = document.querySelector(
+        '.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]',
+      );
+      if (!pageView || !builder || !pageLayer || !editor ||
+        document.activeElement !== internal || !internal.isContentEditable || !button) {
+        throw new Error("The focused FreeText must be editable before the same-presentation hide regression");
+      }
+      const state = {
+        editorId:editor.id,
+        pageIndex:editor.pageIndex,
+        text:internal.textContent.replace(/\u200b/g, ""),
+        scale:pageView.viewport?.scale ?? null,
+        pauseCountBeforeHide:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "layer.pause.begin").length ?? 0,
+        resetCountBefore:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "pageView.reset.begin").length ?? 0,
+        hideCountBefore:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "builder.hide.begin").length ?? 0,
+        renderCountBeforeRedraw:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "builder.render.return").length ?? 0,
+      };
+      // Schedule both PDF.js resume callbacks in the trusted pointerdown task,
+      // before the browser's normal button focus action and before timers run.
+      button.addEventListener("pointerdown", () => {
+        window.__mouseManualPauseResumeCalls.push("pause(true)");
+        pageLayer.pause(true);
+        window.__mouseManualPauseResumeCalls.push("show()");
+        builder.show();
+        window.__mouseManualPauseResumeCalls.push("show()");
+        builder.show();
+      }, { once:true });
+      pageView.reset({
+        keepAnnotationLayer:true,
+        keepAnnotationEditorLayer:true,
+        keepXfaLayer:true,
+        keepTextLayer:true,
+        keepCanvasWrapper:true,
+        preserveDetailViewState:true,
+      });
+      const currentEditor = manager.getEditor(state.editorId);
+      const currentInternal = currentEditor?.div?.querySelector(".internal");
+      const rect = currentEditor?.div?.getBoundingClientRect();
+      state.hiddenAfterSamePresentationHide = Boolean(builder.div?.hidden);
+      state.focusPreservedAfterSamePresentationHide =
+        document.activeElement === currentInternal;
+      state.editingAfterSamePresentationHide = Boolean(currentInternal?.isContentEditable);
+      state.editorBoundsAfterSamePresentationHide = rect
+        ? { width:rect.width, height:rect.height }
+        : null;
+      state.pauseCallsAfterSamePresentationHide = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "layer.pause.begin")
+        .slice(state.pauseCountBeforeHide)
+        .map((entry) => entry.callArgs?.paused ?? null) ?? [];
+      state.pageResetObserved = (window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "pageView.reset.begin").length ?? 0) >
+        state.resetCountBefore;
+      state.builderHideObserved = (window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "builder.hide.begin").length ?? 0) >
+        state.hideCountBefore;
+      return state;
+    });
+    assert.equal(pausedFreeText.hiddenAfterSamePresentationHide, false, JSON.stringify(pausedFreeText));
+    assert.equal(pausedFreeText.focusPreservedAfterSamePresentationHide, true, JSON.stringify(pausedFreeText));
+    assert.equal(pausedFreeText.editingAfterSamePresentationHide, true, JSON.stringify(pausedFreeText));
+    assert.ok(
+      pausedFreeText.editorBoundsAfterSamePresentationHide?.width > 0 &&
+        pausedFreeText.editorBoundsAfterSamePresentationHide?.height > 0,
+      JSON.stringify(pausedFreeText),
+    );
+    assert.equal(pausedFreeText.pageResetObserved, true, JSON.stringify(pausedFreeText));
+    assert.equal(pausedFreeText.builderHideObserved, true, JSON.stringify(pausedFreeText));
+    assert.deepEqual(pausedFreeText.pauseCallsAfterSamePresentationHide, [], JSON.stringify(pausedFreeText));
+
+    // Use the viewer's normal rendering queue after reset. Calling pageView.draw()
+    // directly bypasses PDFRenderingQueue's highest-priority selection, so its
+    // render continuation can pause indefinitely instead of completing a redraw.
+    await viewer.evaluate((pageIndex) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(pageIndex);
+      if (!app?.pdfViewer || !pageView) {
+        throw new Error("The reset page must remain in the active PDF viewer before it is redrawn");
+      }
+      app.pdfViewer.update();
+    }, pausedFreeText.pageIndex);
+    await viewer.waitForFunction((state) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(state.pageIndex);
+      const completedBuilderRenders = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "builder.render.return").length ?? 0;
+      return pageView?.renderingState === 3 &&
+        completedBuilderRenders > state.renderCountBeforeRedraw;
+    }, { timeout:20_000 }, pausedFreeText);
+    const redrawState = await viewer.evaluate((state) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(state.pageIndex);
+      const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+      if (!pageView || !manager) {
+        throw new Error("The current page and editor manager must remain available after redraw");
+      }
+      const afterRedrawEditor = manager.getEditor(state.editorId);
+      const afterRedrawInternal = afterRedrawEditor?.div?.querySelector(".internal");
+      const afterRedrawRect = afterRedrawEditor?.div?.getBoundingClientRect();
+      state.editingAfterRedraw = Boolean(afterRedrawInternal?.isContentEditable);
+      state.focusPreservedAfterRedraw = document.activeElement === afterRedrawInternal;
+      state.editorBoundsAfterRedraw = afterRedrawRect
+        ? { width:afterRedrawRect.width, height:afterRedrawRect.height }
+        : null;
+      state.pageRenderingStateAfterRedraw = pageView.renderingState;
+      // Separate legitimate pause(false) calls made by the queued PDF.js draw from
+      // the explicit toolbar pause/resume callbacks checked below.
+      state.pauseCountBeforeResumeProbe = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "layer.pause.begin").length ?? 0;
+      window.__mouseTestMilestones.samePresentationHide = state;
+      return state;
+    }, pausedFreeText);
+    Object.assign(pausedFreeText, redrawState);
+    assert.equal(pausedFreeText.pageRenderingStateAfterRedraw, 3, JSON.stringify(pausedFreeText));
+    assert.equal(pausedFreeText.editingAfterRedraw, true, JSON.stringify(pausedFreeText));
+    assert.equal(pausedFreeText.focusPreservedAfterRedraw, true, JSON.stringify(pausedFreeText));
+    assert.ok(
+      pausedFreeText.editorBoundsAfterRedraw?.width > 0 &&
+        pausedFreeText.editorBoundsAfterRedraw?.height > 0,
+      JSON.stringify(pausedFreeText),
+    );
     const savesBeforeText = await page.evaluate(() => window.__host.saves.length);
     await openActionMenu();
+    const resumedFreeText = await viewer.evaluate(async (pausedState) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(pausedState.pageIndex);
+      const builder = pageView?.annotationEditorLayer;
+      if (!builder || !pageView?.viewport) {
+        throw new Error("The annotation layer disappeared before the pause/resume probe");
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+      const editor = manager.getEditor(pausedState.editorId);
+      const internal = editor?.div?.querySelector(".internal");
+      const button = document.querySelector(
+        '.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]',
+      );
+      const snapshot = {
+        visible:!builder.div?.hidden,
+        toolbarFocused:document.activeElement === button,
+        focusIsInEditor:Boolean(editor?.div?.contains(document.activeElement)),
+        editorConnected:Boolean(editor?.div?.isConnected),
+        text:internal?.textContent?.replace(/\u200b/g, "") ?? null,
+        pauseCalls:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "layer.pause.begin")
+          .slice(pausedState.pauseCountBeforeResumeProbe)
+          .map((entry) => entry.callArgs?.paused ?? null) ?? [],
+        manualCalls:window.__mouseManualPauseResumeCalls.slice(),
+      };
+      window.__mouseTestMilestones.pauseResumeToolbarFocus = snapshot;
+      return snapshot;
+    }, pausedFreeText);
+    assert.equal(resumedFreeText.visible, true, JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.toolbarFocused, true, JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.focusIsInEditor, false, JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.editorConnected, true, JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.text, typedFreeText.text, JSON.stringify(resumedFreeText));
+    assert.deepEqual(
+      resumedFreeText.pauseCalls.slice(0, 3),
+      [true, false, false],
+      JSON.stringify(resumedFreeText),
+    );
+    assert.equal(
+      resumedFreeText.pauseCalls.filter((paused) => paused === true).length,
+      1,
+      JSON.stringify(resumedFreeText),
+    );
+    assert.deepEqual(
+      resumedFreeText.manualCalls,
+      ["pause(true)", "show()", "show()"],
+      JSON.stringify(resumedFreeText),
+    );
     await viewer.evaluate(() => new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     }));
@@ -1535,6 +2862,105 @@ test(
     }));
     assert.equal(afterRealEditorBlur.activeIsBridgeActionButton, true, JSON.stringify(afterRealEditorBlur));
     assert.equal(afterRealEditorBlur.editorStillActive, false, JSON.stringify(afterRealEditorBlur));
+    const lifecycleEvidence = await viewer.evaluate((typedText) => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const pageView = pdfViewer?.getPageView(0);
+      const builder = pageView?.annotationEditorLayer;
+      const pageLayer = builder?.annotationEditorLayer;
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+      const internal = document.querySelector(
+        ".annotationEditorLayer .freeTextEditor .internal",
+      );
+      const editorElement = internal?.closest(".freeTextEditor");
+      const editor = editorElement && manager?.getEditor?.(editorElement.id);
+      const viewportSummary = (viewport) => viewport ? {
+        rotation:viewport.rotation ?? null,
+        scale:viewport.scale ?? null,
+        width:viewport.width ?? null,
+        height:viewport.height ?? null,
+        offsetX:viewport.offsetX ?? null,
+        offsetY:viewport.offsetY ?? null,
+        viewBox:viewport.viewBox ? Array.from(viewport.viewBox) : null,
+        transform:viewport.transform ? Array.from(viewport.transform) : null,
+      } : null;
+      const elementSummary = (element) => element ? {
+        tag:element.tagName || "",
+        id:element.id || "",
+        className:typeof element.className === "string" ? element.className : "",
+        hidden:Boolean(element.hidden),
+        connected:Boolean(element.isConnected),
+      } : null;
+      return {
+        capturedAt:new Date().toISOString(),
+        fixture:"tests/fixtures/tracemonkey.pdf",
+        documentId:"mouse-regression-document",
+        typedText,
+        viewerMode:pdfViewer?.annotationEditorMode ?? null,
+        currentPageNumber:pdfViewer?.currentPageNumber ?? null,
+        pageView:pageView ? {
+          pageIndex:pageView.id - 1,
+          renderingState:pageView.renderingState,
+          viewport:viewportSummary(pageView.viewport),
+        } : null,
+        builderElement:elementSummary(builder?.div),
+        editorLayer:pageLayer ? {
+          viewport:viewportSummary(pageLayer.viewport),
+          element:elementSummary(pageLayer.div),
+        } : null,
+        editor:editor ? {
+          id:editor.id,
+          pageIndex:editor.pageIndex,
+          parentPageIndex:editor.parent?.pageIndex ?? null,
+          attached:Boolean(editor.isAttachedToDOM),
+          selected:Boolean(editor.div?.classList.contains("selectedEditor")),
+          editing:Boolean(editor.isInEditMode?.()),
+          empty:Boolean(editor.isEmpty?.()),
+          text:internal?.textContent?.replace(/\u200b/g, "") ?? null,
+        } : null,
+        activeElement:elementSummary(document.activeElement),
+        focusEvents:window.__keyboardFocusEvents
+          .filter((event) => event.type === "focusout" || event.type === "focusin")
+          .slice(-96),
+        modeActivationTraceState:window.__mouseModeActivationTraceState || null,
+        modeActivationTrace:window.__mouseModeActivationTrace?.slice(-96) || [],
+        lifecycleTraceState:window.__mousePdfEditorLifecycleTraceState || null,
+        lifecycleTrace:window.__mousePdfEditorLifecycleTrace?.slice(-224) || [],
+        milestones:{
+          rotationBeforeFreeTextCreation:
+            window.__mouseTestMilestones.rotationBeforeFreeTextCreation ?? null,
+          pageBeforeFreeTextCreation:
+            window.__mouseTestMilestones.pageBeforeFreeTextCreation ?? null,
+          inactivePagePrepared:
+            window.__mouseTestMilestones.inactivePagePrepared ?? null,
+          beforeFirstFreeTextClick:
+            window.__mouseTestMilestones.beforeFirstFreeTextClick ?? null,
+          modeActivationBeforeTyping:
+            window.__mouseTestMilestones.modeActivationBeforeTyping ?? null,
+          focusBeforeTyping:
+            window.__mouseTestMilestones.focusBeforeTyping ?? null,
+          deferredMoveProbe:
+            window.__mouseTestMilestones.deferredMoveProbe ?? null,
+          sameViewportUpdateBeforeTyping:
+            window.__mouseTestMilestones.sameViewportUpdateBeforeTyping ?? null,
+          sameViewportUpdateDuringTyping:
+            window.__mouseTestMilestones.sameViewportUpdateDuringTyping ?? null,
+          inactivePageUpdate:
+            window.__mouseTestMilestones.inactivePageUpdate ?? null,
+          manualPauseResumeCalls:
+            window.__mouseManualPauseResumeCalls?.slice() ?? [],
+        },
+      };
+    }, typedFreeText.text);
+    const lifecyclePath = path.join(
+      root,
+      "tests",
+      "artifacts",
+      `mouse-input-${artifactId}.lifecycle.json`,
+    );
+    await writeFile(lifecyclePath, JSON.stringify(lifecycleEvidence, null, 2), "utf8");
+    t.diagnostic(`Mouse lifecycle trace: ${lifecyclePath}`);
+    await viewer.evaluate(() => window.__stopMousePdfEditorLifecycleTrace?.());
     await click('.pdfReaderBridgeActionMenu [data-action="save"]');
     // Save commits the focused FreeText before the bridge returns serialized
     // bytes. Reopen those bytes so the following probe exercises PDF.js's
@@ -1545,6 +2971,77 @@ test(
       savesBeforeText,
     );
     const opensBeforeTextReopen = await page.evaluate(() => window.__host.opened);
+    await viewer.evaluate(() => {
+      const app = PDFViewerApplication;
+      const trace = window.__savedFreeTextRenderEvents = [];
+      const eventNames = [
+        "pagesinit",
+        "documentloaded",
+        "pagerender",
+        "pagerendered",
+        "annotationlayerrendered",
+        "annotationeditorlayerrendered",
+        "updateviewarea",
+      ];
+      for (const name of eventNames) {
+        app.eventBus.on(name, (event) => {
+          const pageNumber = Number.isInteger(event.pageNumber)
+            ? event.pageNumber
+            : app.pdfViewer.currentPageNumber;
+          const pageView = app.pdfViewer.getPageView(pageNumber - 1);
+          const page = pageView?.div;
+          const annotationLayer = pageView?.annotationLayer?.div ||
+            page?.querySelector(".annotationLayer") || null;
+          const annotationNodes = [...(annotationLayer?.querySelectorAll?.(
+            "[data-annotation-id]",
+          ) || [])];
+          const target = window.__mouseTestMilestones?.savedFreeTextAnnotationId;
+          const rect = (element) => {
+            if (!element) return null;
+            const bounds = element.getBoundingClientRect();
+            return {
+              x:bounds.x,
+              y:bounds.y,
+              width:bounds.width,
+              height:bounds.height,
+              connected:element.isConnected,
+            };
+          };
+          let visiblePageIds = [];
+          try {
+            visiblePageIds = app.pdfViewer._getVisiblePages().views.map(({ id }) => id);
+          } catch {}
+          trace.push({
+            type:name,
+            time:performance.now(),
+            pageNumber,
+            error:event.error?.message || null,
+            pageViewPageNumber:pageView?.pdfPage?.pageNumber ?? null,
+            renderingId:pageView?.renderingId ?? null,
+            renderingState:pageView?.renderingState ?? null,
+            pageBounds:rect(page),
+            visiblePageIds,
+            viewerScrollTop:document.getElementById("viewerContainer")?.scrollTop ?? null,
+            annotationLayer:{
+              builderPresent:Boolean(pageView?.annotationLayer),
+              divPresent:Boolean(annotationLayer),
+              bounds:rect(annotationLayer),
+              childCount:annotationLayer?.childElementCount ?? null,
+              annotationNodeCount:annotationNodes.length,
+              annotationNodes:annotationNodes.slice(0, 16).map((element) => ({
+                id:element.getAttribute("data-annotation-id"),
+                className:typeof element.className === "string" ? element.className : "",
+              })),
+              targetPresent:target
+                ? annotationNodes.some((element) =>
+                    element.getAttribute("data-annotation-id") === target)
+                : null,
+            },
+          });
+          if (trace.length > 96) trace.splice(0, trace.length - 96);
+        });
+      }
+    });
     await page.evaluate(() => window.__host.reopenSaved());
     await page.waitForFunction(
       (count) => window.__host.opened === count + 1,
@@ -1563,13 +3060,32 @@ test(
       return annotation ? { id:annotation.id } : null;
     });
     assert.ok(savedFreeText?.id, "The saved FreeText should reopen as a PDF annotation");
+    await viewer.evaluate((annotationId) => {
+      window.__mouseTestMilestones.savedFreeTextAnnotationId = annotationId;
+    }, savedFreeText.id);
     const freeTextModeAfterReopen = await viewer.evaluate(
       () => PDFViewerApplication.pdfViewer.annotationEditorMode,
     );
     if (freeTextModeAfterReopen === 3) {
       // Match the native annotation edit path: leave creation mode active only
       // after PDF.js receives a real double-click on the existing annotation.
+      const completedModeChanges = await viewer.evaluate(() =>
+        window.__mouseModeActivationTrace?.filter((entry) =>
+          entry.method === "event.annotationeditormodechanged" &&
+          entry.requestedMode === 0,
+        ).length ?? 0,
+      );
       await click("#editorFreeTextButton");
+      await viewer.waitForFunction((previousCount) => {
+        const trace = window.__mouseModeActivationTrace || [];
+        const completed = trace.filter((entry) =>
+          entry.method === "event.annotationeditormodechanged" &&
+          entry.requestedMode === 0,
+        ).length;
+        return PDFViewerApplication.pdfViewer.annotationEditorMode === 0 &&
+          completed > previousCount &&
+          (window.__mouseModeUpdatesPending || 0) === 0;
+      }, { timeout:10_000 }, completedModeChanges);
     } else if (freeTextModeAfterReopen !== 0) {
       throw new Error(`Unexpected FreeText editor mode after reopen: ${freeTextModeAfterReopen}`);
     }
@@ -1591,6 +3107,21 @@ test(
       },
       { timeout:30_000 },
       savedFreeText.id,
+    );
+    const reopenedPdfRect = await viewer.evaluate(async (annotationId) => {
+      const pageView = PDFViewerApplication.pdfViewer.getPageView(0);
+      const annotations = await pageView.pdfPage.getAnnotations({ intent:"display" });
+      const annotation = annotations.find((entry) => entry.id === annotationId);
+      const rect = annotation?.rect || null;
+      return {
+        rect,
+        width:rect ? Math.abs(rect[2] - rect[0]) : 0,
+        height:rect ? Math.abs(rect[3] - rect[1]) : 0,
+      };
+    }, savedFreeText.id);
+    assert.ok(
+      reopenedPdfRect.width > 0 && reopenedPdfRect.height > 0,
+      `The saved FreeText must reopen with nonzero PDF geometry: ${JSON.stringify(reopenedPdfRect)}`,
     );
     // Reopening restores the PDF's initial scroll position. Bring the exact
     // persisted annotation back into view with normal DOM scrolling before
@@ -1663,7 +3194,7 @@ test(
       `The saved FreeText double-click should remain inside the visible PDF iframe: ${JSON.stringify(outerTextHit)}`,
     );
     await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, {
-      clickCount:2,
+      count:2,
       delay:80,
     });
     await viewer.waitForFunction((annotationId) => {
@@ -1684,6 +3215,123 @@ test(
           return hit?.closest("[contenteditable]:not([contenteditable=false])") === internal;
         })();
     }, { timeout:10_000 }, savedFreeText.id);
+    const focusedBeforeZoom = await viewer.evaluate(() => {
+      const app = window.PDFViewerApplication;
+      const pageView = app.pdfViewer.getPageView(0);
+      const layer = pageView.annotationEditorLayer?.annotationEditorLayer;
+      const internal = document.querySelector(
+        ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
+      );
+      const editorElement = internal?.closest(".freeTextEditor");
+      const editor = editorElement &&
+        app.pdfViewer._layerProperties.annotationEditorUIManager.getEditor(editorElement.id);
+      if (!layer || !editor || document.activeElement !== internal ||
+        !internal?.isContentEditable) {
+        throw new Error("The reopened annotation must be explicitly editable before zoom");
+      }
+      return {
+        editorId:editor.id,
+        scale:pageView.viewport.scale,
+        pageViewport:{
+          transform:Array.from(pageView.viewport.transform || []),
+          width:pageView.viewport.width,
+          height:pageView.viewport.height,
+        },
+        layerViewport:{
+          scale:layer.viewport?.scale ?? null,
+          transform:Array.from(layer.viewport?.transform || []),
+          width:layer.viewport?.width ?? null,
+          height:layer.viewport?.height ?? null,
+        },
+      };
+    });
+    await viewer.evaluate(() => {
+      PDFViewerApplication.pdfViewer.updateScale({ scaleFactor:1.05, drawingDelay:0 });
+    });
+    await viewer.waitForFunction((previousScale) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(0);
+      const layer = pageView?.annotationEditorLayer?.annotationEditorLayer;
+      return pageView?.renderingState === 3 && pageView.viewport?.scale > previousScale &&
+        layer?.viewport?.scale === pageView.viewport.scale;
+    }, { timeout:20_000 }, focusedBeforeZoom.scale);
+    const zoomedFreeText = await viewer.evaluate(({ annotationId, before }) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app.pdfViewer.getPageView(0);
+      const layer = pageView.annotationEditorLayer?.annotationEditorLayer;
+      const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+      const editor = manager.getEditors(0).find((candidate) =>
+        candidate.annotationElementId === annotationId ||
+        candidate.div?.getAttribute("annotation-id") === annotationId,
+      );
+      const internal = editor?.div?.querySelector(".internal");
+      const rect = editor?.div?.getBoundingClientRect();
+      const hit = rect && document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+      const sameTransform = (left, right) =>
+        left?.length === right?.length && left.every((value, index) =>
+          Object.is(value, right[index]));
+      return {
+        pageScale:pageView.viewport.scale,
+        pageTransform:Array.from(pageView.viewport.transform || []),
+        layerScale:layer?.viewport?.scale ?? null,
+        layerTransform:Array.from(layer?.viewport?.transform || []),
+        pageDimensions:[pageView.viewport.width, pageView.viewport.height],
+        layerDimensions:[layer?.viewport?.width ?? null, layer?.viewport?.height ?? null],
+        transformChanged:!sameTransform(
+          before.pageViewport.transform,
+          pageView.viewport.transform,
+        ),
+        editorConnected:Boolean(editor?.div?.isConnected),
+        editorBounds:rect ? { x:rect.x, y:rect.y, width:rect.width, height:rect.height } : null,
+        editorHit:Boolean(editor?.div?.contains(hit)),
+        text:internal?.textContent?.replace(/\u200b/g, "").replace(/\u00a0/g, " ") ?? null,
+        editing:Boolean(internal?.isContentEditable),
+        active:document.activeElement === internal,
+      };
+    }, { annotationId:savedFreeText.id, before:focusedBeforeZoom });
+    assert.ok(zoomedFreeText.pageScale > focusedBeforeZoom.scale, JSON.stringify(zoomedFreeText));
+    assert.equal(zoomedFreeText.layerScale, zoomedFreeText.pageScale, JSON.stringify(zoomedFreeText));
+    assert.equal(zoomedFreeText.transformChanged, true, JSON.stringify(zoomedFreeText));
+    assert.deepEqual(
+      zoomedFreeText.layerDimensions,
+      zoomedFreeText.pageDimensions,
+      JSON.stringify(zoomedFreeText),
+    );
+    assert.equal(zoomedFreeText.editorConnected, true, JSON.stringify(zoomedFreeText));
+    assert.equal(zoomedFreeText.editorHit, true, JSON.stringify(zoomedFreeText));
+    assert.equal(zoomedFreeText.text, "Mouse toolbar round trip", JSON.stringify(zoomedFreeText));
+    if (!zoomedFreeText.editing || !zoomedFreeText.active) {
+      const refreshedPoint = await viewer.evaluate((annotationId) => {
+        const app = window.PDFViewerApplication;
+        const editor = app.pdfViewer._layerProperties.annotationEditorUIManager
+          .getEditors(0).find((candidate) =>
+            candidate.annotationElementId === annotationId ||
+            candidate.div?.getAttribute("annotation-id") === annotationId,
+          );
+        const rect = editor?.div?.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          throw new Error("The zoomed FreeText annotation has no pointer hit area");
+        }
+        return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
+      }, savedFreeText.id);
+      const frameOffset = await iframeOffset();
+      await page.mouse.click(frameOffset.x + refreshedPoint.x, frameOffset.y + refreshedPoint.y, {
+        count:2,
+        delay:80,
+      });
+      await viewer.waitForFunction((annotationId) => {
+        const app = window.PDFViewerApplication;
+        const internal = [...document.querySelectorAll(
+          ".annotationEditorLayer .freeTextEditor .internal",
+        )].find((element) =>
+          element.closest(".freeTextEditor")?.getAttribute("annotation-id") === annotationId,
+        );
+        return internal?.isContentEditable && document.activeElement === internal;
+      }, { timeout:10_000 }, savedFreeText.id);
+    }
     const localTextPoint = await viewer.evaluate(() => {
       const internal = document.querySelector(
         ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
@@ -1834,11 +3482,551 @@ test(
       "Pointer diagnostics must not include coordinates, PDF text, or paths",
     );
 
+    // Re-enter the saved annotation, cache its focused contenteditable with
+    // PDF.js pause(true), then move focus to a real input in the host document.
+    // Rendering the same page twice schedules PDF.js's delayed focus callback
+    // while the iframe is unfocused; it must not steal host-window focus.
+    const externalFocusPoint = await viewer.evaluate((annotationId) => {
+      const app = window.PDFViewerApplication;
+      const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+      const editor = manager.getEditors(0).find((candidate) =>
+        candidate.annotationElementId === annotationId ||
+        candidate.div?.getAttribute("annotation-id") === annotationId,
+      );
+      const rect = editor?.div?.getBoundingClientRect();
+      if (!editor || !rect || rect.width <= 0 || rect.height <= 0) {
+        throw new Error("The saved FreeText must remain visible before host-window focus testing");
+      }
+      return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
+    }, savedFreeText.id);
+    const externalFocusFrameOffset = await iframeOffset();
+    await page.mouse.click(
+      externalFocusFrameOffset.x + externalFocusPoint.x,
+      externalFocusFrameOffset.y + externalFocusPoint.y,
+      { count:2, delay:80 },
+    );
+    await viewer.waitForFunction((annotationId) => {
+      const app = window.PDFViewerApplication;
+      const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+      const internal = [...document.querySelectorAll(
+        ".annotationEditorLayer .freeTextEditor .internal",
+      )].find((element) =>
+        element.closest(".freeTextEditor")?.getAttribute("annotation-id") === annotationId,
+      );
+      const editor = internal?.closest(".freeTextEditor");
+      return internal?.isContentEditable && document.activeElement === internal &&
+        editor && manager.getEditor(editor.id) && document.hasFocus() &&
+        window.top.document.activeElement === window.frameElement;
+    }, { timeout:10_000 }, savedFreeText.id);
+    const pauseBeforeHostFocus = await viewer.evaluate(async (annotationId) => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app.pdfViewer;
+      const pageView = app.pdfViewer.getPageView(0);
+      const builder = pageView.annotationEditorLayer;
+      const builderLayer = builder.annotationEditorLayer;
+      const manager = pdfViewer._layerProperties.annotationEditorUIManager;
+      const editor = manager.getEditors(0).find((candidate) =>
+        candidate.annotationElementId === annotationId ||
+        candidate.div?.getAttribute("annotation-id") === annotationId,
+      );
+      const internal = editor?.div?.querySelector(".internal");
+      if (!editor || !internal?.isContentEditable || document.activeElement !== internal) {
+        throw new Error("The saved FreeText must be actively editable before host focus moves");
+      }
+      const activeLayer = editor.parent;
+      const editorOwnership = {
+        editorId:editor.id,
+        editorPageIndex:editor.pageIndex,
+        parentPageIndex:activeLayer?.pageIndex ?? null,
+        managerCurrentLayerMatchesEditor:Boolean(manager.currentLayer === activeLayer),
+        builderLayerMatchesEditor:Boolean(builderLayer === activeLayer),
+        activeLayerConnected:Boolean(activeLayer?.div?.isConnected),
+        activeLayerContainsEditor:Boolean(activeLayer?.div?.contains(editor.div)),
+        editorAttached:Boolean(editor.isAttachedToDOM),
+        editorConnected:Boolean(editor.div?.isConnected),
+        currentPageViewMatches:Boolean(pdfViewer.getPageView(0) === pageView),
+        pageViewPageNumber:pageView.pdfPage?.pageNumber ?? null,
+        documentFingerprint:app.pdfDocument?.fingerprints?.[0] ?? null,
+      };
+      if (activeLayer?.pageIndex !== 0 || manager.currentLayer !== activeLayer ||
+        builderLayer !== activeLayer ||
+        !activeLayer.div?.isConnected || !activeLayer.div.contains(editor.div) ||
+        !editor.isAttachedToDOM || !editor.div?.isConnected ||
+        manager.getEditor(editor.id) !== editor || pdfViewer.getPageView(0) !== pageView ||
+        pageView.pdfPage?.pageNumber !== 1) {
+        throw new Error(`The focused FreeText is not owned by the current document/page: ${JSON.stringify(editorOwnership)}`);
+      }
+      const layerTraceIdentity = window.__mouseInstrumentPageLayer(pageView, builder, activeLayer);
+      const pauseCountBefore = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "layer.pause.begin" &&
+          entry.receiverIdentity === layerTraceIdentity.pageLayerIdentity).length ?? 0;
+      window.__mouseHostFocusIdentityRefs = {
+        app,
+        pdfDocument:app.pdfDocument,
+        pdfViewer,
+        pageView,
+        builder,
+        builderLayer,
+        manager,
+        activeLayer,
+        editor,
+      };
+      const observedPauseCalls = [];
+      const originalPause = activeLayer.pause;
+      const observedPauseIdentity = {
+        documentIdentity:layerTraceIdentity.documentIdentity,
+        pageViewIdentity:layerTraceIdentity.pageViewIdentity,
+        layerIdentity:layerTraceIdentity.pageLayerIdentity,
+      };
+      const observedPause = function (paused, ...args) {
+        observedPauseCalls.push({
+          paused:Boolean(paused),
+          receiverMatches:this === activeLayer,
+          time:Math.round(performance.now()),
+          ...observedPauseIdentity,
+        });
+        return originalPause.apply(this, [paused, ...args]);
+      };
+      activeLayer.pause = observedPause;
+      window.__mouseHostFocusPauseProbe = {
+        activeLayer,
+        originalPause,
+        observedPause,
+        calls:observedPauseCalls,
+      };
+      activeLayer.pause(true);
+      return { editorId:editor.id, pauseCountBefore, layerTraceIdentity, editorOwnership };
+    }, savedFreeText.id);
+    const externalInput = await page.evaluate(() => {
+      const previous = document.getElementById("mouse-external-focus-probe");
+      previous?.remove();
+      const input = document.createElement("input");
+      input.id = "mouse-external-focus-probe";
+      input.type = "text";
+      input.autocomplete = "off";
+      input.setAttribute("aria-label", "Mouse regression external focus target");
+      input.style.cssText = "position:fixed;left:12px;top:12px;width:240px;height:28px;z-index:2147483647";
+      document.body.append(input);
+      const rect = input.getBoundingClientRect();
+      return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
+    });
+    await page.mouse.click(externalInput.x, externalInput.y);
+    await page.waitForFunction(
+      () => document.activeElement?.id === "mouse-external-focus-probe",
+      { timeout:5_000 },
+    );
+    const hostFocusAfterResume = await viewer.evaluate(async (pauseState) => {
+      const app = window.PDFViewerApplication;
+      const refs = window.__mouseHostFocusIdentityRefs;
+      const pdfViewer = app.pdfViewer;
+      const pageView = pdfViewer.getPageView(0);
+      const builder = pageView.annotationEditorLayer;
+      const manager = pdfViewer._layerProperties.annotationEditorUIManager;
+      const editor = manager.getEditor(pauseState.editorId);
+      const activeLayer = editor?.parent;
+      const currentTraceIdentity = window.__mouseInstrumentPageLayer(
+        pageView,
+        builder,
+        activeLayer,
+      );
+      builder.show();
+      builder.show();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const pauseProbe = window.__mouseHostFocusPauseProbe;
+      const observedPauseCalls = pauseProbe?.calls?.map((entry) => ({ ...entry })) ?? [];
+      if (pauseProbe?.activeLayer?.pause === pauseProbe.observedPause) {
+        pauseProbe.activeLayer.pause = pauseProbe.originalPause;
+      }
+      delete window.__mouseHostFocusPauseProbe;
+      const pauseEntries = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "layer.pause.begin" &&
+          entry.receiverIdentity === pauseState.layerTraceIdentity.pageLayerIdentity) ?? [];
+      return {
+        frameHasFocus:document.hasFocus(),
+        frameActiveElement:document.activeElement?.id || document.activeElement?.className || "",
+        hostActiveElementId:window.top.document.activeElement?.id || "",
+        editorConnected:Boolean(editor?.div?.isConnected),
+        text:editor?.div?.querySelector(".internal")?.textContent
+          ?.replace(/\u200b/g, "").replace(/\u00a0/g, " ") ?? null,
+        editorOwnership:pauseState.editorOwnership,
+        traceIdentity:{
+          before:pauseState.layerTraceIdentity,
+          after:currentTraceIdentity,
+        },
+        currentOwnership:{
+          sameApp:app === refs.app,
+          sameDocument:app.pdfDocument === refs.pdfDocument,
+          samePdfViewer:pdfViewer === refs.pdfViewer,
+          samePageView:pageView === refs.pageView,
+          sameBuilder:builder === refs.builder,
+          sameBuilderLayer:builder.annotationEditorLayer === refs.builderLayer,
+          builderLayerMatchesActiveLayer:builder.annotationEditorLayer === activeLayer,
+          sameManager:manager === refs.manager,
+          sameActiveLayer:activeLayer === refs.activeLayer,
+          managerCurrentLayerMatchesEditor:Boolean(manager.currentLayer === editor?.parent),
+          editorParentMatchesManagerCurrentLayer:Boolean(editor?.parent === manager.currentLayer),
+          editorMatchesOriginal:Boolean(editor === refs.editor),
+          sameTraceDocument:currentTraceIdentity.documentIdentity ===
+            pauseState.layerTraceIdentity.documentIdentity,
+          sameTracePageView:currentTraceIdentity.pageViewIdentity ===
+            pauseState.layerTraceIdentity.pageViewIdentity,
+          sameTraceBuilder:currentTraceIdentity.builderIdentity ===
+            pauseState.layerTraceIdentity.builderIdentity,
+          sameTraceManager:currentTraceIdentity.managerIdentity ===
+            pauseState.layerTraceIdentity.managerIdentity,
+          sameTraceLayer:currentTraceIdentity.pageLayerIdentity ===
+            pauseState.layerTraceIdentity.pageLayerIdentity,
+          editorAttached:Boolean(editor?.isAttachedToDOM),
+          activeLayerContainsEditor:Boolean(activeLayer?.div?.contains(editor?.div)),
+          pageViewPageNumber:pageView.pdfPage?.pageNumber ?? null,
+          documentFingerprint:app.pdfDocument?.fingerprints?.[0] ?? null,
+        },
+        pauseCalls:observedPauseCalls.map((entry) => entry.paused),
+        observedPauseCalls,
+        pauseTraceDiagnostics:{
+          baseline:pauseState.pauseCountBefore,
+          finalCount:pauseEntries.length,
+          layerIdentity:pauseState.layerTraceIdentity.pageLayerIdentity,
+          events:pauseEntries.map((entry) => ({
+            time:entry.time,
+            paused:entry.callArgs?.paused ?? null,
+            documentIdentity:entry.documentIdentity,
+            pageViewIdentity:entry.pageViewIdentity,
+            pageLayerIdentity:entry.pageLayerIdentity,
+          })),
+        },
+      };
+    }, pauseBeforeHostFocus);
+    await viewer.evaluate((snapshot) => {
+      window.__mouseTestMilestones.hostWindowFocusAfterResume = snapshot;
+    }, hostFocusAfterResume);
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    const hostFocusTargetStillActive = await page.evaluate(
+      () => document.activeElement?.id === "mouse-external-focus-probe",
+    );
+    assert.deepEqual(hostFocusAfterResume.pauseCalls, [true, false, false], JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.frameHasFocus, false, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameDocument, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameApp, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.samePdfViewer, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.samePageView, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameManager, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameActiveLayer, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameTraceDocument, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameTracePageView, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameTraceBuilder, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameTraceManager, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.sameTraceLayer, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.builderLayerMatchesActiveLayer, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.managerCurrentLayerMatchesEditor, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.editorParentMatchesManagerCurrentLayer, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.currentOwnership.editorMatchesOriginal, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.hostActiveElementId, "mouse-external-focus-probe", JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.editorConnected, true, JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusAfterResume.text, "Mouse toolbar round trip", JSON.stringify(hostFocusAfterResume));
+    assert.equal(hostFocusTargetStillActive, true, JSON.stringify(hostFocusAfterResume));
+    await page.evaluate(() => document.getElementById("mouse-external-focus-probe")?.remove());
+
+    const opensBeforeZoomedSaveReopen = await page.evaluate(() => window.__host.opened);
+    await page.evaluate(() => window.__host.reopenSaved());
+    await page.waitForFunction(
+      (count) => window.__host.opened === count + 1,
+      { timeout:20_000 },
+      opensBeforeZoomedSaveReopen,
+    );
+    await viewer.waitForSelector(
+      '.page[data-page-number="1"] .textLayer span',
+      { timeout:20_000 },
+    );
+    await viewer.waitForFunction(
+      (annotationId) => {
+        const app = window.PDFViewerApplication;
+        const pageView = app?.pdfViewer?.getPageView(0);
+        return pageView?.renderingState === 3 && pageView.pdfPage?.pageNumber === 1 &&
+          [...(pageView.annotationLayer?.div?.querySelectorAll?.(".freeTextAnnotation") || [])]
+            .some((element) => element.getAttribute("data-annotation-id") === annotationId);
+      },
+      { timeout:30_000 },
+      savedFreeText.id,
+    );
+    const zoomedSavedAnnotation = await viewer.evaluate(async (annotationId) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app.pdfViewer.getPageView(0);
+      const annotations = await pageView.pdfPage.getAnnotations({ intent:"display" });
+      const annotation = annotations.find((entry) => entry.id === annotationId);
+      const target = [...(pageView.annotationLayer?.div?.querySelectorAll?.(
+        ".freeTextAnnotation",
+      ) || [])].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+      target?.scrollIntoView({ block:"center", inline:"center", behavior:"auto" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rect = target?.getBoundingClientRect();
+      const x = rect ? rect.left + rect.width / 2 : NaN;
+      const y = rect ? rect.top + rect.height / 2 : NaN;
+      const hit = Number.isFinite(x) && Number.isFinite(y)
+        ? document.elementFromPoint(x, y)
+        : null;
+      const viewerRect = document.getElementById("viewerContainer")?.getBoundingClientRect();
+      return {
+        documentFingerprint:app.pdfDocument?.fingerprints?.[0] ?? null,
+        pageNumber:pageView.pdfPage?.pageNumber ?? null,
+        pageRenderingState:pageView.renderingState,
+        pageScale:pageView.viewport?.scale ?? null,
+        pdfRect:annotation?.rect ?? null,
+        pdfWidth:annotation?.rect ? Math.abs(annotation.rect[2] - annotation.rect[0]) : 0,
+        pdfHeight:annotation?.rect ? Math.abs(annotation.rect[3] - annotation.rect[1]) : 0,
+        annotationConnected:Boolean(target?.isConnected),
+        annotationBounds:rect
+          ? { x:rect.x, y:rect.y, width:rect.width, height:rect.height }
+          : null,
+        center:{ x, y },
+        insideViewer:Boolean(viewerRect && x >= Math.max(viewerRect.left, 0) &&
+          x < Math.min(viewerRect.right, window.innerWidth) &&
+          y >= Math.max(viewerRect.top, 0) && y < Math.min(viewerRect.bottom, window.innerHeight)),
+        hitTarget:Boolean(target && hit?.closest(".freeTextAnnotation") === target),
+      };
+    }, savedFreeText.id);
+    assert.ok(
+      zoomedSavedAnnotation.pdfWidth > 0 && zoomedSavedAnnotation.pdfHeight > 0,
+      `The saved FreeText must retain nonzero PDF geometry after zoom and reopen: ${JSON.stringify(zoomedSavedAnnotation)}`,
+    );
+    assert.ok(
+      zoomedSavedAnnotation.annotationBounds?.width > 0 &&
+        zoomedSavedAnnotation.annotationBounds?.height > 0,
+      JSON.stringify(zoomedSavedAnnotation),
+    );
+    assert.equal(zoomedSavedAnnotation.annotationConnected, true, JSON.stringify(zoomedSavedAnnotation));
+    assert.equal(zoomedSavedAnnotation.insideViewer, true, JSON.stringify(zoomedSavedAnnotation));
+    assert.equal(zoomedSavedAnnotation.hitTarget, true, JSON.stringify(zoomedSavedAnnotation));
+
+    // The cross-page no-op guard must stop applying once the active page has
+    // a real new PageViewport that its editor layer has not adopted yet. Stage
+    // that ordering directly, then send an unchanged update to page 2. The
+    // original PDF.js update must still run and reach its shared commit path.
+    await viewer.waitForFunction(() => {
+      const pageView = window.PDFViewerApplication?.pdfViewer?.getPageView(1);
+      const layer = pageView?.annotationEditorLayer?.annotationEditorLayer;
+      return Boolean(
+        pageView?.renderingState === 3 && layer?.viewport && layer.div?.isConnected,
+      );
+    }, { timeout:20_000 });
+    const reopenEditPoint = await viewer.evaluate((annotationId) => {
+      const pageView = PDFViewerApplication.pdfViewer.getPageView(0);
+      const target = [...(pageView.annotationLayer?.div?.querySelectorAll?.(
+        ".freeTextAnnotation",
+      ) || [])].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+      target?.scrollIntoView({ block:"center", inline:"center", behavior:"auto" });
+      const rect = target?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        throw new Error("The reopened FreeText must have a hit area for the viewport-change probe");
+      }
+      return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
+    }, savedFreeText.id);
+    const reopenEditFrameOffset = await iframeOffset();
+    await page.mouse.click(
+      reopenEditFrameOffset.x + reopenEditPoint.x,
+      reopenEditFrameOffset.y + reopenEditPoint.y,
+      { count:2, delay:80 },
+    );
+    await viewer.waitForFunction((annotationId) => {
+      const app = window.PDFViewerApplication;
+      const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+      const internal = document.querySelector(
+        ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
+      );
+      const editor = internal?.closest(".freeTextEditor");
+      return editor?.getAttribute("annotation-id") === annotationId &&
+        internal?.isContentEditable && document.activeElement === internal &&
+        manager?.getEditor?.(editor.id)?.isInEditMode?.();
+    }, { timeout:10_000 }, savedFreeText.id);
+    const crossPageViewportChange = await viewer.evaluate((annotationId) => {
+      const app = window.PDFViewerApplication;
+      const pdfViewer = app?.pdfViewer;
+      const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+      const activePageView = pdfViewer?.getPageView(0);
+      const activeLayer = activePageView?.annotationEditorLayer?.annotationEditorLayer;
+      const receiverPageView = pdfViewer?.getPageView(1);
+      const receiverLayer = receiverPageView?.annotationEditorLayer?.annotationEditorLayer;
+      const activeInternal = document.activeElement;
+      const activeElement = activeInternal instanceof Element
+        ? activeInternal.closest(".freeTextEditor")
+        : null;
+      const editor = activeElement && manager?.getEditor?.(activeElement.id);
+      const bridgeWrapperInspectorAvailable =
+        typeof window.__mouseHasBridgeUpdateWrapper === "function";
+      const bridgeUpdateWrapped = Boolean(
+        bridgeWrapperInspectorAvailable &&
+        window.__mouseHasBridgeUpdateWrapper(receiverLayer?.update),
+      );
+      const preconditions = {
+        activeDocumentPresent:Boolean(app?.pdfDocument),
+        viewerOwnsActiveDocument:pdfViewer?.pdfDocument === app?.pdfDocument,
+        managerIsCurrent:Boolean(
+          manager && manager === pdfViewer?._layerProperties
+            ?.annotationEditorUIManager,
+        ),
+        activePageViewIsCurrent:pdfViewer?.getPageView(0) === activePageView,
+        activePageIsExpected:activePageView?.pdfPage?.pageNumber === 1,
+        activeLayerIsCurrent:
+          activePageView?.annotationEditorLayer?.annotationEditorLayer === activeLayer,
+        receiverPageViewIsCurrent:pdfViewer?.getPageView(1) === receiverPageView,
+        receiverPageIsExpected:receiverPageView?.pdfPage?.pageNumber === 2,
+        receiverLayerIsCurrent:
+          receiverPageView?.annotationEditorLayer?.annotationEditorLayer === receiverLayer,
+        editorPresent:Boolean(editor),
+        editorPageIndex:editor?.pageIndex === 0,
+        editorParentMatchesActiveLayer:editor?.parent === activeLayer,
+        managerOwnsEditor:Boolean(editor && manager?.getEditor?.(editor.id) === editor),
+        editorAttached:Boolean(editor?.isAttachedToDOM),
+        editorConnected:Boolean(editor?.div?.isConnected),
+        activeElementIsEditor:activeElement === editor?.div,
+        internalIsContentEditable:Boolean(activeInternal?.isContentEditable),
+        internalBelongsToEditor:Boolean(editor?.div?.contains(activeInternal)),
+        internalIsActive:document.activeElement === activeInternal,
+        editorMatchesSavedAnnotation:Boolean(
+          editor?.annotationElementId === annotationId ||
+          editor?.div?.getAttribute("annotation-id") === annotationId,
+        ),
+        bridgeWrapperInspectorAvailable,
+        receiverBridgeUpdateWrapped:bridgeUpdateWrapped,
+      };
+      if (Object.values(preconditions).some((value) => value !== true)) {
+        throw new Error(
+          `The changed-viewport probe requires the focused reopened editor and both current-document layers: ${JSON.stringify(preconditions)}`,
+        );
+      }
+      const samePresentation = (left, right) => {
+        if (!left || !right) return false;
+        for (const key of ["rotation", "scale", "width", "height", "offsetX", "offsetY"]) {
+          if (!Object.is(left[key], right[key])) return false;
+        }
+        for (const key of ["viewBox", "transform"]) {
+          const before = left[key];
+          const after = right[key];
+          if (!before && !after) continue;
+          if (!before || !after || before.length !== after.length ||
+            Array.from(before).some((value, index) => !Object.is(value, after[index]))) {
+            return false;
+          }
+        }
+        return true;
+      };
+      const originalPageViewport = activePageView.viewport;
+      const originalLayerViewport = activeLayer.viewport;
+      const receiverViewport = receiverLayer.viewport;
+      const pageBefore = originalPageViewport.clone({ dontFlip:true });
+      const activePresentationMatchesBefore = samePresentation(
+        activeLayer.viewport,
+        pageBefore,
+      );
+      const receiverSamePresentation = samePresentation(receiverLayer.viewport, receiverViewport);
+      const originalCommitOrRemove = manager.commitOrRemove;
+      let managerCommitCalls = 0;
+      const countedCommitOrRemove = function (...args) {
+        managerCommitCalls += 1;
+        return originalCommitOrRemove.apply(this, args);
+      };
+      let changedPagePresentationMatches = false;
+      let activeLayerPresentationAfter = null;
+      let changedPagePresentation = null;
+      let editorAfter = null;
+      try {
+        activePageView.viewport = originalPageViewport.clone({
+          scale:originalPageViewport.scale + 0.2,
+        });
+        changedPagePresentation = activePageView.viewport.clone({ dontFlip:true });
+        changedPagePresentationMatches = samePresentation(
+          activeLayer.viewport,
+          changedPagePresentation,
+        );
+        activeLayerPresentationAfter = {
+          scale:activeLayer.viewport.scale,
+          rotation:activeLayer.viewport.rotation,
+          width:activeLayer.viewport.width,
+          height:activeLayer.viewport.height,
+        };
+        manager.commitOrRemove = countedCommitOrRemove;
+        receiverLayer.update({ viewport:receiverViewport });
+        const liveEditor = manager.getEditor(editor.id);
+        editorAfter = {
+          managerOwnsEditor:liveEditor === editor,
+          editing:Boolean(liveEditor?.isInEditMode?.()),
+          connected:Boolean(liveEditor?.div?.isConnected),
+          text:liveEditor?.div?.querySelector(".internal")?.textContent
+            ?.replace(/\u200b/g, "").replace(/\u00a0/g, " ") ?? null,
+        };
+      } finally {
+        if (manager.commitOrRemove === countedCommitOrRemove) {
+          manager.commitOrRemove = originalCommitOrRemove;
+        }
+        activePageView.viewport = originalPageViewport;
+      }
+      return {
+        documentIdentity:window.__mouseObjectIdentity?.(app.pdfDocument) ?? null,
+        managerIdentity:window.__mouseObjectIdentity?.(manager) ?? null,
+        activePageViewIdentity:window.__mouseObjectIdentity?.(activePageView) ?? null,
+        activeLayerIdentity:window.__mouseObjectIdentity?.(activeLayer) ?? null,
+        receiverPageViewIdentity:window.__mouseObjectIdentity?.(receiverPageView) ?? null,
+        receiverLayerIdentity:window.__mouseObjectIdentity?.(receiverLayer) ?? null,
+        editorIdentity:window.__mouseObjectIdentity?.(editor) ?? null,
+        editorParentIdentity:window.__mouseObjectIdentity?.(editor.parent) ?? null,
+        editorPageIndex:editor.pageIndex,
+        managerCurrentPageIndex:manager.currentPageIndex,
+        managerCurrentLayerMatchesEditor:manager.currentLayer === editor.parent,
+        activePresentationMatchesBefore,
+        changedPagePresentationMatches,
+        receiverSamePresentation,
+        receiverBridgeUpdateWrapped:Boolean(
+          window.__mouseHasBridgeUpdateWrapper?.(receiverLayer.update),
+        ),
+        pageScaleBefore:originalPageViewport.scale,
+        pageScaleChanged:changedPagePresentation?.scale !== originalPageViewport.scale,
+        activeLayerPresentationAfter,
+        managerCommitCalls,
+        editorAfter,
+      };
+    }, savedFreeText.id);
+    assert.equal(crossPageViewportChange.editorPageIndex, 0, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.managerCurrentPageIndex, 0, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.managerCurrentLayerMatchesEditor, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.activePresentationMatchesBefore, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.pageScaleChanged, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.changedPagePresentationMatches, false, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.receiverSamePresentation, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.receiverBridgeUpdateWrapped, true, JSON.stringify(crossPageViewportChange));
+    assert.ok(crossPageViewportChange.managerCommitCalls > 0, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.editorAfter.managerOwnsEditor, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.editorAfter.connected, true, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.editorAfter.editing, false, JSON.stringify(crossPageViewportChange));
+    assert.equal(crossPageViewportChange.editorAfter.text, "Mouse toolbar round trip", JSON.stringify(crossPageViewportChange));
+
       assert.deepEqual(pageErrors, [], "The viewer should not throw during mouse input");
+    const focusLifecyclePath = path.join(
+      root,
+      "tests",
+      "artifacts",
+      `mouse-input-${artifactId}.focus.json`,
+    );
+    await writeFile(focusLifecyclePath, JSON.stringify({
+      capturedAt:new Date().toISOString(),
+      fixture:"tests/fixtures/tracemonkey.pdf",
+      documentId,
+      samePresentationHide:pausedFreeText,
+      samePresentationRedraw:{
+        pageRenderingState:pausedFreeText.pageRenderingStateAfterRedraw,
+        focusPreserved:pausedFreeText.focusPreservedAfterRedraw,
+        editingPreserved:pausedFreeText.editingAfterRedraw,
+        editorBounds:pausedFreeText.editorBoundsAfterRedraw,
+      },
+      focusedZoom:{ before:focusedBeforeZoom, after:zoomedFreeText },
+      savedReopenAfterZoom:zoomedSavedAnnotation,
+      crossPageViewportChange,
+      hostFocusPauseResume:hostFocusAfterResume,
+    }, null, 2), "utf8");
+    t.diagnostic(`Focus lifecycle evidence: ${focusLifecyclePath}`);
     } catch (error) {
       primaryError = error;
       try {
-        const captureId = Date.now();
+        const captureId = artifactId;
         let inputDiagnostics = null;
         if (page && viewer) {
           await page.evaluate(() => {
@@ -1854,13 +4042,223 @@ test(
             () => window.__host?.inputDiagnostics?.requestId === "mouse-failure-diagnostics",
             { timeout: 1_500 },
           ).catch(() => {});
-          inputDiagnostics = await viewer.evaluate(() => {
+          inputDiagnostics = await viewer.evaluate(async () => {
             const app = window.PDFViewerApplication;
-            const editorLayer = document.querySelector(
-              '.page[data-page-number="1"] .annotationEditorLayer',
-            );
-            const pageView = app?.pdfViewer?.getPageView(0);
+            const pdfViewer = app?.pdfViewer;
+            const pageView = pdfViewer?.getPageView(0);
+            const pageElement = document.querySelector('.page[data-page-number="1"]');
+            const editorLayer = pageElement?.querySelector(".annotationEditorLayer");
+            const container = document.getElementById("viewerContainer");
+            const annotationLayer = pageView?.annotationLayer?.div ||
+              pageElement?.querySelector(".annotationLayer") || null;
+            const expectedAnnotationId = window.__mouseTestMilestones
+              ?.savedFreeTextAnnotationId || null;
+            const annotationStorage = app?.pdfDocument?.annotationStorage;
+            const annotationEditorUIManager = pdfViewer?._layerProperties
+              ?.annotationEditorUIManager;
+            const storageValue = expectedAnnotationId
+              ? annotationStorage?.getRawValue?.(expectedAnnotationId)
+              : undefined;
+            const modifiedIds = annotationStorage?.modifiedIds?.ids;
+            const rectSnapshot = (element) => {
+              if (!element) return null;
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return {
+                x:rect.x,
+                y:rect.y,
+                width:rect.width,
+                height:rect.height,
+                connected:element.isConnected,
+                display:style.display,
+                visibility:style.visibility,
+                opacity:style.opacity,
+                pointerEvents:style.pointerEvents,
+              };
+            };
+            const containerRect = container?.getBoundingClientRect();
+            const pageRect = pageElement?.getBoundingClientRect();
+            const intersects = (rect, clip) => Boolean(rect && clip &&
+              rect.width > 0 && rect.height > 0 &&
+              Math.max(rect.left, clip.left) < Math.min(rect.right, clip.right) &&
+              Math.max(rect.top, clip.top) < Math.min(rect.bottom, clip.bottom));
+            const visiblePages = (() => {
+              try {
+                return pdfViewer?._getVisiblePages?.().views.map(({ id, percent, view }) => ({
+                  id,
+                  percent,
+                  renderingId:view?.renderingId ?? null,
+                  renderingState:view?.renderingState ?? null,
+                  bounds:rectSnapshot(view?.div),
+                })) ?? [];
+              } catch (error) {
+                return { error:error?.message || String(error) };
+              }
+            })();
+            let annotationParseError = null;
+            let parsedAnnotations = [];
+            if (pageView?.pdfPage) {
+              try {
+                parsedAnnotations = await pageView.pdfPage.getAnnotations({ intent:"display" });
+              } catch (error) {
+                annotationParseError = error?.message || String(error);
+              }
+            }
+            const parsedFreeText = parsedAnnotations
+              .filter((annotation) => annotation.subtype === "FreeText")
+              .map((annotation) => ({
+                id:annotation.id,
+                subtype:annotation.subtype,
+                rect:annotation.rect,
+                flags:annotation.flags,
+                hasAppearance:Boolean(annotation.appearance),
+                keys:Object.keys(annotation).sort(),
+              }));
+            const annotationNodes = [...(annotationLayer?.querySelectorAll?.(
+              "[data-annotation-id]",
+            ) || [])].map((element) => ({
+              id:element.getAttribute("data-annotation-id"),
+              className:typeof element.className === "string" ? element.className : "",
+              bounds:rectSnapshot(element),
+            }));
+            const editableAnnotations = (() => {
+              try {
+                return pageView?.annotationLayer?.annotationLayer
+                  ?.getEditableAnnotations?.().map((annotation) => ({
+                    id:annotation.data?.id ?? null,
+                    subtype:annotation.data?.subtype ?? null,
+                    hidden:annotation.container?.hidden ?? null,
+                    connected:annotation.container?.isConnected ?? null,
+                    bounds:rectSnapshot(annotation.container),
+                  })) ?? [];
+              } catch (error) {
+                return { error:error?.message || String(error) };
+              }
+            })();
+            const requestedPage = app?.pdfDocument
+              ? await app.pdfDocument.getPage(1).catch(() => null)
+              : null;
+            const frameRect = window.frameElement?.getBoundingClientRect();
+            const renderState = {
+              expectedAnnotationId,
+              document: {
+                pageCount:app?.pdfDocument?.numPages ?? null,
+                documentMatchesPageView:!!requestedPage && pageView?.pdfPage === requestedPage,
+                requestedPageNumber:requestedPage?.pageNumber ?? null,
+                pageViewPageNumber:pageView?.pdfPage?.pageNumber ?? null,
+              },
+              page: {
+                pageNumber:pageView?.id ?? null,
+                renderingId:pageView?.renderingId ?? null,
+                renderingState:pageView?.renderingState ?? null,
+                datasetLoaded:pageElement?.dataset.loaded ?? null,
+                bounds:rectSnapshot(pageElement),
+                viewport:pageView?.viewport ? {
+                  width:pageView.viewport.width,
+                  height:pageView.viewport.height,
+                  scale:pageView.viewport.scale,
+                  rotation:pageView.viewport.rotation,
+                } : null,
+                visibleInViewer:intersects(pageRect, containerRect),
+                visibleInFrame:intersects(pageRect, {
+                  left:0,
+                  top:0,
+                  right:window.innerWidth,
+                  bottom:window.innerHeight,
+                }),
+              },
+              pageLoading: {
+                currentPageNumber:pdfViewer?.currentPageNumber ?? null,
+                currentPageIndex:pdfViewer?._currentPageNumber - 1 ?? null,
+                currentScale:pdfViewer?.currentScale ?? null,
+                pagesRotation:pdfViewer?.pagesRotation ?? null,
+                location:pdfViewer?._location ? {
+                  pageNumber:pdfViewer._location.pageNumber ?? null,
+                  scale:pdfViewer._location.scale ?? null,
+                  left:pdfViewer._location.left ?? null,
+                  top:pdfViewer._location.top ?? null,
+                } : null,
+              },
+              viewport: {
+                visibilityState:document.visibilityState,
+                frameHasFocus:document.hasFocus(),
+                innerWidth:window.innerWidth,
+                innerHeight:window.innerHeight,
+                devicePixelRatio:window.devicePixelRatio,
+                frameBounds:frameRect ? {
+                  x:frameRect.x,
+                  y:frameRect.y,
+                  width:frameRect.width,
+                  height:frameRect.height,
+                } : null,
+                container:container ? {
+                  scrollTop:container.scrollTop,
+                  scrollLeft:container.scrollLeft,
+                  scrollHeight:container.scrollHeight,
+                  scrollWidth:container.scrollWidth,
+                  clientHeight:container.clientHeight,
+                  clientWidth:container.clientWidth,
+                  bounds:rectSnapshot(container),
+                } : null,
+                visiblePages,
+              },
+              renderingQueue: {
+                present:Boolean(pdfViewer?.renderingQueue),
+                printing:pdfViewer?.renderingQueue?.printing ?? null,
+                thumbnailViewEnabled:pdfViewer?.renderingQueue?.isThumbnailViewEnabled ?? null,
+              },
+              annotationLayer: {
+                builderPresent:Boolean(pageView?.annotationLayer),
+                layerPresent:Boolean(pageView?.annotationLayer?.annotationLayer),
+                divPresent:Boolean(annotationLayer),
+                bounds:rectSnapshot(annotationLayer),
+                hidden:annotationLayer?.hidden ?? null,
+                childCount:annotationLayer?.childElementCount ?? null,
+                annotationNodeCount:annotationNodes.length,
+                annotationNodes,
+                expectedAnnotationNodePresent:annotationNodes.some(
+                  (annotation) => annotation.id === expectedAnnotationId,
+                ),
+                editableAnnotations,
+              },
+              annotationState: {
+                parsedFreeText,
+                parseError:annotationParseError,
+                isDeletedInEditorManager:expectedAnnotationId
+                  ? annotationEditorUIManager?.isDeletedAnnotationElement?.(expectedAnnotationId) ?? null
+                  : null,
+                editorLookup:expectedAnnotationId
+                  ? (() => {
+                      const editor = annotationEditorUIManager?.getEditor?.(expectedAnnotationId);
+                      return editor ? {
+                        id:editor.id ?? null,
+                        annotationElementId:editor.annotationElementId ?? null,
+                        pageIndex:editor.pageIndex ?? null,
+                        deleted:editor.deleted ?? null,
+                        hidden:editor.hidden ?? null,
+                      } : null;
+                    })()
+                  : null,
+                storageSize:annotationStorage?.size ?? null,
+                storageValue:storageValue ? {
+                  type:storageValue.constructor?.name ?? null,
+                  keys:Object.keys(storageValue).sort(),
+                } : null,
+                modifiedIds:modifiedIds ? [...modifiedIds].slice(0, 32) : null,
+                expectedIdModified:Boolean(modifiedIds?.has?.(expectedAnnotationId)),
+              },
+            };
             return {
+              renderState,
+              renderEvents:window.__savedFreeTextRenderEvents?.slice(-96) || [],
+              modeActivationTraceState:
+                window.__mouseModeActivationTraceState || null,
+              modeActivationTrace:
+                window.__mouseModeActivationTrace?.slice(-96) || [],
+              pdfEditorLifecycleTraceState:
+                window.__mousePdfEditorLifecycleTraceState || null,
+              pdfEditorLifecycleTrace:
+                window.__mousePdfEditorLifecycleTrace?.slice(-96) || [],
               mode: app?.pdfViewer?.annotationEditorMode ?? null,
               layerConnected: !!editorLayer?.isConnected,
               layerBounds: editorLayer
@@ -1883,6 +4281,9 @@ test(
                 .getElementById("editorSquareParamsToolbar")
                 ?.classList.contains("hidden") ?? null,
               pointerEvents: window.__trustedMouseEvents?.slice(-20) || [],
+              trustedDoubleClicks:window.__trustedDoubleClicks?.slice(-24) || [],
+              annotationModeEvents:window.__mouseAnnotationModeEvents?.slice(-32) || [],
+              pendingAnnotationMode:window.__mousePendingAnnotationMode || null,
               keyboardFocusEvents:window.__keyboardFocusEvents?.slice(-80) || [],
               pdfEditorMoveCalls:window.__pdfEditorMoveCalls?.slice(-24) || [],
               pdfEditorMoveEvents:window.__pdfEditorMoveEvents?.slice(-24) || [],
@@ -1954,6 +4355,10 @@ test(
               })(),
             };
           });
+          await viewer.evaluate(() => window.__stopMousePdfEditorLifecycleTrace?.())
+            .catch(() => {});
+          await viewer.evaluate(() => window.__stopMouseModeActivationTrace?.())
+            .catch(() => {});
         }
         const bridgeDiagnostics = await page?.evaluate(
           () => window.__host?.inputDiagnostics || null,
@@ -1972,7 +4377,29 @@ test(
         console.error("Could not capture mouse failure evidence:", captureError);
       }
     } finally {
-      cleanupReport = await cleanupBrowserTestResources({ browser, server });
+      cleanupReport = await cleanupBrowserTestResources({
+        browser,
+        browserObserver: browserStderrObserver,
+        ownedPages: page ? [page] : [],
+        server,
+      });
+      const cleanupPath = path.join(
+        root,
+        "tests",
+        "artifacts",
+        `mouse-input-${artifactId}.cleanup.json`,
+      );
+      try {
+        await writeFile(cleanupPath, JSON.stringify(cleanupReport, null, 2), "utf8");
+      } catch (error) {
+        cleanupReport.errors.push({
+          phase:"cleanup-report.write",
+          name:error?.name || "Error",
+          message:error?.message || String(error),
+          stack:error?.stack || null,
+        });
+      }
+      t.diagnostic(`Cleanup report: ${cleanupPath}`);
     }
     const finalError = attachCleanupErrors(primaryError, cleanupReport);
     if (finalError) {

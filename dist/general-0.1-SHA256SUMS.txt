@@ -1,0 +1,10 @@
+4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98  dist/pdf-web-reader-0.1general-0.4.0-candidate.zip
+358e4286e7e06fb3e57d1279d4d3db167a931bc829c796b2ecbf81532f1c1d83  dist/pdf-web-reader-0.3.0-ipad-mouse-revised-candidate.zip
+dff690f5c4c21e4b98a39aff2940bfa5b347fef45f0ba575ad851f2e8206e006  dist/pdf-web-reader-0.2.0-macos-c52e522-candidate.zip
+98f9867d5ce798809c863ad8331a8284d1f5e322c14d4d77a8076f680c24ef49  dist/general-0.1-evidence.zip
+d1ef015dd459e2da9fbfdec35fa7e5a3e659222150c10b85572b92283181bc30  dist/general-0.1-evidence.manifest.json
+201ceee6cb7b713df3d2277e6d9934565b04661779e541e715c8a093163fb2cb  dist/pdf-web-reader/main.js
+7c56eb292ea098cad278441919ad7d8d9e5593b436224959d1c55a12e9d28842  dist/pdf-web-reader/manifest.json
+9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650  dist/pdf-web-reader/styles.css
+080d38c4eea2f5cfb0b8d621910ea4bf3613134cd9f4b0e88630286dcb7ec42c  dist/general-0.1-source.diff
+fb9842940780da04f45319efb15f380accef6504cf9a51676c2f0acce8fc3371  dist/general-0.1-delivery.json

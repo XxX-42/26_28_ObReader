@@ -1,0 +1,142 @@
+{
+  "candidate": "0.1general",
+  "pluginVersion": "0.4.0",
+  "createdAt": "2026-10-11T20:43:29.566Z",
+  "sourceBaseline": "40b1f09876cb1d5698303a4f4b36fc69733bd4a8",
+  "windowsBaseline": "c52e5228c8cf9ccafadf759bb08e92bce284144b",
+  "commonCore": true,
+  "desktopEntry": "Windows/macOS resource module + popout coordination",
+  "mobileEntry": "iPad module/Blob Worker; no desktop popout coordination",
+  "releaseAssessment": {
+    "schemaVersion": 1,
+    "assessedAt": "2026-10-11T20:37:21.629Z",
+    "version": "0.4.0",
+    "candidate": "0.1general",
+    "sourceFrozen": true,
+    "defaultCampaign": "tests/artifacts/general-validation-default-2026-10-11T20-32-33-875Z",
+    "rawNodeResult": {
+      "exitCode": 1,
+      "signal": null,
+      "tests": 133,
+      "pass": 131,
+      "fail": 2,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "productFunctionalAssertions": "passed",
+    "infrastructureFailures": [
+      {
+        "test": "desktop-toolbar",
+        "reason": "Product assertions completed; cleanup required external signal."
+      },
+      {
+        "test": "free-text-undo-appearance",
+        "reason": "Product assertions completed; browser child exited with code 2."
+      }
+    ],
+    "releasePolicy": "Latest user instruction: pure Chrome/Puppeteer exit anomalies do not block candidate when product assertions pass; no further teardown investigation, expanded gates or dependency upgrades.",
+    "physicalWindowsValidated": false,
+    "physicalIpadValidated": false,
+    "nativeMacStatus": "passed",
+    "remoteMainBeforePush": "c52e5228c8cf9ccafadf759bb08e92bce284144b",
+    "nativeMacCases": 19,
+    "nativeMacReport": "native-macos-lifecycle-20261011203625445.json",
+    "nativeMobileProductAssertions": "passed",
+    "nativeMobileRawStatus": "incomplete",
+    "nativeMobileInfrastructureIssue": "CDP Promise was collected during emulateMobile(false) restoration; simulation state changed, but navigation invalidated the awaited promise. No further CDP investigation.",
+    "nativeMobileReport": "native-mobile-controls-20261011203945627-a7862f73.json",
+    "desktopModeRestored": true,
+    "allTestViewsClosed": true,
+    "oldRecoveryFilesPreserved": 32,
+    "candidateAssessment": "eligible under latest user release policy",
+    "handoff": "general-final-native-handoff.json"
+  },
+  "nativeHandoff": {
+    "schemaVersion": 1,
+    "checkedAt": "2026-10-11T20:41:12.893Z",
+    "physicalIpadValidated": false,
+    "primaryInstanceTouched": false,
+    "cdp": "http://127.0.0.1:9226",
+    "targets": [
+      {
+        "id": "4943911E71DB0EB5AD0993980CE03405",
+        "url": "app://obsidian.md/index.html"
+      }
+    ],
+    "action": "handoff",
+    "state": {
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "configDir": ".obsidian",
+      "version": "0.4.0",
+      "appMobile": false,
+      "pluginMobile": false,
+      "enabled": true,
+      "autoSave": true,
+      "readers": 0,
+      "views": 0,
+      "gates": 0
+    },
+    "installed": {
+      "main.js": "201ceee6cb7b713df3d2277e6d9934565b04661779e541e715c8a093163fb2cb",
+      "manifest.json": "7c56eb292ea098cad278441919ad7d8d9e5593b436224959d1c55a12e9d28842",
+      "styles.css": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    },
+    "status": "passed"
+  },
+  "artifacts": [
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.4.0-candidate.zip",
+      "sha256": "4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98",
+      "bytes": 4703169
+    },
+    {
+      "path": "dist/pdf-web-reader-0.3.0-ipad-mouse-revised-candidate.zip",
+      "sha256": "358e4286e7e06fb3e57d1279d4d3db167a931bc829c796b2ecbf81532f1c1d83",
+      "bytes": 4703170
+    },
+    {
+      "path": "dist/pdf-web-reader-0.2.0-macos-c52e522-candidate.zip",
+      "sha256": "dff690f5c4c21e4b98a39aff2940bfa5b347fef45f0ba575ad851f2e8206e006",
+      "bytes": 4671829
+    },
+    {
+      "path": "dist/general-0.1-evidence.zip",
+      "sha256": "98f9867d5ce798809c863ad8331a8284d1f5e322c14d4d77a8076f680c24ef49",
+      "bytes": 63415082
+    },
+    {
+      "path": "dist/general-0.1-evidence.manifest.json",
+      "sha256": "d1ef015dd459e2da9fbfdec35fa7e5a3e659222150c10b85572b92283181bc30",
+      "bytes": 221653
+    },
+    {
+      "path": "dist/pdf-web-reader/main.js",
+      "sha256": "201ceee6cb7b713df3d2277e6d9934565b04661779e541e715c8a093163fb2cb",
+      "bytes": 6368788
+    },
+    {
+      "path": "dist/pdf-web-reader/manifest.json",
+      "sha256": "7c56eb292ea098cad278441919ad7d8d9e5593b436224959d1c55a12e9d28842",
+      "bytes": 269
+    },
+    {
+      "path": "dist/pdf-web-reader/styles.css",
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650",
+      "bytes": 637
+    },
+    {
+      "path": "dist/general-0.1-source.diff",
+      "sha256": "080d38c4eea2f5cfb0b8d621910ea4bf3613134cd9f4b0e88630286dcb7ec42c",
+      "bytes": 647525
+    }
+  ],
+  "knownLimitations": [
+    "Physical Windows/iPad mouse and WKWebView acceptance pending",
+    "Abrupt process termination may precede recovery persistence",
+    "Vault baseline comparison and write are not atomic against an external writer",
+    "Historical intermittent open timeout retained; no proven current product P0",
+    "Chrome/Puppeteer exit and mobile-emulation restoration errors retained as infrastructure evidence"
+  ],
+  "deploymentScope": "Only /Users/jiajia/Documents/ObReader-Apple-Test; no primary vault or GitHub Release",
+  "dependencyPolicy": "No further upgrade under latest user instruction; Puppeteer 25.12.0 retained"
+}

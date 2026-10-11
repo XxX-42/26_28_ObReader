@@ -113,6 +113,8 @@
     revision: 0,
     confirmedRevision: 0,
     openQueue: Promise.resolve(),
+    openSession: null,
+    openSessionSequence: 0,
     queuedOpens: [],
     savePromise: null,
     recoveryPromise: null,
@@ -1768,6 +1770,40 @@
     }
   }
 
+  function samePdfViewportPresentation(left, right) {
+    if (!left || !right) {
+      return false;
+    }
+    for (const key of [
+      "rotation",
+      "scale",
+      "width",
+      "height",
+      "offsetX",
+      "offsetY",
+    ]) {
+      if (!Object.is(left[key], right[key])) {
+        return false;
+      }
+    }
+    for (const key of ["viewBox", "transform"]) {
+      const before = left[key];
+      const after = right[key];
+      if (!before && !after) {
+        continue;
+      }
+      if (
+        !before ||
+        !after ||
+        before.length !== after.length ||
+        Array.from(before).some((value, index) => !Object.is(value, after[index]))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   function observeAccessibilityManager(app, pageView) {
     const accessibilityManager = pageView?._accessibilityManager;
     if (
@@ -1859,40 +1895,479 @@
     // the wrapped accessibility method; every inactive editor retains the
     // original PDF.js path.
     const editorLayer = pageView.annotationEditorLayer?.annotationEditorLayer;
+    const editorManager =
+      app.pdfViewer?._layerProperties?.annotationEditorUIManager;
     if (
       editorLayer &&
-      typeof editorLayer.moveEditorInDOM === "function" &&
+      (typeof editorLayer.moveEditorInDOM === "function" ||
+        typeof editorLayer.update === "function") &&
       !state.accessibilityEditorLayers.has(editorLayer)
     ) {
-      wrapMethod(
-        editorLayer,
-        "moveEditorInDOM",
-        function (original, [editor, ...args]) {
-          const active = document.activeElement;
+      const editorBuilder = pageView.annotationEditorLayer;
+      if (typeof editorBuilder?.hide === "function") {
+        wrapMethod(
+          editorBuilder,
+          "hide",
+          function (original, args) {
+            const layer = this.annotationEditorLayer;
+            const active = document.activeElement;
+            const activeInternal =
+              active instanceof Element &&
+              active.matches(".internal[contenteditable='true']")
+                ? active
+                : null;
+            const editorElement = activeInternal?.closest(".freeTextEditor");
+            const editor = editorElement &&
+              editorManager?.getEditor?.(editorElement.id);
+            let nextViewport = null;
+            try {
+              nextViewport = pageView.viewport?.clone?.({ dontFlip:true }) || null;
+            } catch {
+              nextViewport = null;
+            }
+            if (
+              samePdfViewportPresentation(layer?.viewport, nextViewport) &&
+              state.activeDocumentId &&
+              !state.disposed &&
+              state.app === app &&
+              app.pdfDocument &&
+              app.pdfViewer?._layerProperties?.annotationEditorUIManager ===
+                editorManager &&
+              app.pdfViewer?.getPageView?.(pageIndex) === pageView &&
+              pageView._accessibilityManager === accessibilityManager &&
+              pageView.annotationEditorLayer === this &&
+              layer === editorLayer &&
+              editorManager?.currentLayer === layer &&
+              editor?.editorType === "freetext" &&
+              editor.parent === layer &&
+              editor.pageIndex === pageIndex &&
+              editor.isAttachedToDOM &&
+              editor.div === editorElement &&
+              editor.div?.isConnected &&
+              activeInternal.isContentEditable &&
+              editor.div.contains(activeInternal) &&
+              editor.isInEditMode?.() &&
+              editorManager?.getEditor?.(editor.id) === editor
+            ) {
+              // PDFPageView.reset hides a retained annotation editor layer
+              // before redrawing it. If the upcoming and current presentations
+              // are identical, hiding it would blur and commit the live editor
+              // while layout may report a zero-sized rectangle. Keep only this
+              // exact, focused editor visible through the no-op reset; changed
+              // scale or rotation still uses PDF.js's normal hide/commit path.
+              return undefined;
+            }
+            return original.apply(this, args);
+          },
+          cleanups,
+        );
+      }
+      const pendingResumeFocusByLayer = new WeakMap();
+      const pendingResumeCallbacksByLayer = new WeakMap();
+      const deferredResumeGuardCleanupsByLayer = new WeakMap();
+      const focusSessionByTarget = new WeakMap();
+      const focusGuardCleanupByTarget = new WeakMap();
+      const flushDeferredResumeGuardCleanups = (layer) => {
+        if ((pendingResumeCallbacksByLayer.get(layer) || 0) > 0) {
+          return;
+        }
+        const deferred = deferredResumeGuardCleanupsByLayer.get(layer);
+        if (!deferred) {
+          return;
+        }
+        deferredResumeGuardCleanupsByLayer.delete(layer);
+        for (const cleanup of deferred) {
+          cleanup();
+        }
+      };
+      const isResumeFocusSessionCurrent = (session) => !!(
+        session &&
+        !state.disposed &&
+        state.activeDocumentId === session.documentId &&
+        state.activeOpenRequest === session.openRequest &&
+        state.app === session.app &&
+        state.app?.pdfDocument === session.pdfDocument &&
+        rendererGeneration === session.rendererGeneration &&
+        state.app?.pdfViewer?.getPageView?.(session.pageIndex) ===
+          session.pageView &&
+        session.pageView?._accessibilityManager === accessibilityManager &&
+        session.pageView?.annotationEditorLayer?.annotationEditorLayer ===
+          session.editorLayer &&
+        session.editor?.editorType === "freetext" &&
+        session.editor?.parent === session.editorLayer &&
+        session.editor?.pageIndex === session.pageIndex &&
+        session.editor?.div === session.editorElement &&
+        editorManager?.getEditor?.(session.editor.id) === session.editor
+      );
+      const hasExternalFocus = (session) => {
+        if (!document.hasFocus()) {
+          return true;
+        }
+        const frameElement = window.frameElement;
+        const ownerDocument = frameElement?.ownerDocument;
+        const ownerActiveElement = ownerDocument?.activeElement;
+        if (
+          frameElement &&
+          ownerDocument &&
+          ownerActiveElement &&
+          ownerActiveElement !== frameElement &&
+          ownerActiveElement !== ownerDocument.body &&
+          ownerActiveElement !== ownerDocument.documentElement
+        ) {
+          return true;
+        }
+        const active = document.activeElement;
+        return !!(
+          active instanceof HTMLElement &&
+          active !== document.body &&
+          active !== document.documentElement &&
+          !session.editorElement.contains(active)
+        );
+      };
+      const installResumeFocusGuard = (target) => {
+        if (!(target instanceof HTMLElement) || focusGuardCleanupByTarget.has(target)) {
+          return;
+        }
+        const ownFocusDescriptor = Object.getOwnPropertyDescriptor(target, "focus");
+        const originalFocus = target.focus;
+        const capturedSession = focusSessionByTarget.get(target);
+        const guardedFocus = function (...args) {
+          const session = focusSessionByTarget.get(target);
           if (
-            state.activeDocumentId &&
-            !state.disposed &&
-            state.app === app &&
-            app.pdfDocument &&
-            pageView._accessibilityManager === accessibilityManager &&
-            editor?.editorType === "freetext" &&
-            editor.parent === this &&
-            editor.isAttachedToDOM &&
-            editor.div?.isConnected &&
-            editor.div.contains(active)
+            session?.resumeCallbackExecuting &&
+            (hasExternalFocus(session) || !isResumeFocusSessionCurrent(session))
           ) {
-            editor._structTreeParentId = accessibilityManager.moveElementInDOM(
-              this.div,
-              editor.div,
-              editor.contentDiv,
-              true,
-            );
+            session.focusRestoreSuppressed = true;
+            return undefined;
+          }
+          return originalFocus.apply(this, args);
+        };
+        try {
+          Object.defineProperty(target, "focus", {
+            configurable:true,
+            enumerable:ownFocusDescriptor?.enumerable ?? false,
+            writable:true,
+            value:guardedFocus,
+          });
+        } catch {
+          return;
+        }
+        const cleanup = () => {
+          const layer = capturedSession?.editorLayer;
+          if ((pendingResumeCallbacksByLayer.get(layer) || 0) > 0) {
+            capturedSession.guardCleanupRequested = true;
+            let deferred = deferredResumeGuardCleanupsByLayer.get(layer);
+            if (!deferred) {
+              deferred = new Set();
+              deferredResumeGuardCleanupsByLayer.set(layer, deferred);
+            }
+            deferred.add(cleanup);
             return;
           }
-          return original.call(this, editor, ...args);
-        },
-        cleanups,
-      );
+          if (target.focus !== guardedFocus) {
+            focusGuardCleanupByTarget.delete(target);
+            if (focusSessionByTarget.get(target) === capturedSession) {
+              focusSessionByTarget.delete(target);
+            }
+            return;
+          }
+          if (ownFocusDescriptor) {
+            Object.defineProperty(target, "focus", ownFocusDescriptor);
+          } else {
+            delete target.focus;
+          }
+          focusGuardCleanupByTarget.delete(target);
+          focusSessionByTarget.delete(target);
+        };
+        focusGuardCleanupByTarget.set(target, cleanup);
+        cleanups.push(cleanup);
+      };
+      if (typeof editorLayer.pause === "function") {
+        wrapMethod(
+          editorLayer,
+          "pause",
+          function (original, [paused, ...args]) {
+            const layer = this;
+            if (paused) {
+              const active = document.activeElement;
+              if (this.div?.contains(active)) {
+                const editorElement = active instanceof Element
+                  ? active.closest(".freeTextEditor")
+                  : null;
+                const editor = editorElement &&
+                  editorManager?.getEditor?.(editorElement.id);
+                if (
+                  active instanceof HTMLElement &&
+                  editor?.editorType === "freetext" &&
+                  editor.parent === this &&
+                  editor.pageIndex === pageView.id - 1 &&
+                  editor.div === editorElement &&
+                  editor.isAttachedToDOM &&
+                  editorElement.contains(active) &&
+                  pageView._accessibilityManager === accessibilityManager &&
+                  pageView.annotationEditorLayer?.annotationEditorLayer === this
+                ) {
+                  const previous = pendingResumeFocusByLayer.get(layer);
+                  if (previous && previous.target !== active) {
+                    pendingResumeFocusByLayer.delete(layer);
+                    if (focusSessionByTarget.get(previous.target) === previous) {
+                      focusSessionByTarget.delete(previous.target);
+                    }
+                    focusGuardCleanupByTarget.get(previous.target)?.();
+                  }
+                  const session = {
+                    target:active,
+                    editorElement,
+                    editor,
+                    pageIndex:pageView.id - 1,
+                    pageView,
+                    editorLayer:this,
+                    app,
+                    pdfDocument:app.pdfDocument,
+                    documentId:state.activeDocumentId,
+                    openRequest:state.activeOpenRequest,
+                    rendererGeneration,
+                    resumeCallbackExecuting:false,
+                  };
+                  pendingResumeFocusByLayer.set(layer, session);
+                  focusSessionByTarget.set(active, session);
+                  installResumeFocusGuard(active);
+                } else {
+                  // PDF.js replaces its cached target whenever the active
+                  // element is inside the layer, so discard an older FreeText
+                  // target when this pause captures some other layer child.
+                  const previous = pendingResumeFocusByLayer.get(layer);
+                  if (previous) {
+                    pendingResumeFocusByLayer.delete(layer);
+                    focusSessionByTarget.delete(previous.target);
+                    focusGuardCleanupByTarget.get(previous.target)?.();
+                  }
+                }
+              }
+              return original.apply(this, [paused, ...args]);
+            }
+
+            const session = pendingResumeFocusByLayer.get(layer);
+            if (!session) {
+              return original.apply(this, [paused, ...args]);
+            }
+
+            let interceptedResumeCallback = false;
+            const nativeSetTimeout = window.setTimeout;
+            const interceptResumeTimeout = function (callback, delay, ...timerArgs) {
+              if (
+                !interceptedResumeCallback &&
+                typeof callback === "function" &&
+                delay === 0
+              ) {
+                interceptedResumeCallback = true;
+                pendingResumeCallbacksByLayer.set(
+                  layer,
+                  (pendingResumeCallbacksByLayer.get(layer) || 0) + 1,
+                );
+                const scheduledSession =
+                  pendingResumeFocusByLayer.get(layer) || session;
+                const wrappedCallback = function (...callbackArgs) {
+                  const resumeSession =
+                    pendingResumeFocusByLayer.get(layer) || scheduledSession;
+                  if (resumeSession) {
+                    resumeSession.resumeCallbackExecuting = true;
+                  }
+                  try {
+                    return callback.apply(this, callbackArgs);
+                  } finally {
+                    if (resumeSession) {
+                      resumeSession.resumeCallbackExecuting = false;
+                    }
+                    const remaining = Math.max(
+                      0,
+                      (pendingResumeCallbacksByLayer.get(layer) || 1) - 1,
+                    );
+                    if (remaining > 0) {
+                      pendingResumeCallbacksByLayer.set(layer, remaining);
+                    } else {
+                      pendingResumeCallbacksByLayer.delete(layer);
+                    }
+                    if (
+                      remaining === 0 &&
+                      resumeSession &&
+                      pendingResumeFocusByLayer.get(layer) === resumeSession
+                    ) {
+                      pendingResumeFocusByLayer.delete(layer);
+                      if (focusSessionByTarget.get(resumeSession.target) === resumeSession) {
+                        focusSessionByTarget.delete(resumeSession.target);
+                      }
+                    }
+                    if (remaining === 0) {
+                      flushDeferredResumeGuardCleanups(layer);
+                    }
+                  }
+                };
+                return nativeSetTimeout.call(this, wrappedCallback, delay, ...timerArgs);
+              }
+              return nativeSetTimeout.call(this, callback, delay, ...timerArgs);
+            };
+
+            let result;
+            try {
+              window.setTimeout = interceptResumeTimeout;
+              result = original.apply(this, [paused, ...args]);
+            } finally {
+              if (window.setTimeout === interceptResumeTimeout) {
+                window.setTimeout = nativeSetTimeout;
+              }
+              if (!interceptedResumeCallback) {
+                if (pendingResumeFocusByLayer.get(layer) === session) {
+                  pendingResumeFocusByLayer.delete(layer);
+                }
+                if (focusSessionByTarget.get(session.target) === session) {
+                  focusSessionByTarget.delete(session.target);
+                }
+                focusGuardCleanupByTarget.get(session.target)?.();
+              }
+            }
+            return result;
+          },
+          cleanups,
+        );
+      }
+      if (typeof editorLayer.moveEditorInDOM === "function") {
+        wrapMethod(
+          editorLayer,
+          "moveEditorInDOM",
+          function (original, [editor, ...args]) {
+            const active = document.activeElement;
+            if (
+              state.activeDocumentId &&
+              !state.disposed &&
+              state.app === app &&
+              app.pdfDocument &&
+              pageView._accessibilityManager === accessibilityManager &&
+              editor?.editorType === "freetext" &&
+              editor.parent === this &&
+              editor.isAttachedToDOM &&
+              editor.div?.isConnected &&
+              editor.div.contains(active)
+            ) {
+              editor._structTreeParentId = accessibilityManager.moveElementInDOM(
+                this.div,
+                editor.div,
+                editor.contentDiv,
+                true,
+              );
+              return;
+            }
+            return original.call(this, editor, ...args);
+          },
+          cleanups,
+        );
+      }
+      if (typeof editorLayer.update === "function") {
+        wrapMethod(
+          editorLayer,
+          "update",
+          function (original, [parameters, ...args]) {
+            const viewport = parameters?.viewport;
+            const active = document.activeElement;
+            const activeInternal =
+              active instanceof Element &&
+              active.matches(".internal[contenteditable='true']")
+                ? active
+                : null;
+            const activeElement = activeInternal?.closest(".freeTextEditor");
+            const editor = activeElement && editorManager?.getEditor?.(activeElement.id);
+            const samePresentation = samePdfViewportPresentation(
+              this.viewport,
+              viewport,
+            );
+            if (
+              samePresentation &&
+              state.activeDocumentId &&
+              !state.disposed &&
+              state.app === app &&
+              app.pdfDocument &&
+              app.pdfViewer?._layerProperties?.annotationEditorUIManager ===
+                editorManager &&
+              editorManager?.currentLayer === this &&
+              app.pdfViewer?.getPageView?.(pageView.id - 1) === pageView &&
+              pageView.annotationEditorLayer?.annotationEditorLayer === this &&
+              editor?.editorType === "freetext" &&
+              editor.parent === this &&
+              editor.pageIndex === pageView.id - 1 &&
+              editor.isAttachedToDOM &&
+              editor.div === activeElement &&
+              editor.div?.isConnected &&
+              activeInternal.isContentEditable &&
+              editor.div.contains(activeInternal) &&
+              editorManager?.getEditor?.(editor.id) === editor
+            ) {
+              // A page redraw can replay the exact same annotation-layer
+              // viewport after text layout settles. PDF.js commits and cleans
+              // up editors at the start of that no-op presentation update,
+              // disabling the focused FreeText field or removing it if empty.
+              // Skip only this identical update; a real blur or viewport
+              // change still takes PDF.js's normal commit path.
+              return undefined;
+            }
+            const activeEditorPageView = editor &&
+              app.pdfViewer?.getPageView?.(editor.pageIndex);
+            const activeEditorLayer = activeEditorPageView
+              ?.annotationEditorLayer?.annotationEditorLayer;
+            let activeEditorPresentationMatchesPageView = false;
+            try {
+              const currentPageViewport = activeEditorPageView?.viewport
+                ?.clone?.({ dontFlip: true });
+              activeEditorPresentationMatchesPageView =
+                samePdfViewportPresentation(
+                  activeEditorLayer?.viewport,
+                  currentPageViewport,
+                );
+            } catch {
+              activeEditorPresentationMatchesPageView = false;
+            }
+            if (
+              samePresentation &&
+              activeEditorPresentationMatchesPageView &&
+              state.activeDocumentId &&
+              !state.disposed &&
+              state.app === app &&
+              app.pdfDocument &&
+              app.pdfViewer?._layerProperties?.annotationEditorUIManager ===
+                editorManager &&
+              app.pdfViewer?.getPageView?.(pageView.id - 1) === pageView &&
+              pageView.annotationEditorLayer?.annotationEditorLayer === this &&
+              editorManager?.currentPageIndex === editor?.pageIndex &&
+              editorManager?.currentLayer === activeEditorLayer &&
+              activeEditorPageView?.id - 1 === editor?.pageIndex &&
+              activeEditorPageView?.annotationEditorLayer
+                ?.annotationEditorLayer === activeEditorLayer &&
+              editor?.editorType === "freetext" &&
+              editor.parent === activeEditorLayer &&
+              editor.parent !== this &&
+              editor.pageIndex !== pageView.id - 1 &&
+              editor.isAttachedToDOM &&
+              editor.div === activeElement &&
+              editor.div?.isConnected &&
+              activeInternal.isContentEditable &&
+              editor.div.contains(activeInternal) &&
+              editorManager?.getEditor?.(editor.id) === editor
+            ) {
+              // PDF.js's UI manager is shared by every page layer. A replay of
+              // another page's unchanged viewport therefore commits the live
+              // editor from the current page before that other page can update.
+              // Preserve the other layer's no-op presentation update only while
+              // the exact current-document editor remains focused and owned by
+              // the UI manager's current layer and that page still has the
+              // presentation represented by its editor layer. A blur, stale
+              // layer, or genuine active-page/receiver viewport change still
+              // uses PDF.js's normal commit path.
+              return undefined;
+            }
+            return original.apply(this, [parameters, ...args]);
+          },
+          cleanups,
+        );
+      }
       state.accessibilityEditorLayers.add(editorLayer);
     }
     if (cleanups.length === 0) {
@@ -3194,31 +3669,91 @@
       });
   }
 
-  function waitForDocumentLoaded(app) {
-    let onLoaded;
-    let onError;
-    let resolveLoaded;
-    let rejectLoaded;
-    const promise = new Promise((resolve, reject) => {
-      resolveLoaded = resolve;
-      rejectLoaded = reject;
+  function createOpenSession(documentId) {
+    const controller = new AbortController();
+    return {
+      id: ++state.openSessionSequence,
+      documentId,
+      controller,
+      signal: controller.signal,
+    };
+  }
+
+  function abortError() {
+    const error = new Error("The PDF view was closed.");
+    error.name = "AbortError";
+    return error;
+  }
+
+  function waitForOpenSession(promise, session) {
+    const { signal } = session;
+    const pending = Promise.resolve(promise);
+    if (signal.aborted) {
+      pending.catch(() => {});
+      return Promise.reject(abortError());
+    }
+    return new Promise((resolve, reject) => {
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      const onAbort = () => {
+        cleanup();
+        reject(abortError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      pending.then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        },
+      );
     });
-    promise.catch(() => {});
-    const cleanup = () => {
-      app.eventBus._off("documentloaded", onLoaded);
-      app.eventBus._off("documenterror", onError);
-    };
-    onLoaded = () => {
-      cleanup();
-      resolveLoaded();
-    };
-    onError = ({ message: errorMessage }) => {
-      cleanup();
-      rejectLoaded(new Error(errorMessage || "PDF.js could not load the PDF."));
-    };
-    app.eventBus._on("documentloaded", onLoaded, { once: true });
-    app.eventBus._on("documenterror", onError, { once: true });
-    return { promise, cleanup };
+  }
+
+  function waitForDocumentLoaded(app, session) {
+    // The Viewer dispatches documentloaded globally, with only the application
+    // as its source. A prior document can still have asynchronous PDF.js
+    // callbacks in flight while a replacement is opening, so that event alone
+    // cannot identify which loading task finished. Mirror PDF.js's readiness
+    // prerequisites against the exact current proxy instead: load() dispatches
+    // documentloaded only after getDownloadInfo() and the viewer's first page
+    // promise both settle.
+    const loadingTask = app.pdfLoadingTask;
+    const pdfDocument = app.pdfDocument;
+    const pdfViewer = app.pdfViewer;
+    if (
+      !loadingTask ||
+      !pdfDocument ||
+      pdfDocument.loadingTask !== loadingTask ||
+      pdfViewer?.pdfDocument !== pdfDocument
+    ) {
+      throw new Error("PDF.js did not keep the opened document active.");
+    }
+    session.loadingTask = loadingTask;
+    session.pdfDocument = pdfDocument;
+    const firstPagePromise = pdfViewer.firstPagePromise;
+    if (!firstPagePromise) {
+      throw new Error("PDF.js did not start loading the first page.");
+    }
+    return waitForOpenSession(
+      Promise.all([pdfDocument.getDownloadInfo(), firstPagePromise]),
+      session,
+    ).then(() => {
+      if (
+        session.signal.aborted ||
+        state.openSession !== session ||
+        state.disposed ||
+        app.pdfLoadingTask !== loadingTask ||
+        app.pdfDocument !== pdfDocument ||
+        pdfDocument.loadingTask !== loadingTask ||
+        pdfViewer.pdfDocument !== pdfDocument
+      ) {
+        throw abortError();
+      }
+      return { loadingTask, pdfDocument };
+    });
   }
 
   async function openDocument(message) {
@@ -3347,9 +3882,15 @@
     if (state.closeControl?.phase === "prepared") {
       clearCloseControl(state.closeControl, { resume: false });
     }
-    const loadWaiter = waitForDocumentLoaded(app);
-
+    if (state.disposed) {
+      return;
+    }
+    const session = createOpenSession(documentId);
+    state.openSession = session;
     try {
+      if (session.signal.aborted || state.disposed) {
+        return;
+      }
       clearScheduledWork();
       cleanupStorageObserver();
       state.activeDocumentId = null;
@@ -3373,15 +3914,21 @@
       if (typeof state.pdfJsOpen !== "function") {
         throw new Error("PDF.js open handler is unavailable.");
       }
-      await state.pdfJsOpen.call(app, {
-        data,
-        filename,
-        sourceKind: "generic-source",
-        localSessionId: null,
-        canOverwriteOriginal: false,
-      });
+      await waitForOpenSession(
+        state.pdfJsOpen.call(app, {
+          data,
+          filename,
+          sourceKind: "generic-source",
+          localSessionId: null,
+          canOverwriteOriginal: false,
+        }),
+        session,
+      );
 
-      await loadWaiter.promise;
+      await waitForDocumentLoaded(app, session);
+      if (session.signal.aborted || state.disposed) {
+        return;
+      }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
       state.activeDocumentPath = documentPath;
@@ -3421,6 +3968,9 @@
         restorePaused: state.autoSavePaused,
       });
     } catch (error) {
+      if (session.signal.aborted || state.disposed) {
+        return;
+      }
       cleanupStorageObserver();
       state.activeDocumentId = null;
       state.activeDocumentPath = null;
@@ -3437,7 +3987,9 @@
         code: "open-failed",
       });
     } finally {
-      loadWaiter.cleanup();
+      if (state.openSession === session) {
+        state.openSession = null;
+      }
     }
   }
 
@@ -3972,6 +4524,7 @@
     }
     postLifecycleToHost("renderer-unloaded");
     state.disposed = true;
+    state.openSession?.controller.abort();
     if (state.closeControl) {
       clearCloseControl(state.closeControl, { resume: false });
     }

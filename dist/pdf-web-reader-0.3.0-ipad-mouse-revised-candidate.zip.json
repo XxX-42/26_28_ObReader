@@ -1,0 +1,26 @@
+{
+  "artifact": "dist/pdf-web-reader-0.3.0-ipad-mouse-revised-candidate.zip",
+  "version": "0.3.0",
+  "isDesktopOnly": false,
+  "sha256": "358e4286e7e06fb3e57d1279d4d3db167a931bc829c796b2ecbf81532f1c1d83",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6368788,
+      "sha256": "201ceee6cb7b713df3d2277e6d9934565b04661779e541e715c8a093163fb2cb"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "724b980169146a33e8a2fb78a7813f315194b1c50c92a85aeacff9a8ce295aee"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "verifiedExactThreeFiles": true,
+  "physicalWindowsValidated": false,
+  "physicalIpadValidated": false
+}

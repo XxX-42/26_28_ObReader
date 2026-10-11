@@ -5,11 +5,35 @@ PDF.js Viewer. It opens PDFs from the vault and saves standard PDF annotations
 back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
+The current work is the **0.1general unified candidate (plugin
+0.4.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+is the current scope and validation guide. The 0.3.0 iPad package and mouse
+matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
+[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
+acceptance is claimed for Windows or iPad; iPad deployment and final device
+acceptance remain for the user.
+
+The frozen complete default run finished with all product function assertions
+passing (133 total; 131 passed and 2 test-process cleanup statuses failed).
+The toolbar's external-signal cleanup and FreeText child exit code 2 are tracked
+as test-infrastructure anomalies and do not negate the functional result. The
+designated Mac test-vault functional checks are complete: the lifecycle suite
+passed 19/19, and all mobile-control feature assertions passed. That controls
+report remains marked `incomplete` because its final `emulateMobile(false)`
+cleanup returned `Promise was collected`; it is not reported as a fully passed
+script run. The candidate meets the revised functional acceptance gate, while
+Windows and iPad physical-device acceptance remain pending. Candidate ZIPs,
+hashes, and evidence are recorded in
+[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md#冻结默认全套与候选文件). It is
+approved for the normal push to `main`; no release or main-vault deployment is
+planned. The actual commit is recorded in Git history.
+
 ## Install: exactly three release files
 
-For this unpublished 0.3.0 candidate, use the delivered candidate ZIP and follow
-[the test-vault installation steps](IPAD_ACCEPTANCE.md). Public releases use
-the same three matching files:
+For the current candidate, use the package produced by the current
+build and follow the [general candidate installation guide](GENERAL_ACCEPTANCE.md).
+The 0.3.0 ZIP described in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) is a historical package. Public
+releases use the same three matching files:
 
 - `main.js`
 - `manifest.json`
@@ -35,17 +59,23 @@ standard fonts, ICC profile, WASM decoders, all translations and images, the
 scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
-The application baseline is Obsidian **1.14.4**. The 0.3.0 candidate removes
-runtime Node dependencies and enables mobile loading. Its target is iPad Pro
-2018 on iPadOS 26.6 with an external mouse; actual iPad deployment and acceptance
-remain pending. See [iPad installation and acceptance](IPAD_ACCEPTANCE.md).
-Desktop mobile emulation does not establish WKWebView or physical mouse support.
-The previously verified macOS 0.2.0 rollback package and
-[Mac acceptance evidence](MACOS_ACCEPTANCE.md) remain available.
+The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
+0.4.0 candidate uses one source and one three-file package for Windows, macOS,
+and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
+APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
+plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
+The desktop entry uses Obsidian resource URLs and popout coordination; the mobile
+entry uses blob-backed module and Worker paths without desktop popout
+coordination. Editing, save/recovery, and pointer logic are shared. The 402-file
+frozen Viewer is unchanged, and the packaged runtime contains 404 assets.
 
-The resource runtime requires standard browser gzip decompression. SHA-256 is
-bundled with the plugin and does not depend on a WebCrypto secure context.
-The complete frozen Viewer is unchanged. No extra runtime installation is needed.
+These implementation details do not establish physical-device acceptance.
+Windows and iPad device acceptance remain pending, and desktop mobile emulation
+does not establish WKWebView or actual mouse-button delivery. See
+[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md) for current validation status and
+the [historical iPad 0.3.0 installation and mouse matrix](IPAD_ACCEPTANCE.md).
+The macOS 0.2.0 rollback package and [historical Mac acceptance evidence](MACOS_ACCEPTANCE.md)
+remain available.
 
 ## Open and edit PDFs
 
@@ -77,17 +107,16 @@ the previous tool on release. A regular right-click retains the context menu
 and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
 undo and redo.
 
-The iPad candidate selects mouse behavior using the actual pointer type rather
-than disabling it on mobile. The **工具** button opens a clickable wheel and
-**编辑** provides undo, redo, delete and save. These support a
-mouse without a middle button and operation without an external keyboard.
-Buttons intercepted by iPadOS or a mouse mapping cannot be recovered by the
-plugin; exported input diagnostics report which events reached the Viewer.
-On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the
-command **导出 PDF 阅读器诊断 JSON**. Reports are saved under
-`PDF Reader Diagnostics/` and include startup stages, browser capabilities,
-resource verification, Worker mode and pointer/button counters. They contain
-no PDF content or file paths.
+The unified candidate selects pointer behavior from the actual pointer type and
+button state. On iPad, the **工具** button opens a clickable wheel and **编辑** provides
+undo, redo, delete, and save, giving touch-free controls when the mouse has no
+middle button or there is no external keyboard. Physical iPad behavior remains
+unverified. Buttons intercepted by iPadOS or a mouse mapping cannot be recovered
+by the plugin; exported input diagnostics report which events reached the Viewer.
+On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the command
+**导出 PDF 阅读器诊断 JSON**. Reports are saved under `PDF Reader Diagnostics/` and
+include startup stages, browser capabilities, resource verification, Worker mode,
+and pointer/button counters. They contain no PDF content or file paths.
 
 Version 0.1.4 gives the active creation tool priority over existing annotation
 bodies: underline/highlight can select the PDF text beneath them, and drawing
@@ -144,8 +173,10 @@ rewritten automatically; delete and redraw an affected annotation if needed.
 
 The current Mac development checkout is
 `/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`.
-The frozen PDF.js tree is retained; the resource runtime now uses browser APIs
-on both desktop and mobile. Mobile does not install desktop popout coordination.
+The frozen PDF.js tree is retained and the installed runtime uses browser APIs.
+Each plugin load selects one platform entry from Obsidian's platform state;
+changing the Mac mobile-emulation state requires reloading the plugin. The mobile
+entry does not install desktop popout coordination.
 
 - `plugin/`: Obsidian host and embedded-resource runtime source.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
@@ -167,8 +198,11 @@ npm test
 npm run test:offline
 ```
 
-Node/npm and `puppeteer-core` are development/test dependencies only. The
-installed plugin uses Obsidian APIs, standard browser APIs, and bundled SHA-256;
+Node 22.12 or newer, npm and `puppeteer-core` are development/test dependencies
+only. The browser test driver is pinned to Puppeteer 25.12.0, whose supported
+Chrome line is 154. The native Obsidian connection is verified separately because
+it uses the application's embedded Chromium.
+The installed plugin uses Obsidian APIs, standard browser APIs, and bundled SHA-256;
 it does not load Node or Electron modules.
 The offline browser harness may create a temporary local test server to serve
 the extracted artifacts; that server is not part of the installed plugin.
@@ -179,8 +213,10 @@ The Windows test-vault snapshot is included under
 [`test-vault/测试插件`](test-vault/README.md), with configuration, the 0.1.4
 plugin, saved test PDFs and a SHA-256 inventory. Copy it to a separate test
 location before opening it in Obsidian. Generated Viewer caches are excluded;
-the three-file plugin regenerates them locally. See the snapshot guide before
-using it on macOS; mobile support has not been implemented.
+the three-file plugin regenerates them locally. This snapshot preserves the
+historical Windows 0.1.4 test vault. For the current unified candidate, use the
+[general acceptance guide](GENERAL_ACCEPTANCE.md); the snapshot's age does not
+describe the current mobile implementation.
 
 The Mac target is the independent test vault
 `/Users/jiajia/Documents/ObReader-Apple-Test`, copied from the complete outer

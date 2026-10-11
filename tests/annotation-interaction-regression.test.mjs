@@ -1,7 +1,9 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
@@ -69,21 +71,363 @@ test(
     const logicalAssetRoot = `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
     const output = adapter.resolve(logicalAssetRoot);
     const captureId = payload.contentHash.slice(0, 12);
+    const openTraceRunId = `${Date.now()}-${process.pid}`;
+    const artifactId = `${captureId}-${openTraceRunId}`;
     const results = [];
     const errors = [];
     const consoleErrors = [];
     const externalRequests = [];
+    const cdpWorkerTrace = { events: [], droppedEvents: 0 };
+    const partialArtifactPath = path.join(
+      artifacts,
+      `annotation-interaction-${artifactId}.partial.json`,
+    );
+    const failureCaptureErrors = [];
+    const cdpWorkerByTargetId = new Map();
+    const cdpWorkerBySessionId = new Map();
+    const cdpObservedSessions = new WeakSet();
+    const cdpNetworkObservedSessions = new WeakSet();
+    let cdpEventSequence = 0;
+    let cdpWorkerSequence = 0;
+    let restoreCDPSend;
     let apiRequestCount = 0;
     let browser;
+    let page;
     let server;
+    let viewer;
     let functionalError;
+    let failureScreenshotPath = null;
     let cleanupReport;
-    const persistProgress = async () =>
-      writeFile(
-        path.join(
-          artifacts,
-          `annotation-interaction-${captureId}.partial.json`,
-        ),
+    const recordCDPEvent = (event) => {
+      const item = { sequence: ++cdpEventSequence, at: Date.now(), ...event };
+      if (cdpWorkerTrace.events.length < 1_500) {
+        cdpWorkerTrace.events.push(item);
+      } else {
+        cdpWorkerTrace.droppedEvents += 1;
+      }
+    };
+    const sanitizeTargetUrl = (value) => {
+      if (!value) return null;
+      try {
+        const url = new URL(String(value));
+        return {
+          origin: url.origin === "null" ? url.protocol : url.origin,
+          path: url.pathname.split("/").filter(Boolean).slice(-3).join("/"),
+        };
+      } catch {
+        return { origin: null, path: String(value).slice(-100) };
+      }
+    };
+    const sessionTargetInfo = (session) => {
+      try {
+        const target = session?.target?.();
+        const info = target?._getTargetInfo?.();
+        return {
+          type: info?.type ?? target?.type?.() ?? null,
+          targetId: info?.targetId ?? target?._targetId ?? null,
+          url: sanitizeTargetUrl(info?.url ?? target?.url?.()),
+        };
+      } catch {
+        return { type: null, targetId: null, url: null };
+      }
+    };
+    const observeCDPNetwork = (session) => {
+      if (!session || cdpNetworkObservedSessions.has(session)) return;
+      cdpNetworkObservedSessions.add(session);
+      for (const method of ["Network.requestWillBeSent", "Fetch.requestPaused", "Network.loadingFailed", "Network.loadingFinished"]) {
+        session.on(method, (event) => {
+          recordCDPEvent({
+            kind: "network-event",
+            method,
+            targetType: sessionTargetInfo(session).type,
+            targetId: sessionTargetInfo(session).targetId,
+            sessionId: session.id?.() ?? null,
+            requestId: event.requestId ?? null,
+            networkId: event.networkId ?? null,
+            frameId: event.frameId ?? null,
+            requestUrl: sanitizeTargetUrl(event.request?.url),
+            resourceType: event.type ?? event.resourceType ?? null,
+            errorText: String(event.errorText ?? "").slice(0, 180),
+          });
+        });
+      }
+    };
+    const getOrCreateCDPWorker = (session, explicit = {}) => {
+      const info = explicit.targetInfo ?? sessionTargetInfo(session);
+      const type = explicit.type ?? info.type;
+      if (!["worker", "shared_worker", "service_worker"].includes(type)) {
+        return null;
+      }
+      const targetId = explicit.targetId ?? info.targetId ?? null;
+      const sessionId = explicit.sessionId ?? session?.id?.() ?? null;
+      let worker = targetId ? cdpWorkerByTargetId.get(targetId) : null;
+      if (!worker && sessionId) worker = cdpWorkerBySessionId.get(sessionId);
+      if (!worker) {
+        worker = {
+          workerKey: `cdp-worker-${++cdpWorkerSequence}`,
+          type,
+          targetId,
+          sessionId,
+          url: explicit.url ?? info.url ?? null,
+        };
+      }
+      worker.type = type;
+      worker.targetId = targetId ?? worker.targetId;
+      worker.sessionId = sessionId ?? worker.sessionId;
+      worker.url = explicit.url ?? worker.url ?? info.url ?? null;
+      if (worker.targetId) cdpWorkerByTargetId.set(worker.targetId, worker);
+      if (worker.sessionId) cdpWorkerBySessionId.set(worker.sessionId, worker);
+      if (session && !cdpObservedSessions.has(session)) {
+        cdpObservedSessions.add(session);
+        observeCDPNetwork(session);
+        session.on("Runtime.executionContextCreated", (event) => {
+          const context = event?.context ?? {};
+          recordCDPEvent({
+            kind: "runtime-context-created",
+            ...worker,
+            contextId: context.id ?? null,
+            origin: sanitizeTargetUrl(context.origin)?.origin ?? null,
+            name: context.name ?? null,
+            isDefault: context.auxData?.isDefault ?? null,
+            contextType: context.auxData?.type ?? null,
+          });
+        });
+        session.on("Runtime.executionContextDestroyed", (event) => {
+          recordCDPEvent({
+            kind: "runtime-context-destroyed",
+            ...worker,
+            contextId: event?.executionContextId ?? null,
+          });
+        });
+        session.on("Runtime.executionContextsCleared", () => {
+          recordCDPEvent({ kind: "runtime-contexts-cleared", ...worker });
+        });
+        session.on("Runtime.exceptionThrown", (event) => {
+          const details = event?.exceptionDetails ?? {};
+          recordCDPEvent({
+            kind: "runtime-exception",
+            ...worker,
+            exceptionClass: details.exception?.className ?? null,
+            text: String(details.text ?? "").slice(0, 240),
+            lineNumber: details.lineNumber ?? null,
+            columnNumber: details.columnNumber ?? null,
+            frames: (details.stackTrace?.callFrames ?? [])
+              .slice(0, 5)
+              .map((frame) => ({
+                functionName: String(frame.functionName ?? "").slice(0, 100),
+                url: sanitizeTargetUrl(frame.url),
+                lineNumber: frame.lineNumber ?? null,
+                columnNumber: frame.columnNumber ?? null,
+              })),
+          });
+        });
+        session.on("Inspector.targetCrashed", (event) => {
+          recordCDPEvent({
+            kind: "inspector-target-crashed",
+            ...worker,
+            reason: String(event?.reason ?? "").slice(0, 200),
+          });
+        });
+        const onAttached = (event) => {
+          const targetInfo = event?.targetInfo ?? {};
+          const childSession = session.connection?.()?._session?.(event?.sessionId);
+          const child = getOrCreateCDPWorker(childSession, {
+            targetInfo,
+            sessionId: event?.sessionId,
+            targetId: targetInfo.targetId,
+            type: targetInfo.type,
+            url: sanitizeTargetUrl(targetInfo.url),
+          });
+          if (child) {
+            recordCDPEvent({
+              kind: "target-attached",
+              ...child,
+              parentWorkerKey: worker.workerKey,
+              waitingForDebugger: event?.waitingForDebugger ?? null,
+            });
+          }
+        };
+        const onDetached = (event) => {
+          const child = cdpWorkerBySessionId.get(event?.sessionId);
+          if (child) {
+            recordCDPEvent({
+              kind: "target-detached",
+              ...child,
+              parentWorkerKey: worker.workerKey,
+            });
+          }
+        };
+        session.on("Target.attachedToTarget", onAttached);
+        session.on("Target.detachedFromTarget", onDetached);
+      }
+      return worker;
+    };
+    const installCDPWorkerTrace = (page) => {
+      const client = page._client();
+      const connection = client.connection();
+      observeCDPNetwork(client);
+      const onAttached = (event) => {
+        const targetInfo = event?.targetInfo ?? {};
+        if (!["worker", "shared_worker", "service_worker"].includes(targetInfo.type)) {
+          return;
+        }
+        const worker = getOrCreateCDPWorker(
+          connection?._session?.(event?.sessionId),
+          {
+            targetInfo,
+            sessionId: event?.sessionId,
+            targetId: targetInfo.targetId,
+            type: targetInfo.type,
+            url: sanitizeTargetUrl(targetInfo.url),
+          },
+        );
+        recordCDPEvent({
+          kind: "target-attached",
+          ...worker,
+          waitingForDebugger: event?.waitingForDebugger ?? null,
+        });
+      };
+      const onDetached = (event) => {
+        const worker = cdpWorkerBySessionId.get(event?.sessionId);
+        if (worker) {
+          recordCDPEvent({ kind: "target-detached", ...worker });
+        }
+      };
+      client.on("Target.attachedToTarget", onAttached);
+      client.on("Target.detachedFromTarget", onDetached);
+
+      const prototype = Object.getPrototypeOf(client);
+      const originalSend = prototype.send;
+      const tracedSend = function (method, params, options) {
+        const worker = getOrCreateCDPWorker(this);
+        const traceCommand =
+          method === "Target.setAutoAttach" ||
+          ["Runtime.enable", "Runtime.runIfWaitingForDebugger", "Fetch.enable", "Fetch.continueRequest", "Fetch.failRequest"].includes(
+            method,
+          );
+        if (!traceCommand) return originalSend.call(this, method, params, options);
+
+        const targetInfo = sessionTargetInfo(this);
+        const eventBase = {
+          kind: "cdp-command",
+          method,
+          targetType: targetInfo.type,
+          targetId: targetInfo.targetId,
+          sessionId: this.id?.() ?? null,
+          requestId: params?.requestId ?? null,
+          ...(worker ?? {}),
+        };
+        const commandId = ++cdpEventSequence;
+        recordCDPEvent({
+          ...eventBase,
+          kind: "cdp-command-start",
+          commandId,
+          autoAttach: method === "Target.setAutoAttach"
+            ? {
+                autoAttach: params?.autoAttach ?? null,
+                flatten: params?.flatten ?? null,
+                waitForDebuggerOnStart:
+                  params?.waitForDebuggerOnStart ?? null,
+              }
+            : undefined,
+        });
+        if (worker && method === "Runtime.enable") {
+          getOrCreateCDPWorker(this);
+        }
+        let result;
+        try {
+          result = originalSend.call(this, method, params, options);
+        } catch (error) {
+          recordCDPEvent({
+            ...eventBase,
+            kind: "cdp-command-result",
+            commandId,
+            outcome: "throw",
+            errorName: String(error?.name ?? "Error").slice(0, 100),
+            errorMessage: String(error?.message ?? error).slice(0, 240),
+          });
+          throw error;
+        }
+        Promise.resolve(result).then(
+          () =>
+            recordCDPEvent({
+              ...eventBase,
+              kind: "cdp-command-result",
+              commandId,
+              outcome: "resolved",
+            }),
+          (error) =>
+            recordCDPEvent({
+              ...eventBase,
+              kind: "cdp-command-result",
+              commandId,
+              outcome: "rejected",
+              errorName: String(error?.name ?? "Error").slice(0, 100),
+              errorMessage: String(error?.message ?? error).slice(0, 240),
+            }),
+        );
+        return result;
+      };
+      prototype.send = tracedSend;
+      restoreCDPSend = () => {
+        if (prototype.send === tracedSend) prototype.send = originalSend;
+      };
+    };
+    const persistProgress = async () => {
+      const traceFrame =
+        viewer ??
+        (page
+          ? page.frames().find((frame) => frame.name() === "pdf-reader")
+          : null);
+      const hostState = await page?.evaluate(() => {
+        const state = window.__hostState;
+        if (!state) return null;
+        return {
+          opened: state.opened ?? null,
+          saves: state.saves ?? null,
+          readyGenerations: state.readyGenerations?.slice(-20) ?? [],
+          opensSent: state.opensSent?.slice(-20) ?? [],
+          received: state.received?.slice(-30) ?? [],
+          errors: state.errors?.slice(-20) ?? [],
+          setupError: state.error ?? null,
+        };
+      }).catch(() => null);
+      const rendererState = await traceFrame?.evaluate(() => {
+        const app = window.PDFViewerApplication;
+        const task = app?.pdfLoadingTask;
+        const worker = task?._worker;
+        const pageView = app?.pdfViewer?.getPageView?.(0);
+        return {
+          documentId: task?.docId ?? null,
+          pdfLoaded: Boolean(app?.pdfDocument),
+          loadingPercent: app?.loadingBar?.percent ?? null,
+          pageNumber: app?.pdfViewer?.currentPageNumber ?? null,
+          pageRenderState: pageView?.renderingState ?? null,
+          pageLoaded: pageView?.div?.dataset?.loaded ?? null,
+          loadingTask: task
+            ? {
+                destroyed: task.destroyed ?? null,
+                transportPresent: Boolean(task._transport),
+                workerPresent: Boolean(worker),
+                workerDestroyed: worker?.destroyed ?? null,
+                workerPortType: worker?.port?.constructor?.name ?? null,
+                workerPortClosed: worker?.port?.closed ?? null,
+                webWorkerPresent: Boolean(worker?._webWorker),
+                workerMessageHandler: worker?.messageHandler
+                  ? {
+                      sourceName: worker.messageHandler.sourceName ?? null,
+                      targetName: worker.messageHandler.targetName ?? null,
+                      pendingCallbacks: Object.keys(
+                        worker.messageHandler.callbackCapabilities ?? {},
+                      ).length,
+                    }
+                  : null,
+              }
+            : null,
+        };
+      }).catch(() => null);
+      await writeFile(
+        partialArtifactPath,
         JSON.stringify(
           {
             fixture:
@@ -91,19 +435,47 @@ test(
             payloadId: payload.id,
             contentHash: payload.contentHash,
             browserPath,
+            openTraceRunId,
+            openTrace: await traceFrame?.evaluate(() =>
+              window.__pdfOpenTrace?.map((entry) => ({ ...entry })) ?? [],
+            ).catch(() => []),
+            workerMessages: await traceFrame?.evaluate(() =>
+              window.__pdfWorkerMessages?.slice(-200) ?? [],
+            ).catch(() => []),
+            workerLifecycles: await traceFrame?.evaluate(() =>
+              window.__pdfWorkerLifecycles?.slice(-200) ?? [],
+            ).catch(() => []),
+            hostState,
+            rendererState,
+            cdpWorkerTrace,
             scenarios: results,
             apiRequestCount,
             externalRequests,
             errors,
             consoleErrors,
+            failure: functionalError
+              ? {
+                  name: functionalError.name ?? "Error",
+                  message: String(functionalError.message ?? functionalError).slice(
+                    0,
+                    4_000,
+                  ),
+                }
+              : null,
+            failureScreenshotPath,
+            failureCaptureErrors,
           },
           null,
           2,
         ),
         "utf8",
       );
+    };
 
     server = createServer(async (request, response) => {
+      for (const [name, value] of Object.entries(withTestNetworkFirewall())) {
+        response.setHeader(name, value);
+      }
       const url = new URL(request.url, "http://127.0.0.1");
       if (url.pathname.startsWith("/api/")) apiRequestCount += 1;
       if (url.pathname === "/" || url.pathname === "/favicon.ico") {
@@ -175,12 +547,277 @@ test(
         "<",
         "\\u003c",
       );
-      browser = await puppeteer.launch({
+      browser = await launchTestBrowser(puppeteer, {
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
+      }, { testName: "annotation-interaction-regression" });
+      page = await browser.newPage();
+      installCDPWorkerTrace(page);
+      await page.evaluateOnNewDocument(() => {
+        if (window.parent === window) return;
+        window.__pdfOpenTrace = [];
+        window.__pdfWorkerMessages = [];
+        window.__pdfWorkerLifecycles = [];
+        const sanitizeWorkerUrl = (value) => {
+          try {
+            const url = new URL(String(value), window.location.href);
+            return {
+              origin: url.origin === "null" ? url.protocol : url.origin,
+              path: url.pathname.split("/").filter(Boolean).slice(-3).join("/"),
+            };
+          } catch {
+            return { origin: null, path: String(value).slice(-100) };
+          }
+        };
+        let nextWorkerId = 0;
+        if (typeof window.Worker === "function") {
+          const NativeWorker = window.Worker;
+          window.Worker = new Proxy(NativeWorker, {
+            construct(target, args) {
+              const worker = Reflect.construct(target, args, target);
+              const workerId = ++nextWorkerId;
+              const workerUrl = sanitizeWorkerUrl(args[0]);
+              const recordLifecycle = (event, extra = {}) => {
+                if (window.__pdfWorkerLifecycles.length >= 500) return;
+                window.__pdfWorkerLifecycles.push({
+                  at: performance.now(),
+                  wallTime: Date.now(),
+                  workerId,
+                  event,
+                  workerUrl,
+                  workerType: args[1]?.type ?? null,
+                  ...extra,
+                });
+              };
+              recordLifecycle("created");
+              worker.addEventListener("error", (event) =>
+                recordLifecycle("error", {
+                  message: String(event?.message ?? "").slice(0, 240),
+                  filename: sanitizeWorkerUrl(event?.filename),
+                  lineNumber: event?.lineno ?? null,
+                  columnNumber: event?.colno ?? null,
+                }),
+              );
+              worker.addEventListener("messageerror", () =>
+                recordLifecycle("messageerror"),
+              );
+              const record = (direction, message) => {
+                if (!message || typeof message !== "object") return;
+                const action = message.action ?? null;
+                const data = message.data;
+                if (
+                  ![
+                    "GetDocRequest",
+                    "GetDoc",
+                    "DocException",
+                    "DataLoaded",
+                    "Ready",
+                    "ready",
+                    "test",
+                  ].includes(action) &&
+                  !(message.callbackId && message.callback)
+                ) {
+                  return;
+                }
+                window.__pdfWorkerMessages.push({
+                  at: performance.now(),
+                  workerId,
+                  direction,
+                  sourceName: message.sourceName ?? null,
+                  targetName: message.targetName ?? null,
+                  action,
+                  callbackId: message.callbackId ?? null,
+                  callback: message.callback ?? null,
+                  docId: data?.docId ?? null,
+                  pageCount: data?.pdfInfo?.numPages ?? null,
+                  inputByteLength:
+                    data?.data?.byteLength ?? data?.data?.length ?? null,
+                });
+              };
+              const nativePostMessage = worker.postMessage.bind(worker);
+              worker.postMessage = (message, ...rest) => {
+                record("to-worker", message);
+                return nativePostMessage(message, ...rest);
+              };
+              worker.addEventListener("message", (event) =>
+                record("from-worker", event.data),
+              );
+              const nativeTerminate = worker.terminate.bind(worker);
+              worker.terminate = () => {
+                recordLifecycle("terminated");
+                window.__pdfWorkerMessages.push({
+                  at: performance.now(),
+                  workerId,
+                  direction: "terminate",
+                });
+                return nativeTerminate();
+              };
+              return worker;
+            },
+          });
+        }
+        let nextOpenId = 0;
+        window.parent.document.addEventListener(
+          "webviewerloaded",
+          () => {
+            const app = window.PDFViewerApplication;
+            if (!app || app.__openTraceInstalled) return;
+            app.__openTraceInstalled = true;
+            const originalOpen = app.open;
+            const taskState = (task) => {
+              const worker = task?._worker;
+              const messageHandler = task?._transport?.messageHandler;
+              return task
+                ? {
+                    docId: task.docId ?? null,
+                    destroyed: task.destroyed ?? null,
+                    workerDestroyed: worker?.destroyed ?? null,
+                    workerPortType: worker?.port?.constructor?.name ?? null,
+                    workerPortClosed: worker?.port?.closed ?? null,
+                    webWorkerPresent: Boolean(worker?._webWorker),
+                    transportPresent: Boolean(task._transport),
+                    transportMessageHandler: messageHandler
+                      ? {
+                          sourceName: messageHandler.sourceName ?? null,
+                          targetName: messageHandler.targetName ?? null,
+                          pendingCallbacks: Object.keys(
+                            messageHandler.callbackCapabilities ?? {},
+                          ).length,
+                          actionHandlers: Object.keys(
+                            messageHandler.actionHandler ?? {},
+                          ),
+                          streamSinks: Object.keys(
+                            messageHandler.streamSinks ?? {},
+                          ).length,
+                          streamControllers: Object.keys(
+                            messageHandler.streamControllers ?? {},
+                          ).length,
+                        }
+                      : null,
+                    workerMessageHandler: worker?.messageHandler
+                      ? {
+                          sourceName: worker.messageHandler.sourceName ?? null,
+                          targetName: worker.messageHandler.targetName ?? null,
+                          pendingCallbacks: Object.keys(
+                            worker.messageHandler.callbackCapabilities ?? {},
+                          ).length,
+                          actionHandlers: Object.keys(
+                            worker.messageHandler.actionHandler ?? {},
+                          ),
+                        }
+                      : null,
+                  }
+                : null;
+            };
+            app.open = function (args) {
+              const openId = ++nextOpenId;
+              const previousTask = this.pdfLoadingTask;
+              const trace = {
+                openId,
+                startedAt: performance.now(),
+                inputByteLength: args?.data?.byteLength ?? args?.data?.length ?? null,
+                previousDocId: previousTask?.docId ?? null,
+                taskObserved: false,
+                taskPromiseSettled: false,
+                openPromiseSettled: false,
+                taskWait: null,
+              };
+              window.__pdfOpenTrace.push(trace);
+              const openPromise = originalOpen.call(this, args);
+              const observeTask = async () => {
+                for (let attempt = 0; attempt < 2_000; attempt++) {
+                  const task = this.pdfLoadingTask;
+                  if (task && task !== previousTask) {
+                    trace.taskObserved = true;
+                    trace.task = taskState(task);
+                    task.promise.then(
+                      (pdfDocument) => {
+                        trace.taskPromiseSettled = true;
+                        trace.taskWait = {
+                          outcome: "resolved",
+                          pageCount: pdfDocument?.numPages ?? null,
+                          at: performance.now(),
+                        };
+                        trace.taskAfterPromise = taskState(task);
+                      },
+                      (error) => {
+                        trace.taskPromiseSettled = true;
+                        trace.taskWait = {
+                          outcome: "rejected",
+                          message: error?.message ?? String(error),
+                          at: performance.now(),
+                        };
+                        trace.taskAfterPromise = taskState(task);
+                      },
+                    );
+                    return;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+                trace.taskWait = { outcome: "task-not-observed" };
+              };
+              void observeTask();
+              return Promise.resolve(openPromise).then(
+                (value) => {
+                  trace.openPromiseSettled = true;
+                  trace.openOutcome = "resolved";
+                  trace.openSettledAt = performance.now();
+                  return value;
+                },
+                (error) => {
+                  trace.openPromiseSettled = true;
+                  trace.openOutcome = "rejected";
+                  trace.openError = error?.message ?? String(error);
+                  trace.openSettledAt = performance.now();
+                  throw error;
+                },
+              );
+            };
+            const originalClose = app.close;
+            app.close = function (...args) {
+              const trace = window.__pdfOpenTrace.at(-1);
+              if (trace && this.pdfLoadingTask) {
+                trace.closeStartedAt = performance.now();
+                trace.closingDocId = this.pdfLoadingTask.docId ?? null;
+                trace.closingTaskDestroyed =
+                  this.pdfLoadingTask.destroyed ?? null;
+                trace.closingWorkerDestroyed =
+                  this.pdfLoadingTask._worker?.destroyed ?? null;
+              }
+              return originalClose.apply(this, args);
+            };
+            Promise.resolve(app.initializedPromise).then(() => {
+              app.eventBus?._on("documentloaded", (event) => {
+                const trace = window.__pdfOpenTrace.at(-1);
+                if (trace) {
+                  trace.documentLoaded = {
+                    at: performance.now(),
+                    eventSourceIsApp: event?.source === app,
+                    currentDocId: app.pdfLoadingTask?.docId ?? null,
+                    pdfLoaded: Boolean(app.pdfDocument),
+                  };
+                }
+              });
+              app.eventBus?._on("documenterror", (event) => {
+                const trace = window.__pdfOpenTrace.at(-1);
+                if (trace) {
+                  trace.documentError = {
+                    at: performance.now(),
+                    message: event?.message ?? null,
+                    reason:
+                      event?.reason instanceof Error
+                        ? event.reason.message
+                        : event?.reason ?? null,
+                    currentDocId: app.pdfLoadingTask?.docId ?? null,
+                  };
+                }
+              });
+            });
+          },
+          true,
+        );
       });
-      const page = await browser.newPage();
       await page.setViewport({ width: 1400, height: 1000 });
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => {
@@ -191,12 +828,8 @@ test(
       page.on("request", (request) => {
         if (new URL(request.url()).origin !== baseUrl) {
           externalRequests.push(request.url());
-          void request.abort();
-        } else {
-          void request.continue();
         }
       });
-      await page.setRequestInterception(true);
       await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
       await page.setContent(`
         <!doctype html><meta charset="utf-8">
@@ -252,7 +885,7 @@ test(
       await page.waitForFunction(() => window.__hostState?.opened === 1, {
         timeout: 45_000,
       });
-      const viewer = page
+      viewer = page
         .frames()
         .find((frame) => frame.name() === "pdf-reader");
       assert.ok(viewer, "Expected the isolated viewer frame");
@@ -895,6 +1528,29 @@ test(
               pdfLoaded: Boolean(app?.pdfDocument),
               pageCount: app?.pdfDocument?.numPages ?? null,
               loadingTaskActive: Boolean(app?.pdfLoadingTask),
+              loadingTask: app?.pdfLoadingTask
+                ? {
+                    docId: app.pdfLoadingTask.docId ?? null,
+                    destroyed: app.pdfLoadingTask.destroyed ?? null,
+                    workerDestroyed:
+                      app.pdfLoadingTask._worker?.destroyed ?? null,
+                    workerPortType:
+                      app.pdfLoadingTask._worker?.port?.constructor?.name ?? null,
+                    workerPortClosed:
+                      app.pdfLoadingTask._worker?.port?.closed ?? null,
+                    transportPresent: Boolean(app.pdfLoadingTask._transport),
+                    transportMessageHandlerPresent: Boolean(
+                      app.pdfLoadingTask._transport?.messageHandler,
+                    ),
+                  }
+                : null,
+              openTrace: window.__pdfOpenTrace?.map((entry) => ({ ...entry })) ?? [],
+              workerMessages:
+                window.__pdfWorkerMessages?.slice(-200) ?? [],
+              workerLifecycles:
+                window.__pdfWorkerLifecycles?.slice(-200) ?? [],
+              lifecycleEvents:
+                window.__pdfLifecycleEvents?.slice(-20) ?? [],
               loadingPercent: app?.loadingBar?.percent ?? null,
               hasChanges: app?._hasChanges?.() ?? null,
               saveInProgress: app?._saveInProgress ?? null,
@@ -931,6 +1587,8 @@ test(
             expectedOpened: expected,
             host,
             renderer,
+            openTraceRunId,
+            cdpWorkerTrace,
             pageErrors: errors.slice(-20),
             consoleErrors: consoleErrors.slice(-20),
           };
@@ -2152,7 +2810,7 @@ test(
       await page.mouse.click(
         iframeBox.x + firstSquare.rect.x + firstSquare.rect.width / 2,
         iframeBox.y + firstSquare.rect.y + firstSquare.rect.height / 2,
-        { button: "left", clickCount: 2, delay: 80 },
+        { button: "left", count: 2, delay: 80 },
       );
       try {
         await viewer.waitForFunction(
@@ -2220,7 +2878,7 @@ test(
         await page.screenshot({
           path: path.join(
             artifacts,
-            `annotation-interaction-${captureId}-explicit-timeout.png`,
+            `annotation-interaction-${artifactId}-explicit-timeout.png`,
           ),
           fullPage: false,
         });
@@ -2351,7 +3009,7 @@ test(
       await persistProgress();
 
       await page.screenshot({
-        path: path.join(artifacts, `annotation-interaction-${captureId}.png`),
+        path: path.join(artifacts, `annotation-interaction-${artifactId}.png`),
         fullPage: false,
       });
       const diagnostics = {
@@ -2359,13 +3017,27 @@ test(
         payloadId: payload.id,
         contentHash: payload.contentHash,
         browserPath,
+        openTraceRunId,
+        openTrace: await viewer.evaluate(() =>
+          window.__pdfOpenTrace?.map((entry) => ({ ...entry })) ?? [],
+        ),
+        workerMessages: await viewer.evaluate(() =>
+          window.__pdfWorkerMessages?.slice(-200) ?? [],
+        ),
+        workerLifecycles: await viewer.evaluate(() =>
+          window.__pdfWorkerLifecycles?.slice(-200) ?? [],
+        ),
+        cdpWorkerTrace,
+        lifecycleEvents: await viewer.evaluate(() =>
+          window.__pdfLifecycleEvents?.slice(-20) ?? [],
+        ),
         scenarios: results,
         apiRequestCount,
         externalRequests,
         errors,
       };
       await writeFile(
-        path.join(artifacts, `annotation-interaction-${captureId}.json`),
+        path.join(artifacts, `annotation-interaction-${artifactId}.json`),
         JSON.stringify(diagnostics, null, 2),
         "utf8",
       );
@@ -2373,12 +3045,82 @@ test(
       assert.deepEqual(externalRequests, []);
       assert.deepEqual(errors, []);
       console.log(
-        `Real-pointer annotation interaction checks captured in tests/artifacts/annotation-interaction-${captureId}.{json,png}`,
+        `Real-pointer annotation interaction checks captured in tests/artifacts/annotation-interaction-${artifactId}.{json,png}`,
       );
     } catch (error) {
       functionalError = error;
     } finally {
-      cleanupReport = await cleanupBrowserTestResources({ browser, server });
+      if (functionalError) {
+        if (page) {
+          failureScreenshotPath = path.join(
+            artifacts,
+            `annotation-interaction-${artifactId}-failure.png`,
+          );
+          try {
+            await page.screenshot({ path: failureScreenshotPath, fullPage: false });
+          } catch (error) {
+            failureCaptureErrors.push({
+              phase: "failure-screenshot",
+              name: error?.name || "Error",
+              message: String(error?.message ?? error).slice(0, 500),
+            });
+            failureScreenshotPath = null;
+          }
+        }
+        try {
+          await persistProgress();
+        } catch (error) {
+          failureCaptureErrors.push({
+            phase: "failure-partial-write",
+            name: error?.name || "Error",
+            message: String(error?.message ?? error).slice(0, 500),
+          });
+          try {
+            await writeFile(
+              partialArtifactPath,
+              JSON.stringify(
+                {
+                  fixture:
+                    "tests/fixtures/tracemonkey.pdf (read-only public fixture)",
+                  payloadId: payload.id,
+                  contentHash: payload.contentHash,
+                  browserPath,
+                  openTraceRunId,
+                  hostState: null,
+                  workerMessages: [],
+                  workerLifecycles: [],
+                  cdpWorkerTrace,
+                  scenarios: results,
+                  errors,
+                  consoleErrors,
+                  failure: {
+                    name: functionalError.name ?? "Error",
+                    message: String(
+                      functionalError.message ?? functionalError,
+                    ).slice(0, 4_000),
+                  },
+                  failureScreenshotPath,
+                  failureCaptureErrors,
+                },
+                null,
+                2,
+              ),
+              "utf8",
+            );
+          } catch (fallbackError) {
+            failureCaptureErrors.push({
+              phase: "failure-partial-fallback-write",
+              name: fallbackError?.name || "Error",
+              message: String(fallbackError?.message ?? fallbackError).slice(
+                0,
+                500,
+              ),
+            });
+          }
+        }
+      }
+      cleanupReport = await cleanupBrowserTestResources({ browser, ownedPages: [page], server });
+      restoreCDPSend?.();
       try {
         await removeTempRoot(temp);
         cleanupReport.tempRootRemoved = true;
@@ -2393,7 +3135,7 @@ test(
       }
       try {
         await writeFile(
-          path.join(artifacts, `annotation-interaction-${captureId}.cleanup.json`),
+          path.join(artifacts, `annotation-interaction-${artifactId}.cleanup.json`),
           JSON.stringify(cleanupReport, null, 2),
           "utf8",
         );
@@ -2406,8 +3148,13 @@ test(
         });
       }
       t.diagnostic(
-        `Cleanup report: ${path.join(artifacts, `annotation-interaction-${captureId}.cleanup.json`)}`,
+        `Cleanup report: ${path.join(artifacts, `annotation-interaction-${artifactId}.cleanup.json`)}`,
       );
+      if (functionalError) {
+        t.diagnostic(
+          `Failure evidence: ${partialArtifactPath}; screenshot: ${failureScreenshotPath ?? "unavailable"}`,
+        );
+      }
     }
     const finalError = attachCleanupErrors(functionalError, cleanupReport);
     if (finalError) throw finalError;

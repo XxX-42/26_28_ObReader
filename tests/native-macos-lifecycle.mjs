@@ -267,7 +267,7 @@ function installNativePageDiagnostics(page) {
 }
 
 function isLivePageTarget(page) {
-  if (!browser?.isConnected() || !page || page.isClosed()) return false;
+  if (!browser?.connected || !page || page.isClosed()) return false;
   return browser.targets().includes(page.target());
 }
 
@@ -547,7 +547,7 @@ async function readNativeBeforeUnloadObserver(page, observer) {
 
 async function restoreNativeBeforeUnloadObserver(page, observer) {
   if (!observer) return;
-  if (!page.isClosed() && browser?.isConnected()) {
+  if (!page.isClosed() && browser?.connected) {
     await evaluateJsonBounded(page, `(() => {
       const state = window[${JSON.stringify(observer.key)}];
       if (!state) return JSON.stringify({ alreadyAbsent: true });
@@ -7957,7 +7957,7 @@ try {
   }
   throw error;
 } finally {
-  if (browser?.isConnected()) {
+  if (browser?.connected) {
     if (nativeCdpUnavailable) {
       report.cleanupSkippedDueToNativeCdpUnavailable = true;
       browser.disconnect();

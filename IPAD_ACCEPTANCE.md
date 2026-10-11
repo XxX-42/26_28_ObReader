@@ -1,22 +1,43 @@
-# 0.3.0 iPad 外接鼠标待验收候选
+# iPad 验收与候选归档
 
-本阶段基于 macOS 整合提交 `1034e0e`，目标为 iPad Pro 2018、iPadOS 26.6、Obsidian 1.14.4。最终 iPad 安装由用户执行；Mac 移动模拟和浏览器验证不代表真实 WKWebView 或外接鼠标已经通过。旧 0.2.0 包及验收记录保留作回滚依据。
+## 当前跟进：修订后的 0.3 工作纳入 0.1general／插件 0.4.0（功能候选通过；实机待验收）
 
-## 实施和验证记录
+原始 0.3.0 iPad 外接鼠标候选及其证据保留在下方作历史归档。后续整合工作纳入 0.1general／插件 0.4.0 三平台候选，共用核心功能和三平台入口。冻结默认全套和指定 Mac 测试库中的产品功能断言均已通过；toolbar 与 FreeText 的进程退出／清理异常，以及移动控件脚本最终状态恢复时的 `Promise was collected`，另记为测试基础设施状态，不阻断功能候选。生命周期脚本完成 19/19 并自然退出；移动控件报告保持 `incomplete`，不宣称整个脚本正常通过。当前候选 ZIP 和校验值见 [通用候选验收记录](GENERAL_ACCEPTANCE.md#冻结默认全套与候选文件)。本候选按用户授权正常推送 `main`；不创建 Release，不部署用户主库，实际提交以 Git 历史为准。Windows 与 iPad 实机验收仍待设备检查，iPad 最终安装由用户执行。下方历史 0.3.0 的结果不计作当前候选通过。
+
+0.2.0 macOS 回滚包及其原有证据保持不变。Mac 部署仅限 /Users/jiajia/Documents/ObReader-Apple-Test。不得部署到用户主库或创建 Release。最终 iPad 安装和实机验收由用户在最终包可用后执行。本轮不增加 Pencil 压感、手写识别或触控专项手势范围。
+
+<a id="three-platform-actual-device-checklist"></a>
+## 三平台实机验收清单
+
+下表全部待验收。冻结最终三文件候选后，使用独立测试数据逐项检查。记录设备型号、系统、Obsidian 版本、候选版本及可用时的包哈希、鼠标型号和按键映射，以及导出的诊断。只使用测试 PDF 副本；仅将实际观察到的行为标记为通过。
+
+| 平台 | 实机检查 | 状态 |
+| --- | --- | --- |
+| Windows 桌面 | 在独立测试库安装；冷启动和离线打开；默认 PDF 路由；五种工具；Ctrl+S、自动保存、保存重开和二次编辑；右键／中键行为、轮盘、滚动和弹窗生命周期；冲突及恢复行为。 | 待验收；未声称实机通过 |
+| macOS 桌面 | 仅使用 ObReader-Apple-Test 独立测试库；检查桌面入口、PDF 路由、五种工具、Cmd+S、自动保存和保存重开；测试鼠标、弹窗迁移／关闭及恢复；验收后恢复桌面模式和插件状态。 | 指定测试库功能核验完成；生命周期 19/19。移动控件功能断言通过，脚本恢复模拟状态时清理异常，报告保留 `incomplete`；Windows/iPad 实机仍待验收 |
+| iPadOS | 由用户将最终匹配的三文件包安装到独立测试库；检查真实 WKWebView 冷启动和离线资源、五种工具、保存重开和二次编辑、鼠标指针／按键投递、无需外接键盘的可点击工具／编辑入口、屏幕旋转和分屏。 | 待验收；未声称 iPad 实机通过 |
+
+所有平台遇到加载或输入异常时导出诊断。若操作系统未向 WebView 发送某个按键事件，应记录为设备或系统映射限制。回滚时保留完整插件备份；此验收不得使用用户主库或公开 Release。
+
+## 历史归档：0.3.0 iPad 外接鼠标候选
+
+本节只记录原始 0.3.0 候选和归档证据，不描述当前 0.4.0 构建或验收状态。该候选目标为 iPad Pro 2018、iPadOS 26.6 和 Obsidian 1.14.4；真实 WKWebView 和外接鼠标行为仍待用户实机验收。原 0.2.0 macOS 回滚包继续保留。
+
+## 历史 0.3.0 实施和验证记录
 
 由 Luna Max 子代理实现浏览器资源运行时、移动加载和鼠标兼容，另由 Luna Max 子代理独立审计。完整冻结 Viewer 的 402 个文件未改动；运行时共 404 个资源。发布包仅有 main.js、manifest.json、styles.css，版本 0.3.0，isDesktopOnly: false。
 
-候选包：[pdf-web-reader-0.3.0-ipad-mouse-candidate.zip](dist/pdf-web-reader-0.3.0-ipad-mouse-candidate.zip)。ZIP SHA-256：
+历史归档包：[pdf-web-reader-0.3.0-ipad-mouse-candidate.zip](dist/pdf-web-reader-0.3.0-ipad-mouse-candidate.zip)。历史归档 ZIP SHA-256：
 
 `fe9326bb324048a0335dba943dcbd5620663eebfae9ffb730b126e30c1b3cf93`
 
-main.js SHA-256：
+历史归档 main.js SHA-256：
 
 `9257dc71628c2a8439ead9c9291584f063302548bdeec0ee47a0e94e978b770b`
 
 证据、源码提交及文件哈希汇总见 [交付记录](dist/pdf-web-reader-0.3.0-ipad-mouse-delivery.json)、[源码差异](dist/pdf-web-reader-0.3.0-ipad-mouse-source.patch) 和 [证据包](dist/pdf-web-reader-0.3.0-ipad-mouse-evidence.zip)。以下结论只对应 Mac 和浏览器验证，实机列仍全部待验收。
 
-| 最终 0.3.0 验证 | 结果 |
+| 历史 0.3.0 最终验证 | 结果 |
 | --- | --- |
 | 无 Node/Electron/Buffer/process 的最终产物 | VM 和真实浏览器的资源 URL／强制 Blob 两条加载路径通过，覆盖启动、设置、解压、PDF、保存重开和卸载 |
 | 默认并发全套 | **92/95，自然退出失败**：保存重开加载确认 60 秒、已有文字批注渲染 30 秒、下划线浏览器退出检查超时；完整日志保留 |
@@ -45,7 +66,9 @@ main.js SHA-256：
 
 部署和原生验证只允许 `/Users/jiajia/Documents/ObReader-Apple-Test` 的独立 Obsidian 实例。更新前保存并关闭所有 Reader，禁用插件并备份旧插件目录；主库和公开 Release 不属于本轮操作。
 
-## iPad 安装和回滚
+## 历史 0.3.0 iPad 安装和回滚
+
+以下步骤仅用于复现归档的 0.3.0 包，不应用于当前 0.4.0 验收；当前冻结候选包和校验值见 [通用候选验收记录](GENERAL_ACCEPTANCE.md#冻结默认全套与候选文件)。
 
 1. 在 iPad 创建独立测试库并复制公共测试 PDF。保存并关闭 Reader，禁用旧版本插件。
 2. 备份 `.obsidian/plugins/pdf-web-reader/` 完整目录，包含设置、缓存和恢复候选。保留此备份，不仅备份三个发布文件。
@@ -53,9 +76,9 @@ main.js SHA-256：
 4. 完全关闭并重新打开 Obsidian，使它重新读取 manifest；确认插件版本为 `0.3.0`，再启用插件。先验证设置和启动，再打开测试 PDF。仅在测试副本上编辑和保存。
 5. 若启动或资源加载失败，导出诊断；禁用插件并恢复之前备份的完整目录，重新打开 Obsidian。不要删除恢复文件来绕过错误。
 
-## 实机鼠标验收矩阵
+## 历史 0.3.0 iPad 外接鼠标检查矩阵
 
-下列项目均为**待实机验证**。记录鼠标型号、连接方式、iPadOS 次要点击设置及是否将中键分配给系统操作。不要求外接键盘。
+下列项目是原 0.3.0 候选的待实机矩阵，保留作参考；当前三平台设备检查见本文前面的清单。记录鼠标型号、连接方式、iPadOS 次要点击设置及是否将中键分配给系统操作。不要求外接键盘。
 
 | 项目 | 验收行为 |
 | --- | --- |
@@ -75,11 +98,11 @@ main.js SHA-256：
 
 系统未向 WebView 传入的按钮事件不能由插件恢复。用诊断确认实际收到的 pointerType、button/buttons 和事件计数；无事件应记录为设备／系统配置限制，不能标成通过。
 
-## 诊断和 Safari Web Inspector
+## 历史 0.3.0 诊断和 Safari Web Inspector
 
 在插件设置中点击 **导出移动端诊断 → 导出 JSON**，或执行 **导出 PDF 阅读器诊断 JSON** 命令。文件位于 `PDF Reader Diagnostics/`，含启动阶段、资源校验、Worker 模式、浏览器能力及指针类型／按键计数，不含 PDF 内容或路径。启动失败时先记录具体阶段和错误码。
 
-## Safari Web Inspector
+## 历史 Safari Web Inspector
 
 Obsidian 官方推荐在独立 Mac 测试实例中执行 `app.emulateMobile(true)`，重新加载插件以测试移动分支，结束后恢复原状态。这只是桌面模拟，Node 可用性和 WebKit 行为仍需独立验证。
 
@@ -87,6 +110,6 @@ Obsidian 官方推荐在独立 Mac 测试实例中执行 `app.emulateMobile(true
 
 来源：[Obsidian 移动开发](https://docs.obsidian.md/Plugins/Getting%20started/Mobile%20development)、[WebKit Web Inspector](https://webkit.org/web-inspector/enabling-web-inspector/)。实际菜单名称随系统语言和版本可能不同。
 
-## 现有限制
+## 历史 0.3.0 限制
 
 本轮不设计 Pencil 压感、手写识别或触控专项手势。强制退出、系统回收进程和恢复目录写入失败不能承诺无损恢复。磁盘基准比较与写入之间仍非原子操作；历史偶发 PDF 打开确认超时的根因尚未完全证实。实机证据取得前不声明 iPad 鼠标全项兼容。

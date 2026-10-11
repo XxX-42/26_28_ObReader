@@ -581,6 +581,30 @@ test("mobile startup exposes sanitized stages without replacing an opened docume
   harness.plugin.onunload();
 });
 
+test("desktop and mobile emulation keep separate entries over a shared browser-only core", async () => {
+  const harness = makeHarness({ appMobile: false, platformMobile: false });
+  await harness.plugin.onload();
+  const view = harness.makeView();
+  const html = await view.createViewerDocument();
+  assert.match(html, /obsidian-bridge\.js\?v=/);
+  assert.doesNotMatch(html, /__PDF_READER_MOBILE_RESOURCES__/);
+  assert.equal(harness.createdUrls.size, 0);
+  assert.equal(harness.nodeRuntimeRequires.length, 0);
+  harness.app.isMobile = true;
+  assert.equal(harness.plugin.isMobileRuntime, false,
+    "Changing the host simulation flag cannot migrate a loaded Reader's platform entry");
+  harness.plugin.settingTab.display();
+  assert.ok(harness.settings.some((setting) => setting.name === "导出阅读器诊断" && setting.button?.text === "导出 JSON"));
+  view.requestedPath = "Private/Confidential desktop.pdf";
+  const outputPath = await harness.plugin.exportMobileDiagnostics();
+  const output = harness.stored.get(outputPath);
+  const json = JSON.parse(new TextDecoder().decode(output.bytes));
+  assert.equal(json.platform.loaderMode, "desktop-resource");
+  assert.equal(json.readers[0].worker.source, "resource");
+  assert.equal(JSON.stringify(json).includes("Confidential desktop.pdf"), false);
+  harness.plugin.onunload();
+});
+
 test("mobile settings export path-free diagnostics with bounded pointer samples", async () => {
   const harness = makeHarness({ appMobile: false, platformMobile: true });
   await harness.plugin.onload();
@@ -613,5 +637,48 @@ test("mobile settings export path-free diagnostics with bounded pointer samples"
   assert.equal(JSON.stringify(json).includes("Confidential source.pdf"), false);
   assert.equal(JSON.stringify(json).includes("test-cache"), false);
   assert.equal(JSON.stringify(json).includes("pdfjsLib"), false);
+  harness.plugin.onunload();
+});
+
+test("ready-frame diagnostics reject stale replies and sanitize bounded input samples", async () => {
+  const harness = makeHarness();
+  await harness.plugin.onload();
+  const view = harness.makeView();
+  view.ready = true;
+  view.iframe = {};
+  view.rendererGeneration = "diagnostic-generation";
+  let request;
+  view.postToViewer = (message) => { request = message; return true; };
+  const pending = view.requestInputDiagnostics();
+  const samples = Array.from({ length: 40 }, (_, index) => ({
+    type: "pointerdown", pointerType: "mouse", button: 0, buttons: 1,
+    activePointers: 1, editorMode: index, trusted: true,
+    pdfText: "Private PDF content", path: "Private/secret.pdf",
+  }));
+  const reply = {
+    type: "input-diagnostics", requestId: request.requestId,
+    rendererGeneration: "stale-generation", schema: 1,
+    pointerEventsSeen: 40, pointerEventsDropped: 0, activePointers: 1,
+    pointers: samples,
+  };
+  view.handleMobileRuntimeMessage(reply);
+  assert.equal(view.mobileInputDiagnosticsRequests.size, 1);
+  view.handleMobileRuntimeMessage({ ...reply, rendererGeneration: view.rendererGeneration });
+  const snapshot = await pending;
+  assert.equal(snapshot.pointers.length, 32);
+  assert.equal(snapshot.pointers[0].editorMode, 8);
+  assert.equal(snapshot.pointerEventsSeen, 40);
+  assert.equal(JSON.stringify(snapshot).includes("Private"), false);
+  assert.equal(view.mobileInputDiagnosticsRequests.size, 0);
+
+  const malformedPending = view.requestInputDiagnostics();
+  view.handleMobileRuntimeMessage({
+    ...reply, requestId: request.requestId, rendererGeneration: view.rendererGeneration,
+    pointerEventsSeen: NaN, pointers: [null, { ...samples[0], button: "0" },
+      { ...samples[0], type: "secret.pdf" }, { ...samples[0], button: 99 }],
+  });
+  const malformed = await malformedPending;
+  assert.equal(malformed.pointerEventsSeen, 0);
+  assert.equal(malformed.pointers.length, 0);
   harness.plugin.onunload();
 });

@@ -1,10 +1,18 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。历史 Windows 基线是 0.1.4；macOS 0.2.0 候选已作为回滚包保留，当前基于 `1034e0e` 开发 0.3.0 iPad 测试候选。继续保留离线运行、三个发布文件、正常打开 PDF，以及下划线、矩形框、荧光笔、自由画笔、文字框五种功能。最新范围和逐项验收见 [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md)，以下 macOS 记录对应历史 0.2.0 产物。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.4.0），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
 
-接续开发者应先理解现有实现和验证边界，再进行 Apple 平台移植。不能仅修改 manifest 后宣称移动端适配完成，也不能用 Safari 普通网页或 Chromium 的移动模拟替代原生 Obsidian 验收。
+## 当前：0.1general 通用候选（插件 0.4.0）
 
-## 0.3.0 iPad 候选阶段（2026-10-11）
+开发起点源码为 40b1f09，包含 Windows c52e522 与 macOS 1034e0e 的工作。Windows、macOS、iPadOS 共用核心和同一发布包；插件运行时只使用 Obsidian 与标准浏览器 API，不依赖 Node/Electron。冻结 PDF.js Viewer 的 402 个文件保持不变，运行时资源共 404 项。插件 onload 时根据 Obsidian 平台状态一次性选择桌面或移动入口：桌面入口使用资源 URL 与弹窗协调，移动入口使用 Blob 模块／Worker 路径且不安装桌面弹窗协调。保存、恢复、编辑和指针行为使用共享代码。该实现说明不构成实体设备兼容性证明；目前不声称 Windows 或 iPad 实机验收通过；当前候选、证据及哈希见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)。
+
+修订后的完整默认全套已在源码稳定时完成，所有产品功能断言通过（133 项中 131 通过、2 项进程退出／清理状态异常）。这两项仅归类为测试基础设施，不否定产品功能结果。`/Users/jiajia/Documents/ObReader-Apple-Test` 指定独立 Mac 测试库的功能核验已完成：生命周期脚本 19/19、Node 自然退出码 0；移动控件操作和功能断言均通过，但脚本在 `finally` 恢复 `emulateMobile(false)` 时收到 `Promise was collected`，报告保持 `incomplete`、Node 退出码 1。按修订口径，这项功能后清理异常不推翻完整通过的功能断言，也不称整个脚本正常通过。冻结候选包和哈希见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md#冻结默认全套与候选文件)。原定十轮／十次复验门槛已撤回；不触碰用户主库，不创建 Release，也不进行额外 Chrome/Puppeteer/Crashpad/CDP 调查或依赖升级。本候选按用户授权正常推送 `main`，实际提交以 Git 历史为准。Windows 与 iPad 实机验收仍待设备检查；0.3.0 归档候选与 0.2.0 macOS 回滚包继续保留。
+
+Mac 原生验证和部署仅允许独立测试库 /Users/jiajia/Documents/ObReader-Apple-Test；不部署用户主库，不创建公开 Release。iPad 最终部署由用户执行，实际 WKWebView 和鼠标事件投递仍待实机验收。磁盘比较与写入之间仍存在竞争窗口，强制退出或系统终止也可能绕过异步保存／关闭流程，不能承诺无损恢复。
+
+后文的 0.3.0 与 0.2.0 章节及其余 Apple 交接审计均为历史记录。
+
+## 历史：0.3.0 iPad 候选阶段（2026-10-11）
 
 本阶段目标为 iPad Pro 2018、iPadOS 26.6、Obsidian 1.14.4 的启动、五工具、编辑保存及外接鼠标交互。Luna Max 子代理负责运行时、加载器、鼠标修复与独立审计。插件运行时采用浏览器 TypedArray、Base64、DecompressionStream 和内嵌 SHA-256，移除 Node/Electron 依赖；构建脚本继续使用 Node。完整冻结 Viewer 与离线三文件分发保留，manifest 改为 `isDesktopOnly: false`。
 
@@ -12,7 +20,7 @@
 
 Mac 的 `app.emulateMobile(true)` 验证只能证明桌面 Obsidian 的移动分支；真实 WKWebView、iPad 外接鼠标按键传递和命中行为由用户部署后验收。实机证据获得前始终标记“iPad 外接鼠标待验收候选”。仅在 `/Users/jiajia/Documents/ObReader-Apple-Test` 独立实例验证，不部署主库或公开发布。强退恢复限制、基准比较至写入的竞争窗口、历史偶发 PDF 打开超时继续保留，不能因移动分支测试通过而删除。
 
-## 0.2.0 macOS 阶段更新（2026-10-11，保留 10 月 8 日实现）
+## 历史：0.2.0 macOS 阶段更新（2026-10-11，保留 10 月 8 日实现）
 
 2026-10-11 接续整合 Windows `c52e522`：保留本阶段 Mac 的文档身份、所属窗口、修订确认、恢复副本和关闭协调，引入工具轮盘、右键临时橡皮擦及延迟右键选择保护。文字输入停止 1 秒后使用 PDF.js 的保焦提交再自动保存，保留输入焦点和光标；组合输入与绘制手势仍等待结束。修复保存重开交互测试在页面未完成加载、命中旧矩形时发出双击的问题，测试改为核对实际页面和命中对象。整合后的验证结果以 MACOS_ACCEPTANCE.md 的 2026-10-11 记录为准，10 月 8 日证据仅对应之前的候选。
 
@@ -31,6 +39,8 @@ Mac 的 `app.emulateMobile(true)` 验证只能证明桌面 Obsidian 的移动分
 核实过的 `workspace.moveLeafToPopout` 入口也先完成保存／恢复准备。窗口迁移保持 documentId，递增 openRequest 并轮换 rendererGeneration；新 Viewer realm 重载已确认原件或精确的持久化 draft，保留修订、dirty 和冲突暂停。消息由所属窗口 realm 发送，继续严格校验 parent 来源。未拦截的 DOM 重载仅能恢复最近匹配的持久化检查点，额外未序列化编辑可能丢失；尚未核验返回主窗口的其他 SDK 入口，使用前须先保存／恢复。
 
 原生基线、候选验收、默认并发与串行复验的结果和未解决项见 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md)。后台 focus-emulated 的 Electron 验证与系统真实前台操作明确区分，不用 Chrome harness 代替 Mac 原生证据。
+
+以下两段功能及自然退出结果属于早期 Mac 候选的历史记录，不代表当前 0.4.0 验收结果。
 
 本轮另修复已保存文字批注在 NONE 模式右拖擦除后，Cmd+Z 只恢复模型而未恢复 AP 的显示缺口。桥接层复用冻结 Viewer 的正常 reset/render 方法，仅协调精确保存批注，保留原对象和撤销重做栈；显示任务不参与保存边界，实际保存确认期间可延后，模式／会话变化和异常均清理。原先仅验证 AP 点击区不足以证明字形恢复：原生像素证据确认点击区已显示而页面画布仍为空。最终补充精确受影响页的正常 NONE-mode 重绘，清理派生 modified-ID 缓存后重置该页并进入既有渲染队列，不修改批注存储、历史或保存修订。新增真实可信按键、阻塞 ACK、原页面画布 ROI 的像素往返，以及保存重开像素回归。并发测试的一次退出挂起已定位为 Chrome 残留 Crashpad 继承 stderr；测试在核对自有浏览器退出且断开后释放其读端，保留人工介入的诊断记录，最终两种全套均自然退出。历史 PDF 打开未确认的偶发根因仍未证实，不能与该退出问题混为一谈。
 
@@ -83,9 +93,9 @@ Mac 的 `app.emulateMobile(true)` 验证只能证明桌面 Obsidian 的移动分
 
 2026 年 10 月 8 日补充了 `test-vault/测试插件/` 测试库快照。60 个文件包括原配置、已安装 0.1.4、38 份测试 PDF、笔记、图片及历史内层欢迎库；原 `.asset-cache` 未复制，内嵌资源会在首次打开时重建。阅读 `test-vault/README.md` 和 `test-vault/SNAPSHOT.json`，将外层测试库复制到 Mac 用户指定的独立位置使用，不要误开内层同名文件夹。快照不包含未保存编辑或应用账号状态，也不表示 Apple 原生验收已完成。
 
-## 当前功能合同
+## 历史功能合同（原 Apple 交接时记录）
 
-插件 ID 是 `pdf-web-reader`，自定义 View 类型是 `pdf-web-reader-view`。最低 Obsidian 版本为 `1.14.4`；历史 0.1.4/0.2.0 的 `isDesktopOnly` 为 `true`，当前 0.3.0 iPad 候选改为 `false`。这是插件声明和测试范围，不代表已经确定 Apple 最低系统版本或完成 iPad 实机验收。
+插件 ID 是 `pdf-web-reader`，自定义 View 类型是 `pdf-web-reader-view`。最低 Obsidian 版本为 `1.14.4`；历史 0.1.4/0.2.0 的 `isDesktopOnly` 为 `true`，历史 0.3.0 iPad 候选改为 `false`。这是插件声明和测试范围，不代表已经确定 Apple 最低系统版本或完成 iPad 实机验收。
 
 | 按键 | 工具     | 编辑器类型值 | PDF 批注类型 |
 | ---- | -------- | ------------ | ------------ |
@@ -220,7 +230,7 @@ CSS 例外限制在 `:not(.drawing)`，防止覆盖绘制期间的 pointer-event
 
 修改入口为 `build/pdf.mjs`、`web/viewer.mjs` 和 `web/viewer.css`；Worker 和保存格式未改。回归入口为 `tests/annotation-interaction-regression.test.mjs`。不要用全局 `pointer-events:none` 替代这些分状态规则。
 
-## Windows 验证证据与边界
+## 历史 Windows 验证证据与边界
 
 0.1.4 产品提交前已有完整 Windows 运行结果：`npm test` 32/32，通过三文件离线功能测试。原生测试库完成安全重载，运行实例确认 0.1.4、正确资源 hash，并打开 14 页测试 PDF；没有修改用户 PDF 原件。
 
@@ -232,7 +242,7 @@ CSS 例外限制在 `:not(.drawing)`，防止覆盖绘制期间的 pointer-event
 
 测试诊断 JSON/PNG/PDF 位于忽略的 `tests/artifacts/`，不会随克隆到 Mac。源测试和公共 fixture 会随 Git 交付，可重新运行。诊断目录中的早期 timeout 图片或 partial 文件不是最终结果；读取最终 JSON 和测试退出状态。
 
-## Apple 深度启动审计
+## 历史 Apple 深度启动审计（移植前探针）
 
 以下证据来自当前代码、Windows 只读隔离探针和 Chromium 嵌入布局测试，没有 Apple 原生运行记录。
 
@@ -255,7 +265,7 @@ CSS 例外限制在 `:not(.drawing)`，防止覆盖绘制期间的 pointer-event
 
 三个 WASM 资源均存在，并在 Node/V8 验证为有效模块；这不证明 Apple JavaScriptCore 支持其全部目标特性。WebGPU、ImageDecoder、OffscreenCanvas 有检测或回退，不是统一的 Viewer 启动硬依赖。
 
-## Apple 系统版本边界
+## 历史 Apple 系统版本边界
 
 不能把“Apple 多平台”解释为所有历史 macOS/iOS 版本。开始开发前需要明确最低 macOS、Obsidian installer/Electron、iOS/iPadOS 和 Obsidian mobile 版本。
 
@@ -266,7 +276,7 @@ CSS 例外限制在 `:not(.drawing)`，防止覆盖绘制期间的 pointer-event
 - macOS 桌面 Obsidian 使用 Electron/Chromium，不应拿 Safari 测试替代其原生验收。
 - 桌面 Obsidian app 更新与 installer/Electron 更新有区别；minAppVersion 不能独自表达所有浏览器引擎要求。
 
-## 移动交互和宿主缺口
+## 历史移动交互和宿主缺口（实施前审计）
 
 ### 工具栏与触控
 
@@ -356,7 +366,7 @@ git diff --check
 - 用户明确要求不要干扰其正常浏览，不应反复要求其切前台，也不应强制操作其他 Vault 或窗口。
 - 任何无法安全保留未保存编辑的重载、升级或窗口关闭都应先停下。不得用 git reset --hard、覆盖工作树或删除广泛目录来“清理环境”。
 
-## Apple 适配实施顺序
+## 历史 Apple 适配实施顺序（原计划）
 
 1. 在用户指定的 Mac 目录克隆最新 main，阅读本文件、README、PROVENANCE、manifest、package 与入口源码。检查 Git 状态，不覆盖本地新改动。
 2. 在用户指定的 Mac 测试库完成当前桌面基线，记录 Obsidian app/installer、macOS、CPU 架构。验证默认 PDF 路由、五工具、Cmd+S、普通窗口和 popout。
@@ -394,6 +404,6 @@ git diff --check
 
 ## 历史给 Mac Codex 的接续指令（已被本阶段范围覆盖）
 
-以下保留最初的接续指令，不再作为当前实施范围。新会话应使用上文 0.3.0 阶段更新及 IPAD_ACCEPTANCE.md，部署和具体实现仍须遵循该会话的授权及用户指定路径。
+以下保留最初的接续指令，不再作为当前实施范围。新会话应使用上文 0.1general 当前阶段及 GENERAL_ACCEPTANCE.md；IPAD_ACCEPTANCE.md 是 0.3.0 iPad 鼠标候选的历史矩阵。部署和具体实现仍须遵循当前授权及用户指定路径。
 
 > 你接续开发 https://github.com/XxX-42/26_28_ObReader 。先确认最新 main，完整阅读 MACOS_HANDOFF.md、README.md 和 vendor/pdfjs-generic-legacy/PROVENANCE.md，再检查 Git 状态及运行入口。当前产品基线为 0.1.4，产品提交 85da554；Windows 已通过核心回归，但 macOS/iOS/iPadOS 尚未原生验收。目标是同一组三文件插件离线支持 macOS 和 iOS/iPadOS，保留正常打开 PDF、五种标准批注、12345 快捷键、保存重开和二次编辑。先确定我的 Mac 开发目录、独立测试库、最低系统版本和可用设备；不要把 Windows D 盘路径或原生脚本直接搬过来。按交接说明先建立 Mac 桌面基线，再移除移动端 Node 依赖并验证真实 Obsidian 资源和 Worker 链路，然后处理触控、软键盘、窗口与保存生命周期。不得损坏用户 PDF、扰动正常浏览、删减完整资源或换成上游未定制 PDF.js。具体审计和开发使用可用的 Luna Max 子代理，保持验证证据和未通过项清晰，不能仅改 isDesktopOnly 就宣布适配完成。

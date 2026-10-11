@@ -1,3 +1,4 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -54,6 +55,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
   );
   let browser;
   let page;
+  let blurPage;
   let server;
   let primaryError;
   let cleanupReport;
@@ -256,11 +258,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       server.listen(0, "127.0.0.1", resolve);
     });
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    browser = await puppeteer.launch({
+    browser = await launchTestBrowser(puppeteer, {
       executablePath: browserPath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    });
+    }, { testName: "autosave-regression" });
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
@@ -2377,7 +2379,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       beforeBlurCancel.saveCount,
       "A held right drag must not save before blur cancels the gesture",
     );
-    const blurPage = await browser.newPage();
+    blurPage = await browser.newPage();
     try {
       await blurPage.goto("about:blank");
       await blurPage.bringToFront();
@@ -2508,7 +2510,6 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     } finally {
       await page.mouse.up({ button: "right" });
       await page.bringToFront();
-      await blurPage.close();
     }
     await new Promise((resolve) => setTimeout(resolve, 1_200));
     assert.equal(
@@ -2547,7 +2548,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       console.error("Could not capture auto-save failure metadata:", diagnosticError.message);
     }
   } finally {
-    cleanupReport = await cleanupBrowserTestResources({ browser, server });
+    cleanupReport = await cleanupBrowserTestResources({
+      browser,
+      ownedPages: [page, blurPage].filter(Boolean),
+      server,
+    });
   }
   const finalError = attachCleanupErrors(primaryError, cleanupReport);
   if (finalError) throw finalError;

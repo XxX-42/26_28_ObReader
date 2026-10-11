@@ -1,12 +1,17 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import {
+  attachCleanupErrors,
+  cleanupBrowserTestResources,
+} from "./browser-test-cleanup.mjs";
 
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const vendorWeb = path.join(vendorRoot, "web");
@@ -179,12 +184,15 @@ test(
     timeout: 150_000,
     skip: browserPath ? false : "Chrome or Edge is required for DOM geometry checks",
   },
-  async () => {
+  async (t) => {
     const vendorViewerHtml = viewerHtml(
       await readFile(path.join(vendorWeb, "viewer.html"), "utf8"),
     );
     let browser;
+    let page;
     let server;
+    let primaryError;
+    let cleanupReport;
     const pageErrors = [];
     const browserDiagnostics = [];
     const missingRequests = [];
@@ -231,12 +239,12 @@ test(
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      browser = await puppeteer.launch({
+      browser = await launchTestBrowser(puppeteer, {
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      });
-      const page = await browser.newPage();
+      }, { testName: "desktop-toolbar" });
+      page = await browser.newPage();
       await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => {
@@ -407,11 +415,21 @@ test(
         "not-allowed",
       );
       assert.deepEqual(pageErrors, [], "The real vendor viewer should remain error-free");
+    } catch (error) {
+      primaryError = error;
     } finally {
-      await browser?.close();
-      if (server?.listening) {
-        await new Promise((resolve) => server.close(resolve));
-      }
+      cleanupReport = await cleanupBrowserTestResources({
+        browser,
+        ownedPages: page ? [page] : [],
+        server,
+      });
+      const directory = path.join(root, "tests", "artifacts");
+      await mkdir(directory, { recursive: true });
+      const artifact = path.join(directory, `desktop-toolbar-${Date.now()}-${process.pid}.cleanup.json`);
+      await writeFile(artifact, JSON.stringify(cleanupReport, null, 2) + "\n", { flag: "wx" });
+      t.diagnostic(`Cleanup report: ${artifact}`);
     }
+    const finalError = attachCleanupErrors(primaryError, cleanupReport);
+    if (finalError) throw finalError;
   },
 );

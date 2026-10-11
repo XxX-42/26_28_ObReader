@@ -1,14 +1,21 @@
+import { launchTestBrowser, getTestBrowserLaunchMetadata } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { access, readFile, readdir, rm, stat, writeFile, mkdir, mkdtemp } from "node:fs/promises";
 import { createServer } from "node:http";
+import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   attachCleanupErrors,
+  captureOwnedBrowserIdentity,
   cleanupBrowserTestResources,
+  observeBrowserTestChildStderr,
+  sampleOwnedBrowserProcess,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 
@@ -18,6 +25,22 @@ const artifactsPath = path.join(root, "tests", "artifacts");
 const channel = "pdf-web-reader";
 const token = "free-text-undo-appearance-regression";
 const documentId = "freetext-undo-appearance.pdf";
+const pdfTeardownDiagnosticsEnabled = process.env.PDF_READER_PDF_TEARDOWN_DIAGNOSTICS === "1";
+const teardownDiagnosticsEnabled = process.env.PDF_READER_CHROME_TEARDOWN_DIAGNOSTICS === "1";
+const defaultChromeSampleDelayMs = 7_000;
+const chromeSampleDelayMs = (() => {
+  if (!teardownDiagnosticsEnabled) return defaultChromeSampleDelayMs;
+  const value = process.env.PDF_READER_CHROME_SAMPLE_DELAY_MS;
+  if (value === undefined) return defaultChromeSampleDelayMs;
+  if (!/^(?:0|[1-9]\d*)$/.test(value)) {
+    throw new RangeError("PDF_READER_CHROME_SAMPLE_DELAY_MS must be an integer from 0 to 7000");
+  }
+  const delayMs = Number(value);
+  if (!Number.isSafeInteger(delayMs) || delayMs > defaultChromeSampleDelayMs) {
+    throw new RangeError("PDF_READER_CHROME_SAMPLE_DELAY_MS must be an integer from 0 to 7000");
+  }
+  return delayMs;
+})();
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".ftl", "text/plain; charset=utf-8"],
@@ -29,6 +52,171 @@ const mimeTypes = new Map([
   [".svg", "image/svg+xml"],
   [".wasm", "application/wasm"],
 ]);
+
+async function prepareFixturePdfViewerClose(page, remainingMs) {
+  return page.evaluate(async ({ closeBudgetMs, expectedToken, expectedDocumentId }) => {
+    const hostState = window.__hostState;
+    const iframe = document.querySelector('iframe[name="pdf-reader"]');
+    let frameUrl = null;
+    try {
+      frameUrl = iframe ? new URL(iframe.src, location.href) : null;
+    } catch {}
+    const currentEntry = hostState?.opens?.at(-1);
+    const ownedFixture = location.protocol === "http:" && location.hostname === "127.0.0.1" &&
+      location.pathname === "/" && hostState?.teardownDiagnosticToken === expectedToken &&
+      hostState?.documentId === expectedDocumentId && hostState.opened > 0 &&
+      ["fixture", "saved-data"].includes(currentEntry?.label) && iframe?.name === "pdf-reader" &&
+      frameUrl?.origin === location.origin &&
+      frameUrl?.pathname === "/vendor/pdfjs-generic-legacy/web/viewer.html";
+    if (!ownedFixture) {
+      return {
+        state: "failed",
+        reason: "not-the-current-public-fixture-entry",
+        loopbackEntry: location.protocol === "http:" && location.hostname === "127.0.0.1" && location.pathname === "/",
+        hostMarkerMatches: hostState?.teardownDiagnosticToken === expectedToken,
+        currentEntryLabel: currentEntry?.label || null,
+        iframeName: iframe?.name || null,
+        framePath: frameUrl?.pathname || null,
+      };
+    }
+    const app = iframe?.contentWindow?.PDFViewerApplication;
+    const task = app?.pdfLoadingTask;
+    if (!app || !task) {
+      return {
+        state: "failed",
+        reason: "no-active-document",
+        closeBudgetMs,
+        iframePresent: Boolean(iframe),
+        appPresent: Boolean(app),
+        taskPresent: Boolean(task),
+      };
+    }
+
+    const result = {
+      state: "started",
+      closeBudgetMs,
+      appCloseStartedAt: Date.now(),
+      docId: task.docId ?? null,
+      destroyedBefore: task.destroyed === true,
+      workerPresentBefore: Boolean(task._worker),
+      webWorkerPresentBefore: Boolean(task._worker?._webWorker),
+      workerPortPresentBefore: Boolean(task._worker?.port),
+      destroyEvents: [],
+    };
+    const originalDestroy = task.destroy;
+    const wrappedDestroy = function (...args) {
+      result.destroyEvents.push({ event: "loadingTask.destroy.start", at: Date.now() });
+      let destroyPromise;
+      try {
+        destroyPromise = originalDestroy.apply(this, args);
+      } catch (error) {
+        result.destroyEvents.push({
+          event: "loadingTask.destroy.throw",
+          at: Date.now(),
+          name: error?.name || "Error",
+          message: String(error?.message || error).slice(0, 500),
+        });
+        throw error;
+      }
+      return Promise.resolve(destroyPromise).then(
+        (value) => {
+          result.destroyEvents.push({ event: "loadingTask.destroy.resolved", at: Date.now() });
+          return value;
+        },
+        (error) => {
+          result.destroyEvents.push({
+            event: "loadingTask.destroy.rejected",
+            at: Date.now(),
+            name: error?.name || "Error",
+            message: String(error?.message || error).slice(0, 500),
+          });
+          throw error;
+        },
+      );
+    };
+
+    try {
+      task.destroy = wrappedDestroy;
+      await app.close();
+      result.appCloseSettledAt = Date.now();
+      result.destroyedAfter = task.destroyed === true;
+      result.appTaskCleared = app.pdfLoadingTask == null;
+      result.transportCleared = task._transport == null;
+      result.workerCleared = task._worker == null;
+      result.destroyResolved = result.destroyEvents.some((event) => event.event === "loadingTask.destroy.resolved");
+      const incompleteTeardown = [
+        !result.destroyedAfter && "loadingTask-not-marked-destroyed",
+        !result.appTaskCleared && "viewer-still-has-loading-task",
+        !result.transportCleared && "loading-task-transport-still-present",
+        !result.workerCleared && "loading-task-worker-still-present",
+        !result.destroyResolved && "loading-task-destroy-did-not-resolve",
+      ].filter(Boolean);
+      result.state = incompleteTeardown.length === 0 ? "fulfilled" : "failed";
+      if (incompleteTeardown.length) result.reason = incompleteTeardown;
+      return result;
+    } catch (error) {
+      result.state = "failed";
+      result.appCloseSettledAt = Date.now();
+      result.error = {
+        name: error?.name || "Error",
+        message: String(error?.message || error).slice(0, 500),
+      };
+      return result;
+    } finally {
+      if (task.destroy === wrappedDestroy) task.destroy = originalDestroy;
+    }
+  }, {
+    closeBudgetMs: remainingMs,
+    expectedToken: token,
+    expectedDocumentId: documentId,
+  });
+}
+
+const safeTargetUrl = (value) => {
+  if (!value || value === "about:blank") return value || null;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return `${url.origin}${url.pathname}`;
+    }
+    return `${url.protocol}//[redacted]`;
+  } catch {
+    return null;
+  }
+};
+
+const snapshotBrowserTargets = (browser) => {
+  try {
+    return browser.targets().map((target) => ({
+      type: target.type(),
+      url: safeTargetUrl(target.url()),
+    }));
+  } catch (error) {
+    return [{ error: error?.message || String(error) }];
+  }
+};
+
+async function collectOwnedCrashpadMetadata(crashpadDirectory) {
+  const files = [];
+  const visit = async (directory, depth = 0) => {
+    if (depth > 5 || files.length >= 16) return;
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (files.length >= 16) break;
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(target, depth + 1);
+      else if (entry.isFile() && /\.(?:dmp|meta)$/i.test(entry.name)) {
+        const info = await stat(target).catch(() => null);
+        if (!info || info.size > 128 * 1024 * 1024) continue;
+        const digest = createHash("sha256");
+        for await (const chunk of createReadStream(target)) digest.update(chunk);
+        files.push({ path: path.relative(crashpadDirectory, target), bytes: info.size, sha256: digest.digest("hex") });
+      }
+    }
+  };
+  await visit(crashpadDirectory);
+  return { files, rawDumpsCopied: false, contentsIncluded: false, retainedDirectory: crashpadDirectory };
+}
 
 test(
   "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
@@ -61,12 +249,24 @@ test(
     const mimeTypeFor = (target) =>
       mimeTypes.get(path.extname(target)) || "application/octet-stream";
     let browser;
+    let browserStderrObserver;
+    let browserIdentity;
+    let diagnosticProfileDirectory;
+    let diagnosticBrowserEvents = [];
+    let diagnosticTargetsBeforeClose = null;
+    let diagnosticTargetsAfterClose = null;
+    let diagnosticSampleTimer = null;
+    let diagnosticSamplePromise = null;
+    let diagnosticSampleResult = null;
+    let diagnosticChildExitListener = null;
+    let onBrowserCloseStart;
     let page;
     let server;
     const errors = [];
     const consoleErrors = [];
+    const externalRequests = [];
     const evidence = [];
-    const artifactBase = "free-text-undo-appearance-" + Date.now();
+    const artifactBase = `free-text-undo-appearance-${Date.now()}-${process.pid}-${randomUUID()}`;
     let primaryError;
     let cleanupReport;
     const persistEvidence = async () => {
@@ -168,6 +368,7 @@ test(
             frameState,
             errors,
             consoleErrors,
+            externalRequests,
           },
           null,
           2,
@@ -177,6 +378,9 @@ test(
     };
 
     server = createServer(async (request, response) => {
+      for (const [name, value] of Object.entries(withTestNetworkFirewall())) {
+        response.setHeader(name, value);
+      }
       const url = new URL(request.url, "http://127.0.0.1");
       if (url.pathname === "/") {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -193,7 +397,11 @@ test(
             JSON.stringify(documentId) +
             ';' +
             'const iframe=document.querySelector("iframe");' +
-            'const state=window.__hostState={ready:false,opened:0,openRequest:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],errors:[],opens:[]};' +
+            'const state=window.__hostState={teardownDiagnosticToken:' +
+            JSON.stringify(token) +
+            ',documentId:' +
+            JSON.stringify(documentId) +
+            ',ready:false,opened:0,openRequest:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],errors:[],opens:[]};' +
             'let fixtureBytes=null;' +
             'const sendOpen=(data,label)=>{' +
             'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
@@ -265,11 +473,105 @@ test(
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = "http://127.0.0.1:" + server.address().port;
     try {
-      browser = await puppeteer.launch({
+      if (teardownDiagnosticsEnabled) {
+        diagnosticProfileDirectory = await mkdtemp(
+          path.join(tmpdir(), `puppeteer_dev_chrome_profile-${artifactBase}-`),
+        );
+      }
+      const launchOptions = {
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      });
+      };
+      if (diagnosticProfileDirectory) launchOptions.userDataDir = diagnosticProfileDirectory;
+      browser = await launchTestBrowser(puppeteer, launchOptions, { testName: "free-text-undo-appearance-regression" });
+      const browserChild = browser.process?.();
+      browserStderrObserver = observeBrowserTestChildStderr(browserChild);
+      if (teardownDiagnosticsEnabled) {
+        browserIdentity = await captureOwnedBrowserIdentity(browserChild);
+        const recordTargetEvent = (event, target) => {
+          if (diagnosticBrowserEvents.length >= 1_000) return;
+          let type = null;
+          let url = null;
+          try { type = target?.type?.() || null; } catch {}
+          try { url = safeTargetUrl(target?.url?.()); } catch {}
+          diagnosticBrowserEvents.push({ event, at: Date.now(), target: { type, url } });
+        };
+        browser.on("targetcreated", (target) => recordTargetEvent("targetcreated", target));
+        browser.on("targetchanged", (target) => recordTargetEvent("targetchanged", target));
+        browser.on("targetdestroyed", (target) => recordTargetEvent("targetdestroyed", target));
+        onBrowserCloseStart = ({ child, startedAt }) => {
+          diagnosticTargetsBeforeClose = snapshotBrowserTargets(browser);
+          diagnosticBrowserEvents.push({
+            event: "browser.close.request",
+            at: startedAt,
+            targets: diagnosticTargetsBeforeClose,
+          });
+          if (!child || !browserIdentity) {
+            diagnosticSampleResult = {
+              state: "skipped",
+              reason: "Launch-time owned process identity is unavailable",
+              sampleDelayMs: chromeSampleDelayMs,
+            };
+            return;
+          }
+          if (typeof child.exitCode === "number" || typeof child.signalCode === "string") {
+            diagnosticSampleResult = {
+              state: "skipped",
+              reason: "The browser process had already exited before close",
+              sampleDelayMs: chromeSampleDelayMs,
+            };
+            return;
+          }
+          const samplePath = path.join(artifactsPath, `${artifactBase}.chrome-sample.txt`);
+          diagnosticChildExitListener = () => {
+            if (diagnosticSampleTimer) clearTimeout(diagnosticSampleTimer);
+            diagnosticSampleTimer = null;
+            if (!diagnosticSamplePromise && !diagnosticSampleResult) {
+              diagnosticSampleResult = {
+                state: "skipped",
+                reason: `The owned browser exited before the configured ${chromeSampleDelayMs} ms sample point`,
+                sampleDelayMs: chromeSampleDelayMs,
+              };
+            }
+          };
+          child.once("exit", diagnosticChildExitListener);
+          diagnosticSampleTimer = setTimeout(() => {
+            diagnosticSampleTimer = null;
+            const sampleStartedAt = Date.now();
+            diagnosticSamplePromise = sampleOwnedBrowserProcess(
+              child,
+              browserIdentity,
+              samplePath,
+              { durationSeconds: 1, timeoutMs: 8_000, mayDie: true },
+            ).then(
+              (result) => {
+                diagnosticSampleResult = {
+                  ...result,
+                  sampleDelayMs: chromeSampleDelayMs,
+                  sampleStartedAt,
+                  sampleDurationSeconds: 1,
+                  sampleTimeoutMs: 8_000,
+                  mayDie: true,
+                };
+                return diagnosticSampleResult;
+              },
+              (error) => {
+                diagnosticSampleResult = {
+                  state: "failed",
+                  message: error?.message || String(error),
+                  sampleDelayMs: chromeSampleDelayMs,
+                  sampleStartedAt,
+                  sampleDurationSeconds: 1,
+                  sampleTimeoutMs: 8_000,
+                  mayDie: true,
+                };
+                return diagnosticSampleResult;
+              },
+            );
+          }, chromeSampleDelayMs);
+        };
+      }
       page = await browser.newPage();
       await page.setViewport({ width: 1360, height: 980 });
       page.on("pageerror", (error) => errors.push(error.message));
@@ -277,10 +579,8 @@ test(
         if (message.type() === "error") consoleErrors.push(message.text());
       });
       page.on("request", (request) => {
-        if (new URL(request.url()).origin !== baseUrl) void request.abort();
-        else void request.continue();
+        if (new URL(request.url()).origin !== baseUrl) externalRequests.push(request.url());
       });
-      await page.setRequestInterception(true);
       await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
       const viewer = page.frames().find((frame) => frame.name() === "pdf-reader");
       assert.ok(viewer, "Expected the PDF.js iframe");
@@ -949,6 +1249,7 @@ test(
         afterFinalReopen,
         finalAnnotation,
       });
+      assert.deepEqual(externalRequests, [], "The PDF fixture must not request external origins");
       await persistEvidence();
       await page.screenshot({ path: path.join(artifactsPath, artifactBase + ".png"), fullPage: false });
       t.diagnostic("Evidence: " + path.join(artifactsPath, artifactBase + ".partial.json"));
@@ -960,7 +1261,106 @@ test(
       }
       primaryError = error;
     } finally {
-      cleanupReport = await cleanupBrowserTestResources({ browser, server });
+      cleanupReport = await cleanupBrowserTestResources({
+        browser,
+        browserObserver: browserStderrObserver,
+        ownedPages: [page],
+        prepareOwnedPageClose: pdfTeardownDiagnosticsEnabled
+          ? prepareFixturePdfViewerClose
+          : undefined,
+        server,
+        onBrowserCloseStart,
+      });
+      t.diagnostic(
+        `PDF.js pre-close teardown diagnostic: ${pdfTeardownDiagnosticsEnabled ? "enabled" : "disabled"}`,
+      );
+      if (teardownDiagnosticsEnabled) {
+        if (diagnosticSampleTimer) {
+          clearTimeout(diagnosticSampleTimer);
+          diagnosticSampleTimer = null;
+          diagnosticSampleResult ??= {
+            state: "skipped",
+            reason: `Cleanup completed before the configured ${chromeSampleDelayMs} ms sample point`,
+            sampleDelayMs: chromeSampleDelayMs,
+          };
+        }
+        if (diagnosticSamplePromise) await diagnosticSamplePromise;
+        const child = browser?.process?.() || null;
+        if (child && diagnosticChildExitListener) {
+          child.removeListener("exit", diagnosticChildExitListener);
+        }
+        diagnosticTargetsAfterClose = snapshotBrowserTargets(browser);
+        const diagnostics = {
+          enabled: true,
+          launchProfile: diagnosticProfileDirectory ? path.basename(diagnosticProfileDirectory) : null,
+          launchIdentityValidated: Boolean(browserIdentity?.available),
+          launchIdentityReason: browserIdentity?.reason || null,
+          browserEvents: diagnosticBrowserEvents,
+          targetsAfterClose: diagnosticTargetsAfterClose,
+          sampleDelayMs: chromeSampleDelayMs,
+          sample: diagnosticSampleResult || { state: "not-scheduled" },
+          stderr: browserStderrObserver?.snapshot() || null,
+        };
+        const closeTimings = cleanupReport.browser?.timings;
+        if (closeTimings?.browserCloseSettledAt) {
+          diagnosticBrowserEvents.push({
+            event: "browser.close.response",
+            at: closeTimings.browserCloseSettledAt,
+          });
+        }
+        if (closeTimings?.cdpDisconnectedAt) {
+          diagnosticBrowserEvents.push({
+            event: "cdp.disconnected",
+            at: closeTimings.cdpDisconnectedAt,
+          });
+        }
+        if (closeTimings?.processExitAt) {
+          diagnosticBrowserEvents.push({
+            event: "browser.process.exit",
+            at: closeTimings.processExitAt,
+          });
+        }
+        if (diagnostics.stderr?.teardownWatchdogAt) {
+          diagnosticBrowserEvents.push({
+            event: "chromium.teardown-watchdog.stderr",
+            at: diagnostics.stderr.teardownWatchdogAt,
+          });
+        }
+        diagnosticBrowserEvents.sort((left, right) => left.at - right.at);
+        diagnostics.browserEvents = diagnosticBrowserEvents;
+        if (cleanupReport.browser) cleanupReport.browser.diagnostics = diagnostics;
+        const childExitCode = child?.exitCode ?? null;
+        const ownedCrashpadDirectory = getTestBrowserLaunchMetadata(browser)?.crashpadDirectory;
+        if (ownedCrashpadDirectory && childExitCode === 2) {
+          try {
+            diagnostics.crashpad = await collectOwnedCrashpadMetadata(ownedCrashpadDirectory);
+          } catch (error) {
+            diagnostics.crashpad = {
+              copied: [],
+              phaseHints: [],
+              error: error?.message || String(error),
+            };
+          }
+        }
+        if (diagnosticProfileDirectory) {
+          const childExited = Boolean(
+            child && (typeof child.exitCode === "number" || typeof child.signalCode === "string"),
+          );
+          if (childExited) {
+            try {
+              await rm(diagnosticProfileDirectory, { recursive: true, force: true });
+              diagnostics.profileCleanup = { removed: true };
+            } catch (error) {
+              diagnostics.profileCleanup = { removed: false, error: error?.message || String(error) };
+            }
+          } else {
+            diagnostics.profileCleanup = {
+              removed: false,
+              reason: "The test-owned browser process was still live; its profile was left in place",
+            };
+          }
+        }
+      }
       try {
         await writeFile(
           path.join(artifactsPath, artifactBase + ".cleanup.json"),

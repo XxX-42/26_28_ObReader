@@ -1,3 +1,4 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -52,7 +53,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    browser = await puppeteer.launch({ executablePath: resolveBrowserPath(), headless: true, args: ["--no-sandbox"], defaultViewport: { width: 1100, height: 850 } });
+    browser = await launchTestBrowser(puppeteer, { executablePath: resolveBrowserPath(), headless: true, args: ["--no-sandbox"], defaultViewport: { width: 1100, height: 850 } }, { testName: "mobile-browser-startup" });
     page = await browser.newPage();
     page.on("pageerror", error => report.errors.push(error.message));
     await page.goto(base);
@@ -194,7 +195,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     })).catch(() => null);
   }
   finally {
-    report.cleanup = await cleanupBrowserTestResources({ browser, server });
+    report.cleanup = await cleanupBrowserTestResources({ browser, ownedPages: page ? [page] : [], server });
     if (report.cleanup.errors.length) { primaryError ||= new Error("Browser cleanup failed"); attachCleanupErrors(primaryError, report.cleanup); report.status = "failed"; }
     await mkdir(path.join(root, "tests/artifacts"), { recursive: true });
     await writeFile(path.join(root, `tests/artifacts/mobile-browser-startup-${Date.now()}.json`), JSON.stringify(report, null, 2) + "\n");

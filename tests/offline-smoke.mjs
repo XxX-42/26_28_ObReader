@@ -1,10 +1,18 @@
+import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, readdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import {
+  attachCleanupErrors,
+  cleanupBrowserTestResources,
+  observeBrowserTestChildStderr,
+} from "./browser-test-cleanup.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -31,83 +39,100 @@ assert.deepEqual(
   ["main.js", "manifest.json", "styles.css"],
   "Offline smoke must start from the three-file release output only",
 );
-const temp = await createTempRoot("offline-three-file-");
-const adapter = createDiskAdapter(temp);
-const mainSource = await readBuiltMain();
-const payload = readPayloadFromMain(mainSource);
-const harness = loadBundledPlugin(mainSource, adapter);
-await harness.load();
-const logicalAssetRoot = `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
-const output = adapter.resolve(logicalAssetRoot);
 let browser;
+let page;
+let browserObserver;
+let primaryError;
+let cleanupReport;
+const runId = `${Date.now()}-${process.pid}-${randomUUID()}`;
 let server;
-const mimeTypes = new Map([
-  [".css", "text/css; charset=utf-8"],
-  [".ftl", "text/plain; charset=utf-8"],
-  [".html", "text/html; charset=utf-8"],
-  [".js", "text/javascript; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".pdf", "application/pdf"],
-  [".svg", "image/svg+xml"],
-  [".wasm", "application/wasm"],
-]);
-let apiRequestCount = 0;
+let temp;
 
-server = createServer(async (request, response) => {
-  const url = new URL(request.url, "http://127.0.0.1");
-  if (url.pathname.startsWith("/api/")) apiRequestCount += 1;
-  if (url.pathname === "/") {
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(
-      "<!doctype html><title>PDF Web Reader offline smoke test</title>",
-    );
-    return;
-  }
-  if (url.pathname === "/favicon.ico") {
-    response.writeHead(204).end();
-    return;
-  }
+try {
+  await mkdir(path.join(root, "tests", "artifacts"), { recursive: true });
+  temp = await createTempRoot("offline-three-file-");
+  const adapter = createDiskAdapter(temp);
+  const mainSource = await readBuiltMain();
+  const payload = readPayloadFromMain(mainSource);
+  const harness = loadBundledPlugin(mainSource, adapter);
+  await harness.load();
+  const logicalAssetRoot = `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
+  const output = adapter.resolve(logicalAssetRoot);
+  const mimeTypes = new Map([
+    [".css", "text/css; charset=utf-8"],
+    [".ftl", "text/plain; charset=utf-8"],
+    [".html", "text/html; charset=utf-8"],
+    [".js", "text/javascript; charset=utf-8"],
+    [".json", "application/json; charset=utf-8"],
+    [".mjs", "text/javascript; charset=utf-8"],
+    [".pdf", "application/pdf"],
+    [".svg", "image/svg+xml"],
+    [".wasm", "application/wasm"],
+  ]);
+  let apiRequestCount = 0;
 
-  let target;
-  if (url.pathname === "/fixtures/tracemonkey.pdf") {
-    target = fixture;
-  } else if (url.pathname.startsWith("/viewer/")) {
-    const relative = decodeURIComponent(url.pathname.slice("/viewer/".length));
-    target = path.resolve(output, relative);
-    if (!target.startsWith(`${output}${path.sep}`)) {
-      response.writeHead(403).end("forbidden");
+  server = createServer(async (request, response) => {
+    for (const [name, value] of Object.entries(withTestNetworkFirewall())) {
+      response.setHeader(name, value);
+    }
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.pathname.startsWith("/api/")) apiRequestCount += 1;
+    if (url.pathname === "/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        "<!doctype html><title>PDF Web Reader offline smoke test</title>",
+      );
       return;
     }
-  } else {
-    response.writeHead(404).end("not found");
-    return;
-  }
+    if (url.pathname === "/favicon.ico") {
+      response.writeHead(204).end();
+      return;
+    }
 
-  try {
-    await access(target);
-    const info = await stat(target);
-    if (!info.isFile()) {
+    let target;
+    if (url.pathname === "/fixtures/tracemonkey.pdf") {
+      target = fixture;
+    } else if (url.pathname.startsWith("/viewer/")) {
+      const relative = decodeURIComponent(url.pathname.slice("/viewer/".length));
+      target = path.resolve(output, relative);
+      if (!target.startsWith(`${output}${path.sep}`)) {
+        response.writeHead(403).end("forbidden");
+        return;
+      }
+    } else {
       response.writeHead(404).end("not found");
       return;
     }
-    response.writeHead(200, {
-      "content-type":
-        mimeTypes.get(path.extname(target)) || "application/octet-stream",
-      "content-length": info.size,
-      "x-content-type-options": "nosniff",
+
+    try {
+      await access(target);
+      const info = await stat(target);
+      if (!info.isFile()) {
+        response.writeHead(404).end("not found");
+        return;
+      }
+      response.writeHead(200, {
+        "content-type":
+          mimeTypes.get(path.extname(target)) || "application/octet-stream",
+        "content-length": info.size,
+        "x-content-type-options": "nosniff",
+      });
+      createReadStream(target).pipe(response);
+    } catch {
+      response.writeHead(404).end("not found");
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
     });
-    createReadStream(target).pipe(response);
-  } catch {
-    response.writeHead(404).end("not found");
-  }
-});
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
 
-await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-const baseUrl = `http://127.0.0.1:${address.port}`;
-
-try {
   adapter.getResourcePath = (vaultPath) => {
     const prefix = `${logicalAssetRoot}/`;
     assert.ok(
@@ -125,12 +150,13 @@ try {
     "<",
     "\\u003c",
   );
-  browser = await puppeteer.launch({
+  browser = await launchTestBrowser(puppeteer, {
     executablePath: browserPath,
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
-  const page = await browser.newPage();
+  }, { testName: "offline-smoke" });
+  browserObserver = observeBrowserTestChildStderr(browser.process?.());
+  page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
   const errors = [];
   const consoleErrors = [];
@@ -148,12 +174,8 @@ try {
   page.on("request", (request) => {
     if (new URL(request.url()).origin !== baseUrl) {
       externalRequests.push(request.url());
-      void request.abort();
-    } else {
-      void request.continue();
     }
   });
-  await page.setRequestInterception(true);
   await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
   await page.setContent(`
     <!doctype html>
@@ -604,8 +626,8 @@ try {
           path: path.join(
             root,
             "tests",
-            "output",
-            "offline-smoke-ink-failure.png",
+            "artifacts",
+            `offline-smoke-ink-failure-${runId}.png`,
           ),
         })
         .catch(() => {});
@@ -866,7 +888,7 @@ try {
         root,
         "tests",
         "artifacts",
-        `mac-offline-reopen-timeout-${Date.now()}.json`,
+        `mac-offline-reopen-timeout-${runId}.json`,
       );
       await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
       console.error(`Offline reopen diagnostic saved: ${artifactPath}`);
@@ -990,11 +1012,30 @@ try {
   );
   assert.deepEqual(await page.evaluate(() => window.__hostState.errors), []);
   assert.deepEqual(errors, []);
-  console.log(
-    "Offline viewer smoke test passed: open, tools 1–5, bridge validation, save/reopen.",
-  );
+} catch (error) {
+  primaryError = error;
 } finally {
-  await browser?.close();
-  await new Promise((resolve) => server.close(resolve));
-  await removeTempRoot(temp);
+  cleanupReport = await cleanupBrowserTestResources({
+    browser,
+    browserObserver,
+    ownedPages: [page],
+    server: server?.listening ? server : undefined,
+  });
+  const cleanupPath = path.join(root, "tests", "artifacts", `offline-smoke-${runId}.cleanup.json`);
+  try {
+    if (temp) await removeTempRoot(temp);
+  } catch (error) {
+    cleanupReport.status = "failed";
+    cleanupReport.errors.push({ phase: "temp-root.remove", name: error.name, message: error.message });
+  }
+  try {
+    await writeFile(cleanupPath, JSON.stringify(cleanupReport, null, 2) + "\n", { flag: "wx" });
+    console.log(`Offline cleanup evidence: ${cleanupPath}`);
+  } catch (error) {
+    cleanupReport.status = "failed";
+    cleanupReport.errors.push({ phase: "cleanup-evidence.write", name: error.name, message: error.message });
+  }
 }
+const finalError = attachCleanupErrors(primaryError, cleanupReport);
+if (finalError) throw finalError;
+console.log("Offline viewer smoke test passed: open, tools 1–5, bridge validation, save/reopen; normal browser exit.");

@@ -164,7 +164,7 @@ async function verifyPageIdentity(candidate = page) {
 }
 
 async function assertSingleAppPage() {
-  assert.ok(browser?.isConnected(), "The isolated Obsidian CDP connection is closed.");
+  assert.ok(browser?.connected, "The isolated Obsidian CDP connection is closed.");
   const pages = await browser.pages();
   const appPages = pages.filter((candidate) => candidate.url() === appUrl);
   const pageTargets = browser.targets().filter((target) => target.type() === "page");
@@ -252,7 +252,7 @@ function isExpectedNavigationError(error) {
 }
 
 async function ensureFreshBrowserConnection() {
-  if (!browser?.isConnected()) {
+  if (!browser?.connected) {
     browser = await puppeteer.connect({ browserURL: cdpUrl, defaultViewport: null, protocolTimeout: 30_000 });
   }
   return browser;
@@ -361,7 +361,7 @@ async function invokeMobileEmulation(wanted, targetId, nonce) {
   } catch (error) {
     if (!isExpectedNavigationError(error)) throw error;
   }
-  if (browser?.isConnected()) await browser.disconnect().catch(() => {});
+  if (browser?.connected) await browser.disconnect().catch(() => {});
   browser = null;
   page = null;
   await waitForVerifiedAppPage(targetId, wanted, nonce);
@@ -666,7 +666,7 @@ async function fileHash() {
 }
 
 async function closeOnlyOwnedReaders() {
-  if (!page || page.isClosed() || !browser?.isConnected()) return;
+  if (!page || page.isClosed() || !browser?.connected) return;
   await assertSingleAppPage();
   const readers = await ownedEval(page, () => {
     const rows = [];
@@ -705,7 +705,7 @@ async function closeOnlyOwnedReaders() {
 }
 
 async function restoreAutoSaveIfNeeded() {
-  if (!priorState || !page || page.isClosed() || !browser?.isConnected()) return;
+  if (!priorState || !page || page.isClosed() || !browser?.connected) return;
   await assertSingleAppPage();
   const state = await readAppState(page);
   if (state.autoSave === priorState.autoSave) return;
@@ -743,7 +743,7 @@ async function restorePriorMode() {
 
 async function cleanupOwnedFixture() {
   if (!createdFixture && !createdOwnedDirectory) return;
-  if (!page || page.isClosed() || !browser?.isConnected()) {
+  if (!page || page.isClosed() || !browser?.connected) {
     report.cleanup.fixture = "retained: cannot verify the isolated vault connection";
     throw new Error("Refusing fixture cleanup after the verified Obsidian connection closed.");
   }
@@ -1381,7 +1381,7 @@ try {
       if (report.status === "passed") report.status = "incomplete";
     }
   }
-  if (browser?.isConnected() && page && !page.isClosed()) {
+  if (browser?.connected && page && !page.isClosed()) {
     await attemptCleanup("reader", closeOnlyOwnedReaders);
     await attemptCleanup("autoSave", restoreAutoSaveIfNeeded);
     if (createdFixture || createdOwnedDirectory) {
@@ -1414,7 +1414,7 @@ try {
       if (report.status === "passed") report.status = "incomplete";
     }
   }
-  if (browser?.isConnected()) await browser.disconnect().catch(() => {});
+  if (browser?.connected) await browser.disconnect().catch(() => {});
   report.finishedAt ||= new Date().toISOString();
   if (primaryError && report.status === "running") report.status = "failed";
   await persistReport().catch((persistError) => {

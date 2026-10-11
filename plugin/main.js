@@ -60,6 +60,23 @@ function isMobilePlatform(app) {
   return app?.isMobile === true || Platform?.isMobile === true;
 }
 
+// Select the host entry once per plugin load. PDF editing, resource validation,
+// save/recovery and pointer behavior are shared by both entries.
+const DESKTOP_RUNTIME_ADAPTER = Object.freeze({
+  mobile: false,
+  loaderMode: "desktop-resource",
+  workerSource: "resource",
+  supportsPopout: true,
+  createViewerDocument: (view, resources) => view.createDesktopViewerDocument(resources),
+});
+const MOBILE_RUNTIME_ADAPTER = Object.freeze({
+  mobile: true,
+  loaderMode: "mobile-blob",
+  workerSource: "blob",
+  supportsPopout: false,
+  createViewerDocument: (view, resources) => view.createMobileViewerDocument(resources),
+});
+
 function isPdfFile(file) {
   return file instanceof TFile && file.extension.toLowerCase() === "pdf";
 }
@@ -710,16 +727,16 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
     containerEl.empty();
     new Setting(containerEl)
       .setName("自动保存 PDF 注释")
-      .setDesc("编辑后的 PDF 注释会自动写回原文件。关闭后可用 Cmd+S 手动保存。")
+      .setDesc("编辑后的 PDF 注释会自动写回原文件。关闭后可用 Ctrl/Cmd+S 或阅读器保存按钮手动保存。")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.autoSave)
           .onChange((enabled) => this.plugin.setAutoSaveEnabled(enabled)),
       );
-    if (this.plugin.isMobileRuntime) {
+    {
       const diagnosticSetting = new Setting(containerEl)
-        .setName("导出移动端诊断")
-        .setDesc("将阅读器启动、资源和触控统计保存为仓库中的 JSON 文件；不包含 PDF 内容或文件路径。");
+        .setName(this.plugin.isMobileRuntime ? "导出移动端诊断" : "导出阅读器诊断")
+        .setDesc("将阅读器启动、资源和指针事件统计保存为仓库中的 JSON 文件；不包含 PDF 内容或文件路径。");
       if (typeof diagnosticSetting.addButton === "function") {
         diagnosticSetting.addButton((button) =>
           button
@@ -761,11 +778,11 @@ class PdfReaderView extends EditableFileView {
     this.resourcePromise = null;
     this._assetCache = null;
     this.mobileRuntime = {
-      loaderMode: plugin.isMobileRuntime ? "mobile-blob" : "desktop-resource",
+      loaderMode: plugin.runtimeAdapter.loaderMode,
       stage: "idle",
       moduleSources: {},
       assetCount: null,
-      workerSource: plugin.isMobileRuntime ? "blob" : "resource",
+      workerSource: plugin.runtimeAdapter.workerSource,
       workerTerminated: null,
       resourceFailureCount: 0,
       lastError: null,
@@ -1736,16 +1753,12 @@ class PdfReaderView extends EditableFileView {
     ]);
     const viewerUrl = this.app.vault.adapter.getResourcePath(viewerHtmlPath);
     const webBase = new URL("./", viewerUrl).href;
-    if (this.plugin.isMobileRuntime) {
-      return this.createMobileViewerDocument({
-        assets,
-        viewerHtml,
-        viewerCss,
-        bridgeCss,
-        viewerUrl,
-        webBase,
-      });
-    }
+    return this.plugin.runtimeAdapter.createViewerDocument(this, {
+      assets, viewerHtml, viewerCss, bridgeCss, viewerUrl, webBase,
+    });
+  }
+
+  createDesktopViewerDocument({ viewerHtml, viewerCss, bridgeCss, webBase }) {
     const bridgeUrl = new URL("obsidian-bridge.js", webBase);
     // Obsidian's app:// resource URLs can remain stable across plugin reloads,
     // and Chromium may then reuse an older bridge script from its cache.
@@ -2563,12 +2576,18 @@ class PdfReaderView extends EditableFileView {
 }
 
 module.exports = class PdfWebReaderPlugin extends Plugin {
+  get runtimeAdapter() {
+    return this.platformRuntimeAdapter || DESKTOP_RUNTIME_ADAPTER;
+  }
+
   get isMobileRuntime() {
     return this.mobileRuntimeSelected === true;
   }
 
   async onload() {
-    this.mobileRuntimeSelected = isMobilePlatform(this.app);
+    this.platformRuntimeAdapter = isMobilePlatform(this.app)
+      ? MOBILE_RUNTIME_ADAPTER : DESKTOP_RUNTIME_ADAPTER;
+    this.mobileRuntimeSelected = this.runtimeAdapter.mobile;
     this.settings = {
       autoSave: true,
       ...((await this.loadData()) || {}),
@@ -2768,7 +2787,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   registerPopoutCloseProtection(view, ownerWindow) {
-    if (this.isMobileRuntime) {
+    if (!this.runtimeAdapter.supportsPopout) {
       this.unregisterPopoutCloseProtection(view);
       return false;
     }
@@ -3206,7 +3225,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       const runtime = view.mobileRuntime || {};
       const lastError = runtime.lastError;
       return {
-        loaderMode: runtime.loaderMode || (this.isMobileRuntime ? "mobile-blob" : "desktop-resource"),
+        loaderMode: runtime.loaderMode || this.runtimeAdapter.loaderMode,
         stage: MOBILE_STAGE_VALUES.has(runtime.stage) ? runtime.stage : "idle",
         assets: {
           version: typeof runtime.assetVersion === "string" ? runtime.assetVersion : null,
@@ -3238,7 +3257,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       pluginVersion: typeof this.manifest?.version === "string" ? this.manifest.version : null,
       platform: {
         mobile: this.isMobileRuntime,
-        loaderMode: this.isMobileRuntime ? "mobile-blob" : "desktop-resource",
+        loaderMode: this.runtimeAdapter.loaderMode,
       },
       browser: {
         userAgent: typeof globalThis.navigator?.userAgent === "string"
