@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import {
+  attachCleanupErrors,
+  cleanupBrowserTestResources,
+} from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 
 const browserPath = resolveBrowserPath();
@@ -48,7 +53,10 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       `${head}<script src="obsidian-bridge.js" data-channel="${channel}" data-token="${token}" data-renderer-generation="__renderer_generation__"></script>`,
   );
   let browser;
+  let page;
   let server;
+  let primaryError;
+  let cleanupReport;
 
   server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -242,15 +250,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     }
   });
 
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
   try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
     browser = await puppeteer.launch({
       executablePath: browserPath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
     });
-    const page = await browser.newPage();
+    page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     let viewer = page.frames().find((frame) => frame.url().includes("/web/viewer.html"));
@@ -2511,9 +2522,33 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       0,
       "The host should not receive bridge errors",
     );
+  } catch (error) {
+    primaryError = error;
+    // Preserve document/revision timing when a concurrent run fails. Never
+    // serialize the PDF buffers held by this public-fixture host.
+    try {
+      const host = page && !page.isClosed() ? await page.evaluate(() => ({
+        openCount: window.__host?.openCount,
+        openedSessions: window.__host?.openedSessions,
+        lastOpenedAt: window.__host?.lastOpenedAt,
+        saves: window.__host?.saves.map(({ data, ...metadata }) => metadata),
+        errors: window.__host?.errors,
+      })) : null;
+      const artifact = path.join(root, "tests", "artifacts", `autosave-failure-${Date.now()}.json`);
+      await mkdir(path.dirname(artifact), { recursive: true });
+      await writeFile(artifact, JSON.stringify({
+        error: error.stack || String(error),
+        bridgeSha256: createHash("sha256").update(bridgeSource).digest("hex"),
+        harnessSha256: createHash("sha256").update(await readFile(import.meta.filename)).digest("hex"),
+        host,
+      }, null, 2) + "\n");
+      console.error(`Auto-save failure evidence: ${artifact}`);
+    } catch (diagnosticError) {
+      console.error("Could not capture auto-save failure metadata:", diagnosticError.message);
+    }
   } finally {
-    await browser?.close();
-    server.closeAllConnections?.();
-    await new Promise((resolve) => server.close(resolve));
+    cleanupReport = await cleanupBrowserTestResources({ browser, server });
   }
+  const finalError = attachCleanupErrors(primaryError, cleanupReport);
+  if (finalError) throw finalError;
 });

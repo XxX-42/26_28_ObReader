@@ -8,20 +8,57 @@ const {
   Notice,
   Plugin,
   PluginSettingTab,
+  Platform,
   Setting,
   TFile,
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
-const crypto = require("node:crypto");
 
-/* BUILD:ASSET_RUNTIME_REQUIRE */ const {
-  ensureViewerAssets,
-} = require("./asset-runtime.cjs");
+/* BUILD:ASSET_RUNTIME_REQUIRE */ const { ensureViewerAssets, sha256Bytes } = require("./asset-runtime.cjs");
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
+const MOBILE_DIAGNOSTICS_DIRECTORY = "PDF Reader Diagnostics";
+const MOBILE_RESOURCE_SCRIPT_PATHS = Object.freeze({
+  bridge: "web/obsidian-bridge.js",
+  pdf: "build/pdf.mjs",
+  viewer: "web/viewer.mjs",
+  worker: "build/pdf.worker.mjs",
+});
+const MOBILE_STAGE_VALUES = new Set([
+  "idle",
+  "assets-loading",
+  "assets-ready",
+  "resources-read",
+  "bridge-loading",
+  "pdf-module-loading",
+  "pdf-module-loaded",
+  "viewer-module-loading",
+  "viewer-module-loaded",
+  "ready",
+  "resource-failed",
+  "disposed",
+]);
+const MOBILE_STAGE_LABELS = Object.freeze({
+  idle: "初始化",
+  "assets-loading": "解压并校验离线资源",
+  "assets-ready": "读取已校验资源",
+  "resources-read": "准备模块与 Worker",
+  "bridge-loading": "加载宿主桥接",
+  "pdf-module-loading": "加载 PDF 模块",
+  "pdf-module-loaded": "PDF 模块已加载",
+  "viewer-module-loading": "加载阅读器模块",
+  "viewer-module-loaded": "阅读器模块已加载",
+  ready: "阅读器就绪",
+  "resource-failed": "资源加载失败",
+  disposed: "阅读器已关闭",
+});
+
+function isMobilePlatform(app) {
+  return app?.isMobile === true || Platform?.isMobile === true;
+}
 
 function isPdfFile(file) {
   return file instanceof TFile && file.extension.toLowerCase() === "pdf";
@@ -146,6 +183,7 @@ function installPdfOpenRouting(plugin) {
         )
       : null,
     moveLeafToPopoutWrapper: null,
+    mobile: plugin.isMobileRuntime === true,
   };
 
   routing.setViewStateWrapper = function (viewState, eState) {
@@ -298,7 +336,7 @@ function installPdfOpenRouting(plugin) {
     prototype.detach = routing.detachWrapper;
   }
 
-  if (typeof routing.originalMoveLeafToPopout === "function") {
+  if (!routing.mobile && typeof routing.originalMoveLeafToPopout === "function") {
     routing.moveLeafToPopoutWrapper = function (leaf, ...args) {
       const activePlugin = routing.plugin;
       const originalMove = routing.originalMoveLeafToPopout;
@@ -414,7 +452,236 @@ function bytesEqual(left, right) {
 }
 
 function fingerprint(bytes) {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
+  return sha256Bytes(bytes);
+}
+
+function clampDiagnosticInteger(value, minimum, maximum) {
+  return Number.isSafeInteger(value) && value >= minimum && value <= maximum
+    ? value
+    : null;
+}
+
+function sanitizeInputDiagnostics(value) {
+  if (!value || value.schema !== 1) return null;
+  const sampleTypes = new Set(["pointerdown", "pointermove", "pointerup", "pointercancel"]);
+  const pointerTypes = new Set(["mouse", "touch", "pen", "unknown"]);
+  const pointers = Array.isArray(value.pointers)
+    ? value.pointers.slice(-32).flatMap((pointer) => {
+        if (!pointer || typeof pointer !== "object") return [];
+        const type = sampleTypes.has(pointer.type) ? pointer.type : null;
+        const pointerType = pointerTypes.has(pointer.pointerType)
+          ? pointer.pointerType
+          : "unknown";
+        const button = clampDiagnosticInteger(pointer.button, -1, 31);
+        const buttons = clampDiagnosticInteger(pointer.buttons, 0, 255);
+        const activePointers = clampDiagnosticInteger(pointer.activePointers, 0, 64);
+        const editorMode = clampDiagnosticInteger(pointer.editorMode, 0, 1024);
+        if (!type || button === null || buttons === null || activePointers === null || editorMode === null) {
+          return [];
+        }
+        return [{
+          type,
+          pointerType,
+          button,
+          buttons,
+          activePointers,
+          editorMode,
+          trusted: pointer.trusted === true,
+        }];
+      })
+    : [];
+  return {
+    schema: 1,
+    pointerEventsSeen: clampDiagnosticInteger(value.pointerEventsSeen, 0, Number.MAX_SAFE_INTEGER) ?? 0,
+    pointerEventsDropped: clampDiagnosticInteger(value.pointerEventsDropped, 0, Number.MAX_SAFE_INTEGER) ?? 0,
+    activePointers: clampDiagnosticInteger(value.activePointers, 0, 64) ?? 0,
+    pointers,
+  };
+}
+
+function safeDiagnosticCode(value) {
+  const allowed = new Set([
+    "asset-read-failed",
+    "asset-hash-mismatch",
+    "blob-url-unavailable",
+    "bridge-resource",
+    "pdf-module-import",
+    "pdfjs-global-missing",
+    "viewer-module-import",
+    "mobile-bootstrap",
+  ]);
+  return typeof value === "string" && allowed.has(value) ? value : "mobile-bootstrap";
+}
+
+function createMobileBootScript(serializedConfig) {
+  return `(() => {
+    const config = ${serializedConfig};
+    const stage = (value) => window.parent.postMessage({
+      channel: config.channel,
+      token: config.token,
+      rendererGeneration: config.rendererGeneration,
+      type: "mobile-loader-stage",
+      stage: value,
+    }, "*");
+    const loaded = (name, source) => window.parent.postMessage({
+      channel: config.channel,
+      token: config.token,
+      rendererGeneration: config.rendererGeneration,
+      type: "mobile-module-loaded",
+      module: name,
+      source,
+    }, "*");
+    const failed = (code) => window.parent.postMessage({
+      channel: config.channel,
+      token: config.token,
+      rendererGeneration: config.rendererGeneration,
+      type: "mobile-loader-failed",
+      code,
+    }, "*");
+    function bridgeLoadError() {
+      const error = new Error("bridge-resource");
+      error.code = "bridge-resource";
+      return error;
+    }
+    async function waitForBridge() {
+      if (window.__PDF_READER_BRIDGE_LOADED__ === true) {
+        return window.__PDF_READER_BRIDGE_SOURCE__ || "resource";
+      }
+      const bridgeScript = document.querySelector('script[data-pdf-reader-bridge="1"]');
+      if (!bridgeScript) throw bridgeLoadError();
+
+      if (window.__PDF_READER_BRIDGE_RESOURCE_FAILED__ !== true) {
+        await new Promise((resolve, reject) => {
+          let timer;
+          const cleanup = () => {
+            bridgeScript.removeEventListener("load", onLoad);
+            bridgeScript.removeEventListener("error", onError);
+            if (timer !== undefined) window.clearTimeout(timer);
+          };
+          const onLoad = () => { cleanup(); resolve(); };
+          const onError = () => { cleanup(); resolve(); };
+          bridgeScript.addEventListener("load", onLoad, { once: true });
+          bridgeScript.addEventListener("error", onError, { once: true });
+          timer = window.setTimeout(() => { cleanup(); reject(bridgeLoadError()); }, 15000);
+        });
+        if (window.__PDF_READER_BRIDGE_LOADED__ === true) {
+          return window.__PDF_READER_BRIDGE_SOURCE__ || "resource";
+        }
+      }
+      if (window.__PDF_READER_BRIDGE_RESOURCE_FAILED__ !== true) {
+        throw bridgeLoadError();
+      }
+
+      return await new Promise((resolve, reject) => {
+        const fallback = document.createElement("script");
+        for (const name of [
+          "data-pdf-reader-bridge",
+          "data-channel",
+          "data-token",
+          "data-renderer-generation",
+          "data-base-url",
+        ]) {
+          const value = bridgeScript.getAttribute(name);
+          if (value !== null) fallback.setAttribute(name, value);
+        }
+        fallback.dataset.mobileFallback = "1";
+        fallback.async = false;
+        let timer;
+        const cleanup = () => {
+          fallback.removeEventListener("load", onLoad);
+          fallback.removeEventListener("error", onError);
+          if (timer !== undefined) window.clearTimeout(timer);
+        };
+        const onLoad = () => {
+          cleanup();
+          window.__PDF_READER_BRIDGE_LOADED__ = true;
+          window.__PDF_READER_BRIDGE_SOURCE__ = "blob";
+          loaded("bridge", "blob");
+          resolve("blob");
+        };
+        const onError = () => {
+          cleanup();
+          reject(bridgeLoadError());
+        };
+        fallback.addEventListener("load", onLoad, { once: true });
+        fallback.addEventListener("error", onError, { once: true });
+        timer = window.setTimeout(() => { cleanup(); reject(bridgeLoadError()); }, 15000);
+        fallback.src = config.fallbackUrls.bridge;
+        bridgeScript.after(fallback);
+      });
+    }
+    const moduleGlobalNames = [
+      "pdfjsLib",
+      "_pdfjsTestingUtils",
+      "PDFViewerApplication",
+      "PDFViewerApplicationConstants",
+      "PDFViewerApplicationOptions",
+      "PDFViewerApplicationConfiguration",
+    ];
+    function captureModuleState() {
+      const globals = Object.create(null);
+      for (const name of moduleGlobalNames) {
+        globals[name] = globalThis[name];
+      }
+      return {
+        globalKeys: new Set(Reflect.ownKeys(globalThis)),
+        globals,
+        print: window.print,
+      };
+    }
+    function moduleHasSideEffects(before) {
+      for (const key of Reflect.ownKeys(globalThis)) {
+        if (!before.globalKeys.has(key)) return true;
+      }
+      for (const name of moduleGlobalNames) {
+        if (globalThis[name] !== before.globals[name]) return true;
+      }
+      return window.print !== before.print;
+    }
+    function moduleFailure(name) {
+      const error = new Error("module-import-failed");
+      error.code = name === "pdf" ? "pdf-module-import" : "viewer-module-import";
+      return error;
+    }
+    async function importModule(name) {
+      const beforeResourceImport = captureModuleState();
+      try {
+        await import(config.moduleUrls[name]);
+        loaded(name, "resource");
+      } catch {
+        // An ESM import that rejects after publishing globals is not safe to
+        // evaluate again under a blob URL: the second module has a distinct
+        // cache key and can initialize PDF.js twice in one renderer.
+        if (moduleHasSideEffects(beforeResourceImport)) {
+          throw moduleFailure(name);
+        }
+        try {
+          await import(config.fallbackUrls[name]);
+          loaded(name, "blob");
+        } catch {
+          // The blob copy is the final permitted evaluation attempt.
+          throw moduleFailure(name);
+        }
+      }
+    }
+    (async () => {
+      try {
+        await waitForBridge();
+        window.__PDF_READER_MOBILE_RESOURCES__ = config.resourceUrls;
+        stage("pdf-module-loading");
+        await importModule("pdf");
+        if (!globalThis.pdfjsLib) {
+          const error = new Error("pdfjs-global-missing");
+          error.code = "pdfjs-global-missing";
+          throw error;
+        }
+        stage("viewer-module-loading");
+        await importModule("viewer");
+      } catch (error) {
+        failed(error?.code || "mobile-bootstrap");
+      }
+    })();
+  })();`;
 }
 
 async function ensureAdapterDirectory(adapter, directoryPath) {
@@ -449,6 +716,18 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.autoSave)
           .onChange((enabled) => this.plugin.setAutoSaveEnabled(enabled)),
       );
+    if (this.plugin.isMobileRuntime) {
+      const diagnosticSetting = new Setting(containerEl)
+        .setName("导出移动端诊断")
+        .setDesc("将阅读器启动、资源和触控统计保存为仓库中的 JSON 文件；不包含 PDF 内容或文件路径。");
+      if (typeof diagnosticSetting.addButton === "function") {
+        diagnosticSetting.addButton((button) =>
+          button
+            .setButtonText("导出 JSON")
+            .onClick(() => void this.plugin.exportMobileDiagnostics()),
+        );
+      }
+    }
   }
 }
 
@@ -481,6 +760,19 @@ class PdfReaderView extends EditableFileView {
     this.openRequest = 0;
     this.resourcePromise = null;
     this._assetCache = null;
+    this.mobileRuntime = {
+      loaderMode: plugin.isMobileRuntime ? "mobile-blob" : "desktop-resource",
+      stage: "idle",
+      moduleSources: {},
+      assetCount: null,
+      workerSource: plugin.isMobileRuntime ? "blob" : "resource",
+      workerTerminated: null,
+      resourceFailureCount: 0,
+      lastError: null,
+    };
+    this.mobileResourceLease = null;
+    this.mobileInputDiagnostics = null;
+    this.mobileInputDiagnosticsRequests = new Map();
     this.iframe = null;
     this.statusEl = null;
     this.ownerWindow = null;
@@ -632,7 +924,19 @@ class PdfReaderView extends EditableFileView {
       }
     } catch (error) {
       if (this.iframe === iframe) {
-        this.showError(`无法加载内置 PDF 阅读器：${error.message}`);
+        if (this.plugin.isMobileRuntime) {
+          if (this.mobileRuntime.stage !== "resource-failed") {
+            this.mobileRuntime.resourceFailureCount += 1;
+            this.mobileRuntime.lastError = {
+              stage: this.mobileRuntime.stage,
+              code: safeDiagnosticCode(error?.diagnosticCode || "asset-read-failed"),
+            };
+            this.setMobileLoaderStage("resource-failed");
+          }
+          this.showError(this.mobileStartupFailureMessage());
+        } else {
+          this.showError(`无法加载内置 PDF 阅读器：${error.message}`);
+        }
       }
     }
   }
@@ -646,14 +950,24 @@ class PdfReaderView extends EditableFileView {
       this.notifyFlushOutcome(flush);
     }
     this.finishFlushRequests({ ok: false, dirty: true });
+    for (const request of [...this.mobileInputDiagnosticsRequests.values()]) {
+      request.finish(null);
+    }
     this.clearBridgeTimeout();
     await super.onClose();
-    this.unbindOwnerWindow();
+    const mobileGeneration = this.mobileResourceLease?.generation || null;
     if (this.iframe) {
       this.iframe.removeEventListener?.("load", this.iframeLoadListener);
       this.iframe.srcdoc = "";
       this.iframe.remove();
       this.iframe = null;
+    }
+    if (!mobileGeneration) {
+      this.unbindOwnerWindow();
+    } else {
+      this.mobileCleanupTimer = globalThis.setTimeout(() => {
+        this.revokeMobileResources(mobileGeneration, { force: true });
+      }, 5000);
     }
     this.iframeLoadListener = null;
     this.viewerDocumentHtml = null;
@@ -904,6 +1218,153 @@ class PdfReaderView extends EditableFileView {
     this.ownerWindowMessageSender = null;
   }
 
+  setMobileLoaderStage(stage) {
+    if (!MOBILE_STAGE_VALUES.has(stage)) return;
+    if (this.ready && !["ready", "resource-failed", "disposed"].includes(stage)) {
+      return;
+    }
+    this.mobileRuntime.stage = stage;
+    if (this.plugin.isMobileRuntime && !this.ready && !this.teardownStarted &&
+        !["ready", "resource-failed", "disposed"].includes(stage)) {
+      this.setStatus(`正在启动 PDF 阅读器：${MOBILE_STAGE_LABELS[stage]}…`);
+    }
+  }
+
+  mobileStartupFailureMessage() {
+    const error = this.mobileRuntime.lastError;
+    const label = MOBILE_STAGE_LABELS[error?.stage] || MOBILE_STAGE_LABELS.idle;
+    const code = safeDiagnosticCode(error?.code);
+    return `移动端 PDF 阅读器启动失败：${label}（${code}）。请导出诊断 JSON，关闭此标签后重新打开 PDF 重试。`;
+  }
+
+  revokeMobileResourceUrl(generation, key) {
+    const lease = this.mobileResourceLease;
+    if (!lease || lease.generation !== generation) return false;
+    const url = lease.urls.get(key);
+    if (!url) return false;
+    try {
+      globalThis.URL?.revokeObjectURL?.(url);
+    } catch {
+      // A WebView may already have discarded the object URL registry.
+    }
+    lease.urls.delete(key);
+    this.mobileRuntime.revokedResourceCount =
+      (this.mobileRuntime.revokedResourceCount || 0) + 1;
+    return true;
+  }
+
+  revokeMobileResources(generation, { force = false } = {}) {
+    const lease = this.mobileResourceLease;
+    if (!lease || lease.generation !== generation) return false;
+    if (!force && !(lease.rendererUnloaded && lease.workerTerminated)) {
+      return false;
+    }
+    for (const key of [...lease.urls.keys()]) {
+      this.revokeMobileResourceUrl(generation, key);
+    }
+    this.mobileResourceLease = null;
+    if (this.mobileCleanupTimer !== null && this.mobileCleanupTimer !== undefined) {
+      globalThis.clearTimeout(this.mobileCleanupTimer);
+      this.mobileCleanupTimer = null;
+    }
+    if (this.teardownStarted) this.unbindOwnerWindow();
+    return true;
+  }
+
+  handleMobileRuntimeMessage(message) {
+    if (message.type === "input-diagnostics") {
+      if (message.rendererGeneration !== this.rendererGeneration) return true;
+      const request = this.mobileInputDiagnosticsRequests.get(message.requestId);
+      if (!request) return true;
+      const snapshot = sanitizeInputDiagnostics(message);
+      this.mobileInputDiagnostics = snapshot;
+      request.finish(snapshot);
+      return true;
+    }
+
+    const generation = message.rendererGeneration;
+    if (typeof generation !== "string" || generation !== this.rendererGeneration) {
+      return message.type.startsWith("mobile-") ||
+        message.type === "renderer-unloaded" ||
+        message.type === "worker-terminated";
+    }
+
+    if (message.type === "mobile-loader-stage") {
+      this.setMobileLoaderStage(message.stage);
+      return true;
+    }
+    if (message.type === "mobile-module-loaded") {
+      if (!["bridge", "pdf", "viewer"].includes(message.module)) return true;
+      const source = ["resource", "blob"].includes(message.source)
+        ? message.source
+        : "unknown";
+      this.mobileRuntime.moduleSources[message.module] = source;
+      if (message.module === "pdf") {
+        this.setMobileLoaderStage("pdf-module-loaded");
+      } else if (message.module === "viewer") {
+        this.setMobileLoaderStage("viewer-module-loaded");
+      }
+      this.revokeMobileResourceUrl(generation, message.module);
+      return true;
+    }
+    if (message.type === "mobile-loader-failed") {
+      const code = safeDiagnosticCode(message.code);
+      this.mobileRuntime.resourceFailureCount += 1;
+      this.mobileRuntime.lastError = {
+        stage: this.mobileRuntime.stage,
+        code,
+      };
+      this.setMobileLoaderStage("resource-failed");
+      this.clearBridgeTimeout();
+      this.showError(this.mobileStartupFailureMessage());
+      this.revokeMobileResources(generation, { force: true });
+      return true;
+    }
+    if (message.type === "renderer-unloaded") {
+      const lease = this.mobileResourceLease;
+      if (lease?.generation === generation) {
+        lease.rendererUnloaded = true;
+        this.setMobileLoaderStage("disposed");
+        this.revokeMobileResources(generation);
+      }
+      return true;
+    }
+    if (message.type === "worker-terminated") {
+      const lease = this.mobileResourceLease;
+      if (lease?.generation === generation) {
+        lease.workerTerminated = true;
+        this.mobileRuntime.workerTerminated = true;
+        this.revokeMobileResources(generation);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  requestInputDiagnostics(timeoutMs = 1000) {
+    if (!this.iframe || !this.ready) return Promise.resolve(null);
+    const requestId = makeToken();
+    return new Promise((resolve) => {
+      const request = {
+        timer: null,
+        finish: (snapshot) => {
+          if (request.timer !== null) globalThis.clearTimeout(request.timer);
+          this.mobileInputDiagnosticsRequests.delete(requestId);
+          resolve(snapshot);
+        },
+      };
+      this.mobileInputDiagnosticsRequests.set(requestId, request);
+      request.timer = globalThis.setTimeout(() => request.finish(null), timeoutMs);
+      const sent = this.postToViewer({
+        channel: CHANNEL,
+        type: "get-input-diagnostics",
+        token: this.token,
+        requestId,
+      });
+      if (!sent) request.finish(null);
+    });
+  }
+
   clearBridgeTimeout() {
     if (this.bridgeTimeout !== null && this.bridgeTimeout !== undefined) {
       this.bridgeTimeoutWindow?.clearTimeout(this.bridgeTimeout);
@@ -940,9 +1401,22 @@ class PdfReaderView extends EditableFileView {
       this.bridgeTimeoutWindow = null;
       this.bridgeTimeoutDeadline = null;
       if (this.iframe === iframe && !this.ready) {
-        this.showError(
-          "PDF 阅读器未能启动。请检查插件内置的 Viewer 资源是否完整。",
-        );
+        if (this.plugin.isMobileRuntime) {
+          this.mobileRuntime.resourceFailureCount += 1;
+          this.mobileRuntime.lastError = {
+            stage: this.mobileRuntime.stage,
+            code: "mobile-bootstrap",
+          };
+          this.setMobileLoaderStage("resource-failed");
+          this.showError(this.mobileStartupFailureMessage());
+          if (this.mobileResourceLease) {
+            this.revokeMobileResources(this.mobileResourceLease.generation, { force: true });
+          }
+        } else {
+          this.showError(
+            "PDF 阅读器未能启动。请检查插件内置的 Viewer 资源是否完整。",
+          );
+        }
       }
     }, delay);
     this.bridgeTimeout = timer;
@@ -1242,8 +1716,15 @@ class PdfReaderView extends EditableFileView {
   }
 
   async loadViewerDocument() {
+    if (this.plugin.isMobileRuntime) this.setMobileLoaderStage("assets-loading");
     const assets = await this.plugin.ensureViewerAssets();
     this._assetCache = Object.freeze({ ...assets });
+    this.mobileRuntime.assetCount = Array.isArray(VIEWER_ASSET_PAYLOAD?.files)
+      ? VIEWER_ASSET_PAYLOAD.files.length
+      : null;
+    this.mobileRuntime.resourceHash = assets.contentHash;
+    this.mobileRuntime.assetVersion = assets.version;
+    this.setMobileLoaderStage("assets-ready");
     const webRoot = assets.webRoot;
     const viewerHtmlPath = `${webRoot}/viewer.html`;
     const viewerCssPath = `${webRoot}/viewer.css`;
@@ -1255,6 +1736,16 @@ class PdfReaderView extends EditableFileView {
     ]);
     const viewerUrl = this.app.vault.adapter.getResourcePath(viewerHtmlPath);
     const webBase = new URL("./", viewerUrl).href;
+    if (this.plugin.isMobileRuntime) {
+      return this.createMobileViewerDocument({
+        assets,
+        viewerHtml,
+        viewerCss,
+        bridgeCss,
+        viewerUrl,
+        webBase,
+      });
+    }
     const bridgeUrl = new URL("obsidian-bridge.js", webBase);
     // Obsidian's app:// resource URLs can remain stable across plugin reloads,
     // and Chromium may then reuse an older bridge script from its cache.
@@ -1301,6 +1792,174 @@ class PdfReaderView extends EditableFileView {
     return `${injection}${htmlWithInlineStyles}`;
   }
 
+  async createMobileViewerDocument({
+    assets,
+    viewerHtml,
+    viewerCss,
+    bridgeCss,
+    viewerUrl,
+    webBase,
+  }) {
+    const adapter = this.app.vault.adapter;
+    const payloadFiles = new Map(
+      (VIEWER_ASSET_PAYLOAD?.files || []).map((file) => [file.path, file]),
+    );
+    const blobApi = globalThis.URL;
+    if (
+      typeof blobApi?.createObjectURL !== "function" ||
+      typeof globalThis.Blob !== "function"
+    ) {
+      this.mobileRuntime.lastError = {
+        stage: "resources-read",
+        code: "blob-url-unavailable",
+      };
+      this.mobileRuntime.stage = "resource-failed";
+      throw new Error("This mobile WebView cannot create local module URLs.");
+    }
+
+    const scripts = {};
+    const scriptPaths = {};
+    const createdUrls = new Map();
+    try {
+      for (const [name, relativePath] of Object.entries(
+        MOBILE_RESOURCE_SCRIPT_PATHS,
+      )) {
+        const manifestEntry = payloadFiles.get(relativePath);
+        if (!manifestEntry) {
+          throw Object.assign(new Error("A required viewer resource is missing."), {
+            diagnosticCode: "asset-read-failed",
+          });
+        }
+        const fullPath = `${assets.rootPath}/${relativePath}`;
+        const raw = await adapter.readBinary(fullPath);
+        const bytes = new Uint8Array(toArrayBuffer(raw));
+        if (
+          bytes.byteLength !== manifestEntry.size ||
+          sha256Bytes(bytes) !== manifestEntry.sha256
+        ) {
+          throw Object.assign(new Error("A viewer resource failed verification."), {
+            diagnosticCode: "asset-hash-mismatch",
+          });
+        }
+        scripts[name] = bytes;
+        scriptPaths[name] = adapter.getResourcePath(fullPath);
+      }
+
+      this.setMobileLoaderStage("resources-read");
+      const pdfModuleUrl = blobApi.createObjectURL(
+        new globalThis.Blob([scripts.pdf], { type: "text/javascript" }),
+      );
+      createdUrls.set("pdf", pdfModuleUrl);
+      const bridgeFallbackUrl = blobApi.createObjectURL(
+        new globalThis.Blob([scripts.bridge], { type: "text/javascript" }),
+      );
+      createdUrls.set("bridge", bridgeFallbackUrl);
+      const viewerModuleUrl = blobApi.createObjectURL(
+        new globalThis.Blob([scripts.viewer], { type: "text/javascript" }),
+      );
+      createdUrls.set("viewer", viewerModuleUrl);
+      const workerUrl = blobApi.createObjectURL(
+        new globalThis.Blob([scripts.worker], { type: "text/javascript" }),
+      );
+      createdUrls.set("worker", workerUrl);
+
+      if (this.teardownStarted || !this.iframe) {
+        for (const url of createdUrls.values()) blobApi.revokeObjectURL?.(url);
+        throw new Error("The PDF viewer closed while its resources were loading.");
+      }
+
+      const generation = this.rendererGeneration;
+      const bridgeUrl = new URL(scriptPaths.bridge);
+      bridgeUrl.searchParams.set("v", this.token);
+      const resourceUrls = {
+        workerSrc: workerUrl,
+        cMapUrl: new URL("cmaps/", webBase).href,
+        iccUrl: new URL("iccs/", webBase).href,
+        fontUrl: new URL("standard_fonts/", webBase).href,
+        wasmUrl: new URL("wasm/", webBase).href,
+        imageResourcesPath: new URL("images/", webBase).href,
+      };
+      this.mobileResourceLease = {
+        generation,
+        frameWindow: this.iframe.contentWindow,
+        urls: createdUrls,
+        rendererUnloaded: false,
+        workerTerminated: false,
+      };
+      this.setMobileLoaderStage("bridge-loading");
+      this.mobileRuntime.workerSource = "blob";
+      this.mobileRuntime.workerTerminated = false;
+      this.mobileRuntime.moduleSources = {};
+
+      const inlineViewerCss = `<style data-pdf-reader="viewer">${escapeStyleText(viewerCss)}</style>`;
+      const inlineBridgeCss = `<style data-pdf-reader="bridge">${escapeStyleText(bridgeCss)}</style>`;
+      const bootConfig = JSON.stringify({
+        channel: CHANNEL,
+        token: this.token,
+        rendererGeneration: generation,
+        resourceUrls,
+        moduleUrls: {
+          pdf: scriptPaths.pdf,
+          viewer: scriptPaths.viewer,
+        },
+        fallbackUrls: {
+          bridge: bridgeFallbackUrl,
+          pdf: pdfModuleUrl,
+          viewer: viewerModuleUrl,
+        },
+      }).replaceAll("<", "\\u003c");
+      const bootScript = `<script type="module">${createMobileBootScript(bootConfig)}</script>`;
+      const bridgeScript =
+        `<script data-pdf-reader-bridge="1" src="${escapeAttribute(bridgeUrl.href)}" ` +
+        `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
+        `data-renderer-generation="${escapeAttribute(generation)}" ` +
+        `data-base-url="${escapeAttribute(webBase)}" ` +
+        `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
+        `onerror="window.__PDF_READER_BRIDGE_RESOURCE_FAILED__=true"></script>`;
+      let viewerCssInserted = false;
+      let htmlWithInlineStyles = viewerHtml.replace(/<link\b[^>]*>/gi, (tag) => {
+        const relMatch = /\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+        const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+        const rel = relMatch?.[1] ?? relMatch?.[2] ?? relMatch?.[3] ?? "";
+        const href = hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "";
+        if (rel.toLowerCase() === "stylesheet" && /(?:^|\/)viewer\.css(?:[?#].*)?$/i.test(href)) {
+          viewerCssInserted = true;
+          return "";
+        }
+        return tag;
+      });
+      htmlWithInlineStyles = htmlWithInlineStyles.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, (tag) => {
+        const srcMatch = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
+        const src = srcMatch?.[1] ?? srcMatch?.[2] ?? srcMatch?.[3] ?? "";
+        return /(?:^|\/)build\/pdf\.mjs(?:[?#].*)?$/i.test(src) || /(?:^|\/)viewer\.mjs(?:[?#].*)?$/i.test(src)
+          ? ""
+          : tag;
+      });
+      if (!viewerCssInserted) {
+        throw new Error("The bundled viewer.html does not reference viewer.css.");
+      }
+      const headMatch = /<head\b[^>]*>/i.exec(htmlWithInlineStyles);
+      const injection =
+        `<base href="${escapeAttribute(webBase)}">` +
+        inlineViewerCss +
+        inlineBridgeCss +
+        bridgeScript +
+        bootScript;
+      if (headMatch) {
+        htmlWithInlineStyles = htmlWithInlineStyles.replace(/<base\b[^>]*>/gi, "");
+        return htmlWithInlineStyles.replace(/<head\b[^>]*>/i, `${headMatch[0]}${injection}`);
+      }
+      return `${injection}${htmlWithInlineStyles}`;
+    } catch (error) {
+      for (const url of createdUrls.values()) blobApi.revokeObjectURL?.(url);
+      this.mobileRuntime.resourceFailureCount += 1;
+      const code = safeDiagnosticCode(error?.diagnosticCode || "asset-read-failed");
+      this.mobileRuntime.lastError = { stage: this.mobileRuntime.stage, code };
+      this.mobileRuntime.stage = "resource-failed";
+      throw new Error("The mobile PDF reader could not prepare verified viewer resources.");
+    }
+  }
+
   async openFile(file) {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
@@ -1342,11 +2001,20 @@ class PdfReaderView extends EditableFileView {
   }
 
   onMessage(event) {
-    this.bindOwnerWindow();
-    if (!this.iframe || event.source !== this.iframe.contentWindow) {
+    const message = event.data;
+    const cleanupMessage = Boolean(
+      this.mobileResourceLease &&
+        event.source === this.mobileResourceLease.frameWindow &&
+        message?.rendererGeneration === this.mobileResourceLease.generation &&
+        ["renderer-unloaded", "worker-terminated"].includes(message?.type),
+    );
+    if (
+      (!this.iframe || event.source !== this.iframe.contentWindow) &&
+      !cleanupMessage
+    ) {
       return;
     }
-    const message = event.data;
+    this.bindOwnerWindow();
     if (
       !message ||
       message.channel !== CHANNEL ||
@@ -1355,6 +2023,7 @@ class PdfReaderView extends EditableFileView {
     ) {
       return;
     }
+    if (this.handleMobileRuntimeMessage(message)) return;
     if (message.type === "close-prepared") {
       const request = this.flushRequests.get(message.id);
       if (!request) return;
@@ -1390,6 +2059,7 @@ class PdfReaderView extends EditableFileView {
           return;
         }
         this.ready = true;
+        this.setMobileLoaderStage("ready");
         this.clearBridgeTimeout();
         this.sendPendingDocument();
         break;
@@ -1893,7 +2563,12 @@ class PdfReaderView extends EditableFileView {
 }
 
 module.exports = class PdfWebReaderPlugin extends Plugin {
+  get isMobileRuntime() {
+    return this.mobileRuntimeSelected === true;
+  }
+
   async onload() {
+    this.mobileRuntimeSelected = isMobilePlatform(this.app);
     this.settings = {
       autoSave: true,
       ...((await this.loadData()) || {}),
@@ -1934,6 +2609,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       id: "restore-latest-pdf-recovery",
       name: "恢复最近的 PDF 自动保存副本",
       callback: () => void this.restoreLatestRecovery(),
+    });
+    this.addCommand({
+      id: "export-mobile-pdf-diagnostics",
+      name: "导出 PDF 阅读器诊断 JSON",
+      callback: () => void this.exportMobileDiagnostics(),
     });
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
@@ -2088,6 +2768,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   registerPopoutCloseProtection(view, ownerWindow) {
+    if (this.isMobileRuntime) {
+      this.unregisterPopoutCloseProtection(view);
+      return false;
+    }
     const isPopout = isPopoutWindow(ownerWindow);
     const root = isPopout
       ? findPopoutSplit(view.leaf, ownerWindow, this.app.workspace)
@@ -2502,6 +3186,89 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         enabled: this.settings.autoSave,
       });
     }
+  }
+
+  async exportMobileDiagnostics() {
+    const views = [...this.views].slice(0, 16);
+    let gzipDecompression = false;
+    if (typeof globalThis.DecompressionStream === "function") {
+      try {
+        new globalThis.DecompressionStream("gzip");
+        gzipDecompression = true;
+      } catch {
+        // Some WebViews expose DecompressionStream without the gzip format.
+      }
+    }
+    const pointerSnapshots = await Promise.all(
+      views.map((view) => view.requestInputDiagnostics(800)),
+    );
+    const readers = views.map((view, index) => {
+      const runtime = view.mobileRuntime || {};
+      const lastError = runtime.lastError;
+      return {
+        loaderMode: runtime.loaderMode || (this.isMobileRuntime ? "mobile-blob" : "desktop-resource"),
+        stage: MOBILE_STAGE_VALUES.has(runtime.stage) ? runtime.stage : "idle",
+        assets: {
+          version: typeof runtime.assetVersion === "string" ? runtime.assetVersion : null,
+          contentHash: typeof runtime.resourceHash === "string" ? runtime.resourceHash : null,
+          resourceCount: clampDiagnosticInteger(runtime.assetCount, 0, 10000),
+        },
+        modules: {
+          pdf: runtime.moduleSources?.pdf || "unknown",
+          viewer: runtime.moduleSources?.viewer || "unknown",
+        },
+        worker: {
+          source: runtime.workerSource || "unknown",
+          terminated: typeof runtime.workerTerminated === "boolean"
+            ? runtime.workerTerminated
+            : null,
+        },
+        resourceFailureCount: clampDiagnosticInteger(runtime.resourceFailureCount, 0, 10000) ?? 0,
+        revokedResourceCount: clampDiagnosticInteger(runtime.revokedResourceCount, 0, 10000) ?? 0,
+        lastError: lastError && {
+          stage: MOBILE_STAGE_VALUES.has(lastError.stage) ? lastError.stage : "resource-failed",
+          code: safeDiagnosticCode(lastError.code),
+        },
+        input: pointerSnapshots[index] || null,
+      };
+    });
+    const diagnostic = {
+      schema: 1,
+      exportedAt: new Date().toISOString(),
+      pluginVersion: typeof this.manifest?.version === "string" ? this.manifest.version : null,
+      platform: {
+        mobile: this.isMobileRuntime,
+        loaderMode: this.isMobileRuntime ? "mobile-blob" : "desktop-resource",
+      },
+      browser: {
+        userAgent: typeof globalThis.navigator?.userAgent === "string"
+          ? globalThis.navigator.userAgent.slice(0, 256)
+          : null,
+        capabilities: {
+          blob: typeof globalThis.Blob === "function",
+          objectUrl: typeof globalThis.URL?.createObjectURL === "function",
+          worker: typeof globalThis.Worker === "function",
+          pointerEvents: typeof globalThis.PointerEvent === "function",
+          textEncoder: typeof globalThis.TextEncoder === "function",
+          decompressionStream: typeof globalThis.DecompressionStream === "function",
+          gzipDecompression,
+        },
+      },
+      activeReaderCount: views.length,
+      readers,
+    };
+    const folderPath = MOBILE_DIAGNOSTICS_DIRECTORY;
+    if (!this.app.vault.getAbstractFileByPath(folderPath)) {
+      await this.app.vault.createFolder(folderPath);
+    }
+    const timestamp = diagnostic.exportedAt.replace(/[:.]/g, "-");
+    const outputPath = normalizePath(
+      `${folderPath}/PDF Reader diagnostics ${timestamp} ${makeToken().slice(0, 8)}.json`,
+    );
+    const bytes = new TextEncoder().encode(`${JSON.stringify(diagnostic, null, 2)}\n`);
+    await this.app.vault.createBinary(outputPath, bytes.buffer);
+    new Notice(`已导出 PDF 阅读器诊断：${outputPath}`);
+    return outputPath;
   }
 
   async writeRecoveryCandidate({

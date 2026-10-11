@@ -1,13 +1,15 @@
 # PDF Web Reader for Obsidian
 
-An offline, desktop-only Obsidian plugin containing the modified Mozilla
+An offline Obsidian plugin containing the modified Mozilla
 PDF.js Viewer. It opens PDFs from the vault and saves standard PDF annotations
 back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 ## Install: exactly three release files
 
-Download these files from a matching GitHub Release:
+For this unpublished 0.3.0 candidate, use the delivered candidate ZIP and follow
+[the test-vault installation steps](IPAD_ACCEPTANCE.md). Public releases use
+the same three matching files:
 
 - `main.js`
 - `manifest.json`
@@ -33,12 +35,17 @@ standard fonts, ICC profile, WASM decoders, all translations and images, the
 scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
-The supported desktop baseline is Obsidian **1.14.4**. Mobile is not supported.
+The application baseline is Obsidian **1.14.4**. The 0.3.0 candidate removes
+runtime Node dependencies and enables mobile loading. Its target is iPad Pro
+2018 on iPadOS 26.6 with an external mouse; actual iPad deployment and acceptance
+remain pending. See [iPad installation and acceptance](IPAD_ACCEPTANCE.md).
+Desktop mobile emulation does not establish WKWebView or physical mouse support.
+The previously verified macOS 0.2.0 rollback package and
+[Mac acceptance evidence](MACOS_ACCEPTANCE.md) remain available.
 
-The 0.2.0 candidate targets macOS desktop on the tested Apple Silicon Mac,
-macOS 27.2 and Obsidian 1.14.4. iOS/iPadOS work is deferred and
-`isDesktopOnly` remains true. See [the handoff](MACOS_HANDOFF.md) and
-[Mac acceptance evidence](MACOS_ACCEPTANCE.md) for tested behavior and limits.
+The resource runtime requires standard browser gzip decompression. SHA-256 is
+bundled with the plugin and does not depend on a WebCrypto secure context.
+The complete frozen Viewer is unchanged. No extra runtime installation is needed.
 
 ## Open and edit PDFs
 
@@ -61,7 +68,7 @@ Both the number row and numeric keypad are supported. Press the active tool's
 key again or backquote to leave it. Typing digits inside an input or editable
 text does not switch tools.
 
-The macOS 0.2.0 candidate incorporates the Windows `c52e522` mouse controls.
+The desktop mouse controls incorporated from Windows `c52e522` are retained.
 Hold the middle mouse button to preview the six-sector tool wheel and release
 over a sector to select it. Releasing in the center leaves the wheel open for
 a left-click selection; the top sector, Escape, or an outside click closes it.
@@ -69,6 +76,18 @@ Dragging the right mouse button temporarily erases annotations and restores
 the previous tool on release. A regular right-click retains the context menu
 and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
 undo and redo.
+
+The iPad candidate selects mouse behavior using the actual pointer type rather
+than disabling it on mobile. The **工具** button opens a clickable wheel and
+**编辑** provides undo, redo, delete and save. These support a
+mouse without a middle button and operation without an external keyboard.
+Buttons intercepted by iPadOS or a mouse mapping cannot be recovered by the
+plugin; exported input diagnostics report which events reached the Viewer.
+On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the
+command **导出 PDF 阅读器诊断 JSON**. Reports are saved under
+`PDF Reader Diagnostics/` and include startup stages, browser capabilities,
+resource verification, Worker mode and pointer/button counters. They contain
+no PDF content or file paths.
 
 Version 0.1.4 gives the active creation tool priority over existing annotation
 bodies: underline/highlight can select the PDF text beneath them, and drawing
@@ -97,7 +116,7 @@ save target. A controlled close waits for automatic saves when enabled; disabled
 or paused saving persists a recovery draft without writing the original. The
 Reader stays open if that confirmation fails. Closing lets an active stroke or
 composition finish, then suspends new input until teardown or cancellation.
-Closing a verified Obsidian popout prepares all of its Readers before the
+On desktop, closing a verified Obsidian popout prepares all of its Readers before the
 window is destroyed; one failed confirmation keeps the window open. This
 requires the tested SDK window/split relationship. If that relationship cannot
 be verified, the plugin warns you to save or recover before closing the window.
@@ -125,7 +144,8 @@ rewritten automatically; delete and redraw an affected annotation if needed.
 
 The current Mac development checkout is
 `/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`.
-The frozen PDF.js tree and complete desktop asset runtime are retained.
+The frozen PDF.js tree is retained; the resource runtime now uses browser APIs
+on both desktop and mobile. Mobile does not install desktop popout coordination.
 
 - `plugin/`: Obsidian host and embedded-resource runtime source.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
@@ -147,8 +167,9 @@ npm test
 npm run test:offline
 ```
 
-Node/npm and `puppeteer-core` are development/test dependencies only. At
-runtime the desktop plugin uses Obsidian/Electron's built-in facilities.
+Node/npm and `puppeteer-core` are development/test dependencies only. The
+installed plugin uses Obsidian APIs, standard browser APIs, and bundled SHA-256;
+it does not load Node or Electron modules.
 The offline browser harness may create a temporary local test server to serve
 the extracted artifacts; that server is not part of the installed plugin.
 

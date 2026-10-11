@@ -423,9 +423,14 @@ async function compareReleaseDirectories(installedRoot) {
   ].map((match) => match[1]);
   assert.deepEqual(
     [...new Set(runtimeRequires)].sort(),
-    ["node:crypto", "node:zlib", "obsidian"],
-    "The three-file entry point may use only Obsidian and Node built-ins",
+    ["obsidian"],
+    "The three-file entry point may load only Obsidian",
   );
+  // Noble's SHA classes have a process(view, offset) method. Match actual
+  // Node globals/access rather than mistaking that hashing method for Node.
+  const nodeGlobalAccess = /(?<![\w$.])Buffer\s*(?:\.|\[|\()|(?:globalThis|window|self)(?:\?\.|\.)Buffer\b|(?<![\w$.])process\s*(?:\?\.|\.)\s*(?:env|versions|version|platform|arch|argv|execPath|binding|getBuiltinModule)\b|(?<![\w$.])process\s*\[\s*["'](?:env|versions|version|platform|arch|argv|execPath|binding|getBuiltinModule)["']\s*\]|(?:globalThis|window|self)(?:\?\.|\.)process\b|(?:globalThis|window|self)(?:\?\.|\.)electron\b|\brequire\s*\(\s*["'](?:node:|electron|crypto|zlib|fs|path|os|stream|buffer)/;
+  assert.equal(nodeGlobalAccess.test(mainSource), false,
+    "The release must run without Node or Electron globals");
   result.checks.threeFileInstall = {
     directory: installedRoot,
     topLevel: releaseFiles,
@@ -1177,6 +1182,8 @@ try {
       result.cacheAssetRestoredInFinally = true;
     } catch (restoreError) {
       result.cacheAssetRestoreError = restoreError.message;
+      passed = false;
+      failure ||= restoreError;
     }
   }
   if (pluginDisabledByTest) {
@@ -1185,6 +1192,8 @@ try {
       result.reenabledAfterFailure = true;
     } catch (restoreError) {
       result.restorePluginError = restoreError.message;
+      passed = false;
+      failure ||= restoreError;
     }
   }
   if (networkBlocked) {

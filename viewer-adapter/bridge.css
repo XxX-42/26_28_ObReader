@@ -45,8 +45,77 @@ body {
   opacity: 0.45;
 }
 
+.pdfReaderBridgeControls {
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  margin-inline: 4px;
+}
+
+.pdfReaderBridgeControlButton {
+  min-width: 40px;
+  width: auto;
+  max-width: none;
+  padding-inline: 6px;
+  font: inherit;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.pdfReaderBridgeControlButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pdfReaderBridgeClickWheel {
+  z-index: 100002;
+}
+
+.pdfReaderBridgeClickWheel[hidden],
+.pdfReaderBridgeActionMenu[hidden] {
+  display: none !important;
+}
+
+.pdfReaderBridgeActionMenu {
+  position: fixed;
+  z-index: 100003;
+  inset-block-start: calc(var(--toolbar-height, 32px) + 8px);
+  inset-inline-end: 8px;
+  display: grid;
+  min-width: 176px;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--toolbar-border-color, rgb(0 0 0 / 0.3));
+  border-radius: 6px;
+  color: var(--main-color, CanvasText);
+  background: var(--doorhanger-bg-color, Canvas);
+  box-shadow: 0 3px 14px rgb(0 0 0 / 0.3);
+}
+
+.pdfReaderBridgeActionMenu button {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.pdfReaderBridgeActionMenu button:hover:not(:disabled),
+.pdfReaderBridgeActionMenu button:focus-visible {
+  background: var(--button-hover-color, rgb(128 128 128 / 0.2));
+}
+
+.pdfReaderBridgeActionMenu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Keep PDF.js editing controls usable in a narrow Obsidian pane. */
-@media screen and (max-width: 720px) {
+@media screen and (max-width: 880px) {
   :root {
     --toolbar-height: 64px;
   }
@@ -105,6 +174,17 @@ body {
   #secondaryToolbarToggle {
     flex: none;
     margin-inline-start: auto;
+  }
+
+  .pdfReaderBridgeControls {
+    gap: 0;
+    margin-inline: 0;
+  }
+
+  .pdfReaderBridgeControlButton {
+    min-width: 36px;
+    padding-inline: 4px;
+    font-size: 0.875rem;
   }
 
   /* Each parameter menu is centered below the two-row toolbar so buttons at

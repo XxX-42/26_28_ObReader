@@ -1564,16 +1564,30 @@ async function waitForSquareHitReady(view, editor) {
       const editor = storage?.getRawValue?.(targetId);
       if (!layer || !target || editor?.uid !== uid) return { uid, targetFound: false };
       const rect = target.getBoundingClientRect();
-      const x = rect.x + rect.width / 2;
-      const y = rect.y + rect.height / 2;
-      const ordinaryHit = doc.elementFromPoint(x, y);
+      const textLayer=page.querySelector('.textLayer');
+      const candidates=[{x:rect.x+rect.width/2,y:rect.y+rect.height/2}];
+      for(const span of textLayer?.querySelectorAll('span') || []) {
+        const box=span.getBoundingClientRect();
+        const left=Math.max(rect.left+2,box.left), right=Math.min(rect.right-2,box.right);
+        const top=Math.max(rect.top+2,box.top), bottom=Math.min(rect.bottom-2,box.bottom);
+        if(right>left && bottom>top) candidates.push({x:(left+right)/2,y:(top+bottom)/2});
+      }
       const wasEnabled = layer.classList.contains('getElements');
       let stack = [];
-      try {
-        layer.classList.add('getElements');
-        stack = doc.elementsFromPoint(x, y);
-      } finally {
-        if (!wasEnabled) layer.classList.remove('getElements');
+      let x=candidates[0].x,y=candidates[0].y,ordinaryHit=null,textLayerHit=false;
+      // PDF.js's disabled-layer uncommitted-editor path is attached to the
+      // text layer. A geometric center can land in a gap on the SVG canvas.
+      // Pick an actual text hit inside this exact editor, without altering DOM
+      // for the trusted input or bypassing PDF.js's normal pointer handler.
+      for(const point of candidates) {
+        const hit=doc.elementFromPoint(point.x,point.y);
+        if(!hit || !textLayer?.contains(hit)) continue;
+        let proposed=[];
+        try {layer.classList.add('getElements'); proposed=doc.elementsFromPoint(point.x,point.y);}
+        finally {if(!wasEnabled) layer.classList.remove('getElements');}
+        const proposedEditor=proposed.find(element=>/^pdfjs_internal_editor_[0-9]+$/.test(element.id));
+        if(!layer.contains(proposed[0]) || proposedEditor?.id!==targetId) continue;
+        x=point.x;y=point.y;ordinaryHit=hit;stack=proposed;textLayerHit=true;break;
       }
       const editorHit = stack.find(element => /^pdfjs_internal_editor_[0-9]+$/.test(element.id));
       const hitEditor = editorHit && storage?.getRawValue?.(editorHit.id);
@@ -1586,6 +1600,7 @@ async function waitForSquareHitReady(view, editor) {
         targetFound: true,
         targetHasNoAnnotationElementId: editor?.annotationElementId === null,
         ordinaryHit: summarize(ordinaryHit),
+        textLayerHit,
         firstHit: summarize(stack[0]),
         firstHitInsideLayer: !!stack[0] && layer.contains(stack[0]),
         editorHit: summarize(editorHit),
@@ -1598,7 +1613,7 @@ async function waitForSquareHitReady(view, editor) {
       };
     })())`),
     (result) => Boolean(result?.targetFound && result.targetHasNoAnnotationElementId &&
-      result.hitTarget && result.firstHitInsideLayer && result.getElementsRestored),
+      result.hitTarget && result.textLayerHit && result.firstHitInsideLayer && result.getElementsRestored),
     30_000,
   );
 }
@@ -1700,7 +1715,7 @@ async function enterExplicitSquareEdit(view, index = 0) {
     }
   }
   assert.equal(pointerEvents.length, 2,
-    `A physical double-click must deliver two pointerdown events to the target text layer: ${JSON.stringify(pointerEvents)}.`);
+    `A trusted browser double-click must deliver two pointerdown events to the target text layer: ${JSON.stringify(pointerEvents)}.`);
   assert.ok(pointerEvents[1].timeStamp - pointerEvents[0].timeStamp < 500,
     `PDF.js requires the two native pointerdowns to be within 500ms: ${JSON.stringify(pointerEvents)}.`);
   return { target, hitTarget, hit: hit?.inner || null, explicit, bounds, pointerEvents };
@@ -5069,11 +5084,24 @@ async function testNativeToolWheel() {
   await persistReport();
   const view = await openReader(primaryPage, relativePath);
   try {
-    const geometry = await pageGeometry(view, 0);
-    const center = {
-      x: geometry.x + geometry.width / 2,
-      y: geometry.y + geometry.height / 2,
-    };
+    await pageGeometry(view, 0);
+    const center = await evaluateJson(view.page, `JSON.stringify((() => {
+      const leaf=app.workspace.getLeavesOfType(${JSON.stringify(viewType)})
+        .find(candidate=>candidate.id===${JSON.stringify(view.leafId)});
+      const frame=leaf?.view?.iframe,doc=frame?.contentDocument;
+      const outer=frame?.getBoundingClientRect();
+      const page=doc?.querySelector('.page[data-page-number="1"]')?.getBoundingClientRect();
+      const viewport=doc?.getElementById('viewerContainer')?.getBoundingClientRect();
+      if(!outer || !page || !viewport) return null;
+      const left=Math.max(0,outer.left+page.left,outer.left+viewport.left);
+      const right=Math.min(window.innerWidth,outer.left+page.right,outer.left+viewport.right);
+      const top=Math.max(0,outer.top+page.top,outer.top+viewport.top);
+      const bottom=Math.min(window.innerHeight,outer.top+page.bottom,outer.top+viewport.bottom);
+      if(right-left<32 || bottom-top<32) return null;
+      return {x:(left+right)/2,y:(top+bottom)/2,visibleBounds:{left,right,top,bottom}};
+    })())`);
+    assert.ok(center,'The wheel must start in the actual visible PDF intersection');
+    evidence.visibleCenter=center;
     const centerHit = await inspectNativeClickHit(view, center.x, center.y);
     assert.equal(centerHit.outerIsFrame, true,
       `Native tool-wheel center must reach the PDF iframe: ${JSON.stringify(centerHit.outer)}.`);
@@ -5086,7 +5114,7 @@ async function testNativeToolWheel() {
       const leaf = app.workspace.getLeavesOfType(${JSON.stringify(viewType)})
         .find(candidate => candidate.id === ${JSON.stringify(view.leafId)});
       const frame = leaf?.view?.iframe;
-      const wheel = frame?.contentDocument?.querySelector('.pdfToolWheel');
+      const wheel = frame?.contentDocument?.querySelector('.pdfToolWheel:not(.pdfReaderBridgeClickWheel)');
       if (!frame || !wheel) return { open: false,
         mode: frame?.contentWindow?.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null };
       const frameRect = frame.getBoundingClientRect();

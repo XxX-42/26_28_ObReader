@@ -59,6 +59,8 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
     const payload = readPayloadFromMain(source);
     const harness = loadBundledPlugin(source, adapter);
     await harness.load();
+    assert.equal("Buffer" in harness.runtimeContext, false);
+    assert.equal("process" in harness.runtimeContext, false);
 
     const [first, concurrent] = await Promise.all([
       harness.plugin.ensureViewerAssets(),
@@ -136,6 +138,46 @@ test("three-file built main extracts 404 assets once, serializes concurrent requ
       adapter.writeCount,
       811,
       "A different payload version gets an isolated full cache",
+    );
+  } finally {
+    await removeTempRoot(temp);
+  }
+});
+
+test("bundled runtime preserves full manifest hashing and multiline canonical bytes", async () => {
+  const temp = await createTempRoot("asset-bundled-hash-");
+  try {
+    const source = await readBuiltMain();
+    const payload = readPayloadFromMain(source);
+    const destructure =
+      "const { ensureViewerAssets, sha256Bytes } = (() => {";
+    assert.equal(source.split(destructure).length - 1, 1);
+    let instrumented = source.replace(
+      destructure,
+      "const { ensureViewerAssets, sha256Bytes, computeContentHash } = (() => {",
+    );
+    instrumented = instrumented.replace(
+      "const VIEWER_ASSET_PAYLOAD = ",
+      "globalThis.__computeContentHash = computeContentHash;\nconst VIEWER_ASSET_PAYLOAD = ",
+    );
+    const multiline = `pdf-web-reader-assets\n1\n${payload.id}\n`;
+    instrumented +=
+      "\nglobalThis.__bundledManifestHash = computeContentHash(VIEWER_ASSET_PAYLOAD);" +
+      `\nglobalThis.__multilineHash = sha256Bytes(new TextEncoder().encode(${JSON.stringify(multiline)}));\n`;
+    const harness = loadBundledPlugin(
+      instrumented,
+      createDiskAdapter(temp),
+    );
+
+    assert.equal(
+      harness.runtimeContext.__bundledManifestHash,
+      payload.contentHash,
+      "The inlined browser runtime must hash the complete embedded manifest",
+    );
+    assert.equal(
+      harness.runtimeContext.__multilineHash,
+      sha256(Buffer.from(multiline, "utf8")),
+      "Canonical newline bytes must survive build-time runtime inlining",
     );
   } finally {
     await removeTempRoot(temp);

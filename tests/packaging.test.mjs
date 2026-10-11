@@ -120,7 +120,8 @@ test("community release output is exactly the three installer assets", async () 
     await readFile(path.join(root, "versions.json"), "utf8"),
   );
   assert.equal(manifest.id, "pdf-web-reader");
-  assert.equal(manifest.isDesktopOnly, true);
+  assert.equal(manifest.version, "0.3.0");
+  assert.equal(manifest.isDesktopOnly, false);
   assert.deepEqual(manifest, rootManifest);
   assert.deepEqual(manifest, sourceManifest);
   assert.equal(versions[manifest.version], manifest.minAppVersion);

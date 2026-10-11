@@ -1,8 +1,16 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。历史 Windows 基线是 0.1.4；本阶段交付 macOS 桌面 0.2.0 候选，iOS/iPadOS 延后。继续保留离线运行、三个发布文件、正常打开 PDF，以及下划线、矩形框、荧光笔、自由画笔、文字框五种功能。实际验收边界以本文阶段更新及 MACOS_ACCEPTANCE.md 为准。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。历史 Windows 基线是 0.1.4；macOS 0.2.0 候选已作为回滚包保留，当前基于 `1034e0e` 开发 0.3.0 iPad 测试候选。继续保留离线运行、三个发布文件、正常打开 PDF，以及下划线、矩形框、荧光笔、自由画笔、文字框五种功能。最新范围和逐项验收见 [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md)，以下 macOS 记录对应历史 0.2.0 产物。
 
 接续开发者应先理解现有实现和验证边界，再进行 Apple 平台移植。不能仅修改 manifest 后宣称移动端适配完成，也不能用 Safari 普通网页或 Chromium 的移动模拟替代原生 Obsidian 验收。
+
+## 0.3.0 iPad 候选阶段（2026-10-11）
+
+本阶段目标为 iPad Pro 2018、iPadOS 26.6、Obsidian 1.14.4 的启动、五工具、编辑保存及外接鼠标交互。Luna Max 子代理负责运行时、加载器、鼠标修复与独立审计。插件运行时采用浏览器 TypedArray、Base64、DecompressionStream 和内嵌 SHA-256，移除 Node/Electron 依赖；构建脚本继续使用 Node。完整冻结 Viewer 与离线三文件分发保留，manifest 改为 `isDesktopOnly: false`。
+
+自动保存仍默认开启，保留串行写入、修订确认、冲突暂停和待保存恢复副本；绘制或拖动操作完成后合并保存。移动端不安装桌面弹窗协调。工具栏保留，并提供可点击轮盘及编辑动作入口；按实际 Pointer Event 区分鼠标、笔和触摸，本阶段没有 Pencil 压感、手写识别或触控手势设计。模块和 Worker 支持经校验资源 URL 与 Blob 回退，销毁时释放关联资源。
+
+Mac 的 `app.emulateMobile(true)` 验证只能证明桌面 Obsidian 的移动分支；真实 WKWebView、iPad 外接鼠标按键传递和命中行为由用户部署后验收。实机证据获得前始终标记“iPad 外接鼠标待验收候选”。仅在 `/Users/jiajia/Documents/ObReader-Apple-Test` 独立实例验证，不部署主库或公开发布。强退恢复限制、基准比较至写入的竞争窗口、历史偶发 PDF 打开超时继续保留，不能因移动分支测试通过而删除。
 
 ## 0.2.0 macOS 阶段更新（2026-10-11，保留 10 月 8 日实现）
 
@@ -77,7 +85,7 @@
 
 ## 当前功能合同
 
-插件 ID 是 `pdf-web-reader`，自定义 View 类型是 `pdf-web-reader-view`。当前 manifest 的最低 Obsidian 版本为 `1.14.4`，`isDesktopOnly` 为 `true`；这是已使用的桌面基线，不是已确定的 Apple 最低系统版本。
+插件 ID 是 `pdf-web-reader`，自定义 View 类型是 `pdf-web-reader-view`。最低 Obsidian 版本为 `1.14.4`；历史 0.1.4/0.2.0 的 `isDesktopOnly` 为 `true`，当前 0.3.0 iPad 候选改为 `false`。这是插件声明和测试范围，不代表已经确定 Apple 最低系统版本或完成 iPad 实机验收。
 
 | 按键 | 工具     | 编辑器类型值 | PDF 批注类型 |
 | ---- | -------- | ------------ | ------------ |
@@ -386,6 +394,6 @@ git diff --check
 
 ## 历史给 Mac Codex 的接续指令（已被本阶段范围覆盖）
 
-以下保留最初的接续指令，不再作为当前实施范围。新会话应使用上文 macOS 阶段更新，部署和具体实现仍须遵循该会话的授权及用户指定路径。
+以下保留最初的接续指令，不再作为当前实施范围。新会话应使用上文 0.3.0 阶段更新及 IPAD_ACCEPTANCE.md，部署和具体实现仍须遵循该会话的授权及用户指定路径。
 
 > 你接续开发 https://github.com/XxX-42/26_28_ObReader 。先确认最新 main，完整阅读 MACOS_HANDOFF.md、README.md 和 vendor/pdfjs-generic-legacy/PROVENANCE.md，再检查 Git 状态及运行入口。当前产品基线为 0.1.4，产品提交 85da554；Windows 已通过核心回归，但 macOS/iOS/iPadOS 尚未原生验收。目标是同一组三文件插件离线支持 macOS 和 iOS/iPadOS，保留正常打开 PDF、五种标准批注、12345 快捷键、保存重开和二次编辑。先确定我的 Mac 开发目录、独立测试库、最低系统版本和可用设备；不要把 Windows D 盘路径或原生脚本直接搬过来。按交接说明先建立 Mac 桌面基线，再移除移动端 Node 依赖并验证真实 Obsidian 资源和 Worker 链路，然后处理触控、软键盘、窗口与保存生命周期。不得损坏用户 PDF、扰动正常浏览、删减完整资源或换成上游未定制 PDF.js。具体审计和开发使用可用的 Luna Max 子代理，保持验证证据和未通过项清晰，不能仅改 isDesktopOnly 就宣布适配完成。

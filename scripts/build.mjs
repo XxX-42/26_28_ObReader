@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { build as buildBundle } from "esbuild";
 import {
   access,
   mkdir,
@@ -20,6 +21,7 @@ const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
 const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork";
+const bundledRuntimeFileCount = 404;
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
@@ -142,8 +144,10 @@ assert.equal(
   "versions.json must match this plugin version and minimum Obsidian version",
 );
 assert.equal(manifest.id, "pdf-web-reader", "Unexpected plugin ID");
-assert.equal(manifest.isDesktopOnly, true, "Plugin must be desktop-only");
+assert.equal(manifest.isDesktopOnly, false, "Plugin must support desktop and mobile");
+assert.equal(manifest.minAppVersion, "1.14.4");
 const vendorFileCount = await verifyVendorHashes();
+assert.equal(vendorFileCount, 402, "The frozen PDF.js vendor set changed");
 await verifyViewer();
 
 const runtimeInputs = [
@@ -191,9 +195,14 @@ const payload = {
   contentHash: computeContentHash(schema, assetBundleId, files),
   files,
 };
+assert.equal(
+  files.length,
+  bundledRuntimeFileCount,
+  "The frozen viewer and bridge runtime must contain 404 files",
+);
 
 const requireMarker =
-  /\/\* BUILD:ASSET_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*ensureViewerAssets,?\s*\}\s*=\s*require\((["'])\.\/asset-runtime\.cjs\1\);/s;
+  /\/\* BUILD:ASSET_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*ensureViewerAssets\s*,\s*(?:sha256Bytes\s*,?\s*)?\}\s*=\s*require\((["'])\.\/asset-runtime\.cjs\1\);/s;
 const payloadMarker =
   "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
@@ -207,22 +216,33 @@ assert.equal(
   1,
   "Expected exactly one viewer-payload build marker in plugin/main.js",
 );
-const helperSource = await readFile(
-  path.join(pluginSource, "asset-runtime.cjs"),
+const noblePackage = JSON.parse(
+  await readFile(path.join(root, "node_modules", "@noble", "hashes", "package.json"), "utf8"),
+);
+assert.equal(noblePackage.version, "1.8.0", "Unexpected @noble/hashes version");
+const nobleLicense = await readFile(
+  path.join(root, "node_modules", "@noble", "hashes", "LICENSE"),
   "utf8",
 );
+const runtimeBundle = await buildBundle({
+  entryPoints: [path.join(pluginSource, "asset-runtime.cjs")],
+  bundle: true,
+  format: "iife",
+  globalName: "__PDFReaderAssetRuntime",
+  platform: "browser",
+  target: ["es2022"],
+  legalComments: "none",
+  banner: {
+    js: `/* @noble/hashes ${noblePackage.version} MIT License\n${nobleLicense.replaceAll("*/", "* /")}*/`,
+  },
+  write: false,
+});
+assert.equal(runtimeBundle.outputFiles.length, 1);
 const inlinedHelper =
-  "const { ensureViewerAssets } = (() => {\n" +
-  "  const module = { exports: {} };\n" +
-  "  const exports = module.exports;\n" +
-  "  (function (module, exports, require) {\n" +
-  helperSource
-    .split("\n")
-    .map((line) => (line ? `    ${line}` : ""))
-    .join("\n") +
-  "\n  })(module, exports, require);\n" +
-  "  return module.exports;\n" +
-  "})();";
+  "const { ensureViewerAssets, sha256Bytes } = (() => {\n" +
+  runtimeBundle.outputFiles[0].text
+    .trimEnd() +
+  "\n  return __PDFReaderAssetRuntime;\n})();";
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
   .replace(
@@ -231,6 +251,19 @@ const bundledMain = sourceMain
   );
 assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
+const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
+  (match) => match[2],
+);
+assert.deepEqual(
+  externalRequires,
+  ["obsidian"],
+  "The release bundle may only load Obsidian as an external module",
+);
+assert.doesNotMatch(
+  bundledMain,
+  /(?<![\w$.])Buffer\s*(?:\.|\[|\()|(?:globalThis|window|self)(?:\?\.|\.)Buffer\b|(?<![\w$.])process\s*(?:\?\.|\.)\s*(?:env|versions|version|platform|arch|argv|execPath|binding|getBuiltinModule)\b|(?<![\w$.])process\s*\[\s*["'](?:env|versions|version|platform|arch|argv|execPath|binding|getBuiltinModule)["']\s*\]|(?:globalThis|window|self)(?:\?\.|\.)process\b|(?:globalThis|window|self)(?:\?\.|\.)electron\b|\brequire\s*\(\s*["'](?:node:|electron|crypto|zlib|fs|path|os|stream|buffer)/,
+  "The release bundle must not depend on Node or Electron runtime globals/modules",
+);
 
 // This is the only generated output directory touched by the build.
 assert.equal(

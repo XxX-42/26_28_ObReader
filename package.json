@@ -14,6 +14,8 @@
     "deploy": "node scripts/deploy.mjs"
   },
   "devDependencies": {
+    "@noble/hashes": "1.8.0",
+    "esbuild": "0.25.12",
     "puppeteer-core": "^24.41.0"
   }
 }

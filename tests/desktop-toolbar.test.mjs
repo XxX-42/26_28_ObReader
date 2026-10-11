@@ -237,7 +237,7 @@ test(
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
       });
       const page = await browser.newPage();
-      await page.setViewport({ width: 800, height: 900, deviceScaleFactor: 1 });
+      await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       page.on("console", (message) => {
         if (message.type() === "error") browserDiagnostics.push(message.text());
@@ -284,13 +284,13 @@ test(
       assert.ok(expectedVisibleTools.includes("editorUnderlineButton"));
       assert.ok(expectedVisibleTools.includes("editorSquareButton"));
 
-      await page.setViewport({ width: 721, height: 900, deviceScaleFactor: 1 });
+      await page.setViewport({ width: 881, height: 900, deviceScaleFactor: 1 });
       const breakpointWide = await measureToolbar(viewer);
       assert.equal(breakpointWide.toolbarHeight, 32);
       assert.notEqual(breakpointWide.toolbarDisplay, "grid");
-      assertRectInside(breakpointWide.right, 721, "toolbar right group at 721px");
+      assertRectInside(breakpointWide.right, 881, "toolbar right group at 881px");
 
-      for (const width of [720, 691, 432, 320]) {
+      for (const width of [880, 800, 720, 691, 432, 320]) {
         await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
         await viewer.waitForFunction(() => {
           const viewer = document.getElementById("viewerContainer").getBoundingClientRect();

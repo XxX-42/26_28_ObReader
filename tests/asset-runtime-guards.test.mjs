@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const {
   computeContentHash,
   ensureViewerAssets,
+  sha256Bytes,
 } = require("../plugin/asset-runtime.cjs");
 const pluginRoot = ".obsidian/plugins/pdf-web-reader";
 
@@ -35,6 +36,23 @@ function makePayload(files, overrides = {}) {
   payload.contentHash = computeContentHash(payload);
   return payload;
 }
+
+test("synchronous browser SHA-256 export matches standard byte vectors", () => {
+  const whole = new TextEncoder().encode("abc");
+  const padded = new Uint8Array([0, ...whole, 0]);
+  assert.equal(
+    sha256Bytes(whole),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  );
+  assert.equal(
+    sha256Bytes(padded.subarray(1, 4)),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  );
+  assert.equal(
+    sha256Bytes(whole.buffer.slice(0)),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  );
+});
 
 function createMockAdapter() {
   const writes = [];
@@ -157,6 +175,31 @@ test("asset payload integrity guards reject bad compressed data before filesyste
       /Unable to decompress viewer asset/,
     );
   });
+
+  await t.test("non-canonical base64 padding bits are rejected", async () => {
+    const file = makeFile("web/viewer.html", Buffer.from("canonical"));
+    const base64 = file.gzipBase64;
+    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+    assert.ok(padding > 0, "Fixture should have base64 padding");
+    const alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const index = base64.length - padding - 1;
+    const current = alphabet.indexOf(base64[index]);
+    const replacement = alphabet[current + 1];
+    const nonCanonical = {
+      ...file,
+      gzipBase64:
+        base64.slice(0, index) + replacement + base64.slice(index + 1),
+    };
+    const adapter = createMockAdapter();
+
+    await assertRejectedWithoutWrites(
+      adapter,
+      pluginRoot,
+      makePayload([nonCanonical]),
+      /Invalid compressed viewer asset data/,
+    );
+  });
 });
 
 test("asset path, ID, and plugin-root guards reject unsafe names before writes", async (t) => {
@@ -259,4 +302,41 @@ test("asset path, ID, and plugin-root guards reject unsafe names before writes",
       );
     });
   }
+});
+
+test("a failed completion-marker write cannot leave the cache committed", async () => {
+  const bytes = Buffer.from("verified payload");
+  const payload = makePayload([makeFile("web/asset.bin", bytes)]);
+  const files = new Map();
+  let attemptedMarker = "";
+  const adapter = {
+    async exists(path) {
+      return files.has(path);
+    },
+    async mkdir() {},
+    async readBinary(path) {
+      return files.get(path);
+    },
+    async writeBinary(path, value) {
+      files.set(path, value);
+    },
+    async remove(path) {
+      files.delete(path);
+    },
+    async read(path) {
+      return files.get(path);
+    },
+    async write(path, value) {
+      attemptedMarker = path;
+      files.set(path, value);
+      throw new Error("Simulated completion-marker write failure");
+    },
+  };
+
+  await assert.rejects(
+    ensureViewerAssets(adapter, pluginRoot, payload),
+    /Simulated completion-marker write failure/,
+  );
+  assert.ok(attemptedMarker.endsWith("/.complete.json"));
+  assert.equal(files.has(attemptedMarker), false);
 });

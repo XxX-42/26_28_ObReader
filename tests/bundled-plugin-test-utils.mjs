@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+import { webcrypto } from "node:crypto";
 import {
   access,
   mkdir,
@@ -66,7 +68,12 @@ export function computePayloadHash(payload) {
     .digest("hex");
 }
 
-export function loadBundledPlugin(mainSource, adapter, manifest = null) {
+export function loadBundledPlugin(
+  mainSource,
+  adapter,
+  manifest = null,
+  { browserOnly = true, browserGlobals = {} } = {},
+) {
   let viewFactory = null;
   class TFile {
     constructor(filePath) {
@@ -154,11 +161,42 @@ export function loadBundledPlugin(mainSource, adapter, manifest = null) {
     normalizePath: (value) => value.replaceAll("\\", "/"),
   };
   const moduleObject = { exports: {} };
-  new Function("require", "module", "exports", mainSource)(
-    (name) => (name === "obsidian" ? obsidian : externalRequire(name)),
-    moduleObject,
-    moduleObject.exports,
-  );
+  const requirePluginModule = (name) => {
+    if (name === "obsidian") return obsidian;
+    if (browserOnly) {
+      throw new Error(`Unexpected external module in browser release: ${name}`);
+    }
+    return externalRequire(name);
+  };
+  const browserContext = {
+    console,
+    setTimeout,
+    clearTimeout,
+    queueMicrotask,
+    TextEncoder,
+    TextDecoder,
+    atob,
+    btoa,
+    Blob,
+    DecompressionStream,
+    TransformStream,
+    ReadableStream,
+    URL,
+    URLSearchParams,
+    crypto: globalThis.crypto ?? webcrypto,
+    ...browserGlobals,
+  };
+  const nodeContext = browserOnly ? {} : { Buffer, process };
+  const runtimeContext = {
+    ...browserContext,
+    ...nodeContext,
+    require: requirePluginModule,
+    module: moduleObject,
+    exports: moduleObject.exports,
+  };
+  runInNewContext(mainSource, runtimeContext, {
+    filename: "pdf-web-reader-main.js",
+  });
 
   const files = new Map();
   const app = {
@@ -189,6 +227,7 @@ export function loadBundledPlugin(mainSource, adapter, manifest = null) {
     app,
     plugin,
     PluginClass: moduleObject.exports,
+    runtimeContext,
     TFile,
     WorkspaceLeaf,
     async load() {
@@ -257,7 +296,7 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
     },
     async writeBinary(vaultPath, value) {
       assert.ok(
-        value instanceof ArrayBuffer,
+        Object.prototype.toString.call(value) === "[object ArrayBuffer]",
         "The helper should write ArrayBuffer data",
       );
       writeCount += 1;

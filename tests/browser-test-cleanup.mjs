@@ -47,8 +47,8 @@ const waitForProcessExit = async (child, timeoutMs) => {
 export async function cleanupBrowserTestResources({
   browser,
   server,
-  browserTimeoutMs = 8_000,
-  processExitTimeoutMs = 2_000,
+  browserTimeoutMs = 20_000,
+  processExitTimeoutMs = 10_000,
   serverTimeoutMs = 5_000,
 } = {}) {
   const report = {
