@@ -1,16 +1,40 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前可用基线是 Windows 桌面版插件 0.1.4；下一阶段目标是 macOS 桌面和 iOS/iPadOS，继续保留离线运行、三个发布文件、正常打开 PDF，以及下划线、矩形框、荧光笔、自由画笔、文字框五种功能。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。历史 Windows 基线是 0.1.4；本阶段交付 macOS 桌面 0.2.0 候选，iOS/iPadOS 延后。继续保留离线运行、三个发布文件、正常打开 PDF，以及下划线、矩形框、荧光笔、自由画笔、文字框五种功能。实际验收边界以本文阶段更新及 MACOS_ACCEPTANCE.md 为准。
 
 接续开发者应先理解现有实现和验证边界，再进行 Apple 平台移植。不能仅修改 manifest 后宣称移动端适配完成，也不能用 Safari 普通网页或 Chromium 的移动模拟替代原生 Obsidian 验收。
 
-## 接续任务与交付边界
+## 0.2.0 macOS 阶段更新（2026-10-11，保留 10 月 8 日实现）
+
+2026-10-11 接续整合 Windows `c52e522`：保留本阶段 Mac 的文档身份、所属窗口、修订确认、恢复副本和关闭协调，引入工具轮盘、右键临时橡皮擦及延迟右键选择保护。文字输入停止 1 秒后使用 PDF.js 的保焦提交再自动保存，保留输入焦点和光标；组合输入与绘制手势仍等待结束。修复保存重开交互测试在页面未完成加载、命中旧矩形时发出双击的问题，测试改为核对实际页面和命中对象。整合后的验证结果以 MACOS_ACCEPTANCE.md 的 2026-10-11 记录为准，10 月 8 日证据仅对应之前的候选。
+
+首次 Mac 开发基线为 `4b74bf9`；本轮接续 Windows main `c52e522`，原始 Mac 0.2.0 备份提交为 `781b3cc`。开发目录为 `/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`。外层测试库完整复制至 `/Users/jiajia/Documents/ObReader-Apple-Test`，打开前对源与副本全部 60 个文件验证大小和 SHA-256，共 44,931,378 字节。快照继续保留原始 0.1.4，不随候选修改。
+
+仅适配当前 Apple Silicon Mac、macOS 27.2、Obsidian 1.14.4；安装器为 1.12.7，Electron 39.8.3。iPhone/iPad 延后，保留 `isDesktopOnly: true`、完整冻结 Viewer、桌面 Node 资源运行时及离线三文件发布方式。本文后面的移动方案和历史未适配描述保留作背景，不属于本轮实施或兼容性承诺。具体开发和审计由 Luna Max 子代理执行。
+
+0.2.0 修改 Reader 所属窗口消息监听与计时器绑定，支持弹出及迁移清理；跨窗口二进制判断不再依赖单 realm 的 instanceof。文档身份独立于可变路径，打开中 PDF 改名/移动同步保存目标。保存请求在排队入口固定原文档身份、TFile、基准和 iframe，切换后不会将旧 PDF 字节写到新目标。
+
+自动保存默认开启，支持关闭并持久化设置。创建、删除、移动、调整大小、撤销/重做纳入修订追踪；保存串行执行，期间新增修订仍保持待保存。每次写入先持久化待保存 PDF 与元数据到插件 `.recovery`，核对磁盘基准后写入并读回验证。冲突/失败暂停自动覆盖，恢复命令写入独立 `PDF Recovery/` 文件；成功确认清理对应候选。基准比较与写入之间仍有同步竞争窗口，Obsidian API 无原子 compare-and-swap。恢复目录自身写入失败、强制退出和系统进程回收不能承诺无损恢复。
+
+可控关闭及 Reader 文档切换在 SDK 拆除前等待精确的 documentId/openRequest/revision 准备完成确认；正在进行的笔画和组合输入到达边界后，暂时冻结新输入，直到关闭或取消。自动保存关闭或冲突暂停时只持久化独立 draft 恢复候选，不隐式写回原件、不清除 dirty；确认失败保留标签供重试。强制卸载或退出可绕过此拦截，更新前仍须保存并关闭所有 Reader。原生测试和部署支持配置 Vault、configDir、CLI、Chrome 和 loopback CDP，每个原生动作核对目标身份；部署拒绝启用中的插件和任何活动 Reader，完整备份旧插件后只装三文件。主库与公开 Release 不在授权范围。
+
+弹出窗口整体关闭也须先准备同窗所有 Reader。0.2.0 对经 ownerWindow/workspace 身份核实的 SDK popout split 实例安装关闭协调，并在 beforeunload capture 阶段阻止 SDK 提前销毁；任一失败、文档身份变化或新增 Reader 就取消已准备对象并保留窗口。精确准备完成的 leaf 保持 SDK 的同步 detach 行为，已提交关闭允许延迟 beforeunload。迁移、最后 Reader 离开和卸载会清理自己的监听／wrapper。此入口依赖当前已核验的 Obsidian SDK 私有实例关系；若失配，只提示先保存／恢复，不全局猜测拦截。强制退出不承诺异步准备成功。
+
+核实过的 `workspace.moveLeafToPopout` 入口也先完成保存／恢复准备。窗口迁移保持 documentId，递增 openRequest 并轮换 rendererGeneration；新 Viewer realm 重载已确认原件或精确的持久化 draft，保留修订、dirty 和冲突暂停。消息由所属窗口 realm 发送，继续严格校验 parent 来源。未拦截的 DOM 重载仅能恢复最近匹配的持久化检查点，额外未序列化编辑可能丢失；尚未核验返回主窗口的其他 SDK 入口，使用前须先保存／恢复。
+
+原生基线、候选验收、默认并发与串行复验的结果和未解决项见 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md)。后台 focus-emulated 的 Electron 验证与系统真实前台操作明确区分，不用 Chrome harness 代替 Mac 原生证据。
+
+本轮另修复已保存文字批注在 NONE 模式右拖擦除后，Cmd+Z 只恢复模型而未恢复 AP 的显示缺口。桥接层复用冻结 Viewer 的正常 reset/render 方法，仅协调精确保存批注，保留原对象和撤销重做栈；显示任务不参与保存边界，实际保存确认期间可延后，模式／会话变化和异常均清理。原先仅验证 AP 点击区不足以证明字形恢复：原生像素证据确认点击区已显示而页面画布仍为空。最终补充精确受影响页的正常 NONE-mode 重绘，清理派生 modified-ID 缓存后重置该页并进入既有渲染队列，不修改批注存储、历史或保存修订。新增真实可信按键、阻塞 ACK、原页面画布 ROI 的像素往返，以及保存重开像素回归。并发测试的一次退出挂起已定位为 Chrome 残留 Crashpad 继承 stderr；测试在核对自有浏览器退出且断开后释放其读端，保留人工介入的诊断记录，最终两种全套均自然退出。历史 PDF 打开未确认的偶发根因仍未证实，不能与该退出问题混为一谈。
+
+最终同构建验证：默认并发 82/82、串行 82/82、离线通过；19 个 Mac 原生场景实际完成，包含真实弹窗关闭后的自动注销。诊断改为不改变 SDK 同步 detach 返回语义，并从稳定窗口观察、撤销测试绑定；旧通知遮挡与诊断干扰记录保留，不能当作产品缺陷已确定。交付仅本地候选，未推送或部署主库。详见验收记录和交付 JSON。
+
+## 历史接续任务与交付边界
 
 - 用户决定将 Apple 适配开发接续到 macOS；Windows 留作回归环境。
 - 最新产品代码基线：`85da5549df4912300fe80191ed26a7f14a860aa4`，插件版本 `0.1.4`。
 - GitHub 仓库：<https://github.com/XxX-42/26_28_ObReader>；当前产品分支是 `main`。
 - 此交接文件在产品提交之后单独提交；克隆最新 `main`，不要停在旧版本提交。
-- Apple 适配尚未实施。当前 `isDesktopOnly: true` 和 Windows 已通过的功能必须保持真实、可追溯。
+- 交接时 Apple 适配尚未实施；本轮 macOS 状态见上文更新。`isDesktopOnly: true` 和历史 Windows 验证必须保持真实、可追溯。
 - 用户此前明确指定 Luna Max 子代理进行具体开发和审计；已有 Apple 审计由三个 `gpt-6-luna`、`max` 推理子代理完成。需要新子代理时遵循接续会话的工具能力、用户授权及指令，不假设某个模型别名必然存在。
 - 适配交付应包含明确的支持版本、同一组三文件产物、平台验证证据及未解决项。不得把“能显示首屏”当成“五工具完整可用”。
 
@@ -68,8 +92,8 @@
 - 下划线和矩形采用独立参数，不能与 Ink 默认颜色、线宽互相污染。需保留标准 PDF 批注语义，保存重开后再次编辑不得产生重复对象。
 - 启用插件后，Obsidian 中普通 PDF 文件打开走本插件。已存在的核心 PDF 标签页不会被强制替换；关闭重开即可。
 - Markdown 内嵌 PDF 仍由 Obsidian 核心显示。插件不改变 Windows/macOS/iOS 系统级 PDF 文件关联。
-- 保存目前是手动操作：Viewer 的保存入口或收到 `Ctrl+S` / `Cmd+S`。保存覆盖当前 Vault PDF，并检查磁盘内容是否与打开/上次保存的基准一致。
-- 不要关闭、禁用或热重载带未保存批注的视图。关闭或重载不是保存。
+- 0.1.4 基线为手动保存。0.2.0 候选默认启用自动写回：有效编辑后 1 秒合并保存，文字停止输入后保焦提交，提交/失焦也触发保存；组合输入和绘制手势等待结束。设置可关闭自动保存，`Cmd+S` 仍立即请求手动保存。修订号及宿主确认决定未保存状态。
+- 0.1.4 关闭或重载不负责保存；0.2.0 可控关闭具有保存／恢复流程。禁用、热重载和部署前仍须显式保存并关闭 Reader，不能依靠强制退出完成保存。
 
 ## 源码与资源入口
 
@@ -254,11 +278,11 @@ iframe 从 contentEl 创建，但宿主消息监听与 timer 使用 ambient wind
 
 ### 保存和生命周期
 
-插件没有明确的活动 PDF onRename 同步处理。requestedPath 和桥 documentId 在 open 时确定，而保存又要求它们与 TFile.path 一致；文件改名或移动后可能保存失败。需要在原生 Obsidian 验证回调顺序，再同步身份或安全重开，不能丢弃未保存批注。
+0.1.4 没有活动 PDF onRename 同步。0.2.0 已注册 rename 事件，同步 TFile/path/navigation，并向桥发送当前路径；documentId 为独立稳定会话标识，改名不重开。检查与写入期间发生移动时安全拒绝并保留恢复候选。
 
 当前冲突检查是 readBinary 后 compare，再 modifyBinary，存在外部同步恰在检查与写入之间修改文件的窗口。不能用只支持文本的 Vault.process 假装获得 PDF 二进制原子事务。保留冲突拒绝和可恢复副本，明确实际保证范围。
 
-onClose 清理 iframe 和编辑状态，桥 dispose 会终止等待中的保存确认；目前没有未保存关闭保护。移动后台、锁屏或 WebView 被系统回收时尤其需要可恢复草稿和恢复策略。建议保留手动 PDF 保存语义，草稿保护与自动覆盖用户 PDF 是不同动作。
+0.1.4 的 onClose 直接清理 iframe 和编辑状态，没有未保存关闭保护。0.2.0 已增加有界 flush 与待保存恢复候选；强制终止仍可能绕过生命周期，不能承诺此时无损。此段描述 0.1.4 历史缺口；本阶段依用户决定默认自动写回 PDF，并保留关闭选项和恢复候选。
 
 ## 资源性能与缓存策略
 
@@ -290,7 +314,7 @@ node --test --test-concurrency=1 tests/*.test.mjs
 npm run test:offline
 ```
 
-Mac 上先确认 Chrome/Chromium 的实际可执行文件位置，再通过 `PDF_READER_CHROME` 或 `PDFJS_CHROME` 指定；当前测试默认只找 Windows Chrome/Edge。示例仅适用于 Chrome 确实安装在该位置的情况：
+Mac 上先确认 Chrome/Chromium 的实际可执行文件位置，再通过 `PDF_READER_CHROME` 或 `PDFJS_CHROME` 指定；测试现会查找 Mac Chrome、Windows Chrome/Edge，并支持显式路径。示例仅适用于 Chrome 确实安装在该位置的情况：
 
 ```sh
 export PDF_READER_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -310,14 +334,14 @@ git diff --check
 
 `--write` 是对有意修改输入的显式操作，不能用它掩盖意外资源变化。哈希校验不是功能测试，也不替代源 diff 审查。
 
-`npm run test:native`、`test:native:background`、`test:native:release` 当前不能直接当成 Mac 验证：native 脚本硬编码 Windows CLI、Vault 路径与 Vault ID，background wrapper 还调用 cmd.exe。先参数化或建立 Mac 专用入口，并保留未保存状态保护。
+上述入口现使用 tests/native-config.mjs 的参数及身份核对。Mac 原生隔离实例使用 loopback CDP，background wrapper 保持同一持久 session 的 focus emulation 并在 finally 恢复。新增 test:native:lifecycle 专门核验 Mac 保存及窗口生命周期。
 
-`scripts/deploy.mjs` 默认 Windows 测试库，可用 OBSIDIAN_VAULT_PATH 覆盖，但部署脚本仍固定 `.obsidian`。运行时支持实际 Vault.configDir 不代表部署脚本也已经支持自定义配置目录。请先确认目标测试库和配置目录再运行部署。
+`scripts/deploy.mjs` 使用 OBSIDIAN_VAULT_PATH 与 OBSIDIAN_CONFIG_DIR，Mac 不选默认库且限于独立测试库。运行前通过实际 app.vault 身份核对，并拒绝启用中插件和所有活动 Reader。
 
 ## 安全部署与数据规则
 
 - 使用独立测试库和 fixture 副本；不要对用户书籍原件做写入验收。
-- 部署前先确认所有 Reader 已保存，并关闭或安全禁用插件。deploy 脚本不替操作者检查所有活跃未保存视图。
+- 部署前先确认所有 Reader 已保存，并关闭或安全禁用插件。deploy 脚本拒绝任何活动 Reader，但保存和关闭仍由操作者先完成。
 - 旧插件连同自有缓存会移动到项目 `.deploy-backups/`，可恢复；不是永久删除。
 - 替换磁盘 manifest 后，运行中的 Obsidian 可能仍缓存旧 manifest。检查磁盘、manifest map、运行实例三者一致；若 CLI 可用，安全 reload 后再次确认。
 - CLI/CDP 只用于测试，不是最终插件依赖。Windows background wrapper 仅在开发测试期间做 focus emulation，不应搬入生产逻辑或冒充真正前台/移动验收。
@@ -360,8 +384,8 @@ git diff --check
 
 项目和新增宿主代码为 Apache-2.0，第三方字体、色彩和解码器的原许可证保留。三个发布文件并不自动保证社区目录审核通过；当前未获得官方审核批准。资源释放仅物化已经随包提供的代码，不下载或自更新外部代码。
 
-## 给 Mac Codex 的接续指令
+## 历史给 Mac Codex 的接续指令（已被本阶段范围覆盖）
 
-可将以下内容作为新会话的用户消息。部署和具体实现仍须遵循该会话的授权及用户指定路径。
+以下保留最初的接续指令，不再作为当前实施范围。新会话应使用上文 macOS 阶段更新，部署和具体实现仍须遵循该会话的授权及用户指定路径。
 
 > 你接续开发 https://github.com/XxX-42/26_28_ObReader 。先确认最新 main，完整阅读 MACOS_HANDOFF.md、README.md 和 vendor/pdfjs-generic-legacy/PROVENANCE.md，再检查 Git 状态及运行入口。当前产品基线为 0.1.4，产品提交 85da554；Windows 已通过核心回归，但 macOS/iOS/iPadOS 尚未原生验收。目标是同一组三文件插件离线支持 macOS 和 iOS/iPadOS，保留正常打开 PDF、五种标准批注、12345 快捷键、保存重开和二次编辑。先确定我的 Mac 开发目录、独立测试库、最低系统版本和可用设备；不要把 Windows D 盘路径或原生脚本直接搬过来。按交接说明先建立 Mac 桌面基线，再移除移动端 Node 依赖并验证真实 Obsidian 资源和 Worker 链路，然后处理触控、软键盘、窗口与保存生命周期。不得损坏用户 PDF、扰动正常浏览、删减完整资源或换成上游未定制 PDF.js。具体审计和开发使用可用的 Luna Max 子代理，保持验证证据和未通过项清晰，不能仅改 isDesktopOnly 就宣布适配完成。

@@ -27,7 +27,7 @@ export const builtMainPath = path.join(
 const externalRequire = createRequire(builtMainPath);
 
 export async function readBuiltMain() {
-  return readFile(builtMainPath, "utf8");
+  return readFile(process.env.PDF_READER_TEST_MAIN || builtMainPath, "utf8");
 }
 
 export function readPayloadFromMain(mainSource) {
@@ -137,13 +137,18 @@ export function loadBundledPlugin(mainSource, adapter, manifest = null) {
       viewFactory = factory;
     }
     addCommand() {}
+    addSettingTab() {}
     registerEvent() {}
+    async loadData() { return null; }
+    async saveData() {}
   }
 
   const obsidian = {
     EditableFileView,
     Notice: class Notice {},
     Plugin,
+    PluginSettingTab: class PluginSettingTab {},
+    Setting: class Setting {},
     TFile,
     WorkspaceLeaf,
     normalizePath: (value) => value.replaceAll("\\", "/"),
@@ -161,6 +166,7 @@ export function loadBundledPlugin(mainSource, adapter, manifest = null) {
       configDir: ".obsidian",
       adapter,
       getAbstractFileByPath: (filePath) => files.get(filePath) ?? null,
+      on: () => ({}),
     },
     workspace: {
       getActiveFile: () => null,

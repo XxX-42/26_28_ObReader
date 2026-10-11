@@ -9,18 +9,21 @@ import {
   readdir,
   writeFile,
 } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertNativeVaultIdentity,
+  invokeNativeCli,
+  nativeConfig,
+} from "./native-config.mjs";
+import { connectToIsolatedObsidian } from "./native-cdp-transport.mjs";
 
 // Native acceptance test for a community release containing only main.js,
 // manifest.json, and styles.css. It intentionally refuses to clean old cache
 // data or overwrite existing vault files; use a fresh three-file installation.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = path.join(root, "dist", "pdf-web-reader");
-const vault = "D:\\Documents\\Obsidian\\测试插件";
-const vaultId = "d9f81db5f3fef6ee";
-const cli = "D:\\Applications\\Obsidian\\Obsidian.com";
+const { vault, vaultSelector: vaultId, cli, configDir } = nativeConfig;
 const pluginId = "pdf-web-reader";
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
@@ -46,6 +49,14 @@ const toolbarIds = [
   "editorFreeTextButton",
 ];
 const corruptedAssetPath = "web/images/toolbarButton-editorSquare.svg";
+// Set this to 1 for hidden-window validation; focus emulation is disabled in finally.
+const backgroundFocusValue =
+  process.env.PDF_READER_NATIVE_BACKGROUND_FOCUS || "0";
+assert.ok(
+  ["0", "1"].includes(backgroundFocusValue),
+  "PDF_READER_NATIVE_BACKGROUND_FOCUS must be 0 or 1",
+);
+const backgroundFocusRequested = backgroundFocusValue === "1";
 const corruptionBytes = Buffer.from(
   `native-threefile-test-corruption:${stamp}`,
   "utf8",
@@ -64,7 +75,8 @@ await mkdir(artifacts, { recursive: true });
 
 const result = {
   startedAt: new Date().toISOString(),
-  app: cli,
+  app: nativeConfig.cdpUrl || cli,
+  driver: nativeConfig.cdpUrl ? "isolated-cdp" : "obsidian-cli-cdp",
   appVaultId: vaultId,
   expectedVaultPath: vault,
   releaseDirectory: path.relative(root, releaseRoot),
@@ -73,22 +85,16 @@ const result = {
 };
 
 function invokeCli(args, timeout = 20_000) {
-  const processResult = spawnSync(cli, [`vault=${vaultId}`, ...args], {
-    encoding: "utf8",
-    timeout,
-    windowsHide: true,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (processResult.error) throw processResult.error;
-  if (processResult.status !== 0) {
-    throw new Error(
-      `Obsidian CLI failed (${processResult.status}): ${processResult.stderr || processResult.stdout}`,
-    );
-  }
-  return processResult.stdout.trim();
+  return invokeNativeCli(args, timeout);
 }
 
-function cdp(method, params = {}, timeout = 20_000) {
+let persistentCdp = null;
+
+async function cdp(method, params = {}, timeout = 20_000) {
+  if (persistentCdp) {
+    const response = await persistentCdp.send(method, params);
+    return response.result ?? response;
+  }
   const output = invokeCli(
     ["dev:cdp", `method=${method}`, `params=${JSON.stringify(params)}`],
     timeout,
@@ -104,8 +110,8 @@ function cdp(method, params = {}, timeout = 20_000) {
   return JSON.parse(output.slice(start, end + 1));
 }
 
-function runtime(expression, timeout = 30_000) {
-  const response = cdp(
+async function runtime(expression, timeout = 30_000) {
+  const response = await cdp(
     "Runtime.evaluate",
     {
       expression,
@@ -123,8 +129,8 @@ function runtime(expression, timeout = 30_000) {
   return response.result?.value;
 }
 
-function evalJson(expression, timeout = 30_000) {
-  const value = runtime(expression, timeout);
+async function evalJson(expression, timeout = 30_000) {
+  const value = await runtime(expression, timeout);
   if (typeof value !== "string") {
     throw new Error(
       `Expected JSON from Obsidian, got ${typeof value}: ${String(value)}`,
@@ -176,6 +182,7 @@ async function snapshot() {
       configDir: app.vault.configDir,
       visibility: document.visibilityState,
       hidden: document.hidden,
+      hasFocus: document.hasFocus(),
       enabled: app.plugins.enabledPlugins.has(${JSON.stringify(pluginId)}),
       version: plugin?.manifest?.version || null,
       leaves,
@@ -339,7 +346,7 @@ async function detachExactSavedTestViews(
   resultField = "detachedInitialReaderViews",
 ) {
   for (const view of proof) {
-    const detached = runtime(`(() => {
+    const detached = await runtime(`(() => {
       const leaf = app.workspace.getLeavesOfType(${JSON.stringify(viewType)})
         .find(candidate => candidate.id === ${JSON.stringify(view.leafId)} &&
           (candidate.view?.requestedPath || candidate.view?.file?.path) === ${JSON.stringify(view.path)});
@@ -468,6 +475,17 @@ async function inspectActiveViewer(relativePath) {
     const view = leaf?.view;
     const frame = view?.iframe?.contentWindow;
     const pdfApp = frame?.PDFViewerApplication;
+    const outerContent = view?.contentEl;
+    const outerStyle = outerContent ? getComputedStyle(outerContent) : null;
+    const iframe = view?.iframe;
+    const iframeRect = iframe?.getBoundingClientRect();
+    const buttonRect = id => {
+      const element = frame?.document?.getElementById(id);
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom,
+        width: rect.width, height: rect.height };
+    };
     const resourceUrls = frame?.performance?.getEntriesByType('resource')
       .map(entry => entry.name) || [];
     const cache = view?.assetCache || null;
@@ -476,6 +494,22 @@ async function inspectActiveViewer(relativePath) {
       path: view?.requestedPath || null,
       outerVisibility: document.visibilityState,
       frameVisibility: frame?.document?.visibilityState || null,
+      outerContentPadding: outerStyle ? {
+        top: outerStyle.paddingTop,
+        right: outerStyle.paddingRight,
+        bottom: outerStyle.paddingBottom,
+        left: outerStyle.paddingLeft,
+      } : null,
+      iframe: iframeRect ? {
+        x: iframeRect.x, y: iframeRect.y, right: iframeRect.right,
+        bottom: iframeRect.bottom, width: iframeRect.width,
+        height: iframeRect.height, clientWidth: iframe.clientWidth,
+      } : null,
+      frameViewport: frame ? { width: frame.innerWidth, height: frame.innerHeight } : null,
+      toolbarGeometry: {
+        toolbar: buttonRect('toolbarContainer'),
+        buttons: ${JSON.stringify(toolbarIds)}.map(id => ({ id, rect: buttonRect(id) })),
+      },
       cache,
       workerPort: pdfApp?.pdfLoadingTask?._worker?.port?.constructor?.name || null,
       toolbar: ${JSON.stringify(toolbarIds)}.map(id => ({
@@ -490,6 +524,39 @@ async function inspectActiveViewer(relativePath) {
       canvases: frame?.document?.querySelectorAll('.page canvas').length || 0,
     };
   })())`);
+}
+
+function assertViewerChromeLayout(state, label) {
+  assert.deepEqual(
+    state.outerContentPadding,
+    { top: "0px", right: "0px", bottom: "0px", left: "0px" },
+    `${label} outer content must have zero computed padding`,
+  );
+  assert.ok(state.iframe?.width > 0, `${label} iframe must have a non-zero rendered width`);
+  assert.ok(state.frameViewport?.width > 0, `${label} iframe document must have a non-zero viewport width`);
+  assert.ok(
+    Math.abs(state.iframe.width - state.frameViewport.width) <= 1,
+    `${label} iframe viewport should match its actual frame width: ${JSON.stringify({ iframe: state.iframe, frameViewport: state.frameViewport })}`,
+  );
+  const bounds = state.frameViewport;
+  const rects = [
+    { id: "toolbarContainer", rect: state.toolbarGeometry?.toolbar },
+    ...(state.toolbarGeometry?.buttons || []),
+  ];
+  assert.equal(
+    state.toolbarGeometry?.buttons?.length,
+    toolbarIds.length,
+    `${label} must expose all five editor tool button rectangles`,
+  );
+  for (const { id, rect } of rects) {
+    assert.ok(rect, `${label} ${id} must have a rendered rectangle`);
+    assert.ok(rect.width > 0 && rect.height > 0, `${label} ${id} must be visible`);
+    assert.ok(rect.x >= -0.5 && rect.y >= -0.5,
+      `${label} ${id} starts outside the iframe viewport: ${JSON.stringify({ rect, bounds })}`);
+    assert.ok(rect.right <= bounds.width + 0.5 && rect.bottom <= bounds.height + 0.5,
+      `${label} ${id} extends outside the iframe viewport: ${JSON.stringify({ rect, bounds })}`);
+  }
+  state.narrowToolbarViewport = state.frameViewport.width <= 720;
 }
 
 function safeVaultRelativePath(relativePath) {
@@ -703,11 +770,11 @@ async function validateExtractedAssets(cache, expected) {
 
 async function captureScreenshotIfTestViewIsActive() {
   try {
-    const activePath = runtime(
+    const activePath = await runtime(
       "app.workspace.activeLeaf?.view?.requestedPath || app.workspace.activeLeaf?.view?.file?.path || null",
     );
     if (activePath !== testPdf) return null;
-    const response = cdp("Page.captureScreenshot", {
+    const response = await cdp("Page.captureScreenshot", {
       format: "png",
       captureBeyondViewport: false,
     });
@@ -729,14 +796,59 @@ let savedCorruptedAsset = null;
 let savedCorruptedAssetPath = null;
 let passed = false;
 let failure = null;
+let focusEmulationCleanupRequired = false;
 
 try {
-  const initial = await snapshot();
-  assert.equal(
-    path.resolve(initial.vaultPath),
-    path.resolve(vault),
-    "CLI must target only the explicit Obsidian test vault",
-  );
+  let initial = await snapshot();
+  assertNativeVaultIdentity({
+    vault: initial.vaultPath,
+    configDir: initial.configDir,
+  });
+  result.checks.preflightBeforeFocus = {
+    ...initial,
+    releaseRoot,
+  };
+  if (backgroundFocusRequested) {
+    assert.ok(
+      nativeConfig.cdpUrl,
+      "Background focus mode requires PDF_READER_CDP_URL so focus emulation can remain on one identity-checked CDP session",
+    );
+    persistentCdp = await connectToIsolatedObsidian({
+      cdpUrl: nativeConfig.cdpUrl,
+      expectedVault: nativeConfig.vault,
+      expectedConfigDir: nativeConfig.configDir,
+      vaultSelector: nativeConfig.vaultSelector,
+      timeoutMs: 30_000,
+    });
+    focusEmulationCleanupRequired = true;
+    await cdp("Emulation.setFocusEmulationEnabled", { enabled: true });
+    initial = await snapshot();
+    assertNativeVaultIdentity({
+      vault: initial.vaultPath,
+      configDir: initial.configDir,
+    });
+    result.checks.backgroundFocus = {
+      optIn: true,
+      mode: "Emulation.setFocusEmulationEnabled",
+      enabled: true,
+      before: {
+        visibility: result.checks.preflightBeforeFocus.visibility,
+        hasFocus: result.checks.preflightBeforeFocus.hasFocus,
+      },
+      after: {
+        visibility: initial.visibility,
+        hasFocus: initial.hasFocus,
+      },
+      cleanup: "always disabled in finally",
+    };
+  } else {
+    result.checks.backgroundFocus = {
+      optIn: false,
+      mode: "disabled",
+      enabled: false,
+      cleanup: "not requested",
+    };
+  }
   result.checks.preflight = {
     ...initial,
     releaseRoot,
@@ -747,7 +859,7 @@ try {
     "Obsidian is hidden; refusing to create a test PDF until the target vault window is visible",
   );
   assert.equal(initial.hidden, false);
-  assert.equal(initial.configDir, ".obsidian");
+  assert.equal(initial.configDir, configDir);
   assert.equal(
     initial.enabled,
     false,
@@ -813,9 +925,9 @@ try {
     ),
   );
 
-  cdp("Network.enable");
+  await cdp("Network.enable");
   networkBlocked = true;
-  cdp("Network.setBlockedURLs", {
+  await cdp("Network.setBlockedURLs", {
     urls: ["http://*", "https://*", "ws://*", "wss://*"],
   });
   result.checks.network = {
@@ -852,6 +964,7 @@ try {
     60_000,
   );
   assert.equal(firstViewer.path, testPdf);
+  assertViewerChromeLayout(firstViewer, "first native Viewer");
   assert.equal(
     firstViewer.workerPort,
     "Worker",
@@ -882,6 +995,11 @@ try {
     ready: firstViewer.ready,
     outerVisibility: firstViewer.outerVisibility,
     frameVisibility: firstViewer.frameVisibility,
+    outerContentPadding: firstViewer.outerContentPadding,
+    iframe: firstViewer.iframe,
+    frameViewport: firstViewer.frameViewport,
+    toolbarGeometry: firstViewer.toolbarGeometry,
+    narrowToolbarViewport: firstViewer.narrowToolbarViewport,
     workerPort: firstViewer.workerPort,
     loadedPages: firstViewer.loadedPages,
     pageElements: firstViewer.pageElements,
@@ -925,8 +1043,8 @@ try {
     sentinelSha256: sha256(corruptionBytes),
   };
 
-  // Obsidian unload detaches this plugin's Reader leaves. Only proceed when
-  // every current Reader leaf is an already-registered test PDF and byte-clean.
+  // Prove the owned PDF is byte-clean and finish its controlled close before
+  // disabling. Plugin unload can bypass asynchronous leaf teardown protection.
   const beforeDisable = await inspectReaderViews(
     await registeredTestPdfPaths(),
   );
@@ -937,6 +1055,7 @@ try {
   );
   assert.equal(beforeDisable[0].path, testPdf);
   result.checks.savedBeforeRepairReload = beforeDisable;
+  await detachExactSavedTestViews(beforeDisable, "detachedBeforeRepairReload");
   pluginDisabledByTest = true;
   invokeCli(["plugin:disable", `id=${pluginId}`], 60_000);
   await waitFor(
@@ -976,6 +1095,7 @@ try {
     60_000,
   );
   assert.equal(repairedViewer.workerPort, "Worker");
+  assertViewerChromeLayout(repairedViewer, "reopened native Viewer");
   const repairedCache = await validateExtractedAssets(
     repairedViewer.cache,
     expectedAssets,
@@ -1007,6 +1127,11 @@ try {
   result.checks.reloadedViewer = {
     outerVisibility: repairedViewer.outerVisibility,
     frameVisibility: repairedViewer.frameVisibility,
+    outerContentPadding: repairedViewer.outerContentPadding,
+    iframe: repairedViewer.iframe,
+    frameViewport: repairedViewer.frameViewport,
+    toolbarGeometry: repairedViewer.toolbarGeometry,
+    narrowToolbarViewport: repairedViewer.narrowToolbarViewport,
     workerPort: repairedViewer.workerPort,
     loadedPages: repairedViewer.loadedPages,
     pageElements: repairedViewer.pageElements,
@@ -1064,11 +1189,49 @@ try {
   }
   if (networkBlocked) {
     try {
-      cdp("Network.setBlockedURLs", { urls: [] });
-      cdp("Network.disable");
+      await cdp("Network.setBlockedURLs", { urls: [] });
+      await cdp("Network.disable");
       result.networkBlockingRestored = true;
     } catch (restoreError) {
       result.networkBlockingRestoreError = restoreError.message;
+      passed = false;
+      failure ||= restoreError;
+    }
+  }
+  if (focusEmulationCleanupRequired) {
+    try {
+      await persistentCdp.send("Emulation.setFocusEmulationEnabled", {
+        enabled: false,
+      });
+      const afterFocusDisable = await snapshot();
+      assertNativeVaultIdentity({
+        vault: afterFocusDisable.vaultPath,
+        configDir: afterFocusDisable.configDir,
+      });
+      result.checks.backgroundFocus = {
+        ...result.checks.backgroundFocus,
+        disabledInFinally: true,
+        afterDisable: {
+          visibility: afterFocusDisable.visibility,
+          hasFocus: afterFocusDisable.hasFocus,
+        },
+      };
+      focusEmulationCleanupRequired = false;
+    } catch (restoreError) {
+      result.checks.backgroundFocusDisableError = restoreError.stack || String(restoreError);
+      passed = false;
+      failure ||= restoreError;
+    }
+  }
+  if (persistentCdp) {
+    try {
+      persistentCdp.close();
+      result.checks.backgroundFocusCdpClosed = true;
+      persistentCdp = null;
+    } catch (closeError) {
+      result.checks.backgroundFocusCdpCloseError = closeError.message;
+      passed = false;
+      failure ||= closeError;
     }
   }
   result.finishedAt = new Date().toISOString();
@@ -1084,4 +1247,5 @@ try {
   }
 }
 
-console.log(`Native three-file release test passed: ${resultPath}`);
+console.log(`Native three-file release test ${result.status}: ${resultPath}`);
+if (result.status !== "passed") process.exitCode = 1;

@@ -8,8 +8,8 @@
     "test:release": "npm run build && npm test && npm run test:offline",
     "test:offline": "node tests/offline-smoke.mjs",
     "test:native": "node tests/native-obsidian-smoke.mjs && node tests/native-default-routing.mjs",
+    "test:native:lifecycle": "node tests/native-macos-lifecycle.mjs",
     "test:native:background": "node tests/native-background.mjs",
-    "test:native:autosave": "node tests/native-autosave.mjs",
     "test:native:release": "node tests/native-threefile-release.mjs",
     "deploy": "node scripts/deploy.mjs"
   },

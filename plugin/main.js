@@ -7,10 +7,13 @@ const {
   EditableFileView,
   Notice,
   Plugin,
+  PluginSettingTab,
+  Setting,
   TFile,
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
+const crypto = require("node:crypto");
 
 /* BUILD:ASSET_RUNTIME_REQUIRE */ const {
   ensureViewerAssets,
@@ -19,22 +22,6 @@ const {
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
-
-// All views of a TFile share one check-and-write queue. The object identity
-// survives renames; a path-keyed queue would split during a rename.
-const vaultSaveQueues = new WeakMap();
-async function withFileSaveLock(vault, file, operation) {
-  let queues = vaultSaveQueues.get(vault);
-  if (!queues) vaultSaveQueues.set(vault, (queues = new WeakMap()));
-  const previous = queues.get(file) || Promise.resolve();
-  const pending = previous.catch(() => {}).then(operation);
-  queues.set(file, pending);
-  try {
-    return await pending;
-  } finally {
-    if (queues.get(file) === pending) queues.delete(file);
-  }
-}
 
 function isPdfFile(file) {
   return file instanceof TFile && file.extension.toLowerCase() === "pdf";
@@ -53,6 +40,88 @@ function resolvePdfFile(plugin, fileOrPath) {
   return isPdfFile(file) ? file : null;
 }
 
+function isPopoutWindow(ownerWindow) {
+  try {
+    return ownerWindow?.document?.body?.classList?.contains("is-popout-window") === true;
+  } catch {
+    return false;
+  }
+}
+
+function findPopoutSplit(leaf, ownerWindow, workspace) {
+  if (!leaf || !ownerWindow || !isPopoutWindow(ownerWindow)) return null;
+  const candidates = [];
+  const seen = new Set();
+  const add = (candidate) => {
+    if (candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  };
+  try {
+    add(leaf.getContainer?.());
+  } catch {
+    // Fall through to the public leaf parent/root relationships.
+  }
+  try {
+    add(leaf.getRoot?.());
+  } catch {
+    // Fall through to the parent chain.
+  }
+  const ancestors = new Set();
+  for (
+    let current = leaf;
+    current && !ancestors.has(current);
+    current = current.parent
+  ) {
+    ancestors.add(current);
+    add(current);
+  }
+
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.win === ownerWindow &&
+        candidate.workspace === workspace &&
+        typeof candidate.close === "function",
+    ) || null
+  );
+}
+
+function createOwnerWindowMessageSender(ownerWindow) {
+  const FunctionConstructor = ownerWindow?.Function;
+  if (typeof FunctionConstructor !== "function") return null;
+  try {
+    // The bridge accepts messages only from its actual parent window. A
+    // function compiled in Obsidian's main window keeps that window as
+    // event.source after the iframe is adopted by a popout, so compile this
+    // tiny static trampoline in the current owner window's realm instead.
+    return FunctionConstructor(
+      "target",
+      "message",
+      "transfer",
+      `try {
+        if (transfer && transfer.length) {
+          target.postMessage(message, "*", transfer);
+        } else {
+          target.postMessage(message, "*");
+        }
+        return true;
+      } catch (error) {
+        if (!transfer || transfer.length === 0) return false;
+        try {
+          target.postMessage(message, "*");
+          return true;
+        } catch {
+          return false;
+        }
+      }`,
+    );
+  } catch {
+    return null;
+  }
+}
+
 function installPdfOpenRouting(plugin) {
   const prototype = WorkspaceLeaf?.prototype;
   if (!prototype || typeof prototype.setViewState !== "function") {
@@ -64,61 +133,202 @@ function installPdfOpenRouting(plugin) {
     plugin,
     prototype,
     originalSetViewState: prototype.setViewState,
-    originalDetach: prototype.detach,
     setViewStateWrapper: null,
+    originalDetach: prototype.detach,
+    detachWrapper: null,
+    detachOperations: new WeakMap(),
+    workspace: plugin.app?.workspace || null,
+    originalMoveLeafToPopout: plugin.app?.workspace?.moveLeafToPopout,
+    originalMoveLeafToPopoutDescriptor: plugin.app?.workspace
+      ? Object.getOwnPropertyDescriptor(
+          plugin.app.workspace,
+          "moveLeafToPopout",
+        )
+      : null,
+    moveLeafToPopoutWrapper: null,
   };
 
-  routing.setViewStateWrapper = async function (viewState, eState) {
+  routing.setViewStateWrapper = function (viewState, eState) {
     const activePlugin = routing.plugin;
-    const nextPath = viewState?.state?.file ?? viewState?.state?.path;
-    if (
-      routing.active &&
-      this.app === activePlugin?.app &&
-      this.view instanceof PdfReaderView &&
-      (viewState?.type !== VIEW_TYPE ||
-        (nextPath && resolvePdfFile(activePlugin, nextPath) !== this.view.file))
-    ) {
-      if (!(await this.view.flushBeforeLeave())) return;
-    }
-    if (
-      !routing.active ||
-      !activePlugin ||
-      this.app !== activePlugin.app ||
-      viewState?.type !== "pdf"
-    ) {
+    if (!routing.active || !activePlugin || this.app !== activePlugin.app) {
       return routing.originalSetViewState.call(this, viewState, eState);
     }
-    const file = resolvePdfFile(
-      activePlugin,
-      viewState.state?.file ?? viewState.state?.path,
-    );
-    if (!file) {
-      return routing.originalSetViewState.call(this, viewState, eState);
+
+    let routedViewState = viewState;
+    if (viewState?.type === "pdf") {
+      const file = resolvePdfFile(
+        activePlugin,
+        viewState.state?.file ?? viewState.state?.path,
+      );
+      if (file) {
+        routedViewState = {
+          ...viewState,
+          type: VIEW_TYPE,
+          state: { ...viewState.state, file: file.path, path: file.path },
+        };
+      }
     }
-    return routing.originalSetViewState.call(
-      this,
-      {
-        ...viewState,
-        type: VIEW_TYPE,
-        state: { ...viewState.state, file: file.path, path: file.path },
-      },
-      eState,
+
+    const currentView = this.view;
+    if (!(currentView instanceof PdfReaderView)) {
+      return routing.originalSetViewState.call(this, routedViewState, eState);
+    }
+    const targetFile =
+      routedViewState?.type === VIEW_TYPE
+        ? resolvePdfFile(
+            activePlugin,
+            routedViewState.state?.file ?? routedViewState.state?.path,
+          )
+        : null;
+    const changesDocument = Boolean(
+      targetFile &&
+        (currentView.documentFile !== targetFile ||
+          currentView.requestedPath !== targetFile.path),
     );
+    const leavesReader = routedViewState?.type !== VIEW_TYPE;
+    if (!leavesReader && !changesDocument) {
+      return routing.originalSetViewState.call(this, routedViewState, eState);
+    }
+
+    const capturedDocumentId = currentView.documentId;
+    const capturedOpenRequest = currentView.openRequest;
+    return currentView
+      .prepareControlledClose("view-transition")
+      .then((prepared) => {
+        if (!prepared) return undefined;
+        if (
+          this.view !== currentView ||
+          currentView.documentId !== capturedDocumentId ||
+          currentView.openRequest !== capturedOpenRequest
+        ) {
+          currentView.cancelPreparedClose(
+            capturedDocumentId,
+            capturedOpenRequest,
+          );
+          return undefined;
+        }
+        let result;
+        try {
+          result = routing.originalSetViewState.call(
+            this,
+            routedViewState,
+            eState,
+          );
+        } catch (error) {
+          currentView.cancelPreparedClose(
+            capturedDocumentId,
+            capturedOpenRequest,
+          );
+          throw error;
+        }
+        return Promise.resolve(result).catch((error) => {
+          currentView.cancelPreparedClose(
+            capturedDocumentId,
+            capturedOpenRequest,
+          );
+          throw error;
+        });
+      });
   };
 
   prototype.setViewState = routing.setViewStateWrapper;
+
   if (typeof routing.originalDetach === "function") {
-    routing.detachWrapper = async function (...args) {
+    routing.detachWrapper = function (...args) {
+      const activePlugin = routing.plugin;
+      const view = this.view;
       if (
-        routing.active &&
-        this.app === routing.plugin?.app &&
-        this.view instanceof PdfReaderView
+        !routing.active ||
+        !activePlugin ||
+        this.app !== activePlugin.app ||
+        !(view instanceof PdfReaderView)
       ) {
-        if (!(await this.view.flushBeforeLeave())) return;
+        return routing.originalDetach.apply(this, args);
       }
-      return routing.originalDetach.apply(this, args);
+
+      const existing = routing.detachOperations.get(this);
+      if (existing) return existing;
+
+      const documentId = view.documentId;
+      const openRequest = view.openRequest;
+      if (
+        this.view === view &&
+        view.documentId === documentId &&
+        view.openRequest === openRequest &&
+        view.hasPreparedClose(documentId, openRequest)
+      ) {
+        // Obsidian's popout close iterates leaves without awaiting detach().
+        // Once this exact document session is durably prepared, preserve the
+        // SDK's synchronous detach behavior so its parent can close safely.
+        return routing.originalDetach.apply(this, args);
+      }
+      const operation = (async () => {
+        const prepared = await view.prepareControlledClose("detach");
+        if (!prepared) return false;
+        if (
+          !routing.active ||
+          routing.plugin !== activePlugin ||
+          this.app !== activePlugin.app
+        ) {
+          view.cancelPreparedClose(documentId, openRequest);
+          return routing.originalDetach.apply(this, args);
+        }
+        if (
+          this.view !== view ||
+          view.documentId !== documentId ||
+          view.openRequest !== openRequest
+        ) {
+          view.cancelPreparedClose(documentId, openRequest);
+          return false;
+        }
+        try {
+          return await routing.originalDetach.apply(this, args);
+        } catch (error) {
+          view.cancelPreparedClose(documentId, openRequest);
+          throw error;
+        }
+      })();
+      routing.detachOperations.set(this, operation);
+      return operation.finally(() => {
+        if (routing.detachOperations.get(this) === operation) {
+          routing.detachOperations.delete(this);
+        }
+      });
     };
     prototype.detach = routing.detachWrapper;
+  }
+
+  if (typeof routing.originalMoveLeafToPopout === "function") {
+    routing.moveLeafToPopoutWrapper = function (leaf, ...args) {
+      const activePlugin = routing.plugin;
+      const originalMove = routing.originalMoveLeafToPopout;
+      if (
+        !routing.active ||
+        !activePlugin ||
+        this !== routing.workspace ||
+        leaf?.app !== activePlugin.app ||
+        !(leaf.view instanceof PdfReaderView)
+      ) {
+        return originalMove.apply(this, [leaf, ...args]);
+      }
+      return activePlugin.moveReaderToPopout(
+        this,
+        leaf,
+        originalMove,
+        args,
+      );
+    };
+    try {
+      Object.defineProperty(routing.workspace, "moveLeafToPopout", {
+        configurable: true,
+        enumerable:
+          routing.originalMoveLeafToPopoutDescriptor?.enumerable ?? false,
+        writable: true,
+        value: routing.moveLeafToPopoutWrapper,
+      });
+    } catch {
+      routing.moveLeafToPopoutWrapper = null;
+    }
   }
   return routing;
 }
@@ -135,8 +345,28 @@ function restorePdfOpenRouting(routing) {
   if (
     routing.detachWrapper &&
     routing.prototype.detach === routing.detachWrapper
-  )
+  ) {
     routing.prototype.detach = routing.originalDetach;
+  }
+  if (
+    routing.moveLeafToPopoutWrapper &&
+    routing.workspace?.moveLeafToPopout ===
+      routing.moveLeafToPopoutWrapper
+  ) {
+    try {
+      if (routing.originalMoveLeafToPopoutDescriptor) {
+        Object.defineProperty(
+          routing.workspace,
+          "moveLeafToPopout",
+          routing.originalMoveLeafToPopoutDescriptor,
+        );
+      } else {
+        delete routing.workspace.moveLeafToPopout;
+      }
+    } catch {
+      // Preserve an outer SDK/plugin wrapper; the inactive shim delegates.
+    }
+  }
 }
 
 function escapeAttribute(value) {
@@ -159,14 +389,14 @@ function makeToken() {
 }
 
 function toArrayBuffer(value) {
-  if (value instanceof ArrayBuffer) {
-    return value;
+  // The viewer may be hosted in another Electron window/realm, where
+  // instanceof ArrayBuffer is false even though the value is an ArrayBuffer.
+  if (Object.prototype.toString.call(value) === "[object ArrayBuffer]") {
+    return value.slice(0);
   }
   if (ArrayBuffer.isView(value)) {
-    return value.buffer.slice(
-      value.byteOffset,
-      value.byteOffset + value.byteLength,
-    );
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    return bytes.slice().buffer;
   }
   throw new Error("The PDF viewer returned invalid document data.");
 }
@@ -183,26 +413,86 @@ function bytesEqual(left, right) {
   return true;
 }
 
+function fingerprint(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+async function ensureAdapterDirectory(adapter, directoryPath) {
+  const segments = directoryPath.split("/");
+  let currentPath = "";
+  for (const segment of segments) {
+    currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+    if (!(await adapter.exists(currentPath))) {
+      await adapter.mkdir(currentPath);
+    }
+  }
+}
+
+function safeFileName(value) {
+  return String(value || "recovered.pdf").split(/[\\/]/).at(-1) || "recovered.pdf";
+}
+
+class PdfWebReaderSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    new Setting(containerEl)
+      .setName("自动保存 PDF 注释")
+      .setDesc("编辑后的 PDF 注释会自动写回原文件。关闭后可用 Cmd+S 手动保存。")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoSave)
+          .onChange((enabled) => this.plugin.setAutoSaveEnabled(enabled)),
+      );
+  }
+}
+
 class PdfReaderView extends EditableFileView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.token = makeToken();
+    this.documentId = makeToken();
+    this.rendererGeneration = makeToken();
     this.file = null;
     this.documentFile = null;
     this.requestedPath = null;
     this.navigationState = {};
     this.originalBytes = null;
     this.pendingBytes = null;
+    this.currentRevision = 0;
+    this.confirmedRevision = 0;
+    this.latestRecoveryDraft = null;
+    this.pendingOpenState = null;
+    this.popoutMoveTransaction = null;
+    this.rendererStateUnknown = false;
+    this.viewerDocumentHtml = null;
+    this.iframeLoadCount = 0;
+    this.iframeLoadListener = null;
+    this.awaitingRendererLoad = false;
+    this.lastOpenSentRequest = null;
     this.ready = false;
-    this.saving = false;
+    this.teardownStarted = false;
     this.openRequest = 0;
     this.resourcePromise = null;
     this._assetCache = null;
     this.iframe = null;
+    this.statusEl = null;
+    this.ownerWindow = null;
+    this.ownerWindowMessageSender = null;
+    this.flushRequests = new Map();
+    this.pendingSaves = 0;
+    this.preparedClose = null;
+    this.closePreparation = null;
+    this.failureNoticeShown = false;
+    this.bridgeTimeoutWindow = null;
+    this.bridgeTimeoutDeadline = null;
     this.messageListener = (event) => this.onMessage(event);
-    this.sessionId = null;
-    this.flushPending = null;
   }
 
   getViewType() {
@@ -210,7 +500,7 @@ class PdfReaderView extends EditableFileView {
   }
 
   getDisplayText() {
-    return this.file?.basename || "PDF 阅读器";
+    return this.documentFile?.basename || this.file?.basename || "PDF 阅读器";
   }
 
   getIcon() {
@@ -221,9 +511,13 @@ class PdfReaderView extends EditableFileView {
     return this._assetCache;
   }
 
+  get saving() {
+    return this.pendingSaves > 0;
+  }
+
   getState() {
     const baseState = super.getState();
-    const path = this.file?.path ?? this.requestedPath ?? null;
+    const path = this.requestedPath ?? this.file?.path ?? null;
     return {
       ...baseState,
       ...this.navigationState,
@@ -233,14 +527,7 @@ class PdfReaderView extends EditableFileView {
 
   async setState(state, result) {
     const file = resolvePdfFile(this.plugin, state?.file ?? state?.path);
-    if (
-      file &&
-      this.requestedPath &&
-      file !== this.file &&
-      !(await this.flushBeforeLeave())
-    )
-      return;
-    if (!file && (this.requestedPath || this.file)) {
+    if (!file && (this.requestedPath || this.documentFile || this.file)) {
       return;
     }
     const normalizedState = file
@@ -262,30 +549,64 @@ class PdfReaderView extends EditableFileView {
       file: file.path,
       path: file.path,
     };
-    if (this.documentFile !== file) {
+    if (this.requestedPath !== file.path) {
       await this.openFile(file);
     }
   }
 
   async onUnloadFile(file) {
-    const unloadingDocument = this.documentFile === file;
+    const documentId = this.documentId;
+    const openRequest = this.openRequest;
+    const wasCurrent =
+      this.documentFile === file || this.file === file || this.requestedPath === file.path;
+    // FileView may invoke this from super.onClose(). Once SDK teardown has
+    // started, the onClose flush result must stand; a second prepare request
+    // cannot veto destruction and can only fail against a detached iframe.
+    if (
+      wasCurrent &&
+      !this.teardownStarted &&
+      !this.hasPreparedClose(documentId, openRequest)
+    ) {
+      const prepared = await this.prepareControlledClose("view-transition");
+      if (!prepared) {
+        throw new Error("The PDF remains open because its latest changes were not saved or recovered.");
+      }
+    }
     await super.onUnloadFile(file);
-    if (unloadingDocument) {
+    if (wasCurrent) {
+      const preparedClose = this.preparedClose;
+      if (
+        preparedClose?.documentId === documentId &&
+        preparedClose?.openRequest === openRequest
+      ) {
+        preparedClose.unloaded = true;
+      }
       this.openRequest += 1;
       this.pendingBytes = null;
       this.originalBytes = null;
+      this.currentRevision = 0;
+      this.confirmedRevision = 0;
+      this.latestRecoveryDraft = null;
+      this.pendingOpenState = null;
+      this.rendererStateUnknown = false;
       this.requestedPath = null;
       this.documentFile = null;
-      this.sessionId = null;
       this.navigationState = {};
+      this.plugin.releaseDocumentBaseline(file.path, this);
     }
   }
 
   async onOpen() {
+    this.teardownStarted = false;
+    this.rendererGeneration = makeToken();
     await super.onOpen();
     this.contentEl.empty();
     this.contentEl.addClass("pdf-web-reader-content");
 
+    this.statusEl = this.contentEl.createDiv({
+      cls: "pdf-web-reader-status",
+      text: "正在加载 PDF 阅读器…",
+    });
     this.iframe = this.contentEl.createEl("iframe", {
       cls: "pdf-web-reader-frame",
       attr: {
@@ -295,20 +616,19 @@ class PdfReaderView extends EditableFileView {
           "allow-downloads allow-forms allow-modals allow-pointer-lock allow-same-origin allow-scripts",
       },
     });
-    window.addEventListener("message", this.messageListener);
+    this.bindOwnerWindow();
     const iframe = this.iframe;
+    this.iframeLoadCount = 0;
+    this.iframeLoadListener = () => this.onIframeLoad(iframe);
+    iframe.addEventListener?.("load", this.iframeLoadListener);
 
     try {
       const documentHtml = await this.createViewerDocument();
       if (this.iframe === iframe) {
+        this.viewerDocumentHtml = documentHtml;
         iframe.srcdoc = documentHtml;
-        this.bridgeTimeout = window.setTimeout(() => {
-          if (this.iframe === iframe && !this.ready) {
-            this.showError(
-              "PDF 阅读器未能启动。请检查插件内置的 Viewer 资源是否完整。",
-            );
-          }
-        }, 20000);
+        this.bridgeTimeoutDeadline = Date.now() + 20000;
+        this.scheduleBridgeTimeout();
       }
     } catch (error) {
       if (this.iframe === iframe) {
@@ -318,26 +638,597 @@ class PdfReaderView extends EditableFileView {
   }
 
   async onClose() {
-    await super.onClose();
-    this.flushPending?.finish(false);
-    window.removeEventListener("message", this.messageListener);
-    if (this.bridgeTimeout) {
-      window.clearTimeout(this.bridgeTimeout);
-      this.bridgeTimeout = null;
+    this.teardownStarted = true;
+    const closingPath = this.requestedPath || this.documentFile?.path || null;
+    const closeWasPrepared = this.isPreparedCloseForCurrent();
+    if (!closeWasPrepared) {
+      const flush = await this.flushDocument();
+      this.notifyFlushOutcome(flush);
     }
+    this.finishFlushRequests({ ok: false, dirty: true });
+    this.clearBridgeTimeout();
+    await super.onClose();
+    this.unbindOwnerWindow();
     if (this.iframe) {
+      this.iframe.removeEventListener?.("load", this.iframeLoadListener);
       this.iframe.srcdoc = "";
       this.iframe.remove();
       this.iframe = null;
     }
+    this.iframeLoadListener = null;
+    this.viewerDocumentHtml = null;
+    this.iframeLoadCount = 0;
     this.ready = false;
     this.openRequest += 1;
     this.pendingBytes = null;
     this.originalBytes = null;
+    this.currentRevision = 0;
+    this.confirmedRevision = 0;
+    this.latestRecoveryDraft = null;
+    this.pendingOpenState = null;
+    this.popoutMoveTransaction = null;
+    this.awaitingRendererLoad = false;
+    this.lastOpenSentRequest = null;
+    this.rendererStateUnknown = false;
     this.requestedPath = null;
-    this.sessionId = null;
+    this.documentFile = null;
     this.navigationState = {};
+    this.preparedClose = null;
+    this.closePreparation = null;
+    if (closingPath) this.plugin.releaseDocumentBaseline(closingPath, this);
+    this.plugin.views.delete(this);
     this.contentEl.removeClass("pdf-web-reader-content");
+  }
+
+  getOwnerWindow() {
+    try {
+      const frameWindow = this.iframe?.contentWindow;
+      if (frameWindow?.parent) return frameWindow.parent;
+    } catch {
+      // A detached or cross-origin frame may not expose its parent. Fall back
+      // to the iframe's owner document, which is more specific than contentEl.
+    }
+    return (
+      this.iframe?.ownerDocument?.defaultView ||
+      this.contentEl?.ownerDocument?.defaultView ||
+      globalThis.window ||
+      null
+    );
+  }
+
+  onIframeLoad(iframe) {
+    if (this.iframe !== iframe) return;
+    this.iframeLoadCount += 1;
+    // Obsidian can adopt the iframe after its synchronous move method returns.
+    // In that window, contentEl may still belong to the former document, while
+    // the iframe's active browsing context already has a different parent.
+    // Rebind before every early return so the new realm's one-shot `ready`
+    // message cannot be lost on the old owner window.
+    this.bindOwnerWindow();
+    if (this.popoutMoveTransaction) {
+      // The SDK adopts the iframe while the Reader is frozen. The move wrapper
+      // will install the exact reopen checkpoint after the synchronous move.
+      this.popoutMoveTransaction.realmReloaded = true;
+      return;
+    }
+    if (this.awaitingRendererLoad) {
+      this.awaitingRendererLoad = false;
+      if (this.bridgeTimeoutDeadline === null) {
+        this.bridgeTimeoutDeadline = Date.now() + 20000;
+      }
+      this.scheduleBridgeTimeout();
+      return;
+    }
+    if (this.iframeLoadCount === 1 || !this.ready) {
+      if (this.bridgeTimeoutDeadline === null) {
+        this.bridgeTimeoutDeadline = Date.now() + 20000;
+      }
+      this.scheduleBridgeTimeout();
+      return;
+    }
+
+    // A renderer can be adopted or reloaded outside the controlled SDK move
+    // path. Reopen the last durable bytes and warn that edits newer than the
+    // saved/recovery checkpoint might not be in that renderer.
+    this.ready = false;
+    this.rendererStateUnknown = true;
+    this.preparedClose = null;
+    this.openRequest += 1;
+    const draft = this.latestRecoveryDraft;
+    const usableDraft = Boolean(
+      draft &&
+        draft.documentId === this.documentId &&
+        draft.revision === this.currentRevision &&
+        draft.revision > this.confirmedRevision &&
+        draft.baseFingerprint === fingerprint(this.originalBytes || []),
+    );
+    const bytes = usableDraft ? draft.bytes : this.originalBytes;
+    if (bytes) {
+      this.pendingOpenState = {
+        bytes: new Uint8Array(bytes),
+        revision: usableDraft ? draft.revision : this.confirmedRevision,
+        confirmedRevision: this.confirmedRevision,
+        restoreDirty: usableDraft,
+        restorePaused: usableDraft && draft.restorePaused,
+        sent: false,
+      };
+    }
+    this.clearBridgeTimeout();
+    this.bridgeTimeoutDeadline = Date.now() + 20000;
+    if (!this.rotateRendererGeneration()) {
+      this.showError(
+        "PDF 阅读器页面意外重载，但无法建立新的安全通信会话。请重新打开此 PDF。",
+      );
+      return;
+    }
+    this.awaitingRendererLoad = true;
+    this.iframe.srcdoc = this.viewerDocumentHtml;
+    this.scheduleBridgeTimeout();
+    this.showError(
+      usableDraft
+        ? "PDF 阅读器页面意外重载；已恢复最近的编辑副本，重载前未保存的额外更改可能未包含。"
+        : "PDF 阅读器页面意外重载；已重新打开最近确认保存的 PDF，重载前未提交的更改可能需要从恢复副本取回。",
+    );
+  }
+
+  rotateRendererGeneration() {
+    const currentHtml = this.viewerDocumentHtml;
+    const currentAttribute = `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`;
+    if (typeof currentHtml !== "string" || !currentHtml.includes(currentAttribute)) {
+      return false;
+    }
+    const nextGeneration = makeToken();
+    this.viewerDocumentHtml = currentHtml.replace(
+      currentAttribute,
+      `data-renderer-generation="${escapeAttribute(nextGeneration)}"`,
+    );
+    this.rendererGeneration = nextGeneration;
+    return true;
+  }
+
+  createPopoutMigrationState(prepared) {
+    if (
+      !prepared ||
+      prepared.documentId !== this.documentId ||
+      prepared.openRequest !== this.openRequest ||
+      !Number.isSafeInteger(prepared.revision) ||
+      prepared.revision < 0 ||
+      !this.originalBytes ||
+      !this.viewerDocumentHtml?.includes(
+        `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`,
+      )
+    ) {
+      return null;
+    }
+
+    const draft = this.latestRecoveryDraft;
+    if (prepared.recovered) {
+      if (
+        !draft ||
+        draft.documentId !== this.documentId ||
+        draft.revision !== prepared.revision ||
+        draft.revision <= this.confirmedRevision ||
+        draft.baseFingerprint !== fingerprint(this.originalBytes)
+      ) {
+        return null;
+      }
+      return {
+        bytes: new Uint8Array(draft.bytes),
+        revision: draft.revision,
+        confirmedRevision: this.confirmedRevision,
+        restoreDirty: true,
+        restorePaused: draft.restorePaused,
+      };
+    }
+
+    // A clean preparation must match the last original-PDF acknowledgement.
+    // Never substitute a recovery draft for the conflict-checking baseline.
+    if (
+      this.rendererStateUnknown ||
+      prepared.revision !== this.confirmedRevision ||
+      this.currentRevision !== this.confirmedRevision
+    ) {
+      return null;
+    }
+    return {
+      bytes: new Uint8Array(this.originalBytes),
+      revision: this.confirmedRevision,
+      confirmedRevision: this.confirmedRevision,
+      restoreDirty: false,
+      restorePaused: false,
+    };
+  }
+
+  restartViewerAfterPopoutMove(checkpoint, transaction) {
+    if (
+      !this.iframe ||
+      !this.viewerDocumentHtml ||
+      transaction.documentId !== this.documentId ||
+      transaction.openRequest !== this.openRequest
+    ) {
+      return false;
+    }
+    if (!this.rotateRendererGeneration()) return false;
+    this.openRequest += 1;
+    this.pendingBytes = null;
+    this.pendingOpenState = {
+      ...checkpoint,
+      openRequest: this.openRequest,
+      sent: false,
+    };
+    this.preparedClose = null;
+    this.closePreparation = null;
+    this.popoutMoveTransaction = null;
+    this.rendererStateUnknown = false;
+    this.awaitingRendererLoad = true;
+    this.ready = false;
+    this.currentRevision = checkpoint.revision;
+    this.confirmedRevision = checkpoint.confirmedRevision;
+    this.clearBridgeTimeout();
+    this.bridgeTimeoutDeadline = Date.now() + 20000;
+    this.bindOwnerWindow();
+    this.scheduleBridgeTimeout();
+    this.setStatus("正在恢复 PDF 阅读器…");
+    // Reassigning the cached srcdoc forces a fresh PDF.js realm in the new
+    // Obsidian window; its ready message will send the durable checkpoint.
+    this.iframe.srcdoc = this.viewerDocumentHtml;
+    return true;
+  }
+
+  bindOwnerWindow() {
+    const nextWindow = this.getOwnerWindow() || this.ownerWindow;
+    if (nextWindow === this.ownerWindow) {
+      if (!this.ownerWindowMessageSender) {
+        this.ownerWindowMessageSender = createOwnerWindowMessageSender(nextWindow);
+      }
+      this.plugin.registerPopoutCloseProtection(this, nextWindow);
+      return;
+    }
+    this.unbindOwnerWindow();
+    this.ownerWindow = nextWindow;
+    this.ownerWindowMessageSender = createOwnerWindowMessageSender(nextWindow);
+    this.ownerWindow?.addEventListener("message", this.messageListener);
+    this.plugin.registerPopoutCloseProtection(this, this.ownerWindow);
+    if (this.bridgeTimeoutDeadline !== null && !this.ready) {
+      this.scheduleBridgeTimeout();
+    }
+    for (const request of this.flushRequests.values()) {
+      this.scheduleFlushTimeout(request, this.ownerWindow);
+    }
+  }
+
+  unbindOwnerWindow() {
+    this.plugin.unregisterPopoutCloseProtection(this);
+    this.ownerWindow?.removeEventListener("message", this.messageListener);
+    this.ownerWindow = null;
+    this.ownerWindowMessageSender = null;
+  }
+
+  clearBridgeTimeout() {
+    if (this.bridgeTimeout !== null && this.bridgeTimeout !== undefined) {
+      this.bridgeTimeoutWindow?.clearTimeout(this.bridgeTimeout);
+    }
+    this.bridgeTimeout = null;
+    this.bridgeTimeoutWindow = null;
+    this.bridgeTimeoutDeadline = null;
+  }
+
+  scheduleBridgeTimeout() {
+    if (
+      this.bridgeTimeoutDeadline === null ||
+      !this.ownerWindow ||
+      !this.iframe ||
+      this.ready
+    ) {
+      return;
+    }
+    if (this.bridgeTimeout !== null && this.bridgeTimeout !== undefined) {
+      this.bridgeTimeoutWindow?.clearTimeout(this.bridgeTimeout);
+    }
+    const iframe = this.iframe;
+    const timerWindow = this.ownerWindow;
+    const delay = Math.max(0, this.bridgeTimeoutDeadline - Date.now());
+    let timer;
+    timer = timerWindow.setTimeout(() => {
+      if (
+        this.bridgeTimeoutWindow !== timerWindow ||
+        this.bridgeTimeout !== timer
+      ) {
+        return;
+      }
+      this.bridgeTimeout = null;
+      this.bridgeTimeoutWindow = null;
+      this.bridgeTimeoutDeadline = null;
+      if (this.iframe === iframe && !this.ready) {
+        this.showError(
+          "PDF 阅读器未能启动。请检查插件内置的 Viewer 资源是否完整。",
+        );
+      }
+    }, delay);
+    this.bridgeTimeout = timer;
+    this.bridgeTimeoutWindow = timerWindow;
+  }
+
+  scheduleFlushTimeout(request, timerWindow = this.ownerWindow) {
+    if (request.timer !== null && request.timer !== undefined) {
+      request.timerWindow?.clearTimeout(request.timer);
+      request.timer = null;
+      request.timerWindow = null;
+    }
+    if (!timerWindow) {
+      request.finish({ ok: false, dirty: true, timeout: true });
+      return;
+    }
+    const delay = Math.max(0, request.deadline - Date.now());
+    let timer;
+    timer = timerWindow.setTimeout(() => {
+      if (request.timerWindow !== timerWindow || request.timer !== timer) {
+        return;
+      }
+      request.finish({ ok: false, dirty: true, timeout: true });
+    }, delay);
+    request.timer = timer;
+    request.timerWindow = timerWindow;
+  }
+
+  finishFlushRequests(result) {
+    for (const request of [...this.flushRequests.values()]) {
+      request.finish(result);
+    }
+  }
+
+  async flushDocument(timeoutMs = 120000) {
+    if (!this.ready || !this.requestedPath || !this.iframe) {
+      return { ok: true, dirty: false };
+    }
+    const id = makeToken();
+    const ownerWindow = this.getOwnerWindow() || this.ownerWindow;
+    if (!ownerWindow) return { ok: false, dirty: true };
+    this.bindOwnerWindow();
+    const response = new Promise((resolve) => {
+      const request = {
+        id,
+        deadline: Date.now() + timeoutMs,
+        timer: null,
+        timerWindow: null,
+        finish: (result) => {
+          if (request.settled) return;
+          request.settled = true;
+          if (request.timer !== null && request.timer !== undefined) {
+            request.timerWindow?.clearTimeout(request.timer);
+          }
+          request.timer = null;
+          request.timerWindow = null;
+          if (this.flushRequests.get(id) === request) {
+            this.flushRequests.delete(id);
+          }
+          resolve(result);
+        },
+        settled: false,
+      };
+      this.flushRequests.set(id, request);
+      this.scheduleFlushTimeout(request, this.ownerWindow || ownerWindow);
+    });
+    if (
+      !this.postToViewer({
+        channel: CHANNEL,
+        type: "flush",
+        token: this.token,
+        documentId: this.documentId,
+        id,
+      })
+    ) {
+      this.flushRequests.get(id)?.finish({ ok: false, dirty: true });
+    }
+    return response;
+  }
+
+  isPreparedCloseForCurrent() {
+    const prepared = this.preparedClose;
+    if (!prepared || prepared.documentId !== this.documentId) return false;
+    if (prepared.openRequest === this.openRequest) return true;
+    return Boolean(
+      prepared.unloaded &&
+        this.requestedPath === null &&
+        this.openRequest === prepared.openRequest + 1,
+    );
+  }
+
+  hasPreparedClose(documentId, openRequest) {
+    return Boolean(
+      this.preparedClose?.documentId === documentId &&
+        this.preparedClose?.openRequest === openRequest,
+    );
+  }
+
+  sendCancelClose(request) {
+    if (!request?.iframe) return;
+    this.postToViewer(
+      {
+        channel: CHANNEL,
+        type: "cancel-close",
+        token: this.token,
+        id: request.id,
+        documentId: request.documentId,
+        openRequest: request.openRequest,
+      },
+      [],
+      request.iframe,
+    );
+  }
+
+  cancelPreparedClose(documentId, openRequest) {
+    const prepared = this.preparedClose;
+    if (
+      prepared?.documentId === documentId &&
+      prepared?.openRequest === openRequest
+    ) {
+      this.sendCancelClose(prepared);
+      this.preparedClose = null;
+    }
+  }
+
+  async prepareControlledClose(reason) {
+    const documentId = this.documentId;
+    const openRequest = this.openRequest;
+    if (this.hasPreparedClose(documentId, openRequest)) return true;
+    if (!this.ready) {
+      const draft = this.latestRecoveryDraft;
+      const exactDraft = Boolean(
+        draft &&
+          draft.documentId === documentId &&
+          draft.revision === this.currentRevision &&
+          draft.revision > this.confirmedRevision &&
+          draft.baseFingerprint === fingerprint(this.originalBytes || []),
+      );
+      if (this.pendingSaves > 0 || (this.currentRevision > this.confirmedRevision && !exactDraft)) {
+        new Notice(
+          "PDF 标签保持打开：阅读器正在恢复，且尚未确认最新更改已保存或写入恢复副本。",
+          8000,
+        );
+        return false;
+      }
+      this.preparedClose = {
+        id: null,
+        documentId,
+        openRequest,
+        revision: this.currentRevision,
+        recovered: exactDraft,
+        iframe: this.iframe,
+      };
+      return true;
+    }
+    if (!this.iframe) {
+      new Notice(
+        "PDF 标签保持打开：阅读器连接已断开，无法确认最新更改已保存或恢复。",
+        8000,
+      );
+      return false;
+    }
+
+    const inFlight = this.closePreparation;
+    if (
+      inFlight &&
+      inFlight.documentId === documentId &&
+      inFlight.openRequest === openRequest
+    ) {
+      return inFlight.promise;
+    }
+
+    const request = {
+      id: makeToken(),
+      documentId,
+      openRequest,
+      iframe: this.iframe,
+      deadline: Date.now() + 120000,
+      timer: null,
+      timerWindow: null,
+      settled: false,
+      finish: null,
+    };
+    this.bindOwnerWindow();
+    const response = new Promise((resolve) => {
+      request.finish = (result) => {
+        if (request.settled) return;
+        request.settled = true;
+        if (request.timer !== null && request.timer !== undefined) {
+          request.timerWindow?.clearTimeout(request.timer);
+        }
+        request.timer = null;
+        request.timerWindow = null;
+        if (this.flushRequests.get(request.id) === request) {
+          this.flushRequests.delete(request.id);
+        }
+        resolve(result);
+      };
+      this.flushRequests.set(request.id, request);
+      this.scheduleFlushTimeout(request, this.ownerWindow);
+    });
+    const pending = {
+      documentId,
+      openRequest,
+      promise: null,
+    };
+    pending.promise = (async () => {
+      const sent = this.postToViewer(
+        {
+          channel: CHANNEL,
+          type: "prepare-close",
+          token: this.token,
+          id: request.id,
+          documentId,
+          openRequest,
+          reason: ["detach", "view-transition"].includes(reason)
+            ? reason
+            : "detach",
+        },
+        [],
+        request.iframe,
+      );
+      if (!sent) request.finish({ ok: false, dirty: true });
+      const result = await response;
+      const identityMatches =
+        this.documentId === documentId && this.openRequest === openRequest;
+      const revisionValid = Number.isSafeInteger(result?.revision) && result.revision >= 0;
+      const clean = result?.ok === true && result?.dirty === false;
+      const recovered = result?.recovered === true;
+      const prepared =
+        identityMatches &&
+        result?.documentId === documentId &&
+        result?.openRequest === openRequest &&
+        result?.prepared === true &&
+        revisionValid &&
+        (clean || recovered);
+      this.notifyFlushOutcome(result);
+      if (!prepared) {
+        this.sendCancelClose(request);
+        new Notice(
+          "PDF 标签保持打开：关闭前未能确认最新更改已保存或恢复。请解决保存问题后再关闭。",
+          8000,
+        );
+        return false;
+      }
+      this.preparedClose = {
+        id: request.id,
+        documentId,
+        openRequest,
+        revision: result.revision,
+        recovered,
+        iframe: request.iframe,
+        unloaded: false,
+      };
+      return true;
+    })().finally(() => {
+      if (this.closePreparation === pending) this.closePreparation = null;
+    });
+    this.closePreparation = pending;
+    return pending.promise;
+  }
+
+  notifyUnflushed() {
+    if (this.failureNoticeShown) return;
+    this.failureNoticeShown = true;
+    new Notice(
+      "PDF 尚有未确认的更改。若自动保存曾失败，可使用“恢复最近的 PDF 自动保存副本”取回副本。",
+      8000,
+    );
+  }
+
+  notifyRecoveredDraft() {
+    if (this.failureNoticeShown) return;
+    this.failureNoticeShown = true;
+    new Notice(
+      "原 PDF 未写回；关闭前已保留恢复副本。使用“恢复最近的 PDF 自动保存副本”取回。",
+      8000,
+    );
+  }
+
+  notifyFlushOutcome(flush) {
+    if (flush?.recovered) {
+      this.notifyRecoveredDraft();
+    } else if (!flush?.ok || flush?.dirty) {
+      this.notifyUnflushed();
+    }
   }
 
   async createViewerDocument() {
@@ -372,7 +1263,8 @@ class PdfReaderView extends EditableFileView {
 
     const bridgeScript =
       `<script src="${escapeAttribute(bridgeUrl.href)}" ` +
-      `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}"></script>`;
+      `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
+      `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
     const inlineViewerCss = `<style data-pdf-reader="viewer">${escapeStyleText(viewerCss)}</style>`;
@@ -413,11 +1305,20 @@ class PdfReaderView extends EditableFileView {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
     }
+    if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
+      this.documentId = makeToken();
+      this.preparedClose = null;
+      this.closePreparation = null;
+      this.currentRevision = 0;
+      this.confirmedRevision = 0;
+      this.latestRecoveryDraft = null;
+      this.pendingOpenState = null;
+      this.popoutMoveTransaction = null;
+      this.rendererStateUnknown = false;
+    }
     const request = ++this.openRequest;
     this.documentFile = file;
-    // Stable bridge identity for this open session, not the current disk path.
     this.requestedPath = file.path;
-    this.sessionId = makeToken();
     this.pendingBytes = null;
     try {
       const bytes = await this.app.vault.readBinary(file);
@@ -428,6 +1329,8 @@ class PdfReaderView extends EditableFileView {
       // buffer can then be transferred to the viewer without another copy.
       this.originalBytes = new Uint8Array(bytes.slice(0));
       this.pendingBytes = bytes;
+      this.plugin.setDocumentBaseline(file.path, this.originalBytes);
+      this.setStatus(`正在打开：${file.path}`);
       if (this.ready) {
         this.sendPendingDocument();
       }
@@ -439,6 +1342,7 @@ class PdfReaderView extends EditableFileView {
   }
 
   onMessage(event) {
+    this.bindOwnerWindow();
     if (!this.iframe || event.source !== this.iframe.contentWindow) {
       return;
     }
@@ -451,242 +1355,567 @@ class PdfReaderView extends EditableFileView {
     ) {
       return;
     }
-    if (message.documentId && message.documentId !== this.requestedPath) {
+    if (message.type === "close-prepared") {
+      const request = this.flushRequests.get(message.id);
+      if (!request) return;
+      const identityMatches =
+        request.documentId === message.documentId &&
+        request.openRequest === message.openRequest &&
+        this.documentId === request.documentId &&
+        this.openRequest === request.openRequest;
+      request.finish({
+        ok: identityMatches && message.ok === true,
+        dirty: message.dirty === true,
+        recovered: message.recovered === true,
+        prepared: identityMatches && message.prepared === true,
+        revision: message.revision,
+        documentId: message.documentId,
+        openRequest: message.openRequest,
+      });
       return;
     }
-    if (message.sessionId && message.sessionId !== this.sessionId) return;
+    if (message.documentId && message.documentId !== this.documentId) {
+      return;
+    }
+    if (
+      Number.isInteger(message.openRequest) &&
+      message.openRequest !== this.openRequest
+    ) {
+      return;
+    }
 
     switch (message.type) {
       case "ready":
-        this.ready = true;
-        if (this.bridgeTimeout) {
-          window.clearTimeout(this.bridgeTimeout);
-          this.bridgeTimeout = null;
+        if (message.rendererGeneration !== this.rendererGeneration || this.ready) {
+          return;
         }
+        this.ready = true;
+        this.clearBridgeTimeout();
         this.sendPendingDocument();
         break;
+      case "opened":
+        if (
+          message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest
+        ) {
+          return;
+        }
+        if (
+          Number.isSafeInteger(message.revision) &&
+          message.revision >= 0 &&
+          Number.isSafeInteger(message.confirmedRevision) &&
+          message.confirmedRevision >= 0
+        ) {
+          const pending = this.pendingOpenState;
+          if (
+            pending &&
+            (message.revision !== pending.revision ||
+              message.confirmedRevision !== pending.confirmedRevision ||
+              message.dirty !== pending.restoreDirty ||
+              message.restorePaused !== pending.restorePaused)
+          ) {
+            this.showError(
+              "PDF 阅读器恢复状态与宿主确认的检查点不一致；请先检查恢复副本。",
+            );
+            return;
+          }
+          this.currentRevision = message.revision;
+          this.confirmedRevision = message.confirmedRevision;
+          if (pending) this.pendingOpenState = null;
+          this.rendererStateUnknown = false;
+        }
+        this.setStatus(this.file ? `已打开：${this.file.path}` : "");
+        break;
       case "save":
-        if (message.sessionId !== this.sessionId) return;
         void this.saveFile(
           message.data,
           message.documentId,
           message.requestId,
-          message.sessionId,
-          message.automatic === true,
+          message.revision,
+          message.origin,
         );
         break;
-      case "flush-result":
-        if (
-          message.sessionId === this.sessionId &&
-          message.requestId === this.flushPending?.requestId
-        )
-          this.flushPending.finish(message.success === true);
+      case "recover":
+        void this.recoverFile(
+          message.data,
+          message.documentId,
+          message.requestId,
+          message.revision,
+          message.reason,
+        );
         break;
+      case "flushed": {
+        const request = this.flushRequests.get(message.id);
+        request?.finish({
+          ok: Boolean(message.ok),
+          dirty: Boolean(message.dirty),
+          recovered: Boolean(message.recovered),
+        });
+        break;
+      }
       case "error":
-        if (message.requestId) {
-          this.lastSaveError = { code: message.code, message: message.message };
-          return;
-        }
         this.showError(message.message || "PDF 阅读器报告了错误。");
         break;
     }
   }
 
   sendPendingDocument() {
-    if (!this.ready || !this.pendingBytes || !this.file) {
+    const file = this.documentFile || this.file;
+    const restore = this.pendingOpenState;
+    const sourceBytes = restore?.bytes || this.pendingBytes || this.originalBytes;
+    if (
+      !this.ready ||
+      this.popoutMoveTransaction ||
+      !sourceBytes ||
+      !file ||
+      this.lastOpenSentRequest === this.openRequest ||
+      restore?.sent === true
+    ) {
       return;
     }
-    const data = this.pendingBytes;
-    this.pendingBytes = null;
+    const data = new Uint8Array(sourceBytes).slice().buffer;
     const message = {
       channel: CHANNEL,
       type: "open",
       token: this.token,
       data,
-      documentId: this.requestedPath,
+      documentId: this.documentId,
+      documentPath: file.path,
+      filename: file.basename,
+      openRequest: this.openRequest,
+      autoSave: this.plugin.settings.autoSave,
+      revision: restore?.revision ?? this.currentRevision,
+      confirmedRevision:
+        restore?.confirmedRevision ?? this.confirmedRevision,
+      restoreDirty: restore?.restoreDirty === true,
+      restorePaused: restore?.restorePaused === true,
       readOnly: false,
-      sessionId: this.sessionId,
     };
-    try {
-      this.iframe.contentWindow.postMessage(message, "*", [data]);
-    } catch {
-      this.iframe.contentWindow.postMessage(message, "*");
+    if (!this.postToViewer(message, [data])) return;
+    this.lastOpenSentRequest = this.openRequest;
+    if (restore) {
+      restore.sent = true;
+    } else {
+      this.pendingBytes = null;
     }
   }
 
-  postToViewer(message, transfer = []) {
-    const target = this.iframe?.contentWindow;
+  postToViewer(message, transfer = [], iframe = this.iframe) {
+    const target = iframe?.contentWindow;
     if (!target) {
       return false;
     }
-    try {
-      target.postMessage(message, "*", transfer);
-    } catch {
-      if (transfer.length === 0) {
-        return false;
-      }
+    const currentOwnerWindow = this.getOwnerWindow() || this.ownerWindow;
+    if (currentOwnerWindow !== this.ownerWindow) this.bindOwnerWindow();
+    const sender = this.ownerWindowMessageSender;
+    if (sender) {
       try {
-        target.postMessage(message, "*");
+        return sender(target, message, transfer);
       } catch {
         return false;
       }
     }
-    return true;
-  }
-
-  flushBeforeLeave() {
-    if (!this.ready || !this.requestedPath || !this.iframe)
-      return Promise.resolve(true);
-    if (this.flushPending) return this.flushPending.promise;
-    const requestId = makeToken();
-    let finish;
-    const promise = new Promise((resolve) => {
-      finish = (success) => {
-        clearTimeout(timer);
-        this.flushPending = null;
-        resolve(success);
-      };
-    });
-    const timer = setTimeout(() => finish(false), 125000);
-    this.flushPending = { requestId, promise, finish };
-    if (
-      !this.postToViewer({
-        channel: CHANNEL,
-        type: "flush-save",
-        token: this.token,
-        documentId: this.requestedPath,
-        sessionId: this.sessionId,
-        requestId,
-      })
-    )
-      finish(false);
-    return promise;
-  }
-
-  async saveFile(
-    value,
-    documentId,
-    requestId,
-    sessionId = this.sessionId,
-    automatic = false,
-  ) {
-    if (this.saving) {
-      this.postToViewer({
-        channel: CHANNEL,
-        type: "error",
-        token: this.token,
-        code: "busy",
-        message: "已有保存操作正在进行，请稍后重试。",
-        documentId,
-        requestId,
-        sessionId,
-      });
-      return;
+    // The main-window plugin realm can safely use its native sender when the
+    // Function constructor is unavailable. Never use that fallback for a
+    // popup-owned Reader because the bridge checks event.source === parent.
+    if (this.ownerWindow && this.ownerWindow === globalThis.window) {
+      try {
+        if (transfer.length) target.postMessage(message, "*", transfer);
+        else target.postMessage(message, "*");
+        return true;
+      } catch {
+        if (!transfer.length) return false;
+        try {
+          target.postMessage(message, "*");
+          return true;
+        } catch {
+          return false;
+        }
+      }
     }
-    this.saving = true;
-    this.lastSaveError = null;
-    const iframe = this.iframe;
-    const openRequest = this.openRequest;
+    return false;
+  }
+
+  captureSaveRequest() {
+    const file = this.documentFile || this.file;
+    return {
+      documentId: this.documentId,
+      file,
+      documentPath: this.requestedPath,
+      openRequest: this.openRequest,
+      originalBytes: this.originalBytes
+        ? new Uint8Array(this.originalBytes)
+        : null,
+      filename: file?.basename || safeFileName(this.requestedPath),
+      iframe: this.iframe,
+    };
+  }
+
+  async saveFile(value, documentId, requestId, revision = null, origin = "manual") {
+    const saveOrigin = origin === "auto" ? "auto" : "manual";
+    const saveRequest = this.captureSaveRequest();
+    const iframe = saveRequest.iframe;
+    this.pendingSaves += 1;
     try {
-      const file = this.file;
-      const originalBytes = this.originalBytes;
-      if (!file || !originalBytes) {
+      if (!saveRequest.file || !saveRequest.originalBytes) {
         throw new Error("当前没有打开的 PDF 文件。");
       }
-      if (documentId !== this.requestedPath) {
+      if (documentId !== saveRequest.documentId) {
         const mismatch = new Error(
           "保存请求对应的 PDF 与当前打开的文件不一致。",
         );
         mismatch.code = "document-mismatch";
         throw mismatch;
       }
-      await withFileSaveLock(this.app.vault, file, async () => {
-        const assertCurrentSession = () => {
-          if (
-            openRequest !== this.openRequest ||
-            sessionId !== this.sessionId ||
-            iframe !== this.iframe ||
-            this.file !== file
-          ) {
-            throw new Error("PDF 保存会话已失效。");
+      if (Number.isSafeInteger(revision) && revision >= 0) {
+        this.currentRevision = Math.max(this.currentRevision, revision);
+      }
+      const data = toArrayBuffer(value);
+      const savedBytes = new Uint8Array(data.slice(0));
+      await this.plugin.enqueueSave(async () => {
+        const record = await this.plugin.writeRecoveryCandidate({
+          view: this,
+          documentId: saveRequest.documentId,
+          filename: saveRequest.filename,
+          data,
+          originalBytes: saveRequest.originalBytes,
+          documentPath: saveRequest.documentPath,
+          openRequest: saveRequest.openRequest,
+          revision,
+          origin: saveOrigin,
+        });
+        try {
+          if (!this.isCurrentSaveRequest(saveRequest)) {
+            const changed = new Error(
+              "此保存请求已属于切换前的 PDF。恢复副本已保留，没有写入当前文件。",
+            );
+            changed.code = "document-changed";
+            throw changed;
           }
-        };
-        assertCurrentSession();
-        const latestFile = this.app.vault.getAbstractFileByPath(file.path);
-        if (!isPdfFile(latestFile) || latestFile !== file) {
-          throw new Error("原 PDF 已不在当前仓库中。");
-        }
-
-        const latestBytes = new Uint8Array(
-          await this.app.vault.readBinary(latestFile),
-        );
-        if (!bytesEqual(latestBytes, originalBytes)) {
-          const conflict = new Error(
-            "PDF 在打开后已被其他操作修改。请重新打开文件后再保存，以免覆盖新内容。",
+          const targetPath = normalizePath(saveRequest.file.path);
+          const latestFile = this.app.vault.getAbstractFileByPath(targetPath);
+          if (!isPdfFile(latestFile)) {
+            const missing = new Error("原 PDF 已不在当前仓库中。");
+            missing.code = "file-missing";
+            throw missing;
+          }
+          if (latestFile !== saveRequest.file) {
+            const replaced = new Error(
+              "原 PDF 对象已被替换。恢复副本已保留，没有覆盖替换后的文件。",
+            );
+            replaced.code = "conflict";
+            throw replaced;
+          }
+          const baseline = this.plugin.documentBaselines.get(targetPath);
+          const latestBytes = new Uint8Array(
+            await this.app.vault.readBinary(latestFile),
           );
-          conflict.code = "conflict";
-          throw conflict;
+          if (
+            !baseline ||
+            !bytesEqual(saveRequest.originalBytes, baseline) ||
+            !bytesEqual(latestBytes, baseline)
+          ) {
+            const conflict = new Error(
+              "PDF 已被其他视图或操作修改。当前注释已保存在恢复副本中；请检查后再合并。",
+            );
+            conflict.code = "conflict";
+            throw conflict;
+          }
+          if (
+            !this.isCurrentSaveRequest(saveRequest) ||
+            normalizePath(saveRequest.file.path) !== targetPath
+          ) {
+            const changed = new Error(
+              "PDF 在检查期间被切换或移动。恢复副本已保留，请重试保存。",
+            );
+            changed.code = "document-changed";
+            throw changed;
+          }
+          await this.app.vault.modifyBinary(latestFile, data);
+          const savedPath = normalizePath(latestFile.path);
+          const fileAfterWrite = this.app.vault.getAbstractFileByPath(savedPath);
+          if (fileAfterWrite !== latestFile) {
+            const changed = new Error(
+              "PDF 在保存期间被移动或替换。恢复副本已保留，请检查目标文件。",
+            );
+            changed.code = "conflict";
+            throw changed;
+          }
+          const verifiedBytes = new Uint8Array(
+            await this.app.vault.readBinary(fileAfterWrite),
+          );
+          if (!bytesEqual(verifiedBytes, savedBytes)) {
+            const conflict = new Error(
+              "写入后 PDF 内容与保存内容不一致。恢复副本已保留，请检查文件冲突。",
+            );
+            conflict.code = "conflict";
+            throw conflict;
+          }
+          if (savedPath !== targetPath) {
+            this.plugin.documentBaselines.delete(targetPath);
+          }
+          this.plugin.setDocumentBaseline(savedPath, savedBytes);
+          if (Number.isSafeInteger(revision) && revision >= 0) {
+            this.currentRevision = Math.max(this.currentRevision, revision);
+            this.confirmedRevision = Math.max(
+              this.confirmedRevision,
+              revision,
+            );
+          }
+          if (
+            (this.documentFile || this.file) === saveRequest.file &&
+            this.documentId === saveRequest.documentId
+          ) {
+            this.originalBytes = savedBytes;
+          }
+          await this.plugin.removeRecoveryCandidate(record);
+          const previousDraft = this.latestRecoveryDraft;
+          if (
+            previousDraft?.documentId === saveRequest.documentId &&
+            Number.isSafeInteger(revision) &&
+            revision >= previousDraft.revision
+          ) {
+            await this.plugin.removeRecoveryCandidate(previousDraft.record);
+            this.latestRecoveryDraft = null;
+          }
+          this.postToViewer(
+            {
+              channel: CHANNEL,
+              type: "saved",
+              token: this.token,
+              documentId: saveRequest.documentId,
+              requestId,
+              revision,
+            },
+            [],
+            saveRequest.iframe,
+          );
+          this.failureNoticeShown = false;
+          if (this.isCurrentSaveRequest(saveRequest)) {
+            this.setStatus(`已保存：${savedPath}`);
+          }
+          if (saveOrigin === "manual") {
+            new Notice(`已保存 ${saveRequest.filename}`);
+          }
+        } catch (error) {
+          await this.plugin.markRecoveryCandidate(record, {
+            status: error.code === "conflict" ? "conflict" : "failed",
+            error: error.message,
+          });
+          throw error;
         }
-
-        const data = toArrayBuffer(value);
-        const savedBytes = new Uint8Array(data.slice(0));
-        assertCurrentSession();
-        if (this.app.vault.getAbstractFileByPath(file.path) !== file)
-          throw new Error("原 PDF 已不在当前仓库中。");
-        await this.app.vault.modifyBinary(latestFile, data);
-        if (
-          this.file?.path === latestFile.path &&
-          this.openRequest === openRequest &&
-          this.sessionId === sessionId
-        ) {
-          this.file = latestFile;
-          this.originalBytes = savedBytes;
-        }
-        iframe?.contentWindow?.postMessage(
-          {
-            channel: CHANNEL,
-            type: "saved",
-            token: this.token,
-            documentId,
-            requestId,
-            sessionId,
-          },
-          "*",
-        );
       });
     } catch (error) {
-      iframe?.contentWindow?.postMessage(
+      this.postToViewer(
         {
           channel: CHANNEL,
           type: "error",
           token: this.token,
           code: error.code || "save-failed",
           message: error.message,
-          documentId,
+          documentId: saveRequest.documentId,
           requestId,
-          sessionId,
+          revision,
         },
-        "*",
+        [],
+        saveRequest.iframe,
       );
-      this.lastSaveError = {
-        code: error.code || "save-failed",
-        message: error.message,
-      };
-      console.error("PDF save failed:", error);
+      if (
+        iframe &&
+        this.iframe === iframe &&
+        this.documentId === saveRequest.documentId
+      ) {
+        this.setStatus(error.message);
+      }
+      if (!this.failureNoticeShown) {
+        this.failureNoticeShown = true;
+        new Notice(
+          `PDF 保存失败：${error.message}。如恢复副本已写入，可使用“恢复最近的 PDF 自动保存副本”取回。`,
+          8000,
+        );
+      }
     } finally {
-      this.saving = false;
+      this.pendingSaves -= 1;
     }
   }
 
+  async recoverFile(value, documentId, requestId, revision, reason) {
+    const recoveryRequest = this.captureSaveRequest();
+    this.pendingSaves += 1;
+    try {
+      if (
+        !isPdfFile(recoveryRequest.file) ||
+        !recoveryRequest.originalBytes ||
+        !recoveryRequest.documentPath
+      ) {
+        throw new Error("当前没有可恢复的 PDF 文件。");
+      }
+      if (documentId !== recoveryRequest.documentId) {
+        const mismatch = new Error("恢复请求对应的 PDF 与当前打开的文件不一致。");
+        mismatch.code = "document-mismatch";
+        throw mismatch;
+      }
+      if (
+        typeof requestId !== "string" ||
+        requestId.length === 0 ||
+        !Number.isSafeInteger(revision) ||
+        revision < 0 ||
+        !["auto-save-disabled", "save-conflict"].includes(reason)
+      ) {
+        const invalid = new Error("PDF 恢复请求无效。");
+        invalid.code = "invalid-recovery-request";
+        throw invalid;
+      }
+      const data = toArrayBuffer(value);
+      await this.plugin.enqueueSave(async () => {
+        const record = await this.plugin.writeRecoveryCandidate({
+          view: this,
+          documentId: recoveryRequest.documentId,
+          filename: recoveryRequest.filename,
+          data,
+          originalBytes: recoveryRequest.originalBytes,
+          documentPath: recoveryRequest.documentPath,
+          openRequest: recoveryRequest.openRequest,
+          revision,
+          requestId,
+          origin: "recovery",
+          reason,
+          status: "draft",
+        });
+        if (this.isCurrentSaveRequest(recoveryRequest)) {
+          const draftBytes = new Uint8Array(data.slice(0));
+          this.currentRevision = Math.max(this.currentRevision, revision);
+          this.latestRecoveryDraft = {
+            documentId: recoveryRequest.documentId,
+            openRequest: recoveryRequest.openRequest,
+            revision,
+            confirmedRevision: this.confirmedRevision,
+            baseFingerprint: fingerprint(recoveryRequest.originalBytes),
+            bytes: draftBytes,
+            restorePaused: reason === "save-conflict",
+            reason,
+            record,
+          };
+        }
+        this.postToViewer(
+          {
+            channel: CHANNEL,
+            type: "recovered",
+            token: this.token,
+            documentId: recoveryRequest.documentId,
+            requestId,
+            revision,
+          },
+          [],
+          recoveryRequest.iframe,
+        );
+        if (this.isCurrentSaveRequest(recoveryRequest)) {
+          this.setStatus(`已保留恢复副本：${recoveryRequest.filename}`);
+        }
+      });
+    } catch (error) {
+      this.postToViewer(
+        {
+          channel: CHANNEL,
+          type: "error",
+          token: this.token,
+          code: error.code || "recovery-failed",
+          message: error.message,
+          documentId: recoveryRequest.documentId,
+          requestId,
+          revision,
+        },
+        [],
+        recoveryRequest.iframe,
+      );
+      if (
+        recoveryRequest.iframe &&
+        this.iframe === recoveryRequest.iframe &&
+        this.documentId === recoveryRequest.documentId &&
+        !this.failureNoticeShown
+      ) {
+        this.failureNoticeShown = true;
+        new Notice(
+          `PDF 恢复副本未能写入：${error.message}。原 PDF 未更改。`,
+          8000,
+        );
+      }
+    } finally {
+      this.pendingSaves -= 1;
+    }
+  }
+
+  isCurrentSaveRequest(request) {
+    return Boolean(
+      request?.file &&
+        (this.documentFile || this.file) === request.file &&
+        this.documentId === request.documentId &&
+        this.openRequest === request.openRequest &&
+        normalizePath(this.requestedPath || "") ===
+          normalizePath(request.file.path),
+    );
+  }
+
+  onDocumentRenamed(file, oldPath) {
+    if (this.documentFile !== file && this.file !== file && this.requestedPath !== oldPath) return;
+    this.file = file;
+    this.documentFile = file;
+    this.requestedPath = file.path;
+    this.navigationState = {
+      ...this.navigationState,
+      file: file.path,
+      path: file.path,
+    };
+    this.plugin.moveDocumentBaseline(oldPath, file.path);
+    this.postToViewer({
+      channel: CHANNEL,
+      type: "rename",
+      token: this.token,
+      documentId: this.documentId,
+      documentPath: file.path,
+      filename: file.basename,
+    });
+    this.setStatus(`已移动：${file.path}`);
+  }
+
+  setStatus(message) {
+    if (!this.statusEl) {
+      return;
+    }
+    this.statusEl.setText(message);
+    this.statusEl.toggleClass("is-hidden", !message);
+  }
+
   showError(message) {
+    this.setStatus(message);
     new Notice(message, 8000);
   }
 }
 
 module.exports = class PdfWebReaderPlugin extends Plugin {
   async onload() {
-    this.registerView(VIEW_TYPE, (leaf) => new PdfReaderView(leaf, this));
+    this.settings = {
+      autoSave: true,
+      ...((await this.loadData()) || {}),
+    };
+    this.settings.autoSave = this.settings.autoSave !== false;
+    this.views = new Set();
+    this.popoutCloseGates = new Map();
+    this.popoutProtectionWarnings = new WeakSet();
+    this.isQuitting = false;
+    this.isUnloading = false;
+    this.documentBaselines = new Map();
+    this.saveQueue = Promise.resolve();
+    this.recoveryDirectory = normalizePath(
+      `${this.app.vault.configDir}/plugins/${this.manifest.id}/.recovery`,
+    );
+    this.registerView(VIEW_TYPE, (leaf) => {
+      const view = new PdfReaderView(leaf, this);
+      this.views.add(view);
+      return view;
+    });
     this.pdfOpenRouting = installPdfOpenRouting(this);
+    this.addSettingTab(new PdfWebReaderSettingTab(this.app, this));
     this.addCommand({
       id: "open-current-pdf",
       name: "在 PDF 阅读器中打开当前 PDF",
@@ -701,6 +1930,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         return true;
       },
     });
+    this.addCommand({
+      id: "restore-latest-pdf-recovery",
+      name: "恢复最近的 PDF 自动保存副本",
+      callback: () => void this.restoreLatestRecovery(),
+    });
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!isPdfFile(file)) {
@@ -714,13 +1948,694 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         });
       }),
     );
+    if (typeof this.app.vault.on === "function") {
+      this.registerEvent(
+        this.app.vault.on("rename", (file, oldPath) => {
+          if (!isPdfFile(file)) return;
+          const normalizedOldPath = normalizePath(oldPath);
+          for (const view of this.views) {
+            view.onDocumentRenamed(file, normalizedOldPath);
+          }
+        }),
+      );
+    }
+    if (typeof this.app.workspace.on === "function") {
+      this.registerEvent(
+        this.app.workspace.on("layout-change", () => {
+          for (const view of this.views) view.bindOwnerWindow();
+        }),
+      );
+      this.registerEvent(
+        this.app.workspace.on("quit", () => {
+          // Obsidian owns application-quit teardown; do not hold it open for
+          // an asynchronous renderer handshake.
+          this.isQuitting = true;
+        }),
+      );
+    }
   }
 
   onunload() {
+    this.isUnloading = true;
+    for (const gate of [...(this.popoutCloseGates?.values() || [])]) {
+      this.disposePopoutCloseGate(gate);
+    }
     restorePdfOpenRouting(this.pdfOpenRouting);
     this.pdfOpenRouting = null;
     this.viewerAssetsPromise = null;
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+  }
+
+  async moveReaderToPopout(workspace, leaf, originalMove, args) {
+    const callOriginal = () => originalMove.apply(workspace, [leaf, ...args]);
+    const view = leaf?.view;
+    if (
+      workspace !== this.app.workspace ||
+      !(view instanceof PdfReaderView) ||
+      this.isQuitting ||
+      this.isUnloading
+    ) {
+      return callOriginal();
+    }
+
+    const documentId = view.documentId;
+    const openRequest = view.openRequest;
+    const oldOwnerWindow = view.getOwnerWindow();
+    const oldParent = leaf.parent;
+    const prepared = await view.prepareControlledClose("view-transition");
+    if (!prepared) return false;
+    if (
+      leaf.view !== view ||
+      view.documentId !== documentId ||
+      view.openRequest !== openRequest
+    ) {
+      view.cancelPreparedClose(documentId, openRequest);
+      return false;
+    }
+
+    const checkpoint = view.createPopoutMigrationState(view.preparedClose);
+    if (!checkpoint) {
+      view.cancelPreparedClose(documentId, openRequest);
+      view.showError(
+        "无法确认 PDF 弹出迁移的保存检查点；当前标签保持原位。请先保存或恢复更改。",
+      );
+      return false;
+    }
+    const transaction = {
+      documentId,
+      openRequest,
+      oldOwnerWindow,
+      oldParent,
+      checkpoint,
+      realmReloaded: false,
+    };
+    view.popoutMoveTransaction = transaction;
+
+    let result;
+    try {
+      // Obsidian 1.14.4 moves the existing leaf synchronously through this
+      // workspace-instance API. Keep the transaction active if a later SDK
+      // version changes it to return a promise.
+      result = callOriginal();
+      if (result && typeof result.then === "function") {
+        result = await result;
+      }
+    } catch (error) {
+      const ownerChanged = view.getOwnerWindow() !== oldOwnerWindow;
+      if (ownerChanged || transaction.realmReloaded) {
+        view.bindOwnerWindow();
+        if (!view.restartViewerAfterPopoutMove(checkpoint, transaction)) {
+          view.popoutMoveTransaction = null;
+          view.cancelPreparedClose(documentId, openRequest);
+        }
+      } else {
+        view.popoutMoveTransaction = null;
+        view.cancelPreparedClose(documentId, openRequest);
+      }
+      throw error;
+    }
+
+    view.bindOwnerWindow();
+    const newOwnerWindow = view.getOwnerWindow();
+    const moved =
+      newOwnerWindow !== oldOwnerWindow ||
+      (result?.workspace === workspace &&
+        result?.win &&
+        result.win !== oldOwnerWindow &&
+        leaf.parent !== oldParent);
+    if (!moved) {
+      if (transaction.realmReloaded) {
+        if (view.restartViewerAfterPopoutMove(checkpoint, transaction)) {
+          return result;
+        }
+      }
+      view.popoutMoveTransaction = null;
+      view.cancelPreparedClose(documentId, openRequest);
+      return result;
+    }
+
+    // A changed owner window is sufficient evidence that the SDK moved this
+    // Reader even if its internal split cannot be identified for close guard
+    // installation; bindOwnerWindow reports that limited-protection case.
+    if (!view.restartViewerAfterPopoutMove(checkpoint, transaction)) {
+      view.popoutMoveTransaction = null;
+      view.cancelPreparedClose(documentId, openRequest);
+      view.showError(
+        "PDF 标签已移动，但阅读器恢复未能启动。已保留迁移前确认的恢复检查点。",
+      );
+    }
+    return result;
+  }
+
+  registerPopoutCloseProtection(view, ownerWindow) {
+    const isPopout = isPopoutWindow(ownerWindow);
+    const root = isPopout
+      ? findPopoutSplit(view.leaf, ownerWindow, this.app.workspace)
+      : null;
+    const currentGate = view.popoutCloseGate;
+    if (
+      currentGate?.active &&
+      currentGate.ownerWindow === ownerWindow &&
+      currentGate.root === root
+    ) {
+      return true;
+    }
+    this.unregisterPopoutCloseProtection(view);
+    if (!isPopout) return false;
+    if (!root) {
+      this.warnPopoutProtectionUnavailable(ownerWindow);
+      return false;
+    }
+
+    let gate = this.popoutCloseGates.get(ownerWindow);
+    if (gate && gate.root !== root) {
+      this.warnPopoutProtectionUnavailable(ownerWindow);
+      return false;
+    }
+    if (!gate) {
+      gate = this.createPopoutCloseGate(ownerWindow, root);
+      if (!gate) {
+        this.warnPopoutProtectionUnavailable(ownerWindow);
+        return false;
+      }
+      this.popoutCloseGates.set(ownerWindow, gate);
+    }
+    gate.views.add(view);
+    view.popoutCloseGate = gate;
+    return true;
+  }
+
+  unregisterPopoutCloseProtection(view) {
+    const gate = view.popoutCloseGate;
+    if (!gate) return;
+    view.popoutCloseGate = null;
+    gate.views.delete(view);
+    if (gate.views.size === 0 && !gate.closePromise) {
+      this.disposePopoutCloseGate(gate);
+    }
+  }
+
+  warnPopoutProtectionUnavailable(ownerWindow) {
+    if (
+      ownerWindow &&
+      (typeof ownerWindow === "object" || typeof ownerWindow === "function")
+    ) {
+      if (this.popoutProtectionWarnings.has(ownerWindow)) return;
+      this.popoutProtectionWarnings.add(ownerWindow);
+    }
+    new Notice(
+      "无法确认此 PDF 弹出窗口的安全关闭入口。请先保存或恢复更改，再关闭该窗口。",
+      8000,
+    );
+  }
+
+  createPopoutCloseGate(ownerWindow, root) {
+    const originalClose = root.close;
+    if (typeof originalClose !== "function") return null;
+    const ownCloseDescriptor = Object.getOwnPropertyDescriptor(root, "close");
+    const gate = {
+      ownerWindow,
+      root,
+      originalClose,
+      ownCloseDescriptor,
+      closeWrapper: null,
+      beforeUnloadListener: null,
+      views: new Set(),
+      active: true,
+      allowClose: false,
+      closeCommitted: false,
+      closePromise: null,
+    };
+    gate.closeWrapper = function (...args) {
+      return thisPlugin.requestPopoutClose(gate, this, args);
+    };
+    const thisPlugin = this;
+    gate.beforeUnloadListener = (event) =>
+      this.handlePopoutBeforeUnload(gate, event);
+
+    try {
+      Object.defineProperty(root, "close", {
+        configurable: true,
+        enumerable: ownCloseDescriptor?.enumerable ?? false,
+        writable: true,
+        value: gate.closeWrapper,
+      });
+      ownerWindow.addEventListener(
+        "beforeunload",
+        gate.beforeUnloadListener,
+        true,
+      );
+    } catch {
+      this.restorePopoutCloseWrapper(gate);
+      return null;
+    }
+    return gate;
+  }
+
+  restorePopoutCloseWrapper(gate) {
+    if (gate.root.close !== gate.closeWrapper) return;
+    try {
+      if (gate.ownCloseDescriptor) {
+        Object.defineProperty(gate.root, "close", gate.ownCloseDescriptor);
+      } else {
+        delete gate.root.close;
+      }
+    } catch {
+      // Keep an inactive shim if another SDK wrapper made restoration unsafe.
+    }
+  }
+
+  disposePopoutCloseGate(gate) {
+    if (!gate?.active) return;
+    gate.active = false;
+    try {
+      gate.ownerWindow.removeEventListener(
+        "beforeunload",
+        gate.beforeUnloadListener,
+        true,
+      );
+    } catch {
+      // A closing WindowProxy may already reject listener operations.
+    }
+    this.restorePopoutCloseWrapper(gate);
+    if (this.popoutCloseGates.get(gate.ownerWindow) === gate) {
+      this.popoutCloseGates.delete(gate.ownerWindow);
+    }
+    for (const view of gate.views) {
+      if (view.popoutCloseGate === gate) view.popoutCloseGate = null;
+    }
+    gate.views.clear();
+  }
+
+  popoutViewsForGate(gate) {
+    return [...this.views].filter(
+      (view) =>
+        view.getOwnerWindow() === gate.ownerWindow &&
+        findPopoutSplit(view.leaf, gate.ownerWindow, this.app.workspace) ===
+          gate.root,
+    );
+  }
+
+  isPopoutQuitInProgress(ownerWindow) {
+    if (this.isQuitting || this.isUnloading) return true;
+    try {
+      return Boolean(
+        ownerWindow?.electron?.ipcRenderer?.sendSync?.("is-quitting"),
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  handlePopoutBeforeUnload(gate, event) {
+    if (
+      !gate.active ||
+      gate.allowClose ||
+      this.isPopoutQuitInProgress(gate.ownerWindow)
+    ) {
+      return;
+    }
+    if (
+      !gate.closePromise &&
+      this.popoutViewsForGate(gate).length === 0
+    ) {
+      this.disposePopoutCloseGate(gate);
+      return;
+    }
+    event?.preventDefault?.();
+    event?.stopImmediatePropagation?.();
+    // The SDK beforeunload hook cannot await this operation. requestPopoutClose
+    // reports close failures with a Notice, so consume both async and sync
+    // close errors here.
+    try {
+      void Promise.resolve(
+        this.requestPopoutClose(gate, gate.root, []),
+      ).catch(() => {});
+    } catch {
+      // The failure Notice was already shown by requestPopoutClose.
+    }
+  }
+
+  invokeOriginalPopoutClose(gate, receiver, args) {
+    const wasAllowed = gate.allowClose;
+    gate.allowClose = true;
+    let result;
+    try {
+      result = gate.originalClose.apply(receiver, args);
+    } catch (error) {
+      const committed =
+        gate.root.win !== gate.ownerWindow || gate.ownerWindow.closed;
+      gate.closeCommitted ||= committed;
+      gate.allowClose = committed ? true : wasAllowed;
+      throw error;
+    }
+
+    const committed =
+      gate.root.win !== gate.ownerWindow || gate.ownerWindow.closed;
+    gate.closeCommitted ||= committed;
+    // Obsidian may dispatch the Window's beforeunload after close() returns.
+    // Keep the gate open once SDK destroyWindow has detached this WindowProxy;
+    // otherwise the late event can be blocked after root.win has been nulled.
+    gate.allowClose = committed ? true : wasAllowed;
+    return { result, committed };
+  }
+
+  cancelPopoutPreparations(snapshots) {
+    for (const { view, documentId, openRequest } of snapshots) {
+      view.cancelPreparedClose(documentId, openRequest);
+    }
+  }
+
+  reportPopoutCloseFailure(error = null) {
+    const detail = error?.message ? `：${error.message}` : "";
+    new Notice(`无法关闭 PDF 弹出窗口${detail}`, 8000);
+  }
+
+  requestPopoutClose(gate, receiver, args) {
+    const originalClose = () => gate.originalClose.apply(receiver, args);
+    if (
+      !gate.active ||
+      receiver !== gate.root ||
+      this.isPopoutQuitInProgress(gate.ownerWindow)
+    ) {
+      return originalClose();
+    }
+    if (gate.allowClose) return originalClose();
+    if (gate.closePromise) return gate.closePromise;
+
+    const views = this.popoutViewsForGate(gate);
+    if (views.length === 0) {
+      try {
+        return this.invokeOriginalPopoutClose(gate, receiver, args).result;
+      } finally {
+        if (
+          gate.active &&
+          !gate.closePromise &&
+          this.popoutViewsForGate(gate).length === 0
+        ) {
+          this.disposePopoutCloseGate(gate);
+        }
+      }
+    }
+    const snapshots = views.map((view) => ({
+      view,
+      documentId: view.documentId,
+      openRequest: view.openRequest,
+    }));
+    const allAlreadyPrepared = snapshots.every(
+      ({ view, documentId, openRequest }) =>
+        view.documentId === documentId &&
+        view.openRequest === openRequest &&
+        view.hasPreparedClose(documentId, openRequest),
+    );
+    if (allAlreadyPrepared) {
+      try {
+        const { result, committed } = this.invokeOriginalPopoutClose(
+          gate,
+          receiver,
+          args,
+        );
+        if (committed) return result;
+        this.cancelPopoutPreparations(snapshots);
+        this.reportPopoutCloseFailure();
+        return false;
+      } catch (error) {
+        const committed =
+          gate.root.win !== gate.ownerWindow || gate.ownerWindow.closed;
+        if (!committed) this.cancelPopoutPreparations(snapshots);
+        this.reportPopoutCloseFailure(error);
+        throw error;
+      }
+    }
+
+    const pending = (async () => {
+      const results = await Promise.all(
+        snapshots.map(async (snapshot) => {
+          if (
+            snapshot.view.teardownStarted &&
+            !snapshot.view.hasPreparedClose(
+              snapshot.documentId,
+              snapshot.openRequest,
+            )
+          ) {
+            return { ...snapshot, ok: false, blockedByTeardown: true };
+          }
+          try {
+            const ok = await snapshot.view.prepareControlledClose("detach");
+            return {
+              ...snapshot,
+              ok:
+                ok &&
+                snapshot.view.hasPreparedClose(
+                  snapshot.documentId,
+                  snapshot.openRequest,
+                ),
+            };
+          } catch {
+            return { ...snapshot, ok: false };
+          }
+        }),
+      );
+      const currentViews = this.popoutViewsForGate(gate);
+      const identitiesUnchanged =
+        currentViews.length === snapshots.length &&
+        snapshots.every(
+          ({ view, documentId, openRequest }) =>
+            currentViews.includes(view) &&
+            view.ownerWindow === gate.ownerWindow &&
+            view.documentId === documentId &&
+            view.openRequest === openRequest,
+        ) &&
+        gate.root.win === gate.ownerWindow;
+      const prepared =
+        gate.active && identitiesUnchanged && results.every((result) => result.ok);
+
+      if (!prepared) {
+        for (const result of results) {
+          if (result.ok) {
+            result.view.cancelPreparedClose(
+              result.documentId,
+              result.openRequest,
+            );
+          }
+        }
+        if (
+          gate.active &&
+          (results.every((result) => result.ok) ||
+            results.some((result) => result.blockedByTeardown))
+        ) {
+          new Notice(
+            "弹出窗口中的 PDF 阅读器发生变化或未能确认保存；窗口保持打开，请重试。",
+            8000,
+          );
+        }
+        return false;
+      }
+
+      try {
+        const { result, committed } = this.invokeOriginalPopoutClose(
+          gate,
+          gate.root,
+          args,
+        );
+        if (committed) return result;
+        this.cancelPopoutPreparations(snapshots);
+        this.reportPopoutCloseFailure();
+        return false;
+      } catch (error) {
+        const committed =
+          gate.root.win !== gate.ownerWindow || gate.ownerWindow.closed;
+        if (!committed) {
+          this.cancelPopoutPreparations(snapshots);
+          this.reportPopoutCloseFailure(error);
+        }
+        throw error;
+      }
+    })().finally(() => {
+      if (gate.closePromise === pending) gate.closePromise = null;
+      if (gate.active && gate.views.size === 0) {
+        this.disposePopoutCloseGate(gate);
+      }
+    });
+    gate.closePromise = pending;
+    return pending;
+  }
+
+  setDocumentBaseline(documentPath, bytes) {
+    this.documentBaselines.set(normalizePath(documentPath), new Uint8Array(bytes));
+  }
+
+  releaseDocumentBaseline(documentPath, leavingView) {
+    const normalizedPath = normalizePath(documentPath);
+    const stillOpen = [...this.views].some(
+      (view) => view !== leavingView && view.requestedPath === normalizedPath,
+    );
+    if (!stillOpen) this.documentBaselines.delete(normalizedPath);
+  }
+
+  moveDocumentBaseline(oldPath, newPath) {
+    const oldKey = normalizePath(oldPath);
+    const newKey = normalizePath(newPath);
+    if (oldKey === newKey) return;
+    const baseline = this.documentBaselines.get(oldKey);
+    this.documentBaselines.delete(oldKey);
+    if (baseline && !this.documentBaselines.has(newKey)) {
+      this.documentBaselines.set(newKey, baseline);
+    }
+  }
+
+  enqueueSave(operation) {
+    const next = this.saveQueue.then(operation, operation);
+    this.saveQueue = next.catch(() => {});
+    return next;
+  }
+
+  async setAutoSaveEnabled(enabled) {
+    this.settings.autoSave = Boolean(enabled);
+    await this.saveData(this.settings);
+    for (const view of this.views) {
+      view.postToViewer({
+        channel: CHANNEL,
+        type: "configure-auto-save",
+        token: view.token,
+        documentId: view.documentId,
+        enabled: this.settings.autoSave,
+      });
+    }
+  }
+
+  async writeRecoveryCandidate({
+    view,
+    documentId = view.documentId,
+    filename = view.file?.basename,
+    data,
+    originalBytes,
+    documentPath,
+    openRequest = null,
+    revision,
+    origin,
+    requestId = null,
+    reason = null,
+    status = "pending",
+  }) {
+    const adapter = this.app.vault.adapter;
+    const safeId = `${documentId}-${makeToken()}`.replace(/[^a-zA-Z0-9_-]/g, "");
+    const candidatePath = `${this.recoveryDirectory}/${safeId}.pdf`;
+    const metadataPath = `${this.recoveryDirectory}/${safeId}.json`;
+    const metadata = {
+      schema: 1,
+      documentId,
+      candidateId: safeId,
+      originalPath: documentPath,
+      filename: filename || safeFileName(documentPath),
+      openRequest,
+      revision,
+      origin,
+      requestId,
+      reason,
+      baseFingerprint: fingerprint(originalBytes),
+      candidateFile: `${safeId}.pdf`,
+      createdAt: new Date().toISOString(),
+      status,
+    };
+    await ensureAdapterDirectory(adapter, this.recoveryDirectory);
+    await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+    try {
+      await adapter.writeBinary(candidatePath, data);
+    } catch (error) {
+      for (const filePath of [candidatePath, metadataPath]) {
+        try {
+          if (await adapter.exists(filePath)) await adapter.remove(filePath);
+        } catch {
+          // Best-effort cleanup keeps incomplete candidates out of the list.
+        }
+      }
+      throw error;
+    }
+    return { candidatePath, metadataPath, metadata };
+  }
+
+  async markRecoveryCandidate(record, updates) {
+    if (!record) return;
+    Object.assign(record.metadata, updates);
+    record.metadata.updatedAt = new Date().toISOString();
+    try {
+      await this.app.vault.adapter.write(
+        record.metadataPath,
+        `${JSON.stringify(record.metadata, null, 2)}\n`,
+      );
+    } catch {
+      // The binary candidate is still present even if its metadata update fails.
+    }
+  }
+
+  async removeRecoveryCandidate(record) {
+    if (!record) return;
+    const adapter = this.app.vault.adapter;
+    await this.markRecoveryCandidate(record, { status: "saved" });
+    for (const filePath of [record.candidatePath, record.metadataPath]) {
+      try {
+        if (await adapter.exists(filePath)) await adapter.remove(filePath);
+      } catch {
+        // A stale saved candidate is harmless and is excluded by its metadata.
+      }
+    }
+  }
+
+  async listRecoveryCandidates() {
+    const adapter = this.app.vault.adapter;
+    if (!(await adapter.exists(this.recoveryDirectory))) return [];
+    const listing = await adapter.list(this.recoveryDirectory);
+    const candidates = [];
+    for (const metadataPath of listing.files.filter((filePath) => filePath.endsWith(".json"))) {
+      try {
+        const metadata = JSON.parse(await adapter.read(metadataPath));
+        if (!["pending", "conflict", "failed", "draft"].includes(metadata.status)) continue;
+        const safeId = metadata.candidateId?.replace(/[^a-zA-Z0-9_-]/g, "");
+        if (!safeId) continue;
+        const candidatePath = `${this.recoveryDirectory}/${safeId}.pdf`;
+        if (!(await adapter.exists(candidatePath))) continue;
+        candidates.push({ metadata, candidatePath, metadataPath });
+      } catch {
+        // Ignore incomplete/corrupt metadata; the remaining candidates stay intact.
+      }
+    }
+    return candidates.sort((left, right) =>
+      String(right.metadata.updatedAt || right.metadata.createdAt || "").localeCompare(
+        String(left.metadata.updatedAt || left.metadata.createdAt || ""),
+      ),
+    );
+  }
+
+  async restoreLatestRecovery() {
+    const candidates = await this.listRecoveryCandidates();
+    if (candidates.length === 0) {
+      new Notice("没有可恢复的 PDF 自动保存副本。");
+      return null;
+    }
+    const candidate = candidates[0];
+    const adapter = this.app.vault.adapter;
+    const bytes = await adapter.readBinary(candidate.candidatePath);
+    const originalName = safeFileName(candidate.metadata.filename || candidate.metadata.originalPath);
+    const baseName = originalName.replace(/\.pdf$/i, "") || "recovered";
+    const date = new Date(candidate.metadata.createdAt || Date.now())
+      .toISOString()
+      .replace(/[:.]/g, "-");
+    const folderPath = "PDF Recovery";
+    if (!this.app.vault.getAbstractFileByPath(folderPath)) {
+      await this.app.vault.createFolder(folderPath);
+    }
+    let outputPath = normalizePath(`${folderPath}/${baseName} (Recovered ${date}).pdf`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(outputPath)) {
+      outputPath = normalizePath(
+        `${folderPath}/${baseName} (Recovered ${date} ${suffix}).pdf`,
+      );
+      suffix += 1;
+    }
+    await this.app.vault.createBinary(outputPath, bytes);
+    new Notice(`已创建恢复副本：${outputPath}`);
+    return outputPath;
   }
 
   ensureViewerAssets() {

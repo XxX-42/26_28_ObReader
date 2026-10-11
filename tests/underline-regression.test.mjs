@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { createReadStream, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { access, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
+import { resolveBrowserPath } from "./browser-path.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -19,14 +21,7 @@ import {
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
-const browserPath =
-  process.env.PDF_READER_CHROME ||
-  process.env.PDFJS_CHROME ||
-  [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].find((candidate) => candidate && existsSync(candidate));
+const browserPath = resolveBrowserPath();
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -123,6 +118,133 @@ function assertQuadPointsMatchTextRects(selection, label) {
   }
 }
 
+function settleWithin(promise, milliseconds) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ timedOut: true }), milliseconds);
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve({ value });
+      },
+      (error) => {
+        clearTimeout(timer);
+        resolve({ error });
+      },
+    );
+  });
+}
+
+function childHasExited(child) {
+  return Boolean(
+    child &&
+      (typeof child.exitCode === "number" ||
+        typeof child.signalCode === "string"),
+  );
+}
+
+function readProcessGroupId(pid) {
+  if (process.platform === "win32" || !Number.isInteger(pid) || pid <= 0) {
+    return null;
+  }
+  try {
+    const output = execFileSync("ps", ["-o", "pgid=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 250,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const processGroupId = Number(output);
+    return Number.isInteger(processGroupId) ? processGroupId : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLiveProcessGroupMembers(processGroupId) {
+  if (process.platform === "win32" || !Number.isInteger(processGroupId)) {
+    return null;
+  }
+  try {
+    const output = execFileSync("ps", ["-axo", "pid=,pgid=,stat="], {
+      encoding: "utf8",
+      timeout: 250,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/))
+      .filter(
+        ([pid, pgid, state]) =>
+          Number.isInteger(Number(pid)) &&
+          Number(pgid) === processGroupId &&
+          typeof state === "string" &&
+          !state.includes("Z"),
+      )
+      .map(([pid, , state]) => ({ pid: Number(pid), state }));
+  } catch {
+    return null;
+  }
+}
+
+function waitForChildExit(child, milliseconds) {
+  if (!child) {
+    return Promise.resolve({ available: false, exited: false });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let exitEvent = null;
+    let closeEvent = null;
+    const stdioClosed = () =>
+      (!child.stdout || child.stdout.destroyed) &&
+      (!child.stderr || child.stderr.destroyed);
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      child.removeListener("close", onClose);
+      resolve({
+        available: true,
+        exited: childHasExited(child),
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        exitEvent,
+        closeEvent,
+        stdioClosed: stdioClosed(),
+        ...result,
+      });
+    };
+    const onExit = (code, signal) => {
+      exitEvent = { code, signal };
+      if (stdioClosed()) finish({ observed: "exit-and-stdio-closed" });
+    };
+    const onClose = (code, signal) => {
+      closeEvent = { code, signal };
+      finish({ observed: "close" });
+    };
+    const timer = setTimeout(
+      () => finish({ timedOut: true, observed: null }),
+      milliseconds,
+    );
+    child.once("exit", onExit);
+    child.once("close", onClose);
+    // ChildProcess exit can race listener registration. Preserve its state and
+    // wait for stdio closure as well when the `exit` event has already passed.
+    if (childHasExited(child)) {
+      if (stdioClosed()) finish({ observed: "state-and-stdio-closed" });
+    }
+  });
+}
+
+function appendErrorDetails(error, details) {
+  const oldMessage = error.message || String(error);
+  const oldStack = error.stack;
+  error.message = `${oldMessage}\n${details}`;
+  if (typeof oldStack === "string") {
+    error.stack = oldStack.replace(oldMessage, error.message);
+  }
+}
+
 test(
   "underline selection geometry stays single-stroke across text runs and columns",
   { timeout: 150_000 },
@@ -146,7 +268,14 @@ test(
     const captureId = payload.contentHash.slice(0, 12);
     let browser;
     let server;
+    let page;
+    let viewer;
+    let primaryError = null;
+    let phase = "setup";
     let apiRequestCount = 0;
+    const externalRequests = [];
+    const pageErrors = [];
+    const consoleErrors = [];
 
     server = createServer(async (request, response) => {
       const url = new URL(request.url, "http://127.0.0.1");
@@ -221,16 +350,18 @@ test(
         "\\u003c",
       );
 
+      phase = "launching the test browser";
       browser = await puppeteer.launch({
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
       });
-      const page = await browser.newPage();
+      page = await browser.newPage();
       await page.setViewport({ width: 1400, height: 1000 });
-      const externalRequests = [];
-      const errors = [];
-      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("pageerror", (error) => pageErrors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+      });
       page.on("request", (request) => {
         if (new URL(request.url()).origin !== baseUrl) {
           externalRequests.push(request.url());
@@ -240,7 +371,9 @@ test(
         }
       });
       await page.setRequestInterception(true);
+      phase = "loading the viewer harness";
       await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+      phase = "installing the viewer and host message harness";
       await page.setContent(`
         <!doctype html><meta charset="utf-8">
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style>
@@ -251,30 +384,68 @@ test(
           const token = ${JSON.stringify(testView.token)};
           const documentId = 'fixtures/tracemonkey.pdf';
           const iframe = document.querySelector('iframe');
-          const state = window.__hostState = { opened: 0, saves: 0, savedData: null };
+          const state = window.__hostState = { opened: 0, saves: 0, savedData: null, savedDataByteLength: 0, events: [], openRequests: [], errors: [] };
           let fixtureBytes;
+          const recordOpenRequest = (data, reason) => {
+            state.openRequests.push({
+              at: performance.now(),
+              reason,
+              documentId,
+              byteLength: data?.byteLength ?? null,
+            });
+          };
+          const postOpen = (data, reason) => {
+            recordOpenRequest(data, reason);
+            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false, autoSave:false}, '*', [data]);
+          };
           window.addEventListener('message', event => {
             if (event.source !== iframe.contentWindow) return;
             const message = event.data;
             if (!message || message.channel !== channel || message.token !== token) return;
+            const record = {
+              at: performance.now(),
+              type: message.type,
+              documentId: message.documentId ?? null,
+              requestId: message.requestId ?? null,
+              revision: message.revision ?? null,
+              openRequest: message.openRequest ?? null,
+              code: message.code ?? null,
+              message: message.message ?? null,
+              byteLength: message.data?.byteLength ?? null,
+            };
+            state.events.push(record);
             if (message.type === 'ready') {
               const data = fixtureBytes.slice(0);
-              iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+              postOpen(data, 'initial-ready');
             } else if (message.type === 'opened') {
               state.opened += 1;
+              record.openedCount = state.opened;
             } else if (message.type === 'save') {
               state.saves += 1;
               state.savedData = message.data.slice(0);
-              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId, sessionId:message.sessionId}, '*');
+              state.savedDataByteLength = state.savedData.byteLength;
+              record.saveCount = state.saves;
+              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId, revision:message.revision}, '*');
+              state.events.push({
+                at: performance.now(),
+                direction: 'host-to-viewer',
+                type: 'saved-ack',
+                documentId,
+                requestId: message.requestId ?? null,
+                revision: message.revision ?? null,
+                saveCount: state.saves,
+              });
+            } else if (message.type === 'error') {
+              state.errors.push(record);
             }
           });
           window.__reopenSavedData = () => {
             const data = state.savedData.slice(0);
-            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+            postOpen(data, 'saved-data-reopen');
           };
           window.__reopenFixture = () => {
             const data = fixtureBytes.slice(0);
-            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false}, '*', [data]);
+            postOpen(data, 'fixture-reopen');
           };
           (async () => {
             fixtureBytes = await fetch('/fixtures/tracemonkey.pdf').then(response => {
@@ -285,10 +456,48 @@ test(
           })().catch(error => { state.error = error.message; });
         </script>
       `);
-      await page.waitForFunction(() => window.__hostState?.opened === 1, {
-        timeout: 45_000,
-      });
-      const viewer = page
+      const waitForOpenedOrError = async (
+        expectedCount,
+        eventStart,
+        timeout,
+        description,
+      ) => {
+        const handle = await page.waitForFunction(
+          ({ expectedCount, eventStart }) => {
+            const state = window.__hostState;
+            if (!state) return false;
+            if (state.error) {
+              return { kind: "host-harness-error", error: state.error };
+            }
+            const error = state.events
+              .slice(eventStart)
+              .find((event) => event.type === "error");
+            if (error) return { kind: "error", error };
+            if (state.opened >= expectedCount) {
+              return { kind: "opened", opened: state.opened };
+            }
+            return false;
+          },
+          { timeout },
+          { expectedCount, eventStart },
+        );
+        try {
+          const result = await handle.jsonValue();
+          if (result.kind !== "opened") {
+            throw new Error(
+              `${description} failed before opened(${expectedCount}): ${JSON.stringify(result.error)}`,
+            );
+          }
+          return result;
+        } finally {
+          await handle.dispose();
+        }
+      };
+
+      phase = "waiting for the initial viewer open";
+      await waitForOpenedOrError(1, 0, 45_000, "Initial PDF open");
+      phase = "waiting for the initial text and annotation layers";
+      viewer = page
         .frames()
         .find((frame) => frame.name() === "pdf-reader");
       assert.ok(viewer, "Expected the isolated viewer frame");
@@ -582,11 +791,33 @@ test(
         selectAndCreateAnnotation({ ...options, mode: 10, annotationType: 10 });
 
       const reopenFixture = async (openCount) => {
+        phase = `fixture reopen before open count ${openCount}`;
+        if (await viewer.evaluate(() => PDFViewerApplication._hasChanges())) {
+          const expectedSave = await page.evaluate(
+            () => window.__hostState.saves + 1,
+          );
+          await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+          await page.waitForFunction(
+            (expected) => window.__hostState.saves === expected,
+            { timeout: 60_000 },
+            expectedSave,
+          );
+          await viewer.waitForFunction(
+            () =>
+              !PDFViewerApplication._hasChanges() &&
+              !PDFViewerApplication._saveInProgress,
+            { timeout: 60_000 },
+          );
+        }
+        const eventStart = await page.evaluate(
+          () => window.__hostState.events.length,
+        );
         await page.evaluate(() => window.__reopenFixture());
-        await page.waitForFunction(
-          (expected) => window.__hostState.opened === expected,
-          { timeout: 90_000 },
+        await waitForOpenedOrError(
           openCount,
+          eventStart,
+          90_000,
+          "Fixture reopen",
         );
         await viewer.waitForSelector(
           '.page[data-page-number="1"] .textLayer span',
@@ -642,8 +873,10 @@ test(
         path: path.join(artifacts, `underline-regression-${captureId}.png`),
         fullPage: false,
       });
+      phase = "captured underline selections; beginning PDF save and round trip";
 
       const saveAndReopen = async (saveCount, openCount) => {
+        phase = `save and reopen saved PDF before open count ${openCount}`;
         await viewer.evaluate(() => {
           if (
             document
@@ -664,11 +897,19 @@ test(
           () => !PDFViewerApplication._saveInProgress,
           { timeout: 60_000 },
         );
+        await viewer.waitForFunction(
+          () => !PDFViewerApplication._hasChanges(),
+          { timeout: 60_000 },
+        );
+        const eventStart = await page.evaluate(
+          () => window.__hostState.events.length,
+        );
         await page.evaluate(() => window.__reopenSavedData());
-        await page.waitForFunction(
-          (expected) => window.__hostState.opened === expected,
-          { timeout: 90_000 },
+        await waitForOpenedOrError(
           openCount,
+          eventStart,
+          90_000,
+          "Saved PDF reopen",
         );
         await viewer.waitForSelector(
           '.page[data-page-number="1"] .textLayer span',
@@ -867,7 +1108,8 @@ test(
         savedUnderlines,
         apiRequestCount,
         externalRequests,
-        errors,
+        pageErrors,
+        consoleErrors,
       };
       await writeFile(
         path.join(artifacts, `underline-regression-${captureId}.json`),
@@ -944,14 +1186,340 @@ test(
         [],
         "The browser must not request external resources",
       );
-      assert.deepEqual(errors, []);
+      assert.deepEqual(pageErrors, []);
       console.log(
         `Underline geometry and PDF round-trip captured in tests/artifacts/underline-regression-${captureId}.{json,png,pdf}`,
       );
+    } catch (error) {
+      primaryError = error;
+      const captureErrors = [];
+      const failureId = `${captureId}-${Date.now()}`;
+      const failureJsonPath = path.join(
+        artifacts,
+        `underline-regression-${failureId}-failure.json`,
+      );
+      const failurePngPath = path.join(
+        artifacts,
+        `underline-regression-${failureId}-failure.png`,
+      );
+      const diagnostics = {
+        captureId,
+        failureId,
+        payloadId: payload.id,
+        contentHash: payload.contentHash,
+        phase,
+        failure: {
+          name: error?.name ?? typeof error,
+          message: error?.message ?? String(error),
+          stack: error?.stack ?? null,
+        },
+        browser: (() => {
+          const child = browser?.process?.();
+          return {
+            connected: browser?.isConnected?.() ?? null,
+            pid: child?.pid ?? null,
+            exitCode: child?.exitCode ?? null,
+            signalCode: child?.signalCode ?? null,
+          };
+        })(),
+        serverListening: server?.listening ?? null,
+        pageErrors,
+        consoleErrors,
+        externalRequests,
+        apiRequestCount,
+      };
+      if (page && !page.isClosed()) {
+        const pageSnapshot = await settleWithin(
+          page.evaluate(() => {
+            const state = window.__hostState;
+            return {
+              url: location.href,
+              state: state
+                ? {
+                    opened: state.opened,
+                    saves: state.saves,
+                    harnessError: state.error ?? null,
+                    savedDataByteLength: state.savedDataByteLength,
+                    openRequests: state.openRequests,
+                    events: state.events,
+                    errors: state.errors,
+                  }
+                : null,
+            };
+          }),
+          3_000,
+        );
+        if (pageSnapshot.value) {
+          diagnostics.page = pageSnapshot.value;
+        } else {
+          captureErrors.push(
+            `Could not capture host state: ${pageSnapshot.error?.message || "page evaluation timed out"}`,
+          );
+        }
+        try {
+          await settleWithin(
+            page.screenshot({ path: failurePngPath, fullPage: false }),
+            5_000,
+          ).then((result) => {
+            if (result.timedOut) {
+              throw new Error("Failure screenshot timed out after 5000ms.");
+            }
+            if (result.error) throw result.error;
+          });
+          diagnostics.failureScreenshot = failurePngPath;
+        } catch (captureError) {
+          captureErrors.push(
+            `Could not capture failure screenshot: ${captureError?.message || captureError}`,
+          );
+        }
+      }
+      if (viewer && !viewer.isDetached()) {
+        const viewerSnapshot = await settleWithin(
+          viewer.evaluate(() => {
+            const app = window.PDFViewerApplication;
+            const pdfDocument = app?.pdfDocument;
+            return {
+              url: location.href,
+              appReady: !!app,
+              pdfDocument: pdfDocument
+                ? {
+                    numPages: pdfDocument.numPages,
+                    fingerprints: pdfDocument.fingerprints,
+                  }
+                : null,
+              saveInProgress: app?._saveInProgress ?? null,
+              hasChanges: app?._hasChanges?.() ?? null,
+              annotationMode:
+                app?.pdfViewer?.annotationEditorMode ?? null,
+              loadedPages: [...window.document.querySelectorAll(".page")].map(
+                (page) => page.dataset.pageNumber,
+              ),
+              textLayerSpanCount: window.document.querySelectorAll(
+                '.page[data-page-number="1"] .textLayer span',
+              ).length,
+            };
+          }),
+          3_000,
+        );
+        if (viewerSnapshot.value) {
+          diagnostics.viewer = viewerSnapshot.value;
+        } else {
+          captureErrors.push(
+            `Could not capture viewer state: ${viewerSnapshot.error?.message || "frame evaluation timed out"}`,
+          );
+        }
+      }
+      diagnostics.captureErrors = captureErrors;
+      try {
+        await writeFile(failureJsonPath, JSON.stringify(diagnostics, null, 2));
+        const details = [`Underline failure diagnostics: ${failureJsonPath}`];
+        if (diagnostics.failureScreenshot) {
+          details.push(`Underline failure screenshot: ${failurePngPath}`);
+        }
+        if (captureErrors.length) {
+          details.push(`Diagnostic capture issues: ${captureErrors.join("; ")}`);
+        }
+        appendErrorDetails(error, details.join("\n"));
+      } catch (captureError) {
+        appendErrorDetails(
+          error,
+          `Could not write underline failure diagnostics: ${captureError?.message || captureError}`,
+        );
+      }
+      throw error;
     } finally {
-      await browser?.close();
-      await new Promise((resolve) => server.close(resolve));
-      await removeTempRoot(temp);
+      const cleanupErrors = [];
+      if (browser) {
+        const closePromise = Promise.resolve().then(() => browser.close());
+        let closePromisePending = true;
+        let closePromiseError = null;
+        void closePromise.then(
+          () => {
+            closePromisePending = false;
+          },
+          (error) => {
+            closePromisePending = false;
+            closePromiseError = error?.message || String(error);
+          },
+        );
+        let outcome = await settleWithin(closePromise, 5_000);
+        if (outcome.timedOut || outcome.error) {
+          const initialCloseError = outcome.error?.message || null;
+          let child = null;
+          try {
+            child = browser.process();
+          } catch (error) {
+            cleanupErrors.push(`browser.process: ${error?.message || error}`);
+          }
+          const childStateBefore = {
+            pid: child?.pid ?? null,
+            exitCode: child?.exitCode ?? null,
+            signalCode: child?.signalCode ?? null,
+          };
+          const childWasRunning = Boolean(child && !childHasExited(child));
+          let processGroupId = null;
+          let processGroupValidated = false;
+          let signalTarget = null;
+          let signalError = null;
+          if (childWasRunning && child.pid) {
+            if (process.platform !== "win32") {
+              processGroupId = readProcessGroupId(child.pid);
+              // Puppeteer launches a detached process group on POSIX. Only
+              // signal that group after verifying it is led by this exact
+              // test-owned Chrome PID; never signal the app/runner group.
+              processGroupValidated = processGroupId === child.pid;
+            }
+            try {
+              if (processGroupValidated) {
+                process.kill(-child.pid, "SIGTERM");
+                signalTarget = `owned-process-group:${processGroupId}`;
+              } else {
+                child.kill("SIGTERM");
+                signalTarget = `owned-child:${child.pid}`;
+              }
+            } catch (error) {
+              signalError = error?.message || String(error);
+            }
+          }
+          try {
+            browser.disconnect();
+          } catch (error) {
+            cleanupErrors.push(`browser.disconnect: ${error?.message || error}`);
+          }
+          const childExit = await waitForChildExit(child, 2_000);
+          const childStateAfter = {
+            pid: child?.pid ?? null,
+            exitCode: child?.exitCode ?? null,
+            signalCode: child?.signalCode ?? null,
+            killed: child?.killed ?? null,
+            stdioClosed: Boolean(
+              child &&
+                (!child.stdout || child.stdout.destroyed) &&
+                (!child.stderr || child.stderr.destroyed),
+            ),
+          };
+          const liveProcessGroupMembers = processGroupValidated
+            ? readLiveProcessGroupMembers(processGroupId)
+            : null;
+          let connectedAfterDisconnect = null;
+          try {
+            connectedAfterDisconnect = browser.isConnected();
+          } catch (error) {
+            cleanupErrors.push(`browser.isConnected: ${error?.message || error}`);
+          }
+
+          if (!childExit.exited) {
+            cleanupErrors.push(
+              `test-launched browser child ${child?.pid ?? "unknown"} remained alive after the 2000ms fallback window`,
+            );
+          }
+          if (!childStateAfter.stdioClosed) {
+            cleanupErrors.push(
+              `test-launched browser child ${child?.pid ?? "unknown"} stdio remained open after the 2000ms fallback window`,
+            );
+          }
+          if (connectedAfterDisconnect !== false) {
+            cleanupErrors.push(
+              `Puppeteer browser remained connected after disconnect (${String(connectedAfterDisconnect)})`,
+            );
+          }
+          if (
+            processGroupValidated &&
+            liveProcessGroupMembers !== null &&
+            liveProcessGroupMembers.length > 0
+          ) {
+            cleanupErrors.push(
+              `owned Chrome process group ${processGroupId} still has live processes: ${liveProcessGroupMembers.map(({ pid }) => pid).join(", ")}`,
+            );
+          } else if (processGroupValidated && liveProcessGroupMembers === null) {
+            cleanupErrors.push(
+              `could not verify whether owned Chrome process group ${processGroupId} is empty`,
+            );
+          }
+
+          const fallbackId = `${captureId}-${Date.now()}`;
+          const fallbackJsonPath = path.join(
+            artifacts,
+            `underline-regression-${fallbackId}-cleanup.json`,
+          );
+          const fallbackDiagnostics = {
+            captureId,
+            fallbackId,
+            payloadId: payload.id,
+            contentHash: payload.contentHash,
+            createdAt: new Date().toISOString(),
+            primaryError: primaryError
+              ? {
+                  name: primaryError.name || "Error",
+                  message: primaryError.message || String(primaryError),
+                }
+              : null,
+            close: {
+              timedOut: Boolean(outcome.timedOut),
+              initialError: initialCloseError,
+              pendingAfterFallback: closePromisePending,
+              errorAfterFallback: closePromiseError,
+            },
+            browser: {
+              connectedAfterDisconnect,
+            },
+            child: {
+              before: childStateBefore,
+              after: childStateAfter,
+              exitObservation: childExit,
+            },
+            processGroup: {
+              id: processGroupId,
+              validatedAsOwned: processGroupValidated,
+              signalTarget,
+              signalError,
+              liveMembersAfterFallback: liveProcessGroupMembers,
+            },
+            cleanupErrors: [...cleanupErrors],
+          };
+          try {
+            await writeFile(
+              fallbackJsonPath,
+              JSON.stringify(fallbackDiagnostics, null, 2),
+            );
+            console.log(
+              `Underline browser cleanup fallback captured in ${fallbackJsonPath}`,
+            );
+          } catch (error) {
+            cleanupErrors.push(
+              `Could not write browser cleanup fallback diagnostics: ${error?.message || error}`,
+            );
+          }
+        }
+      }
+      if (server?.listening) {
+        try {
+          const closePromise = new Promise((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+          server.closeAllConnections?.();
+          const outcome = await settleWithin(closePromise, 5_000);
+          if (outcome.error) throw outcome.error;
+          if (outcome.timedOut) {
+            throw new Error("HTTP server close timed out after closeAllConnections.");
+          }
+        } catch (error) {
+          cleanupErrors.push(`server.close: ${error?.message || error}`);
+        }
+      }
+      try {
+        await removeTempRoot(temp);
+      } catch (error) {
+        cleanupErrors.push(`removeTempRoot: ${error?.message || error}`);
+      }
+      if (cleanupErrors.length) {
+        const cleanupMessage = `Underline test cleanup issues: ${cleanupErrors.join("; ")}`;
+        if (primaryError) {
+          appendErrorDetails(primaryError, cleanupMessage);
+        } else {
+          throw new AggregateError(cleanupErrors, cleanupMessage);
+        }
+      }
     }
   },
 );

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
 import puppeteer from "puppeteer-core";
+import { resolveBrowserPath } from "./browser-path.mjs";
+import {
+  attachCleanupErrors,
+  cleanupBrowserTestResources,
+} from "./browser-test-cleanup.mjs";
 import {
   createDiskAdapter,
   createTempRoot,
@@ -19,14 +24,7 @@ import {
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const artifacts = path.join(root, "tests", "artifacts");
-const browserPath =
-  process.env.PDF_READER_CHROME ||
-  process.env.PDFJS_CHROME ||
-  [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-  ].find((candidate) => candidate && existsSync(candidate));
+const browserPath = resolveBrowserPath();
 
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -51,7 +49,7 @@ const typeNames = new Map([
 test(
   "annotation creation tools take priority over existing markup only while creating",
   { timeout: 300_000 },
-  async () => {
+  async (t) => {
     assert.ok(browserPath, "Set PDF_READER_CHROME to Chrome or Edge");
     await mkdir(artifacts, { recursive: true });
 
@@ -73,10 +71,13 @@ test(
     const captureId = payload.contentHash.slice(0, 12);
     const results = [];
     const errors = [];
+    const consoleErrors = [];
     const externalRequests = [];
     let apiRequestCount = 0;
     let browser;
     let server;
+    let functionalError;
+    let cleanupReport;
     const persistProgress = async () =>
       writeFile(
         path.join(
@@ -94,6 +95,7 @@ test(
             apiRequestCount,
             externalRequests,
             errors,
+            consoleErrors,
           },
           null,
           2,
@@ -181,6 +183,11 @@ test(
       const page = await browser.newPage();
       await page.setViewport({ width: 1400, height: 1000 });
       page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          consoleErrors.push(message.text());
+        }
+      });
       page.on("request", (request) => {
         if (new URL(request.url()).origin !== baseUrl) {
           externalRequests.push(request.url());
@@ -200,28 +207,38 @@ test(
           const channel='pdf-web-reader', token=${JSON.stringify(view.token)};
           const documentId='fixtures/tracemonkey.pdf';
           const iframe=document.querySelector('iframe');
-          const state=window.__hostState={opened:0,saves:0,savedData:null};
+          const state=window.__hostState={opened:0,saves:0,savedData:null,received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
           let fixtureBytes;
+          const sendOpen=(data,label)=>{
+            state.opensSent.push({label,documentId,byteLength:data.byteLength,openRequest:null,rendererGeneration:state.readyGenerations.at(-1)??null});
+            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false,autoSave:false},'*',[data]);
+          };
           window.addEventListener('message',event=>{
             if(event.source!==iframe.contentWindow)return;
             const message=event.data;
             if(!message||message.channel!==channel||message.token!==token)return;
+          state.received.push({type:message.type,documentId:message.documentId??null,requestId:message.requestId??null,sessionId:message.sessionId??null,revision:message.revision??null,openRequest:message.openRequest??null,rendererGeneration:message.rendererGeneration??null,code:message.code??null,message:message.type==='error'?message.message:undefined});
             if(message.type==='ready'){
+              state.readyGenerations.push(message.rendererGeneration??null);
               const data=fixtureBytes.slice(0);
-              iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
-            } else if(message.type==='opened') state.opened+=1;
+              sendOpen(data,'initial-ready');
+            } else if(message.type==='opened') { state.opened+=1; state.openedMessages.push({documentId:message.documentId??null,sessionId:message.sessionId??null,openRequest:message.openRequest??null,revision:message.revision??null,confirmedRevision:message.confirmedRevision??null,dirty:message.dirty??null,restorePaused:message.restorePaused??null}); }
+            else if(message.type==='error') state.errors.push({documentId:message.documentId??null,requestId:message.requestId??null,code:message.code??null,message:message.message??null});
             else if(message.type==='save'){
               state.saves+=1; state.savedData=message.data.slice(0);
-              iframe.contentWindow.postMessage({channel,type:'saved',token,documentId,requestId:message.requestId,sessionId:message.sessionId},'*');
+              const acknowledgement={channel,type:'saved',token,documentId,requestId:message.requestId};
+              for(const field of ['sessionId','revision'])if(field in message)acknowledgement[field]=message[field];
+              iframe.contentWindow.postMessage(acknowledgement,'*');
+              state.saveAcks.push({documentId,requestId:message.requestId,sessionId:message.sessionId??null,revision:message.revision??null});
             }
           });
           window.__reopenSavedData=()=>{
             const data=state.savedData.slice(0);
-            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
+            sendOpen(data,'reopen-saved-data');
           };
           window.__reopenFixture=()=>{
             const data=fixtureBytes.slice(0);
-            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false},'*',[data]);
+            sendOpen(data,'reopen-fixture');
           };
           (async()=>{
             fixtureBytes=await fetch('/fixtures/tracemonkey.pdf').then(response=>{
@@ -245,185 +262,23 @@ test(
       await viewer.waitForFunction(
         () => !document.getElementById("editorUnderlineButton").disabled,
       );
-      await new Promise((resolve) => setTimeout(resolve, 1300));
-      assert.equal(
-        await page.evaluate(() => window.__hostState.saves),
-        0,
-        "Opening alone must not write the PDF",
-      );
-      // Real mouse events inside the packaged srcdoc viewer, not synthetic
-      // DOM dispatch: this also exercises capture and the middle-button mask.
-      const wheelCenter = { x: 700, y: 500 };
-      const wheelMode = () =>
-        viewer.evaluate(
-          () => PDFViewerApplication.pdfViewer.annotationEditorMode,
-        );
-      const openWheel = async () => {
-        await page.mouse.move(wheelCenter.x, wheelCenter.y);
-        await page.mouse.down({ button: "middle" });
-        await viewer.waitForSelector(".pdfToolWheel");
-      };
-      const wheelModes = [null, 3, 15, 9, 5, 10];
-      for (let index = 1; index < 6; index++) {
-        await openWheel();
-        if (index === 1) {
-          await page.screenshot({
-            path: path.join(artifacts, `tool-wheel-${captureId}.png`),
+      await viewer.evaluate(() => {
+        window.__pdfLifecycleEvents = [];
+        for (const type of ["documentloaded", "documenterror"]) {
+          PDFViewerApplication.eventBus.on(type, (event) => {
+            window.__pdfLifecycleEvents.push({
+              time: performance.now(),
+              type,
+              message: event.message ?? null,
+              reason:
+                event.reason instanceof Error
+                  ? event.reason.message
+                  : event.reason ?? null,
+              pdfLoaded: Boolean(PDFViewerApplication.pdfDocument),
+              loadingTaskActive: Boolean(PDFViewerApplication.pdfLoadingTask),
+            });
           });
         }
-        const angle = ((index * 60 - 90) * Math.PI) / 180;
-        const previousMode = await wheelMode();
-        await page.mouse.move(700, 580);
-        assert.equal(
-          await wheelMode(),
-          previousMode,
-          "Crossing another sector only previews",
-        );
-        await page.mouse.move(
-          wheelCenter.x + 80 * Math.cos(angle),
-          wheelCenter.y + 80 * Math.sin(angle),
-        );
-        assert.ok(
-          await viewer.$(".pdfToolWheel"),
-          "Held movement only previews",
-        );
-        assert.equal(
-          await wheelMode(),
-          previousMode,
-          "Tool must not change until release",
-        );
-        await page.mouse.up({ button: "middle" });
-        await viewer.waitForFunction(
-          () => !document.querySelector(".pdfToolWheel"),
-        );
-        await viewer.waitForFunction(
-          (mode) =>
-            PDFViewerApplication.pdfViewer.annotationEditorMode === mode,
-          {},
-          wheelModes[index],
-        );
-      }
-      assert.equal(await wheelMode(), 10);
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await page.mouse.click(631, 460);
-      assert.equal(
-        await wheelMode(),
-        10,
-        "Selecting active tool does not toggle it off",
-      );
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      await openWheel();
-      await page.mouse.move(700, 420);
-      assert.ok(await viewer.$(".pdfToolWheel"), "Exit also waits for release");
-      await page.mouse.up({ button: "middle" });
-      await viewer.waitForFunction(
-        () => !document.querySelector(".pdfToolWheel"),
-      );
-      assert.equal(await wheelMode(), 10, "Exit preserves selected underline");
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await page.mouse.move(700, 580);
-      assert.ok(
-        await viewer.$(".pdfToolWheel"),
-        "Released wheel must not select on hover",
-      );
-      assert.equal(await wheelMode(), 10);
-      await page.mouse.click(700, 580);
-      await viewer.waitForFunction(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 9,
-      );
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      await openWheel();
-      await page.mouse.move(631, 460);
-      assert.equal(
-        await wheelMode(),
-        9,
-        "Returning from a sector to the center must not select",
-      );
-      await page.mouse.move(705, 505);
-      assert.ok(await viewer.$(".pdfToolWheel"), "Center dead zone");
-      await page.mouse.up({ button: "middle" });
-      await page.keyboard.press("Escape");
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      assert.equal(await wheelMode(), 9, "Escape only closes wheel");
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await page.mouse.click(930, 500);
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      assert.equal(await wheelMode(), 9);
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await viewer.evaluate(() => window.dispatchEvent(new Event("blur")));
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      await page.mouse.move(20, 500);
-      await page.mouse.down({ button: "middle" });
-      await page.mouse.up({ button: "middle" });
-      assert.equal(
-        await viewer.$(".pdfToolWheel"),
-        null,
-        "Insufficient edge space",
-      );
-      await page.mouse.move(70, 500);
-      await page.mouse.down({ button: "middle" });
-      assert.equal(
-        await viewer.$eval(
-          ".pdfToolWheel",
-          (el) => el.getBoundingClientRect().width,
-        ),
-        140,
-        "Wheel shrinks at edge without moving its center",
-      );
-      await page.mouse.up({ button: "middle" });
-      await page.mouse.move(700, 500);
-      await page.mouse.down({ button: "middle" });
-      assert.equal(
-        await viewer.$eval(
-          ".pdfToolWheel",
-          (el) => el.getBoundingClientRect().width,
-        ),
-        240,
-        "Second middle press recenters wheel",
-      );
-      await page.mouse.up({ button: "middle" });
-      await viewer.evaluate(() =>
-        window.dispatchEvent(new PointerEvent("pointercancel")),
-      );
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      await viewer.evaluate(() => {
-        const input = document.createElement("input");
-        input.id = "wheel-test-input";
-        input.style.cssText =
-          "position:fixed;left:600px;top:450px;width:200px;height:40px;z-index:10000";
-        PDFViewerApplication.pdfViewer.container.append(input);
-      });
-      await page.mouse.click(650, 470, { button: "middle" });
-      assert.equal(
-        await viewer.$(".pdfToolWheel"),
-        null,
-        "Inputs must not trigger wheel",
-      );
-      // Input middle-click retains browser behavior; dismiss Chrome's native
-      // autoscroll before resuming PDF-area pointer assertions.
-      await page.keyboard.press("Escape");
-      await viewer.evaluate(() =>
-        document.getElementById("wheel-test-input").remove(),
-      );
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await viewer.evaluate(() => window.dispatchEvent(new Event("resize")));
-      assert.equal(await viewer.$(".pdfToolWheel"), null);
-      await page.mouse.move(700, 500);
-      await page.keyboard.press("Backquote");
-      await viewer.waitForFunction(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
-      );
-      results.push({
-        scenario:
-          "middle-button wheel: five held selections, exit, persistent click, dead zone, Escape, outside, blur, edge",
-        passed: true,
-      });
-      await viewer.evaluate(() => {
         window.__interactionEvents = [];
         const describe = (element) => {
           if (!element) return null;
@@ -433,8 +288,39 @@ test(
             className:
               typeof element.className === "string" ? element.className : "",
             text: (element.textContent || "").trim().slice(0, 80),
+            contentEditable:
+              element.getAttribute?.("contenteditable") || null,
+            connected: element.isConnected,
           };
         };
+        window.__annotationModeEvents = [];
+        window.__realKeydownEvents = [];
+        PDFViewerApplication.eventBus.on(
+          "annotationeditormodechanged",
+          (event) => {
+            window.__annotationModeEvents.push({
+              time: performance.now(),
+              mode: event.mode,
+              isFromKeyboard: event.isFromKeyboard,
+              isTemporary: event.isTemporary,
+            });
+          },
+        );
+        document.addEventListener(
+          "keydown",
+          (event) => {
+            if (!event.isTrusted) return;
+            window.__realKeydownEvents.push({
+              time: performance.now(),
+              key: event.key,
+              code: event.code,
+              target: describe(event.target),
+              activeElement: describe(document.activeElement),
+              defaultPrevented: event.defaultPrevented,
+            });
+          },
+          true,
+        );
         for (const type of [
           "pointerdown",
           "pointermove",
@@ -461,10 +347,33 @@ test(
               const layer = document.querySelector(
                 '.page[data-page-number="1"] .annotationEditorLayer',
               );
+              const selectedFreeTextEditor = layer?.querySelector(
+                ".freeTextEditor.selectedEditor",
+              );
               window.__interactionEvents.push({
+                time: performance.now(),
                 type,
+                trusted: event.isTrusted,
                 target: describe(event.target),
                 hit: describe(hit),
+                hitInSelectedFreeTextInternal: Boolean(
+                  (() => {
+                    const internal = layer?.querySelector(
+                      ".freeTextEditor.selectedEditor .internal",
+                    );
+                    return internal && (hit === internal || internal.contains(hit));
+                  })(),
+                ),
+                targetInSelectedFreeTextEditor: Boolean(
+                  selectedFreeTextEditor &&
+                    (event.target === selectedFreeTextEditor ||
+                      selectedFreeTextEditor.contains(event.target)),
+                ),
+                hitInSelectedFreeTextEditor: Boolean(
+                  selectedFreeTextEditor &&
+                    (hit === selectedFreeTextEditor ||
+                      selectedFreeTextEditor.contains(hit)),
+                ),
                 point: { x: event.clientX, y: event.clientY },
                 buttons: event.buttons,
                 pointerId: event.pointerId,
@@ -488,6 +397,38 @@ test(
             true,
           );
         }
+        for (const type of [
+          "focusin",
+          "focusout",
+          "keydown",
+          "keyup",
+          "beforeinput",
+          "input",
+        ]) {
+          document.addEventListener(
+            type,
+            (event) => {
+              const target =
+                event.target instanceof Element
+                  ? event.target
+                  : event.target?.parentElement;
+              if (!target?.closest(".annotationEditorLayer")) return;
+              window.__interactionEvents.push({
+                time: performance.now(),
+                type,
+                trusted: event.isTrusted,
+                target: describe(target),
+                activeElement: describe(document.activeElement),
+                relatedTarget: describe(event.relatedTarget),
+                key: event.key || null,
+                data: event.data ?? null,
+                inputType: event.inputType || null,
+                defaultPrevented: event.defaultPrevented,
+              });
+            },
+            true,
+          );
+        }
         document.addEventListener(
           "selectionchange",
           () => {
@@ -495,6 +436,7 @@ test(
             const text = selection?.toString() || "";
             if (text) {
               window.__interactionEvents.push({
+                time: performance.now(),
                 type: "selectionchange",
                 text,
                 anchor: describe(selection?.anchorNode?.parentElement),
@@ -544,17 +486,139 @@ test(
         await page.mouse.up({ button: "left" });
       };
       const setMode = async (mode) => {
-        await viewer.evaluate((value) => {
-          PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
-            mode: value,
-          });
-        }, mode);
-        await viewer.waitForFunction(
-          (value) =>
-            PDFViewerApplication.pdfViewer.annotationEditorMode === value,
-          { timeout: 8_000 },
-          mode,
-        );
+        let stage = "target-ready";
+        try {
+          await viewer.waitForFunction(() => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            const pageView = app?.pdfViewer?.getPageView(0);
+            const layer = pageView?.annotationEditorLayer?.div;
+            const manager =
+              app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+            const squareButton = document.getElementById("editorSquareButton");
+            return (
+              app?.pdfDocument &&
+              page?.dataset.loaded === "true" &&
+              !page.classList.contains("loading") &&
+              !page.classList.contains("loadingIcon") &&
+              pageView?.pdfPage &&
+              pageView.renderingState === 3 &&
+              pageView.textLayer?.div?.isConnected &&
+              layer?.isConnected &&
+              manager &&
+              squareButton?.isConnected &&
+              !squareButton.disabled
+            );
+          }, { timeout: 8_000 });
+          stage = "mode-change";
+          await viewer.evaluate((value) => {
+            PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+              mode: value,
+            });
+          }, mode);
+          await viewer.waitForFunction(
+            (value) =>
+              PDFViewerApplication.pdfViewer.annotationEditorMode === value,
+            { timeout: 8_000 },
+            mode,
+          );
+        } catch (error) {
+          const renderer = await viewer.evaluate((requestedMode) => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            const pageView = app?.pdfViewer?.getPageView(0);
+            const layer = pageView?.annotationEditorLayer?.div;
+            const squareButton = document.getElementById("editorSquareButton");
+            const buttonRect = squareButton?.getBoundingClientRect();
+            const buttonHit = buttonRect
+              ? document.elementFromPoint(
+                  buttonRect.x + buttonRect.width / 2,
+                  buttonRect.y + buttonRect.height / 2,
+                )
+              : null;
+            return {
+              requestedMode,
+              currentMode: app?.pdfViewer?.annotationEditorMode ?? null,
+              pdfLoaded: Boolean(app?.pdfDocument),
+              page: {
+                loaded: page?.dataset.loaded ?? null,
+                className: page?.className ?? null,
+                renderState: pageView?.renderingState ?? null,
+                pageReady: Boolean(pageView?.pdfPage),
+                textLayerConnected: Boolean(pageView?.textLayer?.div?.isConnected),
+                editorLayerConnected: Boolean(layer?.isConnected),
+              },
+              editorManagerReady: Boolean(
+                app?.pdfViewer?._layerProperties?.annotationEditorUIManager,
+              ),
+              squareButton: squareButton
+                ? {
+                    disabled: squareButton.disabled,
+                    connected: squareButton.isConnected,
+                    rect: buttonRect
+                      ? {
+                          x: buttonRect.x,
+                          y: buttonRect.y,
+                          width: buttonRect.width,
+                          height: buttonRect.height,
+                        }
+                      : null,
+                    hit: buttonHit
+                      ? {
+                          tag: buttonHit.tagName,
+                          id: buttonHit.id || "",
+                          className:
+                            typeof buttonHit.className === "string"
+                              ? buttonHit.className
+                              : "",
+                        }
+                      : null,
+                  }
+                : null,
+              modeEvents: window.__annotationModeEvents?.slice(-20) ?? [],
+              realKeydowns: window.__realKeydownEvents?.slice(-20) ?? [],
+              recentPointerOrInputEvents:
+                window.__interactionEvents
+                  ?.filter((event) =>
+                    ["pointerdown", "pointerup", "click", "keydown", "input"].includes(
+                      event.type,
+                    ),
+                  )
+                  .slice(-30) ?? [],
+              activeElement: {
+                tag: document.activeElement?.tagName ?? null,
+                id: document.activeElement?.id ?? null,
+                className:
+                  typeof document.activeElement?.className === "string"
+                    ? document.activeElement.className
+                    : "",
+              },
+            };
+          }, mode);
+          const host = await page.evaluate(() => ({
+            opened: window.__hostState?.opened,
+            saves: window.__hostState?.saves,
+            savedDataByteLength:
+              window.__hostState?.savedData?.byteLength ?? null,
+            errors: window.__hostState?.errors ?? [],
+          }));
+          const diagnostic = {
+            scenario: "annotation-mode-change-failure",
+            stage,
+            renderer,
+            host,
+            message: error.message,
+          };
+          results.push(diagnostic);
+          await persistProgress();
+          throw new Error(
+            `${error.message}; mode diagnostic: ${JSON.stringify(diagnostic)}`,
+          );
+        }
       };
       const storageCounts = async () =>
         viewer.evaluate(() => {
@@ -693,6 +757,34 @@ test(
               };
             });
         });
+      const waitForSquareHitReady = async (square) => {
+        const point = {
+          x: square.rect.x + square.rect.width / 2,
+          y: square.rect.y + square.rect.height / 2,
+          uid: square.uid,
+        };
+        await viewer.waitForFunction(
+          ({ x, y, uid }) => {
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            if (
+              !page ||
+              page.classList.contains("loading") ||
+              page.classList.contains("loadingIcon")
+            ) {
+              return false;
+            }
+            const annotation = [
+              ...page.querySelectorAll(".annotationLayer .squareAnnotation"),
+            ].find((element) => element.id.endsWith(uid));
+            const hit = document.elementFromPoint(x, y);
+            return !!annotation && hit?.closest(".squareAnnotation") === annotation;
+          },
+          { timeout: 30_000 },
+          point,
+        );
+      };
       const getTextDragPoints = async (
         phrase = "Dynamic languages such as JavaScript",
       ) => {
@@ -771,83 +863,177 @@ test(
         page.evaluate(() => window.__hostState.opened);
       const saveCount = async () =>
         page.evaluate(() => window.__hostState.saves);
-      const reopenFixture = async () => {
-        const expected = (await openCount()) + 1;
-        await page.evaluate(() => window.__reopenFixture());
-        await page.waitForFunction(
-          (count) => window.__hostState.opened === count,
-          { timeout: 60_000 },
-          expected,
-        );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .textLayer span',
-        );
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      };
-      const reopenSavedData = async () => {
-        const expected = (await openCount()) + 1;
-        await page.evaluate(() => window.__reopenSavedData());
-        await page.waitForFunction(
-          (count) => window.__hostState.opened === count,
-          { timeout: 60_000 },
-          expected,
-        );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .textLayer span',
-        );
-        await viewer.waitForSelector(
-          '.page[data-page-number="1"] .annotationEditorLayer',
-        );
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      };
-      const waitAutoSave = async (previous) => {
-        await page.waitForFunction(
-          (count) => window.__hostState.saves > count,
-          { timeout: 15000 },
-          previous,
-        );
-        await viewer.waitForFunction(
-          () => !PDFViewerApplication._saveInProgress,
-        );
-        const status = await viewer.evaluate(() => {
-          const element = document.getElementById("pdfReaderSaveStatus");
-          return {
-            text: element?.textContent,
-            toolbar: !!element?.closest("#toolbarViewer"),
-            width: element?.getBoundingClientRect().width,
-            popup:
-              document.getElementById("pdfReaderBridgeStatus")?.textContent ||
-              "",
-          };
-        });
-        assert.equal(status.text, undefined);
-        assert.equal(status.toolbar, false);
-        assert.doesNotMatch(status.popup, /^(待保存|保存中|已保存)$/);
-      };
-      const saveAndReopen = async (automatic = false) => {
-        const expectedSave = (await saveCount()) + 1;
-        if (automatic) {
-          await waitAutoSave(expectedSave - 1);
-        } else {
-          await viewer.evaluate(() => {
-            if (
-              document
-                .getElementById("secondaryToolbar")
-                .classList.contains("hidden")
-            ) {
-              document.getElementById("secondaryToolbarToggleButton").click();
-            }
-          });
-          await viewer.waitForSelector("#secondaryToolbar:not(.hidden)");
-          await viewer.click("#secondaryDownload");
+      const waitForOpenCount = async (expected, context) => {
+        try {
           await page.waitForFunction(
-            (count) => window.__hostState.saves >= count,
+            (count) => window.__hostState.opened === count,
             { timeout: 60_000 },
-            expectedSave,
+            expected,
+          );
+        } catch (error) {
+          const host = await page.evaluate(() => {
+            const state = window.__hostState;
+            return {
+              opened: state.opened,
+              saves: state.saves,
+              savedDataByteLength: state.savedData?.byteLength || 0,
+              readyGenerations: state.readyGenerations,
+              opensSent: state.opensSent,
+              openedMessages: state.openedMessages,
+              saveAcks: state.saveAcks,
+              received: state.received.slice(-20),
+              errors: state.errors,
+            };
+          });
+          const renderer = await viewer.evaluate(() => {
+            const app = window.PDFViewerApplication;
+            const page = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            return {
+              title: document.title,
+              pdfLoaded: Boolean(app?.pdfDocument),
+              pageCount: app?.pdfDocument?.numPages ?? null,
+              loadingTaskActive: Boolean(app?.pdfLoadingTask),
+              loadingPercent: app?.loadingBar?.percent ?? null,
+              hasChanges: app?._hasChanges?.() ?? null,
+              saveInProgress: app?._saveInProgress ?? null,
+              overwriteInProgress: app?._overwriteInProgress ?? null,
+              documentEvents: window.__pdfLifecycleEvents?.slice(-20) ?? [],
+              bridgeStatus: document.getElementById("pdfReaderBridgeStatus")?.textContent ?? null,
+              errorWrapper: document.getElementById("errorWrapper")?.textContent?.trim() ?? null,
+              bridgeScript: (() => {
+                const script = document.querySelector("script[data-renderer-generation]");
+                return script ? {
+                  rendererGeneration: script.dataset.rendererGeneration,
+                  channel: script.dataset.channel,
+                  tokenPresent: Boolean(script.dataset.token),
+                } : null;
+              })(),
+              pageClass: page?.className ?? null,
+              pageLoaded: page?.dataset.loaded ?? null,
+              selectedEditorCount: document.querySelectorAll(
+                ".annotationEditorLayer .selectedEditor",
+              ).length,
+              activeElement: {
+                tag: document.activeElement?.tagName ?? null,
+                id: document.activeElement?.id ?? null,
+                className:
+                  typeof document.activeElement?.className === "string"
+                    ? document.activeElement.className
+                    : "",
+              },
+            };
+          });
+          const diagnostic = {
+            scenario: "open-ack-timeout-diagnostic",
+            context,
+            expectedOpened: expected,
+            host,
+            renderer,
+            pageErrors: errors.slice(-20),
+            consoleErrors: consoleErrors.slice(-20),
+          };
+          results.push(diagnostic);
+          await persistProgress();
+          throw new Error(
+            `${error.message}; open diagnostic: ${JSON.stringify(diagnostic)}`,
           );
         }
+      };
+      const saveDirtySessionBeforeOpen = async () => {
+        const dirty = await viewer.evaluate(
+          () => PDFViewerApplication._hasChanges(),
+        );
+        if (!dirty) return;
+        const expectedSave = (await saveCount()) + 1;
+        await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+        await page.waitForFunction(
+          (count) => window.__hostState.saves === count,
+          { timeout: 60_000 },
+          expectedSave,
+        );
+        await viewer.waitForFunction(
+          () =>
+            !PDFViewerApplication._hasChanges() &&
+            !PDFViewerApplication._saveInProgress,
+          { timeout: 60_000 },
+        );
+      };
+      const waitForCurrentPageRendered = async () =>
+        viewer.waitForFunction(
+          async () => {
+            const application = window.PDFViewerApplication;
+            const pdfDocument = application?.pdfDocument;
+            if (
+              !pdfDocument ||
+              pdfDocument === window.__previousPdfDocument
+            ) {
+              return false;
+            }
+            const page = await pdfDocument.getPage(1);
+            const pageView = application.pdfViewer.getPageView(0);
+            const pageElement = document.querySelector(
+              '.page[data-page-number="1"]',
+            );
+            return (
+              pageView?.pdfPage === page &&
+              pageView.renderingState === 3 &&
+              pageView.div === pageElement &&
+              pageElement?.dataset.loaded === "true" &&
+              !pageElement.classList.contains("loading") &&
+              !pageElement.classList.contains("loadingIcon") &&
+              pageView.textLayer?.div?.isConnected &&
+              pageView.textLayer.div.querySelector(".endOfContent") &&
+              pageView.annotationEditorLayer?.div?.isConnected
+            );
+          },
+          { timeout: 60_000 },
+        );
+      const reopenFixture = async () => {
+        await saveDirtySessionBeforeOpen();
+        const expected = (await openCount()) + 1;
+        await viewer.evaluate(() => {
+          window.__previousPdfDocument = PDFViewerApplication.pdfDocument;
+        });
+        await page.evaluate(() => window.__reopenFixture());
+        await waitForOpenCount(expected, "fixture");
+        await waitForCurrentPageRendered();
+      };
+      const reopenSavedData = async () => {
+        await saveDirtySessionBeforeOpen();
+        const expected = (await openCount()) + 1;
+        await viewer.evaluate(() => {
+          window.__previousPdfDocument = PDFViewerApplication.pdfDocument;
+        });
+        await page.evaluate(() => window.__reopenSavedData());
+        await waitForOpenCount(expected, "saved-data");
+        await waitForCurrentPageRendered();
+      };
+      const saveAndReopen = async () => {
+        const expectedSave = (await saveCount()) + 1;
+        await viewer.evaluate(() => {
+          if (
+            document
+              .getElementById("secondaryToolbar")
+              .classList.contains("hidden")
+          ) {
+            document.getElementById("secondaryToolbarToggleButton").click();
+          }
+        });
+        await viewer.waitForSelector("#secondaryToolbar:not(.hidden)");
+        await viewer.click("#secondaryDownload");
+        await page.waitForFunction(
+          (count) => window.__hostState.saves === count,
+          { timeout: 60_000 },
+          expectedSave,
+        );
         await viewer.waitForFunction(
           () => !PDFViewerApplication._saveInProgress,
+          { timeout: 60_000 },
+        );
+        await viewer.waitForFunction(
+          () => !PDFViewerApplication._hasChanges(),
           { timeout: 60_000 },
         );
         const byteLength = await page.evaluate(
@@ -857,196 +1043,6 @@ test(
         await reopenSavedData();
         return { byteLength, save: expectedSave };
       };
-      const rightDrag = await phraseGeometry();
-      await setMode(5);
-      const initialSquares = (await storageCounts())[5];
-      await mouseMove(
-        { x: rightDrag.rect.x - 3, y: rightDrag.rect.y - 3 },
-        { x: rightDrag.rect.right + 3, y: rightDrag.rect.bottom + 3 },
-      );
-      await waitForNewAnnotation(5, initialSquares);
-      const beforeRightDrag = await storageCounts();
-      await viewer.evaluate(() => {
-        window.__rightMenus = [];
-        document.addEventListener("contextmenu", (event) =>
-          window.__rightMenus.push({ prevented: event.defaultPrevented }),
-        );
-      });
-      await setMode(10);
-      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
-        button: "right",
-      });
-      assert.equal(await wheelMode(), 10, "Right-click must not change tools");
-      assert.deepEqual(
-        await storageCounts(),
-        beforeRightDrag,
-        "Right-click does not erase",
-      );
-      assert.ok(
-        await viewer.evaluate(() =>
-          window.__rightMenus.some((event) => !event.prevented),
-        ),
-        "Ordinary contextmenu stays available",
-      );
-      await page.keyboard.press("Escape");
-      // Give native selectionchange callbacks time to run after right-button
-      // release; an immediate storage snapshot can miss delayed annotations.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
-          button: "right",
-        });
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        assert.deepEqual(
-          await storageCounts(),
-          beforeRightDrag,
-          `Right-click ${attempt + 1} must not create delayed annotations`,
-        );
-        assert.equal(await wheelMode(), 10);
-        await page.keyboard.press("Escape");
-      }
-      // Some platforms select the word under a context-menu click only after
-      // pointerup. Replay that native default-action timing deterministically.
-      await viewer.evaluate(() => {
-        document.addEventListener(
-          "contextmenu",
-          () => {
-            setTimeout(() => {
-              const text = document.querySelector(
-                ".page .textLayer span",
-              )?.firstChild;
-              if (!text)
-                throw new Error("Missing text for context selection probe");
-              const range = document.createRange();
-              range.setStart(text, 0);
-              range.setEnd(text, Math.min(6, text.length));
-              const selection = document.getSelection();
-              selection.removeAllRanges();
-              selection.addRange(range);
-            }, 0);
-          },
-          { once: true },
-        );
-      });
-      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
-        button: "right",
-      });
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      assert.deepEqual(
-        await storageCounts(),
-        beforeRightDrag,
-        "Delayed context-menu text selection must not create underline",
-      );
-      await viewer.evaluate(() => document.getSelection().removeAllRanges());
-      await page.keyboard.press("Escape");
-      for (const originalMode of [0, 3, 5, 9, 10, 15, 17]) {
-        await setMode(originalMode);
-        await page.mouse.move(rightDrag.start.x, rightDrag.start.y);
-        await page.mouse.down({ button: "right" });
-        await page.mouse.move(rightDrag.start.x + 2, rightDrag.start.y);
-        assert.equal(
-          await wheelMode(),
-          originalMode,
-          "Tiny click jitter must not activate temporary eraser",
-        );
-        await page.mouse.move(rightDrag.end.x, rightDrag.end.y, { steps: 10 });
-        await viewer.waitForFunction(
-          () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
-        );
-        await page.mouse.up({ button: "right" });
-        await viewer.waitForFunction(
-          (mode) =>
-            PDFViewerApplication.pdfViewer.annotationEditorMode === mode,
-          {},
-          originalMode,
-        );
-        assert.equal(
-          (await storageCounts())[5],
-          initialSquares,
-          "Right-drag erases square",
-        );
-        assert.equal(
-          (await storageCounts())[9],
-          beforeRightDrag[9],
-          "Right-drag no longer creates highlights",
-        );
-        await page.keyboard.down("Control");
-        await page.keyboard.press("z");
-        await page.keyboard.up("Control");
-        await viewer.waitForFunction(
-          (count) =>
-            [
-              ...(PDFViewerApplication.pdfDocument.annotationStorage.serializable.map?.values() ||
-                []),
-            ].filter((entry) => entry.annotationType === 5 && !entry.deleted)
-              .length === count,
-          {},
-          beforeRightDrag[5],
-        );
-        if (originalMode === 0) {
-          await page.keyboard.down("Control");
-          await page.keyboard.press("y");
-          await page.keyboard.up("Control");
-          assert.equal(
-            (await storageCounts())[5],
-            initialSquares,
-            "Redo reapplies erasure without changing NONE",
-          );
-          await page.keyboard.down("Control");
-          await page.keyboard.press("z");
-          await page.keyboard.up("Control");
-          assert.equal((await storageCounts())[5], beforeRightDrag[5]);
-        }
-      }
-      await setMode(10);
-      await page.mouse.move(rightDrag.start.x, rightDrag.start.y);
-      await page.mouse.down({ button: "right" });
-      await page.mouse.move(rightDrag.end.x, rightDrag.end.y, { steps: 10 });
-      await viewer.waitForFunction(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
-      );
-      await viewer.evaluate(() => window.dispatchEvent(new Event("blur")));
-      await page.mouse.up({ button: "right" });
-      await viewer.waitForFunction(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 10,
-      );
-      await page.keyboard.down("Control");
-      await page.keyboard.press("z");
-      await page.keyboard.up("Control");
-      assert.equal(
-        (await storageCounts())[5],
-        beforeRightDrag[5],
-        "Cancellation restores tool and keeps erasure undoable",
-      );
-      const menuCount = await viewer.evaluate(() => window.__rightMenus.length);
-      await page.mouse.click(rightDrag.start.x, rightDrag.start.y, {
-        button: "right",
-      });
-      assert.ok(
-        await viewer.evaluate(
-          (count) => window.__rightMenus.length > count,
-          menuCount,
-        ),
-        "New right-click after drag is not suppressed",
-      );
-      await page.keyboard.press("Escape");
-      assert.equal(
-        await viewer.$(".pdfToolWheel"),
-        null,
-        "Right-drag does not open wheel",
-      );
-      await openWheel();
-      await page.mouse.up({ button: "middle" });
-      await reopenFixture();
-      assert.equal(
-        await viewer.$(".pdfToolWheel"),
-        null,
-        "Document replacement cleans up persistent wheel",
-      );
-      results.push({
-        scenario:
-          "right-click retains contextmenu; drag erases with undo and restores all five tools, NONE and ERASER; reopening cleans up wheel",
-        passed: true,
-      });
       const createSquareAroundText = async (phrase) => {
         const target = await phraseGeometry(phrase);
         const before = await storageCounts();
@@ -1154,13 +1150,226 @@ test(
         );
       };
 
+      // Context-menu input must remain a context menu even over existing
+      // annotations. Repeated right-clicks also exercise the delayed native
+      // text-selection callback that can otherwise look like a second
+      // left-button selection after pointerup.
+      const rightDrag = await phraseGeometry();
+      const initialSquares = (await storageCounts())[5];
+      const rightDragSquare = await createSquareAroundText(
+        "Dynamic languages such as JavaScript",
+      );
+      assertDrawingWasPrioritized(rightDragSquare, 5);
+      const beforeRightDrag = await storageCounts();
+      const currentMode = async () =>
+        viewer.evaluate(
+          () => PDFViewerApplication.pdfViewer.annotationEditorMode,
+        );
+      const undoModifier = process.platform === "darwin" ? "Meta" : "Control";
+      const pressUndo = async () => {
+        await page.keyboard.down(undoModifier);
+        await page.keyboard.press("z");
+        await page.keyboard.up(undoModifier);
+      };
+      const pressRedo = async () => {
+        if (process.platform === "darwin") {
+          await page.keyboard.down("Meta");
+          await page.keyboard.down("Shift");
+          await page.keyboard.press("z");
+          await page.keyboard.up("Shift");
+          await page.keyboard.up("Meta");
+        } else {
+          await page.keyboard.down("Control");
+          await page.keyboard.press("y");
+          await page.keyboard.up("Control");
+        }
+      };
+      const rightClick = (point) =>
+        page.mouse.click(
+          iframeBox.x + point.x,
+          iframeBox.y + point.y,
+          { button: "right" },
+        );
+      await viewer.evaluate(() => {
+        window.__rightMenus = [];
+        document.addEventListener("contextmenu", (event) =>
+          window.__rightMenus.push({ prevented: event.defaultPrevented }),
+        );
+      });
+      await setMode(10);
+      await rightClick(rightDrag.start);
+      assert.equal(await currentMode(), 10, "Right-click must not change tools");
+      assert.deepEqual(
+        await storageCounts(),
+        beforeRightDrag,
+        "Right-click must not erase or create an annotation",
+      );
+      assert.ok(
+        await viewer.evaluate(() =>
+          window.__rightMenus.some((event) => !event.prevented),
+        ),
+        "Ordinary contextmenu stays available",
+      );
+      await page.keyboard.press("Escape");
+
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await rightClick(rightDrag.start);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.deepEqual(
+          await storageCounts(),
+          beforeRightDrag,
+          `Right-click ${attempt + 1} must not create delayed annotations`,
+        );
+        assert.equal(await currentMode(), 10);
+        await page.keyboard.press("Escape");
+      }
+
+      // Reproduce platform default-action timing deterministically: some
+      // browsers update text selection in a task after contextmenu dispatch.
+      await viewer.evaluate(() => {
+        document.addEventListener(
+          "contextmenu",
+          () => {
+            setTimeout(() => {
+              const text = document.querySelector(
+                ".page .textLayer span",
+              )?.firstChild;
+              if (!text) {
+                throw new Error("Missing text for context selection probe");
+              }
+              const range = document.createRange();
+              range.setStart(text, 0);
+              range.setEnd(text, Math.min(6, text.length));
+              const selection = document.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }, 0);
+          },
+          { once: true },
+        );
+      });
+      await rightClick(rightDrag.start);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const contextSelection = await eventSummary();
+      assert.ok(
+        contextSelection.selection,
+        "The delayed context-menu selection probe must run",
+      );
+      assert.deepEqual(
+        await storageCounts(),
+        beforeRightDrag,
+        "Delayed context-menu selection must not create an underline",
+      );
+      await viewer.evaluate(() => document.getSelection()?.removeAllRanges());
+      await page.keyboard.press("Escape");
+
+      const rightDragStart = {
+        x: iframeBox.x + rightDrag.start.x,
+        y: iframeBox.y + rightDrag.start.y,
+      };
+      const rightDragEnd = {
+        x: iframeBox.x + rightDrag.end.x,
+        y: iframeBox.y + rightDrag.end.y,
+      };
+      for (const originalMode of [0, 3, 5, 9, 10, 15, 17]) {
+        await setMode(originalMode);
+        await page.mouse.move(rightDragStart.x, rightDragStart.y);
+        await page.mouse.down({ button: "right" });
+        await page.mouse.move(rightDragStart.x + 2, rightDragStart.y);
+        assert.equal(
+          await currentMode(),
+          originalMode,
+          "Tiny click jitter must not activate the temporary eraser",
+        );
+        await page.mouse.move(rightDragEnd.x, rightDragEnd.y, { steps: 10 });
+        await viewer.waitForFunction(
+          () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
+        );
+        await page.mouse.up({ button: "right" });
+        await viewer.waitForFunction(
+          (mode) =>
+            PDFViewerApplication.pdfViewer.annotationEditorMode === mode,
+          { timeout: 8_000 },
+          originalMode,
+        );
+        assert.equal(
+          (await storageCounts())[5],
+          initialSquares,
+          "Right-drag erases the existing Square",
+        );
+        assert.equal(
+          (await storageCounts())[9],
+          beforeRightDrag[9],
+          "Right-drag must not create a Highlight",
+        );
+
+        await pressUndo();
+        await viewer.waitForFunction(
+          (count) =>
+            [
+              ...(PDFViewerApplication.pdfDocument.annotationStorage.serializable.map?.values() ||
+                []),
+            ].filter((entry) => entry.annotationType === 5 && !entry.deleted)
+              .length === count,
+          { timeout: 8_000 },
+          beforeRightDrag[5],
+        );
+        if (originalMode === 0) {
+          await pressRedo();
+          assert.equal(
+            (await storageCounts())[5],
+            initialSquares,
+            "Redo reapplies erasure without changing NONE",
+          );
+          await pressUndo();
+          assert.equal((await storageCounts())[5], beforeRightDrag[5]);
+        }
+      }
+
+      await setMode(10);
+      await page.mouse.move(rightDragStart.x, rightDragStart.y);
+      await page.mouse.down({ button: "right" });
+      await page.mouse.move(rightDragEnd.x, rightDragEnd.y, { steps: 10 });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 17,
+      );
+      await viewer.evaluate(() => window.dispatchEvent(new Event("blur")));
+      await page.mouse.up({ button: "right" });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 10,
+      );
+      await pressUndo();
+      assert.equal(
+        (await storageCounts())[5],
+        beforeRightDrag[5],
+        "Undo restores the Square after an interrupted right-drag",
+      );
+      const menuCount = await viewer.evaluate(() => window.__rightMenus.length);
+      await rightClick(rightDrag.start);
+      assert.ok(
+        await viewer.evaluate(
+          (count) => window.__rightMenus.length > count,
+          menuCount,
+        ),
+        "A new right-click after a drag must still dispatch contextmenu",
+      );
+      await page.keyboard.press("Escape");
+      results.push({
+        scenario:
+          "right-click contextmenu, delayed selection, 10 repeated clicks, right-drag eraser, Mac undo/redo, and all tool modes",
+        passed: true,
+        delayedSelection: contextSelection.selection,
+      });
+      await persistProgress();
+      await reopenFixture();
+
       // Create a true mouse-drawn Square, then save/reopen it. The following
       // tests begin inside this persisted body instead of manufacturing a DOM
       // Selection, so they exercise Chrome hit-testing and PDF.js event routing.
       const baseSquare = await createSquareAroundText(
         "Dynamic languages such as JavaScript",
       );
-      const baseSquareSave = await saveAndReopen(true);
+      const baseSquareSave = await saveAndReopen();
       await setMode(5);
       await viewer.waitForFunction(
         () =>
@@ -1192,7 +1401,7 @@ test(
       });
       await persistProgress();
       assertTextSelectionWasPrioritized(underlineOnSquare, 10);
-      const underlineSave = await saveAndReopen(true);
+      const underlineSave = await saveAndReopen();
       const pdfAfterUnderlineSave = await pdfSubtypeCounts();
       results.at(-1).save = underlineSave;
       results.at(-1).pdfAfterSave = pdfAfterUnderlineSave;
@@ -1259,7 +1468,6 @@ test(
       // receive the actual pointer and create a new stroke.
       await setMode(15);
       const inkBefore = await storageCounts();
-      const inkAutoBefore = await saveCount();
       const inkStartSquare = (await squareEditors())[0];
       await clearProbe();
       await mouseInkStroke(inkStartSquare.rect);
@@ -1273,7 +1481,9 @@ test(
         "Ink should enter the drawing session while the mouse is held",
       );
       assert.equal(inkGestureEvents.mode, 15);
-      // Idle automatic saving commits the drawing without leaving Ink mode.
+      // Ink intentionally supports multiple strokes in one session: mouseup
+      // ends a stroke, while Escape commits the drawing as one editor.
+      await page.keyboard.press("Escape");
       try {
         await waitForNewAnnotation(15, inkBefore[15]);
       } catch (error) {
@@ -1317,13 +1527,6 @@ test(
       results.push({ scenario: "ink-inside-saved-square", inkInSquare });
       await persistProgress();
       assertDrawingWasPrioritized(inkInSquare, 15);
-      await waitAutoSave(inkAutoBefore);
-      assert.equal(
-        await wheelMode(),
-        15,
-        "Autosave must not leave the Ink tool",
-      );
-      results.push({ scenario: "ink-autosave", saves: await saveCount() });
 
       // Discard that branch and use the saved two-Square document to create a
       // FreeText box over old markup with the real mouse.
@@ -1332,44 +1535,500 @@ test(
       const freeTextBefore = await storageCounts();
       const freeTextSquare = (await squareEditors())[0];
       await clearProbe();
+      const freeTextCreationEventStart = await viewer.evaluate(
+        () => window.__interactionEvents.length,
+      );
       await page.mouse.click(
         iframeBox.x + freeTextSquare.rect.x + freeTextSquare.rect.width / 2,
         iframeBox.y + freeTextSquare.rect.y + freeTextSquare.rect.height / 2,
         { button: "left" },
       );
-      await viewer.waitForSelector(
-        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
-      );
-      const textAutoBefore = await saveCount();
-      await viewer.type(
-        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
-        "12345",
-      );
-      await waitAutoSave(textAutoBefore);
-      const freeTextBeforeCommit = await viewer.evaluate(() => {
-        const internal = document.querySelector(
-          '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal',
+      const freeTextReadySelector =
+        '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal';
+      const waitForStableFreeTextReady = async (
+        selector,
+        afterEventIndex,
+        { timeout = 15_000, expectedId = null, clickPoint = null } = {},
+      ) =>
+        viewer.waitForFunction(
+          async ({ selector, afterEventIndex, expectedId, clickPoint }) => {
+            const nextFrame = () =>
+              new Promise((resolve) => requestAnimationFrame(resolve));
+            const read = () => {
+              const page = document.querySelector(
+                '.page[data-page-number="1"]',
+              );
+              const internal = document.querySelector(selector);
+              const editor = internal?.closest(
+                ".freeTextEditor.selectedEditor",
+              );
+              const events = window.__interactionEvents.slice(afterEventIndex);
+              const pointerdown = events.find(
+                (event) =>
+                  event.type === "pointerdown" &&
+                  event.trusted &&
+                  event.targetInEditorLayer &&
+                  event.mode === 3,
+              );
+              const pointerup = pointerdown
+                ? events.find(
+                    (event) =>
+                      event.type === "pointerup" &&
+                      event.trusted &&
+                      event.pointerId === pointerdown.pointerId &&
+                      event.time >= pointerdown.time,
+                  )
+                : null;
+              const focusEvents = events.filter(
+                (event) =>
+                  event.type === "focusin" || event.type === "focusout",
+              );
+              const rectOf = (element) => {
+                const rect = element?.getBoundingClientRect();
+                return rect
+                  ? {
+                      x: rect.x,
+                      y: rect.y,
+                      width: rect.width,
+                      height: rect.height,
+                    }
+                  : null;
+              };
+              const click = clickPoint
+                ? [...events]
+                    .reverse()
+                    .find(
+                      (event) =>
+                        event.type === "click" &&
+                        Math.abs(
+                          (event.point?.x ?? Infinity) - clickPoint.x,
+                        ) <= 1 &&
+                        Math.abs(
+                          (event.point?.y ?? Infinity) - clickPoint.y,
+                        ) <= 1,
+                    )
+                : null;
+              return {
+                pageReady:
+                  page?.dataset.loaded === "true" &&
+                  !page.classList.contains("loading") &&
+                  !page.classList.contains("loadingIcon") &&
+                  PDFViewerApplication.pdfViewer.annotationEditorMode === 3,
+                internal,
+                parent: internal?.parentElement,
+                editor,
+                editorParent: editor?.parentElement,
+                activeElement: document.activeElement,
+                internalRect: rectOf(internal),
+                editorRect: rectOf(editor),
+                pointerdown,
+                pointerup,
+                focusSignature: focusEvents
+                  .map((event) =>
+                    [
+                      event.time,
+                      event.type,
+                      event.target?.id,
+                      event.target?.className,
+                      event.relatedTarget?.id,
+                    ].join(":"),
+                  )
+                  .join("|"),
+                click:
+                  click &&
+                  click.trusted &&
+                  click.targetInSelectedFreeTextEditor &&
+                  click.hitInSelectedFreeTextEditor
+                    ? click
+                    : null,
+              };
+            };
+            const usable = (sample) =>
+              sample.pageReady &&
+              sample.internal?.isConnected &&
+              sample.internal.getAttribute("contenteditable") === "true" &&
+              sample.editor?.isConnected &&
+              sample.internal.closest(".freeTextEditor.selectedEditor") ===
+                sample.editor &&
+              (!expectedId || sample.internal.id === expectedId) &&
+              sample.internalRect?.width > 0 &&
+              sample.internalRect?.height > 0 &&
+              sample.editorRect?.width > 0 &&
+              sample.editorRect?.height > 0 &&
+              sample.pointerdown &&
+              sample.pointerup &&
+              (!clickPoint || sample.click);
+            const sameRect = (left, right) =>
+              left &&
+              right &&
+              ["x", "y", "width", "height"].every(
+                (key) => Math.abs(left[key] - right[key]) <= 0.25,
+              );
+            const first = read();
+            if (!usable(first)) return false;
+            await nextFrame();
+            const second = read();
+            if (!usable(second)) return false;
+            await nextFrame();
+            const third = read();
+            return (
+              usable(third) &&
+              first.internal === second.internal &&
+              second.internal === third.internal &&
+              first.parent === second.parent &&
+              second.parent === third.parent &&
+              first.editor === second.editor &&
+              second.editor === third.editor &&
+              first.editorParent === second.editorParent &&
+              second.editorParent === third.editorParent &&
+              first.activeElement === second.activeElement &&
+              second.activeElement === third.activeElement &&
+              first.focusSignature === second.focusSignature &&
+              second.focusSignature === third.focusSignature &&
+              sameRect(first.internalRect, second.internalRect) &&
+              sameRect(second.internalRect, third.internalRect) &&
+              sameRect(first.editorRect, second.editorRect) &&
+              sameRect(second.editorRect, third.editorRect)
+            );
+          },
+          { timeout },
+          { selector, afterEventIndex, expectedId, clickPoint },
         );
+      await waitForStableFreeTextReady(
+        freeTextReadySelector,
+        freeTextCreationEventStart,
+      );
+      const freeTextBeforeFocusClick = await viewer.evaluate(
+        (selector, afterEventIndex) => {
+          const internal = document.querySelector(selector);
+          const rect = internal?.getBoundingClientRect();
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const editorRect = editor?.getBoundingClientRect();
+          return {
+            time: performance.now(),
+            id: internal?.id || null,
+            contentEditable: internal?.getAttribute("contenteditable"),
+            active: document.activeElement === internal,
+            connected: Boolean(internal?.isConnected),
+            selected: Boolean(
+              internal?.closest(".freeTextEditor.selectedEditor"),
+            ),
+            rect: rect
+              ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+              : null,
+            editorRect: editorRect
+              ? {
+                  x: editorRect.x,
+                  y: editorRect.y,
+                  width: editorRect.width,
+                  height: editorRect.height,
+                }
+              : null,
+            activeElement: internal?.ownerDocument
+              ? {
+                  tag: document.activeElement?.tagName || null,
+                  id: document.activeElement?.id || null,
+                  className:
+                    typeof document.activeElement?.className === "string"
+                      ? document.activeElement.className
+                      : "",
+                }
+              : null,
+            loaded:
+              document.querySelector('.page[data-page-number="1"]')?.dataset
+                .loaded === "true",
+            parent: internal?.parentElement
+              ? {
+                  tag: internal.parentElement.tagName,
+                  className:
+                    typeof internal.parentElement.className === "string"
+                      ? internal.parentElement.className
+                      : "",
+                }
+              : null,
+            pointerdown: window.__interactionEvents
+              .slice(afterEventIndex)
+              .find(
+                (event) =>
+                  event.type === "pointerdown" &&
+                  event.trusted &&
+                  event.targetInEditorLayer &&
+                  event.mode === 3,
+              ),
+            pointerup: window.__interactionEvents
+              .slice(afterEventIndex)
+              .find((event) => event.type === "pointerup" && event.trusted),
+            recentFocusEvents: window.__interactionEvents
+              .filter(
+                (event) =>
+                  event.type === "focusin" || event.type === "focusout",
+              )
+              .slice(-8),
+          };
+        },
+        freeTextReadySelector,
+        freeTextCreationEventStart,
+      );
+      const freeTextFocusEvidence = {
+        scenario: "freetext-focus-probe",
+        beforeClick: freeTextBeforeFocusClick,
+      };
+      results.push(freeTextFocusEvidence);
+      await persistProgress();
+      assert.ok(
+        freeTextBeforeFocusClick.editorRect?.width > 0 &&
+          freeTextBeforeFocusClick.editorRect?.height > 0,
+        "The selected FreeText outer editor must provide a real mouse hit target even when its empty internal has zero width",
+      );
+      const freeTextClickPoint = {
+        x:
+          freeTextBeforeFocusClick.editorRect.x +
+          freeTextBeforeFocusClick.editorRect.width / 2,
+        y:
+          freeTextBeforeFocusClick.editorRect.y +
+          freeTextBeforeFocusClick.editorRect.height / 2,
+      };
+      const freeTextHitBeforeClick = await viewer.evaluate(
+        ({ selector, point }) => {
+          const internal = document.querySelector(selector);
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const hit = document.elementFromPoint(point.x, point.y);
+          return {
+            time: performance.now(),
+            hit: hit
+              ? {
+                  tag: hit.tagName,
+                  id: hit.id || "",
+                  className:
+                    typeof hit.className === "string" ? hit.className : "",
+                }
+              : null,
+            insideInternal: Boolean(
+              internal && hit && (hit === internal || internal.contains(hit)),
+            ),
+            insideEditor: Boolean(
+              editor && hit && (hit === editor || editor.contains(hit)),
+            ),
+          };
+        },
+        { selector: freeTextReadySelector, point: freeTextClickPoint },
+      );
+      freeTextFocusEvidence.hitBeforeRefocus = freeTextHitBeforeClick;
+      await persistProgress();
+      const refocusWithMouse = !freeTextBeforeFocusClick.active;
+      freeTextFocusEvidence.focusPath = refocusWithMouse
+        ? "real-mouse-refocus"
+        : "focused-by-real-creation-pointerdown";
+      assert.equal(
+        freeTextBeforeFocusClick.pointerdown?.trusted,
+        true,
+        "The FreeText editor must have been created by a trusted pointerdown",
+      );
+      if (refocusWithMouse) {
+        assert.equal(
+          freeTextHitBeforeClick.insideEditor,
+          true,
+          "A blurred FreeText editor can only be refocused by a real click that hits the selected editor",
+        );
+        const refocusEventStart = await viewer.evaluate(
+          () => window.__interactionEvents.length,
+        );
+        await page.mouse.click(
+          iframeBox.x + freeTextClickPoint.x,
+          iframeBox.y + freeTextClickPoint.y,
+          { button: "left" },
+        );
+        try {
+          await waitForStableFreeTextReady(
+            freeTextReadySelector,
+            refocusEventStart,
+            {
+              timeout: 10_000,
+              expectedId: freeTextBeforeFocusClick.id,
+              clickPoint: freeTextClickPoint,
+            },
+          );
+        } catch (error) {
+          freeTextFocusEvidence.focusClickFailure = {
+            time: await viewer.evaluate(() => performance.now()),
+            message: error.message,
+            eventTail: await viewer.evaluate(() =>
+              window.__interactionEvents.slice(-40),
+            ),
+          };
+          await persistProgress();
+          throw error;
+        }
+      }
+      const freeTextFocusBeforeTyping = await viewer.evaluate(
+        ({ selector, point }) => {
+          const internal = document.querySelector(selector);
+          const editor = internal?.closest(
+            ".freeTextEditor.selectedEditor",
+          );
+          const rect = internal?.getBoundingClientRect();
+          const editorRect = editor?.getBoundingClientRect();
+          const hit = editorRect
+            ? document.elementFromPoint(
+                editorRect.x + editorRect.width / 2,
+                editorRect.y + editorRect.height / 2,
+              )
+            : null;
+          const click = [...window.__interactionEvents]
+            .reverse()
+            .find(
+              (event) =>
+                event.type === "click" &&
+                Math.abs((event.point?.x ?? Infinity) - point.x) <= 1 &&
+                Math.abs((event.point?.y ?? Infinity) - point.y) <= 1,
+            );
+          return {
+            time: performance.now(),
+            id: internal?.id || null,
+            contentEditable: internal?.getAttribute("contenteditable"),
+            active: document.activeElement === internal,
+            connected: Boolean(internal?.isConnected),
+            selected: Boolean(
+              internal?.closest(".freeTextEditor.selectedEditor"),
+            ),
+            internalRect: rect
+              ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+              : null,
+            editorRect: editorRect
+              ? {
+                  x: editorRect.x,
+                  y: editorRect.y,
+                  width: editorRect.width,
+                  height: editorRect.height,
+                }
+              : null,
+            actualElementFromPoint: hit
+              ? {
+                  tag: hit.tagName,
+                  id: hit.id || "",
+                  className:
+                    typeof hit.className === "string" ? hit.className : "",
+                }
+              : null,
+            actualElementFromPointInsideInternal: Boolean(
+              internal && hit && (hit === internal || internal.contains(hit)),
+            ),
+            actualElementFromPointInsideEditor: Boolean(
+              editor && hit && (hit === editor || editor.contains(hit)),
+            ),
+            realClick: click || null,
+            recentFocusEvents: window.__interactionEvents
+              .filter(
+                (event) => event.type === "focusin" || event.type === "focusout",
+              )
+              .slice(-10),
+          };
+        },
+        { selector: freeTextReadySelector, point: freeTextClickPoint },
+      );
+      freeTextFocusEvidence.afterClick = freeTextFocusBeforeTyping;
+      await persistProgress();
+      if (
+        freeTextFocusBeforeTyping.contentEditable !== "true" ||
+        !freeTextFocusBeforeTyping.active ||
+        !freeTextFocusBeforeTyping.connected ||
+        !freeTextFocusBeforeTyping.selected ||
+        (refocusWithMouse &&
+          !freeTextFocusBeforeTyping.actualElementFromPointInsideEditor)
+      ) {
+        results.push({
+          scenario: "freetext-focus-after-real-click-failure",
+          beforeClick: freeTextBeforeFocusClick,
+          hitBeforeRefocus: freeTextHitBeforeClick,
+          afterClick: freeTextFocusBeforeTyping,
+          eventTail: await viewer.evaluate(() =>
+            window.__interactionEvents.slice(-40),
+          ),
+        });
+        await persistProgress();
+      }
+      assert.equal(freeTextFocusBeforeTyping.contentEditable, "true");
+      assert.equal(freeTextFocusBeforeTyping.active, true);
+      assert.equal(freeTextFocusBeforeTyping.connected, true);
+      assert.equal(freeTextFocusBeforeTyping.selected, true);
+      if (refocusWithMouse) {
+        assert.equal(
+          freeTextFocusBeforeTyping.actualElementFromPointInsideEditor,
+          true,
+        );
+      }
+      await page.keyboard.type("12345");
+      await viewer.waitForFunction(
+        (internalId) => {
+          const internal = document.getElementById(internalId);
+          const inputEvents = window.__interactionEvents.filter(
+            (event) =>
+              event.type === "input" && event.target?.id === internalId,
+          );
+          const keyEvents = window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "keydown" &&
+                event.target?.id === internalId &&
+                /^[1-5]$/.test(event.key || ""),
+            );
+          return (
+            internal?.isConnected &&
+            internal.closest(".freeTextEditor.selectedEditor") !== null &&
+            document.activeElement === internal &&
+            internal.textContent.includes("12345") &&
+            inputEvents.length >= 5 &&
+            inputEvents.every((event) => event.trusted) &&
+            keyEvents.length === 5 &&
+            keyEvents.map((event) => event.key).join("") === "12345" &&
+            keyEvents.every((event) => event.trusted)
+          );
+        },
+        { timeout: 15_000 },
+        freeTextFocusBeforeTyping.id,
+      );
+      const freeTextBeforeCommit = await viewer.evaluate((internalId) => {
+        const internal = document.getElementById(internalId);
         return {
           text: internal?.textContent || "",
           contentEditable: internal?.getAttribute("contenteditable"),
           active: document.activeElement === internal,
+          connected: Boolean(internal?.isConnected),
+          selected: Boolean(
+            internal?.closest(".freeTextEditor.selectedEditor"),
+          ),
+          keyEvents: window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "keydown" &&
+                event.target?.id === internalId &&
+                /^[1-5]$/.test(event.key || ""),
+            )
+            .map((event) => ({ key: event.key, trusted: event.trusted })),
+          inputEvents: window.__interactionEvents
+            .filter(
+              (event) =>
+                event.type === "input" && event.target?.id === internalId,
+            )
+            .map((event) => ({ data: event.data, trusted: event.trusted })),
         };
-      });
+      }, freeTextFocusBeforeTyping.id);
       assert.equal(freeTextBeforeCommit.contentEditable, "true");
-      assert.equal(
-        freeTextBeforeCommit.active,
-        true,
-        "Autosave must retain text input focus",
-      );
+      assert.equal(freeTextBeforeCommit.active, true);
+      assert.equal(freeTextBeforeCommit.selected, true);
       assert.match(freeTextBeforeCommit.text, /12345/);
-      await page.keyboard.type("6");
-      const secondTextSave = await saveCount();
-      await waitAutoSave(secondTextSave);
-      assert.equal(
-        await viewer.evaluate(() => document.activeElement?.textContent),
-        "123456",
-        "Typing continues at the same caret after automatic save",
+      assert.deepEqual(
+        freeTextBeforeCommit.keyEvents.map((event) => event.key),
+        ["1", "2", "3", "4", "5"],
+      );
+      assert.ok(freeTextBeforeCommit.keyEvents.every((event) => event.trusted));
+      assert.ok(
+        freeTextBeforeCommit.inputEvents.length >= 5 &&
+          freeTextBeforeCommit.inputEvents.every((event) => event.trusted),
       );
       await page.keyboard.press("Escape");
       await waitForNewAnnotation(3, freeTextBefore[3]);
@@ -1425,7 +2084,7 @@ test(
       });
       await persistProgress();
       assertTextSelectionWasPrioritized(highlightOnMarkup, 9);
-      const highlightSave = await saveAndReopen(true);
+      const highlightSave = await saveAndReopen();
       results.at(-1).save = highlightSave;
       await persistProgress();
       const highlightOverHighlight = await createTextMarkup(9);
@@ -1488,6 +2147,7 @@ test(
         (editor) => editor.id !== firstSquare.id,
       );
       await setMode(0);
+      await waitForSquareHitReady(firstSquare);
       await clearProbe();
       await page.mouse.click(
         iframeBox.x + firstSquare.rect.x + firstSquare.rect.width / 2,
@@ -1502,6 +2162,18 @@ test(
               '.page[data-page-number="1"] .annotationEditorLayer .explicitlyEditing',
             ),
           { timeout: 8_000 },
+        );
+        const editEvents = await eventSummary();
+        const firstPointerDown = editEvents.events.find(
+          (event) => event.type === "pointerdown",
+        );
+        assert.ok(
+          firstPointerDown?.stack?.some(
+            (element) =>
+              element.className === "squareAnnotation" &&
+              element.id.endsWith(firstSquare.uid),
+          ),
+          "The genuine double-click must land on the intended rendered Square",
         );
       } catch (error) {
         const failure = {
@@ -1703,10 +2375,41 @@ test(
       console.log(
         `Real-pointer annotation interaction checks captured in tests/artifacts/annotation-interaction-${captureId}.{json,png}`,
       );
+    } catch (error) {
+      functionalError = error;
     } finally {
-      await browser?.close();
-      await new Promise((resolve) => server.close(resolve));
-      await removeTempRoot(temp);
+      cleanupReport = await cleanupBrowserTestResources({ browser, server });
+      try {
+        await removeTempRoot(temp);
+        cleanupReport.tempRootRemoved = true;
+      } catch (error) {
+        cleanupReport.tempRootRemoved = false;
+        cleanupReport.errors.push({
+          phase: "temp-root.remove",
+          name: error?.name || "Error",
+          message: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+      }
+      try {
+        await writeFile(
+          path.join(artifacts, `annotation-interaction-${captureId}.cleanup.json`),
+          JSON.stringify(cleanupReport, null, 2),
+          "utf8",
+        );
+      } catch (error) {
+        cleanupReport.errors.push({
+          phase: "cleanup-report.write",
+          name: error?.name || "Error",
+          message: error?.message || String(error),
+          stack: error?.stack || null,
+        });
+      }
+      t.diagnostic(
+        `Cleanup report: ${path.join(artifacts, `annotation-interaction-${captureId}.cleanup.json`)}`,
+      );
     }
+    const finalError = attachCleanupErrors(functionalError, cleanupReport);
+    if (finalError) throw finalError;
   },
 );

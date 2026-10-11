@@ -35,10 +35,10 @@ resources are trimmed for this release.
 
 The supported desktop baseline is Obsidian **1.14.4**. Mobile is not supported.
 
-For macOS and iOS/iPadOS development continuation, read
-[the complete Apple-platform handoff](MACOS_HANDOFF.md). It records the 0.1.4
-baseline, architecture, verified fixes, platform audit and implementation order;
-it does not claim Apple-platform compatibility has already been completed.
+The 0.2.0 candidate targets macOS desktop on the tested Apple Silicon Mac,
+macOS 27.2 and Obsidian 1.14.4. iOS/iPadOS work is deferred and
+`isDesktopOnly` remains true. See [the handoff](MACOS_HANDOFF.md) and
+[Mac acceptance evidence](MACOS_ACCEPTANCE.md) for tested behavior and limits.
 
 ## Open and edit PDFs
 
@@ -61,17 +61,14 @@ Both the number row and numeric keypad are supported. Press the active tool's
 key again or backquote to leave it. Typing digits inside an input or editable
 text does not switch tools.
 
-Version 0.1.6 uses a six-sector tool wheel centered on the pointer. Hold the
-middle button to preview a sector and release to select it, or release at the
-center and then left-click a sector. Moving between sectors while held does not
-switch tools; the sector under the pointer at release is selected.
-The top sector closes the wheel without changing the tool; counterclockwise
-from its left are tools 1–5. Escape or an outside click also closes the wheel.
-Selecting an already active tool keeps it active. Right-button dragging uses
-the eraser temporarily and restores the previous tool on release. Movement
-under 4 CSS pixels counts as click jitter; an ordinary right-click leaves the
-default context menu available and does not erase. Right-drag erasing supports
-Undo and replaces the former right-button temporary highlighting behavior.
+The macOS 0.2.0 candidate incorporates the Windows `c52e522` mouse controls.
+Hold the middle mouse button to preview the six-sector tool wheel and release
+over a sector to select it. Releasing in the center leaves the wheel open for
+a left-click selection; the top sector, Escape, or an outside click closes it.
+Dragging the right mouse button temporarily erases annotations and restores
+the previous tool on release. A regular right-click retains the context menu
+and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
+undo and redo.
 
 Version 0.1.4 gives the active creation tool priority over existing annotation
 bodies: underline/highlight can select the PDF text beneath them, and drawing
@@ -79,30 +76,44 @@ tools can start inside an existing annotation. Leave the tool, then double-click
 an annotation to explicitly edit its object. Toolbars, comments, the eraser,
 and an actively focused text-box input retain their own interactions.
 
-Version 0.1.7 enables **automatic saving** to the original vault PDF after one
-second without editing. Drawing, dragging and IME composition postpone saving;
-text-box saving keeps the text input and caret active. Creation, content and
-parameter changes, erasing, deletion, Undo and Redo are saved. Opening a PDF,
-selecting an object or switching tools alone does not write it.
+Automatic saving is **enabled by default** and can be disabled in the plugin
+settings. Completed edits are combined after one second. After one second of
+text inactivity, the text is committed for saving without moving focus or the
+caret; active text composition and drawing are allowed to finish. Committing
+or blurring text also schedules saving. Right-button erasing waits until the
+gesture is released or cancelled before saving the changes.
+Press `Cmd+S` on macOS (`Ctrl+S` on Windows), or use **保存到仓库**,
+for an immediate manual save. Saves run in order, and only the host-confirmed
+revision becomes clean; edits made during a save remain pending. Disabling auto-save
+prevents new requests; host-accepted writes finish in order.
 
-`Ctrl+S` and **保存到仓库** still save immediately. Ordinary tab closing and
-PDF replacement wait for pending changes to save; a failure retains the view.
-Saving is silent: no status text, toolbar indicator or success/failure notices
-are displayed. Failures are recorded only in diagnostic logs.
-Views of the same PDF share a file-level check-and-write queue: a stale view
-receives a conflict instead of overwriting another view's save. Renaming an open
-PDF preserves its editing session and writes to the file's current vault path.
-If the on-disk PDF changed since the last read/save, saving stops rather than
-overwriting external changes. Other failures also pause automatic retries;
-use manual save to retry after resolving the error. Never reopen or reload to
-resolve a conflict before preserving the current unsaved edits.
+The host checks the current disk bytes before overwriting and keeps a recovery
+candidate first. A conflict or failure pauses automatic overwrites. Use
+**恢复最近的 PDF 自动保存副本** to recover into a separate PDF under
+`PDF Recovery/`; inspect and merge it yourself. Recovery requires a successful
+candidate write and cannot protect against process termination before that point.
+Renaming or moving an open PDF retains its document identity and updates its
+save target. A controlled close waits for automatic saves when enabled; disabled
+or paused saving persists a recovery draft without writing the original. The
+Reader stays open if that confirmation fails. Closing lets an active stroke or
+composition finish, then suspends new input until teardown or cancellation.
+Closing a verified Obsidian popout prepares all of its Readers before the
+window is destroyed; one failed confirmation keeps the window open. This
+requires the tested SDK window/split relationship. If that relationship cannot
+be verified, the plugin warns you to save or recover before closing the window.
+Moving a Reader through the verified `workspace.moveLeafToPopout` entry point
+also prepares it first. The new window reloads the confirmed PDF or exact durable
+draft, retaining its revision, dirty state and any conflict pause. An unguarded
+DOM reload can restore only the last durable checkpoint; additional edits may
+be lost. Returning a Reader to the main window through other SDK paths has not
+been verified. Save or recover before using those paths.
+Save and confirm success before
+closing, disabling or updating. A forced exit may bypass async close handling.
 
-Automatic saving modifies the original PDF, including subsequent Undo/Redo.
-Forced application termination, plugin unloading/reloading and crashes cannot
-guarantee a final save. Ordinary close retains the view if saving fails; resolve
-the failure and use manual save before retrying. Standalone
-Viewer file picking and drag-and-drop replacement remain intercepted so saves
-cannot target another PDF.
+Disk comparison and the subsequent write are separate operations: another
+sync process can still race between them. Post-write verification detects some
+races, but the Vault API provides no atomic compare-and-swap guarantee.
+Standalone file picking and PDF replacement by drop remain intercepted.
 
 Version 0.1.3 fixes parallel/double underline strokes when a selection spans
 complete text-layer spans. Underlines now use only selected text-node rectangles,
@@ -112,9 +123,9 @@ rewritten automatically; delete and redraw an affected annotation if needed.
 
 ## Development
 
-All new development lives in
-`D:\\Documents\\Codes\\2026_7_PdfWebReader\\2026_7.1_Mozilla_fork-ob`.
-The original PDF.js checkout is not modified.
+The current Mac development checkout is
+`/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`.
+The frozen PDF.js tree and complete desktop asset runtime are retained.
 
 - `plugin/`: Obsidian host and embedded-resource runtime source.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
@@ -150,39 +161,46 @@ location before opening it in Obsidian. Generated Viewer caches are excluded;
 the three-file plugin regenerates them locally. See the snapshot guide before
 using it on macOS; mobile support has not been implemented.
 
-```powershell
+The Mac target is the independent test vault
+`/Users/jiajia/Documents/ObReader-Apple-Test`, copied from the complete outer
+snapshot and verified against all 60 inventory entries before opening.
+Save and close every Reader and disable the plugin before deployment.
+The deploy preflight verifies the exact vault path and configuration directory,
+and refuses active Reader tabs or an enabled plugin. It backs up the entire
+old plugin outside Obsidian's scan, then installs only the three release files.
+
+`OBSIDIAN_VAULT_PATH`, `OBSIDIAN_VAULT_NAME`, `OBSIDIAN_CONFIG_DIR`,
+`PDF_READER_OBSIDIAN_CLI`, `PDF_READER_CDP_URL` and `PDF_READER_CHROME` configure
+test/deploy entry points. Every native action checks the target vault identity;
+the macOS path allowlist excludes user main vaults. For the isolated instance:
+
+```sh
+export OBSIDIAN_VAULT_PATH=/Users/jiajia/Documents/ObReader-Apple-Test
+export OBSIDIAN_VAULT_NAME=ObReader-Apple-Test
+export OBSIDIAN_CONFIG_DIR=.obsidian
+export PDF_READER_CDP_URL=http://127.0.0.1:9226
 npm run deploy
+npm run test:native:background
+npm run test:native:lifecycle
 ```
 
-The default target is
-`D:\\Documents\\Obsidian\\测试插件\\.obsidian\\plugins\\pdf-web-reader`.
-Deployment installs only the three release files. An existing plugin folder
-is moved to a timestamped backup under this project's `.deploy-backups/`,
-outside Obsidian's plugin scan. Save all open PDFs and disable the plugin
-before replacing it. Do not deploy over unsaved edits.
-
-`OBSIDIAN_VAULT_PATH` can select a different vault only when intentional.
-Native testing here is scoped to the outer test vault, ID
-`d9f81db5f3fef6ee`, not its nested vault or other user vaults.
-
-```powershell
-npm run test:native
-```
+`PDF_READER_NATIVE_CASES=matrix,popout` runs selected lifecycle groups. The
+allowlist also includes `manual-save`, `autosave`, `inflight`, `rename`, `stale`,
+`external-conflict`, `failed-save`, `close-flush`, `close-recovery`,
+`close-recovery-write-failure`, `switch`, `eraser`, `popout-move` and
+`popout-close`. Omit it to run all groups. Reports
+list executed and completed groups; an interrupted group does not count as a
+pass. Keyboard chords use actual Puppeteer key events in the native renderer.
 
 Native tests use the user's enabled official Obsidian CLI/CDP. They create
 timestamped PDF and other fixture copies under `PDF迁移测试/` and retain them.
 JSON results and screenshots are under ignored `tests/artifacts/`. Tests
 must refuse to unload/replace views with unsaved user changes.
 
-`npm run test:native:autosave` checks automatic writes, idle write suppression,
-close-time flushing, save/reopen and external-change conflicts in a separate
-test-owned PDF copy. It uses background focus emulation and does not move the
-Obsidian window to the OS foreground. The copied PDF and JSON report are retained.
-
 For a clean-install release acceptance check, first save and close existing
 Reader tabs, disable the plugin and deploy the three-file output, then run:
 
-```powershell
+```sh
 npm run test:native:release
 npm run test:native
 ```
@@ -227,7 +245,9 @@ and [manifest guidance](https://docs.obsidian.md/Reference/Manifest).
 
 The custom reader extends the public `EditableFileView`. Default PDF opens
 are routed by a reversible, app-scoped wrapper of
-`WorkspaceLeaf.setViewState()`; the built-in PDF extension registration is
+`WorkspaceLeaf.setViewState()`. Reader transitions and `WorkspaceLeaf.detach()`
+wait for a document-specific save/recovery handshake before SDK teardown;
+the built-in PDF extension registration is
 not removed. This wrapper is a monkey patch, **not an official dedicated API
 for replacing core PDF behavior**. Other plugins wrapping the same method
 or later Obsidian versions can conflict. Revalidate after Obsidian upgrades.
