@@ -26,6 +26,9 @@ export const builtMainPath = path.join(
   "main.js",
 );
 
+const testTempRootKey = Symbol("pdfReaderTestTempRoot");
+const harnessesByTempRoot = new Map();
+
 const externalRequire = createRequire(builtMainPath);
 
 export async function readBuiltMain() {
@@ -223,7 +226,10 @@ export function loadBundledPlugin(
       ),
     );
   const plugin = new moduleObject.exports(app, pluginManifest);
-  return {
+  let unloadPromise = null;
+  let loaded = false;
+  const tempRoot = adapter?.[testTempRootKey];
+  const harness = {
     app,
     plugin,
     PluginClass: moduleObject.exports,
@@ -231,13 +237,64 @@ export function loadBundledPlugin(
     TFile,
     WorkspaceLeaf,
     async load() {
-      await plugin.onload();
+      if (loaded) return plugin;
+      loaded = true;
+      if (tempRoot) {
+        let harnesses = harnessesByTempRoot.get(tempRoot);
+        if (!harnesses) {
+          harnesses = new Set();
+          harnessesByTempRoot.set(tempRoot, harnesses);
+        }
+        harnesses.add(harness);
+      }
+      try {
+        await plugin.onload();
+      } catch (error) {
+        await harness.unload();
+        throw error;
+      }
       return plugin;
     },
     createView() {
       assert.ok(viewFactory, "The plugin must register the PDF view");
       return viewFactory(new WorkspaceLeaf(app));
     },
+    async unload() {
+      if (unloadPromise) return unloadPromise;
+      unloadPromise = (async () => {
+        const collectPendingWork = () => [
+          plugin.prewarmPromise,
+          plugin.viewerAssetsPromise,
+          ...(plugin.verifiedAssetBytes?.values() || []),
+          ...(plugin.verifiedAssetTexts?.values() || []),
+        ].filter((value) => value && typeof value.then === "function");
+        let unloadError = null;
+        try {
+          const pendingBeforeUnload = [...new Set(collectPendingWork())];
+          try {
+            if (plugin.isUnloading !== true) await plugin.onunload?.();
+          } catch (error) {
+            unloadError = error;
+          }
+          // The prewarm promise owns its nested resource reads; the maps cover
+          // any callers that started verified reads outside that chain.
+          await Promise.allSettled([
+            ...new Set([...pendingBeforeUnload, ...collectPendingWork()]),
+          ]);
+          if (unloadError) throw unloadError;
+        } finally {
+          if (tempRoot) {
+            const harnesses = harnessesByTempRoot.get(tempRoot);
+            harnesses?.delete(harness);
+            if (harnesses?.size === 0) harnessesByTempRoot.delete(tempRoot);
+          }
+        }
+      })();
+      return unloadPromise;
+    },
+  };
+  return {
+    ...harness,
   };
 }
 
@@ -276,7 +333,7 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
       return false;
     }
   }
-  return {
+  const adapter = {
     resolve,
     get writeCount() {
       return writeCount;
@@ -317,9 +374,17 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
       await writeFile(resolve(vaultPath), value, "utf8");
     },
     async stat(vaultPath) {
-      return stat(resolve(vaultPath));
+      const value = await stat(resolve(vaultPath));
+      return {
+        type: value.isFile() ? "file" : "folder",
+        size: value.size,
+        mtime: value.mtimeMs,
+        ctime: value.ctimeMs,
+      };
     },
   };
+  Object.defineProperty(adapter, testTempRootKey, { value: rootPath });
+  return adapter;
 }
 
 export async function createTempRoot(prefix = "pdf-reader-assets-") {
@@ -338,7 +403,13 @@ export async function removeTempRoot(tempRoot) {
     target.startsWith(`${output}${path.sep}`),
     `Refusing to remove path outside tests/output: ${target}`,
   );
+  const harnesses = [...(harnessesByTempRoot.get(target) || [])];
+  const unloadResults = await Promise.allSettled(
+    harnesses.map((harness) => harness.unload()),
+  );
   await rm(target, { recursive: true, force: true });
+  const unloadFailure = unloadResults.find((result) => result.status === "rejected");
+  if (unloadFailure) throw unloadFailure.reason;
 }
 
 export async function listDiskFiles(directory, prefix = "") {

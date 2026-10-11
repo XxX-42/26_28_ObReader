@@ -45,7 +45,7 @@ const MOBILE_STAGE_VALUES = new Set([
 ]);
 const MOBILE_STAGE_LABELS = Object.freeze({
   idle: "初始化",
-  "assets-loading": "解压并校验离线资源",
+  "assets-loading": "检查资源缓存，核验变化项",
   "assets-ready": "读取已校验资源",
   "resources-read": "准备模块与 Worker",
   "bridge-loading": "加载宿主桥接",
@@ -520,6 +520,7 @@ function sanitizeInputDiagnostics(value) {
 
 function safeDiagnosticCode(value) {
   const allowed = new Set([
+    "asset-prewarm-failed",
     "asset-read-failed",
     "asset-hash-mismatch",
     "blob-url-unavailable",
@@ -1866,10 +1867,10 @@ class PdfReaderView extends EditableFileView {
         }
         const fullPath = `${assets.rootPath}/${relativePath}`;
         const bytes = await this.plugin.readVerifiedAsset(relativePath);
-        if (
-          bytes.byteLength !== manifestEntry.size ||
-          sha256Bytes(bytes) !== manifestEntry.sha256
-        ) {
+        // The plugin already hashed these bytes in readVerifiedAsset and keeps
+        // the checked promise across Readers. Rehashing the large Worker here
+        // would repeat the CPU cost after successful background preparation.
+        if (bytes.byteLength !== manifestEntry.size) {
           throw Object.assign(new Error("A viewer resource failed verification."), {
             diagnosticCode: "asset-hash-mismatch",
           });
@@ -2664,6 +2665,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.saveQueue = Promise.resolve();
     this.verifiedAssetBytes = new Map();
     this.verifiedAssetTexts = new Map();
+    this.resourcePrewarm = {
+      status: "idle", reason: null, attempts: 0,
+      durationMs: null, lastErrorCode: null,
+    };
+    this.prewarmPromise = null;
+    this.prewarmTimer = null;
     this.pdfSync = createPdfSyncHost(this, {
       createPdfMergeClient, sha256Bytes, normalizePath, isPdfFile,
       bytesEqual, toArrayBuffer, makeToken, ensureAdapterDirectory, Notice,
@@ -2746,19 +2753,17 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         }),
       );
     }
-    const warm = () => {
-      if (this.isUnloading) return;
-      this.prewarmTimer = globalThis.setTimeout(() => {
-        this.prewarmTimer = null;
-        if (!this.isUnloading) void this.ensureViewerAssets().then(async () => {
-          await Promise.all(["web/viewer.html", "web/viewer.css", "web/bridge.css"].map((path) => this.readVerifiedAssetText(path)));
-          if (this.isMobileRuntime && !this.isUnloading) await Promise.all(Object.values(MOBILE_RESOURCE_SCRIPT_PATHS).map((path) => this.readVerifiedAsset(path)));
-        }).catch(() => {});
-      }, 0);
-    };
-    if (typeof this.app.workspace.onLayoutReady === "function") this.app.workspace.onLayoutReady(warm);
+    // Resource preparation belongs to the plugin, not to DeferredView
+    // materialization or completion of the workspace layout.
+    this.scheduleViewerPrewarm("plugin-load");
+    if (typeof this.app.workspace.onLayoutReady === "function") {
+      this.app.workspace.onLayoutReady(() => this.scheduleViewerPrewarm("layout-ready"));
+    }
     const foreground = () => {
-      if (globalThis.document?.visibilityState !== "hidden") this.pdfSync.checkOpenViews("foreground");
+      if (globalThis.document?.visibilityState !== "hidden") {
+        this.scheduleViewerPrewarm("foreground");
+        this.pdfSync.checkOpenViews("foreground");
+      }
     };
     if (typeof this.registerDomEvent === "function" && globalThis.window?.addEventListener) {
       this.registerDomEvent(globalThis.window, "focus", foreground);
@@ -2769,6 +2774,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   onunload() {
     this.isUnloading = true;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
+    this.prewarmTimer = null;
+    if (this.resourcePrewarm) this.resourcePrewarm.status = "disposed";
     this.pdfSync?.dispose();
     this.viewerAssetsResult = null;
     this.verifiedAssetBytes?.clear();
@@ -3347,12 +3354,15 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         },
         input: pointerSnapshots[index] || null,
         startupTimings: Object.fromEntries(Object.entries({ ...(view.startupTimings || {}), ...(view.startupTimings?.viewer || {}) }).filter(([key, value]) => /Ms$/.test(key) && typeof value === "number" && Number.isFinite(value) && value >= 0)),
+        resourcePreparation: this.resourcePreparationMetrics(view.startupTimings?.resources),
       };
     });
     const diagnostic = {
       schema: 1,
       exportedAt: new Date().toISOString(),
       pluginVersion: typeof this.manifest?.version === "string" ? this.manifest.version : null,
+      resourcePrewarm: { ...this.resourcePrewarm },
+      resourcePreparation: this.resourcePreparationMetrics(this.viewerAssetsResult?.assets?.metrics),
       platform: {
         mobile: this.isMobileRuntime,
         loaderMode: this.runtimeAdapter.loaderMode,
@@ -3522,12 +3532,96 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return outputPath;
   }
 
+  resourcePreparationMetrics(metrics) {
+    return Object.fromEntries([
+      "checkedFiles", "verificationReads", "statChecks", "statCacheFiles",
+      "decodedFiles", "repairedFiles", "decodedBytes", "bytesWritten", "elapsedMs",
+    ].filter((key) => typeof metrics?.[key] === "number" &&
+      Number.isFinite(metrics[key]) && metrics[key] >= 0)
+      .map((key) => [key, metrics[key]]));
+  }
+
+  scheduleViewerPrewarm(reason, delay = 0) {
+    if (this.isUnloading || !VIEWER_ASSET_PAYLOAD || this.prewarmPromise) return;
+    if (this.resourcePrewarm?.status === "ready" &&
+      this.viewerAssetsResult?.adapter === this.app.vault.adapter &&
+      this.viewerAssetsResult?.contentHash === VIEWER_ASSET_PAYLOAD.contentHash) return;
+    if (this.prewarmTimer != null) {
+      if (delay > 0) return;
+      globalThis.clearTimeout(this.prewarmTimer);
+    }
+    if (reason !== "retry" && this.resourcePrewarm?.status === "failed") {
+      this.resourcePrewarm.attempts = 0;
+    }
+    this.resourcePrewarm.status = "scheduled";
+    this.prewarmTimer = globalThis.setTimeout(() => {
+      this.prewarmTimer = null;
+      void this.prewarmViewerAssets(reason);
+    }, delay);
+  }
+
+  prewarmViewerAssets(reason = "plugin-load") {
+    if (this.isUnloading || !VIEWER_ASSET_PAYLOAD) return Promise.resolve(null);
+    if (this.prewarmPromise) return this.prewarmPromise;
+    const started = Date.now();
+    this.resourcePrewarm.status = "running";
+    this.resourcePrewarm.reason = ["plugin-load", "layout-ready", "foreground", "retry"]
+      .includes(reason) ? reason : "requested";
+    this.resourcePrewarm.attempts += 1;
+    const pending = Promise.resolve().then(async () => {
+      const assets = await this.ensureViewerAssets();
+      if (this.isUnloading) return null;
+      await Promise.all(["web/viewer.html", "web/viewer.css", "web/bridge.css"]
+        .map((relativePath) => this.readVerifiedAssetText(relativePath)));
+      if (this.isMobileRuntime && !this.isUnloading) {
+        await Promise.all(Object.values(MOBILE_RESOURCE_SCRIPT_PATHS)
+          .map((relativePath) => this.readVerifiedAsset(relativePath)));
+      }
+      if (!this.isUnloading) {
+        this.resourcePrewarm.status = "ready";
+        this.resourcePrewarm.lastErrorCode = null;
+      }
+      return assets;
+    }).catch((error) => {
+      if (!this.isUnloading) {
+        this.resourcePrewarm.status = "failed";
+        this.resourcePrewarm.lastErrorCode = safeDiagnosticCode(
+          error?.diagnosticCode || "asset-prewarm-failed",
+        );
+      }
+      return null;
+    }).finally(() => {
+      if (this.prewarmPromise !== pending) return;
+      this.prewarmPromise = null;
+      this.resourcePrewarm.durationMs = Date.now() - started;
+      if (!this.isUnloading && this.resourcePrewarm.status === "failed") {
+        if (this.resourcePrewarm.attempts < 3) {
+          this.scheduleViewerPrewarm("retry", this.resourcePrewarm.attempts * 1000);
+        } else {
+          new Notice("PDF 阅读器后台预热未完成；打开 PDF 时会重试。可导出诊断查看启动状态。");
+        }
+      }
+    });
+    this.prewarmPromise = pending;
+    return pending;
+  }
+
   ensureViewerAssets({ forceVerify = false } = {}) {
     const pluginRoot = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
     const adapter = this.app.vault.adapter;
     const result = this.viewerAssetsResult;
     if (!forceVerify && result && result.adapter === adapter && result.pluginRoot === pluginRoot && result.contentHash === VIEWER_ASSET_PAYLOAD?.contentHash) {
-      return Promise.resolve({ ...result.assets, metrics: { ...result.assets.metrics, cacheHit: true, checkedFiles: 0, verificationReads: 0, decodedFiles: 0, repairedFiles: 0, decodedBytes: 0, bytesWritten: 0, elapsedMs: 0 } });
+      return Promise.resolve({ ...result.assets, metrics: {
+        ...result.assets.metrics, cacheHit: true, checkedFiles: 0,
+        verificationReads: 0, statChecks: 0, statCacheFiles: 0,
+        decodedFiles: 0, repairedFiles: 0, decodedBytes: 0,
+        bytesWritten: 0, elapsedMs: 0,
+      } });
+    }
+    if (forceVerify && this.viewerAssetsPromise) {
+      return this.viewerAssetsPromise.catch(() => {}).then(() =>
+        this.ensureViewerAssets({ forceVerify: true }),
+      );
     }
     if (forceVerify) this.invalidateViewerAssets();
     if (!this.viewerAssetsPromise) {
@@ -3537,6 +3631,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
+            { forceVerify },
           ),
         )
         .then((assets) => {

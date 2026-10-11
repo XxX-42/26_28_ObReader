@@ -1,8 +1,14 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.0），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.1），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
 
-## 当前：0.1general 0.5.0 资源加速与跨端合并
+## 当前：0.5.1 重启缓存与自动预热修复
+
+用户实测 iPad 重启后打开仍等待 10–15 秒，等待一分钟也未改善。0.5.1 在插件启用后直接安排后台预热，独立于布局回调和 DeferredView；失败记录并有界重试，前台可补试。完成标记增加按资源绑定的大小、修改时间和创建时间索引；重启只检查元数据，变化项才读内容和做 SHA-256。旧标记首次升级需核验一次建立索引；没有可信 stat 的平台安全回退。真实使用的少量 HTML/CSS/模块字节仍校验，去掉移动入口重复哈希同一模块的开销。冻结 Viewer、406 个资源、三端平台入口与 PDF 同步合并保持共用。
+
+原生测试仍只用 `/Users/jiajia/Documents/ObReader-Apple-Test`；按用户最新明确授权，仅将三文件替换到 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`，先备份，不操作该库中的 PDF 或主动重载其 Obsidian 实例。iPad 实机复验由用户完成，证据与结果见 GENERAL_ACCEPTANCE.md 的 0.5.1 章节。
+
+## 历史：0.1general 0.5.0 资源加速与跨端合并
 
 本轮从 `ad05bb1` 接续。布局就绪后预热资源，最多四项并行，已有缓存先校验，仅缺失或损坏资源解压；同一插件实例复用成功准备结果及已验证模块字节。冻结 Viewer 不裁剪，402 个 vendor 文件未变，运行时 406 项。只新增锁定 pdf-lib 1.17.1 与内嵌许可证，独立浏览器 Worker 按需处理合并，不引入运行时 Node/Electron。
 

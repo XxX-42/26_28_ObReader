@@ -566,7 +566,7 @@ test("mobile startup exposes sanitized stages without replacing an opened docume
   const status = [];
   view.statusEl = { setText: text => status.push(text), toggleClass() {} };
   view.setMobileLoaderStage("assets-loading");
-  assert.match(status.at(-1), /解压并校验离线资源/);
+  assert.match(status.at(-1), /检查资源缓存，核验变化项/);
   view.setMobileLoaderStage("viewer-module-loading");
   assert.match(status.at(-1), /加载阅读器模块/);
   view.mobileRuntime.lastError = { stage: "viewer-module-loading", code: "viewer-module-import" };

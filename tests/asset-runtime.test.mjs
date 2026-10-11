@@ -240,6 +240,20 @@ test("interrupted extraction leaves no completion marker and succeeds on retry",
   }
 });
 
+test("temporary-root cleanup unloads prewarmed harness plugins before removing files", async () => {
+  const temp = await createTempRoot("asset-prewarm-cleanup-");
+  const adapter = createDiskAdapter(temp);
+  const harness = loadBundledPlugin(await readBuiltMain(), adapter);
+  harness.app.workspace.onLayoutReady = (callback) => callback();
+  await harness.load();
+  assert.notEqual(harness.plugin.prewarmTimer, null);
+
+  await removeTempRoot(temp);
+
+  assert.equal(harness.plugin.isUnloading, true);
+  assert.equal(harness.plugin.prewarmTimer, null);
+});
+
 test("malicious embedded asset paths are rejected before writing outside the plugin cache", async () => {
   const temp = await createTempRoot("asset-path-guard-");
   try {

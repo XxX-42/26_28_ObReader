@@ -6,22 +6,26 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.1)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-Version 0.5.0 reuses validated Viewer resources across Readers and prepares them
-in the background after the workspace layout is ready. Open PDFs receive
+Version 0.5.1 prepares Viewer resources immediately after plugin enable, including
+when no Reader has opened or the workspace layout has not completed. A persistent
+verified stat index avoids reading and hashing every cached file after a restart;
+only changed entries are read and verified. Open PDFs receive
 external modifications and reconcile local annotation operations before an
 in-place refresh. Validation, timings, limitations and candidate hashes are
 recorded in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md). Windows and iPad
 physical-device acceptance remain pending. The 0.4.0 package is retained for
 rollback; its historical cleanup anomalies remain recorded separately from
-product assertions. Delivery is limited to the designated test vault and a
-normal push to `main`, without a GitHub Release or main-vault deployment.
+product assertions. Native testing uses the designated test vault. The user has
+also explicitly requested a backed-up three-file replacement in the specified
+`远程仓库1` plugin directory; actual iPad verification remains for the user.
+No GitHub Release is created.
 
 ## Install: exactly three release files
 
@@ -39,8 +43,8 @@ Put only those three files into
 The default configuration directory is `.obsidian`, but the plugin uses
 Obsidian's actual `Vault.configDir` rather than assuming that name.
 
-The complete Viewer is compressed and embedded in `main.js`. After layout is
-ready, the plugin prepares its own resources without constructing background
+The complete Viewer is compressed and embedded in `main.js`. After plugin enable,
+the plugin prepares its own resources without constructing background
 Reader views. Opening a PDF first joins the same task. Resources use a content-hash
 versioned directory under its plugin folder using Obsidian's Adapter API.
 Missing or corrupted resource files are restored from the shipped payload;
@@ -49,8 +53,15 @@ deleted automatically. A completed extraction is marked only after all files
 have been verified. At most four resource operations run together. Valid disk
 files are checked before decompressing; only missing or damaged files are
 repaired. Successful preparation and verified HTML/CSS/mobile script bytes are
-reused for that plugin instance. Reloading the plugin validates disk resources
-again. A failed preparation invalidates the reusable result and can be retried.
+reused for that plugin instance. The completion marker stores verified size,
+modification time and creation time for each file. On restart, matching metadata
+skips full binary reads; changed files are SHA-256 checked and repaired as needed.
+First installation, an older/malformed marker, or an adapter without useful stat
+metadata requires full verification to establish a trusted index. Startup
+prewarm retries are bounded and can resume on foreground; status, counters and
+failure codes are included in the existing diagnostics export. Restoring all
+metadata after modifying bytes cannot be detected by this shortcut; consumed
+HTML/CSS/module bytes are separately verified once per plugin instance.
 
 **Three files is the distribution constraint, not a permanent disk-file-count
 constraint.** Runtime extraction creates the local Viewer files and a
@@ -60,7 +71,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.0 candidate uses one source and one three-file package for Windows, macOS,
+0.5.1 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.

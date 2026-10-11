@@ -396,43 +396,234 @@ async function forEachConcurrent(items, operation) {
   if (hasError) throw firstError;
 }
 
-async function fileMatches(adapter, fullPath, expected) {
-  if (!(await adapter.exists(fullPath))) {
-    return false;
-  }
-  const actual = bytesView(await adapter.readBinary(fullPath), fullPath);
-  return (
-    actual.byteLength === expected.size && sha256Bytes(actual) === expected.sha256
-  );
-}
-
-function markerContent(payload) {
+function manifestMarker(payload) {
   const manifestFiles = [...payload.files]
     .map(({ path, size, sha256 }) => ({ path, size, sha256 }))
     .sort((left, right) => comparePaths(left.path, right.path));
-  return `${JSON.stringify(
-    {
-      schema: payload.schema,
-      id: payload.id,
-      contentHash: payload.contentHash,
-      fileCount: manifestFiles.length,
-      files: manifestFiles,
-    },
-    null,
-    2,
-  )}\n`;
+  return {
+    schema: payload.schema,
+    id: payload.id,
+    contentHash: payload.contentHash,
+    fileCount: manifestFiles.length,
+    files: manifestFiles,
+  };
 }
 
-async function extractOrRepair(adapter, pluginRoot, payload) {
-  const verifiedPayload = validatePayload(payload);
+function markerContent(payload, statIndex) {
+  const marker = manifestMarker(payload);
+  if (statIndex) {
+    marker.statIndexVersion = 1;
+    marker.statIndex = statIndex;
+  }
+  return `${JSON.stringify(marker, null, 2)}\n`;
+}
+
+function markerMatchesManifest(marker, expected) {
+  if (!isPlainObject(marker)) return false;
+  const keys = Object.keys(marker).sort(comparePaths);
+  const baseKeys = Object.keys(expected).sort(comparePaths);
+  const indexedKeys = [...baseKeys, "statIndex", "statIndexVersion"].sort(
+    comparePaths,
+  );
+  if (
+    keys.length !== baseKeys.length &&
+    keys.length !== indexedKeys.length
+  ) {
+    return false;
+  }
+  if (!keys.every((key, index) => key === baseKeys[index]) &&
+      !keys.every((key, index) => key === indexedKeys[index])) {
+    return false;
+  }
+  if (
+    marker.schema !== expected.schema ||
+    marker.id !== expected.id ||
+    marker.contentHash !== expected.contentHash ||
+    marker.fileCount !== expected.fileCount ||
+    !Array.isArray(marker.files) ||
+    marker.files.length !== expected.files.length
+  ) {
+    return false;
+  }
+  return marker.files.every((entry, index) => {
+    const expectedEntry = expected.files[index];
+    return (
+      isPlainObject(entry) &&
+      Object.keys(entry).sort(comparePaths).join("\0") ===
+        "path\0sha256\0size" &&
+      entry.path === expectedEntry.path &&
+      entry.size === expectedEntry.size &&
+      entry.sha256 === expectedEntry.sha256
+    );
+  });
+}
+
+function readStatTuple(stat) {
+  if (!stat || typeof stat !== "object" || stat.type !== "file") return null;
+  const size = stat.size;
+  const mtime = typeof stat.mtime === "number" ? stat.mtime : stat.mtimeMs;
+  const ctime = typeof stat.ctime === "number" ? stat.ctime : stat.ctimeMs;
+  if (
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    typeof mtime !== "number" ||
+    !Number.isFinite(mtime) ||
+    mtime <= 0 ||
+    typeof ctime !== "number" ||
+    !Number.isFinite(ctime) ||
+    ctime < 0
+  ) {
+    return null;
+  }
+  return { size, mtime, ctime };
+}
+
+function sameStatTuple(left, right) {
+  return Boolean(
+    left &&
+      right &&
+      left.size === right.size &&
+      left.mtime === right.mtime &&
+      left.ctime === right.ctime,
+  );
+}
+
+async function fileStat(adapter, fullPath, metrics) {
+  if (typeof adapter.stat !== "function") return null;
+  metrics.statChecks += 1;
+  try {
+    return readStatTuple(await adapter.stat(fullPath));
+  } catch {
+    // A missing/unavailable stat is not evidence that a file is valid. The
+    // caller falls back to reading and hashing it.
+    return null;
+  }
+}
+
+function readStatIndex(marker, payload) {
+  if (
+    !isPlainObject(marker) ||
+    marker.statIndexVersion !== 1 ||
+    !Array.isArray(marker.statIndex) ||
+    marker.statIndex.length !== payload.files.length
+  ) {
+    return null;
+  }
+  const expectedFiles = [...payload.files].sort((a, b) =>
+    comparePaths(a.path, b.path),
+  );
+  const index = new Map();
+  for (let position = 0; position < marker.statIndex.length; position += 1) {
+    const row = marker.statIndex[position];
+    const expected = expectedFiles[position];
+    if (
+      !isPlainObject(row) ||
+      Object.keys(row).sort(comparePaths).join("\0") !==
+        "ctime\0mtime\0path\0sha256\0size" ||
+      row.path !== expected.path ||
+      row.sha256 !== expected.sha256 ||
+      row.size !== expected.size ||
+      (row.mtime !== null &&
+        (typeof row.mtime !== "number" ||
+          !Number.isFinite(row.mtime) ||
+          row.mtime <= 0)) ||
+      (row.ctime !== null &&
+        (typeof row.ctime !== "number" ||
+          !Number.isFinite(row.ctime) ||
+          row.ctime < 0))
+    ) {
+      return null;
+    }
+    index.set(row.path, {
+      size: row.size,
+      mtime: row.mtime,
+      ctime: row.ctime,
+    });
+  }
+  return index;
+}
+
+async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
+  if (!(await adapter.exists(fullPath))) {
+    return {
+      matches: false,
+      stable: true,
+      stat: await fileStat(adapter, fullPath, metrics),
+    };
+  }
+  let actual;
+  try {
+    actual = bytesView(await adapter.readBinary(fullPath), fullPath);
+    metrics.verificationReads += 1;
+  } catch (error) {
+    if (!(await adapter.exists(fullPath))) {
+      return {
+        matches: false,
+        stable: true,
+        stat: await fileStat(adapter, fullPath, metrics),
+      };
+    }
+    throw error;
+  }
+  const afterStat = await fileStat(adapter, fullPath, metrics);
+  const hasComparableStats = Boolean(beforeStat && afterStat);
+  const stable = hasComparableStats
+    ? sameStatTuple(beforeStat, afterStat)
+    : true;
+  return {
+    matches:
+      stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256,
+    stable,
+    // One missing/unusable stat makes this a hash-only verification. Do not
+    // persist the surviving half as if it bracketed the read; the null row
+    // forces another safe SHA check on the next startup.
+    stat: hasComparableStats && stable ? afterStat : null,
+  };
+}
+
+function statIndexRows(payload, verified) {
+  return [...payload.files]
+    .sort((a, b) => comparePaths(a.path, b.path))
+    .map((file) => {
+      const tuple = verified.get(file.path)?.stat || null;
+      return {
+        path: file.path,
+        size: file.size,
+        sha256: file.sha256,
+        mtime: tuple?.mtime ?? null,
+        ctime: tuple?.ctime ?? null,
+      };
+    });
+}
+
+function sameStatIndexRows(left, right) {
+  return Boolean(
+    Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((row, index) => {
+        const other = right[index];
+        return (
+          row.path === other?.path &&
+          row.size === other?.size &&
+          row.sha256 === other?.sha256 &&
+          row.mtime === other?.mtime &&
+          row.ctime === other?.ctime
+        );
+      }),
+  );
+}
+
+async function extractOrRepair(adapter, pluginRoot, verifiedPayload, options = {}) {
   const rootPath = `${pluginRoot}/.asset-cache/${verifiedPayload.id}/${verifiedPayload.contentHash}`;
   const markerPath = `${rootPath}/.complete.json`;
-  const expectedMarker = markerContent(verifiedPayload);
+  const expectedManifest = manifestMarker(verifiedPayload);
   const startedAt = Date.now();
   const metrics = {
     cacheHit: false,
     checkedFiles: verifiedPayload.files.length,
     verificationReads: 0,
+    statChecks: 0,
     decodedFiles: 0,
     repairedFiles: 0,
     decodedBytes: 0,
@@ -441,17 +632,52 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
 
   try {
     const markerExists = await adapter.exists(markerPath);
-    const markerIsCurrent =
-      markerExists && (await adapter.read(markerPath)) === expectedMarker;
-    const repair = new Array(verifiedPayload.files.length).fill(false);
-    await forEachConcurrent(verifiedPayload.files, async (file, index) => {
+    let marker = null;
+    if (markerExists) {
+      try {
+        marker = JSON.parse(await adapter.read(markerPath));
+      } catch {
+        marker = null;
+      }
+    }
+    const manifestMatches = markerMatchesManifest(marker, expectedManifest);
+    const indexed = manifestMatches ? readStatIndex(marker, verifiedPayload) : null;
+    const useIndex = Boolean(indexed) && options.forceVerify !== true;
+    const verified = new Map();
+    const repair = new Set();
+    const touched = new Set();
+    let skippedStatFiles = 0;
+
+    await forEachConcurrent(verifiedPayload.files, async (file) => {
       const fullPath = `${rootPath}/${file.path}`;
-      metrics.verificationReads += 1;
-      repair[index] = !(await fileMatches(adapter, fullPath, file));
+      const beforeStat = await fileStat(adapter, fullPath, metrics);
+      const indexedStat = useIndex ? indexed.get(file.path) : null;
+      if (
+        indexedStat &&
+        indexedStat.size === file.size &&
+        beforeStat &&
+        sameStatTuple(indexedStat, beforeStat) &&
+        beforeStat.size === file.size
+      ) {
+        skippedStatFiles += 1;
+        verified.set(file.path, { stat: beforeStat });
+        return;
+      }
+      touched.add(file.path);
+      const result = await inspectAsset(adapter, fullPath, file, beforeStat, metrics);
+      verified.set(file.path, { stat: result.stat });
+      if (!result.matches || !result.stable) repair.add(file.path);
     });
 
-    if (markerIsCurrent && repair.every((isDamaged) => !isDamaged)) {
+    const observedIndex = statIndexRows(verifiedPayload, verified);
+    if (
+      manifestMatches &&
+      useIndex &&
+      repair.size === 0 &&
+      sameStatIndexRows(marker.statIndex, observedIndex)
+    ) {
       metrics.cacheHit = true;
+      metrics.statCacheFiles = skippedStatFiles;
       metrics.elapsedMs = Date.now() - startedAt;
       return {
         rootPath,
@@ -466,8 +692,9 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
     // is removed before any repair begins, and any failure leaves it absent.
     if (markerExists) await adapter.remove(markerPath);
 
-    await forEachConcurrent(verifiedPayload.files, async (file, index) => {
-      if (!repair[index]) return;
+    const repairFiles = verifiedPayload.files.filter((file) => repair.has(file.path));
+    const hadRepairs = repairFiles.length > 0;
+    await forEachConcurrent(repairFiles, async (file) => {
       const bytes = await decodePayloadFile(file);
       metrics.decodedFiles += 1;
       metrics.decodedBytes += bytes.byteLength;
@@ -477,21 +704,88 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
       await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
       metrics.bytesWritten += bytes.byteLength;
       metrics.repairedFiles += 1;
-      metrics.verificationReads += 1;
-      if (!(await fileMatches(adapter, fullPath, file))) {
+      touched.add(file.path);
+      const writeStat = await fileStat(adapter, fullPath, metrics);
+      const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
+      if (!result.matches || !result.stable) {
         throw new Error(
           `Viewer asset failed verification after writing: ${file.path}`,
         );
       }
+      verified.set(file.path, { stat: result.stat });
     });
 
-    // Recheck the complete tree before committing the completion marker.
-    await forEachConcurrent(verifiedPayload.files, async (file) => {
-      metrics.verificationReads += 1;
-      if (!(await fileMatches(adapter, `${rootPath}/${file.path}`, file))) {
-        throw new Error(`Viewer asset is missing or damaged: ${file.path}`);
+    // Before committing the marker, recheck only files that needed hashing or
+    // repair. Unchanged indexed files already had one current stat read, and a
+    // second whole-tree metadata sweep cannot make that snapshot atomic.
+    const finalRepair = new Set();
+    const touchedFiles = verifiedPayload.files.filter((file) =>
+      touched.has(file.path),
+    );
+    await forEachConcurrent(touchedFiles, async (file) => {
+      const fullPath = `${rootPath}/${file.path}`;
+      const priorStat = verified.get(file.path)?.stat || null;
+      const currentStat = await fileStat(adapter, fullPath, metrics);
+      if (
+        priorStat &&
+        currentStat &&
+        sameStatTuple(priorStat, currentStat)
+      ) {
+        verified.set(file.path, { stat: currentStat });
+        return;
       }
+      if (!priorStat && !currentStat) {
+        // A warm full-SHA scan or marker migration already verified this
+        // file. Preserve the old post-repair tree check when writes occurred,
+        // but don't hash an intact tree twice just to refresh its index.
+        if (!hadRepairs) return;
+        const result = await inspectAsset(adapter, fullPath, file, null, metrics);
+        verified.set(file.path, { stat: result.stat });
+        if (!result.matches || !result.stable) finalRepair.add(file.path);
+        return;
+      }
+      const result = await inspectAsset(adapter, fullPath, file, currentStat, metrics);
+      verified.set(file.path, { stat: result.stat });
+      if (!result.matches || !result.stable) finalRepair.add(file.path);
     });
+    if (finalRepair.size > 0) {
+      await forEachConcurrent(
+        verifiedPayload.files.filter((file) => finalRepair.has(file.path)),
+        async (file) => {
+          const bytes = await decodePayloadFile(file);
+          metrics.decodedFiles += 1;
+          metrics.decodedBytes += bytes.byteLength;
+          const fullPath = `${rootPath}/${file.path}`;
+          const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
+          await ensureDirectory(adapter, parentPath);
+          await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+          metrics.bytesWritten += bytes.byteLength;
+          metrics.repairedFiles += 1;
+          touched.add(file.path);
+          const writeStat = await fileStat(adapter, fullPath, metrics);
+          const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
+          if (!result.matches || !result.stable) {
+            throw new Error(`Viewer asset changed while repairing: ${file.path}`);
+          }
+          verified.set(file.path, { stat: result.stat });
+        },
+      );
+      // A repeated mutation is not silently retried. The marker stays absent.
+      for (const file of verifiedPayload.files.filter((entry) =>
+        finalRepair.has(entry.path),
+      )) {
+        const previous = verified.get(file.path)?.stat || null;
+        const current = await fileStat(adapter, `${rootPath}/${file.path}`, metrics);
+        if (previous && current && !sameStatTuple(previous, current)) {
+          throw new Error(`Viewer asset changed before cache commit: ${file.path}`);
+        }
+      }
+    }
+
+    const expectedMarker = markerContent(
+      verifiedPayload,
+      statIndexRows(verifiedPayload, verified),
+    );
     await adapter.write(markerPath, expectedMarker);
   } catch (error) {
     // Some adapters may report a marker write error after creating the file.
@@ -515,7 +809,7 @@ async function extractOrRepair(adapter, pluginRoot, payload) {
   };
 }
 
-function ensureViewerAssets(adapter, pluginRoot, payload) {
+function ensureViewerAssets(adapter, pluginRoot, payload, options = {}) {
   let safePluginRoot;
   let verifiedPayload;
   try {
@@ -534,20 +828,71 @@ function ensureViewerAssets(adapter, pluginRoot, payload) {
   }
   const pending = adapterLocks.get(rootPath);
   if (pending) {
+    const forceVerify = options?.forceVerify === true;
+    if (forceVerify && pending.forceVerify !== true) {
+      return pending.catch(() => undefined).then(async () => {
+        while (true) {
+          const currentLocks = activeLocks.get(adapter);
+          const active = currentLocks?.get(rootPath);
+          if (active?.forceVerify === true) return active;
+          if (!active) {
+            return startAssetExtraction(
+              adapter,
+              currentLocks || adapterLocks,
+              rootPath,
+              safePluginRoot,
+              verifiedPayload,
+              true,
+            );
+          }
+          await active.catch(() => undefined);
+        }
+      });
+    }
     return pending;
   }
 
+  return startAssetExtraction(
+    adapter,
+    adapterLocks,
+    rootPath,
+    safePluginRoot,
+    verifiedPayload,
+    options?.forceVerify === true,
+  );
+}
+
+function startAssetExtraction(
+  adapter,
+  adapterLocks,
+  rootPath,
+  safePluginRoot,
+  verifiedPayload,
+  forceVerify,
+) {
+  let currentLocks = activeLocks.get(adapter);
+  if (!currentLocks) {
+    currentLocks = adapterLocks || new Map();
+    activeLocks.set(adapter, currentLocks);
+  }
+  const alreadyActive = currentLocks.get(rootPath);
+  if (alreadyActive) return alreadyActive;
   const extraction = Promise.resolve()
-    .then(() => extractOrRepair(adapter, safePluginRoot, verifiedPayload))
+    .then(() =>
+      extractOrRepair(adapter, safePluginRoot, verifiedPayload, {
+        forceVerify,
+      }),
+    )
     .finally(() => {
-      if (adapterLocks.get(rootPath) === extraction) {
-        adapterLocks.delete(rootPath);
+      if (currentLocks.get(rootPath) === extraction) {
+        currentLocks.delete(rootPath);
       }
-      if (adapterLocks.size === 0) {
+      if (currentLocks.size === 0 && activeLocks.get(adapter) === currentLocks) {
         activeLocks.delete(adapter);
       }
     });
-  adapterLocks.set(rootPath, extraction);
+  extraction.forceVerify = forceVerify;
+  currentLocks.set(rootPath, extraction);
   return extraction;
 }
 
