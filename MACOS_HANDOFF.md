@@ -1,8 +1,16 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.1），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.2），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
 
-## 当前：0.5.1 重启缓存与自动预热修复
+## 当前：0.5.2 状态栏与工具布局调整
+
+0.5.2 继续共用 Windows、macOS、iPadOS 的三文件插件、保存／同步核心和既有桌面／移动入口。新增 **显示阅读器状态栏** 设置，默认关闭，旧设置缺失时也按关闭处理。更改设置会立即作用于当前插件实例的每个 Reader，包括 popout，不重新载入 iframe；关闭时不创建状态栏 DOM。Reader 内部保留最新状态与恢复动作，重新打开状态栏可再次显示；恢复错误 Notice 和 **恢复最近的 PDF 自动保存副本** 命令不依赖状态栏开关。状态文本及文档路径不进入诊断导出。
+
+工具布局保留五个原生 PDF.js 批注工具、中键工具轮盘和 **编辑** 中的撤销、重做、删除、保存。单独的可点击 **工具** 轮盘按钮已移除。缩放组宽 80 px，提供 `auto`、`1:1`、`↕` 页面高度和 `↔` 页面宽度预设。0.5.1 后台预热与增量缓存索引保持不变；0.5.2 不修改冻结 Viewer 或升级现有依赖。
+
+Mac 原生检查只在 `/Users/jiajia/Documents/ObReader-Apple-Test` 独立测试库进行，CDP 使用 loopback endpoint `9230`。已授权的安装替换只限 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader` 中匹配的 `main.js`、`manifest.json`、`styles.css` 三文件，更新前备份旧三文件，保留设置、缓存、恢复副本和同步检查点。Windows 与 iPad 硬件结果不由 Mac 验证代替；iPad 实机验收及最终安装由用户执行。0.5.1、0.5.0 与 0.4.0 包继续作为历史回滚参考。当前冻结结果由 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md) 记录。
+
+## 历史：0.5.1 重启缓存与自动预热修复
 
 用户实测 iPad 重启后打开仍等待 10–15 秒，等待一分钟也未改善。0.5.1 在插件启用后直接安排后台预热，独立于布局回调和 DeferredView；失败记录并有界重试，前台可补试。完成标记增加按资源绑定的大小、修改时间和创建时间索引；重启只检查元数据，变化项才读内容和做 SHA-256。旧标记首次升级需核验一次建立索引；没有可信 stat 的平台安全回退。真实使用的少量 HTML/CSS/模块字节仍校验，去掉移动入口重复哈希同一模块的开销。冻结 Viewer、406 个资源、三端平台入口与 PDF 同步合并保持共用。
 

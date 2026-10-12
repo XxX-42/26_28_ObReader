@@ -736,6 +736,14 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.autoSave)
           .onChange((enabled) => this.plugin.setAutoSaveEnabled(enabled)),
       );
+    new Setting(containerEl)
+      .setName("显示阅读器状态栏")
+      .setDesc("在 PDF 阅读器中显示加载、保存和同步状态；关闭后阅读区域不保留状态栏空间。")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showStatusBar)
+          .onChange((enabled) => this.plugin.setStatusBarEnabled(enabled)),
+      );
     {
       const diagnosticSetting = new Setting(containerEl)
         .setName(this.plugin.isMobileRuntime ? "导出移动端诊断" : "导出阅读器诊断")
@@ -799,6 +807,9 @@ class PdfReaderView extends EditableFileView {
     this.mobileInputDiagnosticsRequests = new Map();
     this.iframe = null;
     this.statusEl = null;
+    this.statusBarOpen = false;
+    this.lastStatusMessage = "";
+    this.statusRecoveryAction = false;
     this.ownerWindow = null;
     this.ownerWindowMessageSender = null;
     this.flushRequests = new Map();
@@ -922,10 +933,18 @@ class PdfReaderView extends EditableFileView {
     this.contentEl.empty();
     this.contentEl.addClass("pdf-web-reader-content");
 
+    /*
     this.statusEl = this.contentEl.createDiv({
       cls: "pdf-web-reader-status",
       text: "正在加载 PDF 阅读器…",
     });
+    */
+    this.statusEl = null;
+    this.statusBarOpen = true;
+    if (!this.lastStatusMessage && !this.statusRecoveryAction) {
+      this.setStatus("正在加载 PDF 阅读器…");
+    }
+    this.setStatusBarEnabled(this.plugin.settings.showStatusBar);
     this.iframe = this.contentEl.createEl("iframe", {
       cls: "pdf-web-reader-frame",
       attr: {
@@ -1002,6 +1021,8 @@ class PdfReaderView extends EditableFileView {
     this.iframeLoadListener = null;
     this.viewerDocumentHtml = null;
     this.iframeLoadCount = 0;
+    this.statusBarOpen = false;
+    this.removeStatusElement();
     this.ready = false;
     this.openRequest += 1;
     this.pendingBytes = null;
@@ -2624,12 +2645,55 @@ class PdfReaderView extends EditableFileView {
     this.setStatus(`已移动：${file.path}`);
   }
 
-  setStatus(message) {
-    if (!this.statusEl) {
+  setStatus(message, options = {}) {
+    if (typeof options.recoveryAction === "boolean") {
+      this.statusRecoveryAction = options.recoveryAction;
+    }
+    if (!this.statusRecoveryAction || options.recoveryAction === true) {
+      this.lastStatusMessage = String(message || "");
+    }
+    this.renderStatus();
+  }
+
+  removeStatusElement() {
+    const status = this.statusEl;
+    if (!status) return;
+    if (typeof status.remove === "function") status.remove();
+    else status.parentElement?.removeChild?.(status);
+    this.statusEl = null;
+  }
+
+  setStatusBarEnabled(enabled) {
+    this.statusBarEnabled = Boolean(enabled);
+    if (!this.statusBarEnabled || !this.statusBarOpen) {
+      if (!this.statusBarEnabled) this.removeStatusElement();
       return;
     }
-    this.statusEl.setText(message);
-    this.statusEl.toggleClass("is-hidden", !message);
+    if (!this.statusEl) {
+      this.statusEl = this.contentEl.createDiv({ cls: "pdf-web-reader-status" });
+      const frame = this.iframe;
+      if (frame?.parentNode && frame.parentNode === this.contentEl) {
+        frame.parentNode.insertBefore?.(this.statusEl, frame);
+      } else if (frame?.before) {
+        frame.before(this.statusEl);
+      }
+    }
+    this.renderStatus();
+  }
+
+  renderStatus() {
+    const status = this.statusEl;
+    if (!status) return;
+    status.empty?.();
+    status.setText?.(this.lastStatusMessage);
+    if (this.statusRecoveryAction && typeof status.createEl === "function") {
+      status.createEl("button", { text: "恢复本地副本" })
+        .addEventListener("click", () => void this.plugin.restoreLatestRecovery());
+    }
+    status.toggleClass?.(
+      "is-hidden",
+      !this.lastStatusMessage && !this.statusRecoveryAction,
+    );
   }
 
   showError(message) {
@@ -2653,9 +2717,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.mobileRuntimeSelected = this.runtimeAdapter.mobile;
     this.settings = {
       autoSave: true,
+      showStatusBar: false,
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
+    this.settings.showStatusBar = this.settings.showStatusBar === true;
     this.views = new Set();
     this.popoutCloseGates = new Map();
     this.popoutProtectionWarnings = new WeakSet();
@@ -3309,6 +3375,14 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         enabled: this.settings.autoSave,
       });
     }
+  }
+
+  async setStatusBarEnabled(enabled) {
+    this.settings.showStatusBar = Boolean(enabled);
+    for (const view of this.views) {
+      view.setStatusBarEnabled(this.settings.showStatusBar);
+    }
+    await this.saveData(this.settings);
   }
 
   async exportMobileDiagnostics() {

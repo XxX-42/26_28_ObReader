@@ -35,12 +35,13 @@ function hostHtml() {
   return `<!doctype html>
     <meta charset="utf-8">
     <title>PDF narrow toolbar test host</title>
-    <iframe id="pdf-reader" name="pdf-reader" src="/viewer/viewer.html"
+    <iframe id="pdf-reader" name="pdf-reader"
       style="display:block;width:100vw;height:900px;border:0"></iframe>
     <script>
       const channel = "pdf-web-reader";
       const token = "desktop-toolbar-test";
       const frame = document.getElementById("pdf-reader");
+      const locale = new URL(location.href).searchParams.get("locale") || "en-US";
       let sequence = 0;
       let initialOpenSent = false;
       window.__openedDocuments = [];
@@ -76,6 +77,8 @@ function hostHtml() {
           window.__bridgeErrors.push(message.message || "viewer error");
         }
       });
+      // PDF.js reads its optional locale override from the viewer hash.
+      frame.src = "/viewer/viewer.html#locale=" + encodeURIComponent(locale);
     </script>`;
 }
 
@@ -130,6 +133,20 @@ async function measureToolbar(frame) {
     };
     const toolbar = document.getElementById("toolbarContainer");
     const toolbarViewer = document.getElementById("toolbarViewer");
+    const scaleSelect = document.getElementById("scaleSelect");
+    const coreToolIds = [
+      "editorUnderlineButton",
+      "editorSquareButton",
+      "editorHighlightButton",
+      "editorInkButton",
+      "editorFreeTextButton",
+    ];
+    const zoomPresetIds = [
+      "pageAutoOption",
+      "pageActualOption",
+      "pageFitOption",
+      "pageWidthOption",
+    ];
     return {
       viewportWidth: window.innerWidth,
       toolbarHeight: Number.parseFloat(
@@ -146,14 +163,44 @@ async function measureToolbar(frame) {
       gridRows: getComputedStyle(toolbarViewer).gridTemplateRows,
       toolbarScrollWidth: toolbarViewer.scrollWidth,
       toolbarClientWidth: toolbarViewer.clientWidth,
+      zoom: {
+        language: window.PDFViewerApplication?.l10n?.getLanguage?.() || null,
+        container: rect("scaleSelectContainer"),
+        select: rect("scaleSelect"),
+        selectPaddingInlineEnd: scaleSelect
+          ? getComputedStyle(scaleSelect).paddingInlineEnd
+          : null,
+        presets: zoomPresetIds.map((id) => {
+          const option = document.getElementById(id);
+          return option && {
+            id,
+            value: option.value,
+            label: option.textContent,
+            title: option.title,
+            ariaLabel: option.getAttribute("aria-label"),
+            l10nId: option.getAttribute("data-l10n-id"),
+            l10nArgs: option.getAttribute("data-l10n-args"),
+          };
+        }),
+        retainedValues: scaleSelect ? [...scaleSelect.options].map((option) => ({
+          value: option.value,
+          disabled: option.disabled,
+          hidden: option.hidden,
+        })) : [],
+      },
+      nativeCoreTools: coreToolIds.filter((id) =>
+        document.getElementById(id)?.getClientRects().length > 0,
+      ),
+      bridgeControlLabels: [...document.querySelectorAll(
+        ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
+      )].map((button) => button.textContent.trim()),
+      bridgeClickWheelPresent: !!document.querySelector(".pdfReaderBridgeClickWheel"),
       visibleEditorTools: [
         "editorUnderlineButton",
         "editorSquareButton",
         "editorHighlightButton",
         "editorInkButton",
         "editorFreeTextButton",
-        "editorEraserButton",
-        "editorStampButton",
       ].filter((id) => {
         const element = document.getElementById(id);
         return element && element.getClientRects().length > 0;
@@ -176,6 +223,48 @@ function assertRectInside(rect, width, label) {
   assert.ok(rect, `${label} should exist`);
   assert.ok(rect.x >= -0.5, `${label} should not extend past the left edge: ${JSON.stringify(rect)}`);
   assert.ok(rect.right <= width + 0.5, `${label} should not extend past the right edge: ${JSON.stringify(rect)}`);
+}
+
+function assertZoomPresets(layout, languagePrefix) {
+  const expected = [
+    ["auto", "auto", "自动适配页面"],
+    ["page-actual", "1:1", "按原始大小显示（100%）"],
+    ["page-fit", "↕", "适合页面高度"],
+    ["page-width", "↔", "适合页面宽度"],
+  ];
+  assert.ok(
+    layout.zoom.language?.toLowerCase().startsWith(languagePrefix),
+    `Expected ${languagePrefix} PDF.js localization, got ${layout.zoom.language}`,
+  );
+  assert.equal(layout.zoom.container.width, 80);
+  assert.equal(layout.zoom.select.width, 80);
+  assert.equal(layout.zoom.selectPaddingInlineEnd, "20px");
+  assert.deepEqual(
+    layout.zoom.presets.map((option) => [option.value, option.label, option.title]),
+    expected,
+  );
+  assert.ok(layout.zoom.presets.every((option, index) =>
+    option.ariaLabel === expected[index][2] &&
+    option.l10nId === null && option.l10nArgs === null,
+  ), "Preset tooltips and accessible names must be stable and independent of PDF.js localization");
+  const retainedOptions = new Map(layout.zoom.retainedValues.map((option) => [option.value, option]));
+  assert.deepEqual(
+    ["custom", "0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"]
+      .filter((value) => retainedOptions.has(value)),
+    ["custom", "0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"],
+    "The custom and percentage zoom choices must remain available",
+  );
+  assert.equal(retainedOptions.get("custom").disabled, true);
+  assert.equal(retainedOptions.get("custom").hidden, true);
+  assert.deepEqual(layout.nativeCoreTools, [
+    "editorUnderlineButton",
+    "editorSquareButton",
+    "editorHighlightButton",
+    "editorInkButton",
+    "editorFreeTextButton",
+  ]);
+  assert.deepEqual(layout.bridgeControlLabels, ["编辑"]);
+  assert.equal(layout.bridgeClickWheelPresent, false);
 }
 
 test(
@@ -253,7 +342,7 @@ test(
       page.on("requestfailed", (request) => {
         browserDiagnostics.push(`${request.url()}: ${request.failure()?.errorText}`);
       });
-      await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+      await page.goto(`${baseUrl}/?locale=en-US`, { waitUntil: "domcontentloaded" });
       const viewer = page.frames().find((frame) => frame.name() === "pdf-reader");
       assert.ok(viewer, "Expected the vendor PDF.js viewer frame");
       try {
@@ -288,9 +377,38 @@ test(
       const wide = await measureToolbar(viewer);
       assert.equal(wide.toolbarHeight, 32);
       assert.notEqual(wide.toolbarDisplay, "grid", "Wide panes keep the original one-row toolbar");
+      assertZoomPresets(wide, "en");
       const expectedVisibleTools = wide.visibleEditorTools;
       assert.ok(expectedVisibleTools.includes("editorUnderlineButton"));
       assert.ok(expectedVisibleTools.includes("editorSquareButton"));
+
+      await viewer.evaluate(async () => {
+        await PDFViewerApplication.l10n.translate(document.documentElement);
+      });
+      assertZoomPresets(await measureToolbar(viewer), "en");
+
+      await page.evaluate(() => {
+        const frame = document.createElement("iframe");
+        frame.id = "zoom-l10n-zh-probe";
+        frame.name = "zoom-l10n-zh-probe";
+        frame.title = "PDF zoom localization probe";
+        frame.style.cssText = "position:absolute;left:-10000px;top:0;width:900px;height:900px;border:0";
+        frame.src = "/viewer/viewer.html#locale=zh-CN";
+        document.body.append(frame);
+      });
+      await page.waitForFunction(() => {
+        const app = document.getElementById("zoom-l10n-zh-probe")
+          ?.contentWindow?.PDFViewerApplication;
+        return app?.initialized && app.l10n?.getLanguage?.().toLowerCase() === "zh-cn";
+      }, { timeout: 30_000 });
+      const chineseViewer = page.frames().find((frame) =>
+        frame.name() === "zoom-l10n-zh-probe",
+      );
+      assert.ok(chineseViewer, "Expected the zh-CN localization probe viewer");
+      await chineseViewer.evaluate(async () => {
+        await PDFViewerApplication.l10n.translate(document.documentElement);
+      });
+      assertZoomPresets(await measureToolbar(chineseViewer), "zh-cn");
 
       await page.setViewport({ width: 881, height: 900, deviceScaleFactor: 1 });
       const breakpointWide = await measureToolbar(viewer);

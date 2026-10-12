@@ -121,12 +121,7 @@ function createPdfSyncHost(plugin, api) {
     });
   }
   function failure(view, message) {
-    view.setStatus(`同步暂停：${message}。可恢复本地副本。`);
-    const status = view.statusEl;
-    if (status?.createEl) {
-      const button = status.createEl("button", { text: "恢复本地副本" });
-      button.addEventListener("click", () => void plugin.restoreLatestRecovery());
-    }
+    view.setStatus(`同步暂停：${message}。可恢复本地副本。`, { recoveryAction: true });
     if (!view.syncFailureShown) {
       view.syncFailureShown = true;
       new Notice(`PDF 自动合并暂停：${message}。使用“恢复最近的 PDF 自动保存副本”取回本地版本。`, 8000);
@@ -240,7 +235,7 @@ function createPdfSyncHost(plugin, api) {
           view.latestRecoveryDraft = null;
         }
         view.failureNoticeShown = false;
-        view.setStatus(`已保存：${file.path}`);
+        view.setStatus(`已保存：${file.path}`, { recoveryAction: false });
         if (message.origin === "manual") new Notice(`已保存 ${captured.filename}`);
         if (!bytesEqual(bytes, local.bytes)) view.syncNeedsRefresh = true;
         schedule(file, "saved");
@@ -327,7 +322,7 @@ function createPdfSyncHost(plugin, api) {
         view.lastOpenSentRequest = newOpenRequest;
         view.syncNeedsRefresh = false;
         view.syncFailureShown = false;
-        view.setStatus(`已同步并刷新：${file.path}`);
+        view.setStatus(`已同步并刷新：${file.path}`, { recoveryAction: false });
         if (!merged.conflicts?.length) await plugin.removeRecoveryCandidate(record);
       });
     } catch (error) {

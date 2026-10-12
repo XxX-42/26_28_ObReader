@@ -52,6 +52,20 @@ body {
   margin-inline: 4px;
 }
 
+#scaleSelectContainer {
+  width: 80px;
+  min-width: 0;
+  max-width: 80px;
+  flex: 0 0 80px;
+}
+
+#scaleSelectContainer > #scaleSelect {
+  width: 80px;
+  min-width: 0;
+  padding-inline: 4px 20px;
+  box-sizing: border-box;
+}
+
 .pdfReaderBridgeControlButton {
   min-width: 40px;
   width: auto;
@@ -67,11 +81,6 @@ body {
   opacity: 0.45;
 }
 
-.pdfReaderBridgeClickWheel {
-  z-index: 100002;
-}
-
-.pdfReaderBridgeClickWheel[hidden],
 .pdfReaderBridgeActionMenu[hidden] {
   display: none !important;
 }

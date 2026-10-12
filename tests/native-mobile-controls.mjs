@@ -19,7 +19,19 @@ const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appUrl = "app://obsidian.md/index.html";
-const cdpUrl = "http://127.0.0.1:9226";
+function validateIsolatedCdpUrl(value) {
+  assert.ok(typeof value === "string" && value.length > 0,
+    "Set PDF_READER_CDP_URL to the isolated Obsidian test endpoint.");
+  const endpoint = new URL(value);
+  assert.ok(["http:", "https:"].includes(endpoint.protocol),
+    "PDF_READER_CDP_URL must be a local HTTP endpoint.");
+  assert.ok(["localhost", "127.0.0.1", "[::1]", "::1"].includes(endpoint.hostname),
+    "PDF_READER_CDP_URL must point to a loopback endpoint.");
+  assert.equal(endpoint.username, "", "PDF_READER_CDP_URL must not include credentials.");
+  assert.equal(endpoint.password, "", "PDF_READER_CDP_URL must not include credentials.");
+  return value;
+}
+const cdpUrl = validateIsolatedCdpUrl(nativeConfig.cdpUrl);
 const pluginId = "pdf-web-reader";
 const viewType = "pdf-web-reader-view";
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -54,7 +66,7 @@ assert.equal(nativeConfig.platform, "darwin");
 assert.equal(nativeConfig.vault, MACOS_TEST_VAULT);
 assert.equal(nativeConfig.vaultSelector, "ObReader-Apple-Test");
 assert.equal(nativeConfig.configDir, expectedIdentity.configDir);
-assert.equal(nativeConfig.cdpUrl, cdpUrl, "Only the isolated Obsidian endpoint on port 9226 is permitted.");
+assert.equal(nativeConfig.cdpUrl, cdpUrl, "Use only the configured loopback endpoint for the isolated test vault.");
 assert.match(expected.productMain || "", /^[a-f0-9]{64}$/, "Frozen identity JSON must include productMain SHA-256.");
 assert.match(expected.manifest || "", /^[a-f0-9]{64}$/, "Frozen identity JSON must include manifest SHA-256.");
 assert.match(expected.styles || "", /^[a-f0-9]{64}$/, "Frozen identity JSON must include styles SHA-256.");
@@ -643,7 +655,11 @@ async function openBridgeActionMenu(leafId) {
     return !!menu && !menu.hidden;
   }, leafId);
   if (!isOpen) {
-    await clickOwnedSelector(leafId, ".pdfReaderBridgeControls button[aria-haspopup='menu']:nth-of-type(2)", "open mobile Edit menu");
+    await clickOwnedSelector(
+      leafId,
+      ".pdfReaderBridgeControls .pdfReaderBridgeControlButton[aria-haspopup='menu']",
+      "open mobile Edit menu",
+    );
     await waitForMenu(leafId, ".pdfReaderBridgeActionMenu");
   }
 }
@@ -878,21 +894,40 @@ async function run() {
   const mobileControls = await ownedEval(page, (id) => {
     const leaf = app.workspace.getLeavesOfType("pdf-web-reader-view").find((candidate) => candidate.id === id);
     const doc = leaf?.view?.iframe?.contentDocument;
-    const tools = [...(doc?.querySelectorAll(".pdfReaderBridgeClickWheel [role='menuitem']") || [])]
-      .map((button) => button.getAttribute("aria-label"));
+    const nativeToolIds = [
+      "editorUnderlineButton",
+      "editorSquareButton",
+      "editorHighlightButton",
+      "editorInkButton",
+      "editorFreeTextButton",
+    ];
+    const nativeTools = nativeToolIds.filter((id) =>
+      doc?.getElementById(id)?.getClientRects().length > 0,
+    );
     const actionButtons = [...(doc?.querySelectorAll(".pdfReaderBridgeActionMenu [data-action]") || [])]
       .map((button) => button.dataset.action);
+    const bridgeControls = [...(doc?.querySelectorAll(
+      ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
+    ) || [])].map((button) => button.textContent.trim());
     return {
       loaderMode: leaf?.view?.mobileRuntime?.loaderMode || null,
-      toolLabels: tools,
+      nativeTools,
       actionNames: actionButtons,
-      hasToolButton: !!doc?.querySelector(".pdfReaderBridgeControls button[aria-haspopup='menu']"),
+      bridgeControls,
+      bridgeClickWheelPresent: !!doc?.querySelector(".pdfReaderBridgeClickWheel"),
     };
   }, leafId);
   assert.equal(mobileControls.loaderMode, "mobile-blob");
-  assert.deepEqual(mobileControls.toolLabels, ["退出", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线"]);
+  assert.deepEqual(mobileControls.nativeTools, [
+    "editorUnderlineButton",
+    "editorSquareButton",
+    "editorHighlightButton",
+    "editorInkButton",
+    "editorFreeTextButton",
+  ]);
   assert.deepEqual(mobileControls.actionNames, ["undo", "redo", "delete", "save"]);
-  assert.equal(mobileControls.hasToolButton, true);
+  assert.deepEqual(mobileControls.bridgeControls, ["编辑"]);
+  assert.equal(mobileControls.bridgeClickWheelPresent, false);
   report.interactions.push({ action: "mobile bridge controls rendered", ...mobileControls });
   await persistReport();
 
@@ -904,10 +939,8 @@ async function run() {
   });
   assert.deepEqual(autoSaveDisabled, { autoSave: false, persisted: false });
 
-  await clickOwnedSelector(leafId, ".pdfReaderBridgeControls button[aria-haspopup='menu']:nth-of-type(1)", "open mobile tool wheel");
-  await waitForMenu(leafId, ".pdfReaderBridgeClickWheel");
-  await clickOwnedSelector(leafId, ".pdfReaderBridgeClickWheel button[aria-label='2 矩形框']", "choose Square from the mobile tool wheel");
-  await waitFor("Square editor mode from the visible mobile tool wheel", () => readerState(leafId),
+  await clickOwnedSelector(leafId, "#editorSquareButton", "select Square from the native mobile tools");
+  await waitFor("Square editor mode from the native mobile tools", () => readerState(leafId),
     (state) => state.editorMode === 5);
 
   const draw = await waitFor("a visible PDF page region with unobstructed native draw endpoints", () =>
@@ -973,7 +1006,7 @@ async function run() {
       if (width < 60 || height < 40 || visibleFrame.right <= visibleFrame.left || visibleFrame.bottom <= visibleFrame.top) return null;
 
       const visibleOverlays = [...doc.querySelectorAll(
-        ".editorParamsToolbar, .pdfReaderBridgeClickWheel, .pdfReaderBridgeActionMenu, #secondaryToolbar:not(.hidden)",
+        ".editorParamsToolbar, .pdfReaderBridgeActionMenu, #secondaryToolbar:not(.hidden)",
       )].filter((element) => {
         const style = win.getComputedStyle(element);
         const rect = element.getBoundingClientRect();

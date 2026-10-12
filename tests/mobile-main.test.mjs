@@ -43,7 +43,7 @@ function makeAssets() {
   return { strings, binary, payload: { schema: 1, id: "test", contentHash: "a".repeat(64), files } };
 }
 
-function makeHarness({ appMobile = true, platformMobile = false } = {}) {
+function makeHarness({ appMobile = true, platformMobile = false, savedData = null } = {}) {
   const { strings, binary, payload } = makeAssets();
   const payloadMarker = "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
   assert.ok(source.includes(payloadMarker));
@@ -62,6 +62,74 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
   let viewFactory = null;
   let nextObjectUrl = 0;
   const cacheRoot = "test-cache";
+
+  function makeElement(tagName, options = {}, parent = null, ownerDocument = null) {
+    const classes = new Set(String(options.cls || "").split(/\s+/).filter(Boolean));
+    const element = {
+      tagName,
+      parentNode: parent,
+      parentElement: parent,
+      ownerDocument: ownerDocument || parent?.ownerDocument || null,
+      children: [],
+      textContent: options.text || "",
+      attributes: { ...(options.attr || {}) },
+      listeners: new Map(),
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name),
+        contains: (name) => classes.has(name),
+      },
+      get className() { return [...classes].join(" "); },
+      addClass(name) { classes.add(name); },
+      removeClass(name) { classes.delete(name); },
+      toggleClass(name, enabled) { enabled ? classes.add(name) : classes.delete(name); },
+      setText(value) {
+        this.textContent = String(value ?? "");
+        this.empty();
+      },
+      empty() {
+        for (const child of this.children) {
+          child.parentNode = null;
+          child.parentElement = null;
+        }
+        this.children.length = 0;
+      },
+      createDiv(childOptions = {}) { return this.createEl("div", childOptions); },
+      createEl(childTagName, childOptions = {}) {
+        const child = makeElement(childTagName, childOptions, this, this.ownerDocument);
+        this.children.push(child);
+        return child;
+      },
+      insertBefore(child, reference) {
+        child.remove?.();
+        const index = this.children.indexOf(reference);
+        const insertAt = index < 0 ? this.children.length : index;
+        this.children.splice(insertAt, 0, child);
+        child.parentNode = this;
+        child.parentElement = this;
+        return child;
+      },
+      before(reference) { this.parentNode?.insertBefore?.(reference, this); },
+      remove() {
+        const index = this.parentNode?.children?.indexOf(this) ?? -1;
+        if (index >= 0) this.parentNode.children.splice(index, 1);
+        this.parentNode = null;
+        this.parentElement = null;
+        this.removed = true;
+      },
+      addEventListener(type, listener) {
+        const listeners = this.listeners.get(type) || new Set();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      },
+      click() {
+        for (const listener of this.listeners.get("click") || []) {
+          listener({ type: "click", target: this });
+        }
+      },
+    };
+    return element;
+  }
 
   class TestURL extends URL {}
   TestURL.createObjectURL = (blob) => {
@@ -88,15 +156,8 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
       this.app = leaf.app;
       const ownerWindow = makeWindow();
       const ownerDocument = { defaultView: ownerWindow };
-      this.contentEl = {
-        ownerDocument,
-        empty() {},
-        addClass() {},
-        removeClass() {},
-        createDiv() {
-          return { setText() {}, toggleClass() {} };
-        },
-      };
+      ownerWindow.document = ownerDocument;
+      this.contentEl = makeElement("div", {}, null, ownerDocument);
     }
     async setState() {}
     async onOpen() {}
@@ -116,8 +177,8 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
     addCommand(command) { commands.set(command.id, command); }
     addSettingTab(setting) { this.settingTab = setting; }
     registerEvent() {}
-    async loadData() { return null; }
-    async saveData() {}
+    async loadData() { return savedData; }
+    async saveData(data) { savedData = structuredClone(data); this.persistedData = savedData; }
   }
   class PluginSettingTab {
     constructor(app, plugin) {
@@ -131,8 +192,15 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
     setName(value) { this.name = value; return this; }
     setDesc(value) { this.description = value; return this; }
     addToggle(callback) {
-      const toggle = { setValue() { return this; }, onChange() { return this; } };
+      const toggle = {
+        value: undefined,
+        handler: null,
+        setValue(value) { this.value = value; return this; },
+        onChange(handler) { this.handler = handler; return this; },
+        change(value) { this.value = value; return this.handler?.(value); },
+      };
       callback(toggle);
+      this.toggle = toggle;
       return this;
     }
     addButton(callback) {
@@ -268,6 +336,7 @@ function makeHarness({ appMobile = true, platformMobile = false } = {}) {
     revokedUrls,
     createdUrls,
     ownerWindows,
+    get savedData() { return savedData; },
     makeWindow,
     makeView() {
       const leaf = new WorkspaceLeaf(app);
@@ -580,6 +649,68 @@ test("mobile startup exposes sanitized stages without replacing an opened docume
   view.setMobileLoaderStage("viewer-module-loaded");
   assert.equal(view.mobileRuntime.stage, "ready");
   assert.equal(status.length, count);
+  harness.plugin.onunload();
+});
+
+test("status bar defaults off, toggles live Readers without reload, and restores paused recovery action", async () => {
+  const harness = makeHarness({ savedData: { autoSave: false } });
+  await harness.plugin.onload();
+  assert.equal(harness.plugin.settings.showStatusBar, false,
+    "legacy settings without the new key remain status-bar off");
+  const readers = [harness.makeView(), harness.makeView()];
+  await Promise.all(readers.map((view) => view.onOpen()));
+  const frames = readers.map((view) => view.iframe);
+  const srcdocs = frames.map((frame) => frame.srcdoc);
+  assert.ok(readers.every((view) => view.statusEl === null));
+  assert.ok(readers.every((view) => view.contentEl.children.length === 1));
+  assert.ok(readers.every((view) => view.contentEl.children[0] === view.iframe));
+
+  let restoreCalls = 0;
+  harness.plugin.restoreLatestRecovery = () => { restoreCalls += 1; };
+  const privatePath = "Private/Confidential.pdf";
+  harness.plugin.pdfSync.showFailure(readers[0], `checkpoint conflict for ${privatePath}`);
+  assert.equal(readers[0].statusRecoveryAction, true);
+  assert.equal(readers[0].statusEl, null,
+    "hidden status state and recovery action are retained without creating DOM");
+  assert.match(readers[0].lastStatusMessage, /同步暂停/);
+
+  harness.plugin.settingTab.display();
+  const setting = harness.settings.find((entry) => entry.name === "显示阅读器状态栏");
+  assert.ok(setting);
+  assert.equal(setting.toggle.value, false);
+  for (const enabled of [true, false, true, false, true]) {
+    await setting.toggle.change(enabled);
+    for (const view of readers) {
+      assert.equal(view.statusBarEnabled, enabled);
+      assert.equal(view.iframe, frames[readers.indexOf(view)], "the Viewer iframe is never recreated");
+      assert.equal(view.iframe.srcdoc, srcdocs[readers.indexOf(view)]);
+      const statusNodes = view.contentEl.children.filter((node) => node.classList.contains("pdf-web-reader-status"));
+      assert.equal(statusNodes.length, enabled ? 1 : 0, "repeated toggles do not duplicate status nodes");
+      if (enabled) assert.equal(view.contentEl.children[0], view.statusEl,
+        "the status bar stays before the iframe in every Reader window");
+      else assert.deepEqual(view.contentEl.children, [view.iframe], "disabled status has no DOM or layout height");
+    }
+  }
+
+  const status = readers[0].statusEl;
+  assert.match(status.textContent, /checkpoint conflict/);
+  assert.equal(status.children.filter((node) => node.tagName === "button").length, 1);
+  status.children.find((node) => node.tagName === "button").click();
+  assert.equal(restoreCalls, 1);
+  assert.equal(harness.savedData.showStatusBar, true);
+  assert.equal(harness.savedData.autoSave, false);
+
+  const newlyOpened = harness.makeView();
+  await newlyOpened.onOpen();
+  assert.equal(newlyOpened.contentEl.children[0], newlyOpened.statusEl,
+    "a Reader opened while the preference is enabled creates status before its iframe");
+  assert.equal(newlyOpened.contentEl.children[1], newlyOpened.iframe);
+
+  const diagnosticsPath = await harness.plugin.exportMobileDiagnostics();
+  const diagnostics = JSON.parse(new TextDecoder().decode(harness.stored.get(diagnosticsPath).bytes));
+  assert.equal(JSON.stringify(diagnostics).includes(privatePath), false,
+    "the internal status message and document path never enter exported diagnostics");
+  for (const view of [...readers, newlyOpened]) view.clearBridgeTimeout();
   harness.plugin.onunload();
 });
 

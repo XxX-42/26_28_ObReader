@@ -558,52 +558,11 @@ test(
         return { x:rect.x, y:rect.y, width:rect.width, height:rect.height };
       });
 
-    // The bridge entry is a click alternative to the middle-button wheel. It
-    // must retain the exact frozen vendor map and activate PDF.js's own mode.
-    await click('.pdfReaderBridgeControlButton[aria-label^="批注工具圆盘"]');
-    await viewer.waitForSelector(".pdfReaderBridgeClickWheel:not([hidden])");
-    assert.deepEqual(
-      await viewer.$$eval(".pdfReaderBridgeClickWheel button", (buttons) =>
-        buttons.map((button) => button.getAttribute("aria-label")),
-      ),
-      ["退出", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线"],
-    );
-    await page.setViewport({ width:900, height:500 });
-    await viewer.waitForFunction(() => {
-      const wheel = document.querySelector(".pdfReaderBridgeClickWheel");
-      const rect = wheel?.getBoundingClientRect();
-      return window.innerWidth === 900 && window.innerHeight === 500 && rect &&
-        Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2) <= 1 &&
-        Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2) <= 1;
-    }, { timeout:5_000 });
-    const resizedWheelBounds = await viewer.evaluate(() => {
-      const wheel = document.querySelector(".pdfReaderBridgeClickWheel");
-      const rect = wheel.getBoundingClientRect();
-      return {
-        left:rect.left,
-        top:rect.top,
-        right:rect.right,
-        bottom:rect.bottom,
-        centerX:rect.left + rect.width / 2,
-        centerY:rect.top + rect.height / 2,
-        width:window.innerWidth,
-        height:window.innerHeight,
-      };
-    });
-    assert.ok(
-      resizedWheelBounds.left >= 0 &&
-        resizedWheelBounds.top >= 0 &&
-        resizedWheelBounds.right <= resizedWheelBounds.width &&
-        resizedWheelBounds.bottom <= resizedWheelBounds.height &&
-        Math.abs(resizedWheelBounds.centerX - resizedWheelBounds.width / 2) <= 1 &&
-        Math.abs(resizedWheelBounds.centerY - resizedWheelBounds.height / 2) <= 1,
-      `The visible click wheel should recenter and stay within a resized viewer: ${JSON.stringify(resizedWheelBounds)}`,
-    );
     const assertCompactToolbarFits = async (width) => {
       await page.setViewport({ width, height:500 });
       await viewer.waitForFunction(
         (expectedWidth) => window.innerWidth === expectedWidth &&
-          document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 2,
+          document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 1,
         { timeout:5_000 },
         width,
       );
@@ -613,6 +572,13 @@ test(
         const containerRect = toolbar.getBoundingClientRect();
         const mustReach = [
           ...document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton"),
+          ...[
+            "editorUnderlineButton",
+            "editorSquareButton",
+            "editorHighlightButton",
+            "editorInkButton",
+            "editorFreeTextButton",
+          ].map((id) => document.getElementById(id)),
           document.getElementById("secondaryToolbarToggleButton"),
         ];
         const box = (element) => {
@@ -657,35 +623,61 @@ test(
           layout.controls.every(withinToolbar),
         `All visible toolbar and bridge controls should remain clickable inside a ${width}px pane: ${JSON.stringify(layout)}`,
       );
+      const editControl = layout.controls.find((button) =>
+        button.label === "撤销、重做、删除和保存",
+      );
+      const nativeToolControls = layout.controls.filter((button) =>
+        button.label.startsWith("editor"),
+      );
       assert.ok(
-        layout.controls.filter((button) => button.label !== "secondaryToolbarToggleButton")
-          .every((button) => button.whiteSpace === "nowrap" && button.scrollWidth <= button.clientWidth + 1),
-        `The bridge tool and edit labels should not wrap vertically at ${width}px: ${JSON.stringify(layout.controls)}`,
+        editControl?.whiteSpace === "nowrap" &&
+          editControl.scrollWidth <= editControl.clientWidth + 1,
+        `The Edit control label should not wrap vertically at ${width}px: ${JSON.stringify(editControl)}`,
+      );
+      assert.equal(nativeToolControls.length, 5);
+      assert.ok(
+        nativeToolControls.every((button) => button.scrollWidth <= button.clientWidth + 1),
+        `Native tool buttons should fit at ${width}px: ${JSON.stringify(nativeToolControls)}`,
       );
     };
-    // The native app's 800px split pane previously pushed the PDF.js Tools
-    // toggle off-screen and wrapped the two new Chinese labels vertically.
-    // Check both sides of the 880px layout breakpoint so it doesn't create a
-    // narrow overflow band immediately above the compact two-row toolbar.
+    // Check both sides of the responsive breakpoint with the native tools and
+    // the single edit-actions control inside the available toolbar width.
     await assertCompactToolbarFits(881);
     await assertCompactToolbarFits(880);
     await assertCompactToolbarFits(800);
     await assertCompactToolbarFits(600);
     await page.setViewport({ width:1400, height:1000 });
-    await viewer.waitForFunction(() => {
-      const wheel = document.querySelector(".pdfReaderBridgeClickWheel");
-      const rect = wheel?.getBoundingClientRect();
-      return rect && Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2) <= 1;
-    });
+    const toolbarControls = await viewer.evaluate(() => ({
+      nativeTools: [
+        "editorUnderlineButton",
+        "editorSquareButton",
+        "editorHighlightButton",
+        "editorInkButton",
+        "editorFreeTextButton",
+      ].filter((id) => document.getElementById(id)?.getClientRects().length > 0),
+      bridgeControls: [...document.querySelectorAll(
+        ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
+      )].map((button) => button.textContent.trim()),
+      bridgeClickWheel: !!document.querySelector(".pdfReaderBridgeClickWheel"),
+    }));
+    assert.deepEqual(toolbarControls.nativeTools, [
+      "editorUnderlineButton",
+      "editorSquareButton",
+      "editorHighlightButton",
+      "editorInkButton",
+      "editorFreeTextButton",
+    ]);
+    assert.deepEqual(toolbarControls.bridgeControls, ["编辑"]);
+    assert.equal(toolbarControls.bridgeClickWheel, false);
     const initialSquareModeRequest = await beginAnnotationModeChange(5);
-    await click('.pdfReaderBridgeClickWheel [data-sector="4"]');
+    await click("#editorSquareButton");
     await noteAnnotationModeClickReturned(initialSquareModeRequest.id);
     await waitForAnnotationModeChange(5, initialSquareModeRequest);
     assert.ok(
-      await viewer.evaluate(
-        () => document.getElementById("editorSquareParamsToolbar").classList.contains("hidden"),
+      await viewer.evaluate(() =>
+        !document.getElementById("editorSquareParamsToolbar").classList.contains("hidden"),
       ),
-      "The click wheel should match PDF.js's native wheel behavior and leave tool parameters closed",
+      "Selecting Square from PDF.js's native tool bar should expose its parameter controls",
     );
 
     // Real mouse events create a Square. The browser event log below checks
@@ -1050,18 +1042,14 @@ test(
     });
     await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y);
     await page.mouse.down({ button:"middle" });
-    await viewer.waitForSelector(
-      ".pdfToolWheel:not(.pdfReaderBridgeClickWheel)",
-    );
+    await viewer.waitForSelector(".pdfToolWheel");
     await page.mouse.up({ button:"middle" });
     await viewer.waitForFunction(
-      () => Boolean(document.querySelector(
-        ".pdfToolWheel:not(.pdfReaderBridgeClickWheel)",
-      )),
+      () => Boolean(document.querySelector(".pdfToolWheel")),
       { timeout: 5_000 },
     );
     const middleWheelModeRequest = await beginAnnotationModeChange(5);
-    await click('.pdfToolWheel:not(.pdfReaderBridgeClickWheel) button[aria-label="2 矩形框"]');
+    await click('.pdfToolWheel button[aria-label="2 矩形框"]');
     await noteAnnotationModeClickReturned(middleWheelModeRequest.id);
     await waitForAnnotationModeChange(5, middleWheelModeRequest, 5_000);
 
@@ -1079,9 +1067,7 @@ test(
     await page.mouse.down({ button:"middle" });
     await page.mouse.up({ button:"middle" });
     assert.equal(
-      await viewer.evaluate(() => Boolean(document.querySelector(
-        ".pdfToolWheel:not(.pdfReaderBridgeClickWheel)",
-      ))),
+      await viewer.evaluate(() => Boolean(document.querySelector(".pdfToolWheel"))),
       false,
       "Middle-clicking a native parameter input must not open the tool wheel",
     );
@@ -1095,9 +1081,7 @@ test(
     // explicitly not a simulation or claim about a physical iPad event.
     await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y);
     await page.mouse.down({ button:"middle" });
-    await viewer.waitForSelector(
-      ".pdfToolWheel:not(.pdfReaderBridgeClickWheel)",
-    );
+    await viewer.waitForSelector(".pdfToolWheel");
     const middlePointerId = await viewer.evaluate(() =>
       window.__trustedMouseEvents.findLast(
         (event) => event.type === "pointerdown" && event.button === 1 && event.trusted,
@@ -1115,17 +1099,15 @@ test(
       }));
     }, middlePointerId);
     await viewer.waitForFunction(
-      () => !document.querySelector(
-        ".pdfToolWheel:not(.pdfReaderBridgeClickWheel)",
-      ) &&
+      () => !document.querySelector(".pdfToolWheel") &&
         window.__syntheticCancelProbe?.isTrusted === false,
       { timeout: 5_000 },
     );
     await page.mouse.up({ button:"middle" });
 
     // Ordinary wheel scroll moves the viewer without changing scale. Ctrl-wheel
-    // at the document uses PDF.js zoom; this checks the wheel route stays
-    // separate from the bridge's middle-button radial menu.
+    // at the document uses PDF.js zoom; both routes stay separate from PDF.js's
+    // middle-button tool wheel.
     const beforeWheel = await viewer.evaluate(() => ({
       scale:PDFViewerApplication.pdfViewer.currentScale,
       scrollTop:document.getElementById("viewerContainer").scrollTop,
@@ -1838,14 +1820,12 @@ test(
     await viewer.evaluate(() => {
       window.__mouseModeActivationTrace?.push({
         time:Math.round(performance.now()),
-        method:"test.beforeToolWheelModeClick",
+        method:"test.beforeNativeFreeTextModeClick",
         phase:"mark",
       });
     });
-    await click('.pdfReaderBridgeControlButton[aria-label^="批注工具圆盘"]');
-    await viewer.waitForSelector(".pdfReaderBridgeClickWheel:not([hidden])");
     const freeTextModeRequest = await beginAnnotationModeChange(3);
-    await click('.pdfReaderBridgeClickWheel [data-sector="1"]');
+    await click("#editorFreeTextButton");
     await noteAnnotationModeClickReturned(freeTextModeRequest.id);
     await waitForAnnotationModeChange(3, freeTextModeRequest, 5_000);
     await viewer.evaluate(() => {

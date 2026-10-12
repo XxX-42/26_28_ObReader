@@ -1,0 +1,7 @@
+177f1beb02c197113c881321b0d1835fae8abd7b3d82a90d681d2d14f0d393ad  dist/pdf-web-reader/main.js
+c17a13380762b8780d82866457b5e78e5eb120e8eeb9381d03c3c68782253b88  dist/pdf-web-reader/manifest.json
+9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650  dist/pdf-web-reader/styles.css
+efd19502a5a7eaa9c16dd003c3ecbb10d4fcb88cb78d59b21187b006b77acdbb  dist/pdf-web-reader-0.1general-0.5.2-candidate.zip
+212b6f7539cd6eaf66bd7dcde9f8e6e4b0ef337b934a1dd250039672c01538f0  dist/pdf-web-reader-0.1general-0.5.2-candidate.zip.json
+35d5b69965c615463f641cfa6abec47a6f153f78422ab17c6098dee0a87d5f54  dist/general-0.1general-0.5.2-evidence.zip
+107129a3bb0b2585dd2715cc98a3b01c16ce0232959ddb8f2fc6cb02a1874d8d  dist/general-0.1general-0.5.2-evidence.manifest.json

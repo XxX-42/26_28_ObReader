@@ -1276,9 +1276,42 @@ test("auto-save preference persists and is sent to open views", async () => {
   await harness.plugin.setAutoSaveEnabled(false);
 
   assert.equal(harness.plugin.settings.autoSave, false);
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false });
   assert.equal(sent.at(-1).type, "configure-auto-save");
   assert.equal(sent.at(-1).enabled, false);
+});
+
+test("status bar preference defaults off and updates every live Reader immediately", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  assert.equal(harness.plugin.settings.showStatusBar, false);
+  const readers = [harness.createView(), harness.createView()];
+  for (const view of readers) view.statusBarOpen = true;
+
+  const pending = harness.plugin.setStatusBarEnabled(true);
+  assert.equal(harness.plugin.settings.showStatusBar, true);
+  assert.ok(readers.every((view) => view.statusBarEnabled === true));
+  await pending;
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true });
+
+  await harness.plugin.setStatusBarEnabled(false);
+  assert.ok(readers.every((view) => view.statusBarEnabled === false));
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false });
+});
+
+test("sync failure retains a recoverable status action for the conditional status bar", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const view = harness.createView();
+  let statusCall = null;
+  view.setStatus = (message, options) => { statusCall = { message, options }; };
+
+  harness.plugin.pdfSync.showFailure(view, "checkpoint verification failed");
+
+  assert.match(statusCall.message, /同步暂停/);
+  assert.deepEqual(statusCall.options, { recoveryAction: true });
+  assert.equal(harness.notices.length, 1);
+  assert.match(harness.notices[0], /恢复最近的 PDF 自动保存副本/);
 });
 
 test("recovery protocol persists a draft without writing the original PDF", async () => {

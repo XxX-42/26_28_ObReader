@@ -23,39 +23,6 @@
       : null;
   const POINTER_DIAGNOSTIC_LIMIT = 32;
   const DEFERRED_ACCESSIBILITY_MOVE_LIMIT = 8;
-  const TOOL_WHEEL_ITEMS = [
-    { label: "退出", icon: "×", mode: null },
-    {
-      label: "5 文字框",
-      icon: "T",
-      mode: 3,
-      buttonId: "editorFreeTextButton",
-    },
-    {
-      label: "4 自由画笔",
-      icon: "✎",
-      mode: 15,
-      buttonId: "editorInkButton",
-    },
-    {
-      label: "3 荧光笔",
-      icon: "▰",
-      mode: 9,
-      buttonId: "editorHighlightButton",
-    },
-    {
-      label: "2 矩形框",
-      icon: "□",
-      mode: 5,
-      buttonId: "editorSquareButton",
-    },
-    {
-      label: "1 下划线",
-      icon: "U̲",
-      mode: 10,
-      buttonId: "editorUnderlineButton",
-    },
-  ];
   if (!token) {
     console.error("PDF Reader bridge is missing its session token.");
     return;
@@ -321,26 +288,41 @@
     }
   }
 
+  function configureZoomPresetOptions() {
+    const presets = [
+      ["pageAutoOption", "auto", "自动适配页面"],
+      ["pageActualOption", "1:1", "按原始大小显示（100%）"],
+      ["pageFitOption", "↕", "适合页面高度"],
+      ["pageWidthOption", "↔", "适合页面宽度"],
+    ];
+    for (const [id, label, description] of presets) {
+      const option = document.getElementById(id);
+      if (!option) {
+        continue;
+      }
+      // webviewerloaded fires before PDFViewerApplication.run starts l10n.
+      // Removing these attributes first keeps the compact preset labels from
+      // being replaced during either the initial or a later translation pass.
+      option.removeAttribute("data-l10n-id");
+      option.removeAttribute("data-l10n-args");
+      option.textContent = label;
+      option.title = description;
+      option.setAttribute("aria-label", description);
+    }
+  }
+
   function closeBridgePopup() {
     const controls = state.bridgeControls;
     if (!controls) {
       return;
     }
-    for (const [button, popup] of [
-      [controls.toolButton, controls.toolWheel],
-      [controls.actionButton, controls.actionMenu],
-    ]) {
-      popup.hidden = true;
-      button.setAttribute("aria-expanded", "false");
-    }
+    controls.actionMenu.hidden = true;
+    controls.actionButton.setAttribute("aria-expanded", "false");
   }
 
   function toggleBridgePopup(button, popup) {
     const shouldOpen = popup.hidden;
     closeBridgePopup();
-    if (shouldOpen && button === state.bridgeControls?.toolButton) {
-      state.bridgeControls.updateToolWheelGeometry();
-    }
     popup.hidden = !shouldOpen;
     button.setAttribute("aria-expanded", String(shouldOpen));
   }
@@ -352,10 +334,6 @@
     }
     const hasDocument = !!(state.activeDocumentId && state.app?.pdfDocument);
     const canEdit = hasDocument && !state.readOnly;
-    controls.toolButton.disabled = !canEdit;
-    for (const button of controls.toolButtons) {
-      button.disabled = !canEdit;
-    }
     controls.actionButtons.undo.disabled =
       !canEdit || !state.editorHistory.canUndo;
     controls.actionButtons.redo.disabled =
@@ -363,31 +341,6 @@
     controls.actionButtons.delete.disabled =
       !canEdit || !state.editorHistory.hasSelection;
     controls.actionButtons.save.disabled = !hasDocument;
-  }
-
-  function selectBridgeTool(item) {
-    closeBridgePopup();
-    if (
-      !item ||
-      item.mode === null ||
-      state.readOnly ||
-      !state.app?.pdfDocument
-    ) {
-      return;
-    }
-    // Keep the same six-item meaning and ordering as PDF.js's native middle-
-    // button wheel. The wheel opener is private to viewer.mjs, so this click
-    // fallback uses PDF.js's own public event-bus commands instead of forging
-    // pointer or trusted mouse events.
-    state.app.eventBus?.dispatch("hideannotationeditorparams", {
-      source: window,
-    });
-    state.app.eventBus?.dispatch("switchannotationeditormode", {
-      source: window,
-      mode: item.mode,
-      isFromKeyboard: true,
-      createNewEditor: false,
-    });
   }
 
   function runBridgeAction(action) {
@@ -419,75 +372,6 @@
     }
   }
 
-  function createBridgeToolWheel() {
-    const element = document.createElement("div");
-    element.className = "pdfToolWheel pdfReaderBridgeClickWheel";
-    element.setAttribute("role", "menu");
-    element.setAttribute(
-      "aria-label",
-      "批注工具圆盘（点击选择，中键工具轮的替代入口）",
-    );
-    element.hidden = true;
-    const updateGeometry = () => {
-      const viewportWidth = Math.max(0, window.innerWidth);
-      const viewportHeight = Math.max(0, window.innerHeight);
-      const radius = Math.min(
-        120,
-        Math.max(0, (viewportWidth - 16) / 2),
-        Math.max(0, (viewportHeight - 16) / 2),
-      );
-      const diameter = radius * 2;
-      element.style.left = `${Math.max(0, (viewportWidth - diameter) / 2)}px`;
-      element.style.top = `${Math.max(0, (viewportHeight - diameter) / 2)}px`;
-      element.style.width = `${diameter}px`;
-      element.style.height = `${diameter}px`;
-      element.style.setProperty("--tool-wheel-scale", String(radius / 120));
-    };
-
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "-120 -120 240 240");
-    const sectors = [];
-    const toolButtons = [];
-    TOOL_WHEEL_ITEMS.forEach((item, index) => {
-      const start = ((index * 60 - 120) * Math.PI) / 180;
-      const end = start + Math.PI / 3;
-      const sector = document.createElementNS(svg.namespaceURI, "path");
-      sector.setAttribute(
-        "d",
-        `M 0 0 L ${120 * Math.cos(start)} ${120 * Math.sin(start)} A 120 120 0 0 1 ${120 * Math.cos(end)} ${120 * Math.sin(end)} Z`,
-      );
-      sector.setAttribute("aria-hidden", "true");
-      svg.append(sector);
-      sectors.push(sector);
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.tabIndex = 0;
-      button.setAttribute("role", "menuitem");
-      button.setAttribute("aria-label", item.label);
-      button.dataset.sector = String(index);
-      const angle = ((index * 60 - 90) * Math.PI) / 180;
-      button.style.left = `${50 + 32 * Math.cos(angle)}%`;
-      button.style.top = `${50 + 32 * Math.sin(angle)}%`;
-      const icon = document.createElement("span");
-      icon.className = "pdfToolWheelIcon";
-      icon.textContent = item.icon;
-      button.append(icon, document.createTextNode(item.label));
-      button.addEventListener("click", () => selectBridgeTool(item));
-      element.append(button);
-      toolButtons.push(button);
-    });
-    element.prepend(svg);
-
-    const center = document.createElement("span");
-    center.className = "pdfToolWheelCenter";
-    center.setAttribute("aria-hidden", "true");
-    element.append(center);
-    document.body.append(element);
-    updateGeometry();
-    return { element, toolButtons, sectors, updateGeometry };
-  }
-
   function installBridgeControls() {
     if (state.bridgeControls) {
       return;
@@ -500,15 +384,6 @@
     group.className = "toolbarHorizontalGroup pdfReaderBridgeControls";
     group.setAttribute("aria-label", "PDF 鼠标与触控操作");
 
-    const toolButton = document.createElement("button");
-    toolButton.type = "button";
-    toolButton.className = "toolbarButton pdfReaderBridgeControlButton";
-    toolButton.textContent = "工具";
-    toolButton.title = "批注工具圆盘（点击选择，中键工具轮的替代入口）";
-    toolButton.setAttribute("aria-label", toolButton.title);
-    toolButton.setAttribute("aria-haspopup", "menu");
-    toolButton.setAttribute("aria-expanded", "false");
-
     const actionButton = document.createElement("button");
     actionButton.type = "button";
     actionButton.className = "toolbarButton pdfReaderBridgeControlButton";
@@ -518,7 +393,6 @@
     actionButton.setAttribute("aria-haspopup", "menu");
     actionButton.setAttribute("aria-expanded", "false");
 
-    const toolWheel = createBridgeToolWheel();
     const actionMenu = document.createElement("div");
     actionMenu.className = "pdfReaderBridgeActionMenu";
     actionMenu.setAttribute("role", "menu");
@@ -541,7 +415,7 @@
       actionButtons[action] = button;
     }
 
-    group.append(toolButton, actionButton);
+    group.append(actionButton);
     const secondaryToolbar = document.getElementById("secondaryToolbarToggle");
     if (secondaryToolbar?.parentElement === toolbar) {
       toolbar.insertBefore(group, secondaryToolbar);
@@ -551,26 +425,10 @@
     document.body.append(actionMenu);
     state.bridgeControls = {
       group,
-      toolButton,
       actionButton,
-      toolWheel: toolWheel.element,
-      toolButtons: toolWheel.toolButtons,
-      updateToolWheelGeometry: toolWheel.updateGeometry,
       actionMenu,
       actionButtons,
     };
-    window.addEventListener(
-      "resize",
-      () => {
-        if (!toolWheel.element.hidden) {
-          toolWheel.updateGeometry();
-        }
-      },
-      { signal: state.eventAbortController?.signal },
-    );
-    toolButton.addEventListener("click", () =>
-      toggleBridgePopup(toolButton, toolWheel.element),
-    );
     actionButton.addEventListener("click", () =>
       toggleBridgePopup(actionButton, actionMenu),
     );
@@ -581,7 +439,6 @@
         if (
           !controls ||
           controls.group.contains(event.target) ||
-          controls.toolWheel.contains(event.target) ||
           controls.actionMenu.contains(event.target)
         ) {
           return;
@@ -5788,6 +5645,8 @@
     if (!app || !options?.setAll) {
       return false;
     }
+
+    configureZoomPresetOptions();
 
     const mobileResources =
       window.__PDF_READER_MOBILE_RESOURCES__ &&

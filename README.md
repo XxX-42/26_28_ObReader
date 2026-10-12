@@ -6,26 +6,30 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.1)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.2)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-Version 0.5.1 prepares Viewer resources immediately after plugin enable, including
-when no Reader has opened or the workspace layout has not completed. A persistent
-verified stat index avoids reading and hashing every cached file after a restart;
-only changed entries are read and verified. Open PDFs receive
-external modifications and reconcile local annotation operations before an
-in-place refresh. Validation, timings, limitations and candidate hashes are
-recorded in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md). Windows and iPad
-physical-device acceptance remain pending. The 0.4.0 package is retained for
-rollback; its historical cleanup anomalies remain recorded separately from
-product assertions. Native testing uses the designated test vault. The user has
-also explicitly requested a backed-up three-file replacement in the specified
-`远程仓库1` plugin directory; actual iPad verification remains for the user.
-No GitHub Release is created.
+Version 0.5.2 adds the persisted **显示阅读器状态栏** setting, off by default.
+Toggling it adds or removes the status bar in every open Reader, including popout
+windows, without reloading the Viewer; hidden status and recovery-action state stay
+with the Reader. Recovery notices and the **恢复最近的 PDF 自动保存副本** command
+remain available. Status messages are excluded from exported diagnostics.
+The 0.5.1 background prewarm and incremental cache index are unchanged. The
+modified PDF.js Viewer and existing dependency versions are unchanged in 0.5.2.
+Validation, timings, limitations and candidate hashes are recorded in
+[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md). Windows and iPad physical-device
+acceptance remain pending. The 0.5.1, 0.5.0 and 0.4.0 packages remain historical
+rollback references; preserve the full plugin backup, settings, recovery files
+and sync checkpoints when replacing or rolling back. Native testing uses only
+`/Users/jiajia/Documents/ObReader-Apple-Test` through loopback CDP endpoint 9230.
+The only authorized installed-file replacement target is the specified
+`远程仓库1` plugin directory, limited to `main.js`, `manifest.json`, and
+`styles.css`; actual iPad verification remains for the user. No GitHub Release
+is created.
 
 ## Install: exactly three release files
 
@@ -71,7 +75,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.1 candidate uses one source and one three-file package for Windows, macOS,
+0.5.2 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
@@ -120,11 +124,13 @@ and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
 undo and redo.
 
 The unified candidate selects pointer behavior from the actual pointer type and
-button state. On iPad, the **工具** button opens a clickable wheel and **编辑** provides
-undo, redo, delete, and save, giving touch-free controls when the mouse has no
-middle button or there is no external keyboard. Physical iPad behavior remains
-unverified. Buttons intercepted by iPadOS or a mouse mapping cannot be recovered
-by the plugin; exported input diagnostics report which events reached the Viewer.
+button state. The zoom control is an 80-pixel group with **auto**, **1:1**, **↕**
+(fit page height), and **↔** (fit page width) choices. The separate clickable
+**工具** wheel button is removed. The five native PDF.js annotation tools, the
+middle-button wheel, and **编辑** actions for undo, redo, delete, and save remain.
+Physical iPad behavior remains unverified. Buttons intercepted by iPadOS or a
+mouse mapping cannot be recovered by the plugin; exported input diagnostics
+report which events reached the Viewer.
 On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the command
 **导出 PDF 阅读器诊断 JSON**. Reports are saved under `PDF Reader Diagnostics/` and
 include startup stages, browser capabilities, resource verification, Worker mode,
