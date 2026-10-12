@@ -600,6 +600,7 @@ function createMobileBootScript(serializedConfig) {
           "data-token",
           "data-renderer-generation",
           "data-base-url",
+          "data-ios-input-policy",
         ]) {
           const value = bridgeScript.getAttribute(name);
           if (value !== null) fallback.setAttribute(name, value);
@@ -1811,6 +1812,7 @@ class PdfReaderView extends EditableFileView {
     const bridgeScript =
       `<script src="${escapeAttribute(bridgeUrl.href)}" ` +
       `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
+      `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -1967,6 +1969,7 @@ class PdfReaderView extends EditableFileView {
       const bridgeScript =
         `<script data-pdf-reader-bridge="1" src="${escapeAttribute(bridgeUrl.href)}" ` +
         `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
+        `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2709,6 +2712,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   get isMobileRuntime() {
     return this.mobileRuntimeSelected === true;
+  }
+
+  get iosInputPolicy() {
+    // Obsidian's desktop mobile emulator exercises the same policy as iOS.
+    // Native Android and ordinary desktop Readers keep their existing input.
+    return this.isMobileRuntime &&
+      (Platform?.isIosApp === true || Platform?.isDesktopApp === true);
   }
 
   async onload() {

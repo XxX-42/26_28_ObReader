@@ -21,6 +21,7 @@
     bridgeScript.dataset.rendererGeneration
       ? bridgeScript.dataset.rendererGeneration
       : null;
+  const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
   const POINTER_DIAGNOSTIC_LIMIT = 32;
   const DEFERRED_ACCESSIBILITY_MOVE_LIMIT = 8;
   if (!token) {
@@ -52,6 +53,10 @@
     committingInkForSave: false,
     dirty: false,
     activePointers: new Map(),
+    manualPointers: new Map(),
+    penPolicyPointers: new Map(),
+    lastTouchClickPage: null,
+    lastPenPanClickPage: null,
     pointerDiagnostics: {
       total: 0,
       dropped: 0,
@@ -126,6 +131,9 @@
     startupTimer: null,
     startupFailed: false,
   };
+  if (iosInputPolicy) {
+    document.documentElement.dataset.pdfReaderIosInputPolicy = "true";
+  }
   function postToHost(type, fields = {}, transfer = []) {
     if (state.disposed) {
       return false;
@@ -269,30 +277,70 @@
 
   function labelSaveControls() {
     const title = "保存 PDF 到仓库（覆盖当前文件）";
-    for (const id of ["downloadButton", "secondaryDownload"]) {
-      const button = document.getElementById(id);
-      if (!button) {
-        continue;
-      }
-      button.removeAttribute("data-l10n-id");
-      button.removeAttribute("data-l10n-args");
-      button.title = title;
-      button.setAttribute("aria-label", title);
+    const button = document.getElementById("secondaryDownload");
+    if (!button) {
+      return;
+    }
+    button.removeAttribute("data-l10n-id");
+    button.removeAttribute("data-l10n-args");
+    button.title = title;
+    button.setAttribute("aria-label", title);
 
-      const label = button.querySelector("span");
-      if (label) {
-        label.removeAttribute("data-l10n-id");
-        label.removeAttribute("data-l10n-args");
-        label.textContent = "保存到仓库";
+    const label = button.querySelector("span");
+    if (label) {
+      label.removeAttribute("data-l10n-id");
+      label.removeAttribute("data-l10n-args");
+      label.textContent = "保存到仓库";
+    }
+  }
+
+  function hideUnusedToolbarControls() {
+    for (const id of [
+      "editorStamp",
+      "printButton",
+      "secondaryPrint",
+      "overwriteOriginalButton",
+      "secondaryOverwriteOriginal",
+    ]) {
+      const element = document.getElementById(id);
+      if (element) {
+        element.hidden = true;
       }
     }
+
+    const primaryPrintGroup = document.getElementById("printButton")?.parentElement;
+    if (primaryPrintGroup) {
+      primaryPrintGroup.hidden = true;
+    }
+    const secondaryPrintGroup = document.getElementById("secondaryPrint")?.parentElement;
+    if (secondaryPrintGroup) {
+      secondaryPrintGroup.hidden = true;
+    }
+    document.getElementById("editorModeSeparator")?.setAttribute("hidden", "");
+    for (const separator of document.querySelectorAll(
+      "#toolbarViewerRight > .verticalToolbarSeparator",
+    )) {
+      separator.hidden = true;
+    }
+  }
+
+  function updatePageNumberWidth(pagesCount = state.app?.pdfDocument?.numPages) {
+    const input = document.getElementById("pageNumber");
+    if (!input) {
+      return;
+    }
+    const pageCount = Number.isSafeInteger(pagesCount) && pagesCount > 0
+      ? pagesCount
+      : 0;
+    const digits = pageCount ? String(pageCount).length : 0;
+    input.style.width = `${36 + Math.max(0, digits - 4) * 8}px`;
   }
 
   function configureZoomPresetOptions() {
     const presets = [
       ["pageAutoOption", "auto", "自动适配页面"],
       ["pageActualOption", "1:1", "按原始大小显示（100%）"],
-      ["pageFitOption", "↕", "适合页面高度"],
+      ["pageFitOption", "↕", "适合整页"],
       ["pageWidthOption", "↔", "适合页面宽度"],
     ];
     for (const [id, label, description] of presets) {
@@ -311,22 +359,6 @@
     }
   }
 
-  function closeBridgePopup() {
-    const controls = state.bridgeControls;
-    if (!controls) {
-      return;
-    }
-    controls.actionMenu.hidden = true;
-    controls.actionButton.setAttribute("aria-expanded", "false");
-  }
-
-  function toggleBridgePopup(button, popup) {
-    const shouldOpen = popup.hidden;
-    closeBridgePopup();
-    popup.hidden = !shouldOpen;
-    button.setAttribute("aria-expanded", String(shouldOpen));
-  }
-
   function syncBridgeControls() {
     const controls = state.bridgeControls;
     if (!controls) {
@@ -334,13 +366,13 @@
     }
     const hasDocument = !!(state.activeDocumentId && state.app?.pdfDocument);
     const canEdit = hasDocument && !state.readOnly;
-    controls.actionButtons.undo.disabled =
+    controls.historyButtons.undo.disabled =
       !canEdit || !state.editorHistory.canUndo;
-    controls.actionButtons.redo.disabled =
+    controls.historyButtons.redo.disabled =
       !canEdit || !state.editorHistory.canRedo;
-    controls.actionButtons.delete.disabled =
+    controls.deleteButton.disabled =
       !canEdit || !state.editorHistory.hasSelection;
-    controls.actionButtons.save.disabled = !hasDocument;
+    controls.saveButton.disabled = !hasDocument;
   }
 
   function runBridgeAction(action) {
@@ -349,7 +381,6 @@
     if (!state.activeDocumentId || !state.app?.pdfDocument) {
       return;
     }
-    closeBridgePopup();
     switch (action) {
       case "undo":
         if (manager && !state.readOnly && state.editorHistory.canUndo) {
@@ -363,6 +394,7 @@
         break;
       case "delete":
         if (manager && !state.readOnly && state.editorHistory.hasSelection) {
+          state.app.secondaryToolbar?.close();
           manager.delete();
         }
         break;
@@ -377,76 +409,66 @@
       return;
     }
     const toolbar = document.getElementById("toolbarViewerRight");
-    if (!toolbar) {
+    const secondaryContainer = document.getElementById(
+      "secondaryToolbarButtonContainer",
+    );
+    const saveButton = document.getElementById("secondaryDownload");
+    if (!toolbar || !secondaryContainer || !saveButton) {
       return;
     }
+    hideUnusedToolbarControls();
     const group = document.createElement("div");
     group.className = "toolbarHorizontalGroup pdfReaderBridgeControls";
-    group.setAttribute("aria-label", "PDF 鼠标与触控操作");
+    group.setAttribute("aria-label", "PDF 撤销与重做");
 
-    const actionButton = document.createElement("button");
-    actionButton.type = "button";
-    actionButton.className = "toolbarButton pdfReaderBridgeControlButton";
-    actionButton.textContent = "编辑";
-    actionButton.title = "撤销、重做、删除和保存";
-    actionButton.setAttribute("aria-label", actionButton.title);
-    actionButton.setAttribute("aria-haspopup", "menu");
-    actionButton.setAttribute("aria-expanded", "false");
-
-    const actionMenu = document.createElement("div");
-    actionMenu.className = "pdfReaderBridgeActionMenu";
-    actionMenu.setAttribute("role", "menu");
-    actionMenu.setAttribute("aria-label", "PDF 编辑操作");
-    actionMenu.hidden = true;
-    const actionButtons = {};
-    for (const [action, label] of [
-      ["undo", "撤销"],
-      ["redo", "重做"],
-      ["delete", "删除所选批注"],
-      ["save", "保存到仓库"],
+    const historyButtons = {};
+    for (const [action, symbol, label, id] of [
+      ["undo", "↶", "撤销", "pdfReaderBridgeUndoButton"],
+      ["redo", "↷", "重做", "pdfReaderBridgeRedoButton"],
     ]) {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = label;
+      button.id = id;
+      button.className = "toolbarButton pdfReaderBridgeControlButton pdfReaderBridgeHistoryButton";
+      const glyph = document.createElement("span");
+      glyph.className = "pdfReaderBridgeHistoryGlyph";
+      glyph.textContent = symbol;
+      button.append(glyph);
+      button.title = label;
+      button.setAttribute("aria-label", label);
       button.dataset.action = action;
-      button.setAttribute("role", "menuitem");
       button.addEventListener("click", () => runBridgeAction(action));
-      actionMenu.append(button);
-      actionButtons[action] = button;
+      group.append(button);
+      historyButtons[action] = button;
     }
 
-    group.append(actionButton);
+    const deleteButton = document.createElement("button");
+    deleteButton.id = "pdfReaderBridgeDeleteButton";
+    deleteButton.type = "button";
+    deleteButton.className = "toolbarButton labeled pdfReaderBridgeDeleteButton";
+    deleteButton.title = "删除所选批注";
+    deleteButton.setAttribute("aria-label", deleteButton.title);
+    deleteButton.dataset.action = "delete";
+    const deleteLabel = document.createElement("span");
+    deleteLabel.textContent = deleteButton.title;
+    deleteButton.append(deleteLabel);
+    deleteButton.addEventListener("click", () => runBridgeAction("delete"));
+    if (deleteButton.parentElement !== secondaryContainer) {
+      secondaryContainer.insertBefore(deleteButton, saveButton);
+    }
+
     const secondaryToolbar = document.getElementById("secondaryToolbarToggle");
     if (secondaryToolbar?.parentElement === toolbar) {
       toolbar.insertBefore(group, secondaryToolbar);
     } else {
       toolbar.append(group);
     }
-    document.body.append(actionMenu);
     state.bridgeControls = {
       group,
-      actionButton,
-      actionMenu,
-      actionButtons,
+      historyButtons,
+      deleteButton,
+      saveButton,
     };
-    actionButton.addEventListener("click", () =>
-      toggleBridgePopup(actionButton, actionMenu),
-    );
-    document.addEventListener(
-      "pointerdown",
-      (event) => {
-        const controls = state.bridgeControls;
-        if (
-          !controls ||
-          controls.group.contains(event.target) ||
-          controls.actionMenu.contains(event.target)
-        ) {
-          return;
-        }
-        closeBridgePopup();
-      },
-      { capture: true, signal: state.eventAbortController?.signal },
-    );
     syncBridgeControls();
   }
 
@@ -3909,8 +3931,202 @@
 
   function isNativeContextTarget(target) {
     return !!target?.closest?.(
-      "input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=dialog]",
+      "input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=dialog], .editorToolbar, .editToolbar, .editorParamsToolbar",
     );
+  }
+
+  function isViewerSurfaceTarget(target) {
+    const container = document.getElementById("viewerContainer");
+    return !!(container && target instanceof Element &&
+      (target === container || container.contains(target)));
+  }
+
+  function directManipulationPage(target) {
+    return target?.closest?.(".page") ||
+      (target instanceof Element ? target : null);
+  }
+
+  function stopDirectManipulationEvent(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  function hasActivePenEditorGesture() {
+    return state.penPolicyPointers.size > 0 ||
+      [...state.activePointers.values()].some((pointer) =>
+        pointer.pointerType === "pen" &&
+        (pointer.kind === "editor" || !!pointer.nativeOperation),
+      );
+  }
+
+  function suspendTouchPansForPen() {
+    for (const pointer of state.manualPointers.values()) {
+      if (pointer.pointerType === "touch") {
+        pointer.blockedByPen = true;
+        pointer.moved = false;
+      }
+    }
+  }
+
+  function startManualPointer(event, pointerType) {
+    const container = document.getElementById("viewerContainer");
+    if (!container || state.manualPointers.has(event.pointerId)) {
+      return null;
+    }
+    const anotherDirectPointer = state.manualPointers.size > 0;
+    const pointer = {
+      pointerId: event.pointerId,
+      pointerType,
+      originalTarget: event.target,
+      pageTarget: directManipulationPage(event.target),
+      container,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      startScrollTop: container.scrollTop,
+      startScrollLeft: container.scrollLeft,
+      moved: false,
+      blockedByPen: hasActivePenEditorGesture(),
+      blockedByOtherPointer: anotherDirectPointer,
+      captureTarget: pointerType === "touch" ? container : null,
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+      pdfDocument: state.app?.pdfDocument,
+      rendererGeneration,
+    };
+    state.manualPointers.set(event.pointerId, pointer);
+    if (pointerType === "touch") {
+      state.lastTouchClickPage = pointer.pageTarget;
+      try {
+        container.setPointerCapture(event.pointerId);
+      } catch {
+        // The capture may be unavailable for a synthetic or already-cancelled
+        // contact; window listeners still finish the tracked sequence.
+      }
+      stopDirectManipulationEvent(event);
+    } else if (pointerType === "pen") {
+      // Prevent the browser's compatibility mouse sequence from selecting
+      // PDF text while this bridge-owned mode-NONE pen contact is panning.
+      // A normal click remains available for PDF links and reading controls.
+      event.preventDefault();
+    }
+    return pointer;
+  }
+
+  function manualPointerSessionCurrent(pointer) {
+    return !!(
+      pointer &&
+      state.app?.pdfDocument === pointer.pdfDocument &&
+      state.activeDocumentId === pointer.documentId &&
+      state.activeOpenRequest === pointer.openRequest &&
+      rendererGeneration === pointer.rendererGeneration &&
+      pointer.container?.isConnected
+    );
+  }
+
+  function applyManualPan(pointer, event) {
+    if (
+      !pointer ||
+      pointer.blockedByPen ||
+      pointer.blockedByOtherPointer ||
+      !manualPointerSessionCurrent(pointer)
+    ) {
+      return;
+    }
+    pointer.lastX = event.clientX;
+    pointer.lastY = event.clientY;
+    if (!pointer.moved) {
+      pointer.moved = Math.hypot(
+        event.clientX - pointer.startX,
+        event.clientY - pointer.startY,
+      ) >= 3;
+    }
+    if (!pointer.moved) {
+      return;
+    }
+    pointer.container.scrollTop = pointer.startScrollTop -
+      (event.clientY - pointer.startY);
+    pointer.container.scrollLeft = pointer.startScrollLeft -
+      (event.clientX - pointer.startX);
+  }
+
+  function finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
+    const pointer = state.manualPointers.get(pointerId);
+    if (!pointer) {
+      return null;
+    }
+    state.manualPointers.delete(pointerId);
+    if (
+      pointer.pointerType === "pen" &&
+      pointer.moved &&
+      !cancel &&
+      manualPointerSessionCurrent(pointer)
+    ) {
+      state.lastPenPanClickPage = pointer.pageTarget;
+    }
+    releasePointerCapture(pointer);
+    return pointer;
+  }
+
+  function clearManualPointerSessions({ clearClickTargets = true } = {}) {
+    const pointers = [...state.manualPointers.values()];
+    state.manualPointers.clear();
+    for (const pointer of pointers) {
+      releasePointerCapture(pointer);
+    }
+    state.penPolicyPointers.clear();
+    if (clearClickTargets) {
+      state.lastTouchClickPage = null;
+      state.lastPenPanClickPage = null;
+    }
+  }
+
+  function onBridgeIosClick(event) {
+    if (
+      !iosInputPolicy ||
+      !(event.target instanceof Element) ||
+      !isViewerSurfaceTarget(event.target) ||
+      isNativeContextTarget(event.target)
+    ) {
+      return;
+    }
+    const page = directManipulationPage(event.target);
+    const isTouchClick = event.pointerType === "touch" || (
+      event.detail > 0 &&
+      state.lastTouchClickPage &&
+      (!page || page === state.lastTouchClickPage)
+    );
+    const isCompletedPenPan = event.detail > 0 &&
+      state.lastPenPanClickPage &&
+      (!page || page === state.lastPenPanClickPage);
+    if (isTouchClick || isCompletedPenPan) {
+      stopDirectManipulationEvent(event);
+    }
+  }
+
+  function onBridgeIosDoubleClick(event) {
+    if (
+      !iosInputPolicy ||
+      !(event.target instanceof Element) ||
+      !isViewerSurfaceTarget(event.target) ||
+      isNativeContextTarget(event.target) ||
+      event.detail < 2
+    ) {
+      return;
+    }
+    const page = directManipulationPage(event.target);
+    if (
+      state.lastTouchClickPage &&
+      (!page || page === state.lastTouchClickPage)
+    ) {
+      stopDirectManipulationEvent(event);
+    } else if (
+      state.lastPenPanClickPage &&
+      (!page || page === state.lastPenPanClickPage)
+    ) {
+      stopDirectManipulationEvent(event);
+    }
   }
 
   function pointerInteractionKind(event, target) {
@@ -3984,7 +4200,7 @@
     }
     if (
       pointer.button === 0 &&
-      pointer.pointerType === "mouse" &&
+      ["mouse", "pen"].includes(pointer.pointerType) &&
       ["move", "resize"].includes(pointer.nativeOperation) &&
       !pointer.internalCancelScheduled
     ) {
@@ -4041,6 +4257,7 @@
     if (!pointer || pointer.ending) {
       return;
     }
+    state.penPolicyPointers.delete(pointerId);
     pointer.ending = true;
     pointer.buttons = Number.isInteger(event?.buttons)
       ? event.buttons
@@ -4098,6 +4315,52 @@
     if (!(event.target instanceof Element)) {
       return;
     }
+    const target = event.target;
+    if (iosInputPolicy && event.pointerType !== "touch") {
+      // A real mouse or Pencil press starts a fresh interaction. This keeps a
+      // prior finger tap from suppressing a later physical click without a
+      // timeout-based compatibility-mouse heuristic.
+      state.lastTouchClickPage = null;
+      state.lastPenPanClickPage = null;
+    }
+    if (
+      iosInputPolicy &&
+      event.pointerType === "touch" &&
+      isViewerSurfaceTarget(target) &&
+      !isNativeContextTarget(target)
+    ) {
+      startManualPointer(event, "touch");
+      return;
+    }
+    if (
+      iosInputPolicy &&
+      event.pointerType === "pen" &&
+      isViewerSurfaceTarget(target) &&
+      !isNativeContextTarget(target)
+    ) {
+      const eraserActive = document.body.classList.contains("editorEraserMode");
+      const nativeOperation = target.closest(".resizer")
+        ? "resize"
+        : target.closest(".draggable.selectedEditor")
+          ? "move"
+          : null;
+      if (state.editorMode !== 0 || eraserActive || nativeOperation) {
+        state.penPolicyPointers.set(event.pointerId, {
+          pointerId: event.pointerId,
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+          pdfDocument: state.app?.pdfDocument,
+          rendererGeneration,
+        });
+        suspendTouchPansForPen();
+      } else {
+        // Mode NONE has no editor gesture to preserve. Let the native down/up
+        // continue so Pencil taps still activate PDF links, while bridge-owned
+        // moves scroll the viewer if the contact becomes a drag.
+        startManualPointer(event, "pen");
+        return;
+      }
+    }
     const kind = pointerInteractionKind(event, event.target);
     if (!kind || state.activePointers.has(event.pointerId)) {
       return;
@@ -4113,7 +4376,7 @@
       pointerType: normalizedPointerType(event.pointerType),
       kind,
       nativeOperation:
-        event.button === 0 && event.pointerType === "mouse"
+        event.button === 0 && ["mouse", "pen"].includes(event.pointerType)
           ? event.target.closest(".resizer")
             ? "resize"
             : event.target.closest(".draggable.selectedEditor")
@@ -4136,7 +4399,7 @@
     state.activePointers.set(event.pointerId, pointer);
     recordPointerDiagnostic("pointerdown", pointer, event);
     if (
-      event.pointerType === "mouse" &&
+      (event.pointerType === "mouse" || pointer.nativeOperation) &&
       event.button !== 2 &&
       !(event.button === 0 &&
         document.body.classList.contains("editorEraserMode"))
@@ -4164,6 +4427,8 @@
       ["pointercancel", onBridgePointerEnd],
       ["pointerout", onBridgePointerOut],
       ["lostpointercapture", onBridgeLostPointerCapture],
+      ["click", onBridgeIosClick],
+      ["dblclick", onBridgeIosDoubleClick],
       ["blur", onBridgeWindowBlur],
       ["keydown", onBridgePointerKeyDown],
     ]) {
@@ -4175,6 +4440,19 @@
   }
 
   function onBridgePointerMove(event) {
+    const manualPointer = state.manualPointers.get(event.pointerId);
+    if (manualPointer) {
+      if (manualPointer.pointerType === "touch") {
+        stopDirectManipulationEvent(event);
+        applyManualPan(manualPointer, event);
+      } else {
+        applyManualPan(manualPointer, event);
+        if (manualPointer.moved && !manualPointer.blockedByPen) {
+          event.preventDefault();
+        }
+      }
+      return;
+    }
     const pointer = state.activePointers.get(event.pointerId);
     if (!pointer || pointer.ending) {
       return;
@@ -4194,12 +4472,43 @@
   }
 
   function onBridgePointerEnd(event) {
+    const manualPointer = state.manualPointers.get(event.pointerId);
+    if (manualPointer) {
+      const pointer = finishManualPointer(event.pointerId, event, {
+        cancel: event.type === "pointercancel",
+      });
+      if (pointer?.pointerType === "touch") {
+        stopDirectManipulationEvent(event);
+      }
+      return;
+    }
+    state.penPolicyPointers.delete(event.pointerId);
     finishTrackedPointer(event.pointerId, event.type || "pointerup", event, {
       cancel: event.type === "pointercancel",
     });
   }
 
   function onBridgePointerOut(event) {
+    const manualPointer = state.manualPointers.get(event.pointerId);
+    if (manualPointer) {
+      if (
+        event.relatedTarget !== null ||
+        manualPointer.captureTarget?.hasPointerCapture?.(event.pointerId)
+      ) {
+        return;
+      }
+      const pointer = finishManualPointer(event.pointerId, event, { cancel: true });
+      if (pointer?.pointerType === "touch") {
+        stopDirectManipulationEvent(event);
+      }
+      return;
+    }
+    if (
+      state.penPolicyPointers.has(event.pointerId) &&
+      event.relatedTarget === null
+    ) {
+      state.penPolicyPointers.delete(event.pointerId);
+    }
     const pointer = state.activePointers.get(event.pointerId);
     if (
       !pointer ||
@@ -4213,6 +4522,15 @@
   }
 
   function onBridgeLostPointerCapture(event) {
+    const manualPointer = state.manualPointers.get(event.pointerId);
+    if (manualPointer) {
+      const pointer = finishManualPointer(event.pointerId, event, { cancel: true });
+      if (pointer?.pointerType === "touch") {
+        stopDirectManipulationEvent(event);
+      }
+      return;
+    }
+    state.penPolicyPointers.delete(event.pointerId);
     const pointer = state.activePointers.get(event.pointerId);
     if (!pointer || pointer.ending) {
       return;
@@ -4226,6 +4544,7 @@
     if (event?.target !== window) {
       return;
     }
+    clearManualPointerSessions();
     for (const [pointerId, pointer] of state.activePointers) {
       if (!pointer.ending) {
         finishTrackedPointer(pointerId, "blur", null, { cancel: true });
@@ -4235,7 +4554,6 @@
 
   function onBridgePointerKeyDown(event) {
     if (event.key === "Escape") {
-      closeBridgePopup();
       for (const [pointerId, pointer] of state.activePointers) {
         if (pointer.button === 2) {
           finishTrackedPointer(pointerId, "escape", null, { cancel: true });
@@ -4415,6 +4733,7 @@
     state.pendingInkCommit = false;
     state.manualSaveQueued = false;
     state.manualCommitQueued = false;
+    clearManualPointerSessions();
     state.activePointers.clear();
     state.freeTextFocused = false;
     state.freeTextCommittedForSave = false;
@@ -4655,6 +4974,7 @@
         return;
       }
       state.closeControl = control;
+      clearManualPointerSessions();
       clearAutoSaveTimer();
       const frozen = setCloseInputInert(control);
       if (frozen) {
@@ -4715,6 +5035,7 @@
       cancelled: false,
     };
     state.closeControl = control;
+    clearManualPointerSessions();
     clearAutoSaveTimer();
     void handleFlush(message, control).finally(() => {
       if (state.closeControl === control && control.phase !== "prepared") {
@@ -4995,6 +5316,7 @@
       clearScheduledWork();
       cleanupStorageObserver();
       state.activeDocumentId = null;
+      updatePageNumberWidth(0);
       state.activeDocumentPath = null;
       state.activeFilename = null;
       state.activeOpenRequest = null;
@@ -5034,6 +5356,7 @@
       }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
+      updatePageNumberWidth(pdfDocument.numPages);
       state.activeDocumentPath = documentPath;
       state.activeFilename = filename;
       state.activeOpenRequest = Number.isInteger(message.openRequest)
@@ -5105,6 +5428,7 @@
       }
       cleanupStorageObserver();
       state.activeDocumentId = null;
+      updatePageNumberWidth(0);
       state.activeDocumentPath = null;
       state.activeFilename = null;
       state.activeOpenRequest = null;
@@ -5497,7 +5821,10 @@
         );
         app.eventBus?._on(
           "pagesloaded",
-          () => observeAccessibilityManagers(app),
+          ({ pagesCount } = {}) => {
+            updatePageNumberWidth(pagesCount);
+            observeAccessibilityManagers(app);
+          },
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
@@ -5679,6 +6006,8 @@
     });
 
     ensureViewerLayout();
+    hideUnusedToolbarControls();
+    updatePageNumberWidth(0);
     state.configured = true;
     installAppHooks(app);
     return true;
@@ -5713,6 +6042,7 @@
     if (state.disposed) {
       return;
     }
+    updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
     state.disposed = true;
     stopOpenStartupObserver();

@@ -43,7 +43,7 @@ function makeAssets() {
   return { strings, binary, payload: { schema: 1, id: "test", contentHash: "a".repeat(64), files } };
 }
 
-function makeHarness({ appMobile = true, platformMobile = false, savedData = null } = {}) {
+function makeHarness({ appMobile = true, platformMobile = false, platformIos = false, platformDesktop = false, savedData = null } = {}) {
   const { strings, binary, payload } = makeAssets();
   const payloadMarker = "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
   assert.ok(source.includes(payloadMarker));
@@ -282,7 +282,7 @@ function makeHarness({ appMobile = true, platformMobile = false, savedData = nul
   const obsidian = {
     EditableFileView,
     Notice: class Notice { constructor(message) { notices.push(message); } },
-    Platform: { isMobile: platformMobile },
+    Platform: { isMobile: platformMobile, isIosApp: platformIos, isDesktopApp: platformDesktop },
     Plugin,
     PluginSettingTab,
     Setting,
@@ -409,6 +409,7 @@ async function runBootScript(html, importModule, { bridgeFailure = false, fallba
     ["data-token", "test-token"],
     ["data-renderer-generation", "generation-1"],
     ["data-base-url", "app://local/web/"],
+    ["data-ios-input-policy", /data-ios-input-policy="true"/.test(html) ? "true" : "false"],
     ["src", "app://local/web/obsidian-bridge.js?v=test-token"],
     ["onload", "resource-load-handler"],
     ["onerror", "resource-error-handler"],
@@ -506,7 +507,7 @@ test("mobile loader verifies adapter assets, orders bridge and PDF.js modules, a
 });
 
 test("mobile bridge Blob fallback uses a fresh script and settles before imports", async () => {
-  const harness = makeHarness();
+  const harness = makeHarness({ platformIos: true });
   await harness.plugin.onload();
   const view = harness.makeView();
   view.iframe = {
@@ -526,6 +527,7 @@ test("mobile bridge Blob fallback uses a fresh script and settles before imports
     assert.equal(fallback.attributes.get("data-token"), "test-token");
     assert.equal(fallback.attributes.get("data-renderer-generation"), "generation-1");
     assert.equal(fallback.attributes.get("data-base-url"), "app://local/web/");
+    assert.equal(fallback.attributes.get("data-ios-input-policy"), "true");
     assert.equal(fallback.src, "blob:bridge.js");
     assert.equal(fallback.attributes.has("onload"), false);
     assert.equal(fallback.attributes.has("onerror"), false);
@@ -712,6 +714,30 @@ test("status bar defaults off, toggles live Readers without reload, and restores
     "the internal status message and document path never enter exported diagnostics");
   for (const view of [...readers, newlyOpened]) view.clearBridgeTimeout();
   harness.plugin.onunload();
+});
+
+test("iOS pointer policy follows the frozen Obsidian platform entry and survives bridge fallback", async () => {
+  for (const [name, config, enabled] of [
+    ["native iOS", { appMobile: true, platformIos: true }, true],
+    ["desktop mobile emulator", { appMobile: true, platformDesktop: true }, true],
+    ["native Android", { appMobile: true, platformMobile: true }, false],
+    ["ordinary desktop", { appMobile: false, platformDesktop: true }, false],
+  ]) {
+    const harness = makeHarness(config);
+    await harness.plugin.onload();
+    assert.equal(harness.plugin.iosInputPolicy, enabled, name);
+    const view = harness.makeView();
+    view.iframe = {
+      contentWindow: { parent: {} },
+      ownerDocument: { defaultView: harness.makeWindow() },
+      srcdoc: "",
+      remove() {},
+    };
+    const html = await view.createViewerDocument();
+    assert.ok(html.includes(`data-ios-input-policy="${enabled}"`), name);
+    assert.equal(harness.nodeRuntimeRequires.length, 0, name);
+    harness.plugin.onunload();
+  }
 });
 
 test("desktop and mobile emulation keep separate entries over a shared browser-only core", async () => {

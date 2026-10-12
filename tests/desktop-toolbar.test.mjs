@@ -163,6 +163,14 @@ async function measureToolbar(frame) {
       gridRows: getComputedStyle(toolbarViewer).gridTemplateRows,
       toolbarScrollWidth: toolbarViewer.scrollWidth,
       toolbarClientWidth: toolbarViewer.clientWidth,
+      pageNumber: {
+        rect: rect("pageNumber"),
+        width: document.getElementById("pageNumber")?.style.width || null,
+        min: document.getElementById("pageNumber")?.min || null,
+        max: document.getElementById("pageNumber")?.max || null,
+        value: document.getElementById("pageNumber")?.value || null,
+        pagesLabel: document.getElementById("numPages")?.textContent?.trim() || null,
+      },
       zoom: {
         language: window.PDFViewerApplication?.l10n?.getLanguage?.() || null,
         container: rect("scaleSelectContainer"),
@@ -194,6 +202,76 @@ async function measureToolbar(frame) {
       bridgeControlLabels: [...document.querySelectorAll(
         ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
       )].map((button) => button.textContent.trim()),
+      historyOrder: (() => {
+        const nativeTools = document.getElementById("editorModeButtons");
+        const history = document.querySelector(".pdfReaderBridgeControls");
+        const more = document.getElementById("secondaryToolbarToggle");
+        return {
+          afterNativeTools: !!nativeTools && !!history &&
+            Boolean(nativeTools.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING),
+          beforeMore: !!history && !!more &&
+            Boolean(history.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING),
+        };
+      })(),
+      bridgeHistory: [...document.querySelectorAll(
+        ".pdfReaderBridgeControls .pdfReaderBridgeHistoryButton",
+      )].map((button) => {
+        const box = button.getBoundingClientRect();
+        return {
+          id: button.id,
+          action: button.dataset.action,
+          label: button.textContent.trim(),
+          title: button.title,
+          ariaLabel: button.getAttribute("aria-label"),
+          width: box.width,
+          height: box.height,
+          disabled: button.disabled,
+          iconDisplay: getComputedStyle(button, "::before").display,
+        };
+      }),
+      bridgeDelete: (() => {
+        const button = document.getElementById("pdfReaderBridgeDeleteButton");
+        return button && {
+          action: button.dataset.action,
+          title: button.title,
+          ariaLabel: button.getAttribute("aria-label"),
+          inSecondaryMenu: button.parentElement?.id === "secondaryToolbarButtonContainer",
+          beforeSave: !!button.nextElementSibling && button.nextElementSibling.id === "secondaryDownload",
+        };
+      })(),
+      saveControl: (() => {
+        const button = document.getElementById("secondaryDownload");
+        return button && {
+          title: button.title,
+          ariaLabel: button.getAttribute("aria-label"),
+          label: button.querySelector("span")?.textContent?.trim() || "",
+          count: document.querySelectorAll("#secondaryDownload").length,
+          bridgeSaveActions: document.querySelectorAll(
+            ".pdfReaderBridgeControls [data-action='save'], #pdfReaderBridgeSaveButton",
+          ).length,
+        };
+      })(),
+      hiddenToolbarDom: [
+        "editorStamp",
+        "printButton",
+        "secondaryPrint",
+        "overwriteOriginalButton",
+        "secondaryOverwriteOriginal",
+        "editorModeSeparator",
+      ].map((id) => {
+        const element = document.getElementById(id);
+        return {
+          id,
+          connected: !!element?.isConnected,
+          hidden: !!element?.hidden,
+          rectCount: element?.getClientRects().length || 0,
+          parentHidden: !!element?.parentElement?.hidden,
+        };
+      }),
+      hiddenRightSeparators: [...document.querySelectorAll(
+        "#toolbarViewerRight > .verticalToolbarSeparator",
+      )].map((element) => ({ hidden: element.hidden, rectCount: element.getClientRects().length })),
+      floatingEditMenuPresent: !!document.querySelector(".pdfReaderBridgeActionMenu"),
       bridgeClickWheelPresent: !!document.querySelector(".pdfReaderBridgeClickWheel"),
       visibleEditorTools: [
         "editorUnderlineButton",
@@ -229,16 +307,16 @@ function assertZoomPresets(layout, languagePrefix) {
   const expected = [
     ["auto", "auto", "自动适配页面"],
     ["page-actual", "1:1", "按原始大小显示（100%）"],
-    ["page-fit", "↕", "适合页面高度"],
+    ["page-fit", "↕", "适合整页"],
     ["page-width", "↔", "适合页面宽度"],
   ];
   assert.ok(
     layout.zoom.language?.toLowerCase().startsWith(languagePrefix),
     `Expected ${languagePrefix} PDF.js localization, got ${layout.zoom.language}`,
   );
-  assert.equal(layout.zoom.container.width, 80);
-  assert.equal(layout.zoom.select.width, 80);
-  assert.equal(layout.zoom.selectPaddingInlineEnd, "20px");
+  assert.equal(layout.zoom.container.width, 64);
+  assert.equal(layout.zoom.select.width, 64);
+  assert.equal(layout.zoom.selectPaddingInlineEnd, "16px");
   assert.deepEqual(
     layout.zoom.presets.map((option) => [option.value, option.label, option.title]),
     expected,
@@ -263,7 +341,38 @@ function assertZoomPresets(layout, languagePrefix) {
     "editorInkButton",
     "editorFreeTextButton",
   ]);
-  assert.deepEqual(layout.bridgeControlLabels, ["编辑"]);
+  assert.deepEqual(layout.bridgeControlLabels, ["↶", "↷"]);
+  assert.deepEqual(layout.historyOrder, { afterNativeTools: true, beforeMore: true });
+  assert.deepEqual(layout.bridgeHistory.map((button) => [
+    button.id,
+    button.action,
+    button.label,
+    button.title,
+    button.ariaLabel,
+    button.width,
+    button.height,
+    button.iconDisplay,
+  ]), [
+    ["pdfReaderBridgeUndoButton", "undo", "↶", "撤销", "撤销", 32, 28, "none"],
+    ["pdfReaderBridgeRedoButton", "redo", "↷", "重做", "重做", 32, 28, "none"],
+  ]);
+  assert.equal(layout.bridgeDelete.action, "delete");
+  assert.equal(layout.bridgeDelete.title, "删除所选批注");
+  assert.equal(layout.bridgeDelete.ariaLabel, "删除所选批注");
+  assert.equal(layout.bridgeDelete.inSecondaryMenu, true);
+  assert.equal(layout.bridgeDelete.beforeSave, true);
+  assert.deepEqual(layout.saveControl, {
+    title: "保存 PDF 到仓库（覆盖当前文件）",
+    ariaLabel: "保存 PDF 到仓库（覆盖当前文件）",
+    label: "保存到仓库",
+    count: 1,
+    bridgeSaveActions: 0,
+  });
+  assert.equal(layout.floatingEditMenuPresent, false);
+  assert.ok(layout.hiddenToolbarDom.every((item) =>
+    item.connected && item.hidden && item.rectCount === 0,
+  ), `Unused toolbar DOM stays connected and hidden: ${JSON.stringify(layout.hiddenToolbarDom)}`);
+  assert.ok(layout.hiddenRightSeparators.every((item) => item.hidden && item.rectCount === 0));
   assert.equal(layout.bridgeClickWheelPresent, false);
 }
 
@@ -378,6 +487,15 @@ test(
       assert.equal(wide.toolbarHeight, 32);
       assert.notEqual(wide.toolbarDisplay, "grid", "Wide panes keep the original one-row toolbar");
       assertZoomPresets(wide, "en");
+      assert.equal(wide.pageNumber.width, "36px");
+      assert.equal(wide.pageNumber.rect.width, 36);
+      assert.equal(wide.pageNumber.min, "1");
+      assert.equal(wide.pageNumber.value, "1");
+      assert.equal(
+        Number(wide.pageNumber.max),
+        await viewer.evaluate(() => window.PDFViewerApplication.pdfDocument.numPages),
+        "The page input maximum continues to track the loaded document",
+      );
       const expectedVisibleTools = wide.visibleEditorTools;
       assert.ok(expectedVisibleTools.includes("editorUnderlineButton"));
       assert.ok(expectedVisibleTools.includes("editorSquareButton"));
@@ -496,6 +614,45 @@ test(
       await page.setViewport({ width: 432, height: 900, deviceScaleFactor: 1 });
       await viewer.evaluate(() => new Promise(requestAnimationFrame));
       const editableLayout = await measureToolbar(viewer);
+      const widePageCount = await viewer.evaluate(() => {
+        const app = window.PDFViewerApplication;
+        const input = document.getElementById("pageNumber");
+        const original = {
+          min: input.min,
+          max: input.max,
+          value: input.value,
+        };
+        app.eventBus.dispatch("pagesloaded", {
+          source: app.pdfViewer,
+          pagesCount: 10_000,
+        });
+        const simulatedWidth = input.getBoundingClientRect().width;
+        const simulatedInlineWidth = input.style.width;
+        app.eventBus.dispatch("pagesloaded", {
+          source: app.pdfViewer,
+          pagesCount: app.pdfDocument.numPages,
+        });
+        return {
+          original,
+          simulatedWidth,
+          simulatedInlineWidth,
+          restoredWidth: input.getBoundingClientRect().width,
+          restoredInlineWidth: input.style.width,
+          min: input.min,
+          max: input.max,
+          value: input.value,
+          pageCount: app.pdfDocument.numPages,
+        };
+      });
+      assert.equal(widePageCount.simulatedWidth, 44);
+      assert.equal(widePageCount.simulatedInlineWidth, "44px");
+      assert.equal(widePageCount.restoredWidth, 36);
+      assert.equal(widePageCount.restoredInlineWidth, "36px");
+      assert.deepEqual(
+        { min: widePageCount.min, max: widePageCount.max, value: widePageCount.value },
+        widePageCount.original,
+        "Changing the displayed page count width must preserve page navigation constraints and value",
+      );
       await page.evaluate(() => window.__openPdf(true));
       await page.waitForFunction(
         () => window.__openedDocuments?.length === 2,
@@ -512,20 +669,25 @@ test(
       const readOnlyLayout = await measureToolbar(viewer);
       assert.deepEqual(
         {
-          left: readOnlyLayout.left,
           middle: readOnlyLayout.middle,
           right: readOnlyLayout.right,
           editors: readOnlyLayout.editors,
           secondaryToggle: readOnlyLayout.secondaryToggle,
         },
         {
-          left: editableLayout.left,
           middle: editableLayout.middle,
           right: editableLayout.right,
           editors: editableLayout.editors,
           secondaryToggle: editableLayout.secondaryToggle,
         },
         "read-only disables editing without changing the narrow-pane geometry",
+      );
+      assert.equal(readOnlyLayout.pageNumber.width, "36px");
+      assert.equal(readOnlyLayout.pageNumber.rect.width, 36);
+      assert.equal(
+        editableLayout.left.x - readOnlyLayout.left.x,
+        0,
+        "Page number width resets on document switch without moving the left group origin",
       );
       assert.ok(readOnlyLayout.disabledEditorTools.includes("editorUnderlineButton"));
       assert.equal(

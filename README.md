@@ -6,30 +6,41 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.2)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.3)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-Version 0.5.2 adds the persisted **显示阅读器状态栏** setting, off by default.
-Toggling it adds or removes the status bar in every open Reader, including popout
-windows, without reloading the Viewer; hidden status and recovery-action state stay
-with the Reader. Recovery notices and the **恢复最近的 PDF 自动保存副本** command
-remain available. Status messages are excluded from exported diagnostics.
+Version 0.5.3 keeps the persisted **显示阅读器状态栏** setting from 0.5.2
+(default off; changes apply to existing Readers and popouts without reload) and
+updates the toolbars. The primary toolbar uses 32-pixel **↶** and **↷** controls
+instead of **编辑**; delete is under **更多**, and the existing native Save
+control is reused without adding a duplicate. Insert Image and Print controls are
+hidden in both primary and secondary toolbars; their code and DOM nodes remain
+in the frozen Viewer. The zoom group is 64 pixels wide, and the page-number input
+is 36 pixels wide plus 8 pixels for each digit beyond four. The four existing
+zoom glyphs, percentage and custom zoom values remain. **↕** is described as
+**适合整页** (the existing page-fit value), not fit-height. The modified PDF.js
+Viewer and dependency versions are unchanged.
+
 The 0.5.1 background prewarm and incremental cache index are unchanged. The
-modified PDF.js Viewer and existing dependency versions are unchanged in 0.5.2.
-Validation, timings, limitations and candidate hashes are recorded in
-[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md). Windows and iPad physical-device
-acceptance remain pending. The 0.5.1, 0.5.0 and 0.4.0 packages remain historical
-rollback references; preserve the full plugin backup, settings, recovery files
-and sync checkpoints when replacing or rolling back. Native testing uses only
-`/Users/jiajia/Documents/ObReader-Apple-Test` through loopback CDP endpoint 9230.
-The only authorized installed-file replacement target is the specified
-`远程仓库1` plugin directory, limited to `main.js`, `manifest.json`, and
-`styles.css`; actual iPad verification remains for the user. No GitHub Release
-is created.
+frozen 0.5.3 default suite passed 193/193 with natural Node exit 0; the final
+offline suite also exited 0. Mac-native UI, prewarm/sync and three-file target
+replacement records are summarized in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md).
+That Mac sample does not establish iPad hardware acceptance. Versions 0.5.2,
+0.5.1, 0.5.0 and 0.4.0 remain historical rollback references; preserve the full
+plugin backup, settings, recovery files and sync checkpoints when replacing or
+rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
+after verifying the actual vault and plugin identity; discover the owned loopback
+CDP endpoint for each run rather than assuming a fixed port. The approved
+`远程仓库1` target now contains the matching three candidate files, with the old
+three backed up and user data/cache/recovery/checkpoints unchanged. Its running
+Obsidian instance was not reloaded. Save and close Reader tabs before reloading
+the plugin; after iPad sync, confirm version 0.5.3. Git push status is tracked
+separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
+physical-device acceptance remain pending.
 
 ## Install: exactly three release files
 
@@ -75,7 +86,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.2 candidate uses one source and one three-file package for Windows, macOS,
+0.5.3 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
@@ -124,13 +135,24 @@ and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
 undo and redo.
 
 The unified candidate selects pointer behavior from the actual pointer type and
-button state. The zoom control is an 80-pixel group with **auto**, **1:1**, **↕**
-(fit page height), and **↔** (fit page width) choices. The separate clickable
-**工具** wheel button is removed. The five native PDF.js annotation tools, the
-middle-button wheel, and **编辑** actions for undo, redo, delete, and save remain.
-Physical iPad behavior remains unverified. Buttons intercepted by iPadOS or a
-mouse mapping cannot be recovered by the plugin; exported input diagnostics
-report which events reached the Viewer.
+button state. The zoom control is a 64-pixel group with **auto**, **1:1**, **↕**
+(**适合整页**), and **↔** (fit page width) choices; percentage and custom zoom
+values remain available. The page-number input is 36 pixels wide, growing by
+8 pixels per digit beyond four. The separate clickable **工具** wheel button is
+removed. The primary toolbar shows 32-pixel **↶** and **↷** undo/redo controls
+instead of **编辑**. Delete is in **更多**, and the existing native Save button
+is reused without a duplicate. Insert Image and Print controls are hidden in
+both primary and secondary toolbars while their frozen Viewer code and nodes
+remain. The five native annotation tools and middle-button wheel remain.
+The confirmed iPad input policy follows the active PDF.js tool: Apple Pencil
+input routed as actual `pen` pointer events draws, edits, or erases when an
+annotation tool is active; in **NONE** mode it pans the PDF. Finger contact with
+the PDF page is navigation pan only; page links, text selection, and annotation
+interactions are blocked for fingers. Reader toolbar and sidebar controls remain
+usable, as do native input/contenteditable editing exceptions. This preserves the
+existing tool and editor behavior. Physical iPad/Pencil event delivery remains
+unverified; native CDP touch and Pencil simulation cover automation only. No
+pressure, hover, palm-rejection/AI, or Scribble support is claimed.
 On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the command
 **导出 PDF 阅读器诊断 JSON**. Reports are saved under `PDF Reader Diagnostics/` and
 include startup stages, browser capabilities, resource verification, Worker mode,
@@ -271,7 +293,9 @@ the macOS path allowlist excludes user main vaults. For the isolated instance:
 export OBSIDIAN_VAULT_PATH=/Users/jiajia/Documents/ObReader-Apple-Test
 export OBSIDIAN_VAULT_NAME=ObReader-Apple-Test
 export OBSIDIAN_CONFIG_DIR=.obsidian
-export PDF_READER_CDP_URL=http://127.0.0.1:9226
+# Set this to the loopback endpoint owned by the verified test instance.
+# The port is discovered for each run and may change.
+export PDF_READER_CDP_URL="http://127.0.0.1:${PDF_READER_CDP_PORT:?set the verified instance port}"
 npm run deploy
 npm run test:native:background
 npm run test:native:lifecycle

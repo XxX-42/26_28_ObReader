@@ -1,0 +1,1366 @@
+{
+  "schema": 1,
+  "version": "0.5.3",
+  "archive": "dist/general-0.1general-0.5.3-evidence.zip",
+  "files": [
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.5.3-candidate.zip.json",
+      "bytes": 758,
+      "sha256": "3f5bbe3be7731aa4e0e02563f7a1858c3304622d3756a5c87e7d7949adae23b9"
+    },
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.5.3-toolbar-baseline.zip",
+      "bytes": 4988685,
+      "sha256": "254c2539f4b6b9a2df22bd1af0abe6d8b60de07ba521981266ae44092d861260"
+    },
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.5.3-toolbar-baseline.zip.json",
+      "bytes": 933,
+      "sha256": "54b340ccb192c5885babe3d291e790f12a27e1746e143777f5151270aa2d10e3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-assessment.json",
+      "bytes": 5761,
+      "sha256": "977ea565e535981c1b84bbcf9f81cf2dd38fb49158e7f7c5a16611bf785094ff"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-deploy.mjs",
+      "bytes": 3224,
+      "sha256": "4e8d29c0fd08a095212e43ee5a60bdfc2d34704ec67ef4724c8a1c10e87d1748"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-deployment-1791765330847.json",
+      "bytes": 22867,
+      "sha256": "f48d71717778a27a52a5e2b93f428402ca29b33146dce9612c3384aa4c182823"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-deployment-1791767089936.json",
+      "bytes": 23535,
+      "sha256": "28adf8aa7a7acbd00baa896599f3c03c791b1c052481759b6180b2f5e1f9f109"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-deployment-1791767399319.json",
+      "bytes": 23535,
+      "sha256": "31cd1dc85c90a4776bd7828ab4e4a94359f886721464b388c65ac9c236974055"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-native-handoff.json",
+      "bytes": 894,
+      "sha256": "b02723a2a24d2431aa9491f7977e2615b0e6095fbda355e72c18dd0c5851e9d6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-final-source-freeze.json",
+      "bytes": 7559,
+      "sha256": "f2f334c30c909baecca743d36166de6ffed0759f16c20e163026cd2794441d52"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/desktop-toolbar-1791765270075-25948.cleanup.json",
+      "bytes": 2550,
+      "sha256": "acd6dc6966223e6521dbbe1f17fc096401385e32f1b01d64ec85579519e1edd0"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/general-0.5.3-ios-host-focused-20261012.txt",
+      "bytes": 5602,
+      "sha256": "583eec7f34405bbe2d19779e25ce7c8855ae7cd338f164e1bd2df318ee803789"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/ipad-pointer-policy-1791766879351-30646.json",
+      "bytes": 10051,
+      "sha256": "287159b56924de48cc9f03a82198c5789a24471ed02698d0fc11c8821c6c7255"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/ipad-pointer-policy-1791767312635-32422.json",
+      "bytes": 10163,
+      "sha256": "67ba68f8b5e3051fcd5d122f7b268f24fd574d82994c7935cc4e9b7152663ace"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/mouse-input-1791765249403-25870.cleanup.json",
+      "bytes": 2570,
+      "sha256": "31dd1f55540b1ebb40981aeb6f30f89b591c5e6ea81258361af22f3e6979890e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/mouse-input-1791765249403-25870.focus.json",
+      "bytes": 7149,
+      "sha256": "65c23fb30da013a00155275ead05877acf383d9b63a8837fb18eb605a90ad2c8"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/mouse-input-1791765249403-25870.lifecycle.json",
+      "bytes": 293676,
+      "sha256": "3cf3d552a48f50654be1e24ffc4c4e748cd8ebfbbc67fe336920c8726cf209bc"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/pdf-reader-mouse-failure-1791765191999-25649.json",
+      "bytes": 13352,
+      "sha256": "32d22ec01bbe44bdf91f8c9a7afed96714c16af9cebfb312670d782382a16d08"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/pdf-reader-mouse-failure-1791765191999-25649.png",
+      "bytes": 56755,
+      "sha256": "74ade4ca755cbb26d662cc06487b64f9c417e78e3a48f4a7cbbc9231beb226ee"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/pdf-reader-mouse-failure-1791765210801-25706.json",
+      "bytes": 18383,
+      "sha256": "470515982bbb2538eadeb4b0a971bdd7a6cafc27e69654525adf2e63a4369559"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-focused-records/pdf-reader-mouse-failure-1791765210801-25706.png",
+      "bytes": 56755,
+      "sha256": "74ade4ca755cbb26d662cc06487b64f9c417e78e3a48f4a7cbbc9231beb226ee"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-independent-audit.json",
+      "bytes": 2299,
+      "sha256": "9fef3d8e87ddd8c6e1f92c383eac1843f925dcc46f7ff07ba7b7513eb0a32817"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ios-host-initial-setup-failure.json",
+      "bytes": 503,
+      "sha256": "c40e812beda57596578ee46075c7d8ec26dc8622cb06f795e3b99a209871d1b7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native-1791765350895.json",
+      "bytes": 7606,
+      "sha256": "65023a3ec538e5f11522b0f36cee0549984776a11056413b46ed2aa4fa1cf3df"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native-1791767610375.json",
+      "bytes": 7629,
+      "sha256": "9d363f1ff0985c0ffc8b5c54575e2a1ddc1e0bf2ab20da16dbd5350f8cbfa633"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native-launch.json",
+      "bytes": 583,
+      "sha256": "ec6fd194f30f3b6615bb3c1f736f28b701f8d012c9295c386440bb1e371b279d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native-preflight.json",
+      "bytes": 551,
+      "sha256": "ff51c486ad4a25444ac21d2ee9d0068110c876fe489e78bb15e25aae92579d19"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native-safe-state.mjs",
+      "bytes": 2931,
+      "sha256": "b8685ec0ab5ce7f8483301a803edf82868439e63483000545f546f84583f8861"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-native.mjs",
+      "bytes": 12676,
+      "sha256": "b80e0809ab7c0443be31a7e3c02e1d27643284eea6a16f5e927e53bdd34d7ffb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-package-evidence.mjs",
+      "bytes": 2707,
+      "sha256": "7ca305804e4a2c5208257ba8837c2b6f6843e866444eaa155770bd7176a100fc"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-pencil-source-freeze.json",
+      "bytes": 721,
+      "sha256": "151cb60601b60178e902ef77a2d221252eb1620411ea5d17ae05432d66adbe56"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-source.diff",
+      "bytes": 119707,
+      "sha256": "3d2b62d4c228dbd1e7c3313410f6dfebd87247702b35f78b67afd5756e67fd6e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-target-replace.mjs",
+      "bytes": 2964,
+      "sha256": "4184361219990d684078924e4a9fcda974c4e0fa39f7eb4e058bad48677bfb7b"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-target-replacement-1791767654581.json",
+      "bytes": 1315,
+      "sha256": "0fdbd673c023b17bcbec588303aa513b28fdda4ccddacd539ba34bcb539b3a75"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-toolbar-baseline-original-package.json",
+      "bytes": 758,
+      "sha256": "ba5ea2cc03744143c84655b24181aeb3031f7e0f1dfe73add15c5defbb0e1ab5"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791765397009.driver.mjs",
+      "bytes": 16394,
+      "sha256": "1310b911186ae670b6a3d3d67d58afe5f5278ed9b367dc3d2aa45b4e0f578a67"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791765397009.json",
+      "bytes": 3736,
+      "sha256": "4f58a827294fd2e4711cf6d8eb5355f15bfb07448dc808ae933f873991033e43"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767259461.driver.mjs",
+      "bytes": 19760,
+      "sha256": "49e55f0d190b3d5dcc828dc113d87eb76c5cc1d3a1d75c260eca7194e032221f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767259461.json",
+      "bytes": 1154,
+      "sha256": "772e5300c20300d602fd8021cb00be2dde5e3782f966b15a2edecbd6368c2c67"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767310124.driver.mjs",
+      "bytes": 19760,
+      "sha256": "49e55f0d190b3d5dcc828dc113d87eb76c5cc1d3a1d75c260eca7194e032221f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767310124.json",
+      "bytes": 1154,
+      "sha256": "b75a519cdabf25fdfdb501b5bc0716be66701808728b09a9179022423fa965ea"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767384708.driver.mjs",
+      "bytes": 19840,
+      "sha256": "1d17534c5db4cd7f88541997707dab9e5c12394a5d45ad42606d7b8e275032cf"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767384708.json",
+      "bytes": 1413,
+      "sha256": "d556dfdf6c93a766b2d6ba23d349cb7826fd47647b8d0f1bbff4201e17857295"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767413910.driver.mjs",
+      "bytes": 19840,
+      "sha256": "1d17534c5db4cd7f88541997707dab9e5c12394a5d45ad42606d7b8e275032cf"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767413910.json",
+      "bytes": 4944,
+      "sha256": "5c395f08daab9bb22b370f21d48b506aa60f1a1fee7f2b7728cbcfe21850abb1"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767428386.driver.mjs",
+      "bytes": 19902,
+      "sha256": "c56f446edb0f26b4fd6b51bb22f45ba05bb6e74379b3199d3d01e7b5b8a6eac5"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767428386.json",
+      "bytes": 8826,
+      "sha256": "ba9128e7d9f279b8e6d34b648e84568a93a0f4b82b1a47c9bc1eee755af66cfe"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767474840.driver.mjs",
+      "bytes": 19896,
+      "sha256": "6b2fc568c6dd86dfaff34d98ff4a31ed06437d3449cc4032a0d6186c7ddd1083"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767474840.json",
+      "bytes": 8809,
+      "sha256": "4bdec94fd228853d94ad9f957e58f117cb75bac11892235870ff1108708a1839"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767523702.driver.mjs",
+      "bytes": 20008,
+      "sha256": "e6016019ec1e1f5fbc83b9ef2a4ef364050b972d2d8a0779ee2b04d13d454fe6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767523702.json",
+      "bytes": 9848,
+      "sha256": "893cd8134a0a85e44634ff4a2d5cba6afb553b406c2d7a233642ca72495bd2e3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767574003.driver.mjs",
+      "bytes": 19759,
+      "sha256": "c271a80ea0cdb03ce0128a709e9b7f02e09f0875c9be6bf68ce5c9e23afd7798"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767574003.json",
+      "bytes": 6158,
+      "sha256": "1a25fac8c5b3acf534b438fef8f01771c6abd8d0fb1edddd449ab8939d902f36"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767589751.driver.mjs",
+      "bytes": 19810,
+      "sha256": "3d0188d47080c9475f2383397cf523b31094877f2460502b4e797b6b2217174e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native-1791767589751.json",
+      "bytes": 19263,
+      "sha256": "49c3b4b38063af865c8c55e9dc426ea31d9bc5b5bdce7642da22534edcdd5552"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-ui-native.mjs",
+      "bytes": 19810,
+      "sha256": "3d0188d47080c9475f2383397cf523b31094877f2460502b4e797b6b2217174e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/annotation-interaction-b64a1f9b90db-1791765353816-26146.cleanup.json",
+      "bytes": 2631,
+      "sha256": "cf68293443854afae3078832112581a55e170cb244e9b33646be5b03586a9bc9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/annotation-interaction-b64a1f9b90db-1791765353816-26146.json",
+      "bytes": 749595,
+      "sha256": "13b5a910e015882cc048bac996d313f079af12b9c268ff9cc265cf89058fe770"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/annotation-interaction-b64a1f9b90db-1791765353816-26146.partial.json",
+      "bytes": 760347,
+      "sha256": "d9241c0b9ec5cad51daed7db7312e3721beafe3c47c83a6b2febeda81d44b1ca"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/annotation-interaction-b64a1f9b90db-1791765353816-26146.png",
+      "bytes": 327396,
+      "sha256": "22c1128d24c1350517f967df6148ac7132672c2c9cf8f76d887da08ca51cac5f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791765365074-26146-WG8i5d/launch-record.jsonl",
+      "bytes": 1702,
+      "sha256": "00cdf2ab29185329c1fbc16adda7bb0835b5c84db81197ae5f16262d6be7ded4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791765365074-26146-WG8i5d/owner.json",
+      "bytes": 296,
+      "sha256": "6893b0aac647f449009e0a8b9390858783f3683a936499bfd626a0334d26a5ad"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-autosave-regression-1791765353670-26152-V3Zxwm/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "13ecde17a18081e2ef5c14bf554957afb065e3c8e931102f7aaa9fcb7f4c34ea"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-autosave-regression-1791765353670-26152-V3Zxwm/owner.json",
+      "bytes": 282,
+      "sha256": "c6c0692a60e7e628172e0b8a40a1fdc297ddea379760f44d6b07cee2c32065c3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791765354897-26171-s1QaFw/launch-record.jsonl",
+      "bytes": 1590,
+      "sha256": "a487f2d98a3e2c5f6158020d0f89064a3d71442331834584309753558b48368d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791765354897-26171-s1QaFw/owner.json",
+      "bytes": 278,
+      "sha256": "446a7355b548df992a4dd6b3e0fd0913392c0c580fdb81b34bbb4bac2a34efe6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791765355416-26191-KDzoej/launch-record.jsonl",
+      "bytes": 1716,
+      "sha256": "66ab4f5c24ecf109c44b2dd0a8d2763e12ef0f4c983e81c4066597ec41fe12d3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791765355416-26191-KDzoej/owner.json",
+      "bytes": 299,
+      "sha256": "76135e6ea4a97ea4922f0b62a3df450c947fd452f4a7d9e715a3f091535d98be"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765355565-26192-YFAiKv/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "583b10800179330d082922447f9d2dcb061ab59d2605ef20a3ed11f6c336b993"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765355565-26192-YFAiKv/owner.json",
+      "bytes": 285,
+      "sha256": "d3c2a1dcff1101b5a544b7c5b0622ff7efb4bcdae8cd2d2b30e75796694a56a9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765409712-26192-K0995F/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "0f1af85ae11cab0cf1d8e3fd33ab2d98bf63a480e05f2faf372a5c2de4185e7f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765409712-26192-K0995F/owner.json",
+      "bytes": 285,
+      "sha256": "5a5c7bbc7fc32783a98d07548999eadce58a5f5c58198404425ec030e738b56a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791765379307-26568-Cvtr8B/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "22a90971928fc082fe4ceb5d6d4594c9ab98e6b9727e6c5bf033fe6f89fa35fe"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791765379307-26568-Cvtr8B/owner.json",
+      "bytes": 285,
+      "sha256": "d106a2cc0d05dd0acf958c49d2f11ab5fabc4225bdd1c1a376c8e575b1b6284e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-offline-smoke-1791765360725-26145-FkQQGD/launch-record.jsonl",
+      "bytes": 1582,
+      "sha256": "e90167b130849d7642dbbe22d82c08104b30f8be67b6121bea4feaa5cd3c15c3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-offline-smoke-1791765360725-26145-FkQQGD/owner.json",
+      "bytes": 276,
+      "sha256": "9edac37cf16428938207277c5b054968421d50554a5b919d21f2d673e9b27b61"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791765390025-26610-ysOK36/launch-record.jsonl",
+      "bytes": 1654,
+      "sha256": "e217afff3a54396535ee29f902b8c0ba7990dedbcdd7936ef474379e519a7784"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791765390025-26610-ysOK36/owner.json",
+      "bytes": 288,
+      "sha256": "552ce52125610be41437452c892432d0c2db201b9b3fde547a474e075755718e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791765410682-26720-LvrDd7/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "53700862453b0af521ca9eed0862ca2a5f885c71342b2b317da818293274a05b"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791765410682-26720-LvrDd7/owner.json",
+      "bytes": 285,
+      "sha256": "b06f7ba8f2914b4d3cc6103caebe1642ef2d1e7a84ed4d7d5fc49a826e3f236d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-underline-regression-1791765419611-26721-NXQWVv/launch-record.jsonl",
+      "bytes": 1624,
+      "sha256": "5c33fae75252df7707515cd7b18a2c0d49f2fc0e87b5b4ce88e4698347c09353"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/browser-launch-records/browser-launch-underline-regression-1791765419611-26721-NXQWVv/owner.json",
+      "bytes": 283,
+      "sha256": "c8db32aad6373dd1b88338c12c1cc48eea10dc8b610870c6b56c2c60288c7ed7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/desktop-toolbar-1791765387722-26171.cleanup.json",
+      "bytes": 3294,
+      "sha256": "921c75d03478455f47bdd649b55e77cc20384be1df0ba7189420254a8ee9dbd3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.cleanup.json",
+      "bytes": 3356,
+      "sha256": "55b4144d1ac9d2f6d8ffdf64b61eca96ea3121cbb7762e30ed7750e31a017f4a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.partial.json",
+      "bytes": 44553,
+      "sha256": "0ee930743ee3b15779afa8f3ee03c766076c1f8afb505bf4622fbb78f9df4249"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/mobile-browser-startup-1791765409623.json",
+      "bytes": 3947,
+      "sha256": "b1ba77e5d98bbb79f5e75c9f39342c7c0f3e3eb3392642508b5d751d7f1a1636"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/mobile-browser-startup-1791765433831.json",
+      "bytes": 3933,
+      "sha256": "0315242afa335ab6e5df5921b2db37fd7713833e9be98afe7f92315f0f781312"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/mouse-input-1791765379301-26568.cleanup.json",
+      "bytes": 2570,
+      "sha256": "1af7a82dd41af031aa333b1ce2c6cd7fb20b5c200b08e2b82ee8a7537d606a2c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/mouse-input-1791765379301-26568.focus.json",
+      "bytes": 7152,
+      "sha256": "04cc5913bdd5c967d88aaa0a804ba544637dd7a24105b2eb687fd0c19625aec2"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/mouse-input-1791765379301-26568.lifecycle.json",
+      "bytes": 385629,
+      "sha256": "8ad60aa05750af3949eae6aa60c3d9d150ccdeedc426d9ef63d7b2be5c431452"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/offline-smoke-1791765353091-26145-867a12ee-0adb-4c91-b1e7-6bd589d608b6.cleanup.json",
+      "bytes": 2545,
+      "sha256": "d681b12323c069cf61f0cac95549df7728210437dd85273faa2d3aaa089dd75a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/open-lifecycle-1791765389576-26610-9988c1e2-4ba3-4897-8cec-4e652d619a12.cleanup.json",
+      "bytes": 3245,
+      "sha256": "ef6ff616f82e5ced51bf0f58782b95996e565236d0bd0d4620c5affaa1d9b4c9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/open-lifecycle-1791765389576-26610-9988c1e2-4ba3-4897-8cec-4e652d619a12.json",
+      "bytes": 7475,
+      "sha256": "72d1a3000612953a2d947b586cefa8815ed180792d047ff8f36bf7fb6a51a2b5"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/stdout.txt",
+      "bytes": 24512,
+      "sha256": "971c749dda7c7caec156445c0e9379c148e61040e8ae8924605266161985dc53"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/underline-regression-b64a1f9b90db-1791765410449-26721.json",
+      "bytes": 309033,
+      "sha256": "1a5d1fa6a4e0acb81c97796a48405c71fd5d76aee396ac606f5c245ffb574d72"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/01/underline-regression-b64a1f9b90db-1791765410449-26721.png",
+      "bytes": 257819,
+      "sha256": "d8a69eefd22372733375a542550784345d6941ea04933463eefb89d086fab5af"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T00-35-50-442Z/aggregate.json",
+      "bytes": 21654,
+      "sha256": "6d46f18f2a6d39ea776eeded47f8ab8fbd73e75e47d17e186c815528e7288209"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.cleanup.json",
+      "bytes": 2631,
+      "sha256": "a78d66fd2a8213569b57fb63a578de21e5d35776c17faf10c41ebd63bfc9fdfa"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.json",
+      "bytes": 769057,
+      "sha256": "9870f5824ee1997f43c02427dac470a6d68fa1e3909764eea4d3e0f79ac1cd47"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.partial.json",
+      "bytes": 779799,
+      "sha256": "b84a6ea027644f2ae3a787db8e66b5caa78302be491ee546dbc989d66fada666"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.png",
+      "bytes": 327396,
+      "sha256": "22c1128d24c1350517f967df6148ac7132672c2c9cf8f76d887da08ca51cac5f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767024942-30998-AbfF6D/launch-record.jsonl",
+      "bytes": 1702,
+      "sha256": "b16e6997158bef9de700ea44913c97018de409c53b7409c15dc15b47f56ebc23"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767024942-30998-AbfF6D/owner.json",
+      "bytes": 296,
+      "sha256": "ca6d42c0f4918961fccb0fb22e0bff1c8efe6fec6d055ed6ef41bb106fecb337"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-autosave-regression-1791767013119-31003-Z0KeqE/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "5b94115851fe213c9874b4906120f832563a93f586b414fe59bd2392299d8e10"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-autosave-regression-1791767013119-31003-Z0KeqE/owner.json",
+      "bytes": 282,
+      "sha256": "110d0263e311893d4aa155e75e309a9339c62f444efa74e6698d2f99c7297862"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767014348-31014-Us60Q5/launch-record.jsonl",
+      "bytes": 1594,
+      "sha256": "7a1fc84b02cda97a969b357f772de6c3699bbfc19788b78bef67287adc0ab619"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767014348-31014-Us60Q5/owner.json",
+      "bytes": 278,
+      "sha256": "235f9c8b5c698d90ba34a97dd65bba362d9c05b8402057a2bde10b0b5800fdf8"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767014825-31027-Epcf0M/launch-record.jsonl",
+      "bytes": 1720,
+      "sha256": "c27f21074db07dbaca5b76657e0acd23e94f4ec414a89d4339bc01fcaeab4dae"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767014825-31027-Epcf0M/owner.json",
+      "bytes": 299,
+      "sha256": "0dd0672400ba134f0795420ef6295ebc00e59406b192fc5c1c5bf50cd7a84903"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767014825-31029-qbGtuf/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "471d2db6412464a4323e16fc56f9b07e8b609d809890baec34074f0df14471f7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767014825-31029-qbGtuf/owner.json",
+      "bytes": 282,
+      "sha256": "907fc71c690c972afc0befcdad497c48101dfe338bc423109b21d67c910ef85f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767032699-31404-LDjQfX/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "0d2c70c6d47b08819700373b66e6a777e6380be57e3525eeae3cf2c18ae1860f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767032699-31404-LDjQfX/owner.json",
+      "bytes": 285,
+      "sha256": "3b1c5e074c41a70e835db879fb9ba4bee3e9c223913c2048d792d4fce01abec7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767078146-31404-PdGp50/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "16e03f8e463e77b584f0e3d263478b29e68da2eea084c7862359e1a8b6c796c5"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767078146-31404-PdGp50/owner.json",
+      "bytes": 285,
+      "sha256": "f3d522daebad0b743c51163854e841820a466593b32376a0d44b0e85ab7589a4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767033148-31414-6n7R9y/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "ddcfdb30a7c3d3e0479d6dca73bc5eb096fa6efa481f72b810e74162c45f4ed7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767033148-31414-6n7R9y/owner.json",
+      "bytes": 285,
+      "sha256": "a3e9d48a364348b6e6bcf01d04cc067f3b6b818e743d244db8f7decbffe4b3e4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-offline-smoke-1791767021804-30997-Eyc0tR/launch-record.jsonl",
+      "bytes": 1578,
+      "sha256": "cccc383a40274f254eba62c37bb211c59e953bf21e8abebc9b87da92ecdfaac2"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-offline-smoke-1791767021804-30997-Eyc0tR/owner.json",
+      "bytes": 276,
+      "sha256": "042401917234031628576fff268a84598aa0da238abff87f90157d36d1a300c0"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767033346-31430-xsP13A/launch-record.jsonl",
+      "bytes": 1650,
+      "sha256": "489e8349d46dabe0b18b2c1ccc2902405f00e001614dce02bacca8a033d2ec68"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767033346-31430-xsP13A/owner.json",
+      "bytes": 288,
+      "sha256": "9ea1edbabb7ebb3c9c1bccea00e611a8b896d48bd9cf31a67b5b1d84089cc03c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791767065168-31699-CvGmdZ/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "3eaee1f889361be40b062798c8c6333018ec97b984e6b4c983ef7458177dfd67"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791767065168-31699-CvGmdZ/owner.json",
+      "bytes": 285,
+      "sha256": "b3a14eb77ec1c5dc62f262a6e7364bf21da700a883532857f89c53b0e95085c6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-underline-regression-1791767068561-31700-D3LZ8Z/launch-record.jsonl",
+      "bytes": 1624,
+      "sha256": "b6f2c9cb1a090efed8731fd0b96774898f8ea360a504b07c1cdcd4801e6321e3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-underline-regression-1791767068561-31700-D3LZ8Z/owner.json",
+      "bytes": 283,
+      "sha256": "096433d5c326ccaa7ea2440009ca5e9301ff38dff6af97e2479f50cb851d42fb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/desktop-toolbar-1791767030529-31014.cleanup.json",
+      "bytes": 2551,
+      "sha256": "93814ba3f501fa10dfb6078d4d56daddf73c1dd9b20c9be5393e232b64250b7e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.cleanup.json",
+      "bytes": 2613,
+      "sha256": "c440335a9ea05ec835fb04b711847de75a0527e92a6d0caeba7478ade50f9f5a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.partial.json",
+      "bytes": 44525,
+      "sha256": "52b73e936d89beed738b40ecbea793586142dda9b2ce3e35cedd6150db1c3c55"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/ipad-pointer-policy-1791767014792-31029.json",
+      "bytes": 10053,
+      "sha256": "e49d65ee2e639eb3ae0d50d7047e8e55963f8b6767bf1866eae49c017740d0d3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/mobile-browser-startup-1791767078067.json",
+      "bytes": 3947,
+      "sha256": "e45450d51549ae89e05c1cff58b29e77015cab0cd1db392a82073210a0794c30"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/mobile-browser-startup-1791767097554.json",
+      "bytes": 3933,
+      "sha256": "9c6b3f86af1dfde3f8f586ee89cc15d9529092d3eebc23324106c1491959fee0"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/mouse-input-1791767033143-31414.cleanup.json",
+      "bytes": 2571,
+      "sha256": "156b10024ceb76d6cf8bc8a9cdb85026b84cba335e9519c3c6fa62499f2ec47d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/mouse-input-1791767033143-31414.focus.json",
+      "bytes": 7152,
+      "sha256": "ab9c48ee43c3b80ad0615ae3bf873ee16f40d3fb0605d9b6d9ecf85c5476edb9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/mouse-input-1791767033143-31414.lifecycle.json",
+      "bytes": 379327,
+      "sha256": "4d341617028b9d69853b0d0131416d9bc2ec486a17febe2b02d8046af4ee9582"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/offline-smoke-1791767012618-30997-88403c1b-72ef-4f30-9bec-05f42bccbca5.cleanup.json",
+      "bytes": 3741,
+      "sha256": "f99aa177d8a9eed34001a0132db2ac887b20f627727ef62492c87f83af2591e9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/open-lifecycle-1791767033295-31430-520f70fd-a81f-417f-9830-0c94463301db.cleanup.json",
+      "bytes": 4673,
+      "sha256": "d9593a87438c535eb070960c10951191ea8d0d60a466e528845592b6a038073f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/open-lifecycle-1791767033295-31430-520f70fd-a81f-417f-9830-0c94463301db.json",
+      "bytes": 8831,
+      "sha256": "bdb0bbe1a794816ab88bd8154d6f77d8107fe3f2fa5b2fd6809a3b25e4e5acb1"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/stdout.txt",
+      "bytes": 23147,
+      "sha256": "b89a4db306e9a88024f3c6e34e0f9e989ee8f9559e951a5e3d26d101fba426f9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/underline-regression-5447787ec988-1791767065081-31700.json",
+      "bytes": 308930,
+      "sha256": "04c764c131db9543b1329841dcc2d51b679a97a352973d7e0b157ca6a3f9e475"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/01/underline-regression-5447787ec988-1791767065081-31700.png",
+      "bytes": 257819,
+      "sha256": "d8a69eefd22372733375a542550784345d6941ea04933463eefb89d086fab5af"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-03-31-709Z/aggregate.json",
+      "bytes": 22749,
+      "sha256": "e4b3429dc43fcb7ea0ddde37dc894bec2a2461d056da96c4915b90e2603cf8ef"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/annotation-interaction-e57dd278abcb-1791767352237-32541.cleanup.json",
+      "bytes": 2631,
+      "sha256": "eb490b965c86431c270b02e50dbbe15964607b980ef1187336c9d1d1c209ceba"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/annotation-interaction-e57dd278abcb-1791767352237-32541.json",
+      "bytes": 744188,
+      "sha256": "b558ef7b34d9f0405967ed80bdee763ec749014e347ad25ea398e88ff333fc40"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/annotation-interaction-e57dd278abcb-1791767352237-32541.partial.json",
+      "bytes": 754967,
+      "sha256": "10074e361ecfc998c080c6a7607a636da7236bf32269848737e8d8371b7e519e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/annotation-interaction-e57dd278abcb-1791767352237-32541.png",
+      "bytes": 327396,
+      "sha256": "22c1128d24c1350517f967df6148ac7132672c2c9cf8f76d887da08ca51cac5f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767360323-32541-8bTLEJ/launch-record.jsonl",
+      "bytes": 1702,
+      "sha256": "6434bb94454e0ebe1ee4ce47b5705ed590f7e8ad1e2baf49f934e5e839c66630"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767360323-32541-8bTLEJ/owner.json",
+      "bytes": 296,
+      "sha256": "d5dfb683d7cce9bad7a0569113b4b5d05f3c86f5bfb00ed7b6e781b251b38ae2"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-autosave-regression-1791767352181-32546-70Dqm4/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "ba80956773be2c5030dcc7ba6a662482d26172bb09928d4bc17d32eeab04001d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-autosave-regression-1791767352181-32546-70Dqm4/owner.json",
+      "bytes": 282,
+      "sha256": "13ed244c0de9469a981ce4e29c4dcca62eb83ad2d4416bce76ca455fa3f8b9b4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767352647-32567-Egok5r/launch-record.jsonl",
+      "bytes": 1594,
+      "sha256": "952e1dc664efde1194d6d9e2068ed9d6659f703e39025836d0d71d3c294717f6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767352647-32567-Egok5r/owner.json",
+      "bytes": 278,
+      "sha256": "621702da2478dd39ed288279aa96bcf9b4dabe7bde4f36fc4a923c78363eac00"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767352835-32568-bPGIs4/launch-record.jsonl",
+      "bytes": 1720,
+      "sha256": "c2ca78a0ca3cf4d169f776aa67056e9fb9e3acaa101157f09c3d3e83b01cadab"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767352835-32568-bPGIs4/owner.json",
+      "bytes": 299,
+      "sha256": "1f85871d8f4d2020c06f007c2e60b83831a0886a9f622d223666d4860c876633"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767352846-32569-aJ8qTN/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "a5aefb1cfb5a847dd04e81493f1b1a18952de880582d8ab449b2febd6890fbb4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767352846-32569-aJ8qTN/owner.json",
+      "bytes": 282,
+      "sha256": "de7279588a7327dc15c911b57031c76e3b64aecd6d61e31771989977b5590a20"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767365210-32942-8fIf9O/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "764c0a3f22e8b9cdefe1f3321ea996b5a83b5a1768c8e8d8c2b2bcf7031339bd"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767365210-32942-8fIf9O/owner.json",
+      "bytes": 285,
+      "sha256": "4866f553204c3f3fcc7e834729fd4697175c9d1f1f4066a5d16a6951c8c83546"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767396331-32942-DuPId4/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "3cfd8d7fcecfacef2689ff24d501d98e8c77715107903512c860430775f2b299"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767396331-32942-DuPId4/owner.json",
+      "bytes": 285,
+      "sha256": "148c1764f95e9f06e36ff7a5eba591402246d2809c6ebc1e58b26eebf0c18c77"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767367517-32991-9FPuJK/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "a3355ede9d8b9599140420863843b77c363a9022ffdc178dedcf087931e0ff9b"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767367517-32991-9FPuJK/owner.json",
+      "bytes": 285,
+      "sha256": "a0af8e77a237b716179afd1e66bf2d306c1ca67a410fb125699fcde10d005efd"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-offline-smoke-1791767357230-32537-a1rrUN/launch-record.jsonl",
+      "bytes": 1582,
+      "sha256": "84e83cbb0efa8c1c3e459eb729952320838700afa51a1514988c18b8f873f662"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-offline-smoke-1791767357230-32537-a1rrUN/owner.json",
+      "bytes": 276,
+      "sha256": "59a2bdedf6726244351f272b9e7731b8945c0882c0373e0b23b8ac45a5592657"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767368311-32997-17Fg0f/launch-record.jsonl",
+      "bytes": 1654,
+      "sha256": "8a77cd528bd6dff2c89f6f41873620e5d10c4f4e1ff46654ea4a5925671f9bec"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767368311-32997-17Fg0f/owner.json",
+      "bytes": 288,
+      "sha256": "ca13e7d9eacd8727d7db6f7db51d94dbc9d054cf01c320856476140710fc6090"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791767388517-33091-HXWIMo/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "d0e888a39c827de1aeb841d0f87fe68b9f8f67260a9e2735ddda57963e0ce5c7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-sync-bridge-regression-1791767388517-33091-HXWIMo/owner.json",
+      "bytes": 285,
+      "sha256": "b8941a8f151c5f0ad0ad7a1d7ef7793ebb7c7b9fb0d673599d48e1558a99a8c6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-underline-regression-1791767391396-33102-XBqOAX/launch-record.jsonl",
+      "bytes": 1624,
+      "sha256": "3a97b0a5d520c06f2e4a0c11e4cf799b092bfbf6de35f4522ebd0fc5633a15a9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/browser-launch-records/browser-launch-underline-regression-1791767391396-33102-XBqOAX/owner.json",
+      "bytes": 283,
+      "sha256": "a76224c25263fcdd5ed52948a1cd111d056fcea1be585396903a613ea97a295e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/desktop-toolbar-1791767366204-32567.cleanup.json",
+      "bytes": 2550,
+      "sha256": "48eb817e07f4befb896d807b2dbeeb754d3bca1db2d3d55234a8bf8d3c218f26"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.cleanup.json",
+      "bytes": 2612,
+      "sha256": "0029aa875feb32a4e2d52569daa6dc72175da77d03219bde230607d12a42f27e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.partial.json",
+      "bytes": 44521,
+      "sha256": "0b3f8cfe6e28639eb4da8c7fce5d2d32dd03884a6d59dc3904707d7dc0415b6a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/ipad-pointer-policy-1791767352835-32569.json",
+      "bytes": 10165,
+      "sha256": "7e95bfd4502e8e79da0e902253fd788e3d8850c922555b5fe963dceba6fb87eb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/mobile-browser-startup-1791767396309.json",
+      "bytes": 3947,
+      "sha256": "e37ae2125a9e22911452cfb225f7c46ace885719516c6830a5f2d822472ee777"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/mobile-browser-startup-1791767409831.json",
+      "bytes": 3932,
+      "sha256": "b82a5710e2d51dbac6019be8ce1672bb7f2099153f667f725a8c436a35bf4bec"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/mouse-input-1791767367457-32991.cleanup.json",
+      "bytes": 2570,
+      "sha256": "4d476a1d46ed8b0220a45c2fe68e8802e7bddd35da08ebe7dcb91a8ffc54b567"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/mouse-input-1791767367457-32991.focus.json",
+      "bytes": 7152,
+      "sha256": "758ffd2ec86566081b9c246d3f2101783cd10935715608d70b7318379f1e304e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/mouse-input-1791767367457-32991.lifecycle.json",
+      "bytes": 379202,
+      "sha256": "cc2920cb954252d2bbcd823a31574d130c111086e0b796fde26d9ee70d1bc759"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/offline-smoke-1791767351884-32537-78d42e5b-b616-47fa-9606-711411766090.cleanup.json",
+      "bytes": 2545,
+      "sha256": "610cea7f76f9fee080cbd7df740615d497841a19098b1f462102a65b59cb49d4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/open-lifecycle-1791767368057-32997-51e74f5c-83cf-427c-9b20-af3e82677965.cleanup.json",
+      "bytes": 3246,
+      "sha256": "aed4139d6490ea133b07013adddeb24e744994bbbf4f1fc20d46b76d2608ff1a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/open-lifecycle-1791767368057-32997-51e74f5c-83cf-427c-9b20-af3e82677965.json",
+      "bytes": 7472,
+      "sha256": "a4a2b4668b83103319e70d667ee53a92e47ecb4caaa00569fe2f5036e44fa16d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/stdout.txt",
+      "bytes": 21355,
+      "sha256": "149f4573613b415d9c4f9b7a80159ed69cbd8c8d20d83b021ee4b8ca947ea185"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/underline-regression-e57dd278abcb-1791767388329-33102.json",
+      "bytes": 308930,
+      "sha256": "a8a307f486e970ea77814776bb245696ff04b89d943ad637439bf86875eab6cc"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/01/underline-regression-e57dd278abcb-1791767388329-33102.png",
+      "bytes": 257819,
+      "sha256": "d8a69eefd22372733375a542550784345d6941ea04933463eefb89d086fab5af"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-default-2026-10-12T01-09-11-432Z/aggregate.json",
+      "bytes": 22749,
+      "sha256": "2cbc545795922ec26f24f99de1d94cd8e4260a7fc07bb2d3ce986c18c37ed69c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/annotation-interaction-b64a1f9b90db-1791765353816-26146.partial.json",
+      "bytes": 352988,
+      "sha256": "a10f49eec943672adea77b40ef2e8cda934728d20d5c694d0936f91cdf845a36"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791765365074-26146-WG8i5d/launch-record.jsonl",
+      "bytes": 1013,
+      "sha256": "0f3da0cd0eaeb928750f16113b1e926d494b3615b93dc3b5de2bf2cdf43beb75"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791765365074-26146-WG8i5d/owner.json",
+      "bytes": 296,
+      "sha256": "6893b0aac647f449009e0a8b9390858783f3683a936499bfd626a0334d26a5ad"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-autosave-regression-1791765353670-26152-V3Zxwm/launch-record.jsonl",
+      "bytes": 957,
+      "sha256": "8f3fce7eac5bffd862053e9d6086ac70a67c09f76080cca18b4df075262da249"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-autosave-regression-1791765353670-26152-V3Zxwm/owner.json",
+      "bytes": 282,
+      "sha256": "c6c0692a60e7e628172e0b8a40a1fdc297ddea379760f44d6b07cee2c32065c3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791765354897-26171-s1QaFw/launch-record.jsonl",
+      "bytes": 1590,
+      "sha256": "a487f2d98a3e2c5f6158020d0f89064a3d71442331834584309753558b48368d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791765354897-26171-s1QaFw/owner.json",
+      "bytes": 278,
+      "sha256": "446a7355b548df992a4dd6b3e0fd0913392c0c580fdb81b34bbb4bac2a34efe6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791765355416-26191-KDzoej/launch-record.jsonl",
+      "bytes": 1716,
+      "sha256": "66ab4f5c24ecf109c44b2dd0a8d2763e12ef0f4c983e81c4066597ec41fe12d3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791765355416-26191-KDzoej/owner.json",
+      "bytes": 299,
+      "sha256": "76135e6ea4a97ea4922f0b62a3df450c947fd452f4a7d9e715a3f091535d98be"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765355565-26192-YFAiKv/launch-record.jsonl",
+      "bytes": 969,
+      "sha256": "d3285ab0607b6c791a533da5a35098bcde5c8ba084563d0ea8572c7aad5f3cae"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791765355565-26192-YFAiKv/owner.json",
+      "bytes": 285,
+      "sha256": "d3c2a1dcff1101b5a544b7c5b0622ff7efb4bcdae8cd2d2b30e75796694a56a9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791765379307-26568-Cvtr8B/launch-record.jsonl",
+      "bytes": 969,
+      "sha256": "9d3039f3c193da1e7095a51db6fb13d1c5eeb3700fb9ace2a63ea32cd30afc86"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791765379307-26568-Cvtr8B/owner.json",
+      "bytes": 285,
+      "sha256": "d106a2cc0d05dd0acf958c49d2f11ab5fabc4225bdd1c1a376c8e575b1b6284e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-offline-smoke-1791765360725-26145-FkQQGD/launch-record.jsonl",
+      "bytes": 1582,
+      "sha256": "e90167b130849d7642dbbe22d82c08104b30f8be67b6121bea4feaa5cd3c15c3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-offline-smoke-1791765360725-26145-FkQQGD/owner.json",
+      "bytes": 276,
+      "sha256": "9edac37cf16428938207277c5b054968421d50554a5b919d21f2d673e9b27b61"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791765390025-26610-ysOK36/launch-record.jsonl",
+      "bytes": 453,
+      "sha256": "e4298c31f8d076239f08a090b1016cf572b7eb796c0073dc2af4d6a908b93010"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791765390025-26610-ysOK36/owner.json",
+      "bytes": 288,
+      "sha256": "552ce52125610be41437452c892432d0c2db201b9b3fde547a474e075755718e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/desktop-toolbar-1791765387722-26171.cleanup.json",
+      "bytes": 3294,
+      "sha256": "921c75d03478455f47bdd649b55e77cc20384be1df0ba7189420254a8ee9dbd3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.cleanup.json",
+      "bytes": 3356,
+      "sha256": "55b4144d1ac9d2f6d8ffdf64b61eca96ea3121cbb7762e30ed7750e31a017f4a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.partial.json",
+      "bytes": 44553,
+      "sha256": "0ee930743ee3b15779afa8f3ee03c766076c1f8afb505bf4622fbb78f9df4249"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/free-text-undo-appearance-1791765355400-26191-0054ad3a-9192-43a9-8037-9530e4f28221.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/offline-smoke-1791765353091-26145-867a12ee-0adb-4c91-b1e7-6bd589d608b6.cleanup.json",
+      "bytes": 2545,
+      "sha256": "d681b12323c069cf61f0cac95549df7728210437dd85273faa2d3aaa089dd75a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/01/stdout.txt",
+      "bytes": 559,
+      "sha256": "c7135687b00f6c6ecb358f04503d4183ee096cab6922d1fca48c29b913928c43"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T00-35-50-441Z/aggregate.json",
+      "bytes": 14982,
+      "sha256": "9cd3c932d0fca487330b0604ac5150fe07214eb8fea0e09f95c7e4aa1e6af136"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.json",
+      "bytes": 769057,
+      "sha256": "9870f5824ee1997f43c02427dac470a6d68fa1e3909764eea4d3e0f79ac1cd47"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.partial.json",
+      "bytes": 779799,
+      "sha256": "b84a6ea027644f2ae3a787db8e66b5caa78302be491ee546dbc989d66fada666"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/annotation-interaction-5447787ec988-1791767013227-30998.png",
+      "bytes": 327396,
+      "sha256": "22c1128d24c1350517f967df6148ac7132672c2c9cf8f76d887da08ca51cac5f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767024942-30998-AbfF6D/launch-record.jsonl",
+      "bytes": 1013,
+      "sha256": "b903705fae865b48b9bec3d2242fe5eb521986a5abe9815ee3cd9499a8fafad3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767024942-30998-AbfF6D/owner.json",
+      "bytes": 296,
+      "sha256": "ca6d42c0f4918961fccb0fb22e0bff1c8efe6fec6d055ed6ef41bb106fecb337"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-autosave-regression-1791767013119-31003-Z0KeqE/launch-record.jsonl",
+      "bytes": 957,
+      "sha256": "88006073d5bba1f5a89e1dba8dd59c9e8fe8d3a95ed6123a07a048ec92443602"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-autosave-regression-1791767013119-31003-Z0KeqE/owner.json",
+      "bytes": 282,
+      "sha256": "110d0263e311893d4aa155e75e309a9339c62f444efa74e6698d2f99c7297862"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767014348-31014-Us60Q5/launch-record.jsonl",
+      "bytes": 1594,
+      "sha256": "7a1fc84b02cda97a969b357f772de6c3699bbfc19788b78bef67287adc0ab619"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767014348-31014-Us60Q5/owner.json",
+      "bytes": 278,
+      "sha256": "235f9c8b5c698d90ba34a97dd65bba362d9c05b8402057a2bde10b0b5800fdf8"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767014825-31027-Epcf0M/launch-record.jsonl",
+      "bytes": 1720,
+      "sha256": "c27f21074db07dbaca5b76657e0acd23e94f4ec414a89d4339bc01fcaeab4dae"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767014825-31027-Epcf0M/owner.json",
+      "bytes": 299,
+      "sha256": "0dd0672400ba134f0795420ef6295ebc00e59406b192fc5c1c5bf50cd7a84903"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767014825-31029-qbGtuf/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "471d2db6412464a4323e16fc56f9b07e8b609d809890baec34074f0df14471f7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767014825-31029-qbGtuf/owner.json",
+      "bytes": 282,
+      "sha256": "907fc71c690c972afc0befcdad497c48101dfe338bc423109b21d67c910ef85f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767032699-31404-LDjQfX/launch-record.jsonl",
+      "bytes": 969,
+      "sha256": "ac2f8a5a47fa27c020e1bfcb135db9d5665b1ee057230b26f027a8e8e219c2de"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767032699-31404-LDjQfX/owner.json",
+      "bytes": 285,
+      "sha256": "3b1c5e074c41a70e835db879fb9ba4bee3e9c223913c2048d792d4fce01abec7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767033148-31414-6n7R9y/launch-record.jsonl",
+      "bytes": 1636,
+      "sha256": "ddcfdb30a7c3d3e0479d6dca73bc5eb096fa6efa481f72b810e74162c45f4ed7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767033148-31414-6n7R9y/owner.json",
+      "bytes": 285,
+      "sha256": "a3e9d48a364348b6e6bcf01d04cc067f3b6b818e743d244db8f7decbffe4b3e4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-offline-smoke-1791767021804-30997-Eyc0tR/launch-record.jsonl",
+      "bytes": 1578,
+      "sha256": "cccc383a40274f254eba62c37bb211c59e953bf21e8abebc9b87da92ecdfaac2"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-offline-smoke-1791767021804-30997-Eyc0tR/owner.json",
+      "bytes": 276,
+      "sha256": "042401917234031628576fff268a84598aa0da238abff87f90157d36d1a300c0"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767033346-31430-xsP13A/launch-record.jsonl",
+      "bytes": 1650,
+      "sha256": "489e8349d46dabe0b18b2c1ccc2902405f00e001614dce02bacca8a033d2ec68"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767033346-31430-xsP13A/owner.json",
+      "bytes": 288,
+      "sha256": "9ea1edbabb7ebb3c9c1bccea00e611a8b896d48bd9cf31a67b5b1d84089cc03c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/desktop-toolbar-1791767030529-31014.cleanup.json",
+      "bytes": 2551,
+      "sha256": "93814ba3f501fa10dfb6078d4d56daddf73c1dd9b20c9be5393e232b64250b7e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.cleanup.json",
+      "bytes": 2613,
+      "sha256": "c440335a9ea05ec835fb04b711847de75a0527e92a6d0caeba7478ade50f9f5a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.partial.json",
+      "bytes": 44525,
+      "sha256": "52b73e936d89beed738b40ecbea793586142dda9b2ce3e35cedd6150db1c3c55"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/free-text-undo-appearance-1791767014793-31027-c8788916-a6cb-4d50-b77f-27bee9d08fd2.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/ipad-pointer-policy-1791767014792-31029.json",
+      "bytes": 10053,
+      "sha256": "e49d65ee2e639eb3ae0d50d7047e8e55963f8b6767bf1866eae49c017740d0d3"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/mouse-input-1791767033143-31414.focus.json",
+      "bytes": 7152,
+      "sha256": "ab9c48ee43c3b80ad0615ae3bf873ee16f40d3fb0605d9b6d9ecf85c5476edb9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/mouse-input-1791767033143-31414.lifecycle.json",
+      "bytes": 379327,
+      "sha256": "4d341617028b9d69853b0d0131416d9bc2ec486a17febe2b02d8046af4ee9582"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/offline-smoke-1791767012618-30997-88403c1b-72ef-4f30-9bec-05f42bccbca5.cleanup.json",
+      "bytes": 3741,
+      "sha256": "f99aa177d8a9eed34001a0132db2ac887b20f627727ef62492c87f83af2591e9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/01/stdout.txt",
+      "bytes": 5275,
+      "sha256": "b02207fb937ab67beb04173d332548535c75161acd5a9ff9b00c28bc755ab7b7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-03-31-709Z/aggregate.json",
+      "bytes": 17174,
+      "sha256": "0e4dc65ea00dcd17f1d3d1fea0ae3468199cd50f2db897db54adb5d9924cd335"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/annotation-interaction-e57dd278abcb-1791767352237-32541.partial.json",
+      "bytes": 478607,
+      "sha256": "c0d21cf9caefb5e533c3f6e3bedcdec37c659ec8ed518c30e01224095f464a0d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767360323-32541-8bTLEJ/launch-record.jsonl",
+      "bytes": 1013,
+      "sha256": "03ce74b2f8ed948e76fb5a387927dea9a8f74eef8a94f788a13c0f1928743a14"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-annotation-interaction-regression-1791767360323-32541-8bTLEJ/owner.json",
+      "bytes": 296,
+      "sha256": "d5dfb683d7cce9bad7a0569113b4b5d05f3c86f5bfb00ed7b6e781b251b38ae2"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-autosave-regression-1791767352181-32546-70Dqm4/launch-record.jsonl",
+      "bytes": 957,
+      "sha256": "d7ceb2d46261cc55affb61f9540b35002d23d12811f1a8386453127285b67f88"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-autosave-regression-1791767352181-32546-70Dqm4/owner.json",
+      "bytes": 282,
+      "sha256": "13ed244c0de9469a981ce4e29c4dcca62eb83ad2d4416bce76ca455fa3f8b9b4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767352647-32567-Egok5r/launch-record.jsonl",
+      "bytes": 1594,
+      "sha256": "952e1dc664efde1194d6d9e2068ed9d6659f703e39025836d0d71d3c294717f6"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-desktop-toolbar-1791767352647-32567-Egok5r/owner.json",
+      "bytes": 278,
+      "sha256": "621702da2478dd39ed288279aa96bcf9b4dabe7bde4f36fc4a923c78363eac00"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767352835-32568-bPGIs4/launch-record.jsonl",
+      "bytes": 1720,
+      "sha256": "c2ca78a0ca3cf4d169f776aa67056e9fb9e3acaa101157f09c3d3e83b01cadab"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-free-text-undo-appearance-regression-1791767352835-32568-bPGIs4/owner.json",
+      "bytes": 299,
+      "sha256": "1f85871d8f4d2020c06f007c2e60b83831a0886a9f622d223666d4860c876633"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767352846-32569-aJ8qTN/launch-record.jsonl",
+      "bytes": 1618,
+      "sha256": "a5aefb1cfb5a847dd04e81493f1b1a18952de880582d8ab449b2febd6890fbb4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-ipad-pointer-policy-1791767352846-32569-aJ8qTN/owner.json",
+      "bytes": 282,
+      "sha256": "de7279588a7327dc15c911b57031c76e3b64aecd6d61e31771989977b5590a20"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767365210-32942-8fIf9O/launch-record.jsonl",
+      "bytes": 969,
+      "sha256": "19e16dde36b8442ca4c3a22358dd7ea3887d93306a40afb97ff374cd46a3b463"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-mobile-browser-startup-1791767365210-32942-8fIf9O/owner.json",
+      "bytes": 285,
+      "sha256": "4866f553204c3f3fcc7e834729fd4697175c9d1f1f4066a5d16a6951c8c83546"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767367517-32991-9FPuJK/launch-record.jsonl",
+      "bytes": 969,
+      "sha256": "14852da8bb5cedb82b11c57c2a9b3bf51bcebdc5d43b1bdb80daee62d0056f41"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-mouse-input-regression-1791767367517-32991-9FPuJK/owner.json",
+      "bytes": 285,
+      "sha256": "a0af8e77a237b716179afd1e66bf2d306c1ca67a410fb125699fcde10d005efd"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-offline-smoke-1791767357230-32537-a1rrUN/launch-record.jsonl",
+      "bytes": 1582,
+      "sha256": "84e83cbb0efa8c1c3e459eb729952320838700afa51a1514988c18b8f873f662"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-offline-smoke-1791767357230-32537-a1rrUN/owner.json",
+      "bytes": 276,
+      "sha256": "59a2bdedf6726244351f272b9e7731b8945c0882c0373e0b23b8ac45a5592657"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767368311-32997-17Fg0f/launch-record.jsonl",
+      "bytes": 981,
+      "sha256": "60ae5b3ac58cc78ea2816bd6a1c1395e2837a3abbdc43988a4f21f8af1a4863e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/browser-launch-records/browser-launch-open-lifecycle-regression-1791767368311-32997-17Fg0f/owner.json",
+      "bytes": 288,
+      "sha256": "ca13e7d9eacd8727d7db6f7db51d94dbc9d054cf01c320856476140710fc6090"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/desktop-toolbar-1791767366204-32567.cleanup.json",
+      "bytes": 2550,
+      "sha256": "48eb817e07f4befb896d807b2dbeeb754d3bca1db2d3d55234a8bf8d3c218f26"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.cleanup.json",
+      "bytes": 2612,
+      "sha256": "0029aa875feb32a4e2d52569daa6dc72175da77d03219bde230607d12a42f27e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.partial.json",
+      "bytes": 44521,
+      "sha256": "0b3f8cfe6e28639eb4da8c7fce5d2d32dd03884a6d59dc3904707d7dc0415b6a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/free-text-undo-appearance-1791767352823-32568-f2d4a032-e708-4098-8f73-a6a6ce81f294.png",
+      "bytes": 249555,
+      "sha256": "68b51a06147158ef10425f0f88741eef7c19fdac84f3974a38ad598e93f07963"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/ipad-pointer-policy-1791767352835-32569.json",
+      "bytes": 10165,
+      "sha256": "7e95bfd4502e8e79da0e902253fd788e3d8850c922555b5fe963dceba6fb87eb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/offline-smoke-1791767351884-32537-78d42e5b-b616-47fa-9606-711411766090.cleanup.json",
+      "bytes": 2545,
+      "sha256": "610cea7f76f9fee080cbd7df740615d497841a19098b1f462102a65b59cb49d4"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/01/stdout.txt",
+      "bytes": 559,
+      "sha256": "5288d24fcd3ff6d88e8c88280b828d0ef39ffd074bbced3d1e5f8bf352132f94"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z/aggregate.json",
+      "bytes": 16031,
+      "sha256": "19bc4a2b2d086c7ffcc1441e25661552892b424eeb5ddb845056c377baf43baa"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.3-validation-runner.mjs",
+      "bytes": 7030,
+      "sha256": "e4982ede7750e6f66549aef39a8e0a8a92002aab092710fdabd0ddfdc345a790"
+    }
+  ],
+  "physicalIpadValidated": false,
+  "archiveSha256": "ca80fa9718775efde64a8ed03d6ba97aca206a5f0281dd0a4545168241f1cadc",
+  "archiveBytes": 9460558,
+  "archiveVerified": true
+}

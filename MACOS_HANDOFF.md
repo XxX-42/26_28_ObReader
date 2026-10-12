@@ -1,8 +1,20 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.2），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留 0.2.0 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.3），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
 
-## 当前：0.5.2 状态栏与工具布局调整
+## 当前：0.5.3 工具栏收敛与 iPad 输入分工
+
+0.5.3 继续共用 Windows、macOS、iPadOS 的三文件插件、保存／同步核心和桌面／移动入口。0.5.2 的 **显示阅读器状态栏** 设置保持默认关闭，缺失旧设置时也按关闭处理；开关即时更新当前插件实例的所有 Reader 和 popout，不重载 iframe。状态与恢复动作继续保存在 Reader 内部，现有恢复 Notice 和命令不依赖状态栏显示。
+
+主工具栏用 32 px 的 **↶**/**↷** 撤销／重做按钮替代 **编辑**。删除移到 **更多**；继续使用 PDF.js 原生保存按钮，不复制出第二个保存按钮。主、次工具栏中的插入图像和打印按钮隐藏，冻结 Viewer 内的代码与节点保留。五个原生批注工具和桌面中键工具轮盘仍保留。缩放组宽 64 px；页码输入为 36 px，超过四位后每增加一位增加 8 px。已有四个缩放 glyph、百分比和自定义值保留；`↕` 表示 **适合整页**，沿用整页适配值，不表示 fit-height。0.5.1 后台预热和增量缓存索引不变；不改冻结 Viewer 或升级依赖。
+
+iPad 输入按用户确认的当前工具自动分工：批注工具处于活动状态时，Apple Pencil 兼容的实际 `pen` 指针输入负责绘制、编辑或擦除；`NONE` 模式下笔输入平移 PDF。手指触碰 PDF 页面只用于导航平移，不触发页面链接、文字选择或批注交互；Reader 工具栏和侧栏控件仍可操作，原生 `input`／`contenteditable` 输入例外继续保留。实体 iPad／Pencil 事件投递仍待硬件验收；原生 CDP 触摸与 Pencil 模拟只覆盖自动化路径。当前不宣称压力感应、悬停、掌拒／掌形 AI 或 Scribble 支持。
+
+冻结默认并发 `general-0.5.3-validation-default-2026-10-12T01-09-11-432Z` 为 193/193 通过、无失败／取消／跳过，Node 自然退出 0；离线记录 `general-0.5.3-validation-offline-2026-10-12T01-09-11-430Z` 也自然退出 0。独立库原生 UI 记录 `general-0.5.3-ui-native-1791767589751.json` 通过桌面与移动 SDK 路径，移动输入策略仅在移动入口启用；Pencil 策略模拟记录 `ipad-pointer-policy-1791767312635-32422.json` 自然退出 0。触摸和 Pencil 使用自动化事件模拟，不能当作 iPad 硬件或实际 Pencil 验收。最终独立审计未发现 P0 阻断。测试均在 `/Users/jiajia/Documents/ObReader-Apple-Test` 独立库内完成，并核验实际 Vault／插件身份；CDP loopback 端口按运行时归属发现。
+
+最终候选包 SHA-256 为 `7e1b80709418a9ab3b1d3bae6d74120c113b3a2f422be44675baebd8d112f5cc`，含且仅含 `main.js`、`manifest.json`、`styles.css`；`main.js` SHA-256 为 `365755bccfe8d8887dcbd5c75aeccf84a64058846a6b69cf9e75e0e568611a4f`。Mac 暖启动记录 `general-0.5.3-native-1791767610375.json`：插件加载时、任何 Reader 打开前预热 167 ms，406 次 stat 检查、0 次缓存二进制验证读取、0 次解压；同实例后续 ensure 0 ms／0 次检查，首个 Reader 等待 0 ms、工具可用约 125.1 ms；第二个 Reader 0 次检查、工具可用约 93.6 ms。外部修改刷新、实际鼠标脏批注与远端三身份合并、旧检查点保护、重复事件不重开、保留 90° 旋转与页宽的同 iframe 刷新均通过。此为 Mac 样本，不构成 iPad 性能承诺；最终 handoff 确认桌面启用、自动保存开启，Reader/view/gate 为 0。按授权，已将候选三文件替换到 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`。记录 `general-0.5.3-target-replacement-1791767654581.json` 确认新文件与候选逐字节一致，旧 0.5.2 文件备份在 `.deploy-backups/2026-10-12T01-14-14-542Z/remote-vault-1-three-files`；用户数据一致，缓存、恢复文件、同步检查点和 PDF 未触碰。目标库运行实例未重载；用户应保存、关闭 Reader 后重载插件，iPad 同步后确认版本 0.5.3。主分支推送由主代理另行完成，以 Git 历史为准；不创建 GitHub Release。Windows 与 iPad/Pencil 实机验收仍待设备确认；Mac 移动模拟、CDP 触摸或 Pencil 模拟均不替代实际设备.
+
+## 历史：0.5.2 状态栏与工具布局调整
 
 0.5.2 继续共用 Windows、macOS、iPadOS 的三文件插件、保存／同步核心和既有桌面／移动入口。新增 **显示阅读器状态栏** 设置，默认关闭，旧设置缺失时也按关闭处理。更改设置会立即作用于当前插件实例的每个 Reader，包括 popout，不重新载入 iframe；关闭时不创建状态栏 DOM。Reader 内部保留最新状态与恢复动作，重新打开状态栏可再次显示；恢复错误 Notice 和 **恢复最近的 PDF 自动保存副本** 命令不依赖状态栏开关。状态文本及文档路径不进入诊断导出。
 

@@ -11,6 +11,16 @@ body {
   min-width: 0;
 }
 
+/* iOS separates finger navigation from Pencil editor input in the bridge.
+   Disable the browser's all-pointer native pan here so the bridge can route
+   touch contacts to manual viewer scrolling while leaving Pencil pointer
+   events available to PDF.js. */
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer {
+  touch-action: none;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .pdfReaderBridgeStatus {
   position: fixed;
   z-index: 100001;
@@ -53,16 +63,24 @@ body {
 }
 
 #scaleSelectContainer {
-  width: 80px;
+  width: 64px;
   min-width: 0;
-  max-width: 80px;
-  flex: 0 0 80px;
+  max-width: 64px;
+  flex: 0 0 64px;
 }
 
 #scaleSelectContainer > #scaleSelect {
-  width: 80px;
+  width: 64px;
   min-width: 0;
-  padding-inline: 4px 20px;
+  padding-inline: 4px 16px;
+  box-sizing: border-box;
+}
+
+#toolbarViewerLeft #pageNumber {
+  width: 36px;
+  min-width: 36px;
+  max-width: none;
+  padding-inline: 3px;
   box-sizing: border-box;
 }
 
@@ -81,46 +99,45 @@ body {
   opacity: 0.45;
 }
 
-.pdfReaderBridgeActionMenu[hidden] {
+.pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton {
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton::before {
+  display: none;
+  content: none;
+}
+
+.pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton > .pdfReaderBridgeHistoryGlyph {
+  display: inline-block;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  line-height: 1;
+}
+
+.pdfReaderBridgeDeleteButton::before {
+  display: none;
+  content: none;
+}
+
+#editorStamp[hidden],
+#printButton[hidden],
+#secondaryPrint[hidden],
+#overwriteOriginalButton[hidden],
+#secondaryOverwriteOriginal[hidden],
+#editorModeSeparator[hidden],
+#toolbarViewerRight > .verticalToolbarSeparator[hidden],
+.toolbarHorizontalGroup[hidden],
+.visibleMediumView[hidden] {
   display: none !important;
-}
-
-.pdfReaderBridgeActionMenu {
-  position: fixed;
-  z-index: 100003;
-  inset-block-start: calc(var(--toolbar-height, 32px) + 8px);
-  inset-inline-end: 8px;
-  display: grid;
-  min-width: 176px;
-  gap: 2px;
-  padding: 6px;
-  border: 1px solid var(--toolbar-border-color, rgb(0 0 0 / 0.3));
-  border-radius: 6px;
-  color: var(--main-color, CanvasText);
-  background: var(--doorhanger-bg-color, Canvas);
-  box-shadow: 0 3px 14px rgb(0 0 0 / 0.3);
-}
-
-.pdfReaderBridgeActionMenu button {
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 4px;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-.pdfReaderBridgeActionMenu button:hover:not(:disabled),
-.pdfReaderBridgeActionMenu button:focus-visible {
-  background: var(--button-hover-color, rgb(128 128 128 / 0.2));
-}
-
-.pdfReaderBridgeActionMenu button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* Keep PDF.js editing controls usable in a narrow Obsidian pane. */
@@ -191,9 +208,15 @@ body {
   }
 
   .pdfReaderBridgeControlButton {
-    min-width: 36px;
-    padding-inline: 4px;
-    font-size: 0.875rem;
+    padding-inline: 0;
+  }
+
+  .pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton {
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    height: 28px;
+    font-size: 1.2rem;
   }
 
   /* Each parameter menu is centered below the two-row toolbar so buttons at

@@ -641,33 +641,42 @@ async function clickOwnedSelector(leafId, selector, label, timeoutMs = 45_000) {
 }
 
 async function waitForMenu(leafId, selector) {
-  return waitFor(`mobile action menu ${selector} to open`, () => ownedEval(page, ({ leafId, selector }) => {
+  return waitFor(`mobile toolbar menu ${selector} to open`, () => ownedEval(page, ({ leafId, selector }) => {
     const leaf = app.workspace.getLeavesOfType("pdf-web-reader-view").find((candidate) => candidate.id === leafId);
     const element = leaf?.view?.iframe?.contentDocument?.querySelector(selector);
     return !!element && element.hidden !== true && getComputedStyle(element).display !== "none";
   }, { leafId, selector }), (open) => open === true);
 }
 
-async function openBridgeActionMenu(leafId) {
+async function openSecondaryToolbar(leafId) {
   const isOpen = await ownedEval(page, (id) => {
     const leaf = app.workspace.getLeavesOfType("pdf-web-reader-view").find((candidate) => candidate.id === id);
-    const menu = leaf?.view?.iframe?.contentDocument?.querySelector(".pdfReaderBridgeActionMenu");
-    return !!menu && !menu.hidden;
+    const menu = leaf?.view?.iframe?.contentDocument?.querySelector("#secondaryToolbar");
+    return !!menu && !menu.classList.contains("hidden");
   }, leafId);
   if (!isOpen) {
     await clickOwnedSelector(
       leafId,
-      ".pdfReaderBridgeControls .pdfReaderBridgeControlButton[aria-haspopup='menu']",
-      "open mobile Edit menu",
+      "#secondaryToolbarToggleButton",
+      "open native More menu",
     );
-    await waitForMenu(leafId, ".pdfReaderBridgeActionMenu");
+    await waitForMenu(leafId, "#secondaryToolbar:not(.hidden)");
   }
 }
 
 async function clickAction(leafId, action) {
-  await openBridgeActionMenu(leafId);
-  const selector = `.pdfReaderBridgeActionMenu button[data-action='${action}']`;
-  await clickOwnedSelector(leafId, selector, `mobile action ${action}`);
+  const selectors = {
+    undo: "#pdfReaderBridgeUndoButton",
+    redo: "#pdfReaderBridgeRedoButton",
+    delete: "#pdfReaderBridgeDeleteButton",
+    save: "#secondaryDownload",
+  };
+  const selector = selectors[action];
+  if (!selector) throw new Error(`Unsupported native toolbar action: ${action}`);
+  if (action === "delete" || action === "save") {
+    await openSecondaryToolbar(leafId);
+  }
+  await clickOwnedSelector(leafId, selector, `native toolbar action ${action}`);
 }
 
 async function screenshot(label, outputPath) {
@@ -904,7 +913,9 @@ async function run() {
     const nativeTools = nativeToolIds.filter((id) =>
       doc?.getElementById(id)?.getClientRects().length > 0,
     );
-    const actionButtons = [...(doc?.querySelectorAll(".pdfReaderBridgeActionMenu [data-action]") || [])]
+    const actionButtons = [...(doc?.querySelectorAll(
+      ".pdfReaderBridgeHistoryButton[data-action], #pdfReaderBridgeDeleteButton[data-action]",
+    ) || [])]
       .map((button) => button.dataset.action);
     const bridgeControls = [...(doc?.querySelectorAll(
       ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
@@ -914,6 +925,21 @@ async function run() {
       nativeTools,
       actionNames: actionButtons,
       bridgeControls,
+      historyControls: ["pdfReaderBridgeUndoButton", "pdfReaderBridgeRedoButton"].map((id) => {
+        const button = doc?.getElementById(id);
+        const rect = button?.getBoundingClientRect();
+        return button && {
+          id,
+          action: button.dataset.action,
+          label: button.textContent.trim(),
+          width: rect?.width || 0,
+          height: rect?.height || 0,
+          connected: button.isConnected,
+        };
+      }),
+      deleteLocation: doc?.getElementById("pdfReaderBridgeDeleteButton")?.parentElement?.id || null,
+      saveLabel: doc?.getElementById("secondaryDownload")?.querySelector("span")?.textContent?.trim() || null,
+      floatingEditMenuPresent: !!doc?.querySelector(".pdfReaderBridgeActionMenu"),
       bridgeClickWheelPresent: !!doc?.querySelector(".pdfReaderBridgeClickWheel"),
     };
   }, leafId);
@@ -925,8 +951,15 @@ async function run() {
     "editorInkButton",
     "editorFreeTextButton",
   ]);
-  assert.deepEqual(mobileControls.actionNames, ["undo", "redo", "delete", "save"]);
-  assert.deepEqual(mobileControls.bridgeControls, ["编辑"]);
+  assert.deepEqual(mobileControls.actionNames, ["undo", "redo", "delete"]);
+  assert.deepEqual(mobileControls.bridgeControls, ["↶", "↷"]);
+  assert.deepEqual(mobileControls.historyControls, [
+    { id: "pdfReaderBridgeUndoButton", action: "undo", label: "↶", width: 32, height: 28, connected: true },
+    { id: "pdfReaderBridgeRedoButton", action: "redo", label: "↷", width: 32, height: 28, connected: true },
+  ]);
+  assert.equal(mobileControls.deleteLocation, "secondaryToolbarButtonContainer");
+  assert.equal(mobileControls.saveLabel, "保存到仓库");
+  assert.equal(mobileControls.floatingEditMenuPresent, false);
   assert.equal(mobileControls.bridgeClickWheelPresent, false);
   report.interactions.push({ action: "mobile bridge controls rendered", ...mobileControls });
   await persistReport();
@@ -1006,7 +1039,7 @@ async function run() {
       if (width < 60 || height < 40 || visibleFrame.right <= visibleFrame.left || visibleFrame.bottom <= visibleFrame.top) return null;
 
       const visibleOverlays = [...doc.querySelectorAll(
-        ".editorParamsToolbar, .pdfReaderBridgeActionMenu, #secondaryToolbar:not(.hidden)",
+        ".editorParamsToolbar, #secondaryToolbar:not(.hidden)",
       )].filter((element) => {
         const style = win.getComputedStyle(element);
         const rect = element.getBoundingClientRect();
@@ -1115,28 +1148,28 @@ async function run() {
   await screenshot("square-created-before-undo", screenshotPaths.created);
 
   await clickAction(leafId, "undo");
-  const afterUndo = await waitFor("mobile action-menu undo to remove the Square model", () => readerState(leafId),
+  const afterUndo = await waitFor("direct mobile undo to remove the Square model", () => readerState(leafId),
     (state) => state.editorTypes.length === 0 && state.editorMode === 5);
   assert.deepEqual(afterUndo.editorTypes, []);
-  report.interactions.push({ action: "undo Square through mobile Edit menu", editorTypes: afterUndo.editorTypes });
+  report.interactions.push({ action: "undo Square through direct mobile toolbar control", editorTypes: afterUndo.editorTypes });
 
   await clickAction(leafId, "redo");
-  const afterRedo = await waitFor("mobile action-menu redo to restore the Square model", () => readerState(leafId),
+  const afterRedo = await waitFor("direct mobile redo to restore the Square model", () => readerState(leafId),
     (state) => state.editorTypes.filter((type) => type === 5).length === 1 && state.editorMode === 5);
   assert.deepEqual(afterRedo.editorTypes, [5]);
-  report.interactions.push({ action: "redo Square through mobile Edit menu", editorTypes: afterRedo.editorTypes });
+  report.interactions.push({ action: "redo Square through direct mobile toolbar control", editorTypes: afterRedo.editorTypes });
 
   const beforeManualSave = await fileHash();
   assert.equal(beforeManualSave, report.fixture.sha256Before,
     "Auto-save is disabled, so undo/redo must not write fixture bytes before the explicit Save control.");
   await clickAction(leafId, "save");
-  const saved = await waitFor("mobile Edit-menu manual save to change the owned PDF bytes and settle the revision", async () => {
+  const saved = await waitFor("native More-menu Save to change the owned PDF bytes and settle the revision", async () => {
     const [currentHash, state] = await Promise.all([fileHash(), readerState(leafId)]);
     return { hash: currentHash, ...state };
   }, (state) => state.hash !== report.fixture.sha256Before && !state.saving && state.ready && state.currentRevision === state.confirmedRevision && state.pdfHasChanges === false, 60_000);
   report.fixture.sha256AfterSave = saved.hash;
   assert.notEqual(saved.hash, report.fixture.sha256Before, "Manual save must write changed PDF bytes.");
-  report.interactions.push({ action: "manual Save through mobile Edit menu", revision: saved.currentRevision, confirmedRevision: saved.confirmedRevision, sha256AfterSave: saved.hash });
+  report.interactions.push({ action: "manual Save through native More menu", revision: saved.currentRevision, confirmedRevision: saved.confirmedRevision, sha256AfterSave: saved.hash });
   await persistReport();
   await screenshot("after-manual-save", screenshotPaths.saved);
 

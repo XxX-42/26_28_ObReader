@@ -455,15 +455,29 @@ test(
       await page.mouse.move(offset.x + end.x, offset.y + end.y, { steps:8 });
       await page.mouse.up({ button });
     };
-    const openActionMenu = async () => {
-      await click('.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]');
+    const openSecondaryToolbar = async () => {
+      const isOpen = await viewer.evaluate(() =>
+        !document.getElementById("secondaryToolbar")?.classList.contains("hidden"),
+      );
+      if (isOpen) return;
+      await click("#secondaryToolbarToggleButton");
       await viewer.waitForFunction(
-        () => !document.querySelector(".pdfReaderBridgeActionMenu")?.hidden,
+        () => !document.getElementById("secondaryToolbar")?.classList.contains("hidden"),
       );
     };
     const clickAction = async (action) => {
-      await openActionMenu();
-      await click(`.pdfReaderBridgeActionMenu [data-action="${action}"]`);
+      const selectors = {
+        undo: "#pdfReaderBridgeUndoButton",
+        redo: "#pdfReaderBridgeRedoButton",
+        delete: "#pdfReaderBridgeDeleteButton",
+        save: "#secondaryDownload",
+      };
+      const selector = selectors[action];
+      if (!selector) throw new Error(`Unsupported toolbar action: ${action}`);
+      if (action === "delete" || action === "save") {
+        await openSecondaryToolbar();
+      }
+      await click(selector);
     };
     const squareBounds = async ({ includeHandle = false } = {}) =>
       viewer.evaluate((includeResizeHandle) => {
@@ -562,7 +576,7 @@ test(
       await page.setViewport({ width, height:500 });
       await viewer.waitForFunction(
         (expectedWidth) => window.innerWidth === expectedWidth &&
-          document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 1,
+          document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 2,
         { timeout:5_000 },
         width,
       );
@@ -596,10 +610,17 @@ test(
             bottom:rect.bottom,
             width:rect.width,
             height:rect.height,
+            disabled:element.disabled === true,
             hitTarget:hit === element || element.contains(hit),
             whiteSpace:getComputedStyle(element).whiteSpace,
             scrollWidth:element.scrollWidth,
             clientWidth:element.clientWidth,
+            hitTargetDescription:hit ? {
+              tag:hit.tagName,
+              id:hit.id || null,
+              className:typeof hit.className === "string" ? hit.className : null,
+              pointerEvents:getComputedStyle(hit).pointerEvents,
+            } : null,
           };
         };
         const visibleRightButtons = [...right.querySelectorAll("button")]
@@ -615,7 +636,7 @@ test(
       });
       const withinToolbar = (button) => button && button.width > 0 && button.height > 0 &&
         button.left >= layout.toolbar.left && button.right <= layout.toolbar.right + 1 &&
-        button.top >= 0 && button.bottom <= 64 && button.hitTarget;
+        button.top >= 0 && button.bottom <= 64 && (button.hitTarget || button.disabled);
       assert.ok(
         layout.right.left >= layout.toolbar.left && layout.right.right <= layout.toolbar.right + 1 &&
           layout.right.scrollWidth <= layout.right.clientWidth + 1 &&
@@ -623,25 +644,24 @@ test(
           layout.controls.every(withinToolbar),
         `All visible toolbar and bridge controls should remain clickable inside a ${width}px pane: ${JSON.stringify(layout)}`,
       );
-      const editControl = layout.controls.find((button) =>
-        button.label === "撤销、重做、删除和保存",
+      const historyControls = layout.controls.filter((button) =>
+        button.label === "撤销" || button.label === "重做",
       );
       const nativeToolControls = layout.controls.filter((button) =>
         button.label.startsWith("editor"),
       );
-      assert.ok(
-        editControl?.whiteSpace === "nowrap" &&
-          editControl.scrollWidth <= editControl.clientWidth + 1,
-        `The Edit control label should not wrap vertically at ${width}px: ${JSON.stringify(editControl)}`,
-      );
+      assert.deepEqual(historyControls.map((button) => [button.label, button.width, button.height]), [
+        ["撤销", 32, 28],
+        ["重做", 32, 28],
+      ], `Direct history controls keep their compact hit boxes at ${width}px`);
       assert.equal(nativeToolControls.length, 5);
       assert.ok(
         nativeToolControls.every((button) => button.scrollWidth <= button.clientWidth + 1),
         `Native tool buttons should fit at ${width}px: ${JSON.stringify(nativeToolControls)}`,
       );
     };
-    // Check both sides of the responsive breakpoint with the native tools and
-    // the single edit-actions control inside the available toolbar width.
+    // Check both sides of the responsive breakpoint with native tools and
+    // direct undo/redo controls inside the available toolbar width.
     await assertCompactToolbarFits(881);
     await assertCompactToolbarFits(880);
     await assertCompactToolbarFits(800);
@@ -658,6 +678,7 @@ test(
       bridgeControls: [...document.querySelectorAll(
         ".pdfReaderBridgeControls .pdfReaderBridgeControlButton",
       )].map((button) => button.textContent.trim()),
+      floatingEditMenuPresent: !!document.querySelector(".pdfReaderBridgeActionMenu"),
       bridgeClickWheel: !!document.querySelector(".pdfReaderBridgeClickWheel"),
     }));
     assert.deepEqual(toolbarControls.nativeTools, [
@@ -667,7 +688,8 @@ test(
       "editorInkButton",
       "editorFreeTextButton",
     ]);
-    assert.deepEqual(toolbarControls.bridgeControls, ["编辑"]);
+    assert.deepEqual(toolbarControls.bridgeControls, ["↶", "↷"]);
+    assert.equal(toolbarControls.floatingEditMenuPresent, false);
     assert.equal(toolbarControls.bridgeClickWheel, false);
     const initialSquareModeRequest = await beginAnnotationModeChange(5);
     await click("#editorSquareButton");
@@ -690,7 +712,7 @@ test(
       { timeout: 10_000 },
     );
     await viewer.waitForFunction(
-      () => !document.querySelector('.pdfReaderBridgeActionMenu [data-action="undo"]')?.disabled,
+      () => !document.getElementById("pdfReaderBridgeUndoButton")?.disabled,
     );
     await clickAction("undo");
     await viewer.waitForFunction(
@@ -924,7 +946,7 @@ test(
     // Clicked undo/redo, delete, and save controls must affect PDF.js state and
     // serialized bytes through the real host save path.
     await viewer.waitForFunction(
-      () => !document.querySelector('.pdfReaderBridgeActionMenu [data-action="undo"]')?.disabled,
+      () => !document.getElementById("pdfReaderBridgeUndoButton")?.disabled,
     );
     await clickAction("undo");
     await viewer.waitForFunction(
@@ -945,7 +967,7 @@ test(
       { width:resizedBounds.width, height:resizedBounds.height },
     );
     await viewer.waitForFunction(
-      () => !document.querySelector('.pdfReaderBridgeActionMenu [data-action="delete"]')?.disabled,
+      () => !document.getElementById("pdfReaderBridgeDeleteButton")?.disabled,
     );
     await clickAction("delete");
     await viewer.waitForFunction(
@@ -2654,7 +2676,7 @@ test(
       const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
       const editor = editorElement && manager?.getEditor?.(editorElement.id);
       const button = document.querySelector(
-        '.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]',
+        "#secondaryToolbarToggleButton",
       );
       if (!pageView || !builder || !pageLayer || !editor ||
         document.activeElement !== internal || !internal.isContentEditable || !button) {
@@ -2778,7 +2800,7 @@ test(
       JSON.stringify(pausedFreeText),
     );
     const savesBeforeText = await page.evaluate(() => window.__host.saves.length);
-    await openActionMenu();
+    await openSecondaryToolbar();
     const resumedFreeText = await viewer.evaluate(async (pausedState) => {
       const app = window.PDFViewerApplication;
       const pageView = app?.pdfViewer?.getPageView(pausedState.pageIndex);
@@ -2791,7 +2813,7 @@ test(
       const editor = manager.getEditor(pausedState.editorId);
       const internal = editor?.div?.querySelector(".internal");
       const button = document.querySelector(
-        '.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]',
+        "#secondaryToolbarToggleButton",
       );
       const snapshot = {
         visible:!builder.div?.hidden,
@@ -2832,15 +2854,15 @@ test(
       requestAnimationFrame(() => requestAnimationFrame(resolve));
     }));
     const afterRealEditorBlur = await viewer.evaluate(() => ({
-      activeIsBridgeActionButton:
+      activeIsMoreToggleButton:
         document.activeElement === document.querySelector(
-          '.pdfReaderBridgeControlButton[aria-label="撤销、重做、删除和保存"]',
+          "#secondaryToolbarToggleButton",
         ),
       editorStillActive:Boolean(document.activeElement?.closest?.(
         ".freeTextEditor .internal[contenteditable='true']",
       )),
     }));
-    assert.equal(afterRealEditorBlur.activeIsBridgeActionButton, true, JSON.stringify(afterRealEditorBlur));
+    assert.equal(afterRealEditorBlur.activeIsMoreToggleButton, true, JSON.stringify(afterRealEditorBlur));
     assert.equal(afterRealEditorBlur.editorStillActive, false, JSON.stringify(afterRealEditorBlur));
     const lifecycleEvidence = await viewer.evaluate((typedText) => {
       const app = window.PDFViewerApplication;
@@ -2941,7 +2963,7 @@ test(
     await writeFile(lifecyclePath, JSON.stringify(lifecycleEvidence, null, 2), "utf8");
     t.diagnostic(`Mouse lifecycle trace: ${lifecyclePath}`);
     await viewer.evaluate(() => window.__stopMousePdfEditorLifecycleTrace?.());
-    await click('.pdfReaderBridgeActionMenu [data-action="save"]');
+    await clickAction("save");
     // Save commits the focused FreeText before the bridge returns serialized
     // bytes. Reopen those bytes so the following probe exercises PDF.js's
     // trusted double-click edit path for an existing FreeText annotation.
