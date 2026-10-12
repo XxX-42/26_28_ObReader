@@ -2529,6 +2529,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       0,
       "The host should not receive bridge errors",
     );
+    console.info("Auto-save product assertions completed; entering browser cleanup.");
   } catch (error) {
     primaryError = error;
     // Preserve document/revision timing when a concurrent run fails. Never

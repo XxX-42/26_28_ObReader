@@ -1,0 +1,1598 @@
+diff --git a/GENERAL_ACCEPTANCE.md b/GENERAL_ACCEPTANCE.md
+index e4491e7..9dd393c 100644
+--- a/GENERAL_ACCEPTANCE.md
++++ b/GENERAL_ACCEPTANCE.md
+@@ -1 +1,35 @@
+-# 0.1general 通用候选（插件 0.5.5）
++# 0.1general 通用候选（插件 0.5.6）
++
++## 当前：0.5.6 惯性滚动与跨页链接保存修复（2026-10-13）
++
++Windows、macOS、iPadOS 共用源码和同一组三文件，版本统一 **0.5.6**。自定义手指滚动保留，不放开 WebKit 原生滚动或改变手指／Pencil 分工。
++
++| 参数 | 数值 |
++|---|---:|
++| 采样窗口／权重 | 80 ms／`exp(-age / 40ms)` |
++| 启动最低合速度 | 90 px/s |
++| 最大初始合速度 | 4,000 px/s，保持方向 |
++| 衰减时间常数 | 350 ms |
++| 停止合速度 | 10 px/s |
++| 最大样本数／最低时间跨度 | 128／8 ms |
++
++最近位置使用加权线性回归估算 X/Y 速度，同时间样本合并。保留窗口外最多一个前驱，仅在其与首个窗内样本间隔不超过 80 ms 时插值窗口起点，避免样本刚越过边界令速度突降；超过 80 ms 不桥接，恰在边界的原样本不重复计权；优先采用匹配 performance 时间基准的事件时间戳，异常或倒退时回退并保持非递减，微小未来时间不将惯性起点推到未来。抬指前计入终点，静止终点参与回归但不刷新最后实际移动时间；停住超过 80 ms、样本不足、多指、取消或被 Pencil 绘制阻断时不启动惯性。
++
++保留 rAF 和指数解析积分，移除 32 ms 截断，按真实时间推进，跨停止速度时精确积分到停止时刻；无边界最大初速的理论惯性距离为 1,396.5 px，持续约 2.10 秒。边界按轴停止，新触碰、工具／文档切换和减少动态效果继续受控。隐藏页面取消当前惯性，并阻断隐藏前触摸在恢复后抬指重新启动。该算法保持时间一致性，不能消除主线程阻塞本身造成的丢帧，也不宣称等同原生 UIScrollView。
++
++截图保存错误已定位到普通 `Link /Dest[0]` 的页引用：通用 guard 对每个批注键遍历，将标准跨页链接误判为外观复制页树。只读用户 PDF 结构确认 126 条引用来自 Link 目标，AP 外观中没有页面引用；没有修改或公开书籍内容。合并在页指纹、页顺序、几何与文档身份验证通过后，将已登记的源叶页面引用按页序映射到远端既有页引用，不复制源页面。保留 `/Pages` 根、未知页和批注关系的拒绝；不新增协议或修改恢复格式。回归覆盖标准 Dest、GoTo 动作、AP 资源跨页引用、源／目标对象编号不同、真实页指纹及无孤立页面对象。
++
++0.5.5 的自动保存冷却、复制／内存释放、同步合并与恢复行为保持不变；没有新增设置、消息协议、依赖或冻结 Viewer 修改。0.5.5 最新滚动修复包继续作为回滚：`pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip`，SHA-256 `2e3dfc5d360d6dbbff0b8450d8330215d1e2b893ea731bee8cf41bbdb2f66a0f`。另存三文件备份 `.deploy-backups/0.5.5-before-0.5.6-20261012T193220Z`。
++
++最终候选、验证与部署证据在本节后续交付记录中列出。原生验证只使用 `/Users/jiajia/Documents/ObReader-Apple-Test`；用户明确授权发布后备份替换“远程仓库1”插件三文件，保留设置、缓存、恢复和同步检查点，不操作其中 PDF。实体 iPad 的滚动手感、WKWebView 帧率与 Pencil 行为仍由设备确认。
++
++
++### 0.5.6 冻结验证与交付
++
++惯性数值与合并核心回归 **33/33**。修正后的可信触摸聚焦测试 `ipad-pointer-policy-1791837537773-68111.json` 通过；保留旧的并发慢拖和 Chrome 合并事件前置条件失败，生成器只修正 CDP 输入，未放宽产品断言。独立库原生 `general-0.5.6-scroll-native-1791836646308.json` 验证惯性、新接触停止、手指不生成批注。`general-0.5.6-save-memory-native-1791836494423.json` 验证五条 Square 自动／手动／关闭保存、Pencil 自由高亮、旧版本同步合并、保存重开，以及跨页 Link 指向目标现有页面。结束恢复桌面模式并清理测试 Reader。
++
++最终默认并发 `general-0.5.6-release-validation-1791837577620548000` **223/229 通过、6 失败、0 取消，退出码 1**；源码和产物哈希前后相同。四项仅在产品断言完成后因 Chrome 子进程退出码 2 失败。另两项分别是既有失焦取消保存的 5 秒等待超时，以及滚动“相等时间区间”衰减断言失败；保留为未确认的并发功能断言问题，不能统称清理异常或标记已通过。现存证据没有记录实际区间长度，不能判断区间是否相等。定向／原生验证通过，目前未证明新的真实用户 P0；按用户约定不新增重复门槛、不继续 teardown 调查，交付候选并公开局限。离线退出 **0**。先前失败轮次原样保留在证据包。
++
++[0.5.6 三文件候选](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip) 含且仅含三文件，ZIP SHA-256 `16d8895d93ea92dd8c36f032df6e5a210af34b6de1bc8559b6384f3610ea807f`，main.js `aef5de283dda9a4a756df8d545dbdc2973ab49631030b58f416e0e2a3e928e2e`。附 [源码差异](dist/general-0.1general-0.5.6-source.diff)、[原始证据](dist/general-0.1general-0.5.6-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.6-SHA256SUMS.txt)。用户 PDF 和截图内容不进入公开证据。
++
++已按授权备份并替换“远程仓库1”插件三文件，备份 `.deploy-backups/0.5.6-target-1791837708037886000`；其他 **2036** 个插件文件逐字节哈希不变，设置、缓存、恢复副本及同步检查点保留，未操作 PDF、未连接主库原生实例或强制重载。同步后先保存并关闭旧 Reader，再重启 iPad Obsidian 验证。若旧编辑留在恢复副本，可使用原有“恢复最近的 PDF 自动保存副本”命令；不自动覆盖用户 PDF。0.5.5 回滚包保持原哈希。Windows／iPad 实机、强退恢复和磁盘比较到写入的竞争窗口仍保留原限制。正常推送 main，不创建 Release。
+@@ -12 +46 @@
+-## 当前：0.5.5 iPad 保存与内存候选（2026-10-13）
++## 历史：0.5.5 iPad 保存与内存候选（2026-10-13）
+diff --git a/MACOS_HANDOFF.md b/MACOS_HANDOFF.md
+index 5d17fe2..835ee49 100644
+--- a/MACOS_HANDOFF.md
++++ b/MACOS_HANDOFF.md
+@@ -3 +3,6 @@
+-## 当前 0.5.5 保存与内存候选（2026-10-13）
++## 当前 0.5.6 手指惯性滚动（2026-10-13）
++
++三端统一 0.5.6。80 ms 滚动位置样本使用 `exp(-age / 40ms)` 加权线性回归，启动 90 px/s、总矢量限速 4,000 px/s、衰减时间常数 350 ms、停止 10 px/s。采用真实 rAF 时间差与指数解析积分，跨停止阈值准确截至停止时刻；最多 128 个样本，同时间合并，不足两点或跨度不足 8 ms 不启动。抬指终点保留，静止不更新实际移动时间；隐藏取消当前惯性并阻断隐藏前触摸重启。手指／Pencil 隔离、保存／同步、冻结 Viewer、锁定依赖不变。原生测试仅使用独立库；本轮另有用户明确授权，仅备份替换“远程仓库1”插件三文件，保留设置、缓存、恢复与同步检查点，不操作 PDF。0.5.5 回滚包保留，实机 iPad 手感由用户确认。另修复标准 Link `/Dest` 被保存合并 guard 错误拒绝：在 lineage 已验证的同序页间映射叶页引用，保留既有页树及安全拒绝，不改协议或恢复格式。最终证据见 GENERAL_ACCEPTANCE.md。
++
++
++## 历史 0.5.5 保存与内存候选（2026-10-13）
+@@ -10 +15 @@
+-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.4），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
++本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.6），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+@@ -12 +17 @@
+-## 当前：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
++## 历史：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
+diff --git a/README.md b/README.md
+index 7142fb0..505519c 100644
+--- a/README.md
++++ b/README.md
+@@ -9 +9 @@ The current work is the **0.1general unified candidate (plugin
+-0.5.5)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
++0.5.6)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+@@ -16,4 +16,15 @@ acceptance remain for the user.
+-The latest 0.5.5 [scroll-fix package](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip)
+-adds a slower inertial tail and consumes the final finger-release position.
+-Its follow-up validation and explicitly authorized target replacement are recorded
+-in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); earlier packages remain available.
++The latest [0.5.6 three-file package](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip)
++uses an 80 ms weighted velocity regression, a 4,000 px/s total speed cap, and
++350 ms exponential deceleration. Inertia starts at 90 px/s and stops at 10 px/s.
++It integrates real animation time, including delayed frames, and cancels on
++backgrounding. Finger navigation and Pencil editing remain separate.
++Validation and the authorized target replacement are recorded in
++[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); the 0.5.5 scroll-fix package remains
++available for rollback. Physical iPad feel still requires device confirmation.
++
++Version 0.5.6 also fixes saving annotated PDFs with ordinary cross-page links.
++After validating page lineage, the merge copier maps existing leaf-page targets
++to the output's existing pages; it preserves Link/GoTo destinations and appearance
++resources without copying the page tree. Unknown pages and unsafe relationships
++remain rejected. The earlier “annotation appearance references a page” error could
++actually originate from an unchanged Link destination.
+@@ -69,4 +80,5 @@ CDP endpoint for each run rather than assuming a fixed port. The earlier approve
+-`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequently
+-authorized scroll-fix replacement updates only that plugin's three files to 0.5.5;
+-its settings, cache and recovery bytes are unchanged, and no PDFs are operated. Save and
+-close Reader tabs before installing the three matching 0.5.5 files, and preserve
++`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequent
++0.5.5 scroll-fix replacement was separately authorized. The current 0.5.6 delivery
++has the same explicit authorization to replace only that plugin's three files,
++preserving settings, cache and recovery, with no PDF operations. Save and
++close Reader tabs before installing the three matching 0.5.6 files, and preserve
+@@ -121 +133 @@ The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
+-0.5.5 candidate uses one source and one three-file package for Windows, macOS,
++0.5.6 candidate uses one source and one three-file package for Windows, macOS,
+diff --git a/manifest.json b/manifest.json
+index 00c8101..1ad9b0d 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.5",
++  "version": "0.5.6",
+diff --git a/plugin/manifest.json b/plugin/manifest.json
+index 00c8101..1ad9b0d 100644
+--- a/plugin/manifest.json
++++ b/plugin/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.5",
++  "version": "0.5.6",
+diff --git a/plugin/pdf-merge-core.cjs b/plugin/pdf-merge-core.cjs
+index 6c8223b..9b5b9a1 100644
+--- a/plugin/pdf-merge-core.cjs
++++ b/plugin/pdf-merge-core.cjs
+@@ -1111 +1111 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
+-  if (depth > 100) fail("PDF_MERGE_OBJECT_GRAPH_TOO_DEEP", "Annotation appearance references exceed the safe copy depth.");
++  if (depth > 100) fail("PDF_MERGE_OBJECT_GRAPH_TOO_DEEP", "Annotation references exceed the safe copy depth.");
+@@ -1114 +1114,4 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
+-    if (maps.pageRefs.has(ref)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object; copying it would cross the page tree.");
++    // Leaf-page references in fields such as Link /Dest are valid annotation
++    // data. They are remapped to the destination document's existing pages by
++    // the copier below; never resolve or copy the source page object here.
++    if (maps.pageRefs.has(ref)) return;
+@@ -1119 +1122 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
+-    if (isPageLike(sourceDoc, resolved)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object.");
++    if (isPageLike(sourceDoc, resolved)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation references a page object outside the validated page list.");
+@@ -1134 +1137 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
+-    if (isPageLike(sourceDoc, value)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object.");
++    if (isPageLike(sourceDoc, value)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation contains a direct page object that cannot be safely remapped.");
+@@ -1146,0 +1150,19 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
++function mapValidatedPageRefs(copier, sourceInfo, destDoc) {
++  const sourcePages = sourceInfo.doc.getPages();
++  const destinationPages = destDoc.getPages();
++  if (sourcePages.length !== destinationPages.length) {
++    fail("PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED", "The annotation source and destination have different page counts.");
++  }
++  for (let index = 0; index < sourcePages.length; index += 1) {
++    const sourceRef = sourcePages[index].ref;
++    const destinationRef = destinationPages[index].ref;
++    if (!(sourceRef instanceof PDFRef) || !(destinationRef instanceof PDFRef) || sourceInfo.maps.pageRefs.get(sourceRef.toString()) !== index) {
++      fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation page reference could not be mapped to the validated destination page.");
++    }
++    // PDFObjectCopier 1.17.1 uses interned PDFRef objects as traversedObjects
++    // keys. Seeding the leaf refs makes copyPDFIndirectObject return this
++    // existing destination ref without looking up/copying any page dictionary.
++    copier.traversedObjects.set(sourceRef, destinationRef);
++  }
++}
++
+@@ -1150,0 +1173 @@ function cloneSanitizedDictionary(sourceInfo, sourceEntry, destDoc, targetRef, p
++  mapValidatedPageRefs(copier, sourceInfo, destDoc);
+diff --git a/tests/autosave-regression.test.mjs b/tests/autosave-regression.test.mjs
+index 904c094..69815b5 100644
+--- a/tests/autosave-regression.test.mjs
++++ b/tests/autosave-regression.test.mjs
+@@ -2531,0 +2532 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
++    console.info("Auto-save product assertions completed; entering browser cleanup.");
+diff --git a/tests/ipad-pointer-policy.test.mjs b/tests/ipad-pointer-policy.test.mjs
+index 57c6baf..81752da 100644
+--- a/tests/ipad-pointer-policy.test.mjs
++++ b/tests/ipad-pointer-policy.test.mjs
+@@ -145,2 +145,28 @@ async function waitMs(milliseconds) {
+-async function beginFastTouchDrag(cdp, point, distance, id) {
+-  await dispatchTouch(cdp, "touchStart", point, id);
++async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
++  const eventOffset = await viewer.evaluate(() =>
++    window.__ipadPointerEvents?.length || 0,
++  );
++  const baseTimestamp = await viewer.evaluate(() =>
++    (performance.timeOrigin + performance.now()) / 1000 - 0.06,
++  );
++  const plannedOffsetsMs = [0, 13, 26, 39, 52, 65];
++  const commands = [];
++  const sendAt = (type, pointAtTime, offsetMs) => {
++    const touchPoints = pointAtTime
++      ? [{
++        x: pointAtTime.x,
++        y: pointAtTime.y,
++        id,
++        radiusX: 1,
++        radiusY: 1,
++        force: 1,
++      }]
++      : [];
++    commands.push(cdp.send("Input.dispatchTouchEvent", {
++      type,
++      touchPoints,
++      timestamp: baseTimestamp + offsetMs / 1000,
++    }));
++  };
++
++  sendAt("touchStart", point, plannedOffsetsMs[0]);
+@@ -148,2 +174 @@ async function beginFastTouchDrag(cdp, point, distance, id) {
+-    await waitMs(16);
+-    await dispatchTouch(cdp, "touchMove", {
++    sendAt("touchMove", {
+@@ -152 +177,54 @@ async function beginFastTouchDrag(cdp, point, distance, id) {
+-    }, id);
++    }, plannedOffsetsMs[step]);
++  }
++  sendAt("touchEnd", null, plannedOffsetsMs.at(-1));
++  await Promise.all(commands);
++
++  const timing = await touchReleaseTiming(viewer, eventOffset);
++  const evidence = {
++    pointerId: id,
++    distance,
++    baseTimestamp,
++    plannedOffsetsMs,
++    observed: timing.sequence,
++    observedMoveSpeedPxPerMs: timing.observedMoveSpeedPxPerMs,
++  };
++  report.trustedTimedFingerGestures ||= [];
++  report.trustedTimedFingerGestures.push(evidence);
++
++  assert.ok(timing.sequence.length >= 3 && timing.sequence.length <= plannedOffsetsMs.length,
++    `Fast finger gesture ${id} must deliver down, movement, and release events`);
++  assert.equal(timing.sequence[0].type, "pointerdown");
++  assert.equal(timing.sequence.at(-1).type, "pointerup");
++  const moves = timing.sequence.slice(1, -1);
++  assert.ok(moves.length >= 1 && moves.every((event) => event.type === "pointermove"),
++    `Fast finger gesture ${id} must deliver trusted movement events in order`);
++  for (let index = 0; index < timing.sequence.length; index += 1) {
++    const event = timing.sequence[index];
++    assert.equal(event.trusted, true,
++      `Fast finger gesture ${id} must remain trusted browser input`);
++    assert.equal(event.targetInViewer, true,
++      `Fast finger gesture ${id} must reach the PDF viewer`);
++    assert.ok(event.timeStamp <= event.observedAt,
++      `Fast finger gesture ${id} must not use future timestamps`);
++    assert.ok(event.observedAt - event.timeStamp <= 80,
++      `Fast finger gesture ${id} must not arrive over 80 ms after its timestamp`);
++    const relativeTime = event.timeStamp - timing.sequence[0].timeStamp;
++    const plannedOffset = index === 0
++      ? 0
++      : index === timing.sequence.length - 1
++        ? plannedOffsetsMs.at(-1)
++        : plannedOffsetsMs.slice(1, -1).find((offset) =>
++          Math.abs(relativeTime - offset) <= 1,
++        );
++    assert.ok(Number.isFinite(plannedOffset) && Math.abs(relativeTime - plannedOffset) <= 1,
++      `Fast finger gesture ${id} observed event time must match the 13 ms schedule`);
++    if (index > 0) {
++      const previous = timing.sequence[index - 1];
++      assert.ok(event.timeStamp > previous.timeStamp,
++        `Fast finger gesture ${id} event timestamps must increase`);
++      assert.ok(event.timeStamp - previous.timeStamp <= 80,
++        `Fast finger gesture ${id} must not contain a timestamp pause over 80 ms`);
++      assert.ok(event.observedAt >= previous.observedAt);
++      assert.ok(event.observedAt - previous.observedAt <= 80,
++        `Fast finger gesture ${id} must not contain an observed pause over 80 ms`);
++    }
+@@ -153,0 +232,61 @@ async function beginFastTouchDrag(cdp, point, distance, id) {
++  const lastMove = moves.at(-1);
++  assert.ok(Math.abs(
++    lastMove.timeStamp - timing.sequence[0].timeStamp - plannedOffsetsMs.at(-2),
++  ) <= 1,
++  `Fast finger gesture ${id} must reach its endpoint at the scheduled final move`);
++  assert.ok(Math.abs(lastMove.clientY -
++    (timing.sequence[0].clientY - distance)) <= 1,
++  `Fast finger gesture ${id} must deliver its full trusted touch distance`);
++  assert.ok(Math.abs(
++    timing.sequence.at(-1).timeStamp - lastMove.timeStamp - 13,
++  ) <= 1,
++  `Fast finger gesture ${id} must release 13 ms after its final move`);
++  assert.ok(timing.observedMoveSpeedPxPerMs >= 1,
++    `Fast finger gesture ${id} must have a clearly moving touch segment`);
++  return timing;
++}
++
++async function touchReleaseTiming(viewer, eventOffset) {
++  return viewer.evaluate((offset) => {
++    const events = window.__ipadPointerEvents?.slice(offset) || [];
++    const touchEvents = events.filter((event) =>
++      event.pointerType === "touch" &&
++      ["pointerdown", "pointermove", "pointerup", "pointercancel"].includes(event.type)
++    );
++    const firstDown = touchEvents.find((event) => event.type === "pointerdown");
++    const pointerId = firstDown?.pointerId;
++    const sequence = pointerId === undefined
++      ? touchEvents
++      : touchEvents.filter((event) => event.pointerId === pointerId);
++    const release = [...sequence].reverse().find((event) => event.type === "pointerup");
++    const lastMove = [...sequence].reverse().find((event) => event.type === "pointermove");
++    const recentMoves = sequence.filter((event) => event.type === "pointermove").slice(-3);
++    const movementStart = sequence.find((event) => event.type === "pointerdown");
++    const observedMoveSpeedPxPerMs = movementStart && lastMove &&
++        lastMove.timeStamp > movementStart.timeStamp
++      ? Math.hypot(
++        lastMove.clientX - movementStart.clientX,
++        lastMove.clientY - movementStart.clientY,
++      ) / (lastMove.timeStamp - movementStart.timeStamp)
++      : null;
++    return {
++      browserPointerId: pointerId ?? null,
++      sequence,
++      lastMoveTime: lastMove?.timeStamp ?? null,
++      releaseTime: release?.timeStamp ?? null,
++      gapMs: lastMove && release
++        ? release.timeStamp - lastMove.timeStamp
++        : null,
++      lastMovePoint: lastMove
++        ? { x: lastMove.clientX, y: lastMove.clientY }
++        : null,
++      releasePoint: release
++        ? { x: release.clientX, y: release.clientY }
++        : null,
++      recentMoves: recentMoves.map((event) => ({
++        timeStamp: event.timeStamp,
++        point: { x: event.clientX, y: event.clientY },
++      })),
++      observedMoveSpeedPxPerMs,
++    };
++  }, eventOffset);
+@@ -268,0 +408 @@ test(
++              pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
+@@ -269,0 +410,4 @@ test(
++              timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : null,
++              observedAt: performance.now(),
++              clientX: Number.isFinite(event.clientX) ? event.clientX : null,
++              clientY: Number.isFinite(event.clientY) ? event.clientY : null,
+@@ -726 +870,3 @@ test(
+-      await beginFastTouchDrag(cdp, fastFlickPoint, 260, 21);
++      const fastFlickReleaseTiming = await beginFastTouchDrag(
++        cdp, viewer, fastFlickPoint, 260, 21, report,
++      );
+@@ -728 +873,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -826 +971,3 @@ test(
+-      await beginFastTouchDrag(cdp, boundaryPoint, 220, 24);
++      const boundaryReleaseTiming = await beginFastTouchDrag(
++        cdp, viewer, boundaryPoint, 220, 24, report,
++      );
+@@ -828 +974,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -837,0 +984,92 @@ test(
++      const backgroundStart = await viewer.evaluate(() => {
++        const container = document.getElementById("viewerContainer");
++        container.scrollTop = Math.min(500, container.scrollHeight - container.clientHeight);
++        return container.scrollTop;
++      });
++      const backgroundFlickPoint = await localPointInHost(
++        viewer,
++        page,
++        "#viewerContainer",
++        [0.5, 0.5],
++      );
++      const backgroundFlickReleaseTiming = await beginFastTouchDrag(
++        cdp, viewer, backgroundFlickPoint, 260, 31, report,
++      );
++      const backgroundFlickAtRelease = await inputSnapshot();
++      await waitMs(70);
++      const beforeBackgrounding = await inputSnapshot();
++      assert.ok(beforeBackgrounding.scrollTop > backgroundFlickAtRelease.scrollTop + 5,
++        "The trusted finger flick must still be in motion before this page is backgrounded");
++
++      let backgroundPage = null;
++      let backgroundPhaseError = null;
++      try {
++        backgroundPage = await browser.newPage();
++        await backgroundPage.goto("about:blank");
++        await backgroundPage.bringToFront();
++        await page.waitForFunction(
++          () => document.visibilityState === "hidden",
++          { timeout: 8_000, polling: 100 },
++        );
++        await viewer.waitForFunction(
++          () => document.visibilityState === "hidden",
++          { timeout: 8_000, polling: 100 },
++        );
++        const hiddenAt = await inputSnapshot();
++        await waitMs(180);
++        const hiddenStable = await inputSnapshot();
++        assert.ok(Math.abs(hiddenStable.scrollTop - hiddenAt.scrollTop) <= 1,
++          "Backgrounding must cancel active inertia while the viewer stays hidden");
++
++        await page.bringToFront();
++        await page.waitForFunction(
++          () => document.visibilityState === "visible",
++          { timeout: 8_000, polling: 100 },
++        );
++        await viewer.waitForFunction(
++          () => document.visibilityState === "visible",
++          { timeout: 8_000, polling: 100 },
++        );
++        const afterForegrounding = await inputSnapshot();
++        await waitMs(120);
++        const afterForegrounding120ms = await inputSnapshot();
++        await waitMs(130);
++        const afterForegrounding250ms = await inputSnapshot();
++        assert.ok(Math.abs(afterForegrounding.scrollTop - hiddenStable.scrollTop) <= 1,
++          "Restoring the viewer must not apply hidden-time inertia as a catch-up jump");
++        assert.ok(Math.abs(afterForegrounding120ms.scrollTop - afterForegrounding.scrollTop) <= 1);
++        assert.ok(Math.abs(afterForegrounding250ms.scrollTop - afterForegrounding.scrollTop) <= 1,
++          "Scroll position must remain stable after returning to the viewer");
++        report.backgroundTabInertiaCancellation = {
++          method: "new Chrome about:blank tab brought to front",
++          originalVisibilityWhenBackgrounded: "hidden",
++          iframeVisibilityWhenBackgrounded: "hidden",
++          originalVisibilityWhenRestored: "visible",
++          iframeVisibilityWhenRestored: "visible",
++          start: backgroundStart,
++          flickAtRelease: backgroundFlickAtRelease,
++          releaseTiming: backgroundFlickReleaseTiming,
++          beforeBackgrounding,
++          hiddenAt,
++          hiddenStable,
++          afterForegrounding,
++          afterForegrounding120ms,
++          afterForegrounding250ms,
++        };
++      } catch (error) {
++        backgroundPhaseError = error;
++        throw error;
++      } finally {
++        if (backgroundPage && !backgroundPage.isClosed()) {
++          try {
++            await backgroundPage.close();
++          } catch (cleanupError) {
++            if (backgroundPhaseError) {
++              backgroundPhaseError.backgroundPageCloseError = cleanupError.message;
++            } else {
++              throw cleanupError;
++            }
++          }
++        }
++      }
++
+@@ -860 +1098,3 @@ test(
+-      await beginFastTouchDrag(cdp, newContactPoint, 180, 25);
++      const newContactReleaseTiming = await beginFastTouchDrag(
++        cdp, viewer, newContactPoint, 180, 25, report,
++      );
+@@ -862 +1101,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -864,0 +1104,5 @@ test(
++      report.toolbarContactPrecondition = {
++        atRelease: newContactAtRelease,
++        after80ms: beforeToolbarTouch,
++        releaseTiming: newContactReleaseTiming,
++      };
+@@ -890 +1134,3 @@ test(
+-      await beginFastTouchDrag(cdp, penMomentumPoint, 180, 27);
++      const penFlickReleaseTiming = await beginFastTouchDrag(
++        cdp, viewer, penMomentumPoint, 180, 27, report,
++      );
+@@ -892 +1137,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -912 +1157 @@ test(
+-      await beginFastTouchDrag(cdp, mouseMomentumPoint, 180, 28);
++      await beginFastTouchDrag(cdp, viewer, mouseMomentumPoint, 180, 28, report);
+@@ -914 +1158,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -937 +1181 @@ test(
+-      await beginFastTouchDrag(cdp, wheelMomentumPoint, 180, 29);
++      await beginFastTouchDrag(cdp, viewer, wheelMomentumPoint, 180, 29, report);
+@@ -939 +1182,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -970 +1213 @@ test(
+-      await beginFastTouchDrag(cdp, toolChangePoint, 180, 30);
++      await beginFastTouchDrag(cdp, viewer, toolChangePoint, 180, 30, report);
+@@ -972 +1214,0 @@ test(
+-      await dispatchTouch(cdp, "touchEnd");
+@@ -1013,0 +1256 @@ test(
++          releaseTiming: fastFlickReleaseTiming,
+@@ -1029 +1272,5 @@ test(
+-        boundary: { start: boundaryStart, after: boundaryAfterInertia },
++        boundary: {
++          start: boundaryStart,
++          after: boundaryAfterInertia,
++          releaseTiming: boundaryReleaseTiming,
++        },
+@@ -1033,0 +1281,7 @@ test(
++          releaseTiming: newContactReleaseTiming,
++        },
++        penStop: {
++          atRelease: penFlickAtRelease,
++          before: beforePenStop,
++          after: afterPenStopWait,
++          releaseTiming: penFlickReleaseTiming,
+@@ -1035 +1288,0 @@ test(
+-        penStop: { before: beforePenStop, after: afterPenStopWait },
+diff --git a/tests/native-touch-scroll.mjs b/tests/native-touch-scroll.mjs
+new file mode 100644
+index 0000000..b6ee8fd
+--- /dev/null
++++ b/tests/native-touch-scroll.mjs
+@@ -0,0 +1,111 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs/promises';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import puppeteer from 'puppeteer-core';
++import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
++const { vault, configDir, cdpUrl } = nativeConfig;
++assert.equal(vault, '/Users/jiajia/Documents/ObReader-Apple-Test');
++assert.ok(cdpUrl);
++const version = '0.5.6', runId = `general-${version}-scroll-native-${Date.now()}`;
++const folder = `PDF迁移测试/${runId}`, file = `${folder}/scroll.pdf`;
++const hash = b => crypto.createHash('sha256').update(b).digest('hex');
++const driver = await fs.readFile(import.meta.filename);
++await fs.writeFile(`tests/artifacts/${runId}.driver.mjs`, driver, { flag: 'wx' });
++const report = { runId, version, vault, driverSha256: hash(driver), physicalIpadValidated: false, primaryVaultTouched: false, status: 'running', checks: {} };
++const browser = await puppeteer.connect({ browserURL: cdpUrl, defaultViewport: null });
++const page = (await browser.pages()).find(p => p.url() === 'app://obsidian.md/index.html');
++assert.ok(page);
++const session = await page.createCDPSession();
++let original, failure;
++const pause = ms => new Promise(r => setTimeout(r, ms));
++async function identity() {
++  const s = await page.evaluate(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir, version: app.plugins.plugins['pdf-web-reader']?.manifest.version }));
++  assertNativeVaultIdentity(s); assert.equal(s.version, version); return s;
++}
++async function root(fn, arg) {
++  await identity();
++  return page.evaluate(async ({ source, arg, vault }) => {
++    if (app.vault.adapter.basePath !== vault) throw Error('Wrong test Vault');
++    return (0, eval)(`(${source})`)(arg);
++  }, { source: fn.toString(), arg, vault });
++}
++async function doc(fn, arg) {
++  return root(({ file, source, arg }) => {
++    const v = [...app.plugins.plugins['pdf-web-reader'].views].find(v => v.requestedPath === file);
++    if (!v?.iframe) throw Error('Owned Reader missing');
++    const w = v.iframe.contentWindow;
++    return (0, eval)(`(${source})`)({ v, w, d: w.document, a: w.PDFViewerApplication, arg });
++  }, { file, source: fn.toString(), arg });
++}
++async function wait(label, fn, timeout = 30000) {
++  const end = Date.now() + timeout; let last;
++  while (Date.now() < end) { last = await fn(); if (last) return last; await pause(100); }
++  throw Error(`${label}: ${JSON.stringify(last)}`);
++}
++async function mode(mobile) {
++  await root(() => { if (app.plugins.plugins['pdf-web-reader'].views.size) throw Error('Existing Readers'); });
++  const navigation = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
++  await root(mobile => { setTimeout(() => app.emulateMobile(mobile), 0); }, mobile);
++  await navigation;
++  await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
++  await page.waitForFunction(() => app?.workspace?.layoutReady && app.plugins.plugins['pdf-web-reader']?.settings, { timeout: 30000 });
++  await identity();
++}
++async function touch(type, point) {
++  await identity();
++  await session.send('Input.dispatchTouchEvent', { type, touchPoints: point ? [{ x: point.x, y: point.y, id: 31, radiusX: 4, radiusY: 4, force: 1 }] : [] });
++}
++async function snapshot() {
++  return doc(({ v, d, a }) => ({ scroll: d.getElementById('viewerContainer').scrollTop, revision: v.currentRevision, storage: a.pdfDocument.annotationStorage.size, mode: a.pdfViewer.annotationEditorMode }));
++}
++try {
++  await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
++  report.checks.identity = await identity();
++  original = await root(() => { const p = app.plugins.plugins['pdf-web-reader']; if (p.views.size) throw Error('Existing Readers'); return { mobile: !!app.isMobile, autoSave: p.settings.autoSave }; });
++  assert.equal(original.mobile, false);
++  report.productHashes = {};
++  for (const n of ['main.js', 'manifest.json', 'styles.css']) { const actual = await fs.readFile(path.join(vault, configDir, 'plugins/pdf-web-reader', n)); assert.deepEqual(await fs.readFile(`dist/pdf-web-reader/${n}`), actual); report.productHashes[n] = hash(actual); }
++  await mode(true);
++  const bytes = await fs.readFile('tests/fixtures/tracemonkey.pdf');
++  await root(async ({ folder, file, bytes }) => { if (!folder.startsWith('PDF迁移测试/general-0.5.6-scroll-native-') || app.vault.getAbstractFileByPath(folder) || app.vault.getAbstractFileByPath(file)) throw Error('Unsafe or existing fixture'); await app.vault.createFolder(folder); await app.vault.createBinary(file, new Uint8Array(bytes).buffer); }, { folder, file, bytes: [...bytes] });
++  await root(async file => app.plugins.plugins['pdf-web-reader'].openPdf(app.vault.getAbstractFileByPath(file)), file);
++  await wait('PDF rendered', () => doc(({ v, a }) => v.ready && a.pdfViewer.getPageView(0)?.renderingState === 3));
++  const tool = await doc(({ v, d }) => { const r = d.getElementById('editorInkButton').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width / 2, y: f.y + r.y + r.height / 2 }; });
++  await page.mouse.click(tool.x, tool.y);
++  await wait('Ink selected', async () => (await snapshot()).mode === 15);
++  const before = await snapshot();
++  const point = await doc(({ v, d }) => { const r = d.getElementById('viewerContainer').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width * .5, y: f.y + r.y + r.height * .7, distance: Math.min(240, r.height * .5) }; });
++  await touch('touchStart', point);
++  for (let n = 1; n <= 4; n++) { await pause(12); await touch('touchMove', { x: point.x, y: point.y - point.distance * n / 4 }); }
++  const atRelease = await snapshot(); await touch('touchEnd');
++  const released = await snapshot(); await pause(120); const first = await snapshot(); await pause(120); const second = await snapshot();
++  assert.ok(atRelease.scroll > before.scroll + point.distance * .7);
++  assert.ok(first.scroll > released.scroll + 10);
++  assert.ok(second.scroll > first.scroll + 3);
++  assert.ok(second.scroll - first.scroll < first.scroll - released.scroll);
++  const stationary = await doc(({ v, d }) => { const r = d.getElementById('viewerContainer').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width * .8, y: f.y + r.y + r.height * .7 }; });
++  await touch('touchStart', stationary); const stopped = await snapshot(); await pause(150); await touch('touchEnd'); await pause(160); const stoppedLater = await snapshot();
++  assert.ok(Math.abs(stoppedLater.scroll - stopped.scroll) <= 1);
++  for (const s of [atRelease, released, first, second, stoppedLater]) { assert.equal(s.revision, before.revision); assert.equal(s.storage, before.storage); }
++  assert.equal(hash(await fs.readFile(path.join(vault, file))), hash(bytes));
++  report.checks.trustedCdpTouch = { before, atRelease, released, first, second, stopped, stoppedLater, fixtureUnchanged: true, touchWithInkDoesNotEdit: true, newContactStopsMomentum: true };
++  report.status = 'passed';
++} catch (e) { failure = e; report.status = 'failed'; report.error = { message: e.message, stack: e.stack }; }
++finally {
++  try {
++    await identity(); await root(async prefix => { for (const v of [...app.plugins.plugins['pdf-web-reader'].views]) if (v.requestedPath?.startsWith(prefix + '/')) await v.leaf.detach(); await app.workspace.saveLayout(); }, folder);
++  } catch (e) { failure ||= e; report.status = 'failed'; report.readerCleanupError = e.message; }
++  // Restore the emulator independently even if layout cleanup failed after detach.
++  try {
++    await identity();
++    if (original && await root(() => !!app.isMobile) !== original.mobile) await mode(original.mobile);
++  } catch (e) { failure ||= e; report.status = 'failed'; report.modeRestoreError = e.message; }
++  try {
++    report.cleanup = await root(() => ({ mobile: !!app.isMobile, readers: app.workspace.getLeavesOfType('pdf-web-reader-view').length, views: app.plugins.plugins['pdf-web-reader'].views.size, autoSave: app.plugins.plugins['pdf-web-reader'].settings.autoSave }));
++    assert.equal(report.cleanup.mobile, original?.mobile ?? false); assert.equal(report.cleanup.readers, 0); assert.equal(report.cleanup.views, 0); if (original) assert.equal(report.cleanup.autoSave, original.autoSave);
++  } catch (e) { failure ||= e; report.status = 'failed'; report.cleanupVerificationError = e.message; }
++  try { await session.send('Emulation.setTouchEmulationEnabled', { enabled: false }); await session.send('Emulation.setFocusEmulationEnabled', { enabled: false }); } catch {}
++  await browser.disconnect(); report.finishedAt = new Date().toISOString(); const output = `tests/artifacts/${runId}.json`; await fs.writeFile(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' }); console.log(output, report.status);
++}
++if (failure) throw failure;
+diff --git a/tests/packaging.test.mjs b/tests/packaging.test.mjs
+index ccf2750..644d89b 100644
+--- a/tests/packaging.test.mjs
++++ b/tests/packaging.test.mjs
+@@ -130 +130 @@ test("community release output is exactly the three installer assets", async ()
+-  assert.equal(manifest.version, "0.5.5");
++  assert.equal(manifest.version, "0.5.6");
+diff --git a/tests/pdf-merge-core.test.mjs b/tests/pdf-merge-core.test.mjs
+index d41b314..4a2949c 100644
+--- a/tests/pdf-merge-core.test.mjs
++++ b/tests/pdf-merge-core.test.mjs
+@@ -16,0 +17 @@ const { prepareLocal, merge, inspect } = mergeCore;
++const { getPageFingerprint, refMaps } = mergeCore._internals;
+@@ -663,0 +665,150 @@ test("copied winner preserves AP and NM while /P, popup /Parent and /IRT target
++test("annotation merge remaps GoTo and AP page refs to existing pages without copying the page tree", async () => {
++  const doc = await PDFDocument.create();
++  const pages = [doc.addPage([420, 540]), doc.addPage([420, 540]), doc.addPage([420, 540])];
++  for (const [index, page] of pages.entries()) {
++    page.drawText(`Stable body ${index + 1}`, { x: 24, y: 500, size: 12 });
++  }
++  const link = PDFDict.withContext(doc.context);
++  link.set(PDFName.of("Type"), PDFName.of("Annot"));
++  link.set(PDFName.of("Subtype"), PDFName.of("Link"));
++  link.set(PDFName.of("Rect"), numberArray(doc, [20, 30, 120, 70]));
++  const destination = PDFArray.withContext(doc.context);
++  destination.push(pages[2].ref);
++  destination.push(PDFName.of("Fit"));
++  const action = PDFDict.withContext(doc.context);
++  action.set(PDFName.of("S"), PDFName.of("GoTo"));
++  action.set(PDFName.of("D"), destination);
++  link.set(PDFName.of("A"), action);
++
++  const appearanceStreamDictionary = PDFDict.withContext(doc.context);
++  appearanceStreamDictionary.set(PDFName.of("Type"), PDFName.of("XObject"));
++  appearanceStreamDictionary.set(PDFName.of("Subtype"), PDFName.of("Form"));
++  appearanceStreamDictionary.set(PDFName.of("FormType"), PDFNumber.of(1));
++  appearanceStreamDictionary.set(PDFName.of("BBox"), numberArray(doc, [0, 0, 80, 30]));
++  const properties = PDFDict.withContext(doc.context);
++  properties.set(PDFName.of("Pg"), pages[1].ref);
++  const propertiesRef = doc.context.register(properties);
++  const resources = PDFDict.withContext(doc.context);
++  resources.set(PDFName.of("Properties"), propertiesRef);
++  appearanceStreamDictionary.set(PDFName.of("Resources"), doc.context.register(resources));
++  const appearanceRef = doc.context.register(PDFRawStream.of(
++    appearanceStreamDictionary,
++    new TextEncoder().encode("q\n% page-linked appearance resource\nQ\n"),
++  ));
++  const appearance = PDFDict.withContext(doc.context);
++  appearance.set(PDFName.of("N"), appearanceRef);
++  link.set(PDFName.of("AP"), appearance);
++  const linkRef = doc.context.register(link);
++  annotsFor(doc, pages[0]).push(linkRef);
++  addAnnotation(doc, 0, { subtype: "Square", contents: "before" });
++  const baseBytes = await doc.save({ useObjectStreams: false });
++  const baseFingerprintDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
++  const sourcePageRefs = baseFingerprintDoc.getPages().map((page) => page.ref);
++  const basePageFingerprints = getPageFingerprint(baseFingerprintDoc, refMaps(baseFingerprintDoc));
++  const baseInfo = await inspect({ bytes: baseBytes });
++  const editedIdentity = baseInfo.identities.find((item) => item.kind === "square");
++  const linkIdentity = baseInfo.identities.find((item) => item.ref === `${linkRef.objectNumber}R`);
++  assert.ok(editedIdentity);
++  assert.ok(linkIdentity);
++
++  const draft = await editBranch(baseBytes, refFromPdfJs(editedIdentity.ref), { contents: "after" });
++  const local = await prepareLocal({
++    baseBytes,
++    draftBytes: draft.bytes,
++    actorId: "actor-local",
++    operations: [operation({ uuid: editedIdentity.uuid, ref: editedIdentity.ref, kind: "square", timestamp: 100, operationId: "edit-square" })],
++  });
++  const remoteDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
++  const remotePages = remoteDoc.getPages();
++  const pageTree = remoteDoc.catalog.lookup(PDFName.of("Pages"), PDFDict);
++  const pageKids = pageTree.lookup(PDFName.of("Kids"), PDFArray);
++  const remotePageRefs = remotePages.map(() => remoteDoc.context.nextRef());
++  for (let index = 0; index < remotePages.length; index += 1) {
++    const oldRef = remotePages[index].ref;
++    remoteDoc.context.assign(remotePageRefs[index], remotePages[index].node);
++    remoteDoc.context.delete(oldRef);
++    pageKids.set(index, remotePageRefs[index]);
++  }
++  const remoteLink = remoteDoc.context.lookup(linkRef, PDFDict);
++  const remoteAction = remoteLink.lookup(PDFName.of("A"), PDFDict);
++  remoteAction.lookup(PDFName.of("D"), PDFArray).set(0, remotePageRefs[2]);
++  const remoteAppearanceRef = remoteLink.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
++  const remoteAppearanceStream = remoteDoc.context.lookup(remoteAppearanceRef, PDFRawStream);
++  const remoteResourcesRef = remoteAppearanceStream.dict.get(PDFName.of("Resources"));
++  const remoteResources = remoteDoc.context.lookup(remoteResourcesRef, PDFDict);
++  const remotePropertiesRef = remoteResources.get(PDFName.of("Properties"));
++  remoteDoc.context.lookup(remotePropertiesRef, PDFDict).set(PDFName.of("Pg"), remotePageRefs[1]);
++  assert.notEqual(remotePageRefs[1].toString(), sourcePageRefs[1].toString(), "the AP page ref must differ across branches");
++  assert.notEqual(remotePageRefs[2].toString(), sourcePageRefs[2].toString(), "the GoTo page ref must differ across branches");
++  remoteDoc.setTitle("Remote metadata update");
++  const remoteBytes = await remoteDoc.save({ useObjectStreams: false });
++  const remoteSavedDoc = await PDFDocument.load(remoteBytes, { updateMetadata: false });
++  const remoteSavedPageRefs = remoteSavedDoc.getPages().map((page) => page.ref.toString());
++  assert.notEqual(remoteSavedPageRefs[1], sourcePageRefs[1].toString());
++  assert.notEqual(remoteSavedPageRefs[2], sourcePageRefs[2].toString());
++  assert.deepEqual(getPageFingerprint(remoteSavedDoc, refMaps(remoteSavedDoc)), basePageFingerprints, "reassigning page refs must preserve page lineage");
++  const merged = await merge({ baseBytes, localBytes: local.bytes, remoteBytes });
++
++  const mergedDoc = await PDFDocument.load(merged.bytes, { updateMetadata: false });
++  assert.equal(mergedDoc.getPageCount(), 3, "merging annotations must not add copied page objects to the page tree");
++  const pageObjectCount = mergedDoc.context.enumerateIndirectObjects().filter(([, value]) =>
++    value instanceof PDFDict && value.get(PDFName.of("Type"))?.toString() === "/Page",
++  ).length;
++  assert.equal(pageObjectCount, 3, "merging must not leave detached copies of page objects in the context");
++  const mergedLink = await getAnnotation(merged.bytes, linkIdentity.uuid);
++  const mergedAction = mergedLink.dict.lookup(PDFName.of("A"), PDFDict);
++  assert.equal(mergedAction.lookup(PDFName.of("S"), PDFName).toString(), "/GoTo");
++  const mergedDestination = mergedAction.lookup(PDFName.of("D"), PDFArray);
++  assert.equal(mergedDestination.get(0).toString(), mergedDoc.getPages()[2].ref.toString(), "the cross-page target must point at the existing destination page");
++  assert.equal(mergedDestination.get(1).toString(), "/Fit");
++  const mergedAppearanceRef = mergedLink.dict.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
++  const mergedAppearanceStream = mergedDoc.context.lookup(mergedAppearanceRef, PDFRawStream);
++  const mergedResourcesRef = mergedAppearanceStream.dict.get(PDFName.of("Resources"));
++  const mergedResources = mergedDoc.context.lookup(mergedResourcesRef, PDFDict);
++  const mergedPropertiesRef = mergedResources.get(PDFName.of("Properties"));
++  const mergedProperties = mergedDoc.context.lookup(mergedPropertiesRef, PDFDict);
++  assert.equal(mergedProperties.get(PDFName.of("Pg")).toString(), mergedDoc.getPages()[1].ref.toString(), "AP page references must target the matching existing page");
++  assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), linkIdentity.uuid).uuid, linkIdentity.uuid);
++  assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), editedIdentity.uuid).uuid, editedIdentity.uuid);
++  const mergedFingerprints = getPageFingerprint(mergedDoc, refMaps(mergedDoc));
++  assert.deepEqual(mergedFingerprints, basePageFingerprints, "page content and order must remain unchanged");
++});
++
++test("annotation merge still rejects a reference to the page-tree root", async () => {
++  const doc = await PDFDocument.create();
++  const page = doc.addPage([420, 540]);
++  const targetPage = doc.addPage([420, 540]);
++  page.drawText("Stable source page", { x: 24, y: 500, size: 12 });
++  targetPage.drawText("Stable target page", { x: 24, y: 500, size: 12 });
++  const link = PDFDict.withContext(doc.context);
++  link.set(PDFName.of("Type"), PDFName.of("Annot"));
++  link.set(PDFName.of("Subtype"), PDFName.of("Link"));
++  link.set(PDFName.of("Rect"), numberArray(doc, [20, 30, 120, 70]));
++  const destination = PDFArray.withContext(doc.context);
++  destination.push(doc.catalog.get(PDFName.of("Pages")));
++  destination.push(PDFName.of("Fit"));
++  link.set(PDFName.of("Dest"), destination);
++  annotsFor(doc, page).push(doc.context.register(link));
++  addAnnotation(doc, 0, { subtype: "Square", contents: "before" });
++  const baseBytes = await doc.save({ useObjectStreams: false });
++  const baseInfo = await inspect({ bytes: baseBytes });
++  const squareIdentity = baseInfo.identities.find((item) => item.kind === "square");
++  assert.ok(squareIdentity);
++
++  const draft = await editBranch(baseBytes, refFromPdfJs(squareIdentity.ref), { contents: "after" });
++  const local = await prepareLocal({
++    baseBytes,
++    draftBytes: draft.bytes,
++    actorId: "actor-local",
++    operations: [operation({ uuid: squareIdentity.uuid, ref: squareIdentity.ref, kind: "square", timestamp: 100, operationId: "edit-square" })],
++  });
++  const remoteDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
++  remoteDoc.setTitle("Remote metadata update");
++  const remoteBytes = await remoteDoc.save({ useObjectStreams: false });
++
++  await assert.rejects(
++    merge({ baseBytes, localBytes: local.bytes, remoteBytes }),
++    (error) => error.code === "PDF_MERGE_ANNOTATION_REFERENCES_PAGE",
++  );
++});
++
+diff --git a/tests/touch-inertia.test.mjs b/tests/touch-inertia.test.mjs
+index 4f75653..f4ef6f0 100644
+--- a/tests/touch-inertia.test.mjs
++++ b/tests/touch-inertia.test.mjs
+@@ -6,4 +6,14 @@ import vm from "node:vm";
+-const source = await readFile(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
+-const section = source.slice(source.indexOf("  const MANUAL_INERTIA_SAMPLE_WINDOW_MS"), source.indexOf("  function clearManualPointerSessions"));
+-function harness() {
+-  let time = 0, frameId = 0, top = 100, left = 0;
++const source = await readFile(
++  new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url),
++  "utf8",
++);
++const section = source.slice(
++  source.indexOf("  const MANUAL_INERTIA_SAMPLE_WINDOW_MS"),
++  source.indexOf("  function clearManualPointerSessions"),
++);
++
++function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
++  let currentTime = time;
++  let frameId = 0;
++  let top = scrollTop;
++  let left = 0;
+@@ -12,4 +22,10 @@ function harness() {
+-    isConnected: true, scrollHeight: 10000, clientHeight: 500,
+-    scrollWidth: 500, clientWidth: 500,
+-    get scrollTop() { return top; }, set scrollTop(v) { top = Math.max(0, Math.min(9500, v)); },
+-    get scrollLeft() { return left; }, set scrollLeft(v) { left = Math.max(0, Math.min(0, v)); },
++    isConnected: true,
++    scrollHeight: maxTop + 500,
++    clientHeight: 500,
++    scrollWidth: 500,
++    clientWidth: 500,
++    get scrollTop() { return top; },
++    set scrollTop(value) { top = Math.max(0, Math.min(maxTop, value)); },
++    get scrollLeft() { return left; },
++    set scrollLeft(value) { left = Math.max(0, Math.min(0, value)); },
++    setPointerCapture() {},
+@@ -18 +34,11 @@ function harness() {
+-  const state = { app: { pdfDocument }, activeDocumentId: "doc", activeOpenRequest: 1, manualPointers: new Map(), manualMomentum: null };
++  const state = {
++    app: { pdfDocument },
++    activeDocumentId: "doc",
++    activeOpenRequest: 1,
++    manualPointers: new Map(),
++    manualMomentum: null,
++  };
++  const document = {
++    visibilityState: "visible",
++    getElementById(id) { return id === "viewerContainer" ? container : null; },
++  };
+@@ -20 +46,10 @@ function harness() {
+-    state, rendererGeneration: 1, iosInputPolicy: true,
++    state,
++    rendererGeneration: 1,
++    iosInputPolicy: true,
++    document,
++    directManipulationPage(target) { return target; },
++    hasActivePenEditorGesture() { return false; },
++    stopDirectManipulationEvent(event) {
++      event.preventDefault?.();
++      event.stopImmediatePropagation?.();
++    },
+@@ -22,2 +57,6 @@ function harness() {
+-    performance: { now: () => time },
+-    requestAnimationFrame(fn) { const id = ++frameId; frames.set(id, fn); return id; },
++    performance: { now: () => currentTime },
++    requestAnimationFrame(callback) {
++      const id = ++frameId;
++      frames.set(id, callback);
++      return id;
++    },
+@@ -27,9 +66,52 @@ function harness() {
+-  vm.runInNewContext(section + "\nglobalThis.api = { startManualMomentum, finishManualPointer };", context);
+-  const pointer = { pointerId: 1, pointerType: "touch", container, pdfDocument,
+-    documentId: "doc", openRequest: 1, rendererGeneration: 1,
+-    startX: 50, startY: 300, startScrollTop: 0, startScrollLeft: 0,
+-    lastX: 50, lastY: 200, moved: true, lastMotionAt: 100,
+-    scrollSamples: [{ time: 0, scrollTop: 0, scrollLeft: 0 }, { time: 100, scrollTop: 100, scrollLeft: 0 }] };
+-  return { state, pointer, container, api: context.api,
+-    setTime(t) { time = t; },
+-    advance(t) { while (time < t) { time = Math.min(t, time + 16); const pending = [...frames.values()]; frames.clear(); for (const fn of pending) fn(time); } },
++  vm.runInNewContext(
++    section +
++      "\nglobalThis.api = { touchReleaseVelocity, rememberManualScroll, manualPointerEventTime, startManualMomentum, finishManualPointer, startManualPointer, applyManualPan, onManualDocumentVisibilityChange };",
++    context,
++  );
++  return {
++    state,
++    container,
++    document,
++    frames,
++    api: context.api,
++    setTime(value) { currentTime = value; },
++    frameAt(value) {
++      currentTime = value;
++      const callbacks = [...frames.values()];
++      frames.clear();
++      for (const callback of callbacks) callback(value);
++    },
++  };
++}
++
++function makePointer(h, samples, overrides = {}) {
++  const normalizedSamples = samples.map((sample) => ({
++    time: sample.time,
++    scrollTop: sample.y ?? 0,
++    scrollLeft: sample.x ?? 0,
++  }));
++  const last = normalizedSamples.at(-1) || {
++    time: h.api.manualPointerEventTime(null, null),
++    scrollTop: h.container.scrollTop,
++    scrollLeft: h.container.scrollLeft,
++  };
++  h.container.scrollTop = last.scrollTop;
++  h.container.scrollLeft = last.scrollLeft;
++  return {
++    pointerId: 1,
++    pointerType: "touch",
++    container: h.container,
++    pdfDocument: h.state.app.pdfDocument,
++    documentId: "doc",
++    openRequest: 1,
++    rendererGeneration: 1,
++    startX: 50,
++    startY: 100,
++    lastX: 50,
++    lastY: 100,
++    startScrollTop: last.scrollTop,
++    startScrollLeft: last.scrollLeft,
++    moved: true,
++    lastMotionAt: last.time,
++    scrollSamples: normalizedSamples,
++    ...overrides,
+@@ -39,7 +121,46 @@ function harness() {
+-test("finger inertia decelerates below its launch threshold before stopping", () => {
+-  const h = harness(); h.setTime(100); h.api.startManualMomentum(h.pointer);
+-  h.advance(1000); const tailStart = h.container.scrollTop;
+-  h.advance(1200);
+-  assert.ok(h.container.scrollTop > tailStart + 3, "The slow tail must still move instead of cutting off at 120 px/s");
+-  h.advance(1800); assert.equal(h.state.manualMomentum, null);
+-  const stopped = h.container.scrollTop; h.advance(2000); assert.equal(h.container.scrollTop, stopped);
++function linearSamples({ speedX = 0, speedY = 0, start = 0, duration = 80 }) {
++  return [
++    { time: start, x: 0, y: 0 },
++    { time: start + duration, x: speedX * duration, y: speedY * duration },
++  ];
++}
++
++function launchHarness(speedX = 0, speedY = 0) {
++  const startTime = 100;
++  const h = harness({ time: startTime });
++  const pointer = makePointer(
++    h,
++    linearSamples({ speedX, speedY, start: startTime - 80, duration: 80 }),
++  );
++  h.api.startManualMomentum(pointer, startTime);
++  assert.ok(h.state.manualMomentum, "the test flick should launch inertia");
++  return { h, pointer, startTime };
++}
++
++test("release velocity is a recency-weighted regression over the final 80 ms", () => {
++  const h = harness({ time: 80 });
++  const pointer = makePointer(h, [
++    { time: 0, x: 0, y: 0 },
++    { time: 40, x: 0, y: 0 },
++    { time: 80, x: 0, y: 8 },
++  ]);
++  const velocity = h.api.touchReleaseVelocity(pointer, 80);
++  const weights = [Math.exp(-2), Math.exp(-1), 1];
++  const times = [-80, -40, 0];
++  const positions = [0, 0, 8];
++  const sum = weights.reduce((total, weight) => total + weight, 0);
++  const meanTime = weights.reduce((total, weight, i) => total + weight * times[i], 0) / sum;
++  const meanPosition = weights.reduce((total, weight, i) => total + weight * positions[i], 0) / sum;
++  const denominator = weights.reduce(
++    (total, weight, i) => total + weight * (times[i] - meanTime) ** 2,
++    0,
++  );
++  const expected = weights.reduce(
++    (total, weight, i) =>
++      total + weight * (times[i] - meanTime) * (positions[i] - meanPosition),
++    0,
++  ) / denominator;
++  assert.ok(velocity);
++  assert.ok(velocity.y > 0.1, "the newest accelerating sample should carry more weight");
++  assert.ok(Math.abs(velocity.y - expected) < 1e-12);
++  assert.equal(velocity.x, 0);
+@@ -48,5 +169,131 @@ test("finger inertia decelerates below its launch threshold before stopping", ()
+-test("finger release consumes the final pointerup position before starting momentum", () => {
+-  const h = harness(); h.state.manualPointers.set(1, h.pointer); h.setTime(116);
+-  h.api.finishManualPointer(1, { clientX: 50, clientY: 160 });
+-  assert.equal(h.container.scrollTop, 140);
+-  assert.equal(h.state.manualPointers.size, 0);
++test("a light flick clears the launch threshold while a paused finger does not", () => {
++  const h = harness({ time: 80 });
++  const lightFlick = makePointer(h, linearSamples({ speedY: 0.1, start: 0 }));
++  assert.ok(Math.abs(h.api.touchReleaseVelocity(lightFlick, 80).y - 0.1) < 1e-12);
++
++  const paused = makePointer(
++    h,
++    linearSamples({ speedY: 0.5, start: 0 }),
++    { lastMotionAt: 0 },
++  );
++  assert.equal(h.api.touchReleaseVelocity(paused, 81), null);
++});
++
++test("sample timing merges duplicate timestamps and rejects spans under 8 ms or sparse history", () => {
++  const h = harness({ time: 20, scrollTop: 0 });
++  const pointer = makePointer(h, [{ time: 0, x: 0, y: 0 }]);
++  pointer.lastMotionAt = null;
++  h.container.scrollTop = 1;
++  h.api.rememberManualScroll(pointer, 10);
++  h.container.scrollTop = 2;
++  h.api.rememberManualScroll(pointer, 10);
++  assert.equal(pointer.scrollSamples.length, 2);
++  assert.deepEqual(
++    pointer.scrollSamples.map(({ time, scrollTop }) => [time, scrollTop]),
++    [[0, 0], [10, 2]],
++  );
++  assert.equal(pointer.lastMotionAt, 10);
++
++  const tooShort = makePointer(h, [
++    { time: 0, y: 0 },
++    { time: 7.99, y: 4 },
++  ]);
++  assert.equal(h.api.touchReleaseVelocity(tooShort, 7.99), null);
++
++  const sparse = makePointer(h, [
++    { time: 0, y: 0 },
++    { time: 81, y: 81 },
++  ]);
++  assert.equal(h.api.touchReleaseVelocity(sparse, 81), null);
++
++  for (let i = 1; i <= 200; i += 1) {
++    h.container.scrollTop = i;
++    h.api.rememberManualScroll(pointer, i / 2);
++  }
++  assert.equal(pointer.scrollSamples.length, 128);
++  const precedingWindow = pointer.scrollSamples.filter((sample) => sample.time < 20);
++  assert.ok(precedingWindow.length <= 1);
++  assert.ok(pointer.scrollSamples.at(-1).time >= 20);
++});
++
++test("the 80 ms window interpolates one nearby predecessor without an edge jump", () => {
++  function velocityAt(releaseTime) {
++    const h = harness({ time: releaseTime, scrollTop: 46.9 });
++    const pointer = makePointer(h, [
++      { time: 5953, y: 0 },
++      { time: 5999.9, y: 46.9 },
++      { time: releaseTime, y: 46.9 },
++    ]);
++    pointer.lastMotionAt = 5999.9;
++    return h.api.touchReleaseVelocity(pointer, releaseTime);
++  }
++
++  const sampleAtBoundary = velocityAt(6033);
++  const sampleJustOutsideBoundary = velocityAt(6033.8);
++  assert.ok(sampleAtBoundary);
++  assert.ok(sampleJustOutsideBoundary,
++    "A sample 0.8 ms before the window edge must contribute through interpolation");
++  assert.ok(sampleJustOutsideBoundary.y > 0.09,
++    "The release estimate must retain the real recent flick speed");
++  assert.ok(Math.abs(sampleJustOutsideBoundary.y - sampleAtBoundary.y) < 0.02,
++    "Crossing the window edge by 0.8 ms must not cause a sudden velocity change");
++});
++
++test("a sample exactly on the 80 ms boundary is not counted twice", () => {
++  function estimate(samples) {
++    const h = harness({ time: 80, scrollTop: 40 });
++    const pointer = makePointer(h, samples);
++    pointer.lastMotionAt = 40;
++    return h.api.touchReleaseVelocity(pointer, 80);
++  }
++
++  const withPredecessor = estimate([
++    { time: -1, y: -1 },
++    { time: 0, y: 0 },
++    { time: 40, y: 40 },
++    { time: 80, y: 40 },
++  ]);
++  const boundaryOnly = estimate([
++    { time: 0, y: 0 },
++    { time: 40, y: 40 },
++    { time: 80, y: 40 },
++  ]);
++  assert.ok(withPredecessor);
++  assert.ok(boundaryOnly);
++  assert.equal(withPredecessor.x, boundaryOnly.x);
++  assert.equal(withPredecessor.y, boundaryOnly.y);
++});
++
++test("event timestamps use the performance clock when origins do not match", () => {
++  const h = harness({ time: 100 });
++  const pointer = makePointer(h, [{ time: 90, y: 0 }]);
++  assert.equal(h.api.manualPointerEventTime(pointer, { timeStamp: 95 }, 100), 95);
++  assert.equal(h.api.manualPointerEventTime(pointer, { timeStamp: 900000 }, 100), 100);
++  assert.equal(h.api.manualPointerEventTime(pointer, { timeStamp: 100.1 }, 100), 100);
++  assert.equal(h.api.manualPointerEventTime(pointer, { timeStamp: 85 }, 100), 100);
++});
++
++test("diagonal release velocity is capped at 4 px/ms by vector magnitude", () => {
++  const h = harness({ time: 80 });
++  const pointer = makePointer(h, linearSamples({ speedX: 5, speedY: 5, start: 0 }));
++  const velocity = h.api.touchReleaseVelocity(pointer, 80);
++  assert.ok(velocity);
++  assert.ok(Math.abs(Math.hypot(velocity.x, velocity.y) - 4) < 1e-12);
++  assert.ok(Math.abs(velocity.x - Math.SQRT2 * 2) < 1e-12);
++  assert.ok(Math.abs(velocity.y - Math.SQRT2 * 2) < 1e-12);
++});
++
++test("stationary pointerup records its endpoint without refreshing last motion", () => {
++  const h = harness({ time: 80, scrollTop: 40 });
++  const pointer = makePointer(h, [
++    { time: 0, y: 0 },
++    { time: 40, y: 40 },
++  ]);
++  pointer.lastMotionAt = 40;
++  pointer.startScrollTop = 40;
++  h.state.manualPointers.set(pointer.pointerId, pointer);
++  h.api.finishManualPointer(1, { clientX: 50, clientY: 100, timeStamp: 80 });
++  assert.equal(pointer.lastMotionAt, 40);
++  assert.equal(pointer.scrollSamples.at(-1).time, 80);
++  assert.equal(pointer.scrollSamples.at(-1).scrollTop, 40);
++  assert.equal(pointer.scrollSamples.at(-1).scrollLeft, 0);
+@@ -54 +301,174 @@ test("finger release consumes the final pointerup position before starting momen
+-  h.advance(148); assert.ok(h.container.scrollTop > 140);
++
++  const paused = harness({ time: 121, scrollTop: 40 });
++  const oldPointer = makePointer(paused, [
++    { time: 0, y: 0 },
++    { time: 40, y: 40 },
++  ]);
++  oldPointer.lastMotionAt = 40;
++  oldPointer.startScrollTop = 40;
++  paused.state.manualPointers.set(oldPointer.pointerId, oldPointer);
++  paused.api.finishManualPointer(
++    1,
++    { clientX: 50, clientY: 100, timeStamp: 121 },
++  );
++  assert.equal(oldPointer.lastMotionAt, 40);
++  assert.equal(paused.state.manualMomentum, null);
++});
++
++test("pointerup applies its final position while pointercancel ignores it", () => {
++  const released = harness({ time: 116, scrollTop: 100 });
++  const releasePointer = makePointer(released, [
++    { time: 0, y: 0 },
++    { time: 100, y: 100 },
++  ]);
++  released.state.manualPointers.set(releasePointer.pointerId, releasePointer);
++  released.api.finishManualPointer(
++    releasePointer.pointerId,
++    { clientX: 50, clientY: 60, timeStamp: 116 },
++  );
++  assert.equal(released.container.scrollTop, 140);
++  assert.equal(released.state.manualPointers.size, 0);
++  assert.ok(released.state.manualMomentum);
++
++  const cancelled = harness({ time: 116, scrollTop: 100 });
++  const cancelPointer = makePointer(cancelled, [
++    { time: 0, y: 0 },
++    { time: 100, y: 100 },
++  ]);
++  cancelled.state.manualPointers.set(cancelPointer.pointerId, cancelPointer);
++  cancelled.api.finishManualPointer(
++    cancelPointer.pointerId,
++    { clientX: 50, clientY: 60, timeStamp: 116 },
++    { cancel: true },
++  );
++  assert.equal(cancelled.container.scrollTop, 100);
++  assert.equal(cancelled.state.manualPointers.size, 0);
++  assert.equal(cancelled.state.manualMomentum, null);
++});
++
++test("a second direct pointer blocks both touch pans regardless of lift order", () => {
++  for (const releaseOrder of [[2, 1], [1, 2]]) {
++    const h = harness({ time: 0, scrollTop: 100 });
++    const down = (pointerId) => h.api.startManualPointer({
++      pointerId,
++      pointerType: "touch",
++      target: { id: `target-${pointerId}` },
++      clientX: 50,
++      clientY: 100,
++      timeStamp: h.api.manualPointerEventTime(null, null, 0),
++      preventDefault() {},
++      stopImmediatePropagation() {},
++    }, "touch");
++    const first = down(1);
++    h.setTime(16);
++    h.api.applyManualPan(first, {
++      clientX: 50,
++      clientY: 80,
++      timeStamp: 16,
++    });
++    assert.equal(h.container.scrollTop, 120);
++    assert.equal(first.moved, true);
++
++    h.setTime(20);
++    const second = h.api.startManualPointer({
++      pointerId: 2,
++      pointerType: "touch",
++      target: { id: "target-2" },
++      clientX: 50,
++      clientY: 100,
++      timeStamp: 20,
++      preventDefault() {},
++      stopImmediatePropagation() {},
++    }, "touch");
++    assert.equal(first.blockedByOtherPointer, true);
++    assert.equal(first.moved, false);
++    assert.equal(first.lastMotionAt, null);
++    assert.equal(first.scrollSamples.length, 1);
++    assert.equal(second.blockedByOtherPointer, true);
++
++    h.setTime(36);
++    h.api.applyManualPan(first, {
++      clientX: 50,
++      clientY: 50,
++      timeStamp: 36,
++    });
++    h.api.applyManualPan(second, {
++      clientX: 50,
++      clientY: 70,
++      timeStamp: 36,
++    });
++    assert.equal(h.container.scrollTop, 120,
++      "Neither pointer may pan after the second direct contact joins");
++
++    for (const pointerId of releaseOrder) {
++      const pointer = pointerId === 1 ? first : second;
++      h.setTime(40);
++      h.api.finishManualPointer(pointerId, {
++        clientX: 50,
++        clientY: pointer.lastY,
++        timeStamp: 40,
++      });
++      assert.equal(h.state.manualMomentum, null,
++        "No release order may create one-finger inertia after multi-touch");
++      assert.equal(h.container.scrollTop, 120);
++    }
++    assert.equal(h.state.manualPointers.size, 0);
++  }
++});
++
++test("inertia has partition-independent decay across 60, 120 Hz and an 80 ms stall", () => {
++  const duration = 200;
++  const stopTime = 350 * Math.log(0.8 / 0.01);
++  const frame60 = duration / 12;
++  const frame120 = duration / 24;
++  const schedules = [
++    Array.from(
++      { length: Math.ceil(stopTime / frame60) },
++      (_, i) => frame60 * (i + 1),
++    ),
++    Array.from(
++      { length: Math.ceil(stopTime / frame120) },
++      (_, i) => frame120 * (i + 1),
++    ),
++    (() => {
++      const frames = [16, 33, 50, 130, 146, 163, 181, 200];
++      const intervals = [16, 17, 19, 80, 13, 21];
++      let i = 0;
++      while (frames.at(-1) <= stopTime) {
++        frames.push(frames.at(-1) + intervals[i % intervals.length]);
++        i += 1;
++      }
++      return frames;
++    })(),
++  ];
++  const results = schedules.map((schedule) => {
++    const { h, startTime } = launchHarness(0, 0.8);
++    let at200 = null;
++    for (const elapsed of schedule) {
++      h.frameAt(startTime + elapsed);
++      if (elapsed === duration) {
++        at200 = {
++          position: h.container.scrollTop,
++          velocity: h.state.manualMomentum.velocityY,
++        };
++      }
++    }
++    return {
++      at200,
++      finalPosition: h.container.scrollTop,
++      stopped: h.state.manualMomentum === null,
++    };
++  });
++  const expectedPosition = 64 + 0.8 * 350 * (1 - Math.exp(-duration / 350));
++  const expectedVelocity = 0.8 * Math.exp(-duration / 350);
++  for (const result of results) {
++    assert.ok(result.at200);
++    assert.ok(Math.abs(result.at200.position - expectedPosition) < 1e-9);
++    assert.ok(Math.abs(result.at200.velocity - expectedVelocity) < 1e-12);
++    assert.equal(result.stopped, true);
++    assert.ok(Math.abs(result.finalPosition - (64 + 350 * (0.8 - 0.01))) <= 1);
++  }
++  assert.ok(Math.max(...results.map((result) => result.at200.position)) -
++    Math.min(...results.map((result) => result.at200.position)) < 1e-9);
++  assert.ok(Math.max(...results.map((result) => result.finalPosition)) -
++    Math.min(...results.map((result) => result.finalPosition)) <= 1);
+@@ -57,4 +477,28 @@ test("finger release consumes the final pointerup position before starting momen
+-test("cancelled finger does not apply terminal coordinates or start momentum", () => {
+-  const h = harness(); h.state.manualPointers.set(1, h.pointer); h.setTime(116);
+-  h.api.finishManualPointer(1, { clientX: 50, clientY: 160 }, { cancel: true });
+-  assert.equal(h.container.scrollTop, 100);
++test("a long frame integrates only through the exact stop time", () => {
++  const { h, startTime } = launchHarness(0, 0.8);
++  const stopTime = 350 * Math.log(0.8 / 0.01);
++  h.frameAt(startTime + stopTime + 80);
++  assert.equal(h.state.manualMomentum, null);
++  const expected = 64 + 350 * (0.8 - 0.01);
++  assert.ok(Math.abs(h.container.scrollTop - expected) <= 1);
++  const stoppedPosition = h.container.scrollTop;
++  h.frameAt(startTime + stopTime + 160);
++  assert.equal(h.container.scrollTop, stoppedPosition);
++});
++
++test("hiding cancels inertia and prevents an active finger from restarting it", () => {
++  const { h, pointer, startTime } = launchHarness(0, 0.8);
++  h.state.manualPointers.set(pointer.pointerId, pointer);
++  h.setTime(startTime + 16);
++  h.document.visibilityState = "hidden";
++  h.api.onManualDocumentVisibilityChange();
++  assert.equal(h.state.manualMomentum, null);
++  assert.equal(pointer.blockedByVisibility, true);
++  assert.equal(pointer.moved, false);
++
++  h.document.visibilityState = "visible";
++  h.setTime(startTime + 32);
++  h.api.finishManualPointer(
++    pointer.pointerId,
++    { clientX: 50, clientY: 100, timeStamp: startTime + 32 },
++  );
+@@ -62 +505,0 @@ test("cancelled finger does not apply terminal coordinates or start momentum", (
+-  assert.equal(h.state.manualPointers.size, 0);
+diff --git a/versions.json b/versions.json
+index 88bafff..777861f 100644
+--- a/versions.json
++++ b/versions.json
+@@ -16 +16,2 @@
+-  "0.5.5": "1.14.4"
++  "0.5.5": "1.14.4",
++  "0.5.6": "1.14.4"
+diff --git a/viewer-adapter/obsidian-bridge.js b/viewer-adapter/obsidian-bridge.js
+index 446f6b7..bef7325 100644
+--- a/viewer-adapter/obsidian-bridge.js
++++ b/viewer-adapter/obsidian-bridge.js
+@@ -4734,8 +4734,8 @@
+-  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 120;
+-  const MANUAL_INERTIA_MAX_SPEED = 2;
+-  const MANUAL_INERTIA_START_SPEED = 0.12;
+-  // Starting a flick and ending its tail need different thresholds. Ending at
+-  // the start threshold cuts off visibly while the page is still moving.
+-  const MANUAL_INERTIA_STOP_SPEED = 0.015;
+-  const MANUAL_INERTIA_DECAY_MS = 300;
+-  const MANUAL_INERTIA_MAX_FRAME_MS = 32;
++  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 80;
++  const MANUAL_INERTIA_MAX_SAMPLES = 128;
++  const MANUAL_INERTIA_MAX_SPEED = 4;
++  const MANUAL_INERTIA_START_SPEED = 0.09;
++  const MANUAL_INERTIA_STOP_SPEED = 0.01;
++  const MANUAL_INERTIA_DECAY_MS = 350;
++  const MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS = 8;
++  const MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS = 5000;
+@@ -4755,0 +4756,27 @@
++  function onManualDocumentVisibilityChange() {
++    if (document.visibilityState === "hidden") {
++      cancelManualMomentum();
++      for (const pointer of state.manualPointers.values()) {
++        if (pointer.pointerType === "touch") {
++          pointer.blockedByVisibility = true;
++          pointer.moved = false;
++        }
++      }
++    }
++  }
++
++  function manualPointerEventTime(pointer, event, now = performance.now()) {
++    const eventTime = event?.timeStamp;
++    let time = Number.isFinite(eventTime) &&
++        eventTime >= 0 &&
++        eventTime <= now &&
++        now - eventTime <= MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS
++      ? eventTime
++      : now;
++    const previousTime = pointer?.scrollSamples?.at(-1)?.time;
++    if (Number.isFinite(previousTime) && time < previousTime) {
++      time = Math.max(previousTime, now);
++    }
++    return time;
++  }
++
+@@ -4761 +4788 @@
+-      time,
++      time: Number.isFinite(time) ? time : performance.now(),
+@@ -4766,6 +4793,14 @@
+-    if (
+-      previous &&
+-      Math.abs(sample.scrollTop - previous.scrollTop) < 0.01 &&
+-      Math.abs(sample.scrollLeft - previous.scrollLeft) < 0.01
+-    ) {
+-      return;
++    const moved = previous && (
++      Math.abs(sample.scrollTop - previous.scrollTop) >= 0.01 ||
++      Math.abs(sample.scrollLeft - previous.scrollLeft) >= 0.01
++    );
++    if (previous && sample.time < previous.time) {
++      sample.time = previous.time;
++    }
++    if (previous && sample.time === previous.time) {
++      pointer.scrollSamples[pointer.scrollSamples.length - 1] = sample;
++    } else {
++      pointer.scrollSamples.push(sample);
++    }
++    if (moved) {
++      pointer.lastMotionAt = sample.time;
+@@ -4773,2 +4808 @@
+-    pointer.scrollSamples.push(sample);
+-    pointer.lastMotionAt = time;
++    const oldestRecentTime = sample.time - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
+@@ -4776,2 +4810,2 @@
+-      pointer.scrollSamples.length > 2 &&
+-      pointer.scrollSamples[1].time < time - MANUAL_INERTIA_SAMPLE_WINDOW_MS
++      pointer.scrollSamples.length > 1 &&
++      pointer.scrollSamples[1].time < oldestRecentTime
+@@ -4780,0 +4815,6 @@
++    if (pointer.scrollSamples.length > MANUAL_INERTIA_MAX_SAMPLES) {
++      pointer.scrollSamples.splice(
++        0,
++        pointer.scrollSamples.length - MANUAL_INERTIA_MAX_SAMPLES,
++      );
++    }
+@@ -4788,0 +4829 @@
++      pointer.blockedByVisibility ||
+@@ -4789,0 +4831 @@
++      now < pointer.lastMotionAt ||
+@@ -4794 +4836,31 @@
+-    const samples = pointer.scrollSamples;
++    const windowStart = now - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
++    const samples = pointer.scrollSamples.filter((sample) =>
++      Number.isFinite(sample.time) &&
++      sample.time >= windowStart &&
++      sample.time <= now &&
++      Number.isFinite(sample.scrollTop) &&
++      Number.isFinite(sample.scrollLeft)
++    );
++    const firstRecent = samples[0];
++    const predecessor = [...pointer.scrollSamples].reverse().find((sample) =>
++      Number.isFinite(sample.time) &&
++      sample.time < windowStart &&
++      Number.isFinite(sample.scrollTop) &&
++      Number.isFinite(sample.scrollLeft)
++    );
++    if (
++      predecessor &&
++      firstRecent &&
++      firstRecent.time > windowStart &&
++      firstRecent.time - predecessor.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS
++    ) {
++      const fraction = (windowStart - predecessor.time) /
++        (firstRecent.time - predecessor.time);
++      samples.unshift({
++        time: windowStart,
++        scrollLeft: predecessor.scrollLeft +
++          (firstRecent.scrollLeft - predecessor.scrollLeft) * fraction,
++        scrollTop: predecessor.scrollTop +
++          (firstRecent.scrollTop - predecessor.scrollTop) * fraction,
++      });
++    }
+@@ -4798,5 +4870 @@
+-    const firstRecentIndex = samples.findIndex(
+-      (sample) => now - sample.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS,
+-    );
+-    const firstIndex = firstRecentIndex > 0 ? firstRecentIndex - 1 : 0;
+-    const first = samples[firstIndex];
++    const first = samples[0];
+@@ -4804,8 +4872,38 @@
+-    const elapsed = Math.min(
+-      MANUAL_INERTIA_SAMPLE_WINDOW_MS,
+-      Math.max(8, last.time - first.time),
+-    );
+-    const clampSpeed = (distance) => Math.max(
+-      -MANUAL_INERTIA_MAX_SPEED,
+-      Math.min(MANUAL_INERTIA_MAX_SPEED, distance / elapsed),
+-    );
++    if (last.time - first.time < MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS) {
++      return null;
++    }
++    let weightSum = 0;
++    let weightedTime = 0;
++    let weightedLeft = 0;
++    let weightedTop = 0;
++    for (const sample of samples) {
++      const weight = Math.exp(
++        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
++      );
++      const relativeTime = sample.time - now;
++      weightSum += weight;
++      weightedTime += weight * relativeTime;
++      weightedLeft += weight * sample.scrollLeft;
++      weightedTop += weight * sample.scrollTop;
++    }
++    if (weightSum <= 0) {
++      return null;
++    }
++    const meanTime = weightedTime / weightSum;
++    const meanLeft = weightedLeft / weightSum;
++    const meanTop = weightedTop / weightSum;
++    let timeVariance = 0;
++    let leftCovariance = 0;
++    let topCovariance = 0;
++    for (const sample of samples) {
++      const weight = Math.exp(
++        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
++      );
++      const timeOffset = sample.time - now - meanTime;
++      timeVariance += weight * timeOffset * timeOffset;
++      leftCovariance += weight * timeOffset * (sample.scrollLeft - meanLeft);
++      topCovariance += weight * timeOffset * (sample.scrollTop - meanTop);
++    }
++    if (timeVariance <= 0) {
++      return null;
++    }
+@@ -4813,2 +4911,2 @@
+-      x: clampSpeed(last.scrollLeft - first.scrollLeft),
+-      y: clampSpeed(last.scrollTop - first.scrollTop),
++      x: leftCovariance / timeVariance,
++      y: topCovariance / timeVariance,
+@@ -4815,0 +4914,5 @@
++    const speed = Math.hypot(velocity.x, velocity.y);
++    if (speed > MANUAL_INERTIA_MAX_SPEED) {
++      velocity.x *= MANUAL_INERTIA_MAX_SPEED / speed;
++      velocity.y *= MANUAL_INERTIA_MAX_SPEED / speed;
++    }
+@@ -4825 +4928 @@
+-  function startManualMomentum(pointer) {
++  function startManualMomentum(pointer, now = performance.now()) {
+@@ -4828,0 +4932 @@
++      document.visibilityState === "hidden" ||
+@@ -4833 +4937 @@
+-    const velocity = touchReleaseVelocity(pointer);
++    const velocity = touchReleaseVelocity(pointer, now);
+@@ -4848 +4952 @@
+-      lastFrameTime: performance.now(),
++      lastFrameTime: now,
+@@ -4856 +4960,4 @@
+-      if (prefersReducedMotion()) {
++      if (
++        prefersReducedMotion() ||
++        document.visibilityState === "hidden"
++      ) {
+@@ -4864,7 +4971,15 @@
+-      const elapsed = Math.min(
+-        MANUAL_INERTIA_MAX_FRAME_MS,
+-        Math.max(0, frameTime - momentum.lastFrameTime),
+-      );
+-      momentum.lastFrameTime = frameTime;
+-      if (elapsed > 0) {
+-        const decay = Math.exp(-elapsed / MANUAL_INERTIA_DECAY_MS);
++      if (!Number.isFinite(frameTime)) {
++        cancelManualMomentum();
++        return;
++      }
++      const elapsed = Math.max(0, frameTime - momentum.lastFrameTime);
++      momentum.lastFrameTime = Math.max(momentum.lastFrameTime, frameTime);
++      const speed = Math.hypot(momentum.velocityX, momentum.velocityY);
++      const timeToStop = speed > MANUAL_INERTIA_STOP_SPEED
++        ? MANUAL_INERTIA_DECAY_MS * Math.log(
++          speed / MANUAL_INERTIA_STOP_SPEED,
++        )
++        : 0;
++      const activeElapsed = Math.min(elapsed, timeToStop);
++      if (activeElapsed > 0) {
++        const decay = Math.exp(-activeElapsed / MANUAL_INERTIA_DECAY_MS);
+@@ -4902,0 +5018 @@
++          momentum.targetLeft = momentum.container.scrollLeft;
+@@ -4912,0 +5029 @@
++          momentum.targetTop = momentum.container.scrollTop;
+@@ -4917,4 +5034,3 @@
+-      if (
+-        Math.hypot(momentum.velocityX, momentum.velocityY) <
+-        MANUAL_INERTIA_STOP_SPEED
+-      ) {
++      if (activeElapsed < elapsed ||
++        Math.hypot(momentum.velocityX, momentum.velocityY) <=
++          MANUAL_INERTIA_STOP_SPEED) {
+@@ -4934,0 +5051,13 @@
++    const startTime = manualPointerEventTime(null, event);
++    if (anotherDirectPointer) {
++      for (const activePointer of state.manualPointers.values()) {
++        activePointer.blockedByOtherPointer = true;
++        activePointer.moved = false;
++        activePointer.lastMotionAt = null;
++        activePointer.scrollSamples = [{
++          time: manualPointerEventTime(activePointer, event),
++          scrollTop: container.scrollTop,
++          scrollLeft: container.scrollLeft,
++        }];
++      }
++    }
+@@ -4949 +5078 @@
+-        time: performance.now(),
++        time: startTime,
+@@ -4992 +5121 @@
+-  function applyManualPan(pointer, event) {
++  function applyManualPan(pointer, event, eventTime = null) {
+@@ -4996,0 +5126 @@
++      pointer.blockedByVisibility ||
+@@ -5016 +5146,4 @@
+-    rememberManualScroll(pointer);
++    rememberManualScroll(
++      pointer,
++      eventTime ?? manualPointerEventTime(pointer, event),
++    );
+@@ -5025,0 +5159 @@
++    const releaseTime = manualPointerEventTime(pointer, event);
+@@ -5030 +5164 @@
+-      applyManualPan(pointer, event);
++      applyManualPan(pointer, event, releaseTime);
+@@ -5037 +5171 @@
+-        startManualMomentum(pointer);
++        startManualMomentum(pointer, releaseTime);
+@@ -5710,0 +5845,5 @@
++    document.addEventListener(
++      "visibilitychange",
++      onManualDocumentVisibilityChange,
++      { signal: controller.signal },
++    );

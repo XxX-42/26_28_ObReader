@@ -1,15 +1,20 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-## 当前 0.5.5 保存与内存候选（2026-10-13）
+## 当前 0.5.6 手指惯性滚动（2026-10-13）
+
+三端统一 0.5.6。80 ms 滚动位置样本使用 `exp(-age / 40ms)` 加权线性回归，启动 90 px/s、总矢量限速 4,000 px/s、衰减时间常数 350 ms、停止 10 px/s。采用真实 rAF 时间差与指数解析积分，跨停止阈值准确截至停止时刻；最多 128 个样本，同时间合并，不足两点或跨度不足 8 ms 不启动。抬指终点保留，静止不更新实际移动时间；隐藏取消当前惯性并阻断隐藏前触摸重启。手指／Pencil 隔离、保存／同步、冻结 Viewer、锁定依赖不变。原生测试仅使用独立库；本轮另有用户明确授权，仅备份替换“远程仓库1”插件三文件，保留设置、缓存、恢复与同步检查点，不操作 PDF。0.5.5 回滚包保留，实机 iPad 手感由用户确认。另修复标准 Link `/Dest` 被保存合并 guard 错误拒绝：在 lineage 已验证的同序页间映射叶页引用，保留既有页树及安全拒绝，不改协议或恢复格式。最终证据见 GENERAL_ACCEPTANCE.md。
+
+
+## 历史 0.5.5 保存与内存候选（2026-10-13）
 
 三端继续共用同一源码与三文件，版本统一 0.5.5。iPad/iOS 输入入口自动保存为停笔 3 秒，自动保存起始间隔至少 10 秒并按上一轮耗时适应（冷却上限 30 秒）；桌面仍为 1 秒空闲。自动保存过程中新增修订回到调度器，不连续追写；手动保存和可控关闭绕过冷却但仍等待输入边界和精确修订确认。移动端完整保存／合并使用共享重任务槽，先取得槽再进入写入队列，避免跨 Reader 内存峰值与锁顺序死锁。减少重复 PDF 字节复制；最后 Reader 关闭并完成待处理任务后释放内存检查点，磁盘恢复记录与删除记录保留。延长保存间隔会扩大强退前尚未持久化的编辑窗口；比较与写入之间的同步竞争窗口仍存在。
 
 本轮原生验证仅 `/Users/jiajia/Documents/ObReader-Apple-Test`，主库和此前 `远程仓库1` 部署目录不操作。保留 0.5.4 回滚包；当前验证与交付见 GENERAL_ACCEPTANCE.md。Mac 移动模拟不代表实体 iPad 内存／崩溃验收。
 
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.4），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.6），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
 
-## 当前：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
+## 历史：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
 
 取消阅读区宽度 880px 以下强制双行，按实际控件所需空间决定换行；撤销／重做从字体字符改为 PDF.js 同机制的 16px SVG 遮罩图标。菜单和 Viewer 偏移跟随工具栏实际高度。增加手指抬起后的渐减惯性滑动，新接触、Pencil／鼠标操作、工具或文档切换取消惯性，保持手指不能绘制的规则。三端版本同步为 0.5.4，保留 0.5.3 输入策略和保存／同步／缓存核心，冻结 Viewer 与依赖不变。原生验证仍限指定测试库；仅在授权目录备份替换三文件，实机 iPad/Pencil 结果待设备复验。最终证据以 GENERAL_ACCEPTANCE.md 当前版本记录为准。
 

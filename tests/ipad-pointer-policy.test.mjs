@@ -142,15 +142,154 @@ async function waitMs(milliseconds) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function beginFastTouchDrag(cdp, point, distance, id) {
-  await dispatchTouch(cdp, "touchStart", point, id);
+async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
+  const eventOffset = await viewer.evaluate(() =>
+    window.__ipadPointerEvents?.length || 0,
+  );
+  const baseTimestamp = await viewer.evaluate(() =>
+    (performance.timeOrigin + performance.now()) / 1000 - 0.06,
+  );
+  const plannedOffsetsMs = [0, 13, 26, 39, 52, 65];
+  const commands = [];
+  const sendAt = (type, pointAtTime, offsetMs) => {
+    const touchPoints = pointAtTime
+      ? [{
+        x: pointAtTime.x,
+        y: pointAtTime.y,
+        id,
+        radiusX: 1,
+        radiusY: 1,
+        force: 1,
+      }]
+      : [];
+    commands.push(cdp.send("Input.dispatchTouchEvent", {
+      type,
+      touchPoints,
+      timestamp: baseTimestamp + offsetMs / 1000,
+    }));
+  };
+
+  sendAt("touchStart", point, plannedOffsetsMs[0]);
   for (let step = 1; step <= 4; step += 1) {
-    await waitMs(16);
-    await dispatchTouch(cdp, "touchMove", {
+    sendAt("touchMove", {
       x: point.x,
       y: point.y - distance * step / 4,
-    }, id);
+    }, plannedOffsetsMs[step]);
   }
+  sendAt("touchEnd", null, plannedOffsetsMs.at(-1));
+  await Promise.all(commands);
+
+  const timing = await touchReleaseTiming(viewer, eventOffset);
+  const evidence = {
+    pointerId: id,
+    distance,
+    baseTimestamp,
+    plannedOffsetsMs,
+    observed: timing.sequence,
+    observedMoveSpeedPxPerMs: timing.observedMoveSpeedPxPerMs,
+  };
+  report.trustedTimedFingerGestures ||= [];
+  report.trustedTimedFingerGestures.push(evidence);
+
+  assert.ok(timing.sequence.length >= 3 && timing.sequence.length <= plannedOffsetsMs.length,
+    `Fast finger gesture ${id} must deliver down, movement, and release events`);
+  assert.equal(timing.sequence[0].type, "pointerdown");
+  assert.equal(timing.sequence.at(-1).type, "pointerup");
+  const moves = timing.sequence.slice(1, -1);
+  assert.ok(moves.length >= 1 && moves.every((event) => event.type === "pointermove"),
+    `Fast finger gesture ${id} must deliver trusted movement events in order`);
+  for (let index = 0; index < timing.sequence.length; index += 1) {
+    const event = timing.sequence[index];
+    assert.equal(event.trusted, true,
+      `Fast finger gesture ${id} must remain trusted browser input`);
+    assert.equal(event.targetInViewer, true,
+      `Fast finger gesture ${id} must reach the PDF viewer`);
+    assert.ok(event.timeStamp <= event.observedAt,
+      `Fast finger gesture ${id} must not use future timestamps`);
+    assert.ok(event.observedAt - event.timeStamp <= 80,
+      `Fast finger gesture ${id} must not arrive over 80 ms after its timestamp`);
+    const relativeTime = event.timeStamp - timing.sequence[0].timeStamp;
+    const plannedOffset = index === 0
+      ? 0
+      : index === timing.sequence.length - 1
+        ? plannedOffsetsMs.at(-1)
+        : plannedOffsetsMs.slice(1, -1).find((offset) =>
+          Math.abs(relativeTime - offset) <= 1,
+        );
+    assert.ok(Number.isFinite(plannedOffset) && Math.abs(relativeTime - plannedOffset) <= 1,
+      `Fast finger gesture ${id} observed event time must match the 13 ms schedule`);
+    if (index > 0) {
+      const previous = timing.sequence[index - 1];
+      assert.ok(event.timeStamp > previous.timeStamp,
+        `Fast finger gesture ${id} event timestamps must increase`);
+      assert.ok(event.timeStamp - previous.timeStamp <= 80,
+        `Fast finger gesture ${id} must not contain a timestamp pause over 80 ms`);
+      assert.ok(event.observedAt >= previous.observedAt);
+      assert.ok(event.observedAt - previous.observedAt <= 80,
+        `Fast finger gesture ${id} must not contain an observed pause over 80 ms`);
+    }
+  }
+  const lastMove = moves.at(-1);
+  assert.ok(Math.abs(
+    lastMove.timeStamp - timing.sequence[0].timeStamp - plannedOffsetsMs.at(-2),
+  ) <= 1,
+  `Fast finger gesture ${id} must reach its endpoint at the scheduled final move`);
+  assert.ok(Math.abs(lastMove.clientY -
+    (timing.sequence[0].clientY - distance)) <= 1,
+  `Fast finger gesture ${id} must deliver its full trusted touch distance`);
+  assert.ok(Math.abs(
+    timing.sequence.at(-1).timeStamp - lastMove.timeStamp - 13,
+  ) <= 1,
+  `Fast finger gesture ${id} must release 13 ms after its final move`);
+  assert.ok(timing.observedMoveSpeedPxPerMs >= 1,
+    `Fast finger gesture ${id} must have a clearly moving touch segment`);
+  return timing;
+}
+
+async function touchReleaseTiming(viewer, eventOffset) {
+  return viewer.evaluate((offset) => {
+    const events = window.__ipadPointerEvents?.slice(offset) || [];
+    const touchEvents = events.filter((event) =>
+      event.pointerType === "touch" &&
+      ["pointerdown", "pointermove", "pointerup", "pointercancel"].includes(event.type)
+    );
+    const firstDown = touchEvents.find((event) => event.type === "pointerdown");
+    const pointerId = firstDown?.pointerId;
+    const sequence = pointerId === undefined
+      ? touchEvents
+      : touchEvents.filter((event) => event.pointerId === pointerId);
+    const release = [...sequence].reverse().find((event) => event.type === "pointerup");
+    const lastMove = [...sequence].reverse().find((event) => event.type === "pointermove");
+    const recentMoves = sequence.filter((event) => event.type === "pointermove").slice(-3);
+    const movementStart = sequence.find((event) => event.type === "pointerdown");
+    const observedMoveSpeedPxPerMs = movementStart && lastMove &&
+        lastMove.timeStamp > movementStart.timeStamp
+      ? Math.hypot(
+        lastMove.clientX - movementStart.clientX,
+        lastMove.clientY - movementStart.clientY,
+      ) / (lastMove.timeStamp - movementStart.timeStamp)
+      : null;
+    return {
+      browserPointerId: pointerId ?? null,
+      sequence,
+      lastMoveTime: lastMove?.timeStamp ?? null,
+      releaseTime: release?.timeStamp ?? null,
+      gapMs: lastMove && release
+        ? release.timeStamp - lastMove.timeStamp
+        : null,
+      lastMovePoint: lastMove
+        ? { x: lastMove.clientX, y: lastMove.clientY }
+        : null,
+      releasePoint: release
+        ? { x: release.clientX, y: release.clientY }
+        : null,
+      recentMoves: recentMoves.map((event) => ({
+        timeStamp: event.timeStamp,
+        point: { x: event.clientX, y: event.clientY },
+      })),
+      observedMoveSpeedPxPerMs,
+    };
+  }, eventOffset);
 }
 
 async function dispatchSimulatedPen(cdp, type, point, buttons) {
@@ -266,7 +405,12 @@ test(
             window.__ipadPointerEvents.push({
               type,
               pointerType: event.pointerType || null,
+              pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
               trusted: event.isTrusted === true,
+              timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : null,
+              observedAt: performance.now(),
+              clientX: Number.isFinite(event.clientX) ? event.clientX : null,
+              clientY: Number.isFinite(event.clientY) ? event.clientY : null,
               targetInViewer: !!target?.closest?.("#viewerContainer"),
               targetPage: target?.closest?.(".page")?.dataset.pageNumber || null,
             });
@@ -723,9 +867,10 @@ test(
       const fastFlickEventOffset = await viewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
-      await beginFastTouchDrag(cdp, fastFlickPoint, 260, 21);
+      const fastFlickReleaseTiming = await beginFastTouchDrag(
+        cdp, viewer, fastFlickPoint, 260, 21, report,
+      );
       const fastFlickAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       const fastFlickImmediatelyAfterRelease = await inputSnapshot();
       await waitMs(120);
       const fastFlickAfterFirstInterval = await inputSnapshot();
@@ -823,9 +968,10 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
-      await beginFastTouchDrag(cdp, boundaryPoint, 220, 24);
+      const boundaryReleaseTiming = await beginFastTouchDrag(
+        cdp, viewer, boundaryPoint, 220, 24, report,
+      );
       await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(350);
       const boundaryAfterInertia = await inputSnapshot();
       assert.ok(boundaryAfterInertia.scrollTop >= boundaryStart,
@@ -834,6 +980,98 @@ test(
         Math.abs(boundaryAfterInertia.scrollTop - boundaryAfterInertia.maxScrollTop) <= 1,
         "Finger inertia must stop at the PDF scroll boundary",
       );
+
+      const backgroundStart = await viewer.evaluate(() => {
+        const container = document.getElementById("viewerContainer");
+        container.scrollTop = Math.min(500, container.scrollHeight - container.clientHeight);
+        return container.scrollTop;
+      });
+      const backgroundFlickPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      const backgroundFlickReleaseTiming = await beginFastTouchDrag(
+        cdp, viewer, backgroundFlickPoint, 260, 31, report,
+      );
+      const backgroundFlickAtRelease = await inputSnapshot();
+      await waitMs(70);
+      const beforeBackgrounding = await inputSnapshot();
+      assert.ok(beforeBackgrounding.scrollTop > backgroundFlickAtRelease.scrollTop + 5,
+        "The trusted finger flick must still be in motion before this page is backgrounded");
+
+      let backgroundPage = null;
+      let backgroundPhaseError = null;
+      try {
+        backgroundPage = await browser.newPage();
+        await backgroundPage.goto("about:blank");
+        await backgroundPage.bringToFront();
+        await page.waitForFunction(
+          () => document.visibilityState === "hidden",
+          { timeout: 8_000, polling: 100 },
+        );
+        await viewer.waitForFunction(
+          () => document.visibilityState === "hidden",
+          { timeout: 8_000, polling: 100 },
+        );
+        const hiddenAt = await inputSnapshot();
+        await waitMs(180);
+        const hiddenStable = await inputSnapshot();
+        assert.ok(Math.abs(hiddenStable.scrollTop - hiddenAt.scrollTop) <= 1,
+          "Backgrounding must cancel active inertia while the viewer stays hidden");
+
+        await page.bringToFront();
+        await page.waitForFunction(
+          () => document.visibilityState === "visible",
+          { timeout: 8_000, polling: 100 },
+        );
+        await viewer.waitForFunction(
+          () => document.visibilityState === "visible",
+          { timeout: 8_000, polling: 100 },
+        );
+        const afterForegrounding = await inputSnapshot();
+        await waitMs(120);
+        const afterForegrounding120ms = await inputSnapshot();
+        await waitMs(130);
+        const afterForegrounding250ms = await inputSnapshot();
+        assert.ok(Math.abs(afterForegrounding.scrollTop - hiddenStable.scrollTop) <= 1,
+          "Restoring the viewer must not apply hidden-time inertia as a catch-up jump");
+        assert.ok(Math.abs(afterForegrounding120ms.scrollTop - afterForegrounding.scrollTop) <= 1);
+        assert.ok(Math.abs(afterForegrounding250ms.scrollTop - afterForegrounding.scrollTop) <= 1,
+          "Scroll position must remain stable after returning to the viewer");
+        report.backgroundTabInertiaCancellation = {
+          method: "new Chrome about:blank tab brought to front",
+          originalVisibilityWhenBackgrounded: "hidden",
+          iframeVisibilityWhenBackgrounded: "hidden",
+          originalVisibilityWhenRestored: "visible",
+          iframeVisibilityWhenRestored: "visible",
+          start: backgroundStart,
+          flickAtRelease: backgroundFlickAtRelease,
+          releaseTiming: backgroundFlickReleaseTiming,
+          beforeBackgrounding,
+          hiddenAt,
+          hiddenStable,
+          afterForegrounding,
+          afterForegrounding120ms,
+          afterForegrounding250ms,
+        };
+      } catch (error) {
+        backgroundPhaseError = error;
+        throw error;
+      } finally {
+        if (backgroundPage && !backgroundPage.isClosed()) {
+          try {
+            await backgroundPage.close();
+          } catch (cleanupError) {
+            if (backgroundPhaseError) {
+              backgroundPhaseError.backgroundPageCloseError = cleanupError.message;
+            } else {
+              throw cleanupError;
+            }
+          }
+        }
+      }
 
       const middleScroll = await viewer.evaluate(() => {
         const container = document.getElementById("viewerContainer");
@@ -857,11 +1095,17 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
-      await beginFastTouchDrag(cdp, newContactPoint, 180, 25);
+      const newContactReleaseTiming = await beginFastTouchDrag(
+        cdp, viewer, newContactPoint, 180, 25, report,
+      );
       const newContactAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(80);
       const beforeToolbarTouch = await inputSnapshot();
+      report.toolbarContactPrecondition = {
+        atRelease: newContactAtRelease,
+        after80ms: beforeToolbarTouch,
+        releaseTiming: newContactReleaseTiming,
+      };
       assert.ok(beforeToolbarTouch.scrollTop > newContactAtRelease.scrollTop + 5,
         "The finger flick must have active inertia before the new contact");
       await dispatchTouch(cdp, "touchStart", toolbarTouchPoint, 26);
@@ -887,9 +1131,10 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
-      await beginFastTouchDrag(cdp, penMomentumPoint, 180, 27);
+      const penFlickReleaseTiming = await beginFastTouchDrag(
+        cdp, viewer, penMomentumPoint, 180, 27, report,
+      );
       const penFlickAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(70);
       const beforePenStop = await inputSnapshot();
       assert.ok(beforePenStop.scrollTop > penFlickAtRelease.scrollTop + 5,
@@ -909,9 +1154,8 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
-      await beginFastTouchDrag(cdp, mouseMomentumPoint, 180, 28);
+      await beginFastTouchDrag(cdp, viewer, mouseMomentumPoint, 180, 28, report);
       const mouseFlickAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(70);
       const beforeMouseStop = await inputSnapshot();
       assert.ok(beforeMouseStop.scrollTop > mouseFlickAtRelease.scrollTop + 5,
@@ -934,9 +1178,8 @@ test(
       const wheelEventOffset = await viewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
-      await beginFastTouchDrag(cdp, wheelMomentumPoint, 180, 29);
+      await beginFastTouchDrag(cdp, viewer, wheelMomentumPoint, 180, 29, report);
       const wheelFlickAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(70);
       const beforeWheelStop = await inputSnapshot();
       assert.ok(beforeWheelStop.scrollTop > wheelFlickAtRelease.scrollTop + 5,
@@ -967,9 +1210,8 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
-      await beginFastTouchDrag(cdp, toolChangePoint, 180, 30);
+      await beginFastTouchDrag(cdp, viewer, toolChangePoint, 180, 30, report);
       const toolChangeFlickAtRelease = await inputSnapshot();
-      await dispatchTouch(cdp, "touchEnd");
       await waitMs(70);
       const beforeToolChange = await inputSnapshot();
       assert.ok(beforeToolChange.scrollTop > toolChangeFlickAtRelease.scrollTop + 5,
@@ -1011,6 +1253,7 @@ test(
         fastFlick: {
           before: beforeFastFlick,
           atRelease: fastFlickAtRelease,
+          releaseTiming: fastFlickReleaseTiming,
           immediatelyAfterRelease: fastFlickImmediatelyAfterRelease,
           afterFirstInterval: fastFlickAfterFirstInterval,
           afterSecondInterval: fastFlickAfterSecondInterval,
@@ -1026,13 +1269,23 @@ test(
           afterWait: afterTouchCancelWait,
           observedPointerEvents: touchCancelEvents,
         },
-        boundary: { start: boundaryStart, after: boundaryAfterInertia },
+        boundary: {
+          start: boundaryStart,
+          after: boundaryAfterInertia,
+          releaseTiming: boundaryReleaseTiming,
+        },
         toolbarContact: {
           atRelease: newContactAtRelease,
           beforeTouch: beforeToolbarTouch,
           afterTouch: afterToolbarTouchWait,
+          releaseTiming: newContactReleaseTiming,
         },
-        penStop: { before: beforePenStop, after: afterPenStopWait },
+        penStop: {
+          atRelease: penFlickAtRelease,
+          before: beforePenStop,
+          after: afterPenStopWait,
+          releaseTiming: penFlickReleaseTiming,
+        },
         mouseStop: { before: beforeMouseStop, after: afterMouseStopWait },
         wheelStop: { before: beforeWheelStop, after: afterWheelStopWait },
         wheelEvents,

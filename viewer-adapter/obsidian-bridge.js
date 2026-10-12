@@ -4731,14 +4731,14 @@
     }
   }
 
-  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 120;
-  const MANUAL_INERTIA_MAX_SPEED = 2;
-  const MANUAL_INERTIA_START_SPEED = 0.12;
-  // Starting a flick and ending its tail need different thresholds. Ending at
-  // the start threshold cuts off visibly while the page is still moving.
-  const MANUAL_INERTIA_STOP_SPEED = 0.015;
-  const MANUAL_INERTIA_DECAY_MS = 300;
-  const MANUAL_INERTIA_MAX_FRAME_MS = 32;
+  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 80;
+  const MANUAL_INERTIA_MAX_SAMPLES = 128;
+  const MANUAL_INERTIA_MAX_SPEED = 4;
+  const MANUAL_INERTIA_START_SPEED = 0.09;
+  const MANUAL_INERTIA_STOP_SPEED = 0.01;
+  const MANUAL_INERTIA_DECAY_MS = 350;
+  const MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS = 8;
+  const MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS = 5000;
 
   function prefersReducedMotion() {
     return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -4753,30 +4753,70 @@
     state.manualMomentum = null;
   }
 
+  function onManualDocumentVisibilityChange() {
+    if (document.visibilityState === "hidden") {
+      cancelManualMomentum();
+      for (const pointer of state.manualPointers.values()) {
+        if (pointer.pointerType === "touch") {
+          pointer.blockedByVisibility = true;
+          pointer.moved = false;
+        }
+      }
+    }
+  }
+
+  function manualPointerEventTime(pointer, event, now = performance.now()) {
+    const eventTime = event?.timeStamp;
+    let time = Number.isFinite(eventTime) &&
+        eventTime >= 0 &&
+        eventTime <= now &&
+        now - eventTime <= MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS
+      ? eventTime
+      : now;
+    const previousTime = pointer?.scrollSamples?.at(-1)?.time;
+    if (Number.isFinite(previousTime) && time < previousTime) {
+      time = Math.max(previousTime, now);
+    }
+    return time;
+  }
+
   function rememberManualScroll(pointer, time = performance.now()) {
     if (pointer.pointerType !== "touch") {
       return;
     }
     const sample = {
-      time,
+      time: Number.isFinite(time) ? time : performance.now(),
       scrollTop: pointer.container.scrollTop,
       scrollLeft: pointer.container.scrollLeft,
     };
     const previous = pointer.scrollSamples[pointer.scrollSamples.length - 1];
-    if (
-      previous &&
-      Math.abs(sample.scrollTop - previous.scrollTop) < 0.01 &&
-      Math.abs(sample.scrollLeft - previous.scrollLeft) < 0.01
-    ) {
-      return;
+    const moved = previous && (
+      Math.abs(sample.scrollTop - previous.scrollTop) >= 0.01 ||
+      Math.abs(sample.scrollLeft - previous.scrollLeft) >= 0.01
+    );
+    if (previous && sample.time < previous.time) {
+      sample.time = previous.time;
     }
-    pointer.scrollSamples.push(sample);
-    pointer.lastMotionAt = time;
+    if (previous && sample.time === previous.time) {
+      pointer.scrollSamples[pointer.scrollSamples.length - 1] = sample;
+    } else {
+      pointer.scrollSamples.push(sample);
+    }
+    if (moved) {
+      pointer.lastMotionAt = sample.time;
+    }
+    const oldestRecentTime = sample.time - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
     while (
-      pointer.scrollSamples.length > 2 &&
-      pointer.scrollSamples[1].time < time - MANUAL_INERTIA_SAMPLE_WINDOW_MS
+      pointer.scrollSamples.length > 1 &&
+      pointer.scrollSamples[1].time < oldestRecentTime
     ) {
       pointer.scrollSamples.shift();
+    }
+    if (pointer.scrollSamples.length > MANUAL_INERTIA_MAX_SAMPLES) {
+      pointer.scrollSamples.splice(
+        0,
+        pointer.scrollSamples.length - MANUAL_INERTIA_MAX_SAMPLES,
+      );
     }
   }
 
@@ -4786,33 +4826,96 @@
       !pointer.moved ||
       pointer.blockedByPen ||
       pointer.blockedByOtherPointer ||
+      pointer.blockedByVisibility ||
       !Number.isFinite(pointer.lastMotionAt) ||
+      now < pointer.lastMotionAt ||
       now - pointer.lastMotionAt > MANUAL_INERTIA_SAMPLE_WINDOW_MS
     ) {
       return null;
     }
-    const samples = pointer.scrollSamples;
+    const windowStart = now - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
+    const samples = pointer.scrollSamples.filter((sample) =>
+      Number.isFinite(sample.time) &&
+      sample.time >= windowStart &&
+      sample.time <= now &&
+      Number.isFinite(sample.scrollTop) &&
+      Number.isFinite(sample.scrollLeft)
+    );
+    const firstRecent = samples[0];
+    const predecessor = [...pointer.scrollSamples].reverse().find((sample) =>
+      Number.isFinite(sample.time) &&
+      sample.time < windowStart &&
+      Number.isFinite(sample.scrollTop) &&
+      Number.isFinite(sample.scrollLeft)
+    );
+    if (
+      predecessor &&
+      firstRecent &&
+      firstRecent.time > windowStart &&
+      firstRecent.time - predecessor.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS
+    ) {
+      const fraction = (windowStart - predecessor.time) /
+        (firstRecent.time - predecessor.time);
+      samples.unshift({
+        time: windowStart,
+        scrollLeft: predecessor.scrollLeft +
+          (firstRecent.scrollLeft - predecessor.scrollLeft) * fraction,
+        scrollTop: predecessor.scrollTop +
+          (firstRecent.scrollTop - predecessor.scrollTop) * fraction,
+      });
+    }
     if (samples.length < 2) {
       return null;
     }
-    const firstRecentIndex = samples.findIndex(
-      (sample) => now - sample.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS,
-    );
-    const firstIndex = firstRecentIndex > 0 ? firstRecentIndex - 1 : 0;
-    const first = samples[firstIndex];
+    const first = samples[0];
     const last = samples[samples.length - 1];
-    const elapsed = Math.min(
-      MANUAL_INERTIA_SAMPLE_WINDOW_MS,
-      Math.max(8, last.time - first.time),
-    );
-    const clampSpeed = (distance) => Math.max(
-      -MANUAL_INERTIA_MAX_SPEED,
-      Math.min(MANUAL_INERTIA_MAX_SPEED, distance / elapsed),
-    );
+    if (last.time - first.time < MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS) {
+      return null;
+    }
+    let weightSum = 0;
+    let weightedTime = 0;
+    let weightedLeft = 0;
+    let weightedTop = 0;
+    for (const sample of samples) {
+      const weight = Math.exp(
+        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
+      );
+      const relativeTime = sample.time - now;
+      weightSum += weight;
+      weightedTime += weight * relativeTime;
+      weightedLeft += weight * sample.scrollLeft;
+      weightedTop += weight * sample.scrollTop;
+    }
+    if (weightSum <= 0) {
+      return null;
+    }
+    const meanTime = weightedTime / weightSum;
+    const meanLeft = weightedLeft / weightSum;
+    const meanTop = weightedTop / weightSum;
+    let timeVariance = 0;
+    let leftCovariance = 0;
+    let topCovariance = 0;
+    for (const sample of samples) {
+      const weight = Math.exp(
+        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
+      );
+      const timeOffset = sample.time - now - meanTime;
+      timeVariance += weight * timeOffset * timeOffset;
+      leftCovariance += weight * timeOffset * (sample.scrollLeft - meanLeft);
+      topCovariance += weight * timeOffset * (sample.scrollTop - meanTop);
+    }
+    if (timeVariance <= 0) {
+      return null;
+    }
     const velocity = {
-      x: clampSpeed(last.scrollLeft - first.scrollLeft),
-      y: clampSpeed(last.scrollTop - first.scrollTop),
+      x: leftCovariance / timeVariance,
+      y: topCovariance / timeVariance,
     };
+    const speed = Math.hypot(velocity.x, velocity.y);
+    if (speed > MANUAL_INERTIA_MAX_SPEED) {
+      velocity.x *= MANUAL_INERTIA_MAX_SPEED / speed;
+      velocity.y *= MANUAL_INERTIA_MAX_SPEED / speed;
+    }
     if (
       Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_START_SPEED ||
       prefersReducedMotion()
@@ -4822,15 +4925,16 @@
     return velocity;
   }
 
-  function startManualMomentum(pointer) {
+  function startManualMomentum(pointer, now = performance.now()) {
     if (
       !iosInputPolicy ||
       state.manualPointers.size > 0 ||
+      document.visibilityState === "hidden" ||
       !manualPointerSessionCurrent(pointer)
     ) {
       return;
     }
-    const velocity = touchReleaseVelocity(pointer);
+    const velocity = touchReleaseVelocity(pointer, now);
     if (!velocity) {
       return;
     }
@@ -4845,7 +4949,7 @@
       velocityY: velocity.y,
       targetLeft: pointer.container.scrollLeft,
       targetTop: pointer.container.scrollTop,
-      lastFrameTime: performance.now(),
+      lastFrameTime: now,
       frame: 0,
     };
     state.manualMomentum = momentum;
@@ -4853,7 +4957,10 @@
       if (state.manualMomentum !== momentum) {
         return;
       }
-      if (prefersReducedMotion()) {
+      if (
+        prefersReducedMotion() ||
+        document.visibilityState === "hidden"
+      ) {
         cancelManualMomentum();
         return;
       }
@@ -4861,13 +4968,21 @@
         cancelManualMomentum();
         return;
       }
-      const elapsed = Math.min(
-        MANUAL_INERTIA_MAX_FRAME_MS,
-        Math.max(0, frameTime - momentum.lastFrameTime),
-      );
-      momentum.lastFrameTime = frameTime;
-      if (elapsed > 0) {
-        const decay = Math.exp(-elapsed / MANUAL_INERTIA_DECAY_MS);
+      if (!Number.isFinite(frameTime)) {
+        cancelManualMomentum();
+        return;
+      }
+      const elapsed = Math.max(0, frameTime - momentum.lastFrameTime);
+      momentum.lastFrameTime = Math.max(momentum.lastFrameTime, frameTime);
+      const speed = Math.hypot(momentum.velocityX, momentum.velocityY);
+      const timeToStop = speed > MANUAL_INERTIA_STOP_SPEED
+        ? MANUAL_INERTIA_DECAY_MS * Math.log(
+          speed / MANUAL_INERTIA_STOP_SPEED,
+        )
+        : 0;
+      const activeElapsed = Math.min(elapsed, timeToStop);
+      if (activeElapsed > 0) {
+        const decay = Math.exp(-activeElapsed / MANUAL_INERTIA_DECAY_MS);
         const travelFactor = MANUAL_INERTIA_DECAY_MS * (1 - decay);
         const requestedX = momentum.velocityX * travelFactor;
         const requestedY = momentum.velocityY * travelFactor;
@@ -4900,6 +5015,7 @@
           momentum.velocityX = 0;
         } else if (atXBoundary) {
           momentum.velocityX = 0;
+          momentum.targetLeft = momentum.container.scrollLeft;
         } else {
           momentum.velocityX *= decay;
         }
@@ -4910,14 +5026,14 @@
           momentum.velocityY = 0;
         } else if (atYBoundary) {
           momentum.velocityY = 0;
+          momentum.targetTop = momentum.container.scrollTop;
         } else {
           momentum.velocityY *= decay;
         }
       }
-      if (
-        Math.hypot(momentum.velocityX, momentum.velocityY) <
-        MANUAL_INERTIA_STOP_SPEED
-      ) {
+      if (activeElapsed < elapsed ||
+        Math.hypot(momentum.velocityX, momentum.velocityY) <=
+          MANUAL_INERTIA_STOP_SPEED) {
         cancelManualMomentum();
         return;
       }
@@ -4932,6 +5048,19 @@
       return null;
     }
     const anotherDirectPointer = state.manualPointers.size > 0;
+    const startTime = manualPointerEventTime(null, event);
+    if (anotherDirectPointer) {
+      for (const activePointer of state.manualPointers.values()) {
+        activePointer.blockedByOtherPointer = true;
+        activePointer.moved = false;
+        activePointer.lastMotionAt = null;
+        activePointer.scrollSamples = [{
+          time: manualPointerEventTime(activePointer, event),
+          scrollTop: container.scrollTop,
+          scrollLeft: container.scrollLeft,
+        }];
+      }
+    }
     const pointer = {
       pointerId: event.pointerId,
       pointerType,
@@ -4946,7 +5075,7 @@
       startScrollLeft: container.scrollLeft,
       lastMotionAt: null,
       scrollSamples: [{
-        time: performance.now(),
+        time: startTime,
         scrollTop: container.scrollTop,
         scrollLeft: container.scrollLeft,
       }],
@@ -4989,11 +5118,12 @@
     );
   }
 
-  function applyManualPan(pointer, event) {
+  function applyManualPan(pointer, event, eventTime = null) {
     if (
       !pointer ||
       pointer.blockedByPen ||
       pointer.blockedByOtherPointer ||
+      pointer.blockedByVisibility ||
       !manualPointerSessionCurrent(pointer)
     ) {
       return;
@@ -5013,7 +5143,10 @@
       (event.clientY - pointer.startY);
     pointer.container.scrollLeft = pointer.startScrollLeft -
       (event.clientX - pointer.startX);
-    rememberManualScroll(pointer);
+    rememberManualScroll(
+      pointer,
+      eventTime ?? manualPointerEventTime(pointer, event),
+    );
   }
 
   function finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
@@ -5023,18 +5156,19 @@
     }
     // WebViews may deliver the final contact position only on pointerup.
     // Consume it before deriving release velocity, never on cancellation.
+    const releaseTime = manualPointerEventTime(pointer, event);
     if (
       pointer.pointerType === "touch" && !cancel &&
       Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
     ) {
-      applyManualPan(pointer, event);
+      applyManualPan(pointer, event, releaseTime);
     }
     state.manualPointers.delete(pointerId);
     if (pointer.pointerType === "touch") {
       if (cancel || !manualPointerSessionCurrent(pointer)) {
         cancelManualMomentum();
       } else {
-        startManualMomentum(pointer);
+        startManualMomentum(pointer, releaseTime);
       }
     }
     if (
@@ -5708,6 +5842,11 @@
         signal: controller.signal,
       });
     }
+    document.addEventListener(
+      "visibilitychange",
+      onManualDocumentVisibilityChange,
+      { signal: controller.signal },
+    );
   }
 
   function onBridgeWheel() {

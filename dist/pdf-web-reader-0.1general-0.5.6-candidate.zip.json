@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "releaseName": "0.1general",
+  "version": "0.5.6",
+  "minimumObsidianVersion": "1.14.4",
+  "artifact": "dist/pdf-web-reader-0.1general-0.5.6-candidate.zip",
+  "sha256": "16d8895d93ea92dd8c36f032df6e5a210af34b6de1bc8559b6384f3610ea807f",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6857545,
+      "sha256": "aef5de283dda9a4a756df8d545dbdc2973ab49631030b58f416e0e2a3e928e2e"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "25a8b5deb8271df51c109fd1786671b660daef82f1e711518260d5ac46c38cba"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "verifiedExactThreeFiles": true,
+  "platforms": [
+    "Windows",
+    "macOS",
+    "iPadOS"
+  ],
+  "physicalIpadValidated": false,
+  "physicalWindowsValidated": false,
+  "nativeEvidence": [
+    "tests/artifacts/general-0.5.6-scroll-native-1791836646308.json",
+    "tests/artifacts/general-0.5.6-save-memory-native-1791836494423.json"
+  ],
+  "validation": {
+    "version": "0.5.6",
+    "finalValidationDirectory": "tests/artifacts/general-0.5.6-release-validation-1791837577620548000",
+    "default": {
+      "total": 229,
+      "passed": 223,
+      "failed": 6,
+      "cancelled": 0,
+      "exitCode": 1,
+      "fullyPassed": false
+    },
+    "offline": {
+      "exitCode": 0
+    },
+    "sourceAndBuildUnchanged": true,
+    "focusedNumericAndCore": {
+      "passed": 33,
+      "total": 33,
+      "evidence": "tests/artifacts/general-0.5.6-final-numeric-core.log"
+    },
+    "focusedPointer": "tests/artifacts/ipad-pointer-policy-1791837537773-68111.json",
+    "nativeScroll": "tests/artifacts/general-0.5.6-scroll-native-1791836646308.json",
+    "nativeLinkedSave": "tests/artifacts/general-0.5.6-save-memory-native-1791836494423.json",
+    "failures": [
+      {
+        "tests": [
+          "annotation-interaction",
+          "autosave-mobile",
+          "free-text-undo-appearance",
+          "mouse-input"
+        ],
+        "classification": "four pure Chrome child-exit failures after functional assertions",
+        "status": "failed; retained without teardown investigation"
+      },
+      {
+        "test": "autosave-regression",
+        "classification": "existing 5-second window-blur cancellation wait timed out",
+        "status": "unconfirmed functional timeout; not relabeled passed",
+        "evidence": "tests/artifacts/autosave-failure-1791837655833.json"
+      },
+      {
+        "test": "ipad-pointer-policy",
+        "classification": "equal-time inertia decay assertion failed under default concurrency; trusted fast gesture valid",
+        "status": "unconfirmed interval assertion failure; focused and native checks passed; not relabeled passed",
+        "evidence": "tests/artifacts/ipad-pointer-policy-1791837596832-69198.json"
+      }
+    ],
+    "candidatePolicy": "deliver candidate with explicit unresolved concurrent assertions; no demonstrated new real-user P0; no extra stability gate",
+    "deviceAcceptance": {
+      "iPad": false,
+      "Windows": false
+    },
+    "userPdf": "read-only structural inspection only; no user PDF content in evidence",
+    "targetDeployment": "tests/artifacts/general-0.5.6-target-deployment-1791837708037886000.json",
+    "noDependenciesUpgraded": true,
+    "noFrozenViewerModified": true
+  },
+  "status": "candidate; iPad hardware and two concurrent assertions remain unconfirmed"
+}

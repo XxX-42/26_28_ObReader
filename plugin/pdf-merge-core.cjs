@@ -1108,15 +1108,18 @@ function isPageLike(doc, value) {
 }
 
 function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenObjects = new WeakSet(), depth = 0) {
-  if (depth > 100) fail("PDF_MERGE_OBJECT_GRAPH_TOO_DEEP", "Annotation appearance references exceed the safe copy depth.");
+  if (depth > 100) fail("PDF_MERGE_OBJECT_GRAPH_TOO_DEEP", "Annotation references exceed the safe copy depth.");
   if (value instanceof PDFRef) {
     const ref = value.toString();
-    if (maps.pageRefs.has(ref)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object; copying it would cross the page tree.");
+    // Leaf-page references in fields such as Link /Dest are valid annotation
+    // data. They are remapped to the destination document's existing pages by
+    // the copier below; never resolve or copy the source page object here.
+    if (maps.pageRefs.has(ref)) return;
     if (maps.byRef.has(ref)) fail("PDF_MERGE_ANNOTATION_RELATION_UNBOUND", "An annotation contains an unrecognized reference to another annotation.");
     if (seenRefs.has(ref)) return;
     seenRefs.add(ref);
     const resolved = sourceDoc.context.lookup(value);
-    if (isPageLike(sourceDoc, resolved)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object.");
+    if (isPageLike(sourceDoc, resolved)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation references a page object outside the validated page list.");
     preflightCopyValue(sourceDoc, resolved, maps, seenRefs, seenObjects, depth + 1);
     return;
   }
@@ -1131,7 +1134,7 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
     return;
   }
   if (value instanceof PDFDict) {
-    if (isPageLike(sourceDoc, value)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation appearance references a page object.");
+    if (isPageLike(sourceDoc, value)) fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation contains a direct page object that cannot be safely remapped.");
     if (seenObjects.has(value)) return;
     seenObjects.add(value);
     for (const [key, child] of value.entries()) {
@@ -1144,10 +1147,30 @@ function preflightCopyValue(sourceDoc, value, maps, seenRefs = new Set(), seenOb
   }
 }
 
+function mapValidatedPageRefs(copier, sourceInfo, destDoc) {
+  const sourcePages = sourceInfo.doc.getPages();
+  const destinationPages = destDoc.getPages();
+  if (sourcePages.length !== destinationPages.length) {
+    fail("PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED", "The annotation source and destination have different page counts.");
+  }
+  for (let index = 0; index < sourcePages.length; index += 1) {
+    const sourceRef = sourcePages[index].ref;
+    const destinationRef = destinationPages[index].ref;
+    if (!(sourceRef instanceof PDFRef) || !(destinationRef instanceof PDFRef) || sourceInfo.maps.pageRefs.get(sourceRef.toString()) !== index) {
+      fail("PDF_MERGE_ANNOTATION_REFERENCES_PAGE", "An annotation page reference could not be mapped to the validated destination page.");
+    }
+    // PDFObjectCopier 1.17.1 uses interned PDFRef objects as traversedObjects
+    // keys. Seeding the leaf refs makes copyPDFIndirectObject return this
+    // existing destination ref without looking up/copying any page dictionary.
+    copier.traversedObjects.set(sourceRef, destinationRef);
+  }
+}
+
 function cloneSanitizedDictionary(sourceInfo, sourceEntry, destDoc, targetRef, pageRef, idToDestRef, options = {}) {
   const sourceDoc = sourceInfo.doc;
   const sourceDict = sourceEntry.dict;
   const copier = PDFObjectCopier.for(sourceDoc.context, destDoc.context);
+  mapValidatedPageRefs(copier, sourceInfo, destDoc);
   const result = PDFDict.withContext(destDoc.context);
   const skip = new Set(["P", "Popup", "Parent", "IRT", "StructParent"]);
   for (const [key, value] of sourceDict.entries()) {

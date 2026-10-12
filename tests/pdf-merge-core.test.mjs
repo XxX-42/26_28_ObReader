@@ -14,6 +14,7 @@ import {
 import mergeCore from "../plugin/pdf-merge-core.cjs";
 
 const { prepareLocal, merge, inspect } = mergeCore;
+const { getPageFingerprint, refMaps } = mergeCore._internals;
 const text = (value) => PDFHexString.fromText(value);
 
 function numberArray(doc, values) {
@@ -659,6 +660,156 @@ test("copied winner preserves AP and NM while /P, popup /Parent and /IRT target 
   const appearanceRef = reply.dict.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
   const appearance = result.context.lookup(appearanceRef, PDFRawStream);
   assert.match(new TextDecoder().decode(appearance.getContents()), /reply new AP/);
+});
+
+test("annotation merge remaps GoTo and AP page refs to existing pages without copying the page tree", async () => {
+  const doc = await PDFDocument.create();
+  const pages = [doc.addPage([420, 540]), doc.addPage([420, 540]), doc.addPage([420, 540])];
+  for (const [index, page] of pages.entries()) {
+    page.drawText(`Stable body ${index + 1}`, { x: 24, y: 500, size: 12 });
+  }
+  const link = PDFDict.withContext(doc.context);
+  link.set(PDFName.of("Type"), PDFName.of("Annot"));
+  link.set(PDFName.of("Subtype"), PDFName.of("Link"));
+  link.set(PDFName.of("Rect"), numberArray(doc, [20, 30, 120, 70]));
+  const destination = PDFArray.withContext(doc.context);
+  destination.push(pages[2].ref);
+  destination.push(PDFName.of("Fit"));
+  const action = PDFDict.withContext(doc.context);
+  action.set(PDFName.of("S"), PDFName.of("GoTo"));
+  action.set(PDFName.of("D"), destination);
+  link.set(PDFName.of("A"), action);
+
+  const appearanceStreamDictionary = PDFDict.withContext(doc.context);
+  appearanceStreamDictionary.set(PDFName.of("Type"), PDFName.of("XObject"));
+  appearanceStreamDictionary.set(PDFName.of("Subtype"), PDFName.of("Form"));
+  appearanceStreamDictionary.set(PDFName.of("FormType"), PDFNumber.of(1));
+  appearanceStreamDictionary.set(PDFName.of("BBox"), numberArray(doc, [0, 0, 80, 30]));
+  const properties = PDFDict.withContext(doc.context);
+  properties.set(PDFName.of("Pg"), pages[1].ref);
+  const propertiesRef = doc.context.register(properties);
+  const resources = PDFDict.withContext(doc.context);
+  resources.set(PDFName.of("Properties"), propertiesRef);
+  appearanceStreamDictionary.set(PDFName.of("Resources"), doc.context.register(resources));
+  const appearanceRef = doc.context.register(PDFRawStream.of(
+    appearanceStreamDictionary,
+    new TextEncoder().encode("q\n% page-linked appearance resource\nQ\n"),
+  ));
+  const appearance = PDFDict.withContext(doc.context);
+  appearance.set(PDFName.of("N"), appearanceRef);
+  link.set(PDFName.of("AP"), appearance);
+  const linkRef = doc.context.register(link);
+  annotsFor(doc, pages[0]).push(linkRef);
+  addAnnotation(doc, 0, { subtype: "Square", contents: "before" });
+  const baseBytes = await doc.save({ useObjectStreams: false });
+  const baseFingerprintDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const sourcePageRefs = baseFingerprintDoc.getPages().map((page) => page.ref);
+  const basePageFingerprints = getPageFingerprint(baseFingerprintDoc, refMaps(baseFingerprintDoc));
+  const baseInfo = await inspect({ bytes: baseBytes });
+  const editedIdentity = baseInfo.identities.find((item) => item.kind === "square");
+  const linkIdentity = baseInfo.identities.find((item) => item.ref === `${linkRef.objectNumber}R`);
+  assert.ok(editedIdentity);
+  assert.ok(linkIdentity);
+
+  const draft = await editBranch(baseBytes, refFromPdfJs(editedIdentity.ref), { contents: "after" });
+  const local = await prepareLocal({
+    baseBytes,
+    draftBytes: draft.bytes,
+    actorId: "actor-local",
+    operations: [operation({ uuid: editedIdentity.uuid, ref: editedIdentity.ref, kind: "square", timestamp: 100, operationId: "edit-square" })],
+  });
+  const remoteDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const remotePages = remoteDoc.getPages();
+  const pageTree = remoteDoc.catalog.lookup(PDFName.of("Pages"), PDFDict);
+  const pageKids = pageTree.lookup(PDFName.of("Kids"), PDFArray);
+  const remotePageRefs = remotePages.map(() => remoteDoc.context.nextRef());
+  for (let index = 0; index < remotePages.length; index += 1) {
+    const oldRef = remotePages[index].ref;
+    remoteDoc.context.assign(remotePageRefs[index], remotePages[index].node);
+    remoteDoc.context.delete(oldRef);
+    pageKids.set(index, remotePageRefs[index]);
+  }
+  const remoteLink = remoteDoc.context.lookup(linkRef, PDFDict);
+  const remoteAction = remoteLink.lookup(PDFName.of("A"), PDFDict);
+  remoteAction.lookup(PDFName.of("D"), PDFArray).set(0, remotePageRefs[2]);
+  const remoteAppearanceRef = remoteLink.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
+  const remoteAppearanceStream = remoteDoc.context.lookup(remoteAppearanceRef, PDFRawStream);
+  const remoteResourcesRef = remoteAppearanceStream.dict.get(PDFName.of("Resources"));
+  const remoteResources = remoteDoc.context.lookup(remoteResourcesRef, PDFDict);
+  const remotePropertiesRef = remoteResources.get(PDFName.of("Properties"));
+  remoteDoc.context.lookup(remotePropertiesRef, PDFDict).set(PDFName.of("Pg"), remotePageRefs[1]);
+  assert.notEqual(remotePageRefs[1].toString(), sourcePageRefs[1].toString(), "the AP page ref must differ across branches");
+  assert.notEqual(remotePageRefs[2].toString(), sourcePageRefs[2].toString(), "the GoTo page ref must differ across branches");
+  remoteDoc.setTitle("Remote metadata update");
+  const remoteBytes = await remoteDoc.save({ useObjectStreams: false });
+  const remoteSavedDoc = await PDFDocument.load(remoteBytes, { updateMetadata: false });
+  const remoteSavedPageRefs = remoteSavedDoc.getPages().map((page) => page.ref.toString());
+  assert.notEqual(remoteSavedPageRefs[1], sourcePageRefs[1].toString());
+  assert.notEqual(remoteSavedPageRefs[2], sourcePageRefs[2].toString());
+  assert.deepEqual(getPageFingerprint(remoteSavedDoc, refMaps(remoteSavedDoc)), basePageFingerprints, "reassigning page refs must preserve page lineage");
+  const merged = await merge({ baseBytes, localBytes: local.bytes, remoteBytes });
+
+  const mergedDoc = await PDFDocument.load(merged.bytes, { updateMetadata: false });
+  assert.equal(mergedDoc.getPageCount(), 3, "merging annotations must not add copied page objects to the page tree");
+  const pageObjectCount = mergedDoc.context.enumerateIndirectObjects().filter(([, value]) =>
+    value instanceof PDFDict && value.get(PDFName.of("Type"))?.toString() === "/Page",
+  ).length;
+  assert.equal(pageObjectCount, 3, "merging must not leave detached copies of page objects in the context");
+  const mergedLink = await getAnnotation(merged.bytes, linkIdentity.uuid);
+  const mergedAction = mergedLink.dict.lookup(PDFName.of("A"), PDFDict);
+  assert.equal(mergedAction.lookup(PDFName.of("S"), PDFName).toString(), "/GoTo");
+  const mergedDestination = mergedAction.lookup(PDFName.of("D"), PDFArray);
+  assert.equal(mergedDestination.get(0).toString(), mergedDoc.getPages()[2].ref.toString(), "the cross-page target must point at the existing destination page");
+  assert.equal(mergedDestination.get(1).toString(), "/Fit");
+  const mergedAppearanceRef = mergedLink.dict.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
+  const mergedAppearanceStream = mergedDoc.context.lookup(mergedAppearanceRef, PDFRawStream);
+  const mergedResourcesRef = mergedAppearanceStream.dict.get(PDFName.of("Resources"));
+  const mergedResources = mergedDoc.context.lookup(mergedResourcesRef, PDFDict);
+  const mergedPropertiesRef = mergedResources.get(PDFName.of("Properties"));
+  const mergedProperties = mergedDoc.context.lookup(mergedPropertiesRef, PDFDict);
+  assert.equal(mergedProperties.get(PDFName.of("Pg")).toString(), mergedDoc.getPages()[1].ref.toString(), "AP page references must target the matching existing page");
+  assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), linkIdentity.uuid).uuid, linkIdentity.uuid);
+  assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), editedIdentity.uuid).uuid, editedIdentity.uuid);
+  const mergedFingerprints = getPageFingerprint(mergedDoc, refMaps(mergedDoc));
+  assert.deepEqual(mergedFingerprints, basePageFingerprints, "page content and order must remain unchanged");
+});
+
+test("annotation merge still rejects a reference to the page-tree root", async () => {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([420, 540]);
+  const targetPage = doc.addPage([420, 540]);
+  page.drawText("Stable source page", { x: 24, y: 500, size: 12 });
+  targetPage.drawText("Stable target page", { x: 24, y: 500, size: 12 });
+  const link = PDFDict.withContext(doc.context);
+  link.set(PDFName.of("Type"), PDFName.of("Annot"));
+  link.set(PDFName.of("Subtype"), PDFName.of("Link"));
+  link.set(PDFName.of("Rect"), numberArray(doc, [20, 30, 120, 70]));
+  const destination = PDFArray.withContext(doc.context);
+  destination.push(doc.catalog.get(PDFName.of("Pages")));
+  destination.push(PDFName.of("Fit"));
+  link.set(PDFName.of("Dest"), destination);
+  annotsFor(doc, page).push(doc.context.register(link));
+  addAnnotation(doc, 0, { subtype: "Square", contents: "before" });
+  const baseBytes = await doc.save({ useObjectStreams: false });
+  const baseInfo = await inspect({ bytes: baseBytes });
+  const squareIdentity = baseInfo.identities.find((item) => item.kind === "square");
+  assert.ok(squareIdentity);
+
+  const draft = await editBranch(baseBytes, refFromPdfJs(squareIdentity.ref), { contents: "after" });
+  const local = await prepareLocal({
+    baseBytes,
+    draftBytes: draft.bytes,
+    actorId: "actor-local",
+    operations: [operation({ uuid: squareIdentity.uuid, ref: squareIdentity.ref, kind: "square", timestamp: 100, operationId: "edit-square" })],
+  });
+  const remoteDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  remoteDoc.setTitle("Remote metadata update");
+  const remoteBytes = await remoteDoc.save({ useObjectStreams: false });
+
+  await assert.rejects(
+    merge({ baseBytes, localBytes: local.bytes, remoteBytes }),
+    (error) => error.code === "PDF_MERGE_ANNOTATION_REFERENCES_PAGE",
+  );
 });
 
 test("tagged annotation update is copied only when the structure-tree association is unchanged", async () => {

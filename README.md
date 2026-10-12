@@ -6,17 +6,28 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.5)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.6)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest 0.5.5 [scroll-fix package](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip)
-adds a slower inertial tail and consumes the final finger-release position.
-Its follow-up validation and explicitly authorized target replacement are recorded
-in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); earlier packages remain available.
+The latest [0.5.6 three-file package](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip)
+uses an 80 ms weighted velocity regression, a 4,000 px/s total speed cap, and
+350 ms exponential deceleration. Inertia starts at 90 px/s and stops at 10 px/s.
+It integrates real animation time, including delayed frames, and cancels on
+backgrounding. Finger navigation and Pencil editing remain separate.
+Validation and the authorized target replacement are recorded in
+[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); the 0.5.5 scroll-fix package remains
+available for rollback. Physical iPad feel still requires device confirmation.
+
+Version 0.5.6 also fixes saving annotated PDFs with ordinary cross-page links.
+After validating page lineage, the merge copier maps existing leaf-page targets
+to the output's existing pages; it preserves Link/GoTo destinations and appearance
+resources without copying the page tree. Unknown pages and unsafe relationships
+remain rejected. The earlier “annotation appearance references a page” error could
+actually originate from an unchanged Link destination.
 
 Version 0.5.5 reduces repeated full-PDF work during continuous editing. On the
 iPad/iOS input entry, automatic saving waits for three idle seconds and at least
@@ -66,10 +77,11 @@ plugin backup, settings, recovery files and sync checkpoints when replacing or
 rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
 after verifying the actual vault and plugin identity; discover the owned loopback
 CDP endpoint for each run rather than assuming a fixed port. The earlier approved
-`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequently
-authorized scroll-fix replacement updates only that plugin's three files to 0.5.5;
-its settings, cache and recovery bytes are unchanged, and no PDFs are operated. Save and
-close Reader tabs before installing the three matching 0.5.5 files, and preserve
+`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequent
+0.5.5 scroll-fix replacement was separately authorized. The current 0.5.6 delivery
+has the same explicit authorization to replace only that plugin's three files,
+preserving settings, cache and recovery, with no PDF operations. Save and
+close Reader tabs before installing the three matching 0.5.6 files, and preserve
 settings, cache, recovery and sync checkpoints. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
 physical-device acceptance remain pending.
@@ -118,7 +130,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.5 candidate uses one source and one three-file package for Windows, macOS,
+0.5.6 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
