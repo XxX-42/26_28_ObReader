@@ -22,6 +22,11 @@
       ? bridgeScript.dataset.rendererGeneration
       : null;
   const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
+  const AUTO_SAVE_IDLE_DELAY_MS = iosInputPolicy ? 3000 : 1000;
+  const IOS_AUTO_SAVE_MIN_INTERVAL_MS = 10000;
+  const IOS_AUTO_SAVE_MAX_INTERVAL_MS = 30000;
+  const HEAVY_LEASE_TIMEOUT_MS = 120000;
+  const SAVE_RETRY_AFTER_IDLE = Symbol("save-retry-after-idle");
   const POINTER_DIAGNOSTIC_LIMIT = 32;
   const DEFERRED_ACCESSIBILITY_MOVE_LIMIT = 8;
   if (!token) {
@@ -36,6 +41,7 @@
   const state = {
     app: null,
     pdfJsOpen: null,
+    pdfJsClose: null,
     configured: false,
     disposed: false,
     ready: false,
@@ -49,6 +55,13 @@
     autoSavePaused: false,
     autoSaveTimer: null,
     autoSavePending: false,
+    lastAutoSaveStartedAt: null,
+    lastAutoSaveDurationMs: 0,
+    hostHeavyLeaseRequired: false,
+    heavyLeaseSequence: 0,
+    heavyLeaseWaiters: new Map(),
+    cancelledHeavyLeaseRequests: new Map(),
+    heavyLeaseCleanupTimer: null,
     pendingInkCommit: false,
     committingInkForSave: false,
     dirty: false,
@@ -1629,6 +1642,313 @@
     return true;
   }
 
+  function startSyncApplySessionClose(control, session, app) {
+    if (
+      !app ||
+      !session ||
+      state.syncApplyControl !== control ||
+      control.applyingSession !== session ||
+      typeof app.close !== "function"
+    ) {
+      return Promise.resolve(null);
+    }
+    const currentTask = app.pdfLoadingTask;
+    const currentDocument = app.pdfDocument;
+    if (
+      currentTask &&
+      currentTask !== session.previousLoadingTask &&
+      !session.loadingTask
+    ) {
+      session.loadingTask = currentTask;
+    }
+    const taskMatchesSession = session.loadingTask
+      ? currentTask === session.loadingTask
+      : currentTask === session.previousLoadingTask ||
+        (!!currentTask && currentTask !== session.previousLoadingTask);
+    if (!taskMatchesSession && currentTask) {
+      return Promise.resolve(null);
+    }
+    if (!currentTask && !currentDocument) {
+      return Promise.resolve(null);
+    }
+    try {
+      // Call close immediately so PDF.js destroys the current loading task
+      // before cancellation waits on an open promise that may still be parsing.
+      return Promise.resolve(app.close()).then(() => {
+        if (currentTask) {
+          control.destroyedTasks.add(currentTask);
+        }
+      });
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  function syncApplySessionTasks(session, app) {
+    const tasks = new Set(
+      [session?.previousLoadingTask, session?.loadingTask, app?.pdfLoadingTask]
+        .filter(Boolean),
+    );
+    if (
+      app?.pdfLoadingTask &&
+      app.pdfLoadingTask !== session?.previousLoadingTask &&
+      !session?.loadingTask
+    ) {
+      session.loadingTask = app.pdfLoadingTask;
+      tasks.add(app.pdfLoadingTask);
+    }
+    return tasks;
+  }
+
+  function syncApplyHasLiveViewerReferences(app) {
+    return !!(
+      app?.pdfLoadingTask ||
+      app?.pdfDocument ||
+      app?.pdfViewer?.pdfDocument ||
+      app?.pdfThumbnailViewer?.pdfDocument ||
+      app?.pdfLinkService?.pdfDocument ||
+      app?.pdfDocumentProperties?.pdfDocument
+    );
+  }
+
+  async function clearSyncApplyViewerReferences(session, app, tasks) {
+    const errors = [];
+    const documents = new Set(
+      [
+        session?.previousPdfDocument,
+        session?.pdfDocument,
+        app?.pdfDocument,
+        app?.pdfViewer?.pdfDocument,
+        app?.pdfThumbnailViewer?.pdfDocument,
+        app?.pdfLinkService?.pdfDocument,
+        app?.pdfDocumentProperties?.pdfDocument,
+      ].filter(Boolean),
+    );
+    const clearDocument = async (owner) => {
+      if (!owner || !documents.has(owner.pdfDocument)) {
+        return;
+      }
+      try {
+        await owner.setDocument?.(null);
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    const currentTask = app?.pdfLoadingTask;
+    if (currentTask && tasks.has(currentTask)) {
+      app.pdfLoadingTask = null;
+    }
+    if (app?.pdfDocument && documents.has(app.pdfDocument)) {
+      app.pdfDocument = null;
+    }
+    await clearDocument(app?.pdfThumbnailViewer);
+    await clearDocument(app?.pdfViewer);
+    await clearDocument(app?.pdfLinkService);
+    await clearDocument(app?.pdfDocumentProperties);
+    return errors;
+  }
+
+  async function forceSyncApplySessionCleanup(control, session, app, errors) {
+    const tasks = syncApplySessionTasks(session, app);
+    for (const task of tasks) {
+      if (control.destroyedTasks.has(task)) {
+        continue;
+      }
+      if (typeof task.destroy !== "function") {
+        errors.push(new Error("The PDF.js loading task cannot be destroyed."));
+        continue;
+      }
+      try {
+        await task.destroy();
+        control.destroyedTasks.add(task);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    const closeViewer = state.pdfJsClose || app?.close;
+    if (typeof closeViewer === "function") {
+      const closingTask = app?.pdfLoadingTask;
+      try {
+        await closeViewer.call(app);
+        if (closingTask) {
+          control.destroyedTasks.add(closingTask);
+        }
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    errors.push(...await clearSyncApplyViewerReferences(session, app, tasks));
+
+    const allTasksDestroyed = [...syncApplySessionTasks(session, app)].every(
+      (task) => control.destroyedTasks.has(task),
+    );
+    return {
+      stopped: allTasksDestroyed && !syncApplyHasLiveViewerReferences(app),
+      tasks,
+    };
+  }
+
+  function markSyncApplyCancellationError(reason) {
+    state.autoSavePaused = true;
+    state.readOnly = true;
+    setReadOnlyState(true);
+    const message = reason
+      ? `Sync refresh cleanup needed recovery: ${reason}. The recovery copy is preserved; reopen this PDF.`
+      : "Sync refresh cleanup failed. The recovery copy is preserved; close and reopen this PDF.";
+    showStatus(message);
+  }
+
+  function cancelSyncApply(control) {
+    if (control.cancelPromise) {
+      return control.cancelPromise;
+    }
+    control.cancelRequested = true;
+    control.destroyedTasks = new Set();
+    const session = control.applyingSession;
+    const app = state.app;
+    session?.controller.abort();
+
+    // Start stopping the active PDF.js task before awaiting the open promise.
+    const firstClose = startSyncApplySessionClose(control, session, app);
+    const openSettled = session?.pdfJsOpenPromise
+      ? Promise.resolve(session.pdfJsOpenPromise).then(
+          () => ({ ok: true }),
+          (error) => ({ ok: false, error }),
+        )
+      : Promise.resolve({ ok: true });
+    control.cancelPromise = (async () => {
+      const errors = [];
+      let cleanupFallback = false;
+      try {
+        await firstClose;
+      } catch (error) {
+        errors.push(error);
+        cleanupFallback = true;
+        await forceSyncApplySessionCleanup(control, session, app, errors);
+      }
+      let openDone = false;
+      void openSettled.then(() => {
+        openDone = true;
+      });
+      while (!openDone && session && state.syncApplyControl === control) {
+        const currentTask = app?.pdfLoadingTask;
+        if (
+          currentTask &&
+          currentTask !== session.previousLoadingTask
+        ) {
+          try {
+            // PDFViewerApplication.open may have been waiting for the previous
+            // document's close when cancellation began. Close again as soon as
+            // its replacement task appears, before waiting for that parse.
+            await startSyncApplySessionClose(control, session, app);
+          } catch (error) {
+            errors.push(error);
+            cleanupFallback = true;
+            await forceSyncApplySessionCleanup(control, session, app, errors);
+          }
+        }
+        if (!openDone) {
+          await Promise.race([
+            openSettled.then(() => {
+              openDone = true;
+            }),
+            new Promise((resolve) => setTimeout(resolve, 10)),
+          ]);
+        }
+      }
+      const openResult = await openSettled;
+      if (
+        openResult.ok &&
+        session?.previousLoadingTask &&
+        session.pdfJsOpenPromise
+      ) {
+        control.destroyedTasks.add(session.previousLoadingTask);
+      }
+      try {
+        await control.openDocumentPromise;
+      } catch {
+        // openDocument reports the cancellation through its settled result.
+      }
+      try {
+        await startSyncApplySessionClose(control, session, app);
+      } catch (error) {
+        errors.push(error);
+        cleanupFallback = true;
+      }
+      if (syncApplyHasLiveViewerReferences(app)) {
+        cleanupFallback = true;
+      }
+      const cleanup = await forceSyncApplySessionCleanup(
+        control,
+        session,
+        app,
+        errors,
+      );
+      if (!cleanup.stopped) {
+        const reason = String(errors[0]?.message || errors[0] || "pdf-close-failed");
+        markSyncApplyCancellationError(reason);
+        return { ok: false, reason };
+      }
+      if (cleanupFallback || errors.length > 0) {
+        const reason = String(errors[0]?.message || errors[0] || "pdf-close-fallback");
+        markSyncApplyCancellationError(reason);
+        return { ok: true, cleanupFallback: true, reason };
+      }
+      return {
+        ok: true,
+        cleanupFallback: false,
+      };
+    })();
+    return control.cancelPromise;
+  }
+
+  async function handleSyncApplyCancel(message) {
+    const control = state.syncApplyControl;
+    if (
+      message.rendererGeneration !== rendererGeneration ||
+      !control ||
+      control.id !== message.id ||
+      control.documentId !== message.documentId ||
+      control.openRequest !== message.openRequest
+    ) {
+      return;
+    }
+    if (control.phase !== "applying") {
+      clearSyncApplyControl(control);
+      return;
+    }
+    let result;
+    try {
+      result = await cancelSyncApply(control);
+    } catch (error) {
+      result = {
+        ok: false,
+        reason: String(error?.message || error || "PDF.js cleanup failed."),
+      };
+      markSyncApplyCancellationError(result.reason);
+    }
+    if (result.ok) {
+      clearSyncApplyControl(control);
+      postToHost("sync-apply-cancelled", {
+        id: control.id,
+        documentId: control.documentId,
+        openRequest: control.openRequest,
+        ok: true,
+        ...(result.cleanupFallback ? { cleanupFallback: true } : {}),
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+    } else {
+      postToHost("sync-apply-cancel-failed", {
+        id: control.id,
+        documentId: control.documentId,
+        openRequest: control.openRequest,
+        ok: false,
+        reason: result.reason || "PDF.js is still active.",
+      });
+    }
+  }
+
   function postSyncApplyPrepared(control, ok, reason = null) {
     const fields = {
       id: control.id,
@@ -1789,9 +2109,17 @@
     let opened = false;
     let openError = null;
     try {
-      opened = await openDocument(openMessage);
+      control.openDocumentPromise = openDocument(openMessage);
+      opened = await control.openDocumentPromise;
     } catch (error) {
       openError = error;
+    }
+    if (control.cancelRequested) {
+      const result = await control.cancelPromise;
+      if (result?.ok && state.syncApplyControl === control) {
+        clearSyncApplyControl(control);
+      }
+      return;
     }
     if (opened) {
       postToHost("sync-applied", {
@@ -2051,6 +2379,28 @@
     state.autoSaveTimer = null;
   }
 
+  function autoSaveMinimumIntervalMs() {
+    if (!iosInputPolicy) {
+      return 0;
+    }
+    return Math.min(
+      IOS_AUTO_SAVE_MAX_INTERVAL_MS,
+      Math.max(
+        IOS_AUTO_SAVE_MIN_INTERVAL_MS,
+        IOS_AUTO_SAVE_MIN_INTERVAL_MS + state.lastAutoSaveDurationMs,
+      ),
+    );
+  }
+
+  function autoSaveDelayMs() {
+    if (!iosInputPolicy || !Number.isFinite(state.lastAutoSaveStartedAt)) {
+      return AUTO_SAVE_IDLE_DELAY_MS;
+    }
+    const cooldownRemaining =
+      state.lastAutoSaveStartedAt + autoSaveMinimumIntervalMs() - Date.now();
+    return Math.max(AUTO_SAVE_IDLE_DELAY_MS, cooldownRemaining);
+  }
+
   function captureAutoSaveSession() {
     return {
       documentId: state.activeDocumentId,
@@ -2133,6 +2483,40 @@
     ) {
       return;
     }
+    if (state.savePromise) {
+      // Preserve only the dirty state while a save is active. The settled
+      // flight re-enters the idle debounce with the latest revision.
+      if (state.freeTextFocused && state.freeTextInputPending) {
+        const session = captureAutoSaveSession();
+        state.autoSaveTimer = setTimeout(() => {
+          state.autoSaveTimer = null;
+          if (
+            !isAutoSaveSessionCurrent(session) ||
+            !state.autoSaveEnabled ||
+            state.autoSavePaused ||
+            state.closeControl ||
+            state.isComposing ||
+            hasActivePointerInteraction()
+          ) {
+            return;
+          }
+          if (state.savePromise) {
+            if (state.freeTextFocused && state.freeTextInputPending) {
+              state.freeTextCommitReady = true;
+              try {
+                prepareContentForSave({ commitFreeText: true });
+              } finally {
+                state.freeTextCommitReady = false;
+              }
+            }
+            state.autoSavePending = true;
+            return;
+          }
+          void runAutoSaveAfterIdle(session);
+        }, AUTO_SAVE_IDLE_DELAY_MS);
+      }
+      return;
+    }
     const session = captureAutoSaveSession();
     state.autoSaveTimer = setTimeout(() => {
       state.autoSaveTimer = null;
@@ -2143,8 +2527,12 @@
       ) {
         return;
       }
+      if (state.savePromise) {
+        state.autoSavePending = true;
+        return;
+      }
       void runAutoSaveAfterIdle(session);
-    }, 1000);
+    }, autoSaveDelayMs());
   }
 
   async function runAutoSaveAfterIdle(session) {
@@ -2160,6 +2548,10 @@
       state.readOnly ||
       isInputBusy()
     ) {
+      return false;
+    }
+    if (state.savePromise) {
+      state.autoSavePending = true;
       return false;
     }
     if (state.pendingInkCommit) {
@@ -2273,6 +2665,141 @@
     return `recovery-${rendererGeneration || "legacy"}-${Date.now().toString(36)}-${state.recoverySequence.toString(36)}`;
   }
 
+  function makeHeavyLeaseRequestId() {
+    state.heavyLeaseSequence += 1;
+    return `heavy-${rendererGeneration || "legacy"}-${Date.now().toString(36)}-${state.heavyLeaseSequence.toString(36)}`;
+  }
+
+  function rememberCancelledHeavyLease(waiter) {
+    state.cancelledHeavyLeaseRequests.set(waiter.id, {
+      documentId: waiter.documentId,
+      openRequest: waiter.openRequest,
+      cancelledAt: Date.now(),
+    });
+    while (state.cancelledHeavyLeaseRequests.size > 128) {
+      const oldestId = state.cancelledHeavyLeaseRequests.keys().next().value;
+      state.cancelledHeavyLeaseRequests.delete(oldestId);
+    }
+  }
+
+  function finishHeavyLeaseWaiter(waiter) {
+    clearTimeout(waiter.timeout);
+    state.heavyLeaseWaiters.delete(waiter.id);
+  }
+
+  function cancelHeavyLeaseWaiter(
+    waiter,
+    reason = "The PDF save lease request was cancelled.",
+    { notifyHost = true, leaseTimeout = false } = {},
+  ) {
+    if (!waiter || state.heavyLeaseWaiters.get(waiter.id) !== waiter) {
+      return false;
+    }
+    finishHeavyLeaseWaiter(waiter);
+    rememberCancelledHeavyLease(waiter);
+    if (notifyHost) {
+      postToHost("heavy-cancel", {
+        id: waiter.id,
+        documentId: waiter.documentId,
+        openRequest: waiter.openRequest,
+      });
+    }
+    const error = new Error(reason);
+    error.cancelled = true;
+    if (leaseTimeout) {
+      error.leaseTimeout = true;
+      error.fromHost = true;
+      error.code = "heavy-lease-timeout";
+    }
+    waiter.reject(error);
+    return true;
+  }
+
+  function cancelPendingHeavyLeaseWaiters(
+    reason = "The PDF view changed while waiting for a save lease.",
+  ) {
+    for (const waiter of [...state.heavyLeaseWaiters.values()]) {
+      cancelHeavyLeaseWaiter(waiter, reason);
+    }
+  }
+
+  function releaseHostHeavyLease(lease, documentId) {
+    if (!lease?.leaseId) {
+      return false;
+    }
+    const fields = {
+      leaseId: lease.leaseId,
+      ...(documentId ? { documentId } : {}),
+    };
+    if (!state.disposed) {
+      return postToHost("heavy-release", fields);
+    }
+    try {
+      window.parent.postMessage(
+        { channel, type: "heavy-release", token, rendererGeneration, ...fields },
+        "*",
+      );
+      return true;
+    } catch (error) {
+      console.error("PDF Reader bridge could not release its host save lease:", error);
+      return false;
+    }
+  }
+
+  function finishDisposedHeavyLeaseCleanup() {
+    if (
+      !state.disposed ||
+      state.heavyLeaseWaiters.size > 0 ||
+      state.cancelledHeavyLeaseRequests.size > 0
+    ) {
+      return false;
+    }
+    clearTimeout(state.heavyLeaseCleanupTimer);
+    state.heavyLeaseCleanupTimer = null;
+    window.removeEventListener("message", onHostMessage);
+    return true;
+  }
+
+  function waitForHostHeavyLease({
+    documentId,
+    openRequest,
+    timeoutMs = HEAVY_LEASE_TIMEOUT_MS,
+  }) {
+    if (!state.hostHeavyLeaseRequired) {
+      return Promise.resolve(null);
+    }
+    const id = makeHeavyLeaseRequestId();
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        id,
+        documentId,
+        openRequest,
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          cancelHeavyLeaseWaiter(
+            waiter,
+            "Timed out waiting for the Obsidian PDF save lease.",
+            { leaseTimeout: true },
+          );
+        }, Math.max(0, Math.min(HEAVY_LEASE_TIMEOUT_MS, timeoutMs))),
+      };
+      state.heavyLeaseWaiters.set(id, waiter);
+      if (
+        !postToHost("heavy-acquire", {
+          id,
+          documentId,
+          openRequest,
+        })
+      ) {
+        finishHeavyLeaseWaiter(waiter);
+        const error = new Error("Could not request the Obsidian PDF save lease.");
+        error.fromHost = true;
+        reject(error);
+      }
+    });
+  }
+
   function waitForHostSave({
     data,
     documentId,
@@ -2285,6 +2812,7 @@
     operations,
     newAnnotations,
     actorId,
+    heavyLeaseId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -2328,6 +2856,7 @@
             operations,
             newAnnotations,
             actorId,
+            ...(heavyLeaseId ? { heavyLeaseId } : {}),
           },
           [data],
         )
@@ -2352,6 +2881,7 @@
     operations,
     newAnnotations,
     actorId,
+    heavyLeaseId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -2394,6 +2924,7 @@
             operations,
             newAnnotations,
             actorId,
+            ...(heavyLeaseId ? { heavyLeaseId } : {}),
           },
           [data],
         )
@@ -2409,6 +2940,7 @@
     const app = state.app;
     const pdfDocument = app?.pdfDocument;
     const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
     if (!app || !pdfDocument || !documentId) {
       return false;
     }
@@ -2417,20 +2949,49 @@
       return false;
     }
 
-    const revisionAtStart = state.revision;
-    const dirtySnapshot = snapshotChanges(app);
-    const operationsAtStart = captureSyncOperations(revisionAtStart);
-    const newAnnotationsAtStart = captureNewSyncAnnotations();
-    const actorIdAtStart = state.syncActorId;
-    if (!isDirty(app)) {
-      return true;
-    }
-    const requestId = makeSaveRequestId();
+    const revisionBeforeLease = state.revision;
+    const sessionIsCurrent = () =>
+      !state.disposed &&
+      state.app === app &&
+      state.activeDocumentId === documentId &&
+      state.activeOpenRequest === openRequest &&
+      app.pdfDocument === pdfDocument;
+    let lease = null;
+    let revisionAtStart = null;
+    let dirtySnapshot = null;
+    let requestId = null;
     let willSaveDispatched = false;
-    app._saveInProgress = true;
-    app._updateOverwriteOriginalState?.();
+    let saveStarted = false;
+    let autoStartedAt = null;
 
     try {
+      lease = await waitForHostHeavyLease({ documentId, openRequest });
+      if (!sessionIsCurrent()) {
+        return false;
+      }
+      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
+        return SAVE_RETRY_AFTER_IDLE;
+      }
+      if (
+        origin === "auto" &&
+        (!state.autoSaveEnabled || state.autoSavePaused)
+      ) {
+        return false;
+      }
+
+      revisionAtStart = state.revision;
+      dirtySnapshot = snapshotChanges(app);
+      if (!isDirty(app)) {
+        return true;
+      }
+      const operationsAtStart = captureSyncOperations(revisionAtStart);
+      const newAnnotationsAtStart = captureNewSyncAnnotations();
+      const actorIdAtStart = state.syncActorId;
+      requestId = makeSaveRequestId();
+      app._saveInProgress = true;
+      saveStarted = true;
+      app._updateOverwriteOriginalState?.();
+
       await app.pdfScriptingManager?.dispatchWillSave?.();
       willSaveDispatched = true;
 
@@ -2441,9 +3002,31 @@
           "Page reordering is unavailable in the Obsidian PDF viewer.",
         );
       }
+      if (
+        !sessionIsCurrent() ||
+        state.revision !== revisionAtStart ||
+        isEditBoundaryBusy()
+      ) {
+        if (willSaveDispatched) {
+          await app.pdfScriptingManager?.dispatchDidSave?.();
+          willSaveDispatched = false;
+        }
+        if (sessionIsCurrent()) {
+          restoreChanges(app, {
+            hadAnnotationChanges: true,
+            hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+          });
+        }
+        return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
+      }
+
       const hasAnnotationChanges =
         dirtySnapshot.hadAnnotationChanges || state.dirty ||
         app._annotationStorageModified;
+      autoStartedAt = origin === "auto" ? Date.now() : null;
+      if (autoStartedAt !== null) {
+        state.lastAutoSaveStartedAt = autoStartedAt;
+      }
       const bytes = hasAnnotationChanges
         ? await pdfDocument.saveDocument()
         : await pdfDocument.getData();
@@ -2456,16 +3039,7 @@
         willSaveDispatched = false;
       }
 
-      if (
-        state.disposed ||
-        state.activeDocumentId !== documentId ||
-        app.pdfDocument !== pdfDocument
-      ) {
-        state.dirty = true;
-        restoreChanges(app, {
-          hadAnnotationChanges: true,
-          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-        });
+      if (!sessionIsCurrent()) {
         return false;
       }
 
@@ -2473,9 +3047,8 @@
         origin === "auto" &&
         (!state.autoSaveEnabled || state.autoSavePaused)
       ) {
-        // The setting can change while PDF.js is serializing. This request
-        // has not reached the host yet, so preserve the revision as dirty and
-        // let the host setting decide when a later write is allowed.
+        // The setting can change while PDF.js is serializing. Preserve the
+        // revision as dirty without sending an auto-origin host write.
         state.dirty = true;
         restoreChanges(app, {
           hadAnnotationChanges: true,
@@ -2500,15 +3073,13 @@
         requestId,
         revision: revisionAtStart,
         origin,
-        openRequest: state.activeOpenRequest,
+        openRequest,
         operations: operationsAtStart,
         newAnnotations: newAnnotationsAtStart,
         actorId: actorIdAtStart,
+        heavyLeaseId: lease?.leaseId,
       });
-      if (
-        app.pdfDocument === pdfDocument &&
-        state.activeDocumentId === documentId
-      ) {
+      if (sessionIsCurrent()) {
         state.confirmedRevision = revisionAtStart;
         if (state.revision === revisionAtStart) {
           state.dirty = false;
@@ -2527,9 +3098,13 @@
       }
       return true;
     } catch (error) {
+      if (!sessionIsCurrent() || (error?.cancelled && !error?.leaseTimeout)) {
+        return false;
+      }
       state.autoSavePaused = true;
       clearAutoSaveTimer();
-      state.dirty = state.dirty || dirtySnapshot.hadAnnotationChanges;
+      const failedSnapshot = dirtySnapshot || snapshotChanges(app);
+      state.dirty = true;
       if (willSaveDispatched) {
         try {
           await app.pdfScriptingManager?.dispatchDidSave?.();
@@ -2537,13 +3112,10 @@
           // Keep the original save error as the user-visible failure.
         }
       }
-      if (app.pdfDocument === pdfDocument) {
+      if (sessionIsCurrent()) {
         restoreChanges(app, {
-          hadAnnotationChanges:
-            dirtySnapshot.hadAnnotationChanges ||
-            state.dirty ||
-            state.revision !== revisionAtStart,
-          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+          hadAnnotationChanges: true,
+          hadStructuralChanges: failedSnapshot.hadStructuralChanges,
         });
       }
       if (!error?.fromHost) {
@@ -2557,15 +3129,20 @@
       }
       return false;
     } finally {
-      app._saveInProgress = false;
-      app._updateOverwriteOriginalState?.();
-      app.setTitle?.();
+      if (saveStarted) {
+        app._saveInProgress = false;
+        app._updateOverwriteOriginalState?.();
+        app.setTitle?.();
+      }
+      if (autoStartedAt !== null) {
+        state.lastAutoSaveDurationMs = Math.max(0, Date.now() - autoStartedAt);
+      }
+      releaseHostHeavyLease(lease, documentId);
     }
   }
 
   async function runSaveSequence(origin) {
     const documentId = state.activeDocumentId;
-    let nextOrigin = origin;
     let lastResult = true;
     while (
       !state.disposed &&
@@ -2574,7 +3151,7 @@
       isDirty()
     ) {
       if (
-        nextOrigin === "auto" &&
+        origin === "auto" &&
         (!state.autoSaveEnabled || state.autoSavePaused)
       ) {
         return false;
@@ -2586,29 +3163,46 @@
         }
         continue;
       }
-      const revisionBeforeSave = state.revision;
-      lastResult = await saveOneRevision(nextOrigin);
+      lastResult = await saveOneRevision(origin);
+      if (lastResult === SAVE_RETRY_AFTER_IDLE) {
+        if (origin === "auto") {
+          state.autoSavePending = true;
+          return true;
+        }
+        continue;
+      }
       if (!lastResult) {
         return false;
       }
-      if (state.revision === revisionBeforeSave || !isDirty()) {
+      if (origin === "auto") {
+        if (isDirty()) {
+          state.autoSavePending = true;
+        }
         return true;
       }
-      nextOrigin = origin;
+      if (!isDirty()) {
+        return true;
+      }
     }
     return lastResult;
   }
 
   async function runRecoverySequence(reason, deadline) {
     const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
     if (!documentId || !state.app?.pdfDocument || state.readOnly) {
       return false;
     }
     const app = state.app;
     const pdfDocument = app.pdfDocument;
-    while (
+    const sessionIsCurrent = () =>
       !state.disposed &&
+      state.app === app &&
       state.activeDocumentId === documentId &&
+      state.activeOpenRequest === openRequest &&
+      app.pdfDocument === pdfDocument;
+    while (
+      sessionIsCurrent() &&
       isDirty()
     ) {
       if (state.freeTextFocused && !isInputBusy()) {
@@ -2635,18 +3229,73 @@
         }
       }
 
+      const revisionBeforeLease = state.revision;
+      let lease = null;
+      try {
+        if (deadline <= Date.now()) {
+          return false;
+        }
+        lease = await waitForHostHeavyLease({
+          documentId,
+          openRequest,
+          timeoutMs: Math.max(0, deadline - Date.now()),
+        });
+      } catch (error) {
+        if (!sessionIsCurrent() || error?.cancelled) {
+          return false;
+        }
+        state.dirty = true;
+        restoreChanges(app, {
+          hadAnnotationChanges: true,
+          hadStructuralChanges: snapshotChanges(app).hadStructuralChanges,
+        });
+        showStatus(error?.message || "Could not request the PDF recovery lease.");
+        return false;
+      }
+      if (!sessionIsCurrent()) {
+        releaseHostHeavyLease(lease, documentId);
+        return false;
+      }
+      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
+        releaseHostHeavyLease(lease, documentId);
+        continue;
+      }
+
       const revisionAtStart = state.revision;
       const operationsAtStart = captureSyncOperations(revisionAtStart);
       const newAnnotationsAtStart = captureNewSyncAnnotations();
       const actorIdAtStart = state.syncActorId;
       const dirtySnapshot = snapshotChanges(app);
       let willSaveDispatched = false;
+      let saveStarted = false;
       app._saveInProgress = true;
+      saveStarted = true;
       try {
+        if (deadline <= Date.now()) {
+          return false;
+        }
         await app.pdfScriptingManager?.dispatchWillSave?.();
         willSaveDispatched = true;
         if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
           throw new Error("Page reordering cannot be included in a PDF recovery copy.");
+        }
+        if (
+          !sessionIsCurrent() ||
+          state.revision !== revisionAtStart ||
+          isEditBoundaryBusy()
+        ) {
+          if (willSaveDispatched) {
+            await app.pdfScriptingManager?.dispatchDidSave?.();
+            willSaveDispatched = false;
+          }
+          if (sessionIsCurrent()) {
+            state.dirty = true;
+            restoreChanges(app, {
+              hadAnnotationChanges: true,
+              hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+            });
+          }
+          continue;
         }
         const bytes =
           dirtySnapshot.hadAnnotationChanges || state.dirty ||
@@ -2661,9 +3310,7 @@
           willSaveDispatched = false;
         }
         if (
-          state.disposed ||
-          state.activeDocumentId !== documentId ||
-          app.pdfDocument !== pdfDocument
+          !sessionIsCurrent()
         ) {
           return false;
         }
@@ -2693,12 +3340,9 @@
           operations: operationsAtStart,
           newAnnotations: newAnnotationsAtStart,
           actorId: actorIdAtStart,
+          heavyLeaseId: lease?.leaseId,
         });
-        if (
-          state.disposed ||
-          state.activeDocumentId !== documentId ||
-          state.app.pdfDocument !== pdfDocument
-        ) {
+        if (!sessionIsCurrent()) {
           return false;
         }
         state.dirty = true;
@@ -2712,6 +3356,9 @@
           return true;
         }
       } catch (error) {
+        if (!sessionIsCurrent() || error?.cancelled) {
+          return false;
+        }
         state.dirty = true;
         restoreChanges(app, {
           hadAnnotationChanges: true,
@@ -2720,12 +3367,15 @@
         showStatus(error?.message || "Could not save the PDF recovery copy.");
         return false;
       } finally {
-        app._saveInProgress = false;
-        app._updateOverwriteOriginalState?.();
-        app.setTitle?.();
+        if (saveStarted) {
+          app._saveInProgress = false;
+          app._updateOverwriteOriginalState?.();
+          app.setTitle?.();
+        }
+        releaseHostHeavyLease(lease, documentId);
       }
     }
-    return state.activeDocumentId === documentId && !isDirty();
+    return sessionIsCurrent() && !isDirty();
   }
 
   async function requestRecovery(reason, deadline) {
@@ -2786,26 +3436,20 @@
     if (state.savePromise) {
       if (origin === "manual") {
         state.manualSaveRequestedDuringFlight = true;
+      } else if (isDirty()) {
+        state.autoSavePending = true;
       }
       const inFlight = state.savePromise;
       const result = await inFlight;
       if (
-        !result &&
         origin === "manual" &&
         state.manualSaveRequestedDuringFlight
       ) {
         state.manualSaveRequestedDuringFlight = false;
+        if (state.disposed) {
+          return false;
+        }
         return requestSave("manual");
-      }
-      if (
-        result &&
-        origin === "auto" &&
-        isDirty() &&
-        state.autoSaveEnabled &&
-        !state.autoSavePaused
-      ) {
-        state.autoSavePending = true;
-        scheduleAutoSave();
       }
       state.manualSaveRequestedDuringFlight = false;
       return result;
@@ -2821,6 +3465,16 @@
     }
     state.savePromise = runSaveSequence(origin).finally(() => {
       state.savePromise = null;
+      if (!isDirty()) {
+        state.autoSavePending = false;
+      } else if (
+        state.autoSavePending &&
+        state.autoSaveEnabled &&
+        !state.autoSavePaused &&
+        !state.closeControl
+      ) {
+        scheduleAutoSave();
+      }
     });
     return state.savePromise;
   }
@@ -5339,10 +5993,13 @@
   }
 
   function clearScheduledWork() {
+    cancelPendingHeavyLeaseWaiters();
     clearAutoSaveTimer();
     clearDeferredTimeouts();
     state.pendingFreeTextAppearanceRepair = null;
     state.autoSavePending = false;
+    state.lastAutoSaveStartedAt = null;
+    state.lastAutoSaveDurationMs = 0;
     state.pendingInkCommit = false;
     state.manualSaveQueued = false;
     state.manualCommitQueued = false;
@@ -5832,6 +6489,30 @@
     // A same-view file switch must finish the previous session before PDF.js
     // replaces its document and the bridge drops the old revision observer.
     if (state.activeDocumentId && !isSyncApply) {
+      const finishPreviousSave = async (saveSucceeded) => {
+        if (
+          !saveSucceeded ||
+          state.activeDocumentId !== previousSession.documentId
+        ) {
+          return false;
+        }
+        if (!isDirty()) {
+          return true;
+        }
+        if (!state.autoSaveEnabled || state.autoSavePaused) {
+          return false;
+        }
+        // An auto flight commits only the revision it started with. A file
+        // switch is an explicit flush boundary, so write the latest safe
+        // revision manually instead of treating that remaining dirty state
+        // as a failed switch.
+        const latestRevisionSaved = await requestSave("manual");
+        return (
+          latestRevisionSaved &&
+          state.activeDocumentId === previousSession.documentId &&
+          !isDirty()
+        );
+      };
       clearAutoSaveTimer();
       const recoveredDirtySessionCanSwitch = !!(
         isDirty() &&
@@ -5878,7 +6559,7 @@
           return;
         }
         const priorSaveSucceeded = await priorSave;
-        if (!priorSaveSucceeded || isDirty()) {
+        if (!(await finishPreviousSave(priorSaveSucceeded))) {
           sendError("The previous PDF still has unsaved changes.", {
             documentId: state.activeDocumentId,
             code: "open-blocked-by-unsaved-changes",
@@ -5906,7 +6587,7 @@
         const priorSave = requestSave("auto");
         rearmPendingFreeTextAutoSave(sessionToSave);
         const priorSaveSucceeded = await priorSave;
-        if (!priorSaveSucceeded || isDirty()) {
+        if (!(await finishPreviousSave(priorSaveSucceeded))) {
           sendError("The previous PDF still has unsaved changes.", {
             documentId: state.activeDocumentId,
             code: "open-blocked-by-unsaved-changes",
@@ -5924,12 +6605,18 @@
     stopOpenStartupObserver();
     const session = createOpenSession(documentId);
     state.openSession = session;
+    if (isSyncApply) {
+      syncApplyControl.applyingSession = session;
+    }
     try {
       if (session.signal.aborted || state.disposed) {
         return false;
       }
       clearScheduledWork();
       cleanupStorageObserver();
+      if (typeof message.heavyLeaseRequired === "boolean") {
+        state.hostHeavyLeaseRequired = message.heavyLeaseRequired;
+      }
       state.activeDocumentId = null;
       updatePageNumberWidth(0);
       state.activeDocumentPath = null;
@@ -5945,6 +6632,8 @@
       state.lastRecoveredDocumentId = null;
       state.lastRecoveredRevision = null;
       state.autoSavePaused = false;
+      state.lastAutoSaveStartedAt = null;
+      state.lastAutoSaveDurationMs = 0;
       if (typeof message.autoSave === "boolean") {
         state.autoSaveEnabled = message.autoSave;
       }
@@ -5953,7 +6642,9 @@
         throw new Error("PDF.js open handler is unavailable.");
       }
       const parseStartedAt = performance.now();
-      await waitForOpenSession(
+      session.previousLoadingTask = app.pdfLoadingTask;
+      session.previousPdfDocument = app.pdfDocument;
+      session.pdfJsOpenPromise = Promise.resolve(
         state.pdfJsOpen.call(app, {
           data,
           filename,
@@ -5961,8 +6652,9 @@
           localSessionId: null,
           canOverwriteOriginal: false,
         }),
-        session,
       );
+      await waitForOpenSession(session.pdfJsOpenPromise, session);
+      session.loadingTask = app.pdfLoadingTask;
       const parsedAt = performance.now();
 
       const { pdfDocument } = await waitForDocumentLoaded(app, session);
@@ -6052,6 +6744,9 @@
       state.revision = 0;
       state.confirmedRevision = 0;
       state.autoSavePaused = false;
+      state.hostHeavyLeaseRequired = false;
+      state.lastAutoSaveStartedAt = null;
+      state.lastAutoSaveDurationMs = 0;
       setReadOnlyState(false);
       if (isSyncApply) {
         throw error;
@@ -6152,6 +6847,13 @@
     ) {
       return;
     }
+    if (
+      state.disposed &&
+      message.type !== "heavy-granted" &&
+      message.type !== "heavy-rejected"
+    ) {
+      return;
+    }
 
     if (message.type === "open") {
       if (
@@ -6230,22 +6932,90 @@
     }
 
     if (message.type === "sync-apply-cancel") {
-      const control = state.syncApplyControl;
-      if (
-        message.rendererGeneration === rendererGeneration &&
-        control &&
-        control.id === message.id &&
-        control.documentId === message.documentId &&
-        control.openRequest === message.openRequest &&
-        control.phase !== "applying"
-      ) {
-        clearSyncApplyControl(control);
-      }
+      void handleSyncApplyCancel(message);
       return;
     }
 
     if (message.type === "sync-apply") {
       void applySyncSnapshot(message);
+      return;
+    }
+
+    if (message.type === "heavy-granted") {
+      if (
+        typeof message.id !== "string" ||
+        typeof message.leaseId !== "string" ||
+        !message.leaseId
+      ) {
+        return;
+      }
+      const waiter = state.heavyLeaseWaiters.get(message.id);
+      if (!waiter) {
+        const cancelled = state.cancelledHeavyLeaseRequests.get(message.id);
+        if (cancelled) {
+          state.cancelledHeavyLeaseRequests.delete(message.id);
+          releaseHostHeavyLease(
+            { leaseId: message.leaseId },
+            cancelled.documentId,
+          );
+        }
+        finishDisposedHeavyLeaseCleanup();
+        return;
+      }
+      if (
+        !hasCompatibleHostAckGeneration(message) ||
+        (typeof message.documentId === "string" &&
+          message.documentId !== waiter.documentId) ||
+        (Number.isInteger(message.openRequest) &&
+          message.openRequest !== waiter.openRequest) ||
+        state.disposed ||
+        !state.hostHeavyLeaseRequired ||
+        state.activeDocumentId !== waiter.documentId ||
+        state.activeOpenRequest !== waiter.openRequest
+      ) {
+        finishHeavyLeaseWaiter(waiter);
+        rememberCancelledHeavyLease(waiter);
+        releaseHostHeavyLease({ leaseId: message.leaseId }, waiter.documentId);
+        const error = new Error("The PDF save lease belongs to an old document session.");
+        error.cancelled = true;
+        waiter.reject(error);
+        finishDisposedHeavyLeaseCleanup();
+        return;
+      }
+      finishHeavyLeaseWaiter(waiter);
+      waiter.resolve({ id: message.id, leaseId: message.leaseId });
+      finishDisposedHeavyLeaseCleanup();
+      return;
+    }
+
+    if (message.type === "heavy-rejected") {
+      if (typeof message.id !== "string") {
+        return;
+      }
+      const waiter = state.heavyLeaseWaiters.get(message.id);
+      if (waiter) {
+        if (
+          !hasCompatibleHostAckGeneration(message) ||
+          (typeof message.documentId === "string" &&
+            message.documentId !== waiter.documentId) ||
+          (Number.isInteger(message.openRequest) &&
+            message.openRequest !== waiter.openRequest)
+        ) {
+          return;
+        }
+        finishHeavyLeaseWaiter(waiter);
+        state.cancelledHeavyLeaseRequests.delete(message.id);
+        const error = new Error(
+          message.message || message.reason ||
+            "Obsidian could not grant the PDF save lease.",
+        );
+        error.code = message.code;
+        error.fromHost = true;
+        waiter.reject(error);
+      } else {
+        state.cancelledHeavyLeaseRequests.delete(message.id);
+      }
+      finishDisposedHeavyLeaseCleanup();
       return;
     }
 
@@ -6352,6 +7122,7 @@
     // but prevent the Viewer file picker/drop path from changing the document
     // while the bridge still associates saves with the host's vault path.
     state.pdfJsOpen = app.open;
+    state.pdfJsClose = app.close;
     app.open = async () => {
       showStatus("Open PDFs from the Obsidian file list.");
       return false;
@@ -6661,6 +7432,7 @@
     }
     updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
+    cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
     state.toolbarLayoutResizeObserver?.disconnect();
     state.toolbarLayoutResizeObserver = null;
@@ -6677,7 +7449,19 @@
       clearCloseControl(state.closeControl, { resume: false });
     }
     removeViewerLoadedListeners();
-    window.removeEventListener("message", onHostMessage);
+    if (
+      state.heavyLeaseWaiters.size > 0 ||
+      state.cancelledHeavyLeaseRequests.size > 0
+    ) {
+      clearTimeout(state.heavyLeaseCleanupTimer);
+      state.heavyLeaseCleanupTimer = setTimeout(() => {
+        state.heavyLeaseWaiters.clear();
+        state.cancelledHeavyLeaseRequests.clear();
+        finishDisposedHeavyLeaseCleanup();
+      }, HEAVY_LEASE_TIMEOUT_MS);
+    } else {
+      window.removeEventListener("message", onHostMessage);
+    }
     window.removeEventListener("keydown", onReadOnlyHotkey, true);
     window.removeEventListener("beforeunload", onViewerBeforeUnload, true);
     window.removeEventListener("pagehide", dispose);

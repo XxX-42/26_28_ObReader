@@ -3,12 +3,56 @@
 const { sha256 } = require("@noble/hashes/sha256");
 
 function bytesOf(value) {
-  if (value instanceof Uint8Array) return value;
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Object.prototype.toString.call(value) === "[object ArrayBuffer]" ||
+      Object.prototype.toString.call(value) === "[object SharedArrayBuffer]") {
+    return new Uint8Array(value);
+  }
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
   throw new TypeError("PDF merge worker source must be provided as bytes.");
+}
+
+function isBufferValue(value) {
+  return Object.prototype.toString.call(value) === "[object ArrayBuffer]" ||
+    Object.prototype.toString.call(value) === "[object SharedArrayBuffer]" ||
+    ArrayBuffer.isView(value);
+}
+
+function clonePayloadForTransfer(value, ownedSnapshots, transfers, seen = new WeakMap()) {
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  if (isBufferValue(value)) {
+    if (ownedSnapshots.has(value) && value instanceof Uint8Array &&
+        value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
+      ownedSnapshots.delete(value);
+      transfers.push(value.buffer);
+      seen.set(value, value);
+      return value;
+    }
+    const copy = bytesOf(value).slice();
+    transfers.push(copy.buffer);
+    seen.set(value, copy);
+    return copy;
+  }
+  if (Array.isArray(value)) {
+    const copy = [];
+    seen.set(value, copy);
+    for (const item of value) copy.push(clonePayloadForTransfer(item, ownedSnapshots, transfers, seen));
+    return copy;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    // RPC payloads are plain data. Keep clone-compatible uncommon values intact;
+    // byte-bearing fields are normalized separately above.
+    return value;
+  }
+  const copy = Object.create(prototype);
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    copy[key] = clonePayloadForTransfer(item, ownedSnapshots, transfers, seen);
+  }
+  return copy;
 }
 
 function hex(bytes) {
@@ -42,6 +86,9 @@ function createPdfMergeClient({
   let disposed = false;
   let nextId = 1;
   const pending = new Map();
+  const queue = [];
+  const ownedSnapshots = new WeakSet();
+  let draining = false;
 
   async function getWorkerSource() {
     if (!workerSourcePromise) {
@@ -70,6 +117,10 @@ function createPdfMergeClient({
   function rejectPending(error) {
     for (const task of pending.values()) task.reject(error);
     pending.clear();
+  }
+
+  function rejectQueued(error) {
+    for (const task of queue.splice(0)) task.reject(error);
   }
 
   function releaseWorker() {
@@ -151,20 +202,46 @@ function createPdfMergeClient({
     workerPromise = null;
   }
 
-  async function call(method, payload) {
+  async function runTask(task) {
     const instance = await ensureWorker();
     if (disposed) throw new PdfMergeWorkerError({ code: "PDF_MERGE_CLIENT_DISPOSED", message: "The PDF merge client has been disposed." });
-    const id = nextId++;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+    const transfers = [];
+    const payload = clonePayloadForTransfer(task.payload, ownedSnapshots, transfers);
+    await new Promise((resolve, reject) => {
+      pending.set(task.id, {
+        resolve: (result) => { task.resolve(result); resolve(); },
+        reject: (error) => { task.reject(error); reject(error); },
+      });
       try {
-        // Structured clone copies the byte views without detaching the caller's
-        // loaded-base/checkpoint buffers, which the host retains for recovery.
-        instance.postMessage({ id, method, payload });
+        instance.postMessage({ id: task.id, method: task.method, payload }, transfers);
       } catch (error) {
-        pending.delete(id);
+        pending.delete(task.id);
         reject(error);
       }
+    });
+  }
+
+  async function drainQueue() {
+    if (draining) return;
+    draining = true;
+    try {
+      while (queue.length && !disposed) {
+        const task = queue.shift();
+        try { await runTask(task); }
+        catch (error) { task.reject(error); }
+      }
+    } finally {
+      draining = false;
+      if (queue.length && !disposed) void drainQueue();
+    }
+  }
+
+  function call(method, payload) {
+    if (disposed) return Promise.reject(new PdfMergeWorkerError({ code: "PDF_MERGE_CLIENT_DISPOSED", message: "The PDF merge client has been disposed." }));
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      queue.push({ id, method, payload, resolve, reject });
+      void drainQueue();
     });
   }
 
@@ -176,11 +253,19 @@ function createPdfMergeClient({
       message: "The PDF merge client was disposed before its request completed.",
     });
     rejectPending(error);
+    rejectQueued(error);
     releaseWorker();
     workerPromise = null;
   }
 
   return {
+    // Creates an immutable, one-use copy that the next admitted RPC may transfer.
+    // The caller's bytes stay attached for checkpoints and PDF.js ownership.
+    snapshotBytes(value) {
+      const snapshot = bytesOf(value).slice();
+      ownedSnapshots.add(snapshot);
+      return snapshot;
+    },
     prepareLocal: (payload) => call("prepareLocal", payload),
     merge: (payload) => call("merge", payload),
     inspect: (payload) => call("inspect", payload),

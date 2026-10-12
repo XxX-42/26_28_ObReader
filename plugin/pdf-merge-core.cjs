@@ -726,14 +726,15 @@ function infoToIdentity(stateEntry, runtimeId = null) {
 
 async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId }) {
   if (typeof actorId !== "string" || !actorId) fail("PDF_MERGE_INVALID_ACTOR", "actorId is required.");
+  const checkpointMatchesBase = Boolean(checkpointBytes) && bytesEqual(baseBytes, checkpointBytes);
   const [baseDoc, draftDoc, checkpointDoc] = await Promise.all([
     loadPdf(baseBytes, "Loaded base PDF"),
     loadPdf(draftBytes, "PDF.js draft PDF"),
-    checkpointBytes ? loadPdf(checkpointBytes, "Saved local checkpoint PDF") : Promise.resolve(null),
+    checkpointBytes && !checkpointMatchesBase ? loadPdf(checkpointBytes, "Saved local checkpoint PDF") : Promise.resolve(null),
   ]);
   const baseInfo = inspectDocument(baseDoc);
   const draftInfo = inspectDocument(draftDoc);
-  const checkpointInfo = checkpointDoc ? inspectDocument(checkpointDoc) : null;
+  const checkpointInfo = checkpointBytes ? (checkpointMatchesBase ? baseInfo : inspectDocument(checkpointDoc)) : null;
   validatePageLineage(baseInfo, draftInfo, "PDF.js draft");
   if (checkpointInfo) {
     validatePageLineage(baseInfo, checkpointInfo, "Saved local checkpoint");

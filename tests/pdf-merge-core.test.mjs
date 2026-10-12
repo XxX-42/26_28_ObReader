@@ -317,6 +317,7 @@ test("checkpoint UUIDs survive repeat-save, delete, tombstone carry-forward, and
   const first = await prepareLocal({
     baseBytes: base.bytes,
     draftBytes: firstDraft.bytes,
+    checkpointBytes: base.bytes,
     operations: [operation({ uuid, kind: "square", timestamp: 100, operationId: "create-square" })],
     newAnnotations: newAnnotation,
     actorId: "actor-device-01",

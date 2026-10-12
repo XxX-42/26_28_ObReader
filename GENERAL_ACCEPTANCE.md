@@ -1,4 +1,36 @@
-# 0.1general 通用候选（插件 0.5.4）
+# 0.1general 通用候选（插件 0.5.5）
+
+
+## 当前：0.5.5 iPad 保存与内存候选（2026-10-13）
+
+Windows、macOS、iPadOS 使用同一套源码与同一组三文件，统一版本 **0.5.5**。iPad/iOS 输入入口默认停笔／编辑结束 3 秒后自动保存，自动保存起始间隔至少 10 秒，按上一轮完整保存耗时适应，冷却上限 30 秒；保存期间的新修订保持 dirty，回到下一轮空闲调度，不在 auto flight 中立即循环追写。桌面空闲等待保持 1 秒。手动保存、快捷键和可控关闭绕过自动冷却，仍等待输入边界、串行执行与精确修订确认。focused FreeText 文档切换也等待安全提交及旧文档最新修订，不丢未确认编辑。
+
+移动端共享重任务槽覆盖序列化、检查点／合并和写回；先取得槽再进入保存队列。Worker 入场与 RPC 全局串行，只有独占的一次性副本转移，不 detach PDF.js 或宿主保留的基线。宿主复用不可变已确认快照，去掉哈希、转换和 Worker 返回值的冗余复制；同内容 base/checkpoint 只解析一份只读模型，draft 保持独立可写。自身修改通知先比较实际磁盘内容再分配大检查点，不用时间窗口忽略事件。复用与输出同源的验证元数据，保留 UUID 精确映射、页面血缘、磁盘比较及写后验证。
+
+最后一个 Reader 关闭并完成相关任务后，释放该文件的内存基线／检查点；下次打开从保留的磁盘检查点重新核验。多视图、同一 Reader 快速切回和旧任务结束均有回归保护。不会删除旧恢复文件、同步检查点或删除记录。完整冻结 Viewer、增量缓存／后台预热、离线三文件发布和锁定依赖保持不变，未降低画布清晰度。
+
+慢同步刷新达到原有超时后先请求取消，只有 Viewer 中止打开、销毁 PDF.js 任务并清理引用后才释放槽；迟到成功确认仍正确更新宿主基线。无法确认停止时保留 pending／槽和恢复副本，不能把取消失败当成功。用户显式关闭 Reader 时先销毁失败 renderer，再结束旧请求。清理 fallback 保留原始异常，暂停自动保存并提供恢复／重开提示；不自动重载丢弃编辑。
+
+### 冻结验证与原生证据
+
+- 默认并发全套 `general-0.5.5-validation-default-2026-10-12T17-40-03-735843+00-00`：**214/214 通过**，0 失败／取消／跳过，自然退出 0，源码前后哈希完全一致。离线 `general-0.5.5-validation-offline-2026-10-12T17-40-03-726070+00-00` 自然退出 0，五工具与保存重开通过，正常浏览器退出。
+- Mac 移动模拟 `general-0.5.5-save-memory-native-1791826692846.json`：两次连续鼠标编辑合并成 1 次自动写回；冷却内继续编辑未重复自动保存，工具栏手动保存即时写回，第五条编辑在关闭时保存，重开后五个 Square 均存在。重开重新读取 1 次检查点元数据，验证已释放内存状态但保留磁盘检查点。结束恢复 desktop 模拟状态，Reader 为 0。
+- Mac 桌面 `general-0.5.5-native-1791826734409.json`：干净同步刷新、实际鼠标脏编辑与远端批注合并、已确认本地检查点保护、同内容重复通知、旋转／页宽阅读位置与第二 Reader 缓存复用通过。插件加载时自动预热 254 ms，406 次 stat、0 次缓存二进制核验读取、0 次解压；同实例再次准备 0 ms／0 次检查。该数据只属于 Mac 样本。
+- 独立 Luna Max 审计复核共用核心、各平台入口、所有权、锁顺序、修订确认、取消及释放顺序，最终产物与证据另由交付清单核验。
+
+早期 focused autosave 两次失败保留原始日志与 JSON：分别是 FreeText 提交边界在 flight 中失去计时器，以及旧文档切换错误比较新文档身份；两者已修复，最终 focused 2/2 及默认全套均通过。取消 fallback 测试的首次断言形状失败、source VM harness 未登记新 browser-only 模块、测试安装缓存旧 manifest／后台不可渲染导致的失败也原样保留，未重标为通过。未调查或扩展 Chrome／Puppeteer／Crashpad／CDP teardown。
+
+### 安装、回滚与已知限制
+
+[0.5.5 三文件候选](dist/pdf-web-reader-0.1general-0.5.5-candidate.zip)仅包含 `main.js`、`manifest.json`、`styles.css`，ZIP SHA-256：`6d1277ee0ac018380d97afda2eef4c98defa66403929702290ee7ddd34173cb6`；main.js：`5642446708a3eb88e40935ab061d912f910659cf0f11e035861291a6957e718c`。交付 [证据包](dist/general-0.1general-0.5.5-evidence.zip)、[证据清单](dist/general-0.1general-0.5.5-evidence.manifest.json)、[源码差异](dist/general-0.1general-0.5.5-source.diff) 和 [SHA-256 清单](dist/general-0.1general-0.5.5-SHA256SUMS.txt)。
+
+本轮仅更新 `/Users/jiajia/Documents/ObReader-Apple-Test`。`general-0.5.5-test-deployment-1791826658906.json` 记录完整旧插件备份 `.deploy-backups/general-0.5.5-test-deployment-1791826658906/pdf-web-reader`，替换仅三文件，原设置逐字节保留，既有恢复／检查点未写入。测试只修改每轮独占的合成 PDF。`远程仓库1` 与主库没有更新、重载或 PDF 操作；其先前 0.5.4 部署记录为历史状态。
+
+安装前保存并关闭 Reader，完整备份插件目录，只替换三文件，保留 `data.json`、缓存、恢复和 `.sync-checkpoints`。恢复 [0.5.4 回滚包](dist/pdf-web-reader-0.1general-0.5.4-candidate.zip)时也按此步骤操作；历史三文件 ZIP 原哈希仍是 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`。本地另保留 `.deploy-backups/0.5.4-before-0.5.5-20261012T165407Z` 三文件和 ZIP 备份。
+
+实体 iPad Pro 2018 的实际内存峰值和崩溃是否消失仍待设备复验；Windows 实机也未重新验收。Mac 移动模拟不能替代 WKWebView／Jetsam 证据。较长自动保存间隔扩大了突发强退前未持久化的编辑窗口；系统强退／恢复副本写入失败仍不能承诺无损恢复。磁盘比较与写入之间的同步竞争窗口继续存在。按授权验证后正常推送 main，不创建 GitHub Release，不部署主库。
+
+## 历史：0.5.4 交付与验证
 
 ## 当前：0.5.4 工具栏、惯性滚动、参数浮层与 Pencil 高亮
 

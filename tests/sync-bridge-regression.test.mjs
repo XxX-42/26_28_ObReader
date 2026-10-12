@@ -87,7 +87,7 @@ test(
             const documentId=${JSON.stringify(documentId)};
             const actorId=${JSON.stringify(actorId)};
             const iframe=document.querySelector('iframe');
-            const state=window.__syncHost={ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
+            const state=window.__syncHost={ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
             const bytesToBase64=value=>{const bytes=new Uint8Array(value);let binary='';for(let offset=0;offset<bytes.length;offset+=0x8000)binary+=String.fromCharCode(...bytes.subarray(offset,offset+0x8000));return btoa(binary)};
             const base64ToArrayBuffer=value=>{const binary=atob(value);const bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);return bytes.buffer};
             const sendOpen=async()=>{
@@ -153,6 +153,8 @@ test(
                 state.prepared.push(message);
               }else if(message.type==='sync-applied'){
                 state.applied.push(message);
+              }else if(message.type==='sync-apply-cancelled'){
+                state.cancelled.push(message);
               }else if(message.type==='error'){
                 state.errors.push(message.message||message.code||'bridge-error');
               }
@@ -908,6 +910,149 @@ test(
       assert.equal(failedRecoveryResult.flushed.dirty, true);
       assert.equal(failedRecoveryResult.status, "legacy recovery error",
         "A matching legacy recovery-error ACK should complete after a wrong-generation error is ignored");
+
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-checkpoint",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id: "checkpoint-before-apply-cancel",
+          documentId: currentDocumentId,
+          openRequest: 2,
+        }, "*");
+      }, { channel, token, rendererGeneration, documentId });
+      await page.waitForFunction(() => window.__syncHost?.checkpoints.some(
+        (entry) => entry.id === "checkpoint-before-apply-cancel",
+      ), { timeout: 15_000 });
+      const cancelCheckpoint = await page.evaluate(() => window.__syncHost.checkpoints.find(
+        (entry) => entry.id === "checkpoint-before-apply-cancel",
+      ));
+      assert.equal(cancelCheckpoint.ok, true);
+
+      const cancelApplyId = "sync-apply-controlled-cancel";
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-apply-prepare",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id,
+          documentId: currentDocumentId,
+          openRequest: 2,
+          expectedRevision,
+        }, "*");
+      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId, expectedRevision: cancelCheckpoint.revision });
+      await page.waitForFunction((id) => window.__syncHost?.prepared.some(
+        (entry) => entry.id === id && entry.type === "sync-apply-prepared",
+      ), { timeout: 30_000 }, cancelApplyId);
+
+      await viewer.evaluate(() => {
+        const app = PDFViewerApplication;
+        const originalClose = app.close;
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
+        window.__syncApplyCloseGate = {
+          release,
+          started: 0,
+          originalClose,
+          loadingTask: app.pdfLoadingTask,
+        };
+        app.close = async function () {
+          window.__syncApplyCloseGate.started += 1;
+          await gate;
+          throw new Error("controlled PDF.js close failure");
+        };
+      });
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision, checkpointId }) => {
+        const host = window.__syncHost;
+        const checkpoint = host.checkpoints.find((entry) => entry.id === checkpointId);
+        const data = base64ToArrayBuffer(host.preparedLocal.bytesBase64);
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-apply",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id,
+          documentId: currentDocumentId,
+          previousOpenRequest: 2,
+          newOpenRequest: 3,
+          expectedRevision,
+          data,
+          syncState: host.syncState,
+          viewState: checkpoint.viewState,
+        }, "*", [data]);
+      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId, expectedRevision: cancelCheckpoint.revision, checkpointId: "checkpoint-before-apply-cancel" });
+      await viewer.waitForFunction(() => window.__syncApplyCloseGate?.started >= 1, {
+        timeout: 15_000,
+      });
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-apply-cancel",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id,
+          documentId: currentDocumentId,
+          openRequest: 2,
+        }, "*");
+      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId });
+      await viewer.waitForFunction(() => window.__syncApplyCloseGate?.started >= 2, {
+        timeout: 15_000,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const beforeCloseSettled = await page.evaluate((id) => ({
+        cancelled: window.__syncHost.cancelled.some((entry) => entry.id === id),
+        rejected: window.__syncHost.prepared.some((entry) =>
+          entry.id === id && entry.type === "sync-apply-rejected",
+        ),
+      }), cancelApplyId);
+      assert.equal(beforeCloseSettled.cancelled, false,
+        "The host must not receive a cancellation ACK while PDF.js cleanup is held");
+      assert.equal(beforeCloseSettled.rejected, false,
+        "An apply rejection must not race ahead of PDF.js cleanup");
+      await viewer.evaluate(() => window.__syncApplyCloseGate.release());
+      await page.waitForFunction((id) => window.__syncHost?.cancelled.some(
+        (entry) => entry.id === id,
+      ), { timeout: 30_000 }, cancelApplyId);
+      const cancelResult = await page.evaluate((id) => ({
+        cancelled: window.__syncHost.cancelled.find((entry) => entry.id === id),
+        rejected: window.__syncHost.prepared.some((entry) =>
+          entry.id === id && entry.type === "sync-apply-rejected",
+        ),
+        applied: window.__syncHost.applied.some((entry) => entry.id === id),
+      }), cancelApplyId);
+      assert.equal(cancelResult.cancelled.ok, true);
+      assert.equal(cancelResult.cancelled.documentId, documentId);
+      assert.equal(cancelResult.cancelled.openRequest, 2,
+        "The cancellation ACK must identify the old open request");
+      assert.equal(cancelResult.cancelled.cleanupFallback, true,
+        "A failed app.close should use the explicit loading-task destroy fallback");
+      assert.equal(cancelResult.rejected, false,
+        "A canceled apply should not also report an early rejection");
+      assert.equal(cancelResult.applied, false,
+        "A canceled apply must not be reported as successful");
+      const cancelledDocumentState = await viewer.evaluate(() => {
+        const gate = window.__syncApplyCloseGate;
+        PDFViewerApplication.close = gate.originalClose;
+        return {
+          hasLoadingTask: Boolean(PDFViewerApplication.pdfLoadingTask),
+          hasPdfDocument: Boolean(PDFViewerApplication.pdfDocument),
+          hasViewerDocument: Boolean(PDFViewerApplication.pdfViewer.pdfDocument),
+          loadingTaskDestroyed: gate.loadingTask?.destroyed === true,
+          readonly: document.documentElement.hasAttribute("data-pdf-reader-readonly"),
+          status: document.getElementById("pdfReaderBridgeStatus")?.textContent || "",
+        };
+      });
+      const { status, ...documentState } = cancelledDocumentState;
+      assert.deepEqual(documentState, {
+        hasLoadingTask: false,
+        hasPdfDocument: false,
+        hasViewerDocument: false,
+        loadingTaskDestroyed: true,
+        readonly: true,
+      }, "The apply cancellation ACK must follow PDF.js document destruction");
+      assert.match(status, /controlled PDF\.js close failure/);
       assert.deepEqual(await page.evaluate(() => window.__syncHost.errors), []);
       t.diagnostic(`Sync checkpoint/apply regression completed; rendererGeneration=${rendererGeneration}`);
     } catch (error) {

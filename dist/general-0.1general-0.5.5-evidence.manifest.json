@@ -1,0 +1,343 @@
+{
+  "schema": 1,
+  "releaseName": "0.1general",
+  "version": "0.5.5",
+  "baseCommit": "10937ab82fd511f0ad4775e66040a5e78a2bd6f9",
+  "createdAt": "2026-10-12T17:54:02.073636+00:00",
+  "files": [
+    {
+      "path": "GENERAL_ACCEPTANCE.md",
+      "bytes": 49726,
+      "sha256": "d63542cf41d2f727d1cb7880c828e1c18fe4d76020211801d82ac1f6eeaa430d"
+    },
+    {
+      "path": "MACOS_HANDOFF.md",
+      "bytes": 58231,
+      "sha256": "538580547e26eab4167844f37c645ef6bfeacdd3a74ebf224c683641644183e9"
+    },
+    {
+      "path": "README.md",
+      "bytes": 25289,
+      "sha256": "261213cb10dab6169eeecafad143a4e439ac8cb883a7fc63dd9de0b3feed4ab3"
+    },
+    {
+      "path": "dist/general-0.1general-0.5.5-source.diff",
+      "bytes": 176592,
+      "sha256": "c6eb6df79601963d88893d7c0e7528b31e0411d613f4abc8639c60f92521b60e"
+    },
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.5.5-candidate.zip.json",
+      "bytes": 1114,
+      "sha256": "8588057c0c018c21b45152a660388b8b515a86cd3cdc8606943cc58a96b2f117"
+    },
+    {
+      "path": "tests/artifacts/annotation-interaction-c7a8e7ffd7e3-1791826804714-40450.cleanup.json",
+      "bytes": 2630,
+      "sha256": "89922d2e3eb643e7c369fbae53ac26d9a99d27f5fb36db618baf6782a4411ca3"
+    },
+    {
+      "path": "tests/artifacts/annotation-interaction-c7a8e7ffd7e3-1791826804714-40450.json",
+      "bytes": 770456,
+      "sha256": "797da723a6b8de5cd7be6659d62314bea01244ade70a3a99db0f3d2975c91bd7"
+    },
+    {
+      "path": "tests/artifacts/annotation-interaction-c7a8e7ffd7e3-1791826804714-40450.partial.json",
+      "bytes": 781217,
+      "sha256": "0f0e6b0cf439723c866d0269172cbaf413e16b53b52464c6d28e659b3bbeca81"
+    },
+    {
+      "path": "tests/artifacts/annotation-interaction-c7a8e7ffd7e3-1791826804714-40450.png",
+      "bytes": 324080,
+      "sha256": "7854f182f25eed752fb3f85ff17873133b424aa1056ad6ad2781ce2c27662ca9"
+    },
+    {
+      "path": "tests/artifacts/autosave-failure-1791824998134.json",
+      "bytes": 7026,
+      "sha256": "02f7e9fb2899de8863d24e1f00562c143c180aaa21018d500eb7ba8ef4331281"
+    },
+    {
+      "path": "tests/artifacts/autosave-failure-1791825329338.json",
+      "bytes": 7388,
+      "sha256": "bc3f4a83b90426d1208ba1ddb335f0d8cf1cdf2ae4c0da674726ef920fc8f2df"
+    },
+    {
+      "path": "tests/artifacts/desktop-toolbar-1791826819948-40510.cleanup.json",
+      "bytes": 2551,
+      "sha256": "99590974eaa5c3e3277b6d22d35322b1510fcc272a6adc93d24471c608233063"
+    },
+    {
+      "path": "tests/artifacts/free-text-undo-appearance-1791826805441-40511-1f7e8851-c9b5-4d58-b621-1ce606c55c4f.cleanup.json",
+      "bytes": 2612,
+      "sha256": "c863f4cb9efe94269eed6122d516c76173d65f99ef0b9af2917dffc9d0a13c5e"
+    },
+    {
+      "path": "tests/artifacts/free-text-undo-appearance-1791826805441-40511-1f7e8851-c9b5-4d58-b621-1ce606c55c4f.partial.json",
+      "bytes": 44538,
+      "sha256": "08eeaefd2de5da10591a8131804998b53c2f27f61a3d8a1063aaef83cf3a5cac"
+    },
+    {
+      "path": "tests/artifacts/free-text-undo-appearance-1791826805441-40511-1f7e8851-c9b5-4d58-b621-1ce606c55c4f.png",
+      "bytes": 249005,
+      "sha256": "dd85d25656efcd2bec95ecc8d57489229b3fdb4d4f62d53b11536293128cb34d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-audit.json",
+      "bytes": 1599,
+      "sha256": "935c863a6107998f5b3ea20ec2e491ba3486f8da909c2fe834dcfb7e60e532cb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-final-assessment.json",
+      "bytes": 2686,
+      "sha256": "a325b8a5d7a4bc2517d29fe9a3fed6a4d41fe1e37b756afb735777d5bfdf9c9c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-focused-autosave-20261012T170904Z.log",
+      "bytes": 1743,
+      "sha256": "547c2ab4fef76aa2eda41862a8f2870d645c8252a25883027497f40af6e0b56f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-focused-autosave-20261012T171437Z.log",
+      "bytes": 1743,
+      "sha256": "03d327c477355f7a67de0c0743784e98b1dcdf44e247eaebce9d1a7962121325"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-focused-autosave-20261012T171732Z.log",
+      "bytes": 845,
+      "sha256": "30a5689db946090b978f1347ec4d4aeb830a529bf458afdd8cac6e00b218d5b7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-focused-autosave-20261012T173240Z.log",
+      "bytes": 857,
+      "sha256": "6e19eb12d4a1b3fb0f51852556fa8b2cb05a530dd4a0ea6dcb581aa31b96f764"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-host-await-close-20261012T171846Z.log",
+      "bytes": 4999,
+      "sha256": "99d0846bd76d5fbceb0ab3c0ef11bea036334431a6df5e7a2e3d51f47b147b44"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-host-focused.log",
+      "bytes": 4809,
+      "sha256": "f28b6c47581f1c8b263131e030dcceeaf5d2dfaa9cb0247616f11cb05a2aef2f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-native-1791826734409.driver.mjs",
+      "bytes": 12862,
+      "sha256": "67dba21c0930b7c79da38d845d636cf899d97cddecbe19b4f687b20601956454"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-native-1791826734409.json",
+      "bytes": 7720,
+      "sha256": "44855047d90ba113fc0a05fd618467183293076e279253cf82fd5cf7c59c5177"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-native-sync-driver.mjs",
+      "bytes": 12862,
+      "sha256": "67dba21c0930b7c79da38d845d636cf899d97cddecbe19b4f687b20601956454"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826022605.driver.mjs",
+      "bytes": 10662,
+      "sha256": "48edafcbb8e2efc244ca181bcf9cd37e4ced1368d9aaba5216fbdcc368e9c078"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826022605.json",
+      "bytes": 939,
+      "sha256": "ab0ea3025636e85d92ab9a3a767c466ebad53d8b5d1fbb1c81dece339aa9b978"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826459045.driver.mjs",
+      "bytes": 10662,
+      "sha256": "48edafcbb8e2efc244ca181bcf9cd37e4ced1368d9aaba5216fbdcc368e9c078"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826459045.json",
+      "bytes": 1760,
+      "sha256": "30a0fe5b69c06dd303162fe4177e92eb1840888b4d8947f4791c537fe93503bc"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826692846.driver.mjs",
+      "bytes": 10820,
+      "sha256": "81e500c183b025aec788dfca6257002b4719b571d9d19d9c60ce4a57f62300fa"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-save-memory-native-1791826692846.json",
+      "bytes": 2202,
+      "sha256": "1036e0f4fe975328917f47b1654a58f8f6391d67c4b5fc14b674c87668d7d6c5"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-source-audit-snapshot.diff",
+      "bytes": 209209,
+      "sha256": "b0f318a81764016b1b2de91e6edeeac13c79ecad05bfc901718a468380f866c7"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-source-harness-failure-1791825794985163000/result.json",
+      "bytes": 142,
+      "sha256": "2d9207be7a2406f075c04b214ead68479de329b5012008eb7e9217d1b4cf5c32"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-source-harness-failure-1791825794985163000/test.log",
+      "bytes": 11647,
+      "sha256": "081c242ad4fbf48439302fbf969cf55d3571a13add423ecb9203a32de6b50535"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-source.diff",
+      "bytes": 176592,
+      "sha256": "c6eb6df79601963d88893d7c0e7528b31e0411d613f4abc8639c60f92521b60e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-sync-apply-cancel-20261012T172156Z.log",
+      "bytes": 336,
+      "sha256": "a6cc421e76965363eb749aa860427c87a619aa4a4bd67b0240b137af4087b504"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-sync-apply-cancel-20261012T172251Z.log",
+      "bytes": 334,
+      "sha256": "c97f67de32611e11a12499665ab72b1a2f0190c54b59185c6fcb62533bab84a9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-sync-apply-cancel-20261012T173139Z.log",
+      "bytes": 1710,
+      "sha256": "5e275899a5f8f19e0bdac99f75ce2c6f0909c1211849ac0e61e64df831abbb55"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-sync-apply-cancel-20261012T173155Z.log",
+      "bytes": 333,
+      "sha256": "f4fb93b9e03098ccdd6d6dd00a623319d781168f62d78dbb90003fab598a31a8"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-sync-apply-cancel-20261012T173224Z.log",
+      "bytes": 336,
+      "sha256": "1ab90bef85ae2f6ebf29648e478a57ad699a60ec7dd2106a73ff8c8bf765ed97"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-test-deployment-1791826445548.json",
+      "bytes": 336,
+      "sha256": "461bd1b777f59ef12a47f0c097a0348c5a449cba49fd808ff27b8edaadc59416"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-test-deployment-1791826658906.json",
+      "bytes": 1663,
+      "sha256": "86b17f5d9386e203cd50c47df9ed633c854fe402e1d6fd58fa8dcc84a885445c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-test-deployment-failure-1791825974102.json",
+      "bytes": 441,
+      "sha256": "cb2dcdf7efe9429c6e0e1a0c69c4a2fb966b89c04049ea70329b6b9c7dd63692"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-default-2026-10-12T17-40-03-735843+00-00/result.json",
+      "bytes": 256,
+      "sha256": "b38ea4e20c9f5551170136ba2a55b68120c8ae7dd766aa2f324cdb4630a1be72"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-default-2026-10-12T17-40-03-735843+00-00/source-after.json",
+      "bytes": 4170,
+      "sha256": "ad2bd4dc818a2d8812c6c9e6de8229f3cc359cc36747d50f30081cb1a23be74a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-default-2026-10-12T17-40-03-735843+00-00/source-before.json",
+      "bytes": 4170,
+      "sha256": "ad2bd4dc818a2d8812c6c9e6de8229f3cc359cc36747d50f30081cb1a23be74a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-default-2026-10-12T17-40-03-735843+00-00/test.log",
+      "bytes": 24336,
+      "sha256": "a0c164c37c474f760f734421f1f2c28135a78611eb4e936d6d0faebf28676edb"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-offline-2026-10-12T17-40-03-726070+00-00/result.json",
+      "bytes": 133,
+      "sha256": "e313928cce67e1d03eac718dd8f7446df76fa1a50b356b4cf1f47e57e010f00f"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.5-validation-offline-2026-10-12T17-40-03-726070+00-00/test.log",
+      "bytes": 607,
+      "sha256": "5ff328a440b70d32a003b73b52a0e880266639a6d41157719c10f5271562bf22"
+    },
+    {
+      "path": "tests/artifacts/ipad-pointer-policy-1791826817561-41505.json",
+      "bytes": 23613,
+      "sha256": "227e6a4c122b40a235943c0621191f443d83838fa9eeb60a0026a823056e0856"
+    },
+    {
+      "path": "tests/artifacts/mobile-browser-startup-1791826847074.json",
+      "bytes": 3946,
+      "sha256": "7f37b53bb45e11a03a222d306d062a6ce580727b8fcca6f95d35bdea56059d8e"
+    },
+    {
+      "path": "tests/artifacts/mobile-browser-startup-1791826860928.json",
+      "bytes": 3933,
+      "sha256": "9653646ff74bd71c7a245b3b6a4b6d3f29a948625b59118de825a49fbdac2131"
+    },
+    {
+      "path": "tests/artifacts/mouse-input-1791826820957-41618.cleanup.json",
+      "bytes": 2571,
+      "sha256": "7b46105ea89485462fb57d745fa5c68c0216ef31b615c9a77e85d48254234a2b"
+    },
+    {
+      "path": "tests/artifacts/mouse-input-1791826820957-41618.focus.json",
+      "bytes": 7152,
+      "sha256": "45591885f9ea1989d530f9541b845b1d75df0a271d16264a25e48657a65eb68c"
+    },
+    {
+      "path": "tests/artifacts/mouse-input-1791826820957-41618.lifecycle.json",
+      "bytes": 387126,
+      "sha256": "254529ffc31329acbdb97f158b6eff18e42923547471d1ff2c002872530cad9f"
+    },
+    {
+      "path": "tests/artifacts/offline-smoke-1791826804373-40449-bc50e977-d48a-4485-a48e-6bdbbc81ace9.cleanup.json",
+      "bytes": 2545,
+      "sha256": "e29e91a20bd98da79d9b186b628a06c0b7b92ff4303e686dccf2569dfd4baed9"
+    },
+    {
+      "path": "tests/artifacts/open-lifecycle-1791826821800-41647-a75d1f9e-b78c-48d5-bc52-224b05a00a4b.cleanup.json",
+      "bytes": 3246,
+      "sha256": "dab5c2f8ffe216ba5ae87fdd7b320fa5bfff28dd0b50c86eca45240a2fb32d2e"
+    },
+    {
+      "path": "tests/artifacts/open-lifecycle-1791826821800-41647-a75d1f9e-b78c-48d5-bc52-224b05a00a4b.json",
+      "bytes": 7428,
+      "sha256": "337ef9fb722a410e521d219ce31b311c8831c90350882b38c63375dd863ab403"
+    },
+    {
+      "path": "tests/artifacts/sync-bridge-failure-1791826299687-39220.json",
+      "bytes": 27939,
+      "sha256": "929310acd4ebde56fab8bbe466a7e7c1a4a42bf4e52f0c64229eb8f194c5bddb"
+    },
+    {
+      "path": "tests/artifacts/underline-regression-c7a8e7ffd7e3-1791826838710-41918.json",
+      "bytes": 308930,
+      "sha256": "ff4b3748cc3b2567936716edee0dde6bf72a1c1684aa2271cdd164be4cbd962d"
+    },
+    {
+      "path": "tests/artifacts/underline-regression-c7a8e7ffd7e3-1791826838710-41918.pdf",
+      "bytes": 1018886,
+      "sha256": "e602ef6a0a38c94d4f5b03dbb9839a16d7356504ab77699dc5e493ec72b15a96"
+    },
+    {
+      "path": "tests/artifacts/underline-regression-c7a8e7ffd7e3-1791826838710-41918.png",
+      "bytes": 257077,
+      "sha256": "d0dcd0764120dfa70d2775839d9acc6bcf17bb364280298bb7629797714f321c"
+    }
+  ],
+  "originalFailuresRetained": true,
+  "testVault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "physicalIpadValidated": false,
+  "physicalWindowsValidated": false,
+  "sourceDiffApply": "git apply --unidiff-zero",
+  "defaultSuite": {
+    "tests": 214,
+    "pass": 214,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "exitCode": 0
+  },
+  "offlineExitCode": 0,
+  "archive": {
+    "path": "dist/general-0.1general-0.5.5-evidence.zip",
+    "bytes": 1996998,
+    "sha256": "783b3cd54459e8704fd0543d51aad6bff09a875f88dd0777bcf3ef3649e0bb38"
+  }
+}

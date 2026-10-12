@@ -465,6 +465,12 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
       manager.undo();
     });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(
+      await page.evaluate(() => window.__host.saves.length),
+      1,
+      "Edits during an auto flight must not send another host write before it settles",
+    );
     await page
       .waitForFunction(() => window.__host.saves.length === 2, {
         timeout: 15_000,
@@ -490,8 +496,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     const saves = await page.evaluate(() => window.__host.saves);
     assert.ok(saves[1].revision > saves[0].revision);
     assert.ok(
-      saves[1].receivedAt >= saves[0].acknowledgedAt,
-      "A newer revision must wait for the earlier host acknowledgement",
+      saves[1].receivedAt - saves[0].acknowledgedAt >= 900,
+      "The latest revision must re-enter the one second idle debounce after the earlier flight settles",
     );
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 

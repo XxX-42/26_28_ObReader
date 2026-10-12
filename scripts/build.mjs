@@ -306,6 +306,8 @@ const mergeClientMarker =
   /\/\* BUILD:PDF_MERGE_CLIENT_REQUIRE \*\/\s*const\s*\{\s*createPdfMergeClient\s*\}\s*=\s*require\((['"])\.\/pdf-merge-client\.cjs\1\);/s;
 const syncHostMarker =
   /\/\* BUILD:PDF_SYNC_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfSyncHost\s*\}\s*=\s*require\((['"])\.\/pdf-sync-host\.cjs\1\);/s;
+const heavyWorkMarker =
+  /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
 assert.equal(
   [...sourceMain.matchAll(new RegExp(requireMarker.source, "gs"))].length,
@@ -378,10 +380,13 @@ const inlinedSyncHost = await inlineModule(
   "__PDFReaderSyncHost",
   "createPdfSyncHost",
 );
+assert.equal([...sourceMain.matchAll(new RegExp(heavyWorkMarker.source, "gs"))].length, 1, "Expected one heavy-work build marker");
+const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyWork", "createHeavyWorkCoordinator");
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
   .replace(mergeClientMarker, inlinedMergeClient)
   .replace(syncHostMarker, inlinedSyncHost)
+  .replace(heavyWorkMarker, inlinedHeavyWork)
   .replace(
     payloadMarker,
     `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
@@ -389,6 +394,7 @@ const bundledMain = sourceMain
 assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
+assert.ok(!bundledMain.includes("./heavy-work.cjs"));
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
 const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
   (match) => match[2],

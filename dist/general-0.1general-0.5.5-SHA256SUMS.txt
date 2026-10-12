@@ -1,0 +1,9 @@
+6d1277ee0ac018380d97afda2eef4c98defa66403929702290ee7ddd34173cb6  dist/pdf-web-reader-0.1general-0.5.5-candidate.zip
+8588057c0c018c21b45152a660388b8b515a86cd3cdc8606943cc58a96b2f117  dist/pdf-web-reader-0.1general-0.5.5-candidate.zip.json
+5642446708a3eb88e40935ab061d912f910659cf0f11e035861291a6957e718c  dist/pdf-web-reader/main.js
+74bfd327f2a39fd22ffeb261d396b7a69cefc55e574e05b73970527a2b276819  dist/pdf-web-reader/manifest.json
+9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650  dist/pdf-web-reader/styles.css
+783b3cd54459e8704fd0543d51aad6bff09a875f88dd0777bcf3ef3649e0bb38  dist/general-0.1general-0.5.5-evidence.zip
+45acde97a8282e461b8bbdd884401481b914fbab18c07f3e437e0d5dcf81e9e1  dist/general-0.1general-0.5.5-evidence.manifest.json
+c6eb6df79601963d88893d7c0e7528b31e0411d613f4abc8639c60f92521b60e  dist/general-0.1general-0.5.5-source.diff
+6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6  dist/pdf-web-reader-0.1general-0.5.4-candidate.zip

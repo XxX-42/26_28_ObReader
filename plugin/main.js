@@ -18,6 +18,7 @@ const {
 /* BUILD:ASSET_RUNTIME_REQUIRE */ const { ensureViewerAssets, sha256Bytes } = require("./asset-runtime.cjs");
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require('./pdf-merge-client.cjs');
 /* BUILD:PDF_SYNC_HOST_REQUIRE */ const { createPdfSyncHost } = require('./pdf-sync-host.cjs');
+/* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -456,6 +457,13 @@ function toArrayBuffer(value) {
     return bytes.slice().buffer;
   }
   throw new Error("The PDF viewer returned invalid document data.");
+}
+
+function receivedArrayBuffer(value) {
+  // The bridge transfers an owned buffer to the host. Adopt that received
+  // buffer; do not copy an entire PDF again just to change its byte view.
+  if (Object.prototype.toString.call(value) === "[object ArrayBuffer]") return value;
+  return toArrayBuffer(value);
 }
 
 function bytesEqual(left, right) {
@@ -915,6 +923,7 @@ class PdfReaderView extends EditableFileView {
       this.pendingBytes = null;
       this.originalBytes = null;
       this.loadedBaseBytes = null;
+      this.annotationSyncState = null;
       this.currentRevision = 0;
       this.confirmedRevision = 0;
       this.latestRecoveryDraft = null;
@@ -924,6 +933,8 @@ class PdfReaderView extends EditableFileView {
       this.documentFile = null;
       this.navigationState = {};
       this.plugin.releaseDocumentBaseline(file.path, this);
+      this.plugin.heavyWork?.cancel(this);
+      this.plugin.pdfSync?.releaseView(this, file);
     }
   }
 
@@ -992,10 +1003,28 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
-    this.plugin.pdfSync?.closeView(this);
-    const closingPath = this.requestedPath || this.documentFile?.path || null;
+    let failedApplyRendererStopped = false;
+    try {
+      await this.plugin.pdfSync?.closeView(this);
+    } catch (error) {
+      if (error.code !== "SYNC_APPLY_CANCEL_FAILED") throw error;
+      // This is an explicit Reader close. The apply phase already persisted
+      // and verified its local recovery/checkpoint before replacing the PDF.
+      // Destroy the failed renderer before force-settling its host lease;
+      // never automatically reload it or claim its cancellation succeeded.
+      if (this.iframe) {
+        this.iframe.srcdoc = "";
+        this.iframe.remove();
+        this.iframe = null;
+      }
+      failedApplyRendererStopped = true;
+      await this.plugin.pdfSync?.closeView(this, "Reader renderer destroyed", { force: true });
+      new Notice(`PDF 同步刷新关闭失败：${error.message}。阅读器已关闭，本地恢复副本保留。`, 8000);
+    }
+    const closingFile = this.documentFile || this.file;
+    const closingPath = this.requestedPath || closingFile?.path || null;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
-    if (!closeWasPrepared) {
+    if (!closeWasPrepared && !failedApplyRendererStopped) {
       const flush = await this.flushDocument();
       this.notifyFlushOutcome(flush);
     }
@@ -1029,6 +1058,7 @@ class PdfReaderView extends EditableFileView {
     this.pendingBytes = null;
     this.originalBytes = null;
     this.loadedBaseBytes = null;
+    this.annotationSyncState = null;
     this.currentRevision = 0;
     this.confirmedRevision = 0;
     this.latestRecoveryDraft = null;
@@ -1044,6 +1074,8 @@ class PdfReaderView extends EditableFileView {
     this.closePreparation = null;
     if (closingPath) this.plugin.releaseDocumentBaseline(closingPath, this);
     this.plugin.views.delete(this);
+    this.plugin.heavyWork?.cancel(this);
+    this.plugin.pdfSync?.releaseView(this, closingFile);
     this.contentEl.removeClass("pdf-web-reader-content");
   }
 
@@ -2046,7 +2078,7 @@ class PdfReaderView extends EditableFileView {
       // Keep a private copy for overwrite conflict detection. The original
       // buffer can then be transferred to the viewer without another copy.
       this.originalBytes = new Uint8Array(bytes.slice(0));
-      this.loadedBaseBytes = new Uint8Array(this.originalBytes);
+      this.loadedBaseBytes = this.originalBytes;
       this.annotationSyncState = await this.plugin.pdfSync?.initializeView(this, this.originalBytes);
       if (request !== this.openRequest) return;
       this.pendingBytes = bytes;
@@ -2086,6 +2118,16 @@ class PdfReaderView extends EditableFileView {
       return;
     }
     if (this.handleMobileRuntimeMessage(message)) return;
+    if (message.rendererGeneration === this.rendererGeneration) {
+      if (message.type === "heavy-release") {
+        this.plugin.heavyWork?.release(this, message.leaseId);
+        return;
+      }
+      if (message.type === "heavy-cancel") {
+        if (typeof message.id === "string") this.plugin.heavyWork?.cancel(this, message.id);
+        return;
+      }
+    }
     if (this.plugin.pdfSync?.handleMessage(this, message)) return;
     if (message.type === "close-prepared") {
       const request = this.flushRequests.get(message.id);
@@ -2117,6 +2159,16 @@ class PdfReaderView extends EditableFileView {
     }
 
     switch (message.type) {
+      case "heavy-acquire": {
+        if (message.rendererGeneration !== this.rendererGeneration || typeof message.id !== "string" || !message.id || message.documentId !== this.documentId) return;
+        const captured = this.captureSaveRequest();
+        void this.plugin.acquireHeavyLease(this, captured.file, "viewer", null, message.id).then((lease) => {
+          if (!this.isCurrentSaveRequest(captured) || !this.postToViewer({ channel: CHANNEL, token: this.token, type: "heavy-granted", id: message.id, leaseId: lease.id, documentId: captured.documentId, openRequest: captured.openRequest })) lease.release();
+        }, (error) => {
+          this.postToViewer({ channel: CHANNEL, token: this.token, type: "heavy-rejected", id: message.id, documentId: captured.documentId, openRequest: captured.openRequest, reason: error.message });
+        });
+        break;
+      }
       case "ready":
         if (message.rendererGeneration !== this.rendererGeneration || this.ready) {
           return;
@@ -2233,6 +2285,7 @@ class PdfReaderView extends EditableFileView {
       filename: file.basename,
       openRequest: this.openRequest,
       autoSave: this.plugin.settings.autoSave,
+      heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
       confirmedRevision:
         restore?.confirmedRevision ?? this.confirmedRevision,
@@ -2242,7 +2295,10 @@ class PdfReaderView extends EditableFileView {
       syncState: this.annotationSyncState,
     };
     if (!this.postToViewer(message, [data])) return;
-    this.loadedBaseBytes = new Uint8Array(sourceBytes).slice();
+    // PDF baselines are immutable: saves replace the reference, never mutate
+    // these bytes. Sharing the loaded snapshot is safe across async saves.
+    this.loadedBaseBytes = !restore && this.originalBytes ? this.originalBytes :
+      Object.prototype.toString.call(sourceBytes) === "[object ArrayBuffer]" ? new Uint8Array(sourceBytes) : sourceBytes;
     this.lastOpenSentRequest = this.openRequest;
     if (restore) {
       restore.sent = true;
@@ -2296,10 +2352,8 @@ class PdfReaderView extends EditableFileView {
       documentPath: this.requestedPath,
       openRequest: this.openRequest,
       rendererGeneration: this.rendererGeneration,
-      loadedBaseBytes: this.loadedBaseBytes ? new Uint8Array(this.loadedBaseBytes) : null,
-      originalBytes: this.originalBytes
-        ? new Uint8Array(this.originalBytes)
-        : null,
+      loadedBaseBytes: this.loadedBaseBytes,
+      originalBytes: this.originalBytes,
       filename: file?.basename || safeFileName(this.requestedPath),
       iframe: this.iframe,
     };
@@ -2310,6 +2364,7 @@ class PdfReaderView extends EditableFileView {
     const saveRequest = this.captureSaveRequest();
     const iframe = saveRequest.iframe;
     this.pendingSaves += 1;
+    let heavyLease;
     try {
       if (!saveRequest.file || !saveRequest.originalBytes) {
         throw new Error("当前没有打开的 PDF 文件。");
@@ -2324,11 +2379,12 @@ class PdfReaderView extends EditableFileView {
       if (Number.isSafeInteger(revision) && revision >= 0) {
         this.currentRevision = Math.max(this.currentRevision, revision);
       }
-      const data = toArrayBuffer(value);
+      const data = receivedArrayBuffer(value);
       if (annotationSync?.actorId && this.plugin.pdfSync) {
         await this.plugin.pdfSync.save(this, saveRequest, { ...annotationSync, data, documentId, requestId, revision, origin: saveOrigin });
         return;
       }
+      heavyLease = await this.plugin.acquireHeavyLease(this, saveRequest.file, "save", annotationSync?.heavyLeaseId);
       const savedBytes = new Uint8Array(data.slice(0));
       await this.plugin.enqueueSave(async () => {
         const record = await this.plugin.writeRecoveryCandidate({
@@ -2494,6 +2550,7 @@ class PdfReaderView extends EditableFileView {
         );
       }
     } finally {
+      heavyLease?.release();
       this.pendingSaves -= 1;
     }
   }
@@ -2501,6 +2558,7 @@ class PdfReaderView extends EditableFileView {
   async recoverFile(value, documentId, requestId, revision, reason, annotationSync = null) {
     const recoveryRequest = this.captureSaveRequest();
     this.pendingSaves += 1;
+    let heavyLease;
     try {
       if (
         !isPdfFile(recoveryRequest.file) ||
@@ -2525,11 +2583,12 @@ class PdfReaderView extends EditableFileView {
         invalid.code = "invalid-recovery-request";
         throw invalid;
       }
-      let data = toArrayBuffer(value);
+      heavyLease = await this.plugin.acquireHeavyLease(this, recoveryRequest.file, "recovery", annotationSync?.heavyLeaseId);
+      let data = receivedArrayBuffer(value);
       await this.plugin.enqueueSave(async () => {
         if (annotationSync?.actorId && this.plugin.pdfSync) {
           try {
-            const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data }, recoveryRequest);
+            const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data, heavyLeaseId: heavyLease?.id }, recoveryRequest);
             data = new Uint8Array(prepared.bytes).slice().buffer;
           } catch {
             // Unsupported merge metadata must never prevent recovery of the
@@ -2609,6 +2668,7 @@ class PdfReaderView extends EditableFileView {
         );
       }
     } finally {
+      heavyLease?.release();
       this.pendingSaves -= 1;
     }
   }
@@ -2739,6 +2799,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.isUnloading = false;
     this.documentBaselines = new Map();
     this.saveQueue = Promise.resolve();
+    this.heavyWork = createHeavyWorkCoordinator({ enabled: () => this.isMobileRuntime, makeId: makeToken });
     this.verifiedAssetBytes = new Map();
     this.verifiedAssetTexts = new Map();
     this.resourcePrewarm = {
@@ -2853,6 +2914,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.prewarmTimer = null;
     if (this.resourcePrewarm) this.resourcePrewarm.status = "disposed";
     this.pdfSync?.dispose();
+    this.heavyWork?.dispose();
     this.viewerAssetsResult = null;
     this.verifiedAssetBytes?.clear();
     this.verifiedAssetTexts?.clear();
@@ -3345,7 +3407,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   setDocumentBaseline(documentPath, bytes) {
-    this.documentBaselines.set(normalizePath(documentPath), new Uint8Array(bytes));
+    const snapshot = ArrayBuffer.isView(bytes)
+      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+    this.documentBaselines.set(normalizePath(documentPath), snapshot);
   }
 
   releaseDocumentBaseline(documentPath, leavingView) {
@@ -3371,6 +3435,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const next = this.saveQueue.then(operation, operation);
     this.saveQueue = next.catch(() => {});
     return next;
+  }
+
+  acquireHeavyLease(view, file, reason, leaseId = null, requestId = null) {
+    const context = { file, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+    if (!this.heavyWork) return Promise.resolve({ id: null, release() {} });
+    if (leaseId) return Promise.resolve(this.heavyWork.borrow(view, context, leaseId));
+    return this.heavyWork.acquire(view, context, {
+      requestId,
+      valid: () => !this.isUnloading && (view.documentFile || view.file) === file &&
+        view.documentId === context.documentId && view.openRequest === context.openRequest &&
+        view.rendererGeneration === context.rendererGeneration,
+    });
   }
 
   async setAutoSaveEnabled(enabled) {

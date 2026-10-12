@@ -45,6 +45,20 @@ class FakeWorker {
   }
 }
 
+class TransferWorker extends FakeWorker {
+  constructor(url) {
+    super(url);
+    this.transfers = [];
+  }
+  postMessage(message, transfers = []) {
+    this.transfers.push([...transfers]);
+    this.messages.push(structuredClone(message, { transfer: transfers }));
+  }
+  reply(id, result = {}) {
+    this.emit("message", { data: { id, ok: true, result } });
+  }
+}
+
 function fixture(overrides = {}) {
   FakeWorker.instances = [];
   const revoked = [];
@@ -179,4 +193,37 @@ test("dispose rejects RPCs already posted to a live worker", async () => {
   await assert.rejects(inflight, { code: "PDF_MERGE_CLIENT_DISPOSED" });
   assert.equal(FakeWorker.instances[0].terminated, true);
   assert.deepEqual(revoked, ["blob:merge-1"]);
+});
+
+test("owned byte snapshots transfer once while client admission keeps later payloads off the Worker", async () => {
+  const { client } = fixture({ WorkerClass: TransferWorker });
+  const original = new Uint8Array([9, 8, 7]);
+  const originalBuffer = original.buffer;
+  const snapshot = client.snapshotBytes(original.subarray(1));
+  const first = client.merge({ baseBytes: snapshot, localBytes: snapshot, marker: "first" });
+  const second = client.inspect({ bytes: original, marker: "second" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const worker = TransferWorker.instances[0];
+  assert.equal(worker.messages.length, 1, "only the admitted request is posted");
+  assert.deepEqual([...worker.messages[0].payload.baseBytes], [8, 7]);
+  assert.equal(worker.messages[0].payload.localBytes, worker.messages[0].payload.baseBytes,
+    "repeated references to one owned snapshot transfer only once");
+  assert.equal(worker.transfers[0].length, 1);
+  assert.equal(worker.transfers[0].includes(originalBuffer), false,
+    "the host-owned input buffer is never detached");
+  assert.equal(snapshot.byteLength, 0, "the one-use owned snapshot transfers to the Worker");
+  assert.deepEqual([...original], [9, 8, 7]);
+
+  worker.reply(worker.messages[0].id, { method: "merge" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(worker.messages.length, 2);
+  assert.deepEqual([...worker.messages[1].payload.bytes], [9, 8, 7]);
+  assert.equal(worker.transfers[1].includes(originalBuffer), false);
+  worker.reply(worker.messages[1].id, { method: "inspect" });
+  assert.deepEqual(await Promise.all([first, second]), [
+    { method: "merge" }, { method: "inspect" },
+  ]);
+  assert.deepEqual([...original], [9, 8, 7]);
+  client.dispose();
 });

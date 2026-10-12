@@ -617,6 +617,52 @@ async function settleMicrotasks() {
   await Promise.resolve();
 }
 
+test("mobile host save slots reject stale queued Readers and accept only the matching lease borrower", async () => {
+  const harness = createHarness();
+  harness.app.isMobile = true;
+  await harness.plugin.onload();
+  const a = await createControlledReader(harness, new harness.TFile("Books/lease-a.pdf", [1, 2, 3]));
+  const b = await createControlledReader(harness, new harness.TFile("Books/lease-b.pdf", [1, 2, 3]));
+  const send = (reader, fields) => reader.view.onMessage({ source: reader.frame, data: {
+    channel: "pdf-web-reader", token: reader.view.token, rendererGeneration: reader.view.rendererGeneration,
+    documentId: reader.view.documentId, openRequest: reader.view.openRequest, ...fields,
+  } });
+  send(a, { type: "heavy-acquire", id: "a" });
+  await settleMicrotasks();
+  const grant = a.sent.find(m => m.type === "heavy-granted");
+  assert.ok(grant?.leaseId);
+  const borrower = await harness.plugin.acquireHeavyLease(a.view, a.view.file, "save", grant.leaseId);
+  await assert.rejects(async () => harness.plugin.acquireHeavyLease(b.view, b.view.file, "save", grant.leaseId));
+  send(b, { type: "heavy-acquire", id: "b" });
+  b.view.openRequest += 1;
+  send(a, { type: "heavy-release", leaseId: grant.leaseId });
+  await settleMicrotasks();
+  assert.equal(b.sent.some(m => m.type === "heavy-granted"), false);
+  borrower.release();
+  await settleMicrotasks();
+  assert.equal(b.sent.find(m => m.type === "heavy-rejected")?.id, "b");
+  harness.plugin.heavyWork.dispose();
+});
+
+test("an explicit close destroys a failed apply renderer before force-releasing its pending work", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/failed-apply.pdf", [1, 2, 3]);
+  const reader = await createControlledReader(harness, file);
+  let forced = false;
+  harness.plugin.pdfSync.closeView = async (_view, _reason, options) => {
+    if (!options?.force) throw Object.assign(new Error("injected PDF.js close failure"), { code: "SYNC_APPLY_CANCEL_FAILED" });
+    assert.equal(reader.frame.removed, true, "The renderer must stop before releasing its save slot");
+    forced = true;
+  };
+  await reader.view.onClose();
+  assert.equal(forced, true);
+  assert.equal(harness.plugin.views.has(reader.view), false);
+  assert.equal(reader.sent.some(m => m.type === "flush"), false, "Do not serialize a destroyed Reader");
+  assert.deepEqual([...file.bytes], [1, 2, 3]);
+  assert.ok(harness.notices.some(message => message.includes("本地恢复副本保留")));
+});
+
 test("merge metadata preserves the Obsidian EditableFileView syncState method", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

@@ -6,12 +6,26 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.4)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.5)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
+
+Version 0.5.5 reduces repeated full-PDF work during continuous editing. On the
+iPad/iOS input entry, automatic saving waits for three idle seconds and at least
+ten seconds between automatic starts; the cooldown adapts to the previous save
+cost, up to thirty seconds. Edits during a save remain dirty and return to the
+idle scheduler. Manual saving and controlled close bypass the automatic cooldown
+while retaining input boundaries and revision acknowledgements. Desktop idle
+saving remains one second. Mobile serialization, merge and host write work share
+one save slot. Immutable baselines are shared, Worker messages transfer only
+owned temporary buffers, and the final Reader releases in-memory sync checkpoints
+after its pending work settles. Disk recovery/checkpoint files remain intact.
+Longer automatic delays increase the unsaved window during forced termination.
+The full frozen Viewer, incremental resource cache and offline three-file package
+remain unchanged. Real iPad memory/crash acceptance still requires device testing.
 
 Version 0.5.4 chooses one or two toolbar rows from the available space and
 the actual visible controls, replacing the fixed 880-pixel two-row rule. Undo
@@ -46,11 +60,11 @@ That Mac sample does not establish iPad hardware acceptance. Versions 0.5.3, 0.5
 plugin backup, settings, recovery files and sync checkpoints when replacing or
 rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
 after verifying the actual vault and plugin identity; discover the owned loopback
-CDP endpoint for each run rather than assuming a fixed port. The approved
-`远程仓库1` target now contains the matching three candidate files, with the old
-three backed up and user data/cache/recovery/checkpoints unchanged. Its running
-Obsidian instance was not reloaded. Save and close Reader tabs before reloading
-the plugin; after iPad sync, confirm version 0.5.4. Git push status is tracked
+CDP endpoint for each run rather than assuming a fixed port. The earlier approved
+`远程仓库1` replacement remains at 0.5.4. This 0.5.5 task updates only the
+isolated test vault; it does not replace files in the primary vault. Save and
+close Reader tabs before installing the three matching 0.5.5 files, and preserve
+settings, cache, recovery and sync checkpoints. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
 physical-device acceptance remain pending.
 
@@ -98,7 +112,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.4 candidate uses one source and one three-file package for Windows, macOS,
+0.5.5 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
@@ -177,9 +191,10 @@ an annotation to explicitly edit its object. Toolbars, comments, the eraser,
 and an actively focused text-box input retain their own interactions.
 
 Automatic saving is **enabled by default** and can be disabled in the plugin
-settings. Completed edits are combined after one second. After one second of
-text inactivity, the text is committed for saving without moving focus or the
-caret; active text composition and drawing are allowed to finish. Committing
+settings. Desktop edits wait for one idle second; the iPad/iOS entry waits for
+three idle seconds and uses a ten-to-thirty-second automatic-start cooldown.
+After the applicable idle period, text is committed for saving without moving
+focus or the caret; active text composition and drawing are allowed to finish. Committing
 or blurring text also schedules saving. Right-button erasing waits until the
 gesture is released or cancelled before saving the changes.
 Press `Cmd+S` on macOS (`Ctrl+S` on Windows), or use **保存到仓库**,
@@ -274,6 +289,8 @@ Chrome line is 154. The native Obsidian connection is verified separately becaus
 it uses the application's embedded Chromium.
 The installed plugin uses Obsidian APIs, standard browser APIs, and bundled SHA-256;
 it does not load Node or Electron modules.
+The desktop popout entry retains an optional host-provided Electron quit check;
+the mobile entry does not install that coordination.
 The offline browser harness may create a temporary local test server to serve
 the extracted artifacts; that server is not part of the installed plugin.
 
