@@ -1,0 +1,123 @@
+diff --git a/GENERAL_ACCEPTANCE.md b/GENERAL_ACCEPTANCE.md
+index c3fbb1c..e4491e7 100644
+--- a/GENERAL_ACCEPTANCE.md
++++ b/GENERAL_ACCEPTANCE.md
+@@ -2,0 +3,8 @@
++## 0.5.5 手指滚动追加修复（2026-10-13）
++
++三端版本仍为 0.5.5。惯性启动门槛保留 0.12 px/ms，停止门槛改为 0.015 px/ms，避免尾段仍在明显移动时突然截断；抬指时接收最后触点位移再计算惯性，取消事件不应用终点。暂停、多指、Pencil 绘制、边界、再次触碰及 reduced-motion 的处理保留，冻结 Viewer 和依赖没有修改。
++
++新增惯性回归 3/3；真实浏览器指针策略与移动自动保存聚焦验证 2/2。冻结默认并发原始结果为 **216/217**、退出码 1：所有产品功能断言完成，唯一失败为移动自动保存测试清理时 Chrome 子进程退出码 2。保留原日志，不将此项重标通过，按既有约定单列基础设施问题，不调查 teardown 或增加重复门槛。离线验证正常退出 0。独立 Luna Max 只读审计无阻断项；实体 iPad 手感仍待用户确认。
++
++最新 [三文件包](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip) 和 [追加证据](dist/general-0.1general-0.5.5-scroll-evidence.zip) 对应该小修，最初 0.5.5 候选及 0.5.4 回滚包继续保留。已按本次明确授权替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`，旧三文件备份在 `.deploy-backups/0.5.5-scroll-target-1791832837830032000`；其余 1,629 个文件哈希一致，设置、缓存、恢复副本和同步检查点保留，未操作 PDF 或重载库实例。同步后先保存并关闭 Reader，再重新加载插件。
++
+diff --git a/README.md b/README.md
+index 38794ef..7142fb0 100644
+--- a/README.md
++++ b/README.md
+@@ -15,0 +16,5 @@ acceptance remain for the user.
++The latest 0.5.5 [scroll-fix package](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip)
++adds a slower inertial tail and consumes the final finger-release position.
++Its follow-up validation and explicitly authorized target replacement are recorded
++in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); earlier packages remain available.
++
+@@ -64,2 +69,3 @@ CDP endpoint for each run rather than assuming a fixed port. The earlier approve
+-`远程仓库1` replacement remains at 0.5.4. This 0.5.5 task updates only the
+-isolated test vault; it does not replace files in the primary vault. Save and
++`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequently
++authorized scroll-fix replacement updates only that plugin's three files to 0.5.5;
++its settings, cache and recovery bytes are unchanged, and no PDFs are operated. Save and
+diff --git a/tests/touch-inertia.test.mjs b/tests/touch-inertia.test.mjs
+new file mode 100644
+index 0000000..4f75653
+--- /dev/null
++++ b/tests/touch-inertia.test.mjs
+@@ -0,0 +1,63 @@
++import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
++import test from "node:test";
++import vm from "node:vm";
++
++const source = await readFile(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
++const section = source.slice(source.indexOf("  const MANUAL_INERTIA_SAMPLE_WINDOW_MS"), source.indexOf("  function clearManualPointerSessions"));
++function harness() {
++  let time = 0, frameId = 0, top = 100, left = 0;
++  const frames = new Map();
++  const container = {
++    isConnected: true, scrollHeight: 10000, clientHeight: 500,
++    scrollWidth: 500, clientWidth: 500,
++    get scrollTop() { return top; }, set scrollTop(v) { top = Math.max(0, Math.min(9500, v)); },
++    get scrollLeft() { return left; }, set scrollLeft(v) { left = Math.max(0, Math.min(0, v)); },
++  };
++  const pdfDocument = {};
++  const state = { app: { pdfDocument }, activeDocumentId: "doc", activeOpenRequest: 1, manualPointers: new Map(), manualMomentum: null };
++  const context = {
++    state, rendererGeneration: 1, iosInputPolicy: true,
++    window: { matchMedia: () => ({ matches: false }) },
++    performance: { now: () => time },
++    requestAnimationFrame(fn) { const id = ++frameId; frames.set(id, fn); return id; },
++    cancelAnimationFrame(id) { frames.delete(id); },
++    releasePointerCapture() {},
++  };
++  vm.runInNewContext(section + "\nglobalThis.api = { startManualMomentum, finishManualPointer };", context);
++  const pointer = { pointerId: 1, pointerType: "touch", container, pdfDocument,
++    documentId: "doc", openRequest: 1, rendererGeneration: 1,
++    startX: 50, startY: 300, startScrollTop: 0, startScrollLeft: 0,
++    lastX: 50, lastY: 200, moved: true, lastMotionAt: 100,
++    scrollSamples: [{ time: 0, scrollTop: 0, scrollLeft: 0 }, { time: 100, scrollTop: 100, scrollLeft: 0 }] };
++  return { state, pointer, container, api: context.api,
++    setTime(t) { time = t; },
++    advance(t) { while (time < t) { time = Math.min(t, time + 16); const pending = [...frames.values()]; frames.clear(); for (const fn of pending) fn(time); } },
++  };
++}
++
++test("finger inertia decelerates below its launch threshold before stopping", () => {
++  const h = harness(); h.setTime(100); h.api.startManualMomentum(h.pointer);
++  h.advance(1000); const tailStart = h.container.scrollTop;
++  h.advance(1200);
++  assert.ok(h.container.scrollTop > tailStart + 3, "The slow tail must still move instead of cutting off at 120 px/s");
++  h.advance(1800); assert.equal(h.state.manualMomentum, null);
++  const stopped = h.container.scrollTop; h.advance(2000); assert.equal(h.container.scrollTop, stopped);
++});
++
++test("finger release consumes the final pointerup position before starting momentum", () => {
++  const h = harness(); h.state.manualPointers.set(1, h.pointer); h.setTime(116);
++  h.api.finishManualPointer(1, { clientX: 50, clientY: 160 });
++  assert.equal(h.container.scrollTop, 140);
++  assert.equal(h.state.manualPointers.size, 0);
++  assert.ok(h.state.manualMomentum);
++  h.advance(148); assert.ok(h.container.scrollTop > 140);
++});
++
++test("cancelled finger does not apply terminal coordinates or start momentum", () => {
++  const h = harness(); h.state.manualPointers.set(1, h.pointer); h.setTime(116);
++  h.api.finishManualPointer(1, { clientX: 50, clientY: 160 }, { cancel: true });
++  assert.equal(h.container.scrollTop, 100);
++  assert.equal(h.state.manualMomentum, null);
++  assert.equal(h.state.manualPointers.size, 0);
++});
+diff --git a/viewer-adapter/obsidian-bridge.js b/viewer-adapter/obsidian-bridge.js
+index 1e571ba..446f6b7 100644
+--- a/viewer-adapter/obsidian-bridge.js
++++ b/viewer-adapter/obsidian-bridge.js
+@@ -4736 +4736,4 @@
+-  const MANUAL_INERTIA_MIN_SPEED = 0.12;
++  const MANUAL_INERTIA_START_SPEED = 0.12;
++  // Starting a flick and ending its tail need different thresholds. Ending at
++  // the start threshold cuts off visibly while the page is still moving.
++  const MANUAL_INERTIA_STOP_SPEED = 0.015;
+@@ -4814 +4817 @@
+-      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_MIN_SPEED ||
++      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_START_SPEED ||
+@@ -4916 +4919 @@
+-        MANUAL_INERTIA_MIN_SPEED
++        MANUAL_INERTIA_STOP_SPEED
+@@ -5020,0 +5024,8 @@
++    // WebViews may deliver the final contact position only on pointerup.
++    // Consume it before deriving release velocity, never on cancellation.
++    if (
++      pointer.pointerType === "touch" && !cancel &&
++      Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
++    ) {
++      applyManualPan(pointer, event);
++    }

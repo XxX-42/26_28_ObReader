@@ -13,6 +13,11 @@ matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record i
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
+The latest 0.5.5 [scroll-fix package](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip)
+adds a slower inertial tail and consumes the final finger-release position.
+Its follow-up validation and explicitly authorized target replacement are recorded
+in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); earlier packages remain available.
+
 Version 0.5.5 reduces repeated full-PDF work during continuous editing. On the
 iPad/iOS input entry, automatic saving waits for three idle seconds and at least
 ten seconds between automatic starts; the cooldown adapts to the previous save
@@ -61,8 +66,9 @@ plugin backup, settings, recovery files and sync checkpoints when replacing or
 rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
 after verifying the actual vault and plugin identity; discover the owned loopback
 CDP endpoint for each run rather than assuming a fixed port. The earlier approved
-`远程仓库1` replacement remains at 0.5.4. This 0.5.5 task updates only the
-isolated test vault; it does not replace files in the primary vault. Save and
+`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequently
+authorized scroll-fix replacement updates only that plugin's three files to 0.5.5;
+its settings, cache and recovery bytes are unchanged, and no PDFs are operated. Save and
 close Reader tabs before installing the three matching 0.5.5 files, and preserve
 settings, cache, recovery and sync checkpoints. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil

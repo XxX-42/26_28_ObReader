@@ -1,0 +1,64 @@
+{
+  "version": "0.5.5",
+  "changes": [
+    "separate flick start/stop thresholds to preserve slow inertial tail",
+    "consume final touch pointerup coordinates, never cancellation"
+  ],
+  "focused": {
+    "inertiaUnit": {
+      "pass": 3,
+      "fail": 0
+    },
+    "browserPointerAndAutosave": {
+      "pass": 2,
+      "fail": 0
+    }
+  },
+  "default": {
+    "tests": 217,
+    "pass": 216,
+    "fail": 1,
+    "exitCode": 1,
+    "productAssertionsCompleted": true,
+    "knownInfrastructureFailure": "autosave-mobile browser cleanup: owned Chrome child exited code 2 after assertions; not marked passed",
+    "sourceUnchanged": true
+  },
+  "offline": {
+    "exitCode": 0,
+    "browserExit": "normal"
+  },
+  "audit": {
+    "agent": "independent Luna Max /root/audit_055",
+    "readOnly": true,
+    "blockingFindings": [],
+    "verified": [
+      "cancellation and loss of capture do not apply terminal coordinates",
+      "paused/multiple/pen-blocked contacts do not start inertia",
+      "new contacts, wheel, document lifecycle, editor mode cancel momentum",
+      "reduced-motion and session checks retained",
+      "axis boundaries and Pencil drawing isolation retained"
+    ]
+  },
+  "physicalIpadValidated": false,
+  "releaseName": "0.1general",
+  "artifact": "dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6856009,
+      "sha256": "04bb8589dba89f1b984d68907b761f10a9a093e2455128147399a9a6cedfb0db"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "74bfd327f2a39fd22ffeb261d396b7a69cefc55e574e05b73970527a2b276819"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "sha256": "2e3dfc5d360d6dbbff0b8450d8330215d1e2b893ea731bee8cf41bbdb2f66a0f",
+  "createdAt": "2026-10-12T19:20:10.935252+00:00"
+}

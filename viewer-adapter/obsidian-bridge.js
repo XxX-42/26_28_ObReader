@@ -4733,7 +4733,10 @@
 
   const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 120;
   const MANUAL_INERTIA_MAX_SPEED = 2;
-  const MANUAL_INERTIA_MIN_SPEED = 0.12;
+  const MANUAL_INERTIA_START_SPEED = 0.12;
+  // Starting a flick and ending its tail need different thresholds. Ending at
+  // the start threshold cuts off visibly while the page is still moving.
+  const MANUAL_INERTIA_STOP_SPEED = 0.015;
   const MANUAL_INERTIA_DECAY_MS = 300;
   const MANUAL_INERTIA_MAX_FRAME_MS = 32;
 
@@ -4811,7 +4814,7 @@
       y: clampSpeed(last.scrollTop - first.scrollTop),
     };
     if (
-      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_MIN_SPEED ||
+      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_START_SPEED ||
       prefersReducedMotion()
     ) {
       return null;
@@ -4913,7 +4916,7 @@
       }
       if (
         Math.hypot(momentum.velocityX, momentum.velocityY) <
-        MANUAL_INERTIA_MIN_SPEED
+        MANUAL_INERTIA_STOP_SPEED
       ) {
         cancelManualMomentum();
         return;
@@ -5017,6 +5020,14 @@
     const pointer = state.manualPointers.get(pointerId);
     if (!pointer) {
       return null;
+    }
+    // WebViews may deliver the final contact position only on pointerup.
+    // Consume it before deriving release velocity, never on cancellation.
+    if (
+      pointer.pointerType === "touch" && !cancel &&
+      Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
+    ) {
+      applyManualPan(pointer, event);
     }
     state.manualPointers.delete(pointerId);
     if (pointer.pointerType === "touch") {
