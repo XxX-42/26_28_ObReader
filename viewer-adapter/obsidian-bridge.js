@@ -54,6 +54,8 @@
     dirty: false,
     activePointers: new Map(),
     manualPointers: new Map(),
+    manualMomentum: null,
+    pendingPenHighlight: null,
     penPolicyPointers: new Map(),
     lastTouchClickPage: null,
     lastPenPanClickPage: null,
@@ -68,6 +70,9 @@
       hasSelection: false,
     },
     bridgeControls: null,
+    toolbarLayoutResizeObserver: null,
+    toolbarLayoutMutationObserver: null,
+    toolbarLayoutFrame: 0,
     isComposing: false,
     compositionEndPending: false,
     freeTextFocused: false,
@@ -359,6 +364,19 @@
     }
   }
 
+  function dismissToolbarParameterPopups(event) {
+    const target = event.target;
+    if (!(target instanceof Element) ||
+        target.closest(".editorParamsToolbar, #editorModeButtons")) {
+      return;
+    }
+    if (document.querySelector(".editorParamsToolbar:not(.hidden)")) {
+      // Use the frozen toolbar's existing hide event: it cancels its timers
+      // and updates expanded state without changing the active editor mode.
+      state.app?.eventBus?.dispatch("hideannotationeditorparams", { source: window });
+    }
+  }
+
   function syncBridgeControls() {
     const controls = state.bridgeControls;
     if (!controls) {
@@ -373,6 +391,93 @@
     controls.deleteButton.disabled =
       !canEdit || !state.editorHistory.hasSelection;
     controls.saveButton.disabled = !hasDocument;
+  }
+
+  function toolbarContentWidth(element) {
+    if (!element) {
+      return 0;
+    }
+    return Math.max(element.scrollWidth, element.getBoundingClientRect().width);
+  }
+
+  function updateAdaptiveToolbarLayout() {
+    const toolbarViewer = document.getElementById("toolbarViewer");
+    if (!toolbarViewer || !state.bridgeControls) {
+      return;
+    }
+    const left = document.getElementById("toolbarViewerLeft");
+    const middle = document.getElementById("toolbarViewerMiddle");
+    const editorModes = document.getElementById("editorModeButtons");
+    const more = document.getElementById("secondaryToolbarToggle");
+    const availableWidth = toolbarViewer.clientWidth;
+    const groupWidths = [left, middle, editorModes, state.bridgeControls.group, more]
+      .map(toolbarContentWidth);
+    // A one-row toolbar contains two outer groups, then the editor, history,
+    // and More controls. Include their default 1px gaps, left inset, and the
+    // history group's 8px inline margins. The measured content widths adapt
+    // to page counts, localization, browser fonts, and visible controls. Do
+    // not include computed margins: the More control has an auto margin in
+    // two-row mode, which would otherwise add distributed whitespace and
+    // make the measured width depend on the layout being selected.
+    const requiredWidth = groupWidths.reduce((sum, width) => sum + width, 0) + 20;
+    const needsTwoRows = availableWidth > 0 && requiredWidth > availableWidth + 1;
+    document.documentElement.classList.toggle(
+      "pdfReaderBridgeTwoRow",
+      needsTwoRows,
+    );
+  }
+
+  function scheduleAdaptiveToolbarLayout() {
+    if (state.disposed || state.toolbarLayoutFrame) {
+      return;
+    }
+    state.toolbarLayoutFrame = requestAnimationFrame(() => {
+      state.toolbarLayoutFrame = 0;
+      updateAdaptiveToolbarLayout();
+    });
+  }
+
+  function installAdaptiveToolbarLayout() {
+    const toolbar = document.getElementById("toolbarContainer");
+    const toolbarViewer = document.getElementById("toolbarViewer");
+    if (!toolbar || !toolbarViewer || !state.bridgeControls) {
+      return;
+    }
+    const observedElements = [
+      toolbar,
+      toolbarViewer,
+      document.getElementById("toolbarViewerLeft"),
+      document.getElementById("toolbarViewerMiddle"),
+      document.getElementById("toolbarViewerRight"),
+      document.getElementById("editorModeButtons"),
+      state.bridgeControls.group,
+      document.getElementById("secondaryToolbarToggle"),
+    ].filter(Boolean);
+    if (typeof ResizeObserver === "function") {
+      state.toolbarLayoutResizeObserver = new ResizeObserver(
+        scheduleAdaptiveToolbarLayout,
+      );
+      for (const element of observedElements) {
+        state.toolbarLayoutResizeObserver.observe(element);
+      }
+    }
+    if (typeof MutationObserver === "function") {
+      state.toolbarLayoutMutationObserver = new MutationObserver(
+        scheduleAdaptiveToolbarLayout,
+      );
+      state.toolbarLayoutMutationObserver.observe(toolbar, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["aria-label", "class", "disabled", "hidden", "style", "title"],
+      });
+    }
+    window.addEventListener("resize", scheduleAdaptiveToolbarLayout, {
+      passive: true,
+      signal: state.eventAbortController?.signal,
+    });
+    scheduleAdaptiveToolbarLayout();
   }
 
   function runBridgeAction(action) {
@@ -469,6 +574,7 @@
       deleteButton,
       saveButton,
     };
+    installAdaptiveToolbarLayout();
     syncBridgeControls();
   }
 
@@ -986,17 +1092,20 @@
   function captureNewSyncAnnotations() {
     const rows = getAnnotationStorageRows();
     const result = [];
-    let order = 0;
+    const pageOrder = new Map();
     for (const row of rows.values()) {
       if (row.annotationElementId || row.deleted) {
         continue;
       }
+      const pageIndex = Number.isSafeInteger(row.pageIndex) ? row.pageIndex : 0;
+      const order = pageOrder.get(pageIndex) || 0;
+      pageOrder.set(pageIndex, order + 1);
       result.push({
         runtimeId: row.runtimeId,
         uuid: row.uuid,
-        pageIndex: Number.isSafeInteger(row.pageIndex) ? row.pageIndex : 0,
+        pageIndex,
         kind: row.kind,
-        order: order++,
+        order,
       });
     }
     return result;
@@ -3968,6 +4077,198 @@
     }
   }
 
+  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 120;
+  const MANUAL_INERTIA_MAX_SPEED = 2;
+  const MANUAL_INERTIA_MIN_SPEED = 0.12;
+  const MANUAL_INERTIA_DECAY_MS = 300;
+  const MANUAL_INERTIA_MAX_FRAME_MS = 32;
+
+  function prefersReducedMotion() {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  }
+
+  function cancelManualMomentum() {
+    const momentum = state.manualMomentum;
+    if (!momentum) {
+      return;
+    }
+    cancelAnimationFrame(momentum.frame);
+    state.manualMomentum = null;
+  }
+
+  function rememberManualScroll(pointer, time = performance.now()) {
+    if (pointer.pointerType !== "touch") {
+      return;
+    }
+    const sample = {
+      time,
+      scrollTop: pointer.container.scrollTop,
+      scrollLeft: pointer.container.scrollLeft,
+    };
+    const previous = pointer.scrollSamples[pointer.scrollSamples.length - 1];
+    if (
+      previous &&
+      Math.abs(sample.scrollTop - previous.scrollTop) < 0.01 &&
+      Math.abs(sample.scrollLeft - previous.scrollLeft) < 0.01
+    ) {
+      return;
+    }
+    pointer.scrollSamples.push(sample);
+    pointer.lastMotionAt = time;
+    while (
+      pointer.scrollSamples.length > 2 &&
+      pointer.scrollSamples[1].time < time - MANUAL_INERTIA_SAMPLE_WINDOW_MS
+    ) {
+      pointer.scrollSamples.shift();
+    }
+  }
+
+  function touchReleaseVelocity(pointer, now = performance.now()) {
+    if (
+      pointer.pointerType !== "touch" ||
+      !pointer.moved ||
+      pointer.blockedByPen ||
+      pointer.blockedByOtherPointer ||
+      !Number.isFinite(pointer.lastMotionAt) ||
+      now - pointer.lastMotionAt > MANUAL_INERTIA_SAMPLE_WINDOW_MS
+    ) {
+      return null;
+    }
+    const samples = pointer.scrollSamples;
+    if (samples.length < 2) {
+      return null;
+    }
+    const firstRecentIndex = samples.findIndex(
+      (sample) => now - sample.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS,
+    );
+    const firstIndex = firstRecentIndex > 0 ? firstRecentIndex - 1 : 0;
+    const first = samples[firstIndex];
+    const last = samples[samples.length - 1];
+    const elapsed = Math.min(
+      MANUAL_INERTIA_SAMPLE_WINDOW_MS,
+      Math.max(8, last.time - first.time),
+    );
+    const clampSpeed = (distance) => Math.max(
+      -MANUAL_INERTIA_MAX_SPEED,
+      Math.min(MANUAL_INERTIA_MAX_SPEED, distance / elapsed),
+    );
+    const velocity = {
+      x: clampSpeed(last.scrollLeft - first.scrollLeft),
+      y: clampSpeed(last.scrollTop - first.scrollTop),
+    };
+    if (
+      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_MIN_SPEED ||
+      prefersReducedMotion()
+    ) {
+      return null;
+    }
+    return velocity;
+  }
+
+  function startManualMomentum(pointer) {
+    if (
+      !iosInputPolicy ||
+      state.manualPointers.size > 0 ||
+      !manualPointerSessionCurrent(pointer)
+    ) {
+      return;
+    }
+    const velocity = touchReleaseVelocity(pointer);
+    if (!velocity) {
+      return;
+    }
+    cancelManualMomentum();
+    const momentum = {
+      container: pointer.container,
+      pdfDocument: pointer.pdfDocument,
+      documentId: pointer.documentId,
+      openRequest: pointer.openRequest,
+      rendererGeneration: pointer.rendererGeneration,
+      velocityX: velocity.x,
+      velocityY: velocity.y,
+      targetLeft: pointer.container.scrollLeft,
+      targetTop: pointer.container.scrollTop,
+      lastFrameTime: performance.now(),
+      frame: 0,
+    };
+    state.manualMomentum = momentum;
+    const tick = (frameTime) => {
+      if (state.manualMomentum !== momentum) {
+        return;
+      }
+      if (prefersReducedMotion()) {
+        cancelManualMomentum();
+        return;
+      }
+      if (!manualPointerSessionCurrent(momentum)) {
+        cancelManualMomentum();
+        return;
+      }
+      const elapsed = Math.min(
+        MANUAL_INERTIA_MAX_FRAME_MS,
+        Math.max(0, frameTime - momentum.lastFrameTime),
+      );
+      momentum.lastFrameTime = frameTime;
+      if (elapsed > 0) {
+        const decay = Math.exp(-elapsed / MANUAL_INERTIA_DECAY_MS);
+        const travelFactor = MANUAL_INERTIA_DECAY_MS * (1 - decay);
+        const requestedX = momentum.velocityX * travelFactor;
+        const requestedY = momentum.velocityY * travelFactor;
+        const previousLeft = momentum.container.scrollLeft;
+        const previousTop = momentum.container.scrollTop;
+        const maxLeft = Math.max(
+          0,
+          momentum.container.scrollWidth - momentum.container.clientWidth,
+        );
+        const maxTop = Math.max(
+          0,
+          momentum.container.scrollHeight - momentum.container.clientHeight,
+        );
+        momentum.targetLeft += requestedX;
+        momentum.targetTop += requestedY;
+        momentum.container.scrollLeft = momentum.targetLeft;
+        momentum.container.scrollTop = momentum.targetTop;
+        const movedX = momentum.container.scrollLeft - previousLeft;
+        const movedY = momentum.container.scrollTop - previousTop;
+        const atXBoundary = requestedX > 0
+          ? momentum.container.scrollLeft >= maxLeft - 1
+          : requestedX < 0 && momentum.container.scrollLeft <= 1;
+        const atYBoundary = requestedY > 0
+          ? momentum.container.scrollTop >= maxTop - 1
+          : requestedY < 0 && momentum.container.scrollTop <= 1;
+        if (
+          Math.sign(movedX) !== Math.sign(requestedX) &&
+          Math.abs(movedX) > 0.01
+        ) {
+          momentum.velocityX = 0;
+        } else if (atXBoundary) {
+          momentum.velocityX = 0;
+        } else {
+          momentum.velocityX *= decay;
+        }
+        if (
+          Math.sign(movedY) !== Math.sign(requestedY) &&
+          Math.abs(movedY) > 0.01
+        ) {
+          momentum.velocityY = 0;
+        } else if (atYBoundary) {
+          momentum.velocityY = 0;
+        } else {
+          momentum.velocityY *= decay;
+        }
+      }
+      if (
+        Math.hypot(momentum.velocityX, momentum.velocityY) <
+        MANUAL_INERTIA_MIN_SPEED
+      ) {
+        cancelManualMomentum();
+        return;
+      }
+      momentum.frame = requestAnimationFrame(tick);
+    };
+    momentum.frame = requestAnimationFrame(tick);
+  }
+
   function startManualPointer(event, pointerType) {
     const container = document.getElementById("viewerContainer");
     if (!container || state.manualPointers.has(event.pointerId)) {
@@ -3986,6 +4287,12 @@
       lastY: event.clientY,
       startScrollTop: container.scrollTop,
       startScrollLeft: container.scrollLeft,
+      lastMotionAt: null,
+      scrollSamples: [{
+        time: performance.now(),
+        scrollTop: container.scrollTop,
+        scrollLeft: container.scrollLeft,
+      }],
       moved: false,
       blockedByPen: hasActivePenEditorGesture(),
       blockedByOtherPointer: anotherDirectPointer,
@@ -4049,6 +4356,7 @@
       (event.clientY - pointer.startY);
     pointer.container.scrollLeft = pointer.startScrollLeft -
       (event.clientX - pointer.startX);
+    rememberManualScroll(pointer);
   }
 
   function finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
@@ -4057,6 +4365,13 @@
       return null;
     }
     state.manualPointers.delete(pointerId);
+    if (pointer.pointerType === "touch") {
+      if (cancel || !manualPointerSessionCurrent(pointer)) {
+        cancelManualMomentum();
+      } else {
+        startManualMomentum(pointer);
+      }
+    }
     if (
       pointer.pointerType === "pen" &&
       pointer.moved &&
@@ -4070,6 +4385,8 @@
   }
 
   function clearManualPointerSessions({ clearClickTargets = true } = {}) {
+    cancelManualMomentum();
+    invalidatePendingPenHighlight();
     const pointers = [...state.manualPointers.values()];
     state.manualPointers.clear();
     for (const pointer of pointers) {
@@ -4168,6 +4485,238 @@
     );
   }
 
+  function invalidatePendingPenHighlight(pointer = null) {
+    if (!state.pendingPenHighlight) {
+      return;
+    }
+    if (!pointer || state.pendingPenHighlight === pointer) {
+      clearOwnedPenTextSelection(state.pendingPenHighlight);
+      state.pendingPenHighlight = null;
+    }
+  }
+
+  function selectionSnapshot(selection) {
+    if (!selection) {
+      return null;
+    }
+    return {
+      anchorNode: selection.anchorNode,
+      anchorOffset: selection.anchorOffset,
+      focusNode: selection.focusNode,
+      focusOffset: selection.focusOffset,
+      isCollapsed: selection.isCollapsed,
+      rangeCount: selection.rangeCount,
+      text: selection.toString(),
+    };
+  }
+
+  function selectionMatchesSnapshot(selection, snapshot) {
+    return !!(
+      selection &&
+      snapshot &&
+      selection.anchorNode === snapshot.anchorNode &&
+      selection.anchorOffset === snapshot.anchorOffset &&
+      selection.focusNode === snapshot.focusNode &&
+      selection.focusOffset === snapshot.focusOffset &&
+      selection.isCollapsed === snapshot.isCollapsed &&
+      selection.rangeCount === snapshot.rangeCount &&
+      selection.toString() === snapshot.text
+    );
+  }
+
+  function caretPositionInTextLayer(clientX, clientY, textLayer) {
+    let position = null;
+    try {
+      position = document.caretPositionFromPoint?.(clientX, clientY) || null;
+    } catch {
+      // Some embedded WebKit versions expose but reject caretPositionFromPoint.
+    }
+    if (!position) {
+      try {
+        position = document.caretRangeFromPoint?.(clientX, clientY) || null;
+      } catch {
+        // Ignore an unsupported or unavailable browser caret query.
+      }
+    }
+    const node = position?.offsetNode || position?.startContainer || null;
+    const offset = position?.offset ?? position?.startOffset;
+    if (
+      !node ||
+      !Number.isInteger(offset) ||
+      !textLayer?.contains(node)
+    ) {
+      return null;
+    }
+    return { node, offset };
+  }
+
+  function clearOwnedPenTextSelection(pointer) {
+    const owned = pointer?.ownedPenTextSelection;
+    if (!owned) {
+      return;
+    }
+    const selection = document.getSelection();
+    if (selectionMatchesSnapshot(selection, owned)) {
+      selection.removeAllRanges();
+    }
+    pointer.ownedPenTextSelection = null;
+  }
+
+  function updateOwnedPenTextSelection(pointer, event) {
+    if (
+      !pointer?.penTextSelectionCandidate ||
+      state.pendingPenHighlight !== pointer ||
+      !pointer.moved ||
+      !isPointerSessionCurrent(pointer) ||
+      !pointer.textLayer?.isConnected ||
+      !pointer.textSelectionStart
+    ) {
+      return false;
+    }
+    const endpoint = caretPositionInTextLayer(
+      event.clientX,
+      event.clientY,
+      pointer.textLayer,
+    );
+    if (!endpoint) {
+      return false;
+    }
+    const selection = document.getSelection();
+    if (typeof selection?.setBaseAndExtent !== "function") {
+      return false;
+    }
+    if (pointer.ownedPenTextSelection) {
+      if (!selectionMatchesSnapshot(selection, pointer.ownedPenTextSelection)) {
+        pointer.ownedPenTextSelection = null;
+        pointer.penTextSelectionCandidate = false;
+        pointer.penTextSelectionOwnershipLost = true;
+        return false;
+      }
+    } else if (
+      !pointer.selectionAtDown?.isCollapsed ||
+      !selectionMatchesSnapshot(selection, pointer.selectionAtDown)
+    ) {
+      // A range created by the browser or another user action takes priority.
+      pointer.penTextSelectionCandidate = false;
+      return false;
+    }
+    if (!pointer.textLayer.contains(pointer.textSelectionStart.node)) {
+      pointer.penTextSelectionCandidate = false;
+      return false;
+    }
+    try {
+      selection.setBaseAndExtent(
+        pointer.textSelectionStart.node,
+        pointer.textSelectionStart.offset,
+        endpoint.node,
+        endpoint.offset,
+      );
+    } catch {
+      return false;
+    }
+    pointer.ownedPenTextSelection = selectionSnapshot(selection);
+    event.preventDefault();
+    return true;
+  }
+
+  function onBridgePenTextCompatibilityMouse(event) {
+    if ([...state.activePointers.values()].some((pointer) =>
+      pointer.pointerType === "pen" &&
+      pointer.kind === "text-selection" &&
+      pointer.mode === 9 &&
+      pointer.penTextSelectionGesture
+    )) {
+      stopDirectManipulationEvent(event);
+    }
+  }
+
+  function selectionChangedSincePenDown(selection, pointer) {
+    const initial = pointer.selectionAtDown;
+    return !!(
+      !initial ||
+      initial.anchorNode !== selection.anchorNode ||
+      initial.anchorOffset !== selection.anchorOffset ||
+      initial.focusNode !== selection.focusNode ||
+      initial.focusOffset !== selection.focusOffset ||
+      initial.isCollapsed !== selection.isCollapsed ||
+      initial.text !== selection.toString()
+    );
+  }
+
+  function hasOtherActivePenPointer(pointer) {
+    return [...state.activePointers.values()].some((candidate) =>
+      candidate !== pointer &&
+      candidate.pointerType === "pen" &&
+      !candidate.ending
+    ) || [...state.penPolicyPointers.keys()].some((pointerId) =>
+      pointerId !== pointer.pointerId
+    ) || [...state.manualPointers.values()].some((candidate) =>
+      candidate !== pointer && candidate.pointerType === "pen"
+    );
+  }
+
+  function finishPenHighlightFallback(pointer) {
+    if (state.pendingPenHighlight !== pointer) {
+      return;
+    }
+    state.pendingPenHighlight = null;
+    const manager =
+      state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const pdfViewer = state.app?.pdfViewer;
+    const pageIndex = Number(pointer.page?.dataset.pageNumber) - 1;
+    const pageView = Number.isInteger(pageIndex) && pageIndex >= 0
+      ? pdfViewer?.getPageView?.(pageIndex)
+      : null;
+    const pageEditorLayerBuilder = pageView?.annotationEditorLayer;
+    const selection = document.getSelection();
+    if (
+      !pointer.ending ||
+      pointer.kind !== "text-selection" ||
+      pointer.pointerType !== "pen" ||
+      pointer.button !== 0 ||
+      pointer.mode !== 9 ||
+      !pointer.moved ||
+      pointer.penTextSelectionOwnershipLost ||
+      !isPointerSessionCurrent(pointer) ||
+      state.editorMode !== 9 ||
+      state.app?.pdfViewer?.annotationEditorMode !== 9 ||
+      manager !== pointer.highlightManager ||
+      manager?.getMode?.() !== 9 ||
+      !manager.currentLayer ||
+      manager.getLayer?.(pageIndex) !== pointer.pageEditorLayer ||
+      pageEditorLayerBuilder !== pointer.pageEditorLayerBuilder ||
+      pageEditorLayerBuilder?.annotationEditorLayer !== pointer.pageEditorLayer ||
+      pageEditorLayerBuilder?.div !== pointer.pageEditorLayer?.div ||
+      !pointer.pageEditorLayer?.div?.isConnected ||
+      !pointer.page?.contains(pointer.pageEditorLayer.div) ||
+      !pointer.pageEditorLayer.hasTextLayer?.(pointer.textLayer) ||
+      typeof manager?.highlightSelection !== "function" ||
+      !pointer.textLayer?.isConnected ||
+      pointer.page !== pointer.textLayer.closest(".page") ||
+      !pointer.page?.contains(pointer.textLayer) ||
+      !selection ||
+      selection.isCollapsed ||
+      selection.rangeCount === 0 ||
+      !selection.toString() ||
+      (pointer.ownedPenTextSelection &&
+        !selectionMatchesSnapshot(selection, pointer.ownedPenTextSelection)) ||
+      !selectionChangedSincePenDown(selection, pointer) ||
+      !pointer.textLayer.contains(selection.anchorNode) ||
+      !pointer.textLayer.contains(selection.focusNode) ||
+      hasOtherActivePenPointer(pointer) ||
+      state.closeControl ||
+      state.disposed
+    ) {
+      return;
+    }
+    for (let index = 0; index < selection.rangeCount; index += 1) {
+      if (!pointer.textLayer.contains(selection.getRangeAt(index).commonAncestorContainer)) {
+        return;
+      }
+    }
+    manager.highlightSelection("main_toolbar");
+  }
+
   function cancelPdfJsPointerSession(pointer) {
     if (!isPointerSessionCurrent(pointer)) {
       return;
@@ -4263,6 +4812,7 @@
       ? event.buttons
       : pointer.buttons;
     if (cancel) {
+      invalidatePendingPenHighlight(pointer);
       cancelPdfJsPointerSession(pointer);
     }
     // Pointer listeners in PDF.js finish the editor, temporary eraser, and
@@ -4270,6 +4820,9 @@
     setDeferredTimeout(() => {
       if (state.activePointers.get(pointerId) !== pointer) {
         return;
+      }
+      if (!cancel && reason === "pointerup") {
+        finishPenHighlightFallback(pointer);
       }
       if (cancel && !isPointerSessionCurrent(pointer)) {
         // The session changed while the event was in flight; only release the
@@ -4307,6 +4860,9 @@
   }
 
   function onBridgePointerDown(event) {
+    cancelManualMomentum();
+    invalidatePendingPenHighlight();
+    dismissToolbarParameterPopups(event);
     if (state.closeControl) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -4396,6 +4952,52 @@
       pdfDocument: state.app?.pdfDocument,
       rendererGeneration,
     };
+    if (
+      pointer.pointerType === "pen" &&
+      pointer.kind === "text-selection" &&
+      pointer.mode === 9
+    ) {
+      pointer.textLayer = event.target.closest(".textLayer");
+      pointer.textSpan = event.target.closest(".textLayer span");
+      pointer.page = pointer.textLayer?.closest(".page");
+      const pageIndex = Number(pointer.page?.dataset.pageNumber) - 1;
+      pointer.pageEditorLayerBuilder = Number.isInteger(pageIndex) && pageIndex >= 0
+        ? state.app?.pdfViewer?.getPageView?.(pageIndex)?.annotationEditorLayer
+        : null;
+      pointer.pageEditorLayer =
+        pointer.pageEditorLayerBuilder?.annotationEditorLayer || null;
+      pointer.highlightManager =
+        state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+      pointer.selectionAtDown = selectionSnapshot(document.getSelection());
+      if (
+        pointer.textLayer &&
+        pointer.page &&
+        pointer.pageEditorLayer &&
+        pointer.highlightManager
+      ) {
+        state.pendingPenHighlight = pointer;
+        const caret = caretPositionInTextLayer(
+          event.clientX,
+          event.clientY,
+          pointer.textLayer,
+        );
+        if (
+          pointer.textSpan &&
+          pointer.textLayer.contains(pointer.textSpan) &&
+          caret &&
+          (pointer.textSpan === caret.node || pointer.textSpan.contains(caret.node)) &&
+          pointer.selectionAtDown?.isCollapsed === true &&
+          event.isTrusted
+        ) {
+          pointer.textSelectionStart = caret;
+          pointer.penTextSelectionCandidate = true;
+          pointer.penTextSelectionGesture = true;
+          // Own this glyph-span gesture so the browser's compatibility mouse
+          // sequence cannot start a second PDF.js selection or freehand path.
+          event.preventDefault();
+        }
+      }
+    }
     state.activePointers.set(event.pointerId, pointer);
     recordPointerDiagnostic("pointerdown", pointer, event);
     if (
@@ -4425,8 +5027,12 @@
       ["pointermove", onBridgePointerMove],
       ["pointerup", onBridgePointerEnd],
       ["pointercancel", onBridgePointerEnd],
+      ["mousedown", onBridgePenTextCompatibilityMouse],
+      ["mousemove", onBridgePenTextCompatibilityMouse],
+      ["mouseup", onBridgePenTextCompatibilityMouse],
       ["pointerout", onBridgePointerOut],
       ["lostpointercapture", onBridgeLostPointerCapture],
+      ["wheel", onBridgeWheel],
       ["click", onBridgeIosClick],
       ["dblclick", onBridgeIosDoubleClick],
       ["blur", onBridgeWindowBlur],
@@ -4437,6 +5043,10 @@
         signal: controller.signal,
       });
     }
+  }
+
+  function onBridgeWheel() {
+    cancelManualMomentum();
   }
 
   function onBridgePointerMove(event) {
@@ -4468,6 +5078,9 @@
       pointer.moved =
         Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >
         1;
+    }
+    if (pointer.penTextSelectionCandidate) {
+      updateOwnedPenTextSelection(pointer, event);
     }
   }
 
@@ -5164,6 +5777,8 @@
     if (state.disposed) {
       return false;
     }
+    cancelManualMomentum();
+    invalidatePendingPenHighlight();
     const startedAt = performance.now();
     const { app } = state;
     const documentId = message.documentId;
@@ -5842,6 +6457,8 @@
         app.eventBus?._on(
           "annotationeditormodechanged",
           ({ mode }) => {
+            cancelManualMomentum();
+            invalidatePendingPenHighlight();
             state.editorMode = mode;
             observeAccessibilityManagers(app);
             setDeferredTimeout(
@@ -6045,6 +6662,15 @@
     updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
     state.disposed = true;
+    state.toolbarLayoutResizeObserver?.disconnect();
+    state.toolbarLayoutResizeObserver = null;
+    state.toolbarLayoutMutationObserver?.disconnect();
+    state.toolbarLayoutMutationObserver = null;
+    if (state.toolbarLayoutFrame) {
+      cancelAnimationFrame(state.toolbarLayoutFrame);
+      state.toolbarLayoutFrame = 0;
+    }
+    document.documentElement.classList.remove("pdfReaderBridgeTwoRow");
     stopOpenStartupObserver();
     state.openSession?.controller.abort();
     if (state.closeControl) {

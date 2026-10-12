@@ -6,12 +6,24 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.3)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.4)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
+
+Version 0.5.4 chooses one or two toolbar rows from the available space and
+the actual visible controls, replacing the fixed 880-pixel two-row rule. Undo
+and redo use the same 16-pixel SVG/CSS-mask mechanism, theme colors and states
+as the native PDF.js annotation tools. Finger flicks continue scrolling smoothly
+after release and slow to a stop; fresh interaction or document replacement
+cancels momentum. Clicking outside a tool parameter popup closes it without
+deselecting the tool. Pencil text highlighting constructs a selection from actual
+text-layer caret hits and uses the native highlight editor; freehand highlights
+are bound to their actual saved InkHighlight objects. Saving, sync and incremental
+cache behavior remain shared. Current validation and
+delivery records are in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md).
 
 Version 0.5.3 keeps the persisted **显示阅读器状态栏** setting from 0.5.2
 (default off; changes apply to existing Readers and popouts without reload) and
@@ -26,10 +38,10 @@ zoom glyphs, percentage and custom zoom values remain. **↕** is described as
 Viewer and dependency versions are unchanged.
 
 The 0.5.1 background prewarm and incremental cache index are unchanged. The
-frozen 0.5.3 default suite passed 193/193 with natural Node exit 0; the final
+frozen 0.5.4 default suite passed 194/194 with natural Node exit 0; the final
 offline suite also exited 0. Mac-native UI, prewarm/sync and three-file target
 replacement records are summarized in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md).
-That Mac sample does not establish iPad hardware acceptance. Versions 0.5.2,
+That Mac sample does not establish iPad hardware acceptance. Versions 0.5.3, 0.5.2,
 0.5.1, 0.5.0 and 0.4.0 remain historical rollback references; preserve the full
 plugin backup, settings, recovery files and sync checkpoints when replacing or
 rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
@@ -38,7 +50,7 @@ CDP endpoint for each run rather than assuming a fixed port. The approved
 `远程仓库1` target now contains the matching three candidate files, with the old
 three backed up and user data/cache/recovery/checkpoints unchanged. Its running
 Obsidian instance was not reloaded. Save and close Reader tabs before reloading
-the plugin; after iPad sync, confirm version 0.5.3. Git push status is tracked
+the plugin; after iPad sync, confirm version 0.5.4. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
 physical-device acceptance remain pending.
 
@@ -86,7 +98,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.3 candidate uses one source and one three-file package for Windows, macOS,
+0.5.4 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.

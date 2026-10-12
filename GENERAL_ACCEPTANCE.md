@@ -1,6 +1,38 @@
-# 0.1general 通用候选（插件 0.5.3）
+# 0.1general 通用候选（插件 0.5.4）
 
-## 当前：0.5.3 工具栏收敛与 iPad 输入分工
+## 当前：0.5.4 工具栏、惯性滚动、参数浮层与 Pencil 高亮
+
+修复用户 iPad 截图中的两项界面问题：撤销／重做沿用现有 PDF.js 的 16px SVG + CSS mask 机制，使用相同主题颜色、悬停和禁用表现；工具栏根据实际可用宽度与可见控件宽度决定单行或双行，取消固定 880px 强制双行。布局随阅读区尺寸及控件内容变化更新，菜单与 PDF 顶部位置跟随实际工具栏高度。
+
+手指快速滑动后抬起，页面继续平滑滑动并逐渐减速；再次触碰、Pencil／鼠标操作、滚轮、工具变化或文档生命周期结束时取消惯性。暂停后抬手、取消事件及绘制期间的额外手指不启动惯性；惯性不产生批注修订或阻塞保存。
+
+颜色／参数浮层支持鼠标、手指和 Pencil 点按外部收起，保持当前工具选中。修复高亮保存绑定：文字高亮保存为 `/Highlight`，自由涂抹高亮保存为 `/Ink /IT /InkHighlight`；按逐页 writer 顺序、类型、数量和准确对象引用绑定，普通 Ink 不会被当成高亮。兼容旧 schema-1 的 InkHighlight 身份，不更改 UUID 或恢复格式。
+
+原生移动模拟确认笔尖命中文字时浏览器能返回文字 caret，但拖动后的选区仍折叠。适配层只为可信、主按钮、模式 9、实际文字 span 上的 pen 手势，从原文字层 caret 建立实际 Range，交给冻结的原生 `highlightSelection` 生成 QuadPoints。取消、失焦、模式／文档变化清理仍由本手势拥有的选区；其他操作改变选区后停止接管。手指仍导航，空白区域保持自由高亮。实际设备若没有文字层，不能凭图片内容生成文字高亮。
+
+三端统一 0.5.4，仍共用三文件产物和核心。保留 0.5.3 手指导航／Pencil 按当前工具分工、默认自动保存、同步刷新和增量缓存；冻结 Viewer、依赖、设置与消息协议不变。Luna Max 子代理开发和独立审计；iPad 实机复验仍由用户完成。
+
+### 0.5.4 冻结验证
+
+最终默认并发记录 `general-0.5.4-validation-default-2026-10-12T02-22-14-083Z` 为 **194/194 通过**，0 失败、取消、跳过，Node 自然退出 0；最终离线记录 `general-0.5.4-validation-offline-2026-10-12T02-22-15-366Z` 自然退出 0。源码和产物前后保持一致，没有追加重复运行门槛。早期 SVG data URL 被误判为外部请求及 Chrome 子进程退出失败的原始日志保留，不重标为通过；测试只放行自有 CSS 中两个完整匹配的内嵌 SVG URL，未知 data URL 和外部请求仍受原断言约束。
+
+原生高亮记录 `general-0.5.4-highlight-native-1791771682796.json`：在指定库的 Obsidian 移动 SDK 模拟中，可信 pen 坐标拖动在不可见 OCR 式文字层上生成 8 个 QuadPoints，第二页空白区自由高亮没有 QuadPoints。手动保存确认修订 4/4，两条批注分别准确保存为 `/Highlight` 和 `/Ink /IT /InkHighlight`，UUID／引用按页绑定，重开各保留一条；自动保存设置恢复开启，回到桌面，Reader/view/gate 为 0。该用例不包含实际 OCR 引擎或 iPad/Pencil 硬件结论。此前选区折叠的真实失败、修复前候选及非可见第二页测试坐标失败均保留。
+
+最终聚焦输入记录 `ipad-pointer-policy-1791771564132-45174.json` 通过：真实坐标的可信 pen 输入使用 caret 端点形成选区，原生回调被限定抑制后仍由适配层调用原生编辑器生成 176 QuadPoints／一条存储批注；没有给测试预置 Range。覆盖惯性取消、绘制期间手指阻断、参数浮层外部收起及工具保持选中。核心聚焦回归 18/18，最终完整套件也覆盖保存绑定、旧身份兼容和二次编辑。
+
+[0.5.4 三文件候选](dist/pdf-web-reader-0.1general-0.5.4-candidate.zip) 含且仅含 `main.js`、`manifest.json`、`styles.css`，SHA-256 为 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`；main.js 为 `932a2e86471b259afa18eee2757efd20f9bf45dad0c6f21948969fc7ce7455f9`。保留旧版回滚包和被替代的本地修复前候选。
+
+原生 UI 记录 `general-0.5.4-ui-native-1791771921182.json` 在桌面与移动 SDK 路径通过：780/640 px 阅读区使用 32 px 单行，432/320 px 使用 64 px 双行；SVG 历史图标与原生工具同尺寸／颜色，禁用状态、缩放、页码、五工具、中键轮盘、删除撤销重做、手动保存重开和真实双击二次编辑均通过。可信 CDP 手指输入抬起时滚动 110 px，120 ms 后到 302 px，再次点按工具栏停止惯性且不创建批注。该驱动明确使用跟随已核验测试窗口尺寸的 CSS viewport 自动化；之前残留 800×600 viewport 导致的两次准备失败分别保留，没有把准备失败包装成功或调查 teardown。
+
+暖启动／同步记录 `general-0.5.4-native-1791772000099.json`：任何 Reader 打开前插件加载自动预热 166 ms，406 次 stat、0 验证读取、0 解压／写入；同实例资源准备 0 ms／0 检查。首 Reader 工具可用约 175.7 ms，第二 Reader 约 96.3 ms；实际鼠标本地修改与远端三身份合并、旧检查点保留、重复通知不重开、同 iframe 保持 90° 旋转和页宽通过。此为 Mac 样本，不构成 iPad 耗时承诺。最终 handoff 确认桌面启用、自动保存开启、Reader/view/gate 为 0，测试窗口还原。
+
+最终 Luna Max 独立审计未发现 P0。已知非阻断限制：短暂的笔文字手势中，兼容 MouseEvent 不带原 pointer ID，无法区分同时操作的另一只鼠标；不宣称此混合设备同时操作验收。实际 iPad/Pencil 投递、系统手势和性能仍由设备确认。强退恢复限制和比较至写入竞争窗口继续保留。
+
+已按授权备份并替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader` 的三文件；`general-0.5.4-target-replacement-1791772082646.json` 确认与候选逐字节一致。旧 0.5.3 三文件在 `.deploy-backups/2026-10-12T02-28-02-602Z/remote-vault-1-three-files`，data.json 字节一致，缓存、恢复副本、同步检查点和 PDF 未改动，也未重载目标库运行实例。保存、关闭 Reader 后重新加载插件；iPad 同步后确认 **0.5.4**。已有失败编辑可以通过原有 **恢复最近的 PDF 自动保存副本** 命令取回，不清理旧恢复文件。
+
+[0.5.4 验证与调查证据](dist/general-0.1general-0.5.4-evidence.zip)、[证据清单](dist/general-0.1general-0.5.4-evidence.manifest.json)与 [SHA-256 清单](dist/general-0.1general-0.5.4-SHA256SUMS.txt)包含各次原始失败、驱动快照、原生截图、聚焦回归和源码差异。推送使用正常 `main` 更新，以 Git 历史确认；不创建 Release。Windows／iPad 实机待用户复验。
+
+## 历史：0.5.3 工具栏收敛与 iPad 输入分工
 
 0.5.3 延续 Windows、macOS 与 iPadOS 使用同一组三文件、编辑／保存／同步核心及平台入口。0.5.2 的 **显示阅读器状态栏** 设置继续保留：默认关闭，旧设置缺少该字段时也按关闭处理；开关即时作用于已打开的 Reader 和 popout，不重载 Viewer。状态及恢复动作仍保存在 Reader 内部，现有 Notice 与 **恢复最近的 PDF 自动保存副本** 命令不依赖状态栏显示。
 

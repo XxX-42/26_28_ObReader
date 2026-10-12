@@ -138,6 +138,21 @@ async function dispatchTouch(cdp, type, point = null, id = 1) {
   await cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
 }
 
+async function waitMs(milliseconds) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function beginFastTouchDrag(cdp, point, distance, id) {
+  await dispatchTouch(cdp, "touchStart", point, id);
+  for (let step = 1; step <= 4; step += 1) {
+    await waitMs(16);
+    await dispatchTouch(cdp, "touchMove", {
+      x: point.x,
+      y: point.y - distance * step / 4,
+    }, id);
+  }
+}
+
 async function dispatchSimulatedPen(cdp, type, point, buttons) {
   await cdp.send("Input.dispatchMouseEvent", {
     type,
@@ -244,7 +259,7 @@ test(
         window.__ipadPointerEvents = [];
         for (const type of [
           "pointerdown", "pointermove", "pointerup", "pointercancel",
-          "mousedown", "mouseup", "click", "dblclick",
+          "mousedown", "mouseup", "click", "dblclick", "wheel",
         ]) {
           window.addEventListener(type, (event) => {
             const target = event.target instanceof Element ? event.target : null;
@@ -330,16 +345,25 @@ test(
       const inputSnapshot = async (frame = viewer) => frame.evaluate(() => {
         const app = window.PDFViewerApplication;
         const storage = app.pdfDocument.annotationStorage;
-        const modified = storage.modifiedIds?.ids;
+        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+        const modifiedIds = Array.from(
+          { length: app.pdfDocument.numPages },
+          (_, pageIndex) => [...manager.getEditors(pageIndex)],
+        ).flat().filter((editor) => editor.serialize())
+          .map((editor) => String(editor.id)).sort();
         return {
           scrollTop: document.getElementById("viewerContainer").scrollTop,
+          scrollLeft: document.getElementById("viewerContainer").scrollLeft,
+          maxScrollTop: document.getElementById("viewerContainer").scrollHeight -
+            document.getElementById("viewerContainer").clientHeight,
           storageSize: storage.size ?? null,
           serializedSize: storage.serializable?.map?.size ?? null,
-          modifiedIds: modified && typeof modified[Symbol.iterator] === "function"
-            ? [...modified].sort()
-            : [],
+          modifiedIds,
           editorElements: document.querySelectorAll(
             ".annotationEditorLayer .inkEditor",
+          ).length,
+          highlightElements: document.querySelectorAll(
+            ".annotationEditorLayer .highlightEditor",
           ).length,
         };
       });
@@ -430,12 +454,219 @@ test(
         window.__ipadPageClicksReachedDocument = [];
       });
 
+      await viewer.click("#editorHighlightButton");
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 9,
+        { timeout: 8_000 },
+      );
+      const highlightTarget = await viewer.evaluate(() => {
+        const viewerRect = document.getElementById("viewerContainer").getBoundingClientRect();
+        const spans = [...document.querySelectorAll(
+          '.page[data-page-number="1"] .textLayer span',
+        )].map((element) => {
+          const rect = element.getBoundingClientRect();
+          return {
+            text: element.textContent || "",
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+          };
+        }).filter((span) => span.text.trim() && span.right - span.left > 4 &&
+          span.bottom - span.top > 4 && span.top >= viewerRect.top &&
+          span.bottom <= viewerRect.bottom);
+        spans.sort((left, right) => left.top - right.top || left.left - right.left);
+        const lines = [];
+        for (const span of spans) {
+          let line = lines.find((candidate) => Math.abs(candidate.top - span.top) < 2);
+          if (!line) {
+            line = { top: span.top, spans: [] };
+            lines.push(line);
+          }
+          line.spans.push(span);
+        }
+        const line = lines.find((candidate) => candidate.spans.length >= 2 &&
+          candidate.spans.at(-1).right - candidate.spans[0].left >= 70);
+        if (!line) {
+          throw new Error("Could not find a visible OCR text line for pen selection");
+        }
+        const first = line.spans[0];
+        const last = line.spans.at(-1);
+        const y = (first.top + first.bottom) / 2;
+        return {
+          start: { x: first.left + Math.min(2, (first.right - first.left) / 4), y },
+          end: { x: last.right - Math.min(2, (last.right - last.left) / 4), y },
+          expectedLineText: line.spans.map((span) => span.text).join(""),
+        };
+      });
+      const highlightFrameBounds = await page.$eval("#pdf-reader", (element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y };
+      });
+      const highlightPenStart = {
+        x: highlightFrameBounds.x + highlightTarget.start.x,
+        y: highlightFrameBounds.y + highlightTarget.start.y,
+      };
+      const highlightPenEnd = {
+        x: highlightFrameBounds.x + highlightTarget.end.x,
+        y: highlightFrameBounds.y + highlightTarget.end.y,
+      };
+      await viewer.evaluate(() => window.getSelection()?.removeAllRanges());
+      const beforePenTextHighlight = await inputSnapshot();
+      await viewer.evaluate(() => {
+        window.__penTextSelectionTrace = [];
+        window.__penTextHighlightCalls = [];
+        window.__penCompatibilityMouseEvents = [];
+        document.addEventListener("selectionchange", () => {
+          const selection = document.getSelection();
+          if (selection && !selection.isCollapsed && selection.toString()) {
+            const textLayer = document.querySelector(
+              '.page[data-page-number="1"] .textLayer',
+            );
+            window.__penTextSelectionTrace.push({
+              text: selection.toString(),
+              anchorOffset: selection.anchorOffset,
+              focusOffset: selection.focusOffset,
+              anchorInTextLayer: !!textLayer?.contains(selection.anchorNode),
+              focusInTextLayer: !!textLayer?.contains(selection.focusNode),
+            });
+          }
+        }, true);
+        for (const type of ["mousedown", "mousemove", "mouseup"]) {
+          document.addEventListener(type, () => {
+            window.__penCompatibilityMouseEvents.push(type);
+          });
+        }
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        const highlightSelection = manager.highlightSelection.bind(manager);
+        manager.highlightSelection = (method) => {
+          const selection = document.getSelection();
+          const call = {
+            method,
+            collapsed: selection?.isCollapsed ?? true,
+            text: selection?.toString() || "",
+            rangeCount: selection?.rangeCount || 0,
+            stack: new Error().stack || "",
+          };
+          window.__penTextHighlightCalls.push(call);
+          // Leave the actual Range intact when PDF.js's normal selection
+          // handler asks for a highlight. The bridge's pointerup fallback
+          // should then consume that same Range through the native editor API.
+          if (!call.stack.includes("finishPenHighlightFallback")) return;
+          return highlightSelection(method);
+        };
+      });
+      await dispatchSimulatedPen(cdp, "mousePressed", highlightPenStart, 1);
+      for (let step = 1; step <= 5; step += 1) {
+        await dispatchSimulatedPen(cdp, "mouseMoved", {
+          x: highlightPenStart.x +
+            (highlightPenEnd.x - highlightPenStart.x) * step / 5,
+          y: highlightPenStart.y +
+            (highlightPenEnd.y - highlightPenStart.y) * step / 5,
+        }, 1);
+      }
+      await dispatchSimulatedPen(cdp, "mouseReleased", highlightPenEnd, 0);
+      await viewer.waitForFunction((previousCount) =>
+        document.querySelectorAll(
+          ".annotationEditorLayer .highlightEditor",
+        ).length > previousCount,
+      { timeout: 6_000 }, beforePenTextHighlight.highlightElements);
+      const afterPenTextHighlight = await inputSnapshot();
+      const penTextHighlightEvidence = await viewer.evaluate(() => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        const editors = [...manager.getEditors(0)].filter((editor) =>
+          editor.div?.classList.contains("highlightEditor"),
+        );
+        const serialized = editors.map((editor) => editor.serialize()).filter(Boolean);
+        return {
+          selectionTrace: window.__penTextSelectionTrace || [],
+          highlightCalls: window.__penTextHighlightCalls || [],
+          compatibilityMouseEvents: window.__penCompatibilityMouseEvents || [],
+          editors: editors.length,
+          quadPointCounts: serialized.map((editor) => editor.quadPoints?.length || 0),
+          selectionCollapsedAfter: document.getSelection()?.isCollapsed ?? true,
+        };
+      });
+      const actualSelectionTrace = penTextHighlightEvidence.selectionTrace;
+      assert.ok(actualSelectionTrace.some((entry) => entry.text.length > 0),
+        "Trusted pen drag must create a live browser text selection");
+      assert.ok(actualSelectionTrace.some((entry) =>
+        Number.isInteger(entry.anchorOffset) && Number.isInteger(entry.focusOffset) &&
+        entry.anchorInTextLayer && entry.focusInTextLayer,
+      ), "Pen endpoints must come from caret hit tests inside the captured text layer");
+      assert.deepEqual(penTextHighlightEvidence.compatibilityMouseEvents, [],
+        "The owned text-selection gesture must suppress duplicate compatibility mouse events");
+      assert.ok(penTextHighlightEvidence.highlightCalls.some((call) =>
+        call.method === "main_toolbar" && !call.collapsed && call.text.length > 0 &&
+        call.rangeCount > 0,
+      ), `Native text highlight must consume the live selection: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
+      assert.ok(penTextHighlightEvidence.highlightCalls.some((call) =>
+        call.stack.includes("finishPenHighlightFallback"),
+      ), `The bridge fallback must consume the range when PDF.js selectionchange handling is suppressed: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
+      assert.ok(penTextHighlightEvidence.editors > 0,
+        "Pen text selection must create a native PDF.js HighlightEditor");
+      assert.ok(penTextHighlightEvidence.quadPointCounts.some((count) => count >= 8),
+        `Native text highlight must serialize PDF QuadPoints: ${JSON.stringify(penTextHighlightEvidence.quadPointCounts)}`);
+      assert.equal(penTextHighlightEvidence.selectionCollapsedAfter, true,
+        "Native text highlight should consume and clear the browser selection");
+      assert.ok(afterPenTextHighlight.serializedSize > beforePenTextHighlight.serializedSize,
+        "Native text highlight must update PDF annotation storage");
+      assert.ok(afterPenTextHighlight.storageSize > beforePenTextHighlight.storageSize,
+        "Native text highlight must add an annotation to PDF storage");
+      report.penTextHighlightSelection = {
+        input: "trusted Chromium pen-typed CDP drag over OCR text",
+        simulationOnly: true,
+        expectedLineText: highlightTarget.expectedLineText,
+        selectedText: actualSelectionTrace.at(-1)?.text || "",
+        caretEndpoints: actualSelectionTrace.map((entry) => ({
+          anchorOffset: entry.anchorOffset,
+          focusOffset: entry.focusOffset,
+          anchorInTextLayer: entry.anchorInTextLayer,
+          focusInTextLayer: entry.focusInTextLayer,
+        })),
+        compatibilityMouseEvents: penTextHighlightEvidence.compatibilityMouseEvents,
+        nativeHighlightCalls: penTextHighlightEvidence.highlightCalls,
+        nativeHighlightEditors: penTextHighlightEvidence.editors,
+        quadPointCounts: penTextHighlightEvidence.quadPointCounts,
+        annotationStorageSize: afterPenTextHighlight.serializedSize,
+      };
+      await viewer.evaluate(() => {
+        window.__ipadPageClicksReachedDocument = [];
+      });
+
       await viewer.click("#editorInkButton");
       await viewer.waitForFunction(
         () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
         { timeout: 8_000 },
       );
       const beforeFingerPan = await inputSnapshot();
+      const inkParamsState = () => viewer.evaluate(() => ({
+        hidden: document.getElementById("editorInkParamsToolbar").classList.contains("hidden"),
+        mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+        selected: document.getElementById("editorInkButton").classList.contains("toggled"),
+        expanded: document.getElementById("editorInkButton").getAttribute("aria-expanded"),
+      }));
+      assert.equal((await inkParamsState()).hidden, false);
+      await viewer.click("#pageNumber");
+      assert.deepEqual(await inkParamsState(), {
+        hidden: true, mode: 15, selected: true, expanded: "false",
+      }, "Mouse outside the parameter popup closes it without deselecting Ink");
+      await viewer.click("#editorInkButton");
+      await viewer.click("#editorInkButton");
+      const popupPoint = await localPointInHost(viewer, page, "#editorInkParamsToolbar", [0.03, 0.04]);
+      await dispatchTouch(cdp, "touchStart", popupPoint, 101);
+      await dispatchTouch(cdp, "touchEnd");
+      assert.equal((await inkParamsState()).hidden, false,
+        "A finger contact inside tool parameters must leave them available");
+      const outsidePopupPoint = await localPointInHost(viewer, page, "#viewerContainer", [0.9, 0.45]);
+      await dispatchTouch(cdp, "touchStart", outsidePopupPoint, 102);
+      await dispatchTouch(cdp, "touchEnd");
+      assert.deepEqual(await inkParamsState(), {
+        hidden: true, mode: 15, selected: true, expanded: "false",
+      }, "Finger contact on the PDF closes parameters while retaining the selected tool");
+      report.parameterPopupOutsideMouseAndFinger = true;
       const touchEventOffset = await viewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
@@ -481,6 +712,334 @@ test(
         `Touch must not generate compatibility mouse events in the page: ${JSON.stringify(touchObservation.events)}`,
       );
 
+      await waitMs(1_000);
+      const beforeFastFlick = await inputSnapshot();
+      const fastFlickPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.52, 0.55],
+      );
+      const fastFlickEventOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      await beginFastTouchDrag(cdp, fastFlickPoint, 260, 21);
+      const fastFlickAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      const fastFlickImmediatelyAfterRelease = await inputSnapshot();
+      await waitMs(120);
+      const fastFlickAfterFirstInterval = await inputSnapshot();
+      await waitMs(120);
+      const fastFlickAfterSecondInterval = await inputSnapshot();
+      await waitMs(760);
+      const fastFlickSettled = await inputSnapshot();
+      assert.ok(
+        fastFlickAtRelease.scrollTop > beforeFastFlick.scrollTop + 180,
+        "The trusted fast finger drag must pan the PDF before release",
+      );
+      const firstInertiaDistance = fastFlickAfterFirstInterval.scrollTop -
+        fastFlickImmediatelyAfterRelease.scrollTop;
+      const secondInertiaDistance = fastFlickAfterSecondInterval.scrollTop -
+        fastFlickAfterFirstInterval.scrollTop;
+      assert.ok(firstInertiaDistance > 20,
+        "A recent fast finger release must continue scrolling");
+      assert.ok(secondInertiaDistance > 5,
+        "Finger inertia must continue smoothly across animation frames");
+      assert.ok(secondInertiaDistance < firstInertiaDistance,
+        "Finger inertia must decay over equal time intervals");
+      assert.equal(fastFlickSettled.storageSize, beforeFastFlick.storageSize);
+      assert.equal(fastFlickSettled.serializedSize, beforeFastFlick.serializedSize);
+      assert.deepEqual(fastFlickSettled.modifiedIds, beforeFastFlick.modifiedIds,
+        "Finger inertia must not modify PDF annotations");
+      const fastFlickEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], fastFlickEventOffset,
+      );
+      assert.ok(fastFlickEvents.some((event) =>
+        event.type === "pointerdown" && event.pointerType === "touch" && event.trusted,
+      ), "The fast flick must use trusted touch pointer input");
+
+      const pausePoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await dispatchTouch(cdp, "touchStart", pausePoint, 22);
+      await dispatchTouch(cdp, "touchMove", {
+        x: pausePoint.x,
+        y: pausePoint.y - 100,
+      }, 22);
+      await waitMs(180);
+      await dispatchTouch(cdp, "touchEnd");
+      const pausedRelease = await inputSnapshot();
+      await waitMs(300);
+      const afterPausedRelease = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterPausedRelease.scrollTop - pausedRelease.scrollTop) <= 1,
+        "A finger that pauses before release must not start inertia",
+      );
+
+      const cancelPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.52],
+      );
+      await dispatchTouch(cdp, "touchStart", cancelPoint, 23);
+      await dispatchTouch(cdp, "touchMove", {
+        x: cancelPoint.x,
+        y: cancelPoint.y - 130,
+      }, 23);
+      const cancelEventOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      const beforeTouchCancel = await inputSnapshot();
+      await dispatchTouch(cdp, "touchCancel");
+      const afterTouchCancel = await inputSnapshot();
+      await waitMs(300);
+      const afterTouchCancelWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterTouchCancelWait.scrollTop - afterTouchCancel.scrollTop) <= 1,
+        "A cancelled touch must not start inertia",
+      );
+      assert.ok(beforeTouchCancel.scrollTop > pausedRelease.scrollTop + 50,
+        "The cancelled contact must have panned before it was cancelled");
+      const touchCancelEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], cancelEventOffset,
+      );
+      assert.ok(touchCancelEvents.some((event) =>
+        event.type === "pointercancel" && event.pointerType === "touch" && event.trusted,
+      ), "The cancellation case must deliver a trusted touch pointercancel");
+
+      const boundaryStart = await viewer.evaluate(() => {
+        const container = document.getElementById("viewerContainer");
+        const maxScrollTop = container.scrollHeight - container.clientHeight;
+        container.scrollTop = Math.max(0, maxScrollTop - 60);
+        return container.scrollTop;
+      });
+      const boundaryPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await beginFastTouchDrag(cdp, boundaryPoint, 220, 24);
+      await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(350);
+      const boundaryAfterInertia = await inputSnapshot();
+      assert.ok(boundaryAfterInertia.scrollTop >= boundaryStart,
+        "A finger flick near the lower boundary must not reverse scroll direction");
+      assert.ok(
+        Math.abs(boundaryAfterInertia.scrollTop - boundaryAfterInertia.maxScrollTop) <= 1,
+        "Finger inertia must stop at the PDF scroll boundary",
+      );
+
+      const middleScroll = await viewer.evaluate(() => {
+        const container = document.getElementById("viewerContainer");
+        container.scrollTop = Math.min(
+          500,
+          Math.max(0, (container.scrollHeight - container.clientHeight) / 2),
+        );
+        return container.scrollTop;
+      });
+      const toolbarTouchPoint = await localPointInHost(
+        viewer,
+        page,
+        "#editorInkButton",
+      );
+      const toolbarTouchOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      const newContactPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await beginFastTouchDrag(cdp, newContactPoint, 180, 25);
+      const newContactAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(80);
+      const beforeToolbarTouch = await inputSnapshot();
+      assert.ok(beforeToolbarTouch.scrollTop > newContactAtRelease.scrollTop + 5,
+        "The finger flick must have active inertia before the new contact");
+      await dispatchTouch(cdp, "touchStart", toolbarTouchPoint, 26);
+      await dispatchTouch(cdp, "touchEnd");
+      const afterToolbarTouch = await inputSnapshot();
+      await waitMs(300);
+      const afterToolbarTouchWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterToolbarTouchWait.scrollTop - afterToolbarTouch.scrollTop) <= 1,
+        "A new finger contact on the toolbar must stop PDF inertia",
+      );
+      const toolbarTouchEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], toolbarTouchOffset,
+      );
+      assert.ok(toolbarTouchEvents.some((event) =>
+        event.type === "pointerdown" && event.pointerType === "touch" &&
+        event.trusted && !event.targetInViewer,
+      ), "The momentum-stopping contact must land on a toolbar control");
+
+      const penMomentumPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await beginFastTouchDrag(cdp, penMomentumPoint, 180, 27);
+      const penFlickAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(70);
+      const beforePenStop = await inputSnapshot();
+      assert.ok(beforePenStop.scrollTop > penFlickAtRelease.scrollTop + 5,
+        "The finger flick must be moving before the Pencil contact");
+      await tapSimulatedPen(cdp, toolbarTouchPoint);
+      const afterPenStop = await inputSnapshot();
+      await waitMs(300);
+      const afterPenStopWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterPenStopWait.scrollTop - afterPenStop.scrollTop) <= 1,
+        "A Pencil contact must stop PDF inertia",
+      );
+
+      const mouseMomentumPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await beginFastTouchDrag(cdp, mouseMomentumPoint, 180, 28);
+      const mouseFlickAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(70);
+      const beforeMouseStop = await inputSnapshot();
+      assert.ok(beforeMouseStop.scrollTop > mouseFlickAtRelease.scrollTop + 5,
+        "The finger flick must be moving before the mouse contact");
+      await page.mouse.click(toolbarTouchPoint.x, toolbarTouchPoint.y);
+      const afterMouseStop = await inputSnapshot();
+      await waitMs(300);
+      const afterMouseStopWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterMouseStopWait.scrollTop - afterMouseStop.scrollTop) <= 1,
+        "A mouse contact must stop PDF inertia",
+      );
+
+      const wheelMomentumPoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      const wheelEventOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      await beginFastTouchDrag(cdp, wheelMomentumPoint, 180, 29);
+      const wheelFlickAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(70);
+      const beforeWheelStop = await inputSnapshot();
+      assert.ok(beforeWheelStop.scrollTop > wheelFlickAtRelease.scrollTop + 5,
+        "The finger flick must be moving before the wheel event");
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: wheelMomentumPoint.x,
+        y: wheelMomentumPoint.y,
+        deltaX: 0,
+        deltaY: 0,
+      });
+      const afterWheelStop = await inputSnapshot();
+      await waitMs(300);
+      const afterWheelStopWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterWheelStopWait.scrollTop - afterWheelStop.scrollTop) <= 1,
+        "A wheel event must stop PDF inertia",
+      );
+      const wheelEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], wheelEventOffset,
+      );
+      assert.ok(wheelEvents.some((event) => event.type === "wheel" && event.trusted),
+        "The wheel cancellation case must deliver a trusted wheel event");
+
+      const toolChangePoint = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.5, 0.5],
+      );
+      await beginFastTouchDrag(cdp, toolChangePoint, 180, 30);
+      const toolChangeFlickAtRelease = await inputSnapshot();
+      await dispatchTouch(cdp, "touchEnd");
+      await waitMs(70);
+      const beforeToolChange = await inputSnapshot();
+      assert.ok(beforeToolChange.scrollTop > toolChangeFlickAtRelease.scrollTop + 5,
+        "The finger flick must be moving before the tool change");
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 5,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+        { timeout: 3_000 },
+      );
+      const afterToolChange = await inputSnapshot();
+      await waitMs(300);
+      const afterToolChangeWait = await inputSnapshot();
+      assert.ok(
+        Math.abs(afterToolChangeWait.scrollTop - afterToolChange.scrollTop) <= 1,
+        "Changing annotation tools must stop PDF inertia",
+      );
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 15,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
+        { timeout: 3_000 },
+      );
+
+      report.fingerInertia = {
+        policy: "trusted CDP touch sequence; Chromium routing evidence only",
+        fastFlick: {
+          before: beforeFastFlick,
+          atRelease: fastFlickAtRelease,
+          immediatelyAfterRelease: fastFlickImmediatelyAfterRelease,
+          afterFirstInterval: fastFlickAfterFirstInterval,
+          afterSecondInterval: fastFlickAfterSecondInterval,
+          settled: fastFlickSettled,
+          firstIntervalDistance: firstInertiaDistance,
+          secondIntervalDistance: secondInertiaDistance,
+          observedPointerEvents: fastFlickEvents,
+        },
+        pause: { release: pausedRelease, after: afterPausedRelease },
+        cancel: {
+          before: beforeTouchCancel,
+          after: afterTouchCancel,
+          afterWait: afterTouchCancelWait,
+          observedPointerEvents: touchCancelEvents,
+        },
+        boundary: { start: boundaryStart, after: boundaryAfterInertia },
+        toolbarContact: {
+          atRelease: newContactAtRelease,
+          beforeTouch: beforeToolbarTouch,
+          afterTouch: afterToolbarTouchWait,
+        },
+        penStop: { before: beforePenStop, after: afterPenStopWait },
+        mouseStop: { before: beforeMouseStop, after: afterMouseStopWait },
+        wheelStop: { before: beforeWheelStop, after: afterWheelStopWait },
+        wheelEvents,
+        toolChangeStop: { before: beforeToolChange, after: afterToolChangeWait },
+        middleScroll,
+      };
+
       const squareTool = await localPointInHost(viewer, page, "#editorSquareButton");
       await dispatchTouch(cdp, "touchStart", squareTool, 12);
       await dispatchTouch(cdp, "touchEnd");
@@ -488,6 +1047,9 @@ test(
         () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
         { timeout: 8_000 },
       );
+      await viewer.evaluate(() => {
+        document.getElementById("viewerContainer").scrollTop = 0;
+      });
       const beforeMouseDraw = await inputSnapshot();
       const mouseStart = await localPointInHost(
         viewer,
@@ -629,6 +1191,11 @@ test(
         beforePenDraw.editorElements,
       );
       const afterPenDraw = await inputSnapshot(penViewer);
+      assert.equal(await penViewer.evaluate(() =>
+        document.getElementById("editorSquareParamsToolbar").classList.contains("hidden") &&
+        PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+      ), true, "Pencil drawing closes its tool parameters without deselecting Square");
+      report.parameterPopupOutsideSimulatedPen = true;
       assert.ok(afterPenDraw.serializedSize > beforePenDraw.serializedSize,
         "A pen-typed pointer should reach the active PDF.js editor tool");
       const penDrawObservation = await penViewer.evaluate((offset) =>

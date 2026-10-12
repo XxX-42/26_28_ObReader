@@ -575,15 +575,41 @@ test(
     const assertCompactToolbarFits = async (width) => {
       await page.setViewport({ width, height:500 });
       await viewer.waitForFunction(
-        (expectedWidth) => window.innerWidth === expectedWidth &&
-          document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 2,
+        (expectedWidth) => {
+          const toolbarViewer = document.getElementById("toolbarViewer");
+          const groups = [
+            document.getElementById("toolbarViewerLeft"),
+            document.getElementById("toolbarViewerMiddle"),
+            document.getElementById("editorModeButtons"),
+            document.querySelector(".pdfReaderBridgeControls"),
+            document.getElementById("secondaryToolbarToggle"),
+          ];
+          const requiredWidth = groups.reduce((sum, element) =>
+            sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width),
+          20);
+          return window.innerWidth === expectedWidth &&
+            document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton").length === 2 &&
+            document.documentElement.classList.contains("pdfReaderBridgeTwoRow") ===
+              (requiredWidth > toolbarViewer.clientWidth + 1);
+        },
         { timeout:5_000 },
         width,
       );
       const layout = await viewer.evaluate(() => {
         const toolbar = document.getElementById("toolbarContainer");
+        const toolbarViewer = document.getElementById("toolbarViewer");
         const right = document.getElementById("toolbarViewerRight");
         const containerRect = toolbar.getBoundingClientRect();
+        const groupWidths = [
+          document.getElementById("toolbarViewerLeft"),
+          document.getElementById("toolbarViewerMiddle"),
+          document.getElementById("editorModeButtons"),
+          document.querySelector(".pdfReaderBridgeControls"),
+          document.getElementById("secondaryToolbarToggle"),
+        ];
+        const requiredSingleRowWidth = groupWidths.reduce((sum, element) => {
+          return sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width);
+        }, 20);
         const mustReach = [
           ...document.querySelectorAll(".pdfReaderBridgeControls .pdfReaderBridgeControlButton"),
           ...[
@@ -628,7 +654,17 @@ test(
           .map(box);
         return {
           viewportWidth:window.innerWidth,
-          toolbar:{ left:containerRect.left, right:containerRect.right, scrollWidth:toolbar.scrollWidth, clientWidth:toolbar.clientWidth },
+          toolbar:{
+            left:containerRect.left,
+            right:containerRect.right,
+            bottom:containerRect.bottom,
+            height:containerRect.height,
+            scrollWidth:toolbar.scrollWidth,
+            clientWidth:toolbar.clientWidth,
+            twoRows:document.documentElement.classList.contains("pdfReaderBridgeTwoRow"),
+            requiredSingleRowWidth,
+            availableSingleRowWidth:toolbarViewer.clientWidth,
+          },
           right:{ left:right.getBoundingClientRect().left, right:right.getBoundingClientRect().right, scrollWidth:right.scrollWidth, clientWidth:right.clientWidth },
           controls:mustReach.map(box),
           visibleRightButtons,
@@ -644,6 +680,12 @@ test(
           layout.controls.every(withinToolbar),
         `All visible toolbar and bridge controls should remain clickable inside a ${width}px pane: ${JSON.stringify(layout)}`,
       );
+      const expectedTwoRows =
+        layout.toolbar.requiredSingleRowWidth > layout.toolbar.availableSingleRowWidth + 1;
+      assert.equal(layout.toolbar.twoRows, expectedTwoRows,
+        `Responsive layout follows measured control widths at ${width}px`);
+      assert.equal(layout.toolbar.height, expectedTwoRows ? 64 : 32,
+        `Toolbar height matches its row count at ${width}px`);
       const historyControls = layout.controls.filter((button) =>
         button.label === "撤销" || button.label === "重做",
       );
@@ -660,11 +702,16 @@ test(
         `Native tool buttons should fit at ${width}px: ${JSON.stringify(nativeToolControls)}`,
       );
     };
-    // Check both sides of the responsive breakpoint with native tools and
-    // direct undo/redo controls inside the available toolbar width.
+    // Check panes around the previous breakpoint, including the screenshot
+    // width, and verify the row count follows actual measured control widths.
     await assertCompactToolbarFits(881);
     await assertCompactToolbarFits(880);
     await assertCompactToolbarFits(800);
+    await assertCompactToolbarFits(780);
+    await assertCompactToolbarFits(720);
+    await assertCompactToolbarFits(640);
+    await assertCompactToolbarFits(432);
+    await assertCompactToolbarFits(320);
     await assertCompactToolbarFits(600);
     await page.setViewport({ width:1400, height:1000 });
     const toolbarControls = await viewer.evaluate(() => ({

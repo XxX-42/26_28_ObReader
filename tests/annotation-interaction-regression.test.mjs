@@ -1,3 +1,4 @@
+import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
@@ -826,7 +827,7 @@ test(
         }
       });
       page.on("request", (request) => {
-        if (new URL(request.url()).origin !== baseUrl) {
+        if (!isInlineToolbarIcon(request.url()) && new URL(request.url()).origin !== baseUrl) {
           externalRequests.push(request.url());
         }
       });

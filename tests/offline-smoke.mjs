@@ -1,3 +1,4 @@
+import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -172,7 +173,7 @@ try {
     }
   });
   page.on("request", (request) => {
-    if (new URL(request.url()).origin !== baseUrl) {
+    if (!isInlineToolbarIcon(request.url()) && new URL(request.url()).origin !== baseUrl) {
       externalRequests.push(request.url());
     }
   });

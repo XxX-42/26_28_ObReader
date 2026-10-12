@@ -96,7 +96,6 @@ body {
 
 .pdfReaderBridgeControlButton:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton {
@@ -111,16 +110,24 @@ body {
 }
 
 .pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton::before {
-  display: none;
-  content: none;
+  display: inline-block;
+  content: "";
+  width: var(--icon-size);
+  height: var(--icon-size);
+  -webkit-mask-size: cover;
+          mask-size: cover;
+  -webkit-mask-position: center;
+          mask-position: center;
 }
 
-.pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton > .pdfReaderBridgeHistoryGlyph {
-  display: inline-block;
-  width: auto;
-  height: auto;
-  overflow: visible;
-  line-height: 1;
+#pdfReaderBridgeUndoButton::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cpath%20d='M6.1%203.7%202.8%207l3.3%203.3M3.2%207h4.7a4.2%204.2%200%201%201-2.2%208.1'%20fill='none'%20stroke='black'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+          mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cpath%20d='M6.1%203.7%202.8%207l3.3%203.3M3.2%207h4.7a4.2%204.2%200%201%201-2.2%208.1'%20fill='none'%20stroke='black'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+#pdfReaderBridgeRedoButton::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cpath%20d='M9.9%203.7%2013.2%207l-3.3%203.3M12.8%207H8.1a4.2%204.2%200%201%200%202.2%208.1'%20fill='none'%20stroke='black'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+          mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Cpath%20d='M9.9%203.7%2013.2%207l-3.3%203.3M12.8%207H8.1a4.2%204.2%200%201%200%202.2%208.1'%20fill='none'%20stroke='black'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 .pdfReaderBridgeDeleteButton::before {
@@ -140,17 +147,16 @@ body {
   display: none !important;
 }
 
-/* Keep PDF.js editing controls usable in a narrow Obsidian pane. */
-@media screen and (max-width: 880px) {
-  :root {
-    --toolbar-height: 64px;
-  }
+/* Use two rows only when the actual controls do not fit in one toolbar row. */
+:root.pdfReaderBridgeTwoRow {
+  --toolbar-height: 64px;
+}
 
-  #mainContainer {
-    min-width: 0;
-  }
+:root.pdfReaderBridgeTwoRow #mainContainer {
+  min-width: 0;
+}
 
-  #toolbarContainer #toolbarViewer {
+:root.pdfReaderBridgeTwoRow #toolbarContainer #toolbarViewer {
     display: grid;
     width: 100%;
     height: 100%;
@@ -162,66 +168,65 @@ body {
     align-content: center;
     justify-content: stretch;
     box-sizing: border-box;
-  }
+}
 
-  #toolbarViewerLeft {
+:root.pdfReaderBridgeTwoRow #toolbarViewerLeft {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
     margin-inline-start: 0;
     justify-content: flex-start;
-  }
+}
 
-  #toolbarViewerMiddle {
+:root.pdfReaderBridgeTwoRow #toolbarViewerMiddle {
     grid-column: 2;
     grid-row: 1;
     min-width: 0;
     justify-content: flex-start;
-  }
+}
 
-  #toolbarViewerRight {
+:root.pdfReaderBridgeTwoRow #toolbarViewerRight {
     grid-column: 1 / -1;
     grid-row: 2;
     width: 100%;
     min-width: 0;
     justify-content: space-between;
-  }
+}
 
-  #editorModeButtons {
+:root.pdfReaderBridgeTwoRow #editorModeButtons {
     min-width: 0;
     flex: 0 1 auto;
     justify-content: flex-start;
-  }
+}
 
-  #editorModeSeparator {
+:root.pdfReaderBridgeTwoRow #editorModeSeparator {
     display: none;
-  }
+}
 
-  #secondaryToolbarToggle {
+:root.pdfReaderBridgeTwoRow #secondaryToolbarToggle {
     flex: none;
     margin-inline-start: auto;
-  }
+}
 
-  .pdfReaderBridgeControls {
-    gap: 0;
+:root.pdfReaderBridgeTwoRow .pdfReaderBridgeControls {
     margin-inline: 0;
-  }
+}
 
-  .pdfReaderBridgeControlButton {
+:root.pdfReaderBridgeTwoRow .pdfReaderBridgeControlButton {
     padding-inline: 0;
-  }
+}
 
-  .pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton {
+:root.pdfReaderBridgeTwoRow .pdfReaderBridgeControlButton.pdfReaderBridgeHistoryButton {
     width: 32px;
     min-width: 32px;
     max-width: 32px;
     height: 28px;
     font-size: 1.2rem;
-  }
+}
 
-  /* Each parameter menu is centered below the two-row toolbar so buttons at
-     either end of the editor group cannot push a popup outside the iframe. */
-  #editorModeButtons .editorParamsToolbar {
+/* Each parameter menu is centered below the two-row toolbar so buttons at
+   either end of the editor group cannot push a popup outside the iframe. */
+:root.pdfReaderBridgeTwoRow #editorModeButtons .editorParamsToolbar {
     position: fixed;
     inset-block-start: calc(var(--toolbar-height) + 4px);
     inset-inline-start: 50%;
@@ -230,5 +235,4 @@ body {
     min-width: min(220px, calc(100vw - 16px));
     max-width: calc(100vw - 16px);
     box-sizing: border-box;
-  }
 }

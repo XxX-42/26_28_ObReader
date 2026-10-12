@@ -60,7 +60,7 @@ function addPopup(doc, page, parentRef, label = "popup") {
   return ref;
 }
 
-function addAnnotation(doc, pageIndex, { subtype = "FreeText", nm = `NM-${subtype}`, contents = "initial", rect = [20, 30, 120, 70], popup = false, irt = null, appearance = null, structParent = null } = {}) {
+function addAnnotation(doc, pageIndex, { subtype = "FreeText", nm = `NM-${subtype}`, contents = "initial", rect = [20, 30, 120, 70], popup = false, irt = null, appearance = null, structParent = null, it = null, inkList = null, quadPoints = null } = {}) {
   const page = doc.getPages()[pageIndex];
   const annotation = PDFDict.withContext(doc.context);
   annotation.set(PDFName.of("Type"), PDFName.of("Annot"));
@@ -70,6 +70,13 @@ function addAnnotation(doc, pageIndex, { subtype = "FreeText", nm = `NM-${subtyp
   annotation.set(PDFName.of("Contents"), text(contents));
   annotation.set(PDFName.of("T"), text("fixture author"));
   if (structParent !== null) annotation.set(PDFName.of("StructParent"), PDFNumber.of(structParent));
+  if (it) annotation.set(PDFName.of("IT"), PDFName.of(it));
+  if (inkList) {
+    const inkLists = PDFArray.withContext(doc.context);
+    inkLists.push(numberArray(doc, inkList));
+    annotation.set(PDFName.of("InkList"), inkLists);
+  }
+  if (quadPoints) annotation.set(PDFName.of("QuadPoints"), numberArray(doc, quadPoints));
   if (appearance) addAppearance(doc, annotation, appearance);
   const ref = doc.context.register(annotation);
   annotsFor(doc, page).push(ref);
@@ -81,10 +88,14 @@ function addAnnotation(doc, pageIndex, { subtype = "FreeText", nm = `NM-${subtyp
   return ref;
 }
 
-async function makeBase({ annotations = [], taggedRoot = false } = {}) {
+async function makeBase({ annotations = [], taggedRoot = false, pageCount = 1 } = {}) {
   const doc = await PDFDocument.create();
-  const page = doc.addPage([420, 540]);
-  page.drawText("Stable page body for merge tests", { x: 24, y: 500, size: 12 });
+  const pages = [];
+  for (let index = 0; index < pageCount; index += 1) {
+    const page = doc.addPage([420, 540]);
+    page.drawText("Stable page body for merge tests", { x: 24, y: 500, size: 12 });
+    pages.push(page);
+  }
   if (taggedRoot) {
     const root = PDFDict.withContext(doc.context);
     root.set(PDFName.of("Type"), PDFName.of("StructTreeRoot"));
@@ -92,7 +103,9 @@ async function makeBase({ annotations = [], taggedRoot = false } = {}) {
     doc.catalog.set(PDFName.of("StructTreeRoot"), doc.context.register(root));
   }
   const refs = [];
-  for (const annotation of annotations) refs.push(addAnnotation(doc, 0, annotation));
+  for (const annotation of annotations) {
+    refs.push(addAnnotation(doc, annotation.pageIndex || 0, annotation));
+  }
   return { bytes: await doc.save({ useObjectStreams: false }), refs };
 }
 
@@ -176,6 +189,124 @@ test("preparation binds all five editor kinds by storage order and preserves NM 
   assert.equal(loaded.context.lookup(existingRef, PDFDict).lookup(PDFName.of("NM"), PDFHexString).decodeText(), "Original Square NM");
   assert.equal(prepared.stateDigest, identityData.stateDigest);
   assert.equal(loaded.getPages().length, 1);
+});
+
+test("text and freehand HighlightEditor output bind exact refs and retain semantic highlight identity", async () => {
+  const base = await makeBase({ pageCount: 2 });
+  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  // This matches PDF.js's frozen writer contract: text selections become a
+  // /Highlight, while a freehand HighlightEditor becomes /Ink with
+  // /IT /InkHighlight. Storage order is grouped per page by the writer.
+  const freehandPage0Ref = addAnnotation(draft, 0, {
+    subtype: "Ink",
+    it: "InkHighlight",
+    inkList: [24, 40, 60, 44, 92, 42],
+    nm: "freehand page 1 NM",
+    contents: "freehand page 1",
+  });
+  const textPage1Ref = addAnnotation(draft, 1, {
+    subtype: "Highlight",
+    quadPoints: [20, 82, 150, 82, 20, 66, 150, 66],
+    nm: "text page 2 NM",
+    contents: "text page 2",
+  });
+  const freehandPage1Ref = addAnnotation(draft, 1, {
+    subtype: "Ink",
+    it: "InkHighlight",
+    inkList: [180, 40, 210, 45, 245, 43],
+    nm: "freehand page 2 NM",
+    contents: "freehand page 2",
+  });
+  const draftBytes = await draft.save({ useObjectStreams: false });
+  const uuidByRuntimeId = new Map([
+    ["freehand-page-0", "freehand-highlight-page-1"],
+    ["text-page-1", "text-highlight-page-2"],
+    ["freehand-page-1", "freehand-highlight-page-2"],
+  ]);
+  const newAnnotations = [
+    { runtimeId: "freehand-page-0", uuid: uuidByRuntimeId.get("freehand-page-0"), pageIndex: 0, kind: "highlight", order: 0 },
+    { runtimeId: "text-page-1", uuid: uuidByRuntimeId.get("text-page-1"), pageIndex: 1, kind: "highlight", order: 0 },
+    { runtimeId: "freehand-page-1", uuid: uuidByRuntimeId.get("freehand-page-1"), pageIndex: 1, kind: "highlight", order: 1 },
+  ];
+  const prepared = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes,
+    actorId: "actor-device-01",
+    newAnnotations,
+    operations: newAnnotations.map((annotation, index) => operation({
+      uuid: annotation.uuid,
+      kind: "highlight",
+      timestamp: 100 + index,
+      operationId: `highlight-create-${index}`,
+      pageIndex: annotation.pageIndex,
+    })),
+  });
+  const expectedRef = (ref) => `${ref.objectNumber}R${ref.generationNumber || ""}`;
+  const savedDoc = await PDFDocument.load(prepared.bytes, { updateMetadata: false });
+  for (const [annotation, ref, subtype, nm, it] of [
+    [newAnnotations[0], freehandPage0Ref, "Ink", "freehand page 1 NM", "InkHighlight"],
+    [newAnnotations[1], textPage1Ref, "Highlight", "text page 2 NM", null],
+    [newAnnotations[2], freehandPage1Ref, "Ink", "freehand page 2 NM", "InkHighlight"],
+  ]) {
+    const identity = findIdentity(prepared, annotation.uuid);
+    assert.equal(identity.kind, "highlight");
+    assert.equal(identity.pageIndex, annotation.pageIndex);
+    assert.equal(identity.ref, expectedRef(ref), "UUID must bind to the exact writer reference");
+    const dict = savedDoc.context.lookup(ref, PDFDict);
+    assert.equal(dict.get(PDFName.of("Subtype")).toString(), `/${subtype}`);
+    assert.equal(dict.lookup(PDFName.of("NM"), PDFHexString).decodeText(), nm);
+    assert.equal(dict.lookup(PDFName.of("ObReaderId"), PDFHexString).decodeText(), annotation.uuid);
+    assert.equal(it ? dict.get(PDFName.of("IT")).toString() : null, it ? `/${it}` : null);
+    assert.ok(
+      dict.lookupMaybe(PDFName.of(subtype === "Highlight" ? "QuadPoints" : "InkList"), PDFArray)?.size() > 0,
+      "The bound PDF dictionary must retain the writer's text quads or freehand ink path",
+    );
+  }
+  const reopened = await inspect({ bytes: prepared.bytes });
+  for (const annotation of newAnnotations) {
+    assert.equal(findIdentity(reopened, annotation.uuid).kind, "highlight");
+    assert.equal(findIdentity(reopened, annotation.uuid).ref, findIdentity(prepared, annotation.uuid).ref);
+  }
+
+  // Schema-1 ledgers created before freehand HighlightEditor output received
+  // its semantic kind called this physical /Ink entry simply "ink". Reopen
+  // it, preserve its exact ref/UUID, and validate an edit that still carries
+  // that legacy operation kind only because /IT proves InkHighlight.
+  const legacyDoc = await PDFDocument.load(prepared.bytes, { updateMetadata: false });
+  const legacyLedger = JSON.parse(
+    legacyDoc.catalog.get(PDFName.of("ObReaderMerge")).decodeText(),
+  );
+  legacyLedger.entries.find((entry) => entry.uuid === newAnnotations[0].uuid).kind = "ink";
+  legacyDoc.catalog.set(
+    PDFName.of("ObReaderMerge"),
+    PDFHexString.fromText(JSON.stringify(legacyLedger)),
+  );
+  const legacyBytes = await legacyDoc.save({ useObjectStreams: false });
+  const legacyIdentity = findIdentity(await inspect({ bytes: legacyBytes }), newAnnotations[0].uuid);
+  assert.equal(legacyIdentity.kind, "highlight");
+  assert.equal(legacyIdentity.ref, findIdentity(prepared, newAnnotations[0].uuid).ref);
+  const editedLegacyDoc = await PDFDocument.load(legacyBytes, { updateMetadata: false });
+  const legacyRef = refFromPdfJs(legacyIdentity.ref);
+  editedLegacyDoc.context
+    .lookup(legacyRef, PDFDict)
+    .set(PDFName.of("Contents"), text("edited legacy freehand highlight"));
+  const secondEdit = await prepareLocal({
+    baseBytes: legacyBytes,
+    draftBytes: await editedLegacyDoc.save({ useObjectStreams: false }),
+    operations: [operation({
+      uuid: newAnnotations[0].uuid,
+      ref: legacyIdentity.ref,
+      kind: "ink",
+      timestamp: 900,
+      operationId: "legacy-freehand-edit",
+      pageIndex: 0,
+    })],
+    newAnnotations: [],
+    actorId: "actor-device-01",
+  });
+  const secondIdentity = findIdentity(await inspect({ bytes: secondEdit.bytes }), newAnnotations[0].uuid);
+  assert.equal(secondIdentity.kind, "highlight");
+  assert.equal(secondIdentity.ref, legacyIdentity.ref);
 });
 
 test("checkpoint UUIDs survive repeat-save, delete, tombstone carry-forward, and undo with null-ref upserts", async () => {

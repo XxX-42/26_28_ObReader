@@ -1,8 +1,14 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.3），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.4），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
 
-## 当前：0.5.3 工具栏收敛与 iPad 输入分工
+## 当前：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
+
+取消阅读区宽度 880px 以下强制双行，按实际控件所需空间决定换行；撤销／重做从字体字符改为 PDF.js 同机制的 16px SVG 遮罩图标。菜单和 Viewer 偏移跟随工具栏实际高度。增加手指抬起后的渐减惯性滑动，新接触、Pencil／鼠标操作、工具或文档切换取消惯性，保持手指不能绘制的规则。三端版本同步为 0.5.4，保留 0.5.3 输入策略和保存／同步／缓存核心，冻结 Viewer 与依赖不变。原生验证仍限指定测试库；仅在授权目录备份替换三文件，实机 iPad/Pencil 结果待设备复验。最终证据以 GENERAL_ACCEPTANCE.md 当前版本记录为准。
+
+颜色／参数浮层外部点按收起但不取消工具。Pencil 在 OCR 式文字层的可信 pen 手势使用实际 caret 端点构建选区，再调用原生高亮；不会把手指拖动改成绘制。自由高亮 writer 实际输出 `/Ink /IT /InkHighlight`，共用保存核心据结构标记准确绑定，普通 Ink 保持原分类；新编辑器顺序按页记录，旧身份兼容。最终默认并发 194/194、离线自然退出 0；原生模拟完成两页文字／自由高亮保存重开。实机结果仍待用户验证，已失败内容可使用原有恢复命令取回；不直接操作用户 PDF 或旧恢复副本。
+
+## 历史：0.5.3 工具栏收敛与 iPad 输入分工
 
 0.5.3 继续共用 Windows、macOS、iPadOS 的三文件插件、保存／同步核心和桌面／移动入口。0.5.2 的 **显示阅读器状态栏** 设置保持默认关闭，缺失旧设置时也按关闭处理；开关即时更新当前插件实例的所有 Reader 和 popout，不重载 iframe。状态与恢复动作继续保存在 Reader 内部，现有恢复 Notice 和命令不依赖状态栏显示。
 

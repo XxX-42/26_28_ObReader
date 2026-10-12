@@ -134,6 +134,17 @@ async function measureToolbar(frame) {
     const toolbar = document.getElementById("toolbarContainer");
     const toolbarViewer = document.getElementById("toolbarViewer");
     const scaleSelect = document.getElementById("scaleSelect");
+    const toolbarGroupWidth = (element) => {
+      if (!element) return 0;
+      return Math.max(element.scrollWidth, element.getBoundingClientRect().width);
+    };
+    const singleRowRequiredWidth = [
+      document.getElementById("toolbarViewerLeft"),
+      document.getElementById("toolbarViewerMiddle"),
+      document.getElementById("editorModeButtons"),
+      document.querySelector(".pdfReaderBridgeControls"),
+      document.getElementById("secondaryToolbarToggle"),
+    ].reduce((sum, element) => sum + toolbarGroupWidth(element), 0) + 20;
     const coreToolIds = [
       "editorUnderlineButton",
       "editorSquareButton",
@@ -163,6 +174,8 @@ async function measureToolbar(frame) {
       gridRows: getComputedStyle(toolbarViewer).gridTemplateRows,
       toolbarScrollWidth: toolbarViewer.scrollWidth,
       toolbarClientWidth: toolbarViewer.clientWidth,
+      twoRows: document.documentElement.classList.contains("pdfReaderBridgeTwoRow"),
+      singleRowRequiredWidth,
       pageNumber: {
         rect: rect("pageNumber"),
         width: document.getElementById("pageNumber")?.style.width || null,
@@ -217,6 +230,7 @@ async function measureToolbar(frame) {
         ".pdfReaderBridgeControls .pdfReaderBridgeHistoryButton",
       )].map((button) => {
         const box = button.getBoundingClientRect();
+        const glyph = button.querySelector(".pdfReaderBridgeHistoryGlyph");
         return {
           id: button.id,
           action: button.dataset.action,
@@ -227,6 +241,18 @@ async function measureToolbar(frame) {
           height: box.height,
           disabled: button.disabled,
           iconDisplay: getComputedStyle(button, "::before").display,
+          iconWidth: getComputedStyle(button, "::before").width,
+          iconHeight: getComputedStyle(button, "::before").height,
+          iconMask: getComputedStyle(button, "::before").maskImage,
+          iconMaskSize: getComputedStyle(button, "::before").maskSize,
+          iconMaskPosition: getComputedStyle(button, "::before").maskPosition,
+          iconColor: getComputedStyle(button, "::before").backgroundColor,
+          hiddenGlyphWidth: glyph ? getComputedStyle(glyph).width : null,
+          hiddenGlyphHeight: glyph ? getComputedStyle(glyph).height : null,
+          nativeIconColor: getComputedStyle(
+            document.getElementById("editorInkButton"),
+            "::before",
+          ).backgroundColor,
         };
       }),
       bridgeDelete: (() => {
@@ -352,9 +378,17 @@ function assertZoomPresets(layout, languagePrefix) {
     button.width,
     button.height,
     button.iconDisplay,
+    button.iconWidth,
+    button.iconHeight,
+    button.iconMask.includes("data:image/svg+xml"),
+    button.iconMaskSize,
+    button.iconMaskPosition,
+    button.iconColor === button.nativeIconColor,
+    button.hiddenGlyphWidth,
+    button.hiddenGlyphHeight,
   ]), [
-    ["pdfReaderBridgeUndoButton", "undo", "↶", "撤销", "撤销", 32, 28, "none"],
-    ["pdfReaderBridgeRedoButton", "redo", "↷", "重做", "重做", 32, 28, "none"],
+    ["pdfReaderBridgeUndoButton", "undo", "↶", "撤销", "撤销", 32, 28, "block", "16px", "16px", true, "cover", "50% 50%", true, "0px", "0px"],
+    ["pdfReaderBridgeRedoButton", "redo", "↷", "重做", "重做", 32, 28, "block", "16px", "16px", true, "cover", "50% 50%", true, "0px", "0px"],
   ]);
   assert.equal(layout.bridgeDelete.action, "delete");
   assert.equal(layout.bridgeDelete.title, "删除所选批注");
@@ -527,31 +561,98 @@ test(
         await PDFViewerApplication.l10n.translate(document.documentElement);
       });
       assertZoomPresets(await measureToolbar(chineseViewer), "zh-cn");
+      await page.evaluate(() => {
+        document.getElementById("zoom-l10n-zh-probe").style.width = "780px";
+      });
+      await chineseViewer.waitForFunction(() => {
+        const toolbarViewer = document.getElementById("toolbarViewer");
+        const groups = [
+          document.getElementById("toolbarViewerLeft"),
+          document.getElementById("toolbarViewerMiddle"),
+          document.getElementById("editorModeButtons"),
+          document.querySelector(".pdfReaderBridgeControls"),
+          document.getElementById("secondaryToolbarToggle"),
+        ];
+        const required = groups.reduce((sum, element) =>
+          sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width),
+        20);
+        return window.innerWidth === 780 &&
+          !document.documentElement.classList.contains("pdfReaderBridgeTwoRow") &&
+          required <= toolbarViewer.clientWidth + 1;
+      });
+      const narrowChinese = await measureToolbar(chineseViewer);
+      assert.equal(narrowChinese.toolbarHeight, 32);
+      assert.equal(narrowChinese.twoRows, false,
+        "CJK localization keeps the measured 780px toolbar in one row");
+      assert.ok(narrowChinese.toolbarScrollWidth <= narrowChinese.toolbarClientWidth + 1);
 
       await page.setViewport({ width: 881, height: 900, deviceScaleFactor: 1 });
       const breakpointWide = await measureToolbar(viewer);
       assert.equal(breakpointWide.toolbarHeight, 32);
       assert.notEqual(breakpointWide.toolbarDisplay, "grid");
       assertRectInside(breakpointWide.right, 881, "toolbar right group at 881px");
+      assert.equal(breakpointWide.twoRows, false);
 
-      for (const width of [880, 800, 720, 691, 432, 320]) {
+      for (const width of [880, 800, 780, 720, 691, 640, 432, 320]) {
         await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
         await viewer.waitForFunction(() => {
           const viewer = document.getElementById("viewerContainer").getBoundingClientRect();
           const toolbar = document.getElementById("toolbarContainer").getBoundingClientRect();
-          return viewer.top >= toolbar.bottom - 0.5;
+          const groups = [
+            document.getElementById("toolbarViewerLeft"),
+            document.getElementById("toolbarViewerMiddle"),
+            document.getElementById("editorModeButtons"),
+            document.querySelector(".pdfReaderBridgeControls"),
+            document.getElementById("secondaryToolbarToggle"),
+          ];
+          const required = groups.reduce((sum, element) => {
+            return sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width);
+          }, 20);
+          return viewer.top >= toolbar.bottom - 0.5 &&
+            document.documentElement.classList.contains("pdfReaderBridgeTwoRow") ===
+              (required > document.getElementById("toolbarViewer").clientWidth + 1);
         });
         const layout = await measureToolbar(viewer);
-        assert.equal(layout.toolbarHeight, 64, `toolbar height at ${width}px`);
-        assert.equal(layout.toolbarDisplay, "grid", `toolbar should use two rows at ${width}px`);
+        const expectedTwoRows = layout.singleRowRequiredWidth > layout.toolbarClientWidth + 1;
+        assert.equal(layout.twoRows, expectedTwoRows,
+          `row mode should follow measured control widths at ${width}px`);
+        if (width === 780) {
+          assert.equal(expectedTwoRows, false,
+            "The measured controls fit in one row at the iPad screenshot width");
+        }
+        if ([780, 720, 640, 432, 320].includes(width)) {
+          t.diagnostic(JSON.stringify({
+            viewportWidth: width,
+            toolbarHeight: layout.toolbarHeight,
+            twoRows: layout.twoRows,
+            requiredSingleRowWidth: layout.singleRowRequiredWidth,
+            availableSingleRowWidth: layout.toolbarClientWidth,
+          }));
+        }
+        assert.equal(layout.toolbarHeight, expectedTwoRows ? 64 : 32,
+          `toolbar height at ${width}px`);
+        assert.equal(layout.toolbarDisplay === "grid", expectedTwoRows,
+          `toolbar display at ${width}px`);
         assertRectInside(layout.left, width, `left group at ${width}px`);
         assertRectInside(layout.middle, width, `middle group at ${width}px`);
         assertRectInside(layout.right, width, `right group at ${width}px`);
         assertRectInside(layout.editors, width, `editor tools at ${width}px`);
         assertRectInside(layout.secondaryToggle, width, `secondary toggle at ${width}px`);
-        assert.equal(layout.left.y, layout.middle.y, `left and middle groups share the first row at ${width}px`);
-        assert.ok(layout.right.y > layout.left.y, `right group occupies the second row at ${width}px`);
-        assert.ok(layout.right.bottom <= layout.toolbar.bottom + 0.5, `second row stays in the toolbar at ${width}px`);
+        if (expectedTwoRows) {
+          assert.equal(layout.left.y, layout.middle.y,
+            `left and middle groups share the first row at ${width}px`);
+          assert.ok(layout.right.y > layout.left.y,
+            `right group occupies the second row at ${width}px`);
+          assert.ok(layout.right.bottom <= layout.toolbar.bottom + 0.5,
+            `second row stays in the toolbar at ${width}px`);
+        } else {
+          assert.equal(layout.left.y, layout.middle.y,
+            `left and middle groups share the one row at ${width}px`);
+          assert.equal(layout.right.y, layout.left.y,
+            `right group shares the one row at ${width}px`);
+          assert.equal(layout.toolbarHeight, 32,
+            `a fitting toolbar stays one row at ${width}px`);
+        }
         assert.ok(
           layout.viewer.y >= layout.toolbar.bottom - 0.5,
           `viewer starts below the taller toolbar at ${width}px: ${JSON.stringify({ viewer: layout.viewer, toolbar: layout.toolbar, toolbarHeight: layout.toolbarHeight })}`,
@@ -611,33 +712,184 @@ test(
         });
       }
 
-      await page.setViewport({ width: 432, height: 900, deviceScaleFactor: 1 });
-      await viewer.evaluate(() => new Promise(requestAnimationFrame));
+      // Grow back after the narrowest pane to prove the measured layout
+      // returns to one row without a ResizeObserver feedback oscillation.
+      await page.setViewport({ width: 780, height: 900, deviceScaleFactor: 1 });
+      await viewer.waitForFunction(() =>
+        !document.documentElement.classList.contains("pdfReaderBridgeTwoRow") &&
+        document.getElementById("toolbarViewer").clientWidth >= 778,
+      );
+      const grownModes = await viewer.evaluate(async () => {
+        const modes = [];
+        for (let index = 0; index < 6; index += 1) {
+          await new Promise(requestAnimationFrame);
+          modes.push(document.documentElement.classList.contains("pdfReaderBridgeTwoRow"));
+        }
+        return modes;
+      });
+      assert.deepEqual(grownModes, Array(6).fill(false),
+        "The 780px toolbar remains stably one row after shrinking and growing");
+
+      // Exercise the exact one-pixel fit boundary in both directions. The
+      // two-row class must not change intrinsic group widths, or ResizeObserver
+      // can alternate between rows after crossing this threshold.
+      await page.setViewport({ width: 640, height: 900, deviceScaleFactor: 1 });
+      await viewer.waitForFunction(() =>
+        !document.documentElement.classList.contains("pdfReaderBridgeTwoRow") &&
+        !(
+          [
+            document.getElementById("toolbarViewerLeft"),
+            document.getElementById("toolbarViewerMiddle"),
+            document.getElementById("editorModeButtons"),
+            document.querySelector(".pdfReaderBridgeControls"),
+            document.getElementById("secondaryToolbarToggle"),
+          ].reduce((sum, element) =>
+            sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width), 20,
+          ) > document.getElementById("toolbarViewer").clientWidth + 1
+        ),
+      );
+      const fitBoundaryWidth = await viewer.evaluate(() => {
+        const toolbarViewer = document.getElementById("toolbarViewer");
+        const groups = [
+          document.getElementById("toolbarViewerLeft"),
+          document.getElementById("toolbarViewerMiddle"),
+          document.getElementById("editorModeButtons"),
+          document.querySelector(".pdfReaderBridgeControls"),
+          document.getElementById("secondaryToolbarToggle"),
+        ];
+        const required = groups.reduce((sum, element) =>
+          sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width), 20,
+        );
+        const viewportInset = window.innerWidth - toolbarViewer.clientWidth;
+        // The bridge wraps when required > clientWidth + 1.
+        return Math.ceil(required + viewportInset - 1);
+      });
+
+      const sampleBoundaryMode = async (width, expectedTwoRows) => {
+        await page.setViewport({ width, height: 900, deviceScaleFactor: 1 });
+        await viewer.waitForFunction((expected) => {
+          const groups = [
+            document.getElementById("toolbarViewerLeft"),
+            document.getElementById("toolbarViewerMiddle"),
+            document.getElementById("editorModeButtons"),
+            document.querySelector(".pdfReaderBridgeControls"),
+            document.getElementById("secondaryToolbarToggle"),
+          ];
+          const required = groups.reduce((sum, element) =>
+            sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width), 20,
+          );
+          const needsTwoRows = required >
+            document.getElementById("toolbarViewer").clientWidth + 1;
+          return needsTwoRows === expected &&
+            document.documentElement.classList.contains("pdfReaderBridgeTwoRow") === expected;
+        }, { timeout: 5_000 }, expectedTwoRows);
+        return viewer.evaluate(async () => {
+          const read = () => {
+            const groups = [
+              document.getElementById("toolbarViewerLeft"),
+              document.getElementById("toolbarViewerMiddle"),
+              document.getElementById("editorModeButtons"),
+              document.querySelector(".pdfReaderBridgeControls"),
+              document.getElementById("secondaryToolbarToggle"),
+            ];
+            return {
+              twoRows: document.documentElement.classList.contains("pdfReaderBridgeTwoRow"),
+              required: groups.reduce((sum, element) =>
+                sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width), 20,
+              ),
+              available: document.getElementById("toolbarViewer").clientWidth + 1,
+            };
+          };
+          const samples = [];
+          for (let index = 0; index < 8; index += 1) {
+            await new Promise(requestAnimationFrame);
+            samples.push(read());
+          }
+          return samples;
+        });
+      };
+
+      const exactFitSamples = await sampleBoundaryMode(fitBoundaryWidth, false);
+      const onePixelTooNarrowSamples = await sampleBoundaryMode(fitBoundaryWidth - 1, true);
+      const grownBoundarySamples = await sampleBoundaryMode(fitBoundaryWidth, false);
+      for (const [label, samples, expected] of [
+        ["exact-fit", exactFitSamples, false],
+        ["one-pixel-narrow", onePixelTooNarrowSamples, true],
+        ["grow-back", grownBoundarySamples, false],
+      ]) {
+        assert.deepEqual(samples.map((sample) => sample.twoRows), Array(8).fill(expected),
+          `${label} row mode stays stable across animation frames`);
+      }
+      const measuredWidths = [
+        exactFitSamples[0].required,
+        onePixelTooNarrowSamples[0].required,
+        grownBoundarySamples[0].required,
+      ];
+      assert.ok(Math.max(...measuredWidths) - Math.min(...measuredWidths) <= 0.5,
+        `Row mode does not change the measured intrinsic width: ${JSON.stringify({ fitBoundaryWidth, measuredWidths })}`);
+      t.diagnostic(JSON.stringify({
+        fitBoundaryWidth,
+        exactFit: exactFitSamples[0],
+        onePixelNarrow: onePixelTooNarrowSamples[0],
+        growBack: grownBoundarySamples[0],
+      }));
+
+      await page.setViewport({ width: 780, height: 900, deviceScaleFactor: 1 });
+      await viewer.waitForFunction(() =>
+        !document.documentElement.classList.contains("pdfReaderBridgeTwoRow"),
+      );
       const editableLayout = await measureToolbar(viewer);
-      const widePageCount = await viewer.evaluate(() => {
+      assert.equal(editableLayout.toolbarHeight, 32);
+      assert.equal(editableLayout.twoRows, false);
+      const widePageCount = await viewer.evaluate(async () => {
         const app = window.PDFViewerApplication;
         const input = document.getElementById("pageNumber");
+        const requiredWidth = () => [
+          document.getElementById("toolbarViewerLeft"),
+          document.getElementById("toolbarViewerMiddle"),
+          document.getElementById("editorModeButtons"),
+          document.querySelector(".pdfReaderBridgeControls"),
+          document.getElementById("secondaryToolbarToggle"),
+        ].reduce((sum, element) =>
+          sum + Math.max(element.scrollWidth, element.getBoundingClientRect().width), 20,
+        );
         const original = {
           min: input.min,
           max: input.max,
           value: input.value,
         };
+        const originalRequiredWidth = requiredWidth();
         app.eventBus.dispatch("pagesloaded", {
           source: app.pdfViewer,
           pagesCount: 10_000,
         });
         const simulatedWidth = input.getBoundingClientRect().width;
         const simulatedInlineWidth = input.style.width;
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const simulatedRequiredWidth = requiredWidth();
+        const simulatedTwoRows = document.documentElement.classList.contains(
+          "pdfReaderBridgeTwoRow",
+        );
         app.eventBus.dispatch("pagesloaded", {
           source: app.pdfViewer,
           pagesCount: app.pdfDocument.numPages,
         });
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
         return {
           original,
+          originalRequiredWidth,
           simulatedWidth,
           simulatedInlineWidth,
+          simulatedRequiredWidth,
+          simulatedTwoRows,
           restoredWidth: input.getBoundingClientRect().width,
           restoredInlineWidth: input.style.width,
+          restoredRequiredWidth: requiredWidth(),
+          restoredTwoRows: document.documentElement.classList.contains(
+            "pdfReaderBridgeTwoRow",
+          ),
           min: input.min,
           max: input.max,
           value: input.value,
@@ -646,8 +898,14 @@ test(
       });
       assert.equal(widePageCount.simulatedWidth, 44);
       assert.equal(widePageCount.simulatedInlineWidth, "44px");
+      assert.ok(widePageCount.simulatedRequiredWidth > widePageCount.originalRequiredWidth,
+        "The measured toolbar width responds when a five-digit page count needs more space");
+      assert.equal(widePageCount.simulatedTwoRows, false,
+        "The larger page input still fits within the one-row screenshot-width toolbar");
       assert.equal(widePageCount.restoredWidth, 36);
       assert.equal(widePageCount.restoredInlineWidth, "36px");
+      assert.equal(widePageCount.restoredTwoRows, false);
+      assert.equal(widePageCount.restoredRequiredWidth, widePageCount.originalRequiredWidth);
       assert.deepEqual(
         { min: widePageCount.min, max: widePageCount.max, value: widePageCount.value },
         widePageCount.original,

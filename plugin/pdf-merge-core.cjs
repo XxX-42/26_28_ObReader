@@ -117,6 +117,20 @@ function getName(dict, key) {
   return value instanceof PDFName ? nameKey(value) : null;
 }
 
+function isFreehandHighlight(entry) {
+  return entry?.subtype === "Ink" && getName(entry.dict, "IT") === "InkHighlight";
+}
+
+function operationKindMatches(actualKind, expectedKind, entry = null) {
+  const actual = String(actualKind || "").toLowerCase();
+  const expected = String(expectedKind || "").toLowerCase();
+  return actual === expected || (
+    ((actual === "ink" && expected === "highlight") ||
+      (actual === "highlight" && expected === "ink")) &&
+    isFreehandHighlight(entry)
+  );
+}
+
 function resolve(context, value) {
   return value instanceof PDFRef ? context.lookup(value) : value;
 }
@@ -190,6 +204,13 @@ function refMaps(doc) {
           );
         }
         const subtype = getName(dict, "Subtype") || "Unknown";
+        // PDF.js writes its freehand HighlightEditor through the Ink writer:
+        // /Subtype /Ink plus /IT /InkHighlight. Keep the physical subtype on
+        // the entry for exact writer validation, while exposing the editor's
+        // semantic kind to identities and operations.
+        const kind = isFreehandHighlight({ subtype, dict })
+          ? "highlight"
+          : SUBTYPE_TO_KIND.get(subtype) || subtype.toLowerCase();
         const entry = {
           ref,
           refString: ref.toString(),
@@ -197,8 +218,8 @@ function refMaps(doc) {
           pageIndex,
           order,
           subtype,
-          kind: SUBTYPE_TO_KIND.get(subtype) || subtype.toLowerCase(),
-          supported: SUBTYPE_TO_KIND.has(subtype),
+          kind,
+          supported: SUBTYPE_TO_KIND.has(subtype) || isFreehandHighlight({ subtype, dict }),
         };
         entries.push(entry);
         annotations.push(entry);
@@ -633,6 +654,7 @@ function buildNewAnnotationAssignments(baseInfo, draftInfo, newAnnotations, chec
     }
     const expectedSubtype = supportedSubtype(input.kind);
     if (!expectedSubtype) fail("PDF_MERGE_UNSUPPORTED_ANNOTATION_KIND", `New annotation kind ${input.kind} is not one of the five editor tools.`);
+    const expectedKind = SUBTYPE_TO_KIND.get(expectedSubtype);
     if (seenUuids.has(input.uuid)) fail("PDF_MERGE_DUPLICATE_ANNOTATION_ID", `New annotations repeat UUID ${input.uuid}.`);
     seenUuids.add(input.uuid);
     if (baseInfo.liveEntries.some((entry) => entry.uuid === input.uuid)) fail("PDF_MERGE_DUPLICATE_ANNOTATION_ID", `New annotation UUID ${input.uuid} already belongs to the loaded document.`);
@@ -642,10 +664,10 @@ function buildNewAnnotationAssignments(baseInfo, draftInfo, newAnnotations, chec
     }
     seenPositions.add(positionKey);
     const checkpointIdentity = checkpointByUuid.get(input.uuid);
-    if (checkpointIdentity && (checkpointIdentity.pageIndex !== input.pageIndex || String(checkpointIdentity.kind).toLowerCase() !== input.kind.toLowerCase())) {
+    if (checkpointIdentity && checkpointIdentity.pageIndex !== input.pageIndex) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `New editor ${input.runtimeId} does not match its saved checkpoint page or kind.`);
     }
-    const matches = [...unassigned.values()].filter((entry) => entry.pageIndex === input.pageIndex && entry.subtype === expectedSubtype && !usedRefs.has(entry.refString));
+    const matches = [...unassigned.values()].filter((entry) => entry.pageIndex === input.pageIndex && entry.kind === expectedKind && !usedRefs.has(entry.refString));
     const orderedPageEntries = draftInfo.maps.byPage[input.pageIndex] || [];
     const expectedBefore = orderedInputs.filter((other) => other.pageIndex === input.pageIndex && other.order < input.order).length;
     const positionMatches = matches.filter((entry) => {
@@ -657,6 +679,9 @@ function buildNewAnnotationAssignments(baseInfo, draftInfo, newAnnotations, chec
     const candidate = positionMatches.length === 1 ? positionMatches[0] : null;
     if (!candidate) {
       fail("PDF_MERGE_NEW_ANNOTATION_BINDING_FAILED", `Could not bind new ${input.kind} editor ${input.runtimeId} to one exact PDF annotation reference on page ${input.pageIndex + 1}.`);
+    }
+    if (checkpointIdentity && !operationKindMatches(checkpointIdentity.kind, input.kind, candidate)) {
+      fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `New editor ${input.runtimeId} does not match its saved checkpoint page or kind.`);
     }
     usedRefs.add(candidate.refString);
     candidate.uuid = input.uuid;
@@ -683,7 +708,7 @@ function collectEffectiveOperations(operations, actorId, newAssignments, priorEn
       if (operation?.pageIndex !== null && operation?.pageIndex !== undefined && operation.pageIndex !== assignment.pageIndex) {
         fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `Operation page for saved annotation ${uuid} does not match its checkpoint identity.`);
       }
-      if (operation?.kind && operation.kind.toLowerCase() !== assignment.kind.toLowerCase()) {
+      if (operation?.kind && !operationKindMatches(operation.kind, assignment.kind, assignment.entry)) {
         fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `Operation kind for saved annotation ${uuid} does not match its checkpoint identity.`);
       }
     }
@@ -772,13 +797,13 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     if (op.pageIndex !== null && op.pageIndex !== expected.pageIndex) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `${label} page for ${expected.uuid} does not match its saved identity.`);
     }
-    if (op.kind && op.kind.toLowerCase() !== String(expected.kind).toLowerCase()) {
+    if (op.kind && !operationKindMatches(op.kind, expected.kind, current || expected)) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `${label} kind for ${expected.uuid} does not match its saved identity.`);
     }
     if (current && op.pageIndex !== null && op.pageIndex !== current.pageIndex) {
       fail("PDF_MERGE_PAGE_MOVE_UNSUPPORTED", `${label} for ${expected.uuid} points to a different page than the draft annotation.`);
     }
-    if (current && op.kind && op.kind.toLowerCase() !== current.kind.toLowerCase()) {
+    if (current && op.kind && !operationKindMatches(op.kind, current.kind, current)) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `${label} for ${expected.uuid} does not match the draft PDF subtype.`);
     }
   };
@@ -914,7 +939,7 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     const op = effectiveOperations.get(uuid);
     if (op?.action !== "upsert") fail("PDF_MERGE_MISSING_CREATION_OPERATION", `New annotation ${uuid} is missing its creation upsert operation.`);
     if (op.pageIndex !== null && op.pageIndex !== current.pageIndex) fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `Creation operation for ${uuid} points to a different page.`);
-    if (op.kind && op.kind.toLowerCase() !== current.kind.toLowerCase()) fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `Creation operation kind for ${uuid} does not match the PDF subtype.`);
+    if (op.kind && !operationKindMatches(op.kind, current.kind, current)) fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `Creation operation kind for ${uuid} does not match the PDF subtype.`);
     setUuid(current.dict, uuid);
     entries.push({
       uuid,
