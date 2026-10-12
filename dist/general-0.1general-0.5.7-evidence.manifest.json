@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "version": "0.5.7",
+  "archive": "dist/general-0.1general-0.5.7-evidence.zip",
+  "sha256": "41efa2d6442b4419c96dde920c2620df80ed2ba4145ebbdc8218d5c6ae61701f",
+  "entries": [
+    {
+      "path": "dist/general-0.1general-0.5.7-source.diff",
+      "bytes": 28925,
+      "sha256": "187dcd0fff9ebff1006f2da7b71f22ba23e8e9994ccb9afbdb59b96eb1ecc875"
+    },
+    {
+      "path": "dist/pdf-web-reader-0.1general-0.5.7-candidate.zip.json",
+      "bytes": 3368,
+      "sha256": "5d65c7cd61ab353789c4d59e709a4fc7893111fc30ca9c53d7ee4504032966da"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-assessment.json",
+      "bytes": 2495,
+      "sha256": "1c2e782161bbc5c6bd28f5f0554d0cfc208bae27ad0292fd0e94981cb97ca3e9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-build.log",
+      "bytes": 202,
+      "sha256": "d1647a1ae08dbe3a03b5d81aff66f175ecd52dc8f76501772f64af5bed70e835"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-focused-20261013-075104.log",
+      "bytes": 1204,
+      "sha256": "43d1e1690d6c07cb225e2c0f7e0c0b3edcc77709d8ec21729f722cdffe096b23"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-independent-audit.json",
+      "bytes": 7961,
+      "sha256": "401e169db45001e3cf455397ff1e484b16c448e46281e57ceb9e44ce268250e9"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-native-scroll-corrected.log",
+      "bytes": 70,
+      "sha256": "d07435f47477be7751450588c402521f820a700d10c49321b35a2107ac482354"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-native-scroll.log",
+      "bytes": 1282,
+      "sha256": "76464dfc9dd43ac99a2501ffe338197881c634c9d2f37782cd7f60cf63c03628"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-offline.log",
+      "bytes": 607,
+      "sha256": "168cc862047dc5fedc534304370fe5f75d6c57da6bcf361b61782556cbdaac4d"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-scroll-native-1791849145722.driver.mjs",
+      "bytes": 8873,
+      "sha256": "027d1c2413a719073c9e70c28e9c71c5edf5d952a080608e67b7b81b4c635c49"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-scroll-native-1791849145722.json",
+      "bytes": 2107,
+      "sha256": "a56e46146b141e7bd7cf250d6d017fed47d946c573956cd010c0c4e23d55a50a"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-scroll-native-1791849207700.driver.mjs",
+      "bytes": 8873,
+      "sha256": "ca85d1845a8c6724e714c5ee584a6cd2c54b2895e977ceb6ebb17624d04e3fa1"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-scroll-native-1791849207700.json",
+      "bytes": 1858,
+      "sha256": "6e8391a146b592dc8ed3a6b2775812ae9e4e54e6ac67159561830ec4a1a11a4b"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-target-deployment-1791849230176807000.json",
+      "bytes": 1023,
+      "sha256": "28216af049931cb375348dfcd7541b8acf48457350aebb9b827d6ed0d6aae63c"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-test-deploy.mjs",
+      "bytes": 4828,
+      "sha256": "0dad390fba6969d1b8f268055fdb15dfc924961c437ac89f3be291cc23ffa565"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-test-deployment-1791849121073.json",
+      "bytes": 1499,
+      "sha256": "673a16970712f7e27ceda62e5a6fbc6e558c373bccf30822f80c5db5aff8911e"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-unit-corrected.log",
+      "bytes": 2813,
+      "sha256": "358e83d215f082a2dc03e9b87edf9b22eecb09b63633b1f4c5b8468f76fd1074"
+    },
+    {
+      "path": "tests/artifacts/general-0.5.7-unit.log",
+      "bytes": 5328,
+      "sha256": "e53bb504d0d8c1f7eb263a486dba2038993f33105d8f4bc1f0046cde157e937f"
+    },
+    {
+      "path": "tests/artifacts/ipad-pointer-policy-1791848497232-91043.json",
+      "bytes": 11156,
+      "sha256": "23dce73fe8575b0597002b46652d3ea0ee95e7352181dfcce99b0bbd8cb3ec72"
+    },
+    {
+      "path": "tests/artifacts/ipad-pointer-policy-1791849064922-92699.json",
+      "bytes": 38800,
+      "sha256": "61503cee5d55175b60cdea097a918f5962a65ca7508dcbda525a6af89e4a4079"
+    },
+    {
+      "path": "tests/artifacts/offline-smoke-1791849176296-93040-a5b4e764-7b5d-4029-a597-a15a6c1e146a.cleanup.json",
+      "bytes": 2544,
+      "sha256": "39107cfbb940de21f4213c347a7b03afe13cf4672828415c7924dd6bf84da550"
+    }
+  ],
+  "userPdfIncluded": false
+}

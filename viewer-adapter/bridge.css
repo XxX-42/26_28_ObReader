@@ -21,6 +21,16 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* While a drawing tool is active, a finger-owned page contact also blocks
+   WebKit's delayed text selection and callout. The bridge removes this class
+   before Pencil/mouse input and when that contact's ownership is cancelled. */
+:root.pdfReaderFingerTextSelectionSuppressed #viewerContainer .textLayer,
+:root.pdfReaderFingerTextSelectionSuppressed #viewerContainer .textLayer * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
 .pdfReaderBridgeStatus {
   position: fixed;
   z-index: 100001;

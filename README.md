@@ -6,14 +6,19 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.6)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.7)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest [0.5.6 three-file package](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip)
+The latest [0.5.7 three-file package](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip)
+blocks finger text selection on iPad PDF pages while an annotation tool is active.
+Finger input remains navigation; Pencil text highlighting/drawing, mouse input,
+toolbar controls and editable text fields retain their existing behavior.
+It also targets continuous Pencil text highlighting across line breaks.
+The prior [0.5.6 package](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip)
 uses an 80 ms weighted velocity regression, a 4,000 px/s total speed cap, and
 350 ms exponential deceleration. Inertia starts at 90 px/s and stops at 10 px/s.
 It integrates real animation time, including delayed frames, and cancels on
@@ -78,10 +83,10 @@ rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-T
 after verifying the actual vault and plugin identity; discover the owned loopback
 CDP endpoint for each run rather than assuming a fixed port. The earlier approved
 `远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequent
-0.5.5 scroll-fix replacement was separately authorized. The current 0.5.6 delivery
+0.5.5 scroll-fix replacement was separately authorized. The current 0.5.7 delivery
 has the same explicit authorization to replace only that plugin's three files,
 preserving settings, cache and recovery, with no PDF operations. Save and
-close Reader tabs before installing the three matching 0.5.6 files, and preserve
+close Reader tabs before installing the three matching 0.5.7 files, and preserve
 settings, cache, recovery and sync checkpoints. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
 physical-device acceptance remain pending.

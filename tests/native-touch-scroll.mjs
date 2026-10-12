@@ -7,7 +7,7 @@ import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
 const { vault, configDir, cdpUrl } = nativeConfig;
 assert.equal(vault, '/Users/jiajia/Documents/ObReader-Apple-Test');
 assert.ok(cdpUrl);
-const version = '0.5.6', runId = `general-${version}-scroll-native-${Date.now()}`;
+const version = '0.5.7', runId = `general-${version}-scroll-native-${Date.now()}`;
 const folder = `PDF迁移测试/${runId}`, file = `${folder}/scroll.pdf`;
 const hash = b => crypto.createHash('sha256').update(b).digest('hex');
 const driver = await fs.readFile(import.meta.filename);
@@ -68,7 +68,7 @@ try {
   for (const n of ['main.js', 'manifest.json', 'styles.css']) { const actual = await fs.readFile(path.join(vault, configDir, 'plugins/pdf-web-reader', n)); assert.deepEqual(await fs.readFile(`dist/pdf-web-reader/${n}`), actual); report.productHashes[n] = hash(actual); }
   await mode(true);
   const bytes = await fs.readFile('tests/fixtures/tracemonkey.pdf');
-  await root(async ({ folder, file, bytes }) => { if (!folder.startsWith('PDF迁移测试/general-0.5.6-scroll-native-') || app.vault.getAbstractFileByPath(folder) || app.vault.getAbstractFileByPath(file)) throw Error('Unsafe or existing fixture'); await app.vault.createFolder(folder); await app.vault.createBinary(file, new Uint8Array(bytes).buffer); }, { folder, file, bytes: [...bytes] });
+  await root(async ({ folder, file, bytes }) => { if (!folder.startsWith('PDF迁移测试/general-0.5.7-scroll-native-') || app.vault.getAbstractFileByPath(folder) || app.vault.getAbstractFileByPath(file)) throw Error('Unsafe or existing fixture'); await app.vault.createFolder(folder); await app.vault.createBinary(file, new Uint8Array(bytes).buffer); }, { folder, file, bytes: [...bytes] });
   await root(async file => app.plugins.plugins['pdf-web-reader'].openPdf(app.vault.getAbstractFileByPath(file)), file);
   await wait('PDF rendered', () => doc(({ v, a }) => v.ready && a.pdfViewer.getPageView(0)?.renderingState === 3));
   const tool = await doc(({ v, d }) => { const r = d.getElementById('editorInkButton').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width / 2, y: f.y + r.y + r.height / 2 }; });

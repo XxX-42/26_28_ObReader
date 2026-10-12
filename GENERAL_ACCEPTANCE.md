@@ -1,6 +1,24 @@
-# 0.1general 通用候选（插件 0.5.6）
+# 0.1general 通用候选（插件 0.5.7）
 
-## 当前：0.5.6 惯性滚动与跨页链接保存修复（2026-10-13）
+## 当前：0.5.7 iPad 工具启用时手指仅导航（2026-10-13）
+
+启用批注工具时，手指在 PDF 页面只用于滑动翻页，不触发文字选择、选择手柄或长按选词。按真实指针类型保护页面，Pencil 的文字高亮、绘制与鼠标操作仍保留；工具栏、参数、页码和可编辑输入区保持可操作。补齐 Pencil 文字选区的释放端点，验证同页连续跨行高亮及保存重开。不改变保存、同步、惯性参数、依赖或冻结 Viewer。三端统一版本 0.5.7；0.5.6 三文件包保留回滚。iPad 实机由用户同步后确认。
+
+手指禁选使用 scoped `user-select`、Safari 的 `-webkit-user-select`／`-webkit-touch-callout` 及事件拦截；[Safari 官方说明](https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariCSSRef/Articles/StandardCSSProperties.html)解释 callout 的长按控制。Chromium 不支持的 Safari 属性只核对 CSS 声明，不能据模拟宣称 iPad 系统菜单已验收。
+
+### 0.5.7 验证与交付
+
+打包、无 Node 启动和惯性数值回归 **27/27**。可信 Chromium touch 验证启用高亮时的 CSS 禁选、selectstart/contextmenu 拦截与正常抬指后的 sticky 保护；这些事件兜底的 scripted 检查不等于 iPad 实机菜单验收。Pencil 跨同页两行、经过行间空白，并只在 pointerup 给出第二行最终坐标：真实 PDF.js `#onSelectEnd` 原生调用收到含换行的完整 Range，生成 1 条 Highlight；保存并重新解析输出 PDF 后仍是 1 条批注、44 个 quad，审计确认两条几何行带。主测试不屏蔽原生调用，不凭 fallback mock 宣称通过；异步 selectionchange 的旧 trace 不作为最终选区。
+
+原始 focused 完整用例退出 **1**，本轮两项功能断言完成后，旧惯性输入 helper 因可信 pointerdown 迟到 **85.8 ms** 超过测试 **80 ms** 门槛失败。未修改门槛或重跑挑成功结果，日志 `general-0.5.7-focused-20261013-075104.log` 与 `ipad-pointer-policy-1791849064922-92699.json` 保留；不能称整项测试通过。此前 Blink 不支持 Safari-only computed 属性、数值 VM 缺少新 helper，以及原生驱动旧版本安全前缀的失败亦保留，修正只涉及测试能力判断／依赖／版本前缀。
+
+独立测试库 `general-0.5.7-scroll-native-1791849207700.json` 通过，安装产物逐字节匹配后用真实 touch 检查工具启用时惯性滑动与再次接触停止、不生成批注，结束恢复 desktop、Reader/view 均为 0。离线验证退出 **0**，五工具及保存重开通过。本轮仅做受影响验证，不重跑默认完整套件或继续 teardown 调查；0.5.6 默认 **223/229** 的历史失败仍保留，不重标通过。
+
+[0.5.7 三文件候选](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip) ZIP SHA-256：`6ec59c3862f3accbf81179529746948091908e48bd61bbc8d738f8d6d461889e`。附 [源码差异](dist/general-0.1general-0.5.7-source.diff)、[证据包](dist/general-0.1general-0.5.7-evidence.zip) 和 [哈希清单](dist/general-0.1general-0.5.7-SHA256SUMS.txt)。三端使用相同三文件，Windows／iPad 实机仍待用户确认。
+
+按既有明确授权备份并替换“远程仓库1”插件三文件，备份 `.deploy-backups/0.5.7-target-1791849230176807000`；其他 **2038** 个文件逐字节哈希一致，保留设置、缓存、恢复和同步检查点，未操作 PDF、未重载主库。同步后先保存关闭旧 Reader，再重启 iPad Obsidian；验证工具启用时手指长按／拖动只翻页，Pencil 连续跨两行保存重开。0.5.6 回滚包原哈希保留；正常推送 main，不创建 Release。强退恢复、设备时钟及磁盘比较到写入的同步竞争窗口限制不变。
+
+## 历史：0.5.6 惯性滚动与跨页链接保存修复（2026-10-13）
 
 Windows、macOS、iPadOS 共用源码和同一组三文件，版本统一 **0.5.6**。自定义手指滚动保留，不放开 WebKit 原生滚动或改变手指／Pencil 分工。
 

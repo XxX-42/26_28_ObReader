@@ -603,6 +603,105 @@ test(
         () => PDFViewerApplication.pdfViewer.annotationEditorMode === 9,
         { timeout: 8_000 },
       );
+      const fingerSelectionSuppressionPoint = await localPointInHost(
+        viewer,
+        page,
+        '.page[data-page-number="1"] .textLayer span',
+        [0.5, 0.5],
+      );
+      await viewer.evaluate(() => window.getSelection()?.removeAllRanges());
+      await dispatchTouch(cdp, "touchStart", fingerSelectionSuppressionPoint, 109);
+      const fingerSelectionGuardDuringContact = await viewer.evaluate(() => {
+        const span = document.querySelector(
+          '.page[data-page-number="1"] .textLayer span',
+        );
+        const selectStart = new Event("selectstart", {
+          bubbles: true,
+          cancelable: true,
+        });
+        span?.dispatchEvent(selectStart);
+        const callout = new Event("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+        });
+        span?.dispatchEvent(callout);
+        const textLayer = span?.closest(".textLayer");
+        const style = textLayer ? getComputedStyle(textLayer) : null;
+        return {
+          mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+          guardClass: document.documentElement.classList.contains(
+            "pdfReaderFingerTextSelectionSuppressed",
+          ),
+          userSelect: style?.userSelect || null,
+          webkitTouchCalloutSupported: CSS.supports(
+            "-webkit-touch-callout",
+            "none",
+          ),
+          webkitTouchCallout: style?.getPropertyValue(
+            "-webkit-touch-callout",
+          ) || null,
+          selectStartPrevented: selectStart.defaultPrevented,
+          contextMenuPrevented: callout.defaultPrevented,
+          selectedText: document.getSelection()?.toString() || "",
+        };
+      });
+      const {
+        webkitTouchCalloutSupported,
+        webkitTouchCallout,
+        ...observableFingerSelectionGuard
+      } = fingerSelectionGuardDuringContact;
+      assert.deepEqual(observableFingerSelectionGuard, {
+        mode: 9,
+        guardClass: true,
+        userSelect: "none",
+        selectStartPrevented: true,
+        contextMenuPrevented: true,
+        selectedText: "",
+      }, "An active annotation tool must suppress finger text selection and WebKit callouts");
+      if (webkitTouchCalloutSupported) {
+        assert.equal(webkitTouchCallout, "none");
+      }
+      assert.match(
+        await readFile(bridgeCssPath, "utf8"),
+        /-webkit-touch-callout:\s*none\s*!important;/,
+        "The Safari callout rule must remain present even when Chromium cannot report it",
+      );
+      await waitMs(800);
+      const fingerSelectionAfterLongPress = await viewer.evaluate(() =>
+        document.getSelection()?.toString() || "",
+      );
+      assert.equal(fingerSelectionAfterLongPress, "",
+        "A held finger must not select OCR text while an annotation tool is active");
+      await dispatchTouch(cdp, "touchEnd");
+      const fingerSelectionGuardAfterRelease = await viewer.evaluate(() => {
+        const span = document.querySelector(
+          '.page[data-page-number="1"] .textLayer span',
+        );
+        const selectStart = new Event("selectstart", {
+          bubbles: true,
+          cancelable: true,
+        });
+        span?.dispatchEvent(selectStart);
+        return {
+          guardClass: document.documentElement.classList.contains(
+            "pdfReaderFingerTextSelectionSuppressed",
+          ),
+          selectStartPrevented: selectStart.defaultPrevented,
+          selectedText: document.getSelection()?.toString() || "",
+        };
+      });
+      assert.deepEqual(fingerSelectionGuardAfterRelease, {
+        guardClass: true,
+        selectStartPrevented: true,
+        selectedText: "",
+      }, "Finger selection ownership must cover delayed iOS selection after release");
+      report.fingerTextSelectionSuppression = {
+        input: "trusted CDP touch contact and release while Highlight is active",
+        simulationOnly: true,
+        duringContact: fingerSelectionGuardDuringContact,
+        afterRelease: fingerSelectionGuardAfterRelease,
+        physicalIPadCalloutBehaviorUnverified: true,
+      };
       const highlightTarget = await viewer.evaluate(() => {
         const viewerRect = document.getElementById("viewerContainer").getBoundingClientRect();
         const spans = [...document.querySelectorAll(
@@ -629,18 +728,44 @@ test(
           }
           line.spans.push(span);
         }
-        const line = lines.find((candidate) => candidate.spans.length >= 2 &&
-          candidate.spans.at(-1).right - candidate.spans[0].left >= 70);
-        if (!line) {
-          throw new Error("Could not find a visible OCR text line for pen selection");
+        const lineIndex = lines.findIndex((candidate) =>
+          candidate.spans.length >= 2 &&
+          candidate.spans.at(-1).right - candidate.spans[0].left >= 70,
+        );
+        const line = lines[lineIndex];
+        const secondLine = lines.slice(lineIndex + 1).find((candidate) =>
+          candidate.spans.length > 0 &&
+          candidate.spans.at(-1).right - candidate.spans[0].left >= 20,
+        );
+        if (!line || !secondLine) {
+          throw new Error("Could not find two adjacent visible OCR text lines for pen selection");
         }
         const first = line.spans[0];
-        const last = line.spans.at(-1);
-        const y = (first.top + first.bottom) / 2;
+        const firstLineLast = line.spans.at(-1);
+        const secondLineLast = secondLine.spans.at(-1);
+        const firstLineY = (first.top + first.bottom) / 2;
+        const secondLineY = (secondLine.spans[0].top + secondLine.spans[0].bottom) / 2;
         return {
-          start: { x: first.left + Math.min(2, (first.right - first.left) / 4), y },
-          end: { x: last.right - Math.min(2, (last.right - last.left) / 4), y },
-          expectedLineText: line.spans.map((span) => span.text).join(""),
+          start: {
+            x: first.left + Math.min(2, (first.right - first.left) / 4),
+            y: firstLineY,
+          },
+          firstLineEnd: {
+            x: firstLineLast.right - Math.min(2, (firstLineLast.right - firstLineLast.left) / 4),
+            y: firstLineY,
+          },
+          interlineGap: {
+            x: firstLineLast.right - Math.min(2, (firstLineLast.right - firstLineLast.left) / 4),
+            y: (firstLineY + secondLineY) / 2,
+          },
+          end: {
+            x: secondLineLast.right - Math.min(2, (secondLineLast.right - secondLineLast.left) / 4),
+            y: secondLineY,
+          },
+          expectedLineText: [line, secondLine]
+            .flatMap((candidate) => candidate.spans)
+            .map((span) => span.text)
+            .join(""),
         };
       });
       const highlightFrameBounds = await page.$eval("#pdf-reader", (element) => {
@@ -663,6 +788,10 @@ test(
         window.__penCompatibilityMouseEvents = [];
         document.addEventListener("selectionchange", () => {
           const selection = document.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          const lineTops = [...new Set(
+            [...(range?.getClientRects() || [])].map((rect) => Math.round(rect.top)),
+          )];
           if (selection && !selection.isCollapsed && selection.toString()) {
             const textLayer = document.querySelector(
               '.page[data-page-number="1"] .textLayer',
@@ -673,6 +802,7 @@ test(
               focusOffset: selection.focusOffset,
               anchorInTextLayer: !!textLayer?.contains(selection.anchorNode),
               focusInTextLayer: !!textLayer?.contains(selection.focusNode),
+              lineTops,
             });
           }
         }, true);
@@ -686,30 +816,42 @@ test(
         const highlightSelection = manager.highlightSelection.bind(manager);
         manager.highlightSelection = (method) => {
           const selection = document.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          const lineTops = [...new Set(
+            [...(range?.getClientRects() || [])].map((rect) => Math.round(rect.top)),
+          )];
           const call = {
             method,
             collapsed: selection?.isCollapsed ?? true,
             text: selection?.toString() || "",
             rangeCount: selection?.rangeCount || 0,
+            lineTops,
             stack: new Error().stack || "",
           };
           window.__penTextHighlightCalls.push(call);
-          // Leave the actual Range intact when PDF.js's normal selection
-          // handler asks for a highlight. The bridge's pointerup fallback
-          // should then consume that same Range through the native editor API.
-          if (!call.stack.includes("finishPenHighlightFallback")) return;
+          // Observe and run PDF.js's normal native highlight path. This test
+          // verifies that the bridge delivers the second-line pointerup caret
+          // before the editor consumes the live Range.
           return highlightSelection(method);
         };
       });
       await dispatchSimulatedPen(cdp, "mousePressed", highlightPenStart, 1);
+      assert.equal(await viewer.evaluate(() =>
+        document.documentElement.classList.contains(
+          "pdfReaderFingerTextSelectionSuppressed",
+        ),
+      ), false, "Pencil input must release finger selection suppression before selecting text");
       for (let step = 1; step <= 5; step += 1) {
         await dispatchSimulatedPen(cdp, "mouseMoved", {
-          x: highlightPenStart.x +
-            (highlightPenEnd.x - highlightPenStart.x) * step / 5,
-          y: highlightPenStart.y +
-            (highlightPenEnd.y - highlightPenStart.y) * step / 5,
+          x: highlightFrameBounds.x + highlightTarget.start.x +
+            (highlightTarget.firstLineEnd.x - highlightTarget.start.x) * step / 5,
+          y: highlightFrameBounds.y + highlightTarget.firstLineEnd.y,
         }, 1);
       }
+      await dispatchSimulatedPen(cdp, "mouseMoved", {
+        x: highlightFrameBounds.x + highlightTarget.interlineGap.x,
+        y: highlightFrameBounds.y + highlightTarget.interlineGap.y,
+      }, 1);
       await dispatchSimulatedPen(cdp, "mouseReleased", highlightPenEnd, 0);
       await viewer.waitForFunction((previousCount) =>
         document.querySelectorAll(
@@ -744,26 +886,51 @@ test(
         "The owned text-selection gesture must suppress duplicate compatibility mouse events");
       assert.ok(penTextHighlightEvidence.highlightCalls.some((call) =>
         call.method === "main_toolbar" && !call.collapsed && call.text.length > 0 &&
-        call.rangeCount > 0,
-      ), `Native text highlight must consume the live selection: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
+        call.rangeCount > 0 && call.lineTops.length >= 2 &&
+        !call.stack.includes("finishPenHighlightFallback"),
+      ), `The native pointerup path must consume a live two-line selection: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
       assert.ok(penTextHighlightEvidence.highlightCalls.some((call) =>
-        call.stack.includes("finishPenHighlightFallback"),
-      ), `The bridge fallback must consume the range when PDF.js selectionchange handling is suppressed: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
+        call.method === "main_toolbar" &&
+        !call.stack.includes("finishPenHighlightFallback"),
+      ), `The normal PDF.js pointerup path must consume the live multiline Range: ${JSON.stringify(penTextHighlightEvidence.highlightCalls)}`);
       assert.ok(penTextHighlightEvidence.editors > 0,
         "Pen text selection must create a native PDF.js HighlightEditor");
-      assert.ok(penTextHighlightEvidence.quadPointCounts.some((count) => count >= 8),
-        `Native text highlight must serialize PDF QuadPoints: ${JSON.stringify(penTextHighlightEvidence.quadPointCounts)}`);
+      assert.ok(penTextHighlightEvidence.quadPointCounts.some((count) => count >= 16),
+        `Native text highlight must serialize QuadPoints for at least two lines: ${JSON.stringify(penTextHighlightEvidence.quadPointCounts)}`);
       assert.equal(penTextHighlightEvidence.selectionCollapsedAfter, true,
         "Native text highlight should consume and clear the browser selection");
       assert.ok(afterPenTextHighlight.serializedSize > beforePenTextHighlight.serializedSize,
         "Native text highlight must update PDF annotation storage");
       assert.ok(afterPenTextHighlight.storageSize > beforePenTextHighlight.storageSize,
         "Native text highlight must add an annotation to PDF storage");
+      const savedMultilineHighlight = await viewer.evaluate(async () => {
+        const data = await PDFViewerApplication.pdfDocument.saveDocument();
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(data) });
+        try {
+          const savedDocument = await loadingTask.promise;
+          const page = await savedDocument.getPage(1);
+          const annotations = await page.getAnnotations({ intent: "display" });
+          return annotations
+            .filter((annotation) => annotation.subtype === "Highlight")
+            .map((annotation) => ({
+              id: annotation.id,
+              quadPoints: [...annotation.quadPoints],
+              quadCount: annotation.quadPoints.length / 8,
+            }));
+        } finally {
+          await loadingTask.destroy();
+        }
+      });
+      assert.equal(savedMultilineHighlight.length, 1,
+        "Saving and reopening the PDF must retain this single multiline Highlight annotation");
+      assert.ok(savedMultilineHighlight[0].quadPoints.length >= 16,
+        `The reopened Highlight must retain at least two line quads: ${JSON.stringify(savedMultilineHighlight)}`);
       report.penTextHighlightSelection = {
-        input: "trusted Chromium pen-typed CDP drag over OCR text",
+        input: "trusted Chromium pen-typed CDP drag over two OCR lines, with line two only at pointerup",
         simulationOnly: true,
         expectedLineText: highlightTarget.expectedLineText,
         selectedText: actualSelectionTrace.at(-1)?.text || "",
+        selectedLineTops: actualSelectionTrace.at(-1)?.lineTops || [],
         caretEndpoints: actualSelectionTrace.map((entry) => ({
           anchorOffset: entry.anchorOffset,
           focusOffset: entry.focusOffset,
@@ -775,6 +942,7 @@ test(
         nativeHighlightEditors: penTextHighlightEvidence.editors,
         quadPointCounts: penTextHighlightEvidence.quadPointCounts,
         annotationStorageSize: afterPenTextHighlight.serializedSize,
+        savedAndReopenedHighlight: savedMultilineHighlight,
       };
       await viewer.evaluate(() => {
         window.__ipadPageClicksReachedDocument = [];
@@ -941,6 +1109,11 @@ test(
       const beforeTouchCancel = await inputSnapshot();
       await dispatchTouch(cdp, "touchCancel");
       const afterTouchCancel = await inputSnapshot();
+      assert.equal(await viewer.evaluate(() =>
+        document.documentElement.classList.contains(
+          "pdfReaderFingerTextSelectionSuppressed",
+        ),
+      ), false, "A cancelled touch must release finger text-selection suppression");
       await waitMs(300);
       const afterTouchCancelWait = await inputSnapshot();
       assert.ok(
@@ -1228,6 +1401,11 @@ test(
         () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
         { timeout: 3_000 },
       );
+      assert.equal(await viewer.evaluate(() =>
+        document.documentElement.classList.contains(
+          "pdfReaderFingerTextSelectionSuppressed",
+        ),
+      ), true, "Changing between annotation tools must preserve touch-owned selection suppression");
       const afterToolChange = await inputSnapshot();
       await waitMs(300);
       const afterToolChangeWait = await inputSnapshot();
@@ -1235,6 +1413,35 @@ test(
         Math.abs(afterToolChangeWait.scrollTop - afterToolChange.scrollTop) <= 1,
         "Changing annotation tools must stop PDF inertia",
       );
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 15,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
+        { timeout: 3_000 },
+      );
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 0,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
+        { timeout: 3_000 },
+      );
+      assert.equal(await viewer.evaluate(() =>
+        document.documentElement.classList.contains(
+          "pdfReaderFingerTextSelectionSuppressed",
+        ),
+      ), false, "Returning to reading mode must release finger text-selection suppression");
       await viewer.evaluate(() => {
         PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
           source: window,

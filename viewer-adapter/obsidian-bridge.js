@@ -67,6 +67,7 @@
     dirty: false,
     activePointers: new Map(),
     manualPointers: new Map(),
+    fingerTextSelectionSuppressionOwned: false,
     manualMomentum: null,
     pendingPenHighlight: null,
     penPolicyPointers: new Map(),
@@ -4714,6 +4715,60 @@
     event.stopImmediatePropagation();
   }
 
+  function annotationToolIsActive() {
+    return state.editorMode !== 0 ||
+      document.body.classList.contains("editorEraserMode");
+  }
+
+  function fingerTextSelectionSuppressionIsOwned() {
+    return iosInputPolicy && state.fingerTextSelectionSuppressionOwned &&
+      annotationToolIsActive();
+  }
+
+  function refreshFingerTextSelectionSuppression() {
+    document.documentElement.classList.toggle(
+      "pdfReaderFingerTextSelectionSuppressed",
+      fingerTextSelectionSuppressionIsOwned(),
+    );
+  }
+
+  function clearFingerTextSelectionSuppression() {
+    state.fingerTextSelectionSuppressionOwned = false;
+    for (const pointer of state.manualPointers.values()) {
+      pointer.suppressesFingerTextSelection = false;
+    }
+    document.documentElement.classList.remove(
+      "pdfReaderFingerTextSelectionSuppressed",
+    );
+  }
+
+  function isPdfTextLayerTarget(target) {
+    const element = target instanceof Element ? target : target?.parentElement;
+    return !!(
+      element &&
+      isViewerSurfaceTarget(element) &&
+      element.closest(".textLayer")
+    );
+  }
+
+  function onBridgeFingerSelectStart(event) {
+    if (
+      fingerTextSelectionSuppressionIsOwned() &&
+      isPdfTextLayerTarget(event.target)
+    ) {
+      event.preventDefault();
+    }
+  }
+
+  function onBridgeFingerContextMenu(event) {
+    if (
+      fingerTextSelectionSuppressionIsOwned() &&
+      isPdfTextLayerTarget(event.target)
+    ) {
+      event.preventDefault();
+    }
+  }
+
   function hasActivePenEditorGesture() {
     return state.penPolicyPointers.size > 0 ||
       [...state.activePointers.values()].some((pointer) =>
@@ -4723,6 +4778,7 @@
   }
 
   function suspendTouchPansForPen() {
+    clearFingerTextSelectionSuppression();
     for (const pointer of state.manualPointers.values()) {
       if (pointer.pointerType === "touch") {
         pointer.blockedByPen = true;
@@ -4756,6 +4812,7 @@
   function onManualDocumentVisibilityChange() {
     if (document.visibilityState === "hidden") {
       cancelManualMomentum();
+      clearFingerTextSelectionSuppression();
       for (const pointer of state.manualPointers.values()) {
         if (pointer.pointerType === "touch") {
           pointer.blockedByVisibility = true;
@@ -5052,6 +5109,7 @@
     if (anotherDirectPointer) {
       for (const activePointer of state.manualPointers.values()) {
         activePointer.blockedByOtherPointer = true;
+        activePointer.cancelledByOtherPointer = true;
         activePointer.moved = false;
         activePointer.lastMotionAt = null;
         activePointer.scrollSamples = [{
@@ -5082,6 +5140,11 @@
       moved: false,
       blockedByPen: hasActivePenEditorGesture(),
       blockedByOtherPointer: anotherDirectPointer,
+      cancelledByOtherPointer: anotherDirectPointer,
+      suppressesFingerTextSelection: pointerType === "touch" &&
+        !anotherDirectPointer &&
+        !hasActivePenEditorGesture() &&
+        annotationToolIsActive(),
       captureTarget: pointerType === "touch" ? container : null,
       documentId: state.activeDocumentId,
       openRequest: state.activeOpenRequest,
@@ -5090,6 +5153,10 @@
     };
     state.manualPointers.set(event.pointerId, pointer);
     if (pointerType === "touch") {
+      if (pointer.suppressesFingerTextSelection) {
+        state.fingerTextSelectionSuppressionOwned = true;
+      }
+      refreshFingerTextSelectionSuppression();
       state.lastTouchClickPage = pointer.pageTarget;
       try {
         container.setPointerCapture(event.pointerId);
@@ -5166,6 +5233,10 @@
     state.manualPointers.delete(pointerId);
     if (pointer.pointerType === "touch") {
       if (cancel || !manualPointerSessionCurrent(pointer)) {
+        if (!pointer.cancelledByOtherPointer ||
+          !manualPointerSessionCurrent(pointer)) {
+          clearFingerTextSelectionSuppression();
+        }
         cancelManualMomentum();
       } else {
         startManualMomentum(pointer, releaseTime);
@@ -5185,6 +5256,7 @@
 
   function clearManualPointerSessions({ clearClickTargets = true } = {}) {
     cancelManualMomentum();
+    clearFingerTextSelectionSuppression();
     invalidatePendingPenHighlight();
     const pointers = [...state.manualPointers.values()];
     state.manualPointers.clear();
@@ -5605,6 +5677,14 @@
     if (!pointer || pointer.ending) {
       return;
     }
+    if (
+      !cancel && reason === "pointerup" &&
+      pointer.penTextSelectionCandidate
+    ) {
+      // Some WebViews deliver the last caret position only with pointerup,
+      // especially when a Pencil crosses the whitespace between text lines.
+      updateOwnedPenTextSelection(pointer, event);
+    }
     state.penPolicyPointers.delete(pointerId);
     pointer.ending = true;
     pointer.buttons = Number.isInteger(event?.buttons)
@@ -5662,6 +5742,22 @@
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(event);
+    if (iosInputPolicy && event.pointerType !== "touch") {
+      clearFingerTextSelectionSuppression();
+    } else if (
+      iosInputPolicy && event.pointerType === "touch" &&
+      state.manualPointers.size > 0 &&
+      !state.manualPointers.has(event.pointerId)
+    ) {
+      // A second finger anywhere in the document cancels manual panning, but
+      // keeps the touch-owned text-selection guard until Pencil/mouse handoff.
+      for (const pointer of state.manualPointers.values()) {
+        pointer.blockedByOtherPointer = true;
+        pointer.cancelledByOtherPointer = true;
+        pointer.moved = false;
+        pointer.lastMotionAt = null;
+      }
+    }
     if (state.closeControl) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -5834,6 +5930,8 @@
       ["wheel", onBridgeWheel],
       ["click", onBridgeIosClick],
       ["dblclick", onBridgeIosDoubleClick],
+      ["selectstart", onBridgeFingerSelectStart],
+      ["contextmenu", onBridgeFingerContextMenu],
       ["blur", onBridgeWindowBlur],
       ["keydown", onBridgePointerKeyDown],
     ]) {
@@ -7381,6 +7479,11 @@
             cancelManualMomentum();
             invalidatePendingPenHighlight();
             state.editorMode = mode;
+            if (annotationToolIsActive()) {
+              refreshFingerTextSelectionSuppression();
+            } else {
+              clearFingerTextSelectionSuppression();
+            }
             observeAccessibilityManagers(app);
             setDeferredTimeout(
               () => observeAccessibilityManagers(app),
@@ -7593,6 +7696,7 @@
       state.toolbarLayoutFrame = 0;
     }
     document.documentElement.classList.remove("pdfReaderBridgeTwoRow");
+    clearFingerTextSelectionSuppression();
     stopOpenStartupObserver();
     state.openSession?.controller.abort();
     if (state.closeControl) {

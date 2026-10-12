@@ -11,6 +11,10 @@ const section = source.slice(
   source.indexOf("  const MANUAL_INERTIA_SAMPLE_WINDOW_MS"),
   source.indexOf("  function clearManualPointerSessions"),
 );
+const selectionPolicySection = source.slice(
+  source.indexOf("  function annotationToolIsActive"),
+  source.indexOf("  function isPdfTextLayerTarget"),
+);
 
 function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
   let currentTime = time;
@@ -37,9 +41,20 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     activeOpenRequest: 1,
     manualPointers: new Map(),
     manualMomentum: null,
+    editorMode: 0,
+    fingerTextSelectionSuppressionOwned: false,
   };
+  const classes = new Set();
   const document = {
     visibilityState: "visible",
+    body: { classList: { contains: () => false } },
+    documentElement: { classList: {
+      toggle(name, enabled) {
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+      },
+      remove(name) { classes.delete(name); },
+    } },
     getElementById(id) { return id === "viewerContainer" ? container : null; },
   };
   const context = {
@@ -64,7 +79,7 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     releasePointerCapture() {},
   };
   vm.runInNewContext(
-    section +
+    selectionPolicySection + section +
       "\nglobalThis.api = { touchReleaseVelocity, rememberManualScroll, manualPointerEventTime, startManualMomentum, finishManualPointer, startManualPointer, applyManualPan, onManualDocumentVisibilityChange };",
     context,
   );

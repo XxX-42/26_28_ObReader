@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "releaseName": "0.1general",
+  "version": "0.5.7",
+  "sha256": "6ec59c3862f3accbf81179529746948091908e48bd61bbc8d738f8d6d461889e",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6858693,
+      "sha256": "97108ed57e0e6e1b2961c225f80bca489aba8702c55f9995fd29fa507167fe6d"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "dc93717d0ea4fd41976326a3c9fe324ea1170c7afbfcbbb0556ba5a51e0bc6b2"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "platforms": [
+    "Windows",
+    "macOS",
+    "iPadOS"
+  ],
+  "physicalIpadValidated": false,
+  "physicalWindowsValidated": false,
+  "validation": {
+    "version": "0.5.7",
+    "baseCommit": "bd6627a3b1edbe8c06962d7d8ab11e6513463449",
+    "unit": {
+      "total": 27,
+      "passed": 27,
+      "failed": 0,
+      "exitCode": 0,
+      "evidence": "tests/artifacts/general-0.5.7-unit-corrected.log"
+    },
+    "focused": {
+      "exitCode": 1,
+      "entireCasePassed": false,
+      "affectedAssertionsPassed": true,
+      "evidence": "tests/artifacts/ipad-pointer-policy-1791849064922-92699.json",
+      "log": "tests/artifacts/general-0.5.7-focused-20261013-075104.log",
+      "failure": "existing inertia gesture timing assertion: trusted pointerdown arrival age85.8ms exceeds test80ms requirement; no rerun/threshold change"
+    },
+    "multiline": {
+      "nativePdfjsCall": true,
+      "nativeCallTextContainsTwoLines": true,
+      "savedHighlightCount": 1,
+      "savedQuadCount": 44,
+      "note": "nativeHighlightCalls contains final live Range; asynchronous selectedText trace is earlier and not the final selection"
+    },
+    "native": {
+      "status": "passed",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "evidence": "tests/artifacts/general-0.5.7-scroll-native-1791849207700.json",
+      "restoredMobile": false,
+      "readersAfter": 0
+    },
+    "offline": {
+      "exitCode": 0,
+      "evidence": "tests/artifacts/general-0.5.7-offline.log"
+    },
+    "targetDeployment": "tests/artifacts/general-0.5.7-target-deployment-1791849230176807000.json",
+    "retainedFailures": [
+      {
+        "file": "tests/artifacts/ipad-pointer-policy-1791848497232-91043.json",
+        "reason": "Chromium does not expose Safari-only webkitTouchCallout computed property; corrected capability-gated assertion"
+      },
+      {
+        "file": "tests/artifacts/general-0.5.7-unit.log",
+        "reason": "partial-source numeric VM omitted new selection helpers; imported actual helpers and minimal classList DOM"
+      },
+      {
+        "file": "tests/artifacts/general-0.5.7-scroll-native-1791849145722.json",
+        "reason": "test fixture prefix still0.5.6; corrected to0.5.7; failed before creating fixture"
+      }
+    ],
+    "physicalIpadValidated": false,
+    "physicalWindowsValidated": false,
+    "dependenciesUpgraded": false,
+    "frozenViewerModified": false,
+    "defaultSuite": "not rerun for narrow change; previous0.5.6 result223/229 with6 failures remains in history; not claimed passing",
+    "userPdfTouched": false,
+    "independentAudit": "tests/artifacts/general-0.5.7-independent-audit.json",
+    "status": "candidate; affected assertions passed; complete pointer test failed its older timing precondition"
+  }
+}
