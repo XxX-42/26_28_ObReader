@@ -1,6 +1,10 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-## 当前 0.5.9 增量写入与恢复（2026-10-13）
+## 当前 0.5.10 连续笔迹保存（2026-10-13）
+
+同一组三文件服务 Windows、macOS、iPadOS。修复 ACK 后保留 Storage 却读取原始 Worker 字节导致 Ink 绑定失败；各序列化入口包含当前编辑。保存期间完成的 Ink 在每轮安全边界和重任务许可后复核提交，避免同一修订重复保存并阻塞关闭。恢复仅确认校验后的原始或准备完成草稿，未提交笔迹不满足关闭条件。原始失败及实机限制见 GENERAL_ACCEPTANCE.md。保留 0.5.9 回滚包、旧恢复、缓存与设置，不升级依赖，不修改冻结 Viewer。
+
+## 历史 0.5.9 增量写入与恢复（2026-10-13）
 
 三端统一 0.5.9。自有增量写入器保持原 PDF 前缀，补丁绑定当前磁盘完整指纹与长度；可用时通过 Vault.appendBinary 写回。共享恢复基线、增量段和不可变同步日志减少重复写入，旧恢复格式与被替代本地分支保留；无法安全追加时完整保存。继承 0.5.8 安全关闭协调。冻结 Viewer 和依赖不变，0.5.8 保留回滚。完整 PDF.js 输出、全文件核验、非原子比较／追加及日志累计限制仍在；性能与指定独立库证据见 GENERAL_ACCEPTANCE.md，实体 iPad 不以 Mac 模拟替代。
 
@@ -24,7 +28,7 @@
 本轮原生验证仅 `/Users/jiajia/Documents/ObReader-Apple-Test`，主库和此前 `远程仓库1` 部署目录不操作。保留 0.5.4 回滚包；当前验证与交付见 GENERAL_ACCEPTANCE.md。Mac 移动模拟不代表实体 iPad 内存／崩溃验收。
 
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.9），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.10），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
 
 ## 历史：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
 

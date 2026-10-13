@@ -6,14 +6,23 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.9)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.10)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
+The latest [0.5.10 three-file package](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip)
+fixes retained live Ink serialization and commits strokes completed during an
+in-flight save before capturing the next revision. Host-confirmed clean flags
+do not mean the PDF.js loaded bytes already contain those editors. Save and
+recovery both serialize retained editor storage; exact UUID-to-ref binding
+remains strict. Recovery acknowledges only verified nonempty serialized bytes.
+See [validation and limitations](GENERAL_ACCEPTANCE.md). Physical iPad acceptance
+remains pending; the 0.5.9 package is retained for rollback.
+
+The prior [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
 uses verified PDF incremental revisions and binary append where the host supports
 it. Shared recovery bases plus checksummed deltas retain complete local branches;
 old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,

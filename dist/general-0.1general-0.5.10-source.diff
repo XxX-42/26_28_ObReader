@@ -1,0 +1,1729 @@
+diff --git a/GENERAL_ACCEPTANCE.md b/GENERAL_ACCEPTANCE.md
+index d1028e2..edf275d 100644
+--- a/GENERAL_ACCEPTANCE.md
++++ b/GENERAL_ACCEPTANCE.md
+@@ -1,6 +1,33 @@
+-# 0.1general 通用候选（插件 0.5.9）
++# 0.1general 通用候选（插件 0.5.10）
+ 
+-## 当前：0.5.9 轻量恢复与后台增量保存（2026-10-13）
++## 当前：0.5.10 连续笔迹保存与关闭修复（2026-10-13）
++
++三端统一 0.5.10，冻结 Viewer、依赖、自动保存间隔、跨端合并及恢复格式不变。只修复有实际用户影响的保存故障，不放宽 UUID／页／类型／写入顺序的精确绑定，不猜测坐标，不忽略遗漏笔迹。
++
++### 根因与修复
++
++实体 iPad 0.5.9 重启后截图仍报 Ink editor_11／第10页绑定失败。在独立测试库用 12 页合成 PDF、可信 Chromium pen 事件复现同类失败。保留的 `rpc-4` 基线和草稿均为最初 7,573 bytes，含 0 条第10页批注，而请求元数据包含 9 条 Ink；已保存检查点为 95,493 bytes。独立审计重放同一输入得到完全一致的 `PDF_MERGE_NEW_ANNOTATION_BINDING_FAILED`。这是数据遗漏，而非 UUID 冲突。原始驱动最终因工具状态前置条件失败，不称整轮通过。
++
++宿主 ACK 清除未保存标记，却不会替换 PDF.js Worker 最初加载的字节。同步检查点在 0.5.9 已处理这一点，普通保存与恢复路径尚有遗漏。三条入口现在都在保留批注 Storage 时调用 `saveDocument()`，不能发送初始 `getData()` 字节与当前批注身份混搭。
++
++第一轮局部修复原生复验保存了 12 条 Ink 与 4 条 InkHighlight，修订 11／22／33／44 均确认，但暴露了另一实际问题：保存期间抬笔会再次设置 pendingInkCommit，手动保存循环只在入口提交一次，之后不断重复同一修订，阻塞关闭。失败驱动重开返回旧 Viewer 的 0 条批注，未视为重开成功；超过 770 份 RPC 捕获原样保留。仅对已核对当前修订与磁盘 16 条批注的合成测试文档注入一次序列化故障，让旧运行时停止循环，再走正常恢复确认关闭；这份清理不属于正常通过。
++
++每轮保存在安全输入边界提交新结束的 Ink 笔迹，再捕获修订；等待重任务许可后还要复核，防止等待期间完成的笔迹遗漏。恢复确认与可关闭状态不接受仍有待提交笔迹的修订。绑定准备失败或为空时，宿主保存未经修改的原始 PDF.js 序列化结果；数据与完成标记读回校验之后才确认恢复。原 PDF 不被失败结果覆盖。
++
++### 验证与交付
++
++刷新身份兼容回归另外发现：已准备 PDF 的身份数据可能带有旧 Writer 的 runtimeId，而新 PDF.js 文档可能将同一编号分配给另一批注。旧映射使新 Square 的确切 ref 被关联到旧 Highlight 的 UUID。重新加载时只接纳 PDF ref／UUID，并丢弃前一文档的 runtimeId；同一文档的保存 ACK 仍保留 runtimeId，以兼容输出对象编号变化。该回归使用真实 prepareLocal 产物，正常宿主 inspect／merge 通常不带 runtimeId；不把模拟协议中的失败误称实体 iPad 已发生。保留失败再针对性修复，不改变 PDF 内 UUID。
++
++首次默认并发 **275** 项：**272** 通过、**3** 失败、**0** 取消，退出 **1**。一项刷新身份回归触发了上述修复；另两项分别是 browser cleanup 的合成期限断言和可信手指事件迟于测试 80ms 前置门槛，不涉及本轮生产代码。原始日志保留，不调查 Chrome／CDP teardown、不加大等待或隐藏失败。重新冻结后的默认并发 **275** 项：**267** 通过、**6** 失败、**2** 取消，退出 **1**。五项完成产品断言后仅因浏览器退出 code 2／强制清理失败；iPad pointer 停在 80ms 事件到达门槛，未执行部分不宣称通过；桌面自动保存受 90s 并发期限取消，单独受影响回归通过；刷新后新增 ACK 用例因假宿主沿用旧基线取消，最终针对性复验保留断言并通过。不重复整套挑成功、不增加门槛、不继续 teardown 调查。实体 iPad 不用这些结果代替。
++
++冻结核心回归 **114/114**、资源与打包回归 **46/46** 已通过。前一冻结构建的离线五工具及保存重开退出 **0**；最终构建完成五工具与保存重开断言，脚本因 Chrome 必须强制清理退出 **1**，不称正常通过。独立库最终可信 pen 用例连续四轮分别写入 **4／8／12／16** 条批注，修订 **11／22／33／44** 与宿主确认一致；只有 **4** 次 prepareLocal，实际关闭按钮完成关闭，新 Reader 重开保留全部 **12 Ink＋4 InkHighlight**，退出 **0**。桌面／移动模拟各自未编辑、编辑后、故障写入恢复共六项真实关闭按钮测试通过，退出 **0**。两份完整成功驱动均恢复 desktop、Reader／view 为 0。先前的 SDK detach 异步清理前置断言、键盘请求早于笔迹提交完成的观察错误，以及所有产品失败均保留原证据，不重标成功。受影响自动保存浏览器回归 **1/1**（54.565s），持有 ACK／重任务许可时完成的新 Ink 正确进入下一修订并结束保存。刷新身份回归 **1/1**（4.980s），覆盖真实合并产物刷新、保存 ACK、另一已有批注再次编辑的 UUID／ref 保持；额外测试最初使用刷新前的假宿主基线和旧 openRequest，守卫正确拒绝，校正真实会话前置条件后复验通过，未移除断言。原生操作仅在 `/Users/jiajia/Documents/ObReader-Apple-Test`；实际 Mac 为 macOS27.2／arm64、Obsidian1.12.7；1.14.4 是目标最低版本。Mac 移动模拟和可信 pen 事件不是实体 Pencil／WKWebView 验收。Windows／实体 iPad 保存、关闭、同步继续需要设备复验。强退恢复、完整 PDF.js 输出内存、非原子比较到写入以及日志累计限制沿用 0.5.9，不宣称全数消除。
++
++
++[0.5.10 三文件候选](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip) SHA-256：`b1a23e399f16139c9da09d2b7290c693b1c8f501b8d53f7e21bfdfe402fac7b1`。附 [源码差异](dist/general-0.1general-0.5.10-source.diff)、[哈希清单](dist/general-0.1general-0.5.10-SHA256SUMS.txt) 与包含原始失败的 [证据包](dist/general-0.1general-0.5.10-evidence.zip)。正常推送 main，不创建 Release。0.5.9 回滚 ZIP 保留；早期未完成刷新身份修复的局部候选仅在本地标记 superseded，不发布。
++
++已完整备份并替换授权“远程仓库1”三文件，备份 `.deploy-backups/general-0.5.10-target-1791901733357089000`；其余 **2038** 个文件哈希不变，未操作 PDF、未重载主实例。设置、缓存、旧恢复和检查点保持不变。同步后确认三文件均为本候选，有未保存编辑时先尝试恢复并确认副本，再重启加载 0.5.10；实体 iPad 连续 Ink／高亮保存、二次编辑及关闭仍由用户复验。
++
++## 历史：0.5.9 轻量恢复与后台增量保存（2026-10-13）
+ 
+ 三端统一 0.5.9，同一源码和三文件；依赖、冻结 Viewer、默认自动保存间隔保持不变。PDF.js 先生成完整保存结果，自有增量写入器只输出变化的间接对象、外观资源、页面批注数组、合并元数据和 xref/trailer。最终补丁绑定磁盘的完整指纹和长度，使用公开 `Vault.appendBinary`；追加只发起一次，失败或写后不一致保留恢复并暂停，不能盲目重试。无法安全生成增量或宿主没有追加能力时保留完整写入路径。比较与追加之间仍无原子 CAS，同步竞争窗口不能完全消除。
+ 
+diff --git a/MACOS_HANDOFF.md b/MACOS_HANDOFF.md
+index 2243305..75ee73f 100644
+--- a/MACOS_HANDOFF.md
++++ b/MACOS_HANDOFF.md
+@@ -1,6 +1,10 @@
+ # PDF Web Reader 苹果平台开发交接上下文
+ 
+-## 当前 0.5.9 增量写入与恢复（2026-10-13）
++## 当前 0.5.10 连续笔迹保存（2026-10-13）
++
++同一组三文件服务 Windows、macOS、iPadOS。修复 ACK 后保留 Storage 却读取原始 Worker 字节导致 Ink 绑定失败；各序列化入口包含当前编辑。保存期间完成的 Ink 在每轮安全边界和重任务许可后复核提交，避免同一修订重复保存并阻塞关闭。恢复仅确认校验后的原始或准备完成草稿，未提交笔迹不满足关闭条件。原始失败及实机限制见 GENERAL_ACCEPTANCE.md。保留 0.5.9 回滚包、旧恢复、缓存与设置，不升级依赖，不修改冻结 Viewer。
++
++## 历史 0.5.9 增量写入与恢复（2026-10-13）
+ 
+ 三端统一 0.5.9。自有增量写入器保持原 PDF 前缀，补丁绑定当前磁盘完整指纹与长度；可用时通过 Vault.appendBinary 写回。共享恢复基线、增量段和不可变同步日志减少重复写入，旧恢复格式与被替代本地分支保留；无法安全追加时完整保存。继承 0.5.8 安全关闭协调。冻结 Viewer 和依赖不变，0.5.8 保留回滚。完整 PDF.js 输出、全文件核验、非原子比较／追加及日志累计限制仍在；性能与指定独立库证据见 GENERAL_ACCEPTANCE.md，实体 iPad 不以 Mac 模拟替代。
+ 
+@@ -24,7 +28,7 @@
+ 本轮原生验证仅 `/Users/jiajia/Documents/ObReader-Apple-Test`，主库和此前 `远程仓库1` 部署目录不操作。保留 0.5.4 回滚包；当前验证与交付见 GENERAL_ACCEPTANCE.md。Mac 移动模拟不代表实体 iPad 内存／崩溃验收。
+ 
+ 
+-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.9），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
++本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.10），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+ 
+ ## 历史：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
+ 
+diff --git a/README.md b/README.md
+index 8ce8960..b2ea83b 100644
+--- a/README.md
++++ b/README.md
+@@ -6,14 +6,23 @@ back to the same file. No local web server, Windows launcher, external browser,
+ Python, separately installed Node.js, or network service is needed at runtime.
+ 
+ The current work is the **0.1general unified candidate (plugin
+-0.5.9)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
++0.5.10)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+ is the current scope and validation guide. The 0.3.0 iPad package and mouse
+ matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
+ [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
+ acceptance is claimed for Windows or iPad; iPad deployment and final device
+ acceptance remain for the user.
+ 
+-The latest [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
++The latest [0.5.10 three-file package](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip)
++fixes retained live Ink serialization and commits strokes completed during an
++in-flight save before capturing the next revision. Host-confirmed clean flags
++do not mean the PDF.js loaded bytes already contain those editors. Save and
++recovery both serialize retained editor storage; exact UUID-to-ref binding
++remains strict. Recovery acknowledges only verified nonempty serialized bytes.
++See [validation and limitations](GENERAL_ACCEPTANCE.md). Physical iPad acceptance
++remains pending; the 0.5.9 package is retained for rollback.
++
++The prior [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
+ uses verified PDF incremental revisions and binary append where the host supports
+ it. Shared recovery bases plus checksummed deltas retain complete local branches;
+ old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,
+diff --git a/manifest.json b/manifest.json
+index e28bdf0..9da79ac 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "id": "pdf-web-reader",
+   "name": "PDF Web Reader",
+-  "version": "0.5.9",
++  "version": "0.5.10",
+   "minAppVersion": "1.14.4",
+   "description": "Read vault PDFs and edit underline, rectangle, highlight, ink, and text annotations offline.",
+   "author": "XxX-42",
+diff --git a/plugin/main.js b/plugin/main.js
+index 3e3447d..438c24c 100644
+--- a/plugin/main.js
++++ b/plugin/main.js
+@@ -2624,15 +2624,25 @@ class PdfReaderView extends EditableFileView {
+         throw invalid;
+       }
+       heavyLease = await this.plugin.acquireHeavyLease(this, recoveryRequest.file, "recovery", annotationSync?.heavyLeaseId);
+-      let data = receivedArrayBuffer(value);
++      // Keep the PDF.js serialization untouched until the recovery record has
++      // been durably verified. Annotation-ID preparation is best-effort: a
++      // binding failure must fall back to these exact bytes, never an empty or
++      // partially constructed prepared buffer.
++      const serializedData = receivedArrayBuffer(value);
++      let data = serializedData;
+       await this.plugin.enqueueSave(async () => {
+         if (annotationSync?.actorId && this.plugin.pdfSync) {
+           try {
+             const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data, heavyLeaseId: heavyLease?.id }, recoveryRequest);
+-            data = new Uint8Array(prepared.bytes).slice().buffer;
++            const preparedData = receivedArrayBuffer(prepared?.bytes);
++            if (preparedData.byteLength === 0) {
++              throw new Error("Prepared recovery output is empty.");
++            }
++            data = preparedData.slice(0);
+           } catch {
+             // Unsupported merge metadata must never prevent recovery of the
+             // frozen writer's valid draft; this path does not overwrite PDF.
++            data = serializedData;
+           }
+         }
+         const record = await this.plugin.writeRecoveryCandidate({
+diff --git a/plugin/manifest.json b/plugin/manifest.json
+index e28bdf0..9da79ac 100644
+--- a/plugin/manifest.json
++++ b/plugin/manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "id": "pdf-web-reader",
+   "name": "PDF Web Reader",
+-  "version": "0.5.9",
++  "version": "0.5.10",
+   "minAppVersion": "1.14.4",
+   "description": "Read vault PDFs and edit underline, rectangle, highlight, ink, and text annotations offline.",
+   "author": "XxX-42",
+diff --git a/tests/autosave-regression.test.mjs b/tests/autosave-regression.test.mjs
+index 69815b5..083272a 100644
+--- a/tests/autosave-regression.test.mjs
++++ b/tests/autosave-regression.test.mjs
+@@ -74,7 +74,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+           const documentId = ${JSON.stringify(documentId)};
+           const documentPath = ${JSON.stringify(documentPath)};
+           const iframe = document.querySelector('iframe');
+-          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], errors:[], holdFirstAck:true, holdNextAck:false, nextAckDelay:10, failNext:false, failDelay:10 };
++          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], heavyLeases:[], pendingHeavyLeases:[], errors:[], holdFirstAck:true, holdNextAck:false, holdNextHeavyLease:false, nextAckDelay:10, failNext:false, failDelay:10 };
+           window.addEventListener('message', event => {
+             if (event.source !== iframe.contentWindow) return;
+             const message = event.data;
+@@ -112,7 +112,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+                 fetch('/tests/fixtures/tracemonkey.pdf').then(response => response.arrayBuffer()).then(data => {
+                   iframe.contentWindow.postMessage({
+                     channel, type:'open', token, documentId, documentPath,
+-                    filename:'tracemonkey.pdf', autoSave:true, openRequest:1, data,
++                    filename:'tracemonkey.pdf', autoSave:true, heavyLeaseRequired:true, openRequest:1, data,
+                   }, '*', [data]);
+                 }).catch(error => state.errors.push(error.message));
+               }
+@@ -129,6 +129,26 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+                 dirty:message.dirty,
+                 restorePaused:message.restorePaused,
+               });
++            } else if (message.type === 'heavy-acquire') {
++              const leaseRequest = {
++                id: message.id,
++                documentId: message.documentId,
++                openRequest: message.openRequest,
++                rendererGeneration: message.rendererGeneration,
++              };
++              state.heavyLeases.push(leaseRequest);
++              if (state.holdNextHeavyLease) {
++                state.holdNextHeavyLease = false;
++                state.pendingHeavyLeases.push(leaseRequest);
++                return;
++              }
++              setTimeout(() => iframe.contentWindow.postMessage({
++                channel, type:'heavy-granted', token,
++                ...leaseRequest,
++                leaseId:'autosave-test-lease-' + state.heavyLeases.length,
++              }, '*'), 0);
++            } else if (message.type === 'heavy-release') {
++              state.heavyLeases.push({ release:message.leaseId, documentId:message.documentId });
+             } else if (message.type === 'save') {
+               const save = {
+                 documentId: message.documentId,
+@@ -138,6 +158,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+                 receivedAt: performance.timeOrigin + performance.now(),
+                 byteLength: message.data?.byteLength || 0,
+                 data: message.data?.slice(0),
++                operations: message.operations,
++                newAnnotations: message.newAnnotations,
+               };
+               state.saves.push(save);
+               if (state.failNext) {
+@@ -561,6 +583,140 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+         throw error;
+       });
+ 
++    // A pen stroke that finishes while a manual write waits for its Vault ACK
++    // must be committed on the next revision boundary, then settle without an
++    // unbounded save loop or a close request waiting forever.
++    const saveCountBeforeHeldInk = await page.evaluate(() => {
++      window.__host.holdNextAck = true;
++      window.__host.nextAckDelay = 1_800;
++      return window.__host.saves.length;
++    });
++    await viewer.evaluate(() => {
++      const app = PDFViewerApplication;
++      app.pdfViewer._layerProperties.annotationEditorUIManager.undo();
++      document.body.focus();
++      document.getElementById("editorInkButton").click();
++    });
++    await viewer.waitForFunction(
++      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
++      { timeout: 5_000 },
++    );
++    await viewer.waitForFunction(() => {
++      const page = document.querySelector('.page[data-page-number="1"]');
++      const layer = PDFViewerApplication.pdfViewer.getPageView(0)?.annotationEditorLayer?.div;
++      const rect = page?.getBoundingClientRect();
++      return Boolean(
++        layer?.isConnected && rect?.width > 0 && rect?.bottom > 0 &&
++        rect?.top < window.innerHeight
++      );
++    }, { timeout: 10_000 });
++    const penPoint = await viewer.evaluate(() => {
++      const rect = document
++        .querySelector('.page[data-page-number="1"] .annotationEditorLayer')
++        .getBoundingClientRect();
++      return { x: rect.left + 360, y: rect.top + 260 };
++    });
++    const iframeOffset = await page.$eval("iframe", (element) => {
++      const rect = element.getBoundingClientRect();
++      return { x: rect.left, y: rect.top };
++    });
++    const penX = iframeOffset.x + penPoint.x;
++    const penY = iframeOffset.y + penPoint.y;
++    const heldInkCdp = await page.createCDPSession();
++    const sendPen = (type, x, y) => heldInkCdp.send("Input.dispatchMouseEvent", {
++      type,
++      x,
++      y,
++      button: type === "mouseMoved" ? "none" : "left",
++      buttons: type === "mouseReleased" ? 0 : 1,
++      pointerType: "pen",
++      force: type === "mouseReleased" ? 0 : 0.6,
++    });
++    try {
++      await page.keyboard.down("Meta");
++      await page.keyboard.press("s");
++      await page.keyboard.up("Meta");
++      await page.waitForFunction(
++        (count) => window.__host.saves.length === count + 1,
++        { timeout: 5_000 },
++        saveCountBeforeHeldInk,
++      );
++      const heldInkFirstSave = await page.evaluate(() => window.__host.saves.at(-1));
++      assert.equal(heldInkFirstSave.origin, "manual");
++      assert.equal(heldInkFirstSave.acknowledgedAt, undefined,
++        "The first manual write should still be waiting for its host ACK");
++
++      const storageSizeBeforePen = await viewer.evaluate(() =>
++        PDFViewerApplication.pdfDocument.annotationStorage.size,
++      );
++      await sendPen("mousePressed", penX, penY);
++      for (let step = 1; step <= 8; step += 1) {
++        await sendPen("mouseMoved", penX + step * 8, penY + step * 4);
++      }
++      await sendPen("mouseReleased", penX + 64, penY + 32);
++      await viewer.waitForFunction(
++        (size) => PDFViewerApplication.pdfDocument.annotationStorage.size > size,
++        { timeout: 5_000 },
++        storageSizeBeforePen,
++      );
++
++      await page.waitForFunction(
++        (count) => window.__host.saves.length === count + 2,
++        { timeout: 10_000 },
++        saveCountBeforeHeldInk,
++      );
++      const heldInkSaves = await page.evaluate((count) =>
++        window.__host.saves.slice(count), saveCountBeforeHeldInk);
++      assert.equal(heldInkSaves[1].origin, "manual");
++      assert.ok(heldInkSaves[1].revision > heldInkSaves[0].revision,
++        "The post-ACK write should cover the pen stroke's later revision");
++      assert.ok(heldInkSaves[1].newAnnotations?.some((entry) => entry.kind === "Ink"),
++        "The post-ACK serialization should include the committed Ink editor");
++      await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), {
++        timeout: 10_000,
++      });
++      await new Promise((resolve) => setTimeout(resolve, 1_200));
++      assert.equal(await page.evaluate((count) => window.__host.saves.length, saveCountBeforeHeldInk),
++        saveCountBeforeHeldInk + 2,
++        "The settled manual save must not emit another write for the same revision");
++
++      await page.evaluate(() => {
++        document.querySelector("iframe").contentWindow.postMessage({
++          channel,
++          type: "prepare-close",
++          token,
++          documentId,
++          openRequest: 1,
++          reason: "detach",
++          id: "prepare-close-after-held-ink-save",
++        }, "*");
++      });
++      await page.waitForFunction(() => window.__host.closePrepareds.some(
++        (entry) => entry.id === "prepare-close-after-held-ink-save",
++      ), { timeout: 10_000 });
++      const closeAfterHeldInk = await page.evaluate(() =>
++        window.__host.closePrepareds.find(
++          (entry) => entry.id === "prepare-close-after-held-ink-save",
++        ));
++      assert.equal(closeAfterHeldInk.ok, true);
++      assert.equal(closeAfterHeldInk.dirty, false);
++      await page.evaluate(() => {
++        document.querySelector("iframe").contentWindow.postMessage({
++          channel,
++          type: "cancel-close",
++          token,
++          documentId,
++          openRequest: 1,
++          id: "prepare-close-after-held-ink-save",
++        }, "*");
++      });
++      await viewer.waitForFunction(() =>
++        !PDFViewerApplication.appConfig.appContainer.hasAttribute("inert"),
++      );
++    } finally {
++      await heldInkCdp.detach().catch(() => {});
++    }
++
+     // Build another dirty revision, start an IME composition, then press Cmd+S.
+     // The bridge must hold the request until compositionend.
+     await viewer.evaluate(() => {
+@@ -582,16 +738,16 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await new Promise((resolve) => setTimeout(resolve, 1200));
+     assert.equal(
+       await page.evaluate(() => window.__host.saves.length),
+-      3,
++      5,
+       "Both auto-save and Cmd+S must wait while IME composition is active",
+     );
+     await viewer.evaluate(() =>
+       window.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })),
+     );
+-    await page.waitForFunction(() => window.__host.saves.length === 4, {
++    await page.waitForFunction(() => window.__host.saves.length === 6, {
+       timeout: 5_000,
+     });
+-    const fourthSave = await page.evaluate(() => window.__host.saves[3]);
++    const fourthSave = await page.evaluate(() => window.__host.saves[5]);
+     assert.equal(fourthSave.origin, "manual");
+     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
+ 
+@@ -608,7 +764,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     });
+     await new Promise((resolve) => setTimeout(resolve, 150));
+     assert.equal(await page.evaluate(() => window.__host.flushes.length), 0);
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 4);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 6);
+     await viewer.evaluate(() =>
+       window.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })),
+     );
+@@ -617,7 +773,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       await page.evaluate(() => window.__host.flushes[0]),
+       { id: "flush-ime-boundary", ok: true, dirty: false },
+     );
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 5);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 7);
+     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
+ 
+     // A close flush waits for a pointer gesture to finish, then writes the
+@@ -636,14 +792,14 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     });
+     await new Promise((resolve) => setTimeout(resolve, 150));
+     assert.equal(await page.evaluate(() => window.__host.flushes.length), 1);
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 5);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 7);
+     await finishSquare(closePoint);
+     await page.waitForFunction(() => window.__host.flushes.length === 2);
+     assert.deepEqual(
+       await page.evaluate(() => window.__host.flushes[1]),
+       { id: "flush-auto-close", ok: true, dirty: false },
+     );
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 6);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 8);
+     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
+ 
+     // A controlled close blocks new pointer edits while it waits for an
+@@ -656,7 +812,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await viewer.evaluate(() => {
+       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
+     });
+-    await page.waitForFunction(() => window.__host.saves.length === 7, {
++    await page.waitForFunction(() => window.__host.saves.length === 9, {
+       timeout: 5_000,
+     });
+     if (
+@@ -700,21 +856,21 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     );
+     assert.equal(
+       await page.evaluate(() => window.__host.closePrepareds.length),
+-      0,
++      1,
+       "The host must not receive a prepared acknowledgement before its pending write settles",
+     );
+-    await page.waitForFunction(() => window.__host.closePrepareds.length === 1, {
++    await page.waitForFunction(() => window.__host.closePrepareds.length === 2, {
+       timeout: 10_000,
+     });
+     const heldClose = await page.evaluate(
+-      () => window.__host.closePrepareds[0],
++      () => window.__host.closePrepareds[1],
+     );
+     assert.equal(heldClose.id, "prepare-close-held-save");
+     assert.equal(heldClose.documentId, documentId);
+     assert.equal(heldClose.openRequest, 1);
+     assert.equal(
+       heldClose.revision,
+-      await page.evaluate(() => window.__host.saves[6].revision),
++      await page.evaluate(() => window.__host.saves[8].revision),
+     );
+     assert.equal(heldClose.ok, true);
+     assert.equal(heldClose.dirty, false);
+@@ -760,7 +916,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       { timeout: 3_000 },
+       squaresAfterCancel,
+     );
+-    await page.waitForFunction(() => window.__host.saves.length === 8, {
++    await page.waitForFunction(() => window.__host.saves.length === 10, {
+       timeout: 10_000,
+     });
+     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
+@@ -800,16 +956,16 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       }, "*");
+     });
+     await new Promise((resolve) => setTimeout(resolve, 120));
+-    assert.equal(await page.evaluate(() => window.__host.closePrepareds.length), 1);
++    assert.equal(await page.evaluate(() => window.__host.closePrepareds.length), 2);
+     await viewer.evaluate(() => {
+       document
+         .querySelector('.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal')
+         .dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+     });
+-    await page.waitForFunction(() => window.__host.closePrepareds.length === 2, {
++    await page.waitForFunction(() => window.__host.closePrepareds.length === 3, {
+       timeout: 10_000,
+     });
+-    const imeClose = await page.evaluate(() => window.__host.closePrepareds[1]);
++    const imeClose = await page.evaluate(() => window.__host.closePrepareds[2]);
+     assert.equal(imeClose.prepared, true);
+     assert.equal(imeClose.ok, true);
+     assert.equal(imeClose.dirty, false);
+@@ -881,7 +1037,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await viewer.waitForFunction(() => !PDFViewerApplication._saveInProgress, {
+       timeout: 10_000,
+     });
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 9);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
+     assert.equal(
+       await viewer.evaluate(() => PDFViewerApplication._hasChanges()),
+       true,
+@@ -890,7 +1046,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     const savesAfterDisable = await page.evaluate(() => window.__host.saves);
+     assert.equal(
+       savesAfterDisable.length,
+-      9,
++      11,
+       `Disabling auto-save must stop idle writes; got ${JSON.stringify(savesAfterDisable)}`,
+     );
+     await page.evaluate(() => {
+@@ -908,7 +1064,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       await page.evaluate(() => window.__host.flushes[2]),
+       { id: "flush-disabled", ok: false, dirty: true, recovered: true },
+     );
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 9);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
+     const disabledRecovery = await page.evaluate(() => window.__host.recoveries[0]);
+     assert.equal(disabledRecovery.reason, "auto-save-disabled");
+     assert.ok(disabledRecovery.byteLength > 0);
+@@ -923,11 +1079,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+         id: "prepare-close-disabled-recovery",
+       }, "*");
+     });
+-    await page.waitForFunction(() => window.__host.closePrepareds.length === 3, {
++    await page.waitForFunction(() => window.__host.closePrepareds.length === 4, {
+       timeout: 10_000,
+     });
+     const disabledClose = await page.evaluate(
+-      () => window.__host.closePrepareds[2],
++      () => window.__host.closePrepareds[3],
+     );
+     assert.equal(disabledClose.id, "prepare-close-disabled-recovery");
+     assert.equal(disabledClose.documentId, documentId);
+@@ -968,9 +1124,9 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+ 
+     // An explicit manual save still works while the setting is disabled.
+     await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+-    await page.waitForFunction(() => window.__host.saves.length === 10);
++    await page.waitForFunction(() => window.__host.saves.length === 12);
+     assert.equal(
+-      await page.evaluate(() => window.__host.saves[9].origin),
++      await page.evaluate(() => window.__host.saves[11].origin),
+       "manual",
+     );
+     await viewer
+@@ -1004,7 +1160,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       await page.evaluate(() => window.__host.flushes[3]),
+       { id: "flush-clean-disabled", ok: true, dirty: false },
+     );
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 10);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 12);
+ 
+     // A host conflict pauses autosave. If a newer edit occurs while the
+     // conflicting write is still pending, close recovery must capture that
+@@ -1017,7 +1173,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       window.__host.failDelay = 800;
+     });
+     await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+-    await page.waitForFunction(() => window.__host.saves.length === 11);
++    await page.waitForFunction(() => window.__host.saves.length === 13);
+     await viewer.evaluate(() => {
+       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
+     });
+@@ -1036,17 +1192,17 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       await page.evaluate(() => window.__host.flushes[4]),
+       { id: "flush-conflict", ok: false, dirty: true, recovered: true },
+     );
+-    assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
++    assert.equal(await page.evaluate(() => window.__host.saves.length), 13);
+     const conflictRecovery = await page.evaluate(() => window.__host.recoveries[2]);
+     assert.equal(conflictRecovery.reason, "save-conflict");
+     assert.ok(conflictRecovery.byteLength > 0);
+     assert.ok(
+       conflictRecovery.revision >
+-        (await page.evaluate(() => window.__host.saves[10].revision)),
++        (await page.evaluate(() => window.__host.saves[12].revision)),
+       "Recovery must serialize the edit made while the original save was pending",
+     );
+     await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+-    await page.waitForFunction(() => window.__host.saves.length === 12);
++    await page.waitForFunction(() => window.__host.saves.length === 14);
+     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
+ 
+     // Once a disabled dirty revision has a durable recovery candidate, a new
+@@ -1126,11 +1282,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+         id: "prepare-close-before-open",
+       }, "*");
+     });
+-    await page.waitForFunction(() => window.__host.closePrepareds.length === 4, {
++    await page.waitForFunction(() => window.__host.closePrepareds.length === 5, {
+       timeout: 5_000,
+     });
+     const emptyClose = await page.evaluate(
+-      () => window.__host.closePrepareds[3],
++      () => window.__host.closePrepareds[4],
+     );
+     assert.deepEqual(emptyClose, {
+       id: "prepare-close-before-open",
+@@ -1319,18 +1475,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await new Promise((resolve) => setTimeout(resolve, 1_200));
+     assert.equal(
+       await page.evaluate(() => window.__host.saves.length),
+-      12,
++      14,
+       "Opening a dirty recovery candidate with autosave off must not write the original PDF",
+     );
+     await viewer.evaluate(() => document.body.focus());
+     await page.keyboard.down("Meta");
+     await page.keyboard.press("s");
+     await page.keyboard.up("Meta");
+-    await page.waitForFunction(() => window.__host.saves.length === 13, {
++    await page.waitForFunction(() => window.__host.saves.length === 15, {
+       timeout: 5_000,
+     });
+     const restoredManualSave = await page.evaluate(
+-      () => window.__host.saves[12],
++      () => window.__host.saves[14],
+     );
+     assert.equal(restoredManualSave.origin, "manual");
+     assert.equal(
+@@ -1357,17 +1513,17 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await setSquareMode();
+     const conflictSquarePoint = await startSquare(250);
+     await finishSquare(conflictSquarePoint);
+-    await page.waitForFunction(() => window.__host.saves.length === 14, {
++    await page.waitForFunction(() => window.__host.saves.length === 16, {
+       timeout: 10_000,
+     });
+     assert.equal(
+-      await page.evaluate(() => window.__host.saves[13].origin),
++      await page.evaluate(() => window.__host.saves[15].origin),
+       "auto",
+     );
+     await new Promise((resolve) => setTimeout(resolve, 1_200));
+     assert.equal(
+       await page.evaluate(() => window.__host.saves.length),
+-      14,
++      16,
+       "A failed auto-origin save must stay paused instead of retrying silently",
+     );
+     const pausedRecoveryIndex = await page.evaluate(
+@@ -1417,18 +1573,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+     await new Promise((resolve) => setTimeout(resolve, 1_200));
+     assert.equal(
+       await page.evaluate(() => window.__host.saves.length),
+-      14,
++      16,
+       "A restored conflict pause must suppress autosave after the viewer realm reloads",
+     );
+     await viewer.evaluate(() => document.body.focus());
+     await page.keyboard.down("Meta");
+     await page.keyboard.press("s");
+     await page.keyboard.up("Meta");
+-    await page.waitForFunction(() => window.__host.saves.length === 15, {
++    await page.waitForFunction(() => window.__host.saves.length === 17, {
+       timeout: 5_000,
+     });
+     const pausedManualSave = await page.evaluate(
+-      () => window.__host.saves[14],
++      () => window.__host.saves[16],
+     );
+     assert.equal(pausedManualSave.origin, "manual");
+     assert.equal(pausedManualSave.revision, pausedRecovery.revision);
+@@ -2437,7 +2593,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+             documentId: "test-session-7",
+             documentPath: "tests/fixtures/seventh-session.pdf",
+             filename: "seventh-session.pdf",
+-            autoSave: true,
++            autoSave: false,
++            heavyLeaseRequired: true,
+             openRequest: 9,
+             data,
+           },
+@@ -2524,6 +2681,131 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
+       "Blur cancellation must not leave a stuck pointer or stale timer after switching",
+     );
+ 
++    // Hold the host's heavy lease after a dirty Ink editor already exists,
++    // finish a second pen stroke during that wait, then grant the lease. The
++    // stale pre-stroke snapshot must be discarded and retried with both Ink
++    // editors before the host sees a write.
++    await viewer.evaluate(() => {
++      const app = PDFViewerApplication;
++      app.pdfViewer.currentPageNumber = 1;
++      document.querySelector('.page[data-page-number="1"]')
++        .scrollIntoView({ block: "start" });
++      document.body.focus();
++      document.getElementById("editorInkButton").click();
++    });
++    await viewer.waitForFunction(
++      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
++      { timeout: 5_000 },
++    );
++    await viewer.waitForFunction(() => {
++      const page = document.querySelector('.page[data-page-number="1"]');
++      const layer = PDFViewerApplication.pdfViewer.getPageView(0)?.annotationEditorLayer?.div;
++      const rect = page?.getBoundingClientRect();
++      return Boolean(
++        layer?.isConnected && rect?.width > 0 && rect?.bottom > 0 &&
++        rect?.top < window.innerHeight
++      );
++    }, { timeout: 10_000 });
++    const inkPagePoint = await viewer.evaluate(() => {
++      const rect = document
++        .querySelector('.page[data-page-number="1"] .annotationEditorLayer')
++        .getBoundingClientRect();
++      return { x: rect.left + 330, y: rect.top + 270 };
++    });
++    const inkIframeOffset = await page.$eval("iframe", (element) => {
++      const rect = element.getBoundingClientRect();
++      return { x: rect.left, y: rect.top };
++    });
++    const leasePenX = inkIframeOffset.x + inkPagePoint.x;
++    const leasePenY = inkIframeOffset.y + inkPagePoint.y;
++    const leasePenCdp = await page.createCDPSession();
++    const sendLeasePen = (type, x, y) => leasePenCdp.send("Input.dispatchMouseEvent", {
++      type,
++      x,
++      y,
++      button: type === "mouseMoved" ? "none" : "left",
++      buttons: type === "mouseReleased" ? 0 : 1,
++      pointerType: "pen",
++      force: type === "mouseReleased" ? 0 : 0.6,
++    });
++    try {
++      const drawLeasePen = async (offset) => {
++        const previousPointerUps = await page.evaluate(() => window.__host.pointerUps.length);
++        await sendLeasePen("mousePressed", leasePenX + offset, leasePenY + offset);
++        for (let step = 1; step <= 6; step += 1) {
++          await sendLeasePen(
++            "mouseMoved",
++            leasePenX + offset + step * 7,
++            leasePenY + offset + step * 4,
++          );
++        }
++        await sendLeasePen(
++          "mouseReleased",
++          leasePenX + offset + 42,
++          leasePenY + offset + 24,
++        );
++        await page.waitForFunction(
++          (count) => window.__host.pointerUps.length > count,
++          { timeout: 5_000 },
++          previousPointerUps,
++        );
++      };
++
++      await drawLeasePen(0);
++      const leaseWindowSaveCount = await page.evaluate(() => {
++        window.__host.holdNextHeavyLease = true;
++        return window.__host.saves.length;
++      });
++      await page.keyboard.down("Meta");
++      await page.keyboard.press("s");
++      await page.keyboard.up("Meta");
++      await page.waitForFunction(() => window.__host.pendingHeavyLeases.length === 1, {
++        timeout: 5_000,
++      });
++      assert.equal(
++        await page.evaluate(() => window.__host.saves.length),
++        leaseWindowSaveCount,
++        "The held heavy lease must prevent serialization and host write",
++      );
++
++      await drawLeasePen(90);
++      const grantedLease = await page.evaluate(() => {
++        const lease = window.__host.pendingHeavyLeases.shift();
++        if (!lease) return null;
++        document.querySelector("iframe").contentWindow.postMessage({
++          channel,
++          type: "heavy-granted",
++          token,
++          ...lease,
++          leaseId: "autosave-test-held-lease-grant",
++        }, "*");
++        return lease;
++      });
++      assert.ok(grantedLease, "The held lease request should still be pending");
++      await page.waitForFunction(
++        (count) => window.__host.saves.length === count + 1,
++        { timeout: 10_000 },
++        leaseWindowSaveCount,
++      );
++      const afterHeldLeaseSave = await page.evaluate(() => window.__host.saves.at(-1));
++      assert.equal(afterHeldLeaseSave.origin, "manual");
++      assert.ok(
++        afterHeldLeaseSave.newAnnotations?.filter((entry) => entry.kind === "Ink").length >= 2,
++        "The retried snapshot must include both the pre-lease and in-lease Ink editors",
++      );
++      await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), {
++        timeout: 10_000,
++      });
++      await new Promise((resolve) => setTimeout(resolve, 300));
++      assert.equal(
++        await page.evaluate((count) => window.__host.saves.length, leaseWindowSaveCount),
++        leaseWindowSaveCount + 1,
++        "A stroke completed during the lease wait must not cause an unbounded retry/write loop",
++      );
++    } finally {
++      await leasePenCdp.detach().catch(() => {});
++    }
++
+     assert.equal(
+       await page.evaluate(() => window.__host.errors.length),
+       0,
+diff --git a/tests/native-close-button.mjs b/tests/native-close-button.mjs
+index 4aa34d5..3500bec 100644
+--- a/tests/native-close-button.mjs
++++ b/tests/native-close-button.mjs
+@@ -7,7 +7,7 @@ import { PDFDocument, PDFName } from 'pdf-lib';
+ import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
+ const {vault,configDir,cdpUrl}=nativeConfig;
+ assert.equal(vault,'/Users/jiajia/Documents/ObReader-Apple-Test');assert.ok(cdpUrl);
+-const version='0.5.9',run=`general-${version}-close-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
++const version=process.env.NATIVE_VERSION||'0.5.10',run=`general-${version}-close-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
+ const bytes=await fs.readFile('tests/fixtures/tracemonkey.pdf'),hash=x=>crypto.createHash('sha256').update(x).digest('hex');
+ await fs.writeFile(`tests/artifacts/${run}.driver.mjs`,await fs.readFile(import.meta.filename),{flag:'wx'});
+ const b=await puppeteer.connect({browserURL:cdpUrl,defaultViewport:null});const p=(await b.pages()).find(p=>p.url()==='app://obsidian.md/index.html');assert.ok(p);const c=await p.createCDPSession();let original,failure;
+@@ -22,7 +22,7 @@ try{
+  await c.send('Emulation.setFocusEmulationEnabled',{enabled:true});original=await identity();assert.equal(original.mobile,false);assert.equal(original.views,0);
+  assert.equal(await root(()=>app.plugins.plugins['pdf-web-reader'].settings.autoSave),true);
+  report.productHashes={};for(const name of ['main.js','manifest.json','styles.css']){const actual=await fs.readFile(path.join(vault,configDir,'plugins/pdf-web-reader',name));assert.deepEqual(actual,await fs.readFile(`dist/pdf-web-reader/${name}`));report.productHashes[name]=hash(actual);}
+- await root(async prefix=>{if(!prefix.startsWith('PDF迁移测试/general-0.5.9-close-native-')||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},prefix);
++ await root(async({prefix,version})=>{if(!prefix.startsWith(`PDF迁移测试/general-${version}-close-native-`)||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},{prefix,version});
+  for(const mobile of [false,true]){
+   if(mobile)await mode(true);
+   for(const kind of ['clean','edited','write-failure']){
+@@ -56,7 +56,7 @@ try{
+ }catch(e){failure=e;report.status='failed';report.error=e.stack;try{report.failureState=await root(prefix=>[...app.plugins.plugins['pdf-web-reader'].views].filter(v=>v.requestedPath?.startsWith(prefix+'/')).map(v=>({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision,page:v.iframe?.contentWindow?.PDFViewerApplication?.pdfViewer.currentPageNumber,pageBounds:(()=>{const r=v.iframe?.contentWindow?.document.querySelector('.page[data-page-number="1"]')?.getBoundingClientRect();return r?{x:r.x,y:r.y,width:r.width,height:r.height}:null;})(),storage:v.iframe?.contentWindow?.PDFViewerApplication?.pdfDocument?.annotationStorage.serializable.map? [...v.iframe.contentWindow.PDFViewerApplication.pdfDocument.annotationStorage.serializable.map.values()].map(e=>({type:e.annotationType,deleted:e.deleted})):[],closing:!!v.closePreparation,prepared:!!v.preparedClose})),prefix);}catch(x){report.failureStateError=x.message;}}
+ finally{
+  try{await identity();await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;if(window.__closeFaultAppend)app.vault.appendBinary=window.__closeFaultAppend;delete window.__closeFaultOriginal;delete window.__closeFaultAppend;}});await root(async prefix=>{for(const v of [...app.plugins.plugins['pdf-web-reader'].views])if(v.requestedPath?.startsWith(prefix+'/'))await v.leaf.detach();await app.workspace.saveLayout();},prefix);}catch(e){failure||=e;report.status='failed';report.cleanupError=e.message;}
+- try{if((await identity()).mobile!==original?.mobile)await mode(original?.mobile??false);report.restoredTestReaders=await root(async()=>{const rows=[];for(const v of [...app.plugins.plugins['pdf-web-reader'].views]){if(!/^PDF迁移测试\/general-0\.5\.9-close-native-\d+\/(?:desktop|mobile)-(?:clean|edited|write-failure)\.pdf$/.test(v.requestedPath||''))throw Error('Unrelated Reader after simulation restore');rows.push({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision});await v.leaf.detach();}await app.workspace.saveLayout();return rows;});await wait('Restored owned views cleaned',async()=>(await identity()).views===0);report.cleanup=await identity();assert.equal(report.cleanup.views,0);assert.equal(report.cleanup.mobile,false);}catch(e){failure||=e;report.status='failed';report.restoreError=e.message;}
++ try{if((await identity()).mobile!==original?.mobile)await mode(original?.mobile??false);report.restoredTestReaders=await root(async()=>{const rows=[];for(const v of [...app.plugins.plugins['pdf-web-reader'].views]){if(!/^PDF迁移测试\/general-0\.5\.(?:9|10)-close-native-\d+\/(?:desktop|mobile)-(?:clean|edited|write-failure)\.pdf$/.test(v.requestedPath||''))throw Error('Unrelated Reader after simulation restore');rows.push({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision});await v.leaf.detach();}await app.workspace.saveLayout();return rows;});await wait('Restored owned views cleaned',async()=>(await identity()).views===0);report.cleanup=await identity();assert.equal(report.cleanup.views,0);assert.equal(report.cleanup.mobile,false);}catch(e){failure||=e;report.status='failed';report.restoreError=e.message;}
+  await c.send('Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});b.disconnect();await fs.writeFile(`tests/artifacts/${run}.json`,JSON.stringify(report,null,2)+'\n',{flag:'wx'});console.log(run,report.status);
+ }
+ if(failure)throw failure;
+diff --git a/tests/native-ink-save-regression.mjs b/tests/native-ink-save-regression.mjs
+new file mode 100644
+index 0000000..feb88bc
+--- /dev/null
++++ b/tests/native-ink-save-regression.mjs
+@@ -0,0 +1,66 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs/promises';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import puppeteer from 'puppeteer-core';
++import { PDFDocument, PDFName } from 'pdf-lib';
++import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
++const {vault,configDir,cdpUrl}=nativeConfig;
++assert.equal(vault,'/Users/jiajia/Documents/ObReader-Apple-Test');assert.ok(cdpUrl);
++const version=process.env.NATIVE_VERSION||'0.5.10',run=`general-${version}-ink-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
++const pdf=await PDFDocument.create();for(let n=0;n<12;n++){const pg=pdf.addPage([600,780]);pg.drawText(`Synthetic existing annotation test page ${n+1}`,{x:30,y:740,size:15});}const bytes=await pdf.save({useObjectStreams:false}),hash=x=>crypto.createHash('sha256').update(x).digest('hex');
++await fs.writeFile(`tests/artifacts/${run}.driver.mjs`,await fs.readFile(import.meta.filename),{flag:'wx'});
++const b=await puppeteer.connect({browserURL:cdpUrl,defaultViewport:null});const p=(await b.pages()).find(p=>p.url()==='app://obsidian.md/index.html');assert.ok(p);const c=await p.createCDPSession();let original,failure;
++async function identity(){const s=await p.evaluate(()=>({vault:app.vault.adapter.basePath,configDir:app.vault.configDir,version:app.plugins.plugins['pdf-web-reader']?.manifest.version,mobile:!!app.isMobile,views:app.plugins.plugins['pdf-web-reader']?.views.size}));assertNativeVaultIdentity(s);assert.equal(s.version,version);return s;}
++async function root(fn,arg){await identity();return p.evaluate(async({source,arg,vault})=>{if(app.vault.adapter.basePath!==vault)throw Error('Wrong Vault');return (0,eval)(`(${source})`)(arg);},{source:fn.toString(),arg,vault});}
++async function doc(file,fn,arg){return root(({file,source,arg})=>{const v=[...app.plugins.plugins['pdf-web-reader'].views].find(v=>v.requestedPath===file);if(!v)throw Error('Own Reader missing');const w=v.iframe.contentWindow;return (0,eval)(`(${source})`)({v,w,d:w.document,a:w.PDFViewerApplication,arg});},{file,source:fn.toString(),arg});}
++const pause=ms=>new Promise(r=>setTimeout(r,ms));
++async function wait(label,fn,timeout=20000){const end=Date.now()+timeout;let last;while(Date.now()<end){last=await fn();if(last)return last;await pause(50);}throw Error(`${label}: ${JSON.stringify(last)}`);}
++async function mode(mobile){assert.equal((await identity()).views,0);await root(async()=>app.workspace.saveLayout());const nav=p.waitForNavigation({waitUntil:'domcontentloaded',timeout:30000});await root(m=>{setTimeout(()=>app.emulateMobile(m),0);},mobile);await nav;await c.send('Emulation.setFocusEmulationEnabled',{enabled:true});await p.waitForFunction(wanted=>app?.workspace?.layoutReady&&!!app.plugins.plugins['pdf-web-reader']?.settings&&!!app.isMobile===wanted,{polling:100,timeout:30000},mobile);await identity();}
++async function annotationCount(data){const pdf=await PDFDocument.load(data);return (pdf.getPage(0).node.Annots()?.asArray()||[]).filter(ref=>pdf.context.lookup(ref)?.get(PDFName.of('Subtype'))?.toString()==='/Square').length;}
++
++const file=`${prefix}/mixed-ink.pdf`;
++async function choose(id,modeValue){if(await doc(file,({a,arg})=>a.pdfViewer.annotationEditorMode===arg,modeValue))return;const q=await doc(file,({v,d,arg})=>{const el=d.getElementById(arg),r=el.getBoundingClientRect(),f=v.iframe.getBoundingClientRect();if(!r.width||!r.height||!el.contains(d.elementFromPoint(r.x+r.width/2,r.y+r.height/2)))throw Error('Tool not actually visible: '+arg);return{x:f.x+r.x+r.width/2,y:f.y+r.y+r.height/2};},id);await p.mouse.click(q.x,q.y);await wait('Tool selected',()=>doc(file,({a,arg})=>a.pdfViewer.annotationEditorMode===arg,modeValue));}
++async function pen(type,x,y){await c.send('Input.dispatchMouseEvent',{type,x,y,button:type==='mouseMoved'?'none':'left',buttons:type==='mouseReleased'?0:1,pointerType:'pen',force:type==='mouseReleased'?0:.6});}
++try{
++ await c.send('Emulation.setFocusEmulationEnabled',{enabled:true});original=await identity();assert.equal(original.mobile,false);assert.equal(original.views,0);
++ await root(async()=>app.workspace.saveLayout());await mode(true);
++ await root(async prefix=>{if(!/^PDF迁移测试\/general-0\./.test(prefix)||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},prefix);
++ await root(({prefix})=>{const original=Worker.prototype.postMessage;window.__inkNative={original,writes:[]};Worker.prototype.postMessage=function(message,...rest){if(message?.method==='prepareLocal'){const payload=message.payload||message.args||{},t=window.__inkNative,index=t.count||0;t.count=index+1;if(index>=40)return original.call(this,message,...rest);t.writes.push((async()=>{const adapter=app.vault.adapter,stem=`${prefix}/rpc-${index}`,meta={operations:payload.operations,newAnnotations:payload.newAnnotations,actorId:payload.actorId};const copy={};for(const name of ['baseBytes','draftBytes','checkpointBytes']){const value=payload[name];if(value)copy[name]=new Uint8Array(value.buffer||value,value.byteOffset||0,value.byteLength).slice().buffer;}for(const[name,value]of Object.entries(copy))await adapter.writeBinary(`${stem}-${name}.pdf`,value);await adapter.write(`${stem}.json`,JSON.stringify(meta));})());}return original.call(this,message,...rest);};},{prefix});
++ await root(async({file,bytes})=>{const f=await app.vault.createBinary(file,new Uint8Array(bytes).buffer);await app.plugins.plugins['pdf-web-reader'].openPdf(f);},{file,bytes:[...bytes]});
++ await wait('Own PDF ready',()=>doc(file,({v,a})=>v.ready&&a.pdfDocument?.numPages===12));
++ await doc(file,({w,d,a})=>{w.__penEvents=[];for(const type of ['pointerdown','pointerup','pointercancel'])d.addEventListener(type,e=>w.__penEvents.push({type,pointerType:e.pointerType,trusted:e.isTrusted}));a.pdfViewer.currentScaleValue='page-fit';});
++ await pause(300);await doc(file,({a})=>a.pdfViewer.scrollPageIntoView({pageNumber:10}));
++ await wait('Page 10 rendered',()=>doc(file,({a,d})=>{const pg=d.querySelector('.page[data-page-number="10"]'),r=pg?.getBoundingClientRect(),v=d.getElementById('viewerContainer').getBoundingClientRect();return a.pdfViewer.currentPageNumber===10&&a.pdfViewer.getPageView(9)?.renderingState===3&&r&&Math.min(r.bottom,v.bottom)-Math.max(r.top,v.top)>200;}));
++ for(let round=0;round<4;round++){
++  for(let n=0;n<3;n++){
++   await choose('editorInkButton',15);
++   const q=await doc(file,({v,d,arg})=>{const r=d.querySelector('.page[data-page-number="10"]').getBoundingClientRect(),view=d.getElementById('viewerContainer').getBoundingClientRect(),f=v.iframe.getBoundingClientRect();const x=Math.max(r.left,view.left)+40+arg.n*65,y=Math.max(r.top,view.top)+70+arg.round*60;return{x:x+f.x,y:y+f.y};},{round,n});
++   await pen('mousePressed',q.x,q.y);for(let k=1;k<=10;k++)await pen('mouseMoved',q.x+Math.sin(k*.6)*22,q.y+k*3);await pen('mouseReleased',q.x+Math.sin(6)*22,q.y+30);
++   await choose('editorHighlightButton',9);await pause(100);
++  }
++  const q=await doc(file,({v,d,arg})=>{const r=d.querySelector('.page[data-page-number="10"]').getBoundingClientRect(),view=d.getElementById('viewerContainer').getBoundingClientRect(),f=v.iframe.getBoundingClientRect();return{x:f.x+Math.max(r.left,view.left)+35,y:f.y+Math.max(r.top,view.top)+330+arg*12};},round);
++  await pen('mousePressed',q.x,q.y);for(let k=1;k<=8;k++)await pen('mouseMoved',q.x+k*5,q.y+k*3);await pen('mouseReleased',q.x+40,q.y+24);
++  await choose('editorInkButton',15);
++  await pause(200);
++  await wait('Actual edited state',()=>doc(file,({v,a})=>v.currentRevision>0&&a.pdfDocument.annotationStorage.size>0));
++  const target=await doc(file,({v,a,w})=>({revision:v.currentRevision,confirmed:v.confirmedRevision,entries:[...a.pdfDocument.annotationStorage.serializable.map].map(([id,row])=>({id,type:row.annotationType,page:row.pageIndex,deleted:row.deleted,ref:row.id})),events:w.__penEvents}));report.checks.push({round,target});
++  // Await the production Viewer manual-save promise so late Ink commits belong to this check.
++  await doc(file,async({a})=>a.save());
++  await wait('Ink save confirmed',()=>doc(file,({v,arg})=>{if(v.failureNoticeShown||v.syncFailureShown)throw Error('Production Ink save reported failure');return v.confirmedRevision>=arg&&v.confirmedRevision===v.currentRevision&&v.pendingSaves===0&&!v.iframe.contentWindow.PDFViewerApplication._saveInProgress;},target.revision));
++  const roundPdf=await PDFDocument.load(await fs.readFile(path.join(vault,file)));report.checks.at(-1).diskCount=(roundPdf.getPage(9).node.Annots()?.asArray()||[]).length;assert.equal(report.checks.at(-1).diskCount,(round+1)*4);
++  report.checks.at(-1).saved=await doc(file,({v,a})=>({revision:v.currentRevision,confirmed:v.confirmedRevision,entries:a.pdfDocument.annotationStorage.size}));
++ }
++ const disk=await fs.readFile(path.join(vault,file));const loaded=await PDFDocument.load(disk);report.savedAnnotations=(loaded.getPage(9).node.Annots()?.asArray()||[]).map(ref=>({ref:ref.toString(),subtype:loaded.context.lookup(ref).get(PDFName.of('Subtype'))?.toString(),it:loaded.context.lookup(ref).get(PDFName.of('IT'))?.toString()}));
++ assert.ok(report.savedAnnotations.length>=12);assert.ok(report.checks[0].target.events.some(e=>e.trusted&&e.pointerType==='pen'));
++ const closePoint=await root(file=>{const v=[...app.plugins.plugins['pdf-web-reader'].views].find(v=>v.requestedPath===file),r=v.leaf.tabHeaderEl.querySelector('.workspace-tab-header-inner-close-button').getBoundingClientRect();if(!r.width)throw Error('Real close button missing');return{x:r.x+r.width/2,y:r.y+r.height/2};},file);await p.mouse.click(closePoint.x,closePoint.y);await wait('Edited Reader actually closed',()=>root(file=>![...app.plugins.plugins['pdf-web-reader'].views].some(v=>v.requestedPath===file)&&!app.workspace.getLeavesOfType('pdf-web-reader-view').some(l=>l.view.requestedPath===file),file));report.realCloseButton=true;
++ await root(file=>app.plugins.plugins['pdf-web-reader'].openPdf(app.vault.getAbstractFileByPath(file)),file);
++ await wait('Reopened Ink PDF',()=>doc(file,({v,a})=>v.ready&&a.pdfDocument?.numPages===12));
++ report.reopenedAnnotations=await doc(file,async({a})=>(await(await a.pdfDocument.getPage(10)).getAnnotations()).map(x=>({id:x.id,type:x.annotationType})));assert.equal(report.reopenedAnnotations.length,report.savedAnnotations.length);
++ report.rpcCount=await root(()=>window.__inkNative?.count||0);assert.ok(report.rpcCount<40,'Save/recovery should settle, not repeatedly serialize');report.status='passed';
++}catch(e){failure=e;report.status='failed';report.error=e.stack;try{await p.screenshot({path:`tests/artifacts/${run}.png`});report.failureState=await doc(file,({v,a,w})=>({revision:v.currentRevision,confirmed:v.confirmedRevision,page:a.pdfViewer.currentPageNumber,render:a.pdfViewer.getPageView(9)?.renderingState,scroll:w.document.getElementById('viewerContainer').scrollTop,entries:[...(a.pdfDocument.annotationStorage.serializable.map||new Map())].map(([id,row])=>({id,...row})),events:w.__penEvents}));report.recovery=await root(async file=>(await app.plugins.plugins['pdf-web-reader'].listRecoveryCandidates()).filter(r=>r.metadata.originalPath===file||r.metadata.documentPath===file).map(r=>({candidate:r.candidatePath,metadata:r.metadata})),file);}catch(x){report.failureCaptureError=x.message;}}
++finally{
++ try{await root(async()=>{if(window.__inkNative){await Promise.allSettled(window.__inkNative.writes);Worker.prototype.postMessage=window.__inkNative.original;delete window.__inkNative;}});await root(async prefix=>{for(const v of [...app.plugins.plugins['pdf-web-reader'].views])if(v.requestedPath?.startsWith(prefix+'/'))await v.leaf.detach();await app.workspace.saveLayout();},prefix);await wait('Owned Reader cleanup settled',async()=>(await identity()).views===0);if((await identity()).mobile)await mode(false);report.cleanup=await identity();if(report.cleanup.views||report.cleanup.mobile)throw Error('Own Reader cleanup incomplete');}catch(e){report.cleanupError=e.stack;failure||=e;report.status='failed';}
++ await c.send('Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});b.disconnect();await fs.writeFile(`tests/artifacts/${run}.json`,JSON.stringify(report,null,2)+'\n',{flag:'wx'});console.log(run,report.status);
++}
++if(failure)throw failure;
+diff --git a/tests/packaging.test.mjs b/tests/packaging.test.mjs
+index 3b9626a..28ac68d 100644
+--- a/tests/packaging.test.mjs
++++ b/tests/packaging.test.mjs
+@@ -127,7 +127,7 @@ test("community release output is exactly the three installer assets", async ()
+     await readFile(path.join(root, "versions.json"), "utf8"),
+   );
+   assert.equal(manifest.id, "pdf-web-reader");
+-  assert.equal(manifest.version, "0.5.9");
++  assert.equal(manifest.version, "0.5.10");
+   assert.equal(manifest.isDesktopOnly, false);
+   assert.deepEqual(manifest, rootManifest);
+   assert.deepEqual(manifest, sourceManifest);
+diff --git a/tests/pdf-sync-host.test.mjs b/tests/pdf-sync-host.test.mjs
+index b0ef627..7e05bab 100644
+--- a/tests/pdf-sync-host.test.mjs
++++ b/tests/pdf-sync-host.test.mjs
+@@ -18,7 +18,7 @@ async function until(check) {
+ 
+ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false,
+   appendPatch = null, appendFailure = null, acquireHeavyLease = null, prepareIdentities = [],
+-  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null,
++  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null, prepareFailure = null,
+   checkpointReadGate = null, autoApply = true } = {}) {
+   let disk = bytes([1]);
+   let nextId = 0;
+@@ -35,7 +35,11 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+     async list(path) { return { files: [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`)), folders: [] }; },
+   };
+   const client = {
+-    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger }; },
++    async prepareLocal(input) {
++      calls.prepare += 1;
++      if (prepareFailure) throw prepareFailure;
++      return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger };
++    },
+     async merge(input) {
+       calls.merge.push(input);
+       const result = { conflicts: [], identities: mergeIdentities, ledger: mergeLedger };
+@@ -767,6 +771,35 @@ test("write failure retains the pending branch and prevents subsequent automatic
+   } finally { h.host.dispose(); }
+ });
+ 
++test("prepareLocal binding failure pauses sync only after preserving the raw Viewer checkpoint", async () => {
++  const rawViewerBytes = bytes([37, 80, 68, 70, 45, 49, 46, 55, 10, 105, 110, 107, 45, 101, 100, 105, 116]);
++  const operations = [{ uuid: "native-ink-11", pageIndex: 9, kind: "Ink", action: "upsert",
++    deleted: false, timestamp: 1791892800000, logical: 1, actorId: "native-ipad-device",
++    operationId: "native-ipad-device:1791892800000:0:1",
++    serialized: { subtype: "Ink", inkList: [[64, 80, 108, 117, 146, 99]] } }];
++  const h = harness({ local: rawViewerBytes, dirty: true, operations,
++    prepareFailure: new Error("annotation object binding failed for InkEditor11 on page 10") });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: rawViewerBytes.buffer, actorId: "native-ipad-device", operations, revision: 11,
++    }), /binding failed/);
++
++    assert.equal(h.calls.prepare, 1);
++    assert.equal(h.calls.writes, 0);
++    assert.equal(h.calls.appends, 0);
++    assert.deepEqual([...h.disk], [1], "a mapping failure never writes an unverified merge result to the source");
++    const record = h.records[0];
++    assert.equal(record.reason, "before-save");
++    assert.equal(record.revision, 11);
++    assert.deepEqual([...bytes(record.data)], [...rawViewerBytes],
++      "the raw PDF.js serialization was made durable before annotation mapping began");
++    assert.equal(record.metadata.status, "conflict");
++    assert.ok(record.retained, "the recovery entry remains available after the host pauses sync");
++    assert.match(h.view.status, /同步暂停/);
++  } finally { h.host.dispose(); }
++});
++
+ test("a queued save keeps captured recovery identity when its Reader selects another PDF", async () => {
+   const h = harness({ operations: [{ uuid: "annotation-a" }] });
+   let release;
+diff --git a/tests/plugin-host.test.mjs b/tests/plugin-host.test.mjs
+index a9bf898..dd38659 100644
+--- a/tests/plugin-host.test.mjs
++++ b/tests/plugin-host.test.mjs
+@@ -5,6 +5,7 @@ import path from "node:path";
+ import test from "node:test";
+ import { fileURLToPath } from "node:url";
+ import vm from "node:vm";
++import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber } from "pdf-lib";
+ 
+ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+ const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
+@@ -1410,6 +1411,114 @@ test("recovery protocol persists a draft without writing the original PDF", asyn
+   assert.deepEqual([...harness.files.get(restoredPath).bytes], [4, 5, 6]);
+ });
+ 
++test("mapping failure still persists the exact serialized Ink draft before acknowledging recovery", async () => {
++  const harness = createHarness();
++  await harness.plugin.onload();
++  const original = new Uint8Array(await readFile(path.join(root, "tests/fixtures/tracemonkey.pdf")));
++  const source = await PDFDocument.load(original);
++  const edited = await PDFDocument.load(original);
++  const page = edited.getPage(9);
++  const annotations = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) || PDFArray.withContext(edited.context);
++  page.node.set(PDFName.of("Annots"), annotations);
++  const ink = PDFDict.withContext(edited.context);
++  ink.set(PDFName.of("Type"), PDFName.of("Annot"));
++  ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
++  ink.set(PDFName.of("NM"), PDFHexString.fromText("native-ink-11"));
++  ink.set(PDFName.of("P"), page.ref);
++  const rect = PDFArray.withContext(edited.context);
++  for (const value of [64, 80, 146, 117]) rect.push(PDFNumber.of(value));
++  ink.set(PDFName.of("Rect"), rect);
++  const pathPoints = PDFArray.withContext(edited.context);
++  for (const value of [64, 80, 108, 117, 146, 99]) pathPoints.push(PDFNumber.of(value));
++  const inkList = PDFArray.withContext(edited.context);
++  inkList.push(pathPoints);
++  ink.set(PDFName.of("InkList"), inkList);
++  const color = PDFArray.withContext(edited.context);
++  for (const value of [0.08, 0.28, 0.78]) color.push(PDFNumber.of(value));
++  ink.set(PDFName.of("C"), color);
++  const border = PDFDict.withContext(edited.context);
++  border.set(PDFName.of("W"), PDFNumber.of(5));
++  ink.set(PDFName.of("BS"), border);
++  annotations.push(edited.context.register(ink));
++  const savedDraft = new Uint8Array(await edited.save({ useObjectStreams: false }));
++  assert.equal(source.getPageCount(), 14);
++  const serializedPdf = await PDFDocument.load(savedDraft);
++  const serializedPage = serializedPdf.getPage(9);
++  const inkRef = serializedPage.node.lookupMaybe(PDFName.of("Annots"), PDFArray).asArray().find((reference) => {
++    return serializedPdf.context.lookup(reference)?.get(PDFName.of("Subtype"))?.toString() === "/Ink";
++  });
++  assert.ok(inkRef, "the saved Viewer draft contains a real page-10 Ink annotation");
++  assert.deepEqual(serializedPdf.context.lookup(inkRef).lookup(PDFName.of("InkList"), PDFArray)
++    .asArray()[0].asArray().map((point) => point.asNumber()), [64, 80, 108, 117, 146, 99]);
++  const file = new harness.TFile("Books/ink-editor-11-page-10.pdf", original);
++  harness.files.set(file.path, file);
++  const view = harness.createView();
++  const replies = [];
++  let candidateWasCompleteAtAck = false;
++  const frame = {
++    parent: view.contentEl.ownerDocument.defaultView,
++    postMessage(message) {
++      replies.push(message);
++      if (message.type !== "recovered") return;
++      const entry = [...harness.storedFiles.entries()].find(([candidatePath, value]) => {
++        if (!candidatePath.endsWith(".json")) return false;
++        try {
++          const metadata = JSON.parse(String(value));
++          return metadata.requestId === "close-recovery-ink-11" && metadata.revision === 11;
++        } catch { return false; }
++      });
++      candidateWasCompleteAtAck = !!entry && JSON.parse(String(entry[1])).completed === true;
++    },
++  };
++  view.file = file;
++  view.documentFile = file;
++  view.requestedPath = file.path;
++  view.originalBytes = original;
++  view.loadedBaseBytes = original;
++  view.currentRevision = 10;
++  view.confirmedRevision = 10;
++  view.ready = false;
++  view.iframe = { ownerDocument: view.contentEl.ownerDocument, contentWindow: frame };
++  harness.plugin.setDocumentBaseline(file.path, original);
++  let preparedInput;
++  harness.plugin.pdfSync.prepareRecovery = async (_view, input) => {
++    preparedInput = input;
++    throw new Error("annotation object binding failed for InkEditor11 on page 10");
++  };
++  const operations = [{
++    uuid: "native-ink-11", ref: "42R", pageIndex: 9, kind: "Ink", deleted: false, action: "upsert",
++    timestamp: 1791892800000, logical: 1, actorId: "native-ipad-device",
++    operationId: "native-ipad-device:1791892800000:0:1",
++    serialized: { subtype: "Ink", pageIndex: 9, inkList: [[64, 80, 108, 117, 146, 99]] },
++  }];
++  const newAnnotations = [{ runtimeId: "11", uuid: "native-ink-11", pageIndex: 9, kind: "Ink", order: 0 }];
++
++  await view.recoverFile(savedDraft.buffer, view.documentId, "close-recovery-ink-11", 11,
++    "save-conflict", { actorId: "native-ipad-device", operations, newAnnotations });
++
++  assert.equal(preparedInput.operations[0].uuid, "native-ink-11",
++    "the recovery attempt exercises the failing annotation mapping inputs");
++  assert.ok(candidateWasCompleteAtAck,
++    "the recovery acknowledgement is sent only after the exact PDF candidate and completion record verify");
++  assert.equal(replies.at(-1).type, "recovered");
++  assert.equal(replies.at(-1).revision, 11);
++  assert.equal(file.writes, 0, "raw recovery never overwrites the source PDF");
++  assert.deepEqual([...file.bytes], [...original]);
++
++  const candidates = await harness.plugin.listRecoveryCandidates();
++  const candidate = candidates.find(({ metadata }) => metadata.requestId === "close-recovery-ink-11");
++  assert.ok(candidate);
++  assert.equal(candidate.metadata.status, "draft");
++  assert.equal(candidate.metadata.reason, "save-conflict");
++  const recoveredBytes = new Uint8Array(await harness.plugin.readRecoveryBytes(candidate));
++  assert.deepEqual([...recoveredBytes], [...savedDraft], "the retained candidate is the raw Viewer serialization, not a mapping result");
++  assert.equal((await PDFDocument.load(recoveredBytes)).getPageCount(), 14);
++  assert.equal(await view.prepareControlledClose("detach"), true,
++    "the exact durable revision permits closing while autosave mapping is paused");
++  assert.equal(view.preparedClose.recovered, true);
++  assert.equal(view.preparedClose.revision, 11);
++});
++
+ test("queued recovery keeps the source PDF identity when the view switches", async () => {
+   const harness = createHarness();
+   await harness.plugin.onload();
+diff --git a/tests/sync-bridge-regression.test.mjs b/tests/sync-bridge-regression.test.mjs
+index 64b4199..ba676b3 100644
+--- a/tests/sync-bridge-regression.test.mjs
++++ b/tests/sync-bridge-regression.test.mjs
+@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
+ import path from "node:path";
+ import test from "node:test";
+ import puppeteer from "puppeteer-core";
++import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef } from "pdf-lib";
+ import { resolveBrowserPath } from "./browser-path.mjs";
+ import { launchTestBrowser } from "./browser-test-launch.mjs";
+ import {
+@@ -41,6 +42,89 @@ const mimeTypes = new Map([
+   [".wasm", "application/wasm"],
+ ]);
+ 
++async function makeWriterOrderFixture() {
++  const doc = await PDFDocument.create();
++  const pages = [];
++  for (let index = 0; index < 12; index += 1) {
++    const page = doc.addPage([612, 792]);
++    page.drawText(`PDF.js annotation writer fixture page ${index + 1}`, {
++      x: 36,
++      y: 744,
++      size: 14,
++    });
++    pages.push(page);
++  }
++
++  // Page 10 deliberately starts with a supported annotation and its popup.
++  // The writer must preserve these refs while adding new annotations after
++  // them; this reproduces the real document shape involved in the iPad report.
++  const page = pages[9];
++  const annots = PDFArray.withContext(doc.context);
++  page.node.set(PDFName.of("Annots"), annots);
++  const square = PDFDict.withContext(doc.context);
++  square.set(PDFName.of("Type"), PDFName.of("Annot"));
++  square.set(PDFName.of("Subtype"), PDFName.of("Square"));
++  const rect = PDFArray.withContext(doc.context);
++  for (const value of [72, 160, 190, 250]) rect.push(PDFNumber.of(value));
++  square.set(PDFName.of("Rect"), rect);
++  square.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-square"));
++  square.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 annotation"));
++  square.set(PDFName.of("P"), page.ref);
++  const squareRef = doc.context.register(square);
++  annots.push(squareRef);
++
++  const popup = PDFDict.withContext(doc.context);
++  popup.set(PDFName.of("Type"), PDFName.of("Annot"));
++  popup.set(PDFName.of("Subtype"), PDFName.of("Popup"));
++  const popupRect = PDFArray.withContext(doc.context);
++  for (const value of [200, 160, 330, 280]) popupRect.push(PDFNumber.of(value));
++  popup.set(PDFName.of("Rect"), popupRect);
++  popup.set(PDFName.of("Parent"), squareRef);
++  popup.set(PDFName.of("P"), page.ref);
++  const popupRef = doc.context.register(popup);
++  square.set(PDFName.of("Popup"), popupRef);
++  annots.push(popupRef);
++
++  const addBaseInk = (nm, contents, { freehandHighlight = false } = {}) => {
++    const ink = PDFDict.withContext(doc.context);
++    ink.set(PDFName.of("Type"), PDFName.of("Annot"));
++    ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
++    const inkRect = PDFArray.withContext(doc.context);
++    for (const value of [220, 320, 360, 400]) inkRect.push(PDFNumber.of(value));
++    ink.set(PDFName.of("Rect"), inkRect);
++    ink.set(PDFName.of("NM"), PDFHexString.fromText(nm));
++    ink.set(PDFName.of("Contents"), PDFHexString.fromText(contents));
++    ink.set(PDFName.of("P"), page.ref);
++    if (freehandHighlight) ink.set(PDFName.of("IT"), PDFName.of("InkHighlight"));
++    const inkList = PDFArray.withContext(doc.context);
++    const path = PDFArray.withContext(doc.context);
++    for (const value of [220, 325, 255, 350, 295, 375, 350, 395]) path.push(PDFNumber.of(value));
++    inkList.push(path);
++    ink.set(PDFName.of("InkList"), inkList);
++    annots.push(doc.context.register(ink));
++  };
++  addBaseInk("page-ten-existing-ink", "Existing page 10 Ink");
++  addBaseInk("page-ten-existing-freehand-highlight", "Existing page 10 freehand Highlight", {
++    freehandHighlight: true,
++  });
++
++  const underline = PDFDict.withContext(doc.context);
++  underline.set(PDFName.of("Type"), PDFName.of("Annot"));
++  underline.set(PDFName.of("Subtype"), PDFName.of("Underline"));
++  const underlineRect = PDFArray.withContext(doc.context);
++  for (const value of [72, 420, 200, 444]) underlineRect.push(PDFNumber.of(value));
++  underline.set(PDFName.of("Rect"), underlineRect);
++  underline.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-underline"));
++  underline.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 Underline"));
++  underline.set(PDFName.of("P"), page.ref);
++  const quadPoints = PDFArray.withContext(doc.context);
++  for (const value of [72, 444, 200, 444, 72, 420, 200, 420]) quadPoints.push(PDFNumber.of(value));
++  underline.set(PDFName.of("QuadPoints"), quadPoints);
++  annots.push(doc.context.register(underline));
++
++  return doc.save({ useObjectStreams: false });
++}
++
+ test(
+   "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
+   {
+@@ -55,7 +139,12 @@ test(
+     const actorId = "00000000-0000-4000-8000-000000000001";
+     const runId = `${Date.now()}-${process.pid}`;
+     const bridgeSource = await readFile(bridgePath, "utf8");
+-    const loadedBaseBytes = await readFile(fixturePath);
++    const loadedBaseBytes = await makeWriterOrderFixture();
++    const baseInspection = await inspect({ bytes: loadedBaseBytes });
++    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "square").length, 1);
++    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "ink").length, 1);
++    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "highlight").length, 1);
++    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "underline").length, 1);
+     const viewerHtml = await readFile(viewerHtmlPath, "utf8");
+     const viewerWithBridge = viewerHtml.replace(
+       /<head\b[^>]*>/i,
+@@ -87,12 +176,13 @@ test(
+             const documentId=${JSON.stringify(documentId)};
+             const actorId=${JSON.stringify(actorId)};
+             const iframe=document.querySelector('iframe');
+-            const state=window.__syncHost={ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
++            const state=window.__syncHost={loadedBaseBytes:null,ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
+             const bytesToBase64=value=>{const bytes=new Uint8Array(value);let binary='';for(let offset=0;offset<bytes.length;offset+=0x8000)binary+=String.fromCharCode(...bytes.subarray(offset,offset+0x8000));return btoa(binary)};
+             const base64ToArrayBuffer=value=>{const binary=atob(value);const bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);return bytes.buffer};
+             const sendOpen=async()=>{
+-              const response=await fetch('/tests/fixtures/tracemonkey.pdf');
++            const response=await fetch('/tests/fixtures/tracemonkey.pdf');
+               const data=await response.arrayBuffer();
++              state.loadedBaseBytes=bytesToBase64(data);
+               iframe.contentWindow.postMessage({channel,type:'open',token,rendererGeneration,documentId,documentPath:'tests/fixtures/tracemonkey.pdf',filename:'tracemonkey.pdf',autoSave:false,openRequest:1,syncState:state.syncState,data},'*',[data]);
+             };
+             window.addEventListener('message',event=>{
+@@ -116,7 +206,7 @@ test(
+                   setTimeout(()=>iframe.contentWindow.postMessage(failed,'*'),50);
+                   return;
+                 }
+-                void fetch('/prepare-local',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({checkpointBytes:state.preparedLocal?.bytesBase64||null,draftBytes:bytesToBase64(message.data),operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId})})
++                void fetch('/prepare-local',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseBytes:state.loadedBaseBytes,checkpointBytes:state.preparedLocal?.bytesBase64||null,draftBytes:bytesToBase64(message.data),operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId})})
+                   .then(async response=>{const body=await response.json();if(!response.ok)throw new Error('prepareLocal returned HTTP '+response.status+' ('+(body.code||'unknown-code')+'): '+(body.error||'unknown merge error'));return body})
+                   .then(prepared=>{
+                     state.preparedLocal=prepared;
+@@ -152,6 +242,7 @@ test(
+               }else if(message.type==='sync-apply-prepared'||message.type==='sync-apply-rejected'){
+                 state.prepared.push(message);
+               }else if(message.type==='sync-applied'){
++                if(message.ok)state.loadedBaseBytes=state.preparedLocal.bytesBase64;
+                 state.applied.push(message);
+               }else if(message.type==='sync-apply-cancelled'){
+                 state.cancelled.push(message);
+@@ -175,7 +266,13 @@ test(
+         return;
+       }
+       if (url.pathname === "/tests/fixtures/tracemonkey.pdf") {
+-        target = fixturePath;
++        response.writeHead(200, {
++          "content-type": "application/pdf",
++          "content-length": loadedBaseBytes.length,
++          "x-content-type-options": "nosniff",
++        });
++        response.end(loadedBaseBytes);
++        return;
+       } else if (url.pathname === "/prepare-local" && request.method === "POST") {
+         let input = null;
+         let draftPdfBytes = null;
+@@ -189,7 +286,7 @@ test(
+             ? Buffer.from(input.checkpointBytes, "base64")
+             : null;
+           const prepared = await prepareLocal({
+-            baseBytes: loadedBaseBytes,
++            baseBytes: input.baseBytes ? Buffer.from(input.baseBytes, 'base64') : loadedBaseBytes,
+             draftBytes: draftPdfBytes,
+             checkpointBytes: checkpointPdfBytes || undefined,
+             operations: input.operations,
+@@ -333,6 +430,10 @@ test(
+         );
+       }, { timeout: 30_000 });
+ 
++      await viewer.evaluate(async () => {
++        PDFViewerApplication.pdfViewer.currentScaleValue = "page-fit";
++        await new Promise(requestAnimationFrame);
++      });
+       await viewer.evaluate(() => {
+         PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+           mode: 5,
+@@ -375,8 +476,8 @@ test(
+           [...map.values()].filter((value) => value?.annotationType === 5).length > before;
+       }, { timeout: 15_000 }, priorSquares);
+ 
+-      const requestCheckpoint = async (id, { includeBytes = false } = {}) => {
+-        await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId }) => {
++      const requestCheckpoint = async (id, { includeBytes = false, openRequest = 1 } = {}) => {
++        await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId, openRequest: currentOpenRequest }) => {
+           document.querySelector("iframe").contentWindow.postMessage({
+             channel: messageChannel,
+             type: "sync-checkpoint",
+@@ -384,9 +485,9 @@ test(
+             rendererGeneration: generation,
+             id: requestId,
+             documentId: currentDocumentId,
+-            openRequest: 1,
++            openRequest: currentOpenRequest,
+           }, "*");
+-        }, { channel, token, rendererGeneration, documentId, id });
++        }, { channel, token, rendererGeneration, documentId, id, openRequest });
+         await page.waitForFunction((requestId) =>
+           window.__syncHost?.checkpoints.some((entry) => entry.id === requestId) ||
+           window.__syncHost?.rejected.some((entry) => entry.id === requestId),
+@@ -431,6 +532,83 @@ test(
+         assert.ok(host.preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
+         return host;
+       };
++      const drawWithTool = async (mode, pageNumber, offset) => {
++        const before = await viewer.evaluate(() =>
++          PDFViewerApplication.pdfDocument.annotationStorage.size,
++        );
++        await viewer.evaluate(({ editorMode, targetPage }) => {
++          const app = PDFViewerApplication;
++          document.querySelector(`.page[data-page-number="${targetPage}"]`)
++            .scrollIntoView({ block: "start" });
++          app.eventBus.dispatch("switchannotationeditormode", {
++            mode: editorMode,
++            isFromKeyboard: true,
++            createNewEditor: false,
++          });
++        }, { editorMode: mode, targetPage: pageNumber });
++        await viewer.waitForFunction((targetPage) => {
++          const pageElement = document.querySelector(`.page[data-page-number="${targetPage}"]`);
++          const pageView = PDFViewerApplication.pdfViewer.getPageView(targetPage - 1);
++          const rect = pageElement?.getBoundingClientRect();
++          return Boolean(
++            pageView?.annotationEditorLayer?.div?.isConnected &&
++            rect?.width > 0 && rect?.height > 0 &&
++            rect.bottom > 0 && rect.top < window.innerHeight &&
++            PDFViewerApplication.pdfViewer.currentPageNumber === targetPage,
++          );
++        }, { timeout: 15_000 }, pageNumber);
++        const pageRect = await viewer.$eval(
++          `.page[data-page-number="${pageNumber}"]`,
++          (element) => {
++            const rect = element.getBoundingClientRect();
++            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
++          },
++        );
++        const iframeRect = await page.$eval("iframe", (element) => {
++          const rect = element.getBoundingClientRect();
++          return { x: rect.x, y: rect.y };
++        });
++        const start = {
++          x: iframeRect.x + pageRect.x + pageRect.width * (0.28 + (offset % 3) * 0.12),
++          y: iframeRect.y + pageRect.y + pageRect.height * (0.36 + (offset % 2) * 0.14),
++        };
++        const end = {
++          x: start.x + Math.min(64, pageRect.width * 0.1),
++          y: start.y + Math.min(46, pageRect.height * 0.06),
++        };
++        await page.mouse.move(start.x, start.y, { steps: 2 });
++        await page.mouse.down({ button: "left" });
++        await page.mouse.move(end.x, end.y, { steps: 6 });
++        await page.mouse.up({ button: "left" });
++        if (mode === 15) {
++          await viewer.evaluate(() => {
++            PDFViewerApplication.pdfViewer._layerProperties
++              .annotationEditorUIManager.currentLayer?.commitOrRemove?.();
++          });
++        }
++        try {
++          await viewer.waitForFunction((priorSize) =>
++            PDFViewerApplication.pdfDocument.annotationStorage.size > priorSize,
++          { timeout: 15_000 }, before);
++        } catch (error) {
++          const state = await viewer.evaluate((targetPage) => {
++            const app = PDFViewerApplication;
++            const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
++            const pageView = app.pdfViewer.getPageView(targetPage - 1);
++            const rect = document.querySelector(`.page[data-page-number="${targetPage}"]`).getBoundingClientRect();
++            return {
++              annotationStorageSize: app.pdfDocument.annotationStorage.size,
++              annotationEditorMode: app.pdfViewer.annotationEditorMode,
++              managerMode: manager?.mode,
++              pageRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
++              currentPageNumber: app.pdfViewer.currentPageNumber,
++              editorIds: manager?.getEditors?.(targetPage - 1)?.map((editor) => editor.id) || [],
++              layerConnected: pageView?.annotationEditorLayer?.div?.isConnected || false,
++            };
++          }, pageNumber);
++          throw new Error(`PDF.js did not store mode ${mode} editor on page ${pageNumber}; before=${before}; state=${JSON.stringify(state)}; cause=${error.message}`);
++        }
++      };
+ 
+       const first = await requestCheckpoint("checkpoint-first");
+       assert.equal(first.saves, 0, "A sync checkpoint must not persist a Vault save");
+@@ -505,7 +683,7 @@ test(
+       const cleanCheckpointBytes = Buffer.from(second.checkpointDataBase64, "base64");
+       const cleanCheckpointInfo = await inspect({ bytes: cleanCheckpointBytes });
+       assert.equal(cleanCheckpointInfo.identities.filter((identity) =>
+-        identity.kind === "square" && !identity.deleted,
++        identity.pageIndex === 0 && identity.kind === "square" && !identity.deleted,
+       ).length, 1, "The clean checkpoint PDF should still contain exactly one Square");
+       const refreshedPrepared = await prepareLocal({
+         baseBytes: loadedBaseBytes,
+@@ -519,6 +697,94 @@ test(
+       assert.equal(refreshedIdentity?.runtimeId, runtimeId,
+         "The clean checkpoint should rebind the same live editor UUID to its saved PDF ref");
+ 
++      // Exercise the frozen PDF.js writer's per-page editor order with mixed
++      // Ink and freehand Highlight editors on page 2 and page 10. Page 10 also
++      // has a pre-existing Square plus Popup, so the new refs follow unrelated
++      // existing refs and the popup entries the writer adds for comments.
++      await drawWithTool(15, 2, 0);
++      await drawWithTool(9, 10, 1);
++      await drawWithTool(9, 2, 2);
++      await drawWithTool(15, 10, 3);
++      await drawWithTool(15, 10, 4);
++      await drawWithTool(15, 2, 5);
++      const mixedSaveHost = await saveAndWaitForPreparation(2);
++      const mixedSave = mixedSaveHost.saves[1];
++      const mixedAssignments = mixedSave.newAnnotations;
++      assert.ok(mixedAssignments.length >= 7,
++        "The repeated save should include the retained Square and the mixed multi-page editor set");
++      const mixedAssignmentsByPage = new Map();
++      for (const assignment of mixedAssignments) {
++        const pageAssignments = mixedAssignmentsByPage.get(assignment.pageIndex) || [];
++        pageAssignments.push(assignment);
++        mixedAssignmentsByPage.set(assignment.pageIndex, pageAssignments);
++      }
++      for (const [pageIndex, assignments] of mixedAssignmentsByPage) {
++        assert.deepEqual(
++          assignments.map((assignment) => assignment.order).sort((left, right) => left - right),
++          Array.from({ length: assignments.length }, (_, index) => index),
++          `Page ${pageIndex + 1} writer assignments should be contiguous and deterministic`,
++        );
++      }
++      const mixedPreparedBytes = Buffer.from(mixedSaveHost.preparedLocal.bytesBase64, "base64");
++      const mixedPreparedInfo = await inspect({ bytes: mixedPreparedBytes });
++      const mixedPreparedDoc = await PDFDocument.load(mixedPreparedBytes, { updateMetadata: false });
++      const runtimeIdentities = new Map(
++        mixedSaveHost.preparedLocal.identities.map((identity) => [identity.uuid, identity]),
++      );
++      const positionsByPage = new Map();
++      for (const assignment of mixedAssignments) {
++        const identity = mixedPreparedInfo.identities.find((entry) => entry.uuid === assignment.uuid);
++        const runtimeIdentity = runtimeIdentities.get(assignment.uuid);
++        assert.equal(runtimeIdentity?.runtimeId, assignment.runtimeId,
++          `Writer order should bind ${assignment.runtimeId} to its own UUID`);
++        assert.equal(identity?.pageIndex, assignment.pageIndex,
++          `Writer order should preserve ${assignment.runtimeId} page`);
++        assert.equal(identity?.kind, assignment.kind.toLowerCase(),
++          `Writer subtype mapping should preserve ${assignment.runtimeId} kind`);
++        assert.equal(runtimeIdentity?.ref, identity?.ref,
++          `The runtime assignment and persisted UUID must resolve to one exact PDF ref for ${assignment.runtimeId}`);
++        const refMatch = /^(\d+)R(\d*)$/.exec(identity.ref);
++        assert.ok(refMatch, `Expected a PDF.js ref for ${assignment.runtimeId}`);
++        const ref = PDFRef.of(Number(refMatch[1]), Number(refMatch[2] || 0));
++        const page = mixedPreparedDoc.getPages()[assignment.pageIndex];
++        const annots = page.node.lookup(PDFName.of("Annots"), PDFArray);
++        const annotationIndex = Array.from({ length: annots.size() }, (_, index) => index)
++          .find((index) => annots.get(index) instanceof PDFRef && annots.get(index).toString() === ref.toString());
++        assert.notEqual(annotationIndex, undefined,
++          `The exact ref for ${assignment.runtimeId} must occur in its page /Annots array`);
++        const positions = positionsByPage.get(assignment.pageIndex) || [];
++        positions.push({ order: assignment.order, index: annotationIndex });
++        positionsByPage.set(assignment.pageIndex, positions);
++
++        const dict = mixedPreparedDoc.context.lookup(ref, PDFDict);
++        const subtype = dict.lookup(PDFName.of("Subtype"), PDFName).decodeText();
++        const intentObject = dict.get(PDFName.of("IT"));
++        const intent = intentObject instanceof PDFName
++          ? intentObject.decodeText()
++          : null;
++        const operation = mixedSave.operations.find((entry) => entry.uuid === assignment.uuid);
++        if (assignment.kind === "Highlight" && !operation?.serialized?.quadPoints) {
++          assert.equal(subtype, "Ink");
++          assert.equal(intent, "InkHighlight",
++            "A freehand HighlightEditor is physically Ink/InkHighlight in PDF.js output");
++        } else if (assignment.kind === "Ink") {
++          assert.equal(subtype, "Ink");
++          assert.notEqual(intent, "InkHighlight");
++        } else {
++          assert.equal(subtype.toLowerCase(), assignment.kind.toLowerCase());
++        }
++      }
++      for (const [pageIndex, positions] of positionsByPage) {
++        const ordered = positions.sort((left, right) => left.order - right.order);
++        assert.deepEqual(ordered.map(({ index }) => index),
++          [...ordered].map(({ index }) => index).sort((left, right) => left - right),
++          `Physical /Annots refs should follow the writer order on page ${pageIndex + 1}`);
++      }
++      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Ink"));
++      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Highlight"));
++      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Ink"));
++      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Highlight"));
++
+       const checkpointIdentity = preparedLocal.identities.find((identity) =>
+         identity.uuid === uuid,
+       );
+@@ -591,6 +857,9 @@ test(
+         (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
+       ));
+       const thirdSaveHost = await saveAndWaitForPreparation(3);
++      assert.ok(thirdSaveHost.preparedLocal.identities.some((identity) =>
++        typeof identity.runtimeId === "string" && identity.runtimeId.length > 0,
++      ), "The checkpoint host should exercise writer-local runtime IDs during sync apply");
+       const revivedIdentity = thirdSaveHost.preparedLocal.identities.find(
+         (identity) => identity.uuid === uuid,
+       );
+@@ -684,6 +953,17 @@ test(
+       const expectedRect = revivedOperation.serialized?.rect;
+       assert.ok(Array.isArray(expectedRect) && expectedRect.length === 4,
+         "The revived Square operation should retain its serialized geometry");
++      await viewer.evaluate(async () => {
++        document.querySelector('.page[data-page-number="1"]')
++          .scrollIntoView({ block: "start" });
++        await new Promise(requestAnimationFrame);
++      });
++      await viewer.waitForFunction(() => {
++        const rect = document
++          .querySelector('.page[data-page-number="1"]')
++          ?.getBoundingClientRect();
++        return Boolean(rect?.bottom > 0 && rect?.top < window.innerHeight);
++      }, { timeout: 10_000 });
+       await viewer.waitForFunction(async ({ annotationRef, rect }) => {
+         const app = PDFViewerApplication;
+         const pdfPage = await app.pdfDocument.getPage(1);
+@@ -874,6 +1154,42 @@ test(
+         operation.serialized?.thickness === 5,
+       ), "The edited Square should remain associated with its UUID operation");
+ 
++      // Preserve exact identities after a saved ACK as well as immediately after apply.
++      const nextSaveCount = await page.evaluate(() => window.__syncHost.saves.length + 1);
++      const acknowledgedSquareHost = await saveAndWaitForPreparation(nextSaveCount);
++      assert.ok(acknowledgedSquareHost.preparedLocal.identities.some((identity) =>
++        identity.uuid === uuid && identity.ref,
++      ), "The post-apply saved ACK should keep the edited Square identity");
++      const pageTenSquareIdentity = thirdSaveHost.preparedLocal.identities.find((identity) =>
++        identity.pageIndex === 9 && identity.kind?.toLowerCase() === "square" &&
++        identity.uuid !== uuid && identity.ref,
++      );
++      assert.ok(pageTenSquareIdentity);
++      await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]').scrollIntoView({ block: "start" }));
++      await viewer.waitForFunction((ref) => {
++        const app = PDFViewerApplication;
++        return app.pdfViewer.getPageView(9)?.renderingState === 3 &&
++          [...app.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(9)]
++            .some(editor => editor.annotationElementId === ref);
++      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
++      await viewer.evaluate((ref) => {
++        const app = PDFViewerApplication;
++        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
++        const editor = [...manager.getEditors(9)].find(candidate => candidate.annotationElementId === ref);
++        manager.setSelected(editor);
++        app.eventBus.dispatch("switchannotationeditorparams", { source: window, type: 62, value: 7 });
++      }, pageTenSquareIdentity.ref);
++      await viewer.waitForFunction((ref) => {
++        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
++        return [...manager.getEditors(9)].find(editor => editor.annotationElementId === ref)?.serialize()?.thickness === 7;
++      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
++      const afterAckCheckpoint = await requestCheckpoint("checkpoint-post-ack-second-existing-edit", { openRequest: 2 });
++      assert.ok(afterAckCheckpoint.checkpoint.operations.some(operation =>
++        operation.uuid === pageTenSquareIdentity.uuid && operation.ref === pageTenSquareIdentity.ref &&
++        operation.pageIndex === 9 && operation.kind === "Square" && operation.action === "upsert" &&
++        operation.serialized?.thickness === 7,
++      ), "A post-ACK edit of another existing annotation must retain its UUID and exact ref");
++
+       await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
+         document.querySelector("iframe").contentWindow.postMessage({
+           channel: messageChannel,
+diff --git a/versions.json b/versions.json
+index ada0a95..3d2f8c8 100644
+--- a/versions.json
++++ b/versions.json
+@@ -17,5 +17,6 @@
+   "0.5.6": "1.14.4",
+   "0.5.7": "1.14.4",
+   "0.5.8": "1.14.4",
+-  "0.5.9": "1.14.4"
++  "0.5.9": "1.14.4",
++  "0.5.10": "1.14.4"
+ }
+diff --git a/viewer-adapter/obsidian-bridge.js b/viewer-adapter/obsidian-bridge.js
+index 1e4ef67..381d023 100644
+--- a/viewer-adapter/obsidian-bridge.js
++++ b/viewer-adapter/obsidian-bridge.js
+@@ -940,7 +940,19 @@
+   }
+ 
+   function applySyncIdentities(value, { reset = false } = {}) {
+-    const syncState = normalizeSyncState(value);
++    const normalizedSyncState = normalizeSyncState(value);
++    const syncState = reset && normalizedSyncState
++      ? {
++          ...normalizedSyncState,
++          // Runtime editor IDs are local to the document that produced the
++          // checkpoint. Remove them from adopted state too, so a later
++          // same-document ACK cannot re-seed those stale IDs by merging.
++          identities: normalizedSyncState.identities.map((identity) => {
++            const { runtimeId: _runtimeId, ...stableIdentity } = identity;
++            return stableIdentity;
++          }),
++        }
++      : normalizedSyncState;
+     if (reset) {
+       state.annotationUuidByRuntimeId.clear();
+       state.annotationRefByRuntimeId.clear();
+@@ -984,7 +996,12 @@
+     };
+     for (const identity of mergedSyncState.identities) {
+       const uuid = identity.uuid;
+-      if (typeof identity.runtimeId === "string" && identity.runtimeId) {
++      // A sync apply opens a new PDF.js document, whose editor IDs are newly
++      // allocated. Runtime IDs in the host identity list belong to the writer
++      // document that produced the checkpoint, so only reuse them when
++      // adopting same-document state; the new document will rebuild them from
++      // exact annotation refs below.
++      if (!reset && typeof identity.runtimeId === "string" && identity.runtimeId) {
+         state.annotationUuidByRuntimeId.set(identity.runtimeId, uuid);
+         const reference = canonicalPdfAnnotationRef(identity.ref);
+         if (reference) {
+@@ -2985,7 +3002,11 @@
+       if (!sessionIsCurrent()) {
+         return false;
+       }
+-      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
++      if (
++        state.revision !== revisionBeforeLease ||
++        isEditBoundaryBusy() ||
++        state.pendingInkCommit
++      ) {
+         return SAVE_RETRY_AFTER_IDLE;
+       }
+       if (
+@@ -3021,7 +3042,8 @@
+       if (
+         !sessionIsCurrent() ||
+         state.revision !== revisionAtStart ||
+-        isEditBoundaryBusy()
++        isEditBoundaryBusy() ||
++        state.pendingInkCommit
+       ) {
+         if (willSaveDispatched) {
+           await app.pdfScriptingManager?.dispatchDidSave?.();
+@@ -3036,9 +3058,11 @@
+         return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
+       }
+ 
++      // A host ACK clears the dirty flags but does not replace PDF.js's loaded
++      // base; retained id:null editors still need saveDocument serialization.
+       const hasAnnotationChanges =
+         dirtySnapshot.hadAnnotationChanges || state.dirty ||
+-        app._annotationStorageModified;
++        app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0;
+       autoStartedAt = origin === "auto" ? Date.now() : null;
+       if (autoStartedAt !== null) {
+         state.lastAutoSaveStartedAt = autoStartedAt;
+@@ -3179,6 +3203,18 @@
+         }
+         continue;
+       }
++      if (state.pendingInkCommit) {
++        state.committingInkForSave = true;
++        try {
++          // A stroke can finish while an earlier Vault write is awaiting its
++          // ACK. Commit it at this revision boundary before serializing again.
++          state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager
++            ?.currentLayer?.commitOrRemove?.();
++        } finally {
++          state.committingInkForSave = false;
++          state.pendingInkCommit = false;
++        }
++      }
+       lastResult = await saveOneRevision(origin);
+       if (lastResult === SAVE_RETRY_AFTER_IDLE) {
+         if (origin === "auto") {
+@@ -3272,7 +3308,11 @@
+         releaseHostHeavyLease(lease, documentId);
+         return false;
+       }
+-      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
++      if (
++        state.revision !== revisionBeforeLease ||
++        isEditBoundaryBusy() ||
++        state.pendingInkCommit
++      ) {
+         releaseHostHeavyLease(lease, documentId);
+         continue;
+       }
+@@ -3298,7 +3338,8 @@
+         if (
+           !sessionIsCurrent() ||
+           state.revision !== revisionAtStart ||
+-          isEditBoundaryBusy()
++          isEditBoundaryBusy() ||
++          state.pendingInkCommit
+         ) {
+           if (willSaveDispatched) {
+             await app.pdfScriptingManager?.dispatchDidSave?.();
+@@ -3313,9 +3354,10 @@
+           }
+           continue;
+         }
++        // Recovery has the same loaded-base boundary as an ordinary save.
+         const bytes =
+           dirtySnapshot.hadAnnotationChanges || state.dirty ||
+-          app._annotationStorageModified
++          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
+             ? await pdfDocument.saveDocument()
+             : await pdfDocument.getData();
+         if (!bytes) {
+@@ -3366,7 +3408,11 @@
+           hadAnnotationChanges: true,
+           hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+         });
+-        if (state.revision === revisionAtStart && !isEditBoundaryBusy()) {
++        if (
++          state.revision === revisionAtStart &&
++          !isEditBoundaryBusy() &&
++          !state.pendingInkCommit
++        ) {
+           state.lastRecoveredDocumentId = documentId;
+           state.lastRecoveredRevision = revisionAtStart;
+           return true;
+@@ -6400,7 +6446,8 @@
+         recovered &&
+         state.lastRecoveredDocumentId === documentId &&
+         state.lastRecoveredRevision === state.revision &&
+-        !isEditBoundaryBusy()
++        !isEditBoundaryBusy() &&
++        !state.pendingInkCommit
+       );
+       const durable = (result === true && !dirty) || recoveryIsCurrent;
+       if (
+@@ -6553,7 +6600,8 @@
+           dirty: isDirty(),
+           recovered:
+             state.lastRecoveredDocumentId === existing.documentId &&
+-            state.lastRecoveredRevision === state.revision,
++            state.lastRecoveredRevision === state.revision &&
++            !state.pendingInkCommit,
+           prepared: true,
+         });
+       }

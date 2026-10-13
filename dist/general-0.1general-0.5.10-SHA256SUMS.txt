@@ -1,0 +1,7 @@
+1ba92f39e55800028b7b5d965ab829c10e1764bbfce375817c305c76c6b2253e  dist/pdf-web-reader/main.js
+8c3718b55e956a6f1101114a85e0ccd91391b1d10e678ee8162175862f29ae7f  dist/pdf-web-reader/manifest.json
+9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650  dist/pdf-web-reader/styles.css
+b1a23e399f16139c9da09d2b7290c693b1c8f501b8d53f7e21bfdfe402fac7b1  dist/pdf-web-reader-0.1general-0.5.10-candidate.zip
+1d4f9737cbfe77c0a948849bf218304f92919cc2948f2a84b5115e6c1a7cd605  dist/general-0.1general-0.5.10-source.diff
+c5baf2aaae8ba5b6bf8ff3e2742137b3d069d447f7d1a7f1af0b6363fa4344e5  dist/general-0.1general-0.5.10-evidence.zip
+1937cd7df6ab9288f39aa71e93bd181a4e58093a855c957895b42f99fdeeea96  dist/general-0.1general-0.5.10-delivery.json

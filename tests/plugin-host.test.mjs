@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber } from "pdf-lib";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
@@ -1408,6 +1409,114 @@ test("recovery protocol persists a draft without writing the original PDF", asyn
   const restoredPath = await harness.plugin.restoreLatestRecovery();
   assert.match(restoredPath, /^PDF Recovery\/recovery-draft \(Recovered /);
   assert.deepEqual([...harness.files.get(restoredPath).bytes], [4, 5, 6]);
+});
+
+test("mapping failure still persists the exact serialized Ink draft before acknowledging recovery", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const original = new Uint8Array(await readFile(path.join(root, "tests/fixtures/tracemonkey.pdf")));
+  const source = await PDFDocument.load(original);
+  const edited = await PDFDocument.load(original);
+  const page = edited.getPage(9);
+  const annotations = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) || PDFArray.withContext(edited.context);
+  page.node.set(PDFName.of("Annots"), annotations);
+  const ink = PDFDict.withContext(edited.context);
+  ink.set(PDFName.of("Type"), PDFName.of("Annot"));
+  ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
+  ink.set(PDFName.of("NM"), PDFHexString.fromText("native-ink-11"));
+  ink.set(PDFName.of("P"), page.ref);
+  const rect = PDFArray.withContext(edited.context);
+  for (const value of [64, 80, 146, 117]) rect.push(PDFNumber.of(value));
+  ink.set(PDFName.of("Rect"), rect);
+  const pathPoints = PDFArray.withContext(edited.context);
+  for (const value of [64, 80, 108, 117, 146, 99]) pathPoints.push(PDFNumber.of(value));
+  const inkList = PDFArray.withContext(edited.context);
+  inkList.push(pathPoints);
+  ink.set(PDFName.of("InkList"), inkList);
+  const color = PDFArray.withContext(edited.context);
+  for (const value of [0.08, 0.28, 0.78]) color.push(PDFNumber.of(value));
+  ink.set(PDFName.of("C"), color);
+  const border = PDFDict.withContext(edited.context);
+  border.set(PDFName.of("W"), PDFNumber.of(5));
+  ink.set(PDFName.of("BS"), border);
+  annotations.push(edited.context.register(ink));
+  const savedDraft = new Uint8Array(await edited.save({ useObjectStreams: false }));
+  assert.equal(source.getPageCount(), 14);
+  const serializedPdf = await PDFDocument.load(savedDraft);
+  const serializedPage = serializedPdf.getPage(9);
+  const inkRef = serializedPage.node.lookupMaybe(PDFName.of("Annots"), PDFArray).asArray().find((reference) => {
+    return serializedPdf.context.lookup(reference)?.get(PDFName.of("Subtype"))?.toString() === "/Ink";
+  });
+  assert.ok(inkRef, "the saved Viewer draft contains a real page-10 Ink annotation");
+  assert.deepEqual(serializedPdf.context.lookup(inkRef).lookup(PDFName.of("InkList"), PDFArray)
+    .asArray()[0].asArray().map((point) => point.asNumber()), [64, 80, 108, 117, 146, 99]);
+  const file = new harness.TFile("Books/ink-editor-11-page-10.pdf", original);
+  harness.files.set(file.path, file);
+  const view = harness.createView();
+  const replies = [];
+  let candidateWasCompleteAtAck = false;
+  const frame = {
+    parent: view.contentEl.ownerDocument.defaultView,
+    postMessage(message) {
+      replies.push(message);
+      if (message.type !== "recovered") return;
+      const entry = [...harness.storedFiles.entries()].find(([candidatePath, value]) => {
+        if (!candidatePath.endsWith(".json")) return false;
+        try {
+          const metadata = JSON.parse(String(value));
+          return metadata.requestId === "close-recovery-ink-11" && metadata.revision === 11;
+        } catch { return false; }
+      });
+      candidateWasCompleteAtAck = !!entry && JSON.parse(String(entry[1])).completed === true;
+    },
+  };
+  view.file = file;
+  view.documentFile = file;
+  view.requestedPath = file.path;
+  view.originalBytes = original;
+  view.loadedBaseBytes = original;
+  view.currentRevision = 10;
+  view.confirmedRevision = 10;
+  view.ready = false;
+  view.iframe = { ownerDocument: view.contentEl.ownerDocument, contentWindow: frame };
+  harness.plugin.setDocumentBaseline(file.path, original);
+  let preparedInput;
+  harness.plugin.pdfSync.prepareRecovery = async (_view, input) => {
+    preparedInput = input;
+    throw new Error("annotation object binding failed for InkEditor11 on page 10");
+  };
+  const operations = [{
+    uuid: "native-ink-11", ref: "42R", pageIndex: 9, kind: "Ink", deleted: false, action: "upsert",
+    timestamp: 1791892800000, logical: 1, actorId: "native-ipad-device",
+    operationId: "native-ipad-device:1791892800000:0:1",
+    serialized: { subtype: "Ink", pageIndex: 9, inkList: [[64, 80, 108, 117, 146, 99]] },
+  }];
+  const newAnnotations = [{ runtimeId: "11", uuid: "native-ink-11", pageIndex: 9, kind: "Ink", order: 0 }];
+
+  await view.recoverFile(savedDraft.buffer, view.documentId, "close-recovery-ink-11", 11,
+    "save-conflict", { actorId: "native-ipad-device", operations, newAnnotations });
+
+  assert.equal(preparedInput.operations[0].uuid, "native-ink-11",
+    "the recovery attempt exercises the failing annotation mapping inputs");
+  assert.ok(candidateWasCompleteAtAck,
+    "the recovery acknowledgement is sent only after the exact PDF candidate and completion record verify");
+  assert.equal(replies.at(-1).type, "recovered");
+  assert.equal(replies.at(-1).revision, 11);
+  assert.equal(file.writes, 0, "raw recovery never overwrites the source PDF");
+  assert.deepEqual([...file.bytes], [...original]);
+
+  const candidates = await harness.plugin.listRecoveryCandidates();
+  const candidate = candidates.find(({ metadata }) => metadata.requestId === "close-recovery-ink-11");
+  assert.ok(candidate);
+  assert.equal(candidate.metadata.status, "draft");
+  assert.equal(candidate.metadata.reason, "save-conflict");
+  const recoveredBytes = new Uint8Array(await harness.plugin.readRecoveryBytes(candidate));
+  assert.deepEqual([...recoveredBytes], [...savedDraft], "the retained candidate is the raw Viewer serialization, not a mapping result");
+  assert.equal((await PDFDocument.load(recoveredBytes)).getPageCount(), 14);
+  assert.equal(await view.prepareControlledClose("detach"), true,
+    "the exact durable revision permits closing while autosave mapping is paused");
+  assert.equal(view.preparedClose.recovered, true);
+  assert.equal(view.preparedClose.revision, 11);
 });
 
 test("queued recovery keeps the source PDF identity when the view switches", async () => {

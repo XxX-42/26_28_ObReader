@@ -2624,15 +2624,25 @@ class PdfReaderView extends EditableFileView {
         throw invalid;
       }
       heavyLease = await this.plugin.acquireHeavyLease(this, recoveryRequest.file, "recovery", annotationSync?.heavyLeaseId);
-      let data = receivedArrayBuffer(value);
+      // Keep the PDF.js serialization untouched until the recovery record has
+      // been durably verified. Annotation-ID preparation is best-effort: a
+      // binding failure must fall back to these exact bytes, never an empty or
+      // partially constructed prepared buffer.
+      const serializedData = receivedArrayBuffer(value);
+      let data = serializedData;
       await this.plugin.enqueueSave(async () => {
         if (annotationSync?.actorId && this.plugin.pdfSync) {
           try {
             const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data, heavyLeaseId: heavyLease?.id }, recoveryRequest);
-            data = new Uint8Array(prepared.bytes).slice().buffer;
+            const preparedData = receivedArrayBuffer(prepared?.bytes);
+            if (preparedData.byteLength === 0) {
+              throw new Error("Prepared recovery output is empty.");
+            }
+            data = preparedData.slice(0);
           } catch {
             // Unsupported merge metadata must never prevent recovery of the
             // frozen writer's valid draft; this path does not overwrite PDF.
+            data = serializedData;
           }
         }
         const record = await this.plugin.writeRecoveryCandidate({

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef } from "pdf-lib";
 import { resolveBrowserPath } from "./browser-path.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import {
@@ -41,6 +42,89 @@ const mimeTypes = new Map([
   [".wasm", "application/wasm"],
 ]);
 
+async function makeWriterOrderFixture() {
+  const doc = await PDFDocument.create();
+  const pages = [];
+  for (let index = 0; index < 12; index += 1) {
+    const page = doc.addPage([612, 792]);
+    page.drawText(`PDF.js annotation writer fixture page ${index + 1}`, {
+      x: 36,
+      y: 744,
+      size: 14,
+    });
+    pages.push(page);
+  }
+
+  // Page 10 deliberately starts with a supported annotation and its popup.
+  // The writer must preserve these refs while adding new annotations after
+  // them; this reproduces the real document shape involved in the iPad report.
+  const page = pages[9];
+  const annots = PDFArray.withContext(doc.context);
+  page.node.set(PDFName.of("Annots"), annots);
+  const square = PDFDict.withContext(doc.context);
+  square.set(PDFName.of("Type"), PDFName.of("Annot"));
+  square.set(PDFName.of("Subtype"), PDFName.of("Square"));
+  const rect = PDFArray.withContext(doc.context);
+  for (const value of [72, 160, 190, 250]) rect.push(PDFNumber.of(value));
+  square.set(PDFName.of("Rect"), rect);
+  square.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-square"));
+  square.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 annotation"));
+  square.set(PDFName.of("P"), page.ref);
+  const squareRef = doc.context.register(square);
+  annots.push(squareRef);
+
+  const popup = PDFDict.withContext(doc.context);
+  popup.set(PDFName.of("Type"), PDFName.of("Annot"));
+  popup.set(PDFName.of("Subtype"), PDFName.of("Popup"));
+  const popupRect = PDFArray.withContext(doc.context);
+  for (const value of [200, 160, 330, 280]) popupRect.push(PDFNumber.of(value));
+  popup.set(PDFName.of("Rect"), popupRect);
+  popup.set(PDFName.of("Parent"), squareRef);
+  popup.set(PDFName.of("P"), page.ref);
+  const popupRef = doc.context.register(popup);
+  square.set(PDFName.of("Popup"), popupRef);
+  annots.push(popupRef);
+
+  const addBaseInk = (nm, contents, { freehandHighlight = false } = {}) => {
+    const ink = PDFDict.withContext(doc.context);
+    ink.set(PDFName.of("Type"), PDFName.of("Annot"));
+    ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
+    const inkRect = PDFArray.withContext(doc.context);
+    for (const value of [220, 320, 360, 400]) inkRect.push(PDFNumber.of(value));
+    ink.set(PDFName.of("Rect"), inkRect);
+    ink.set(PDFName.of("NM"), PDFHexString.fromText(nm));
+    ink.set(PDFName.of("Contents"), PDFHexString.fromText(contents));
+    ink.set(PDFName.of("P"), page.ref);
+    if (freehandHighlight) ink.set(PDFName.of("IT"), PDFName.of("InkHighlight"));
+    const inkList = PDFArray.withContext(doc.context);
+    const path = PDFArray.withContext(doc.context);
+    for (const value of [220, 325, 255, 350, 295, 375, 350, 395]) path.push(PDFNumber.of(value));
+    inkList.push(path);
+    ink.set(PDFName.of("InkList"), inkList);
+    annots.push(doc.context.register(ink));
+  };
+  addBaseInk("page-ten-existing-ink", "Existing page 10 Ink");
+  addBaseInk("page-ten-existing-freehand-highlight", "Existing page 10 freehand Highlight", {
+    freehandHighlight: true,
+  });
+
+  const underline = PDFDict.withContext(doc.context);
+  underline.set(PDFName.of("Type"), PDFName.of("Annot"));
+  underline.set(PDFName.of("Subtype"), PDFName.of("Underline"));
+  const underlineRect = PDFArray.withContext(doc.context);
+  for (const value of [72, 420, 200, 444]) underlineRect.push(PDFNumber.of(value));
+  underline.set(PDFName.of("Rect"), underlineRect);
+  underline.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-underline"));
+  underline.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 Underline"));
+  underline.set(PDFName.of("P"), page.ref);
+  const quadPoints = PDFArray.withContext(doc.context);
+  for (const value of [72, 444, 200, 444, 72, 420, 200, 420]) quadPoints.push(PDFNumber.of(value));
+  underline.set(PDFName.of("QuadPoints"), quadPoints);
+  annots.push(doc.context.register(underline));
+
+  return doc.save({ useObjectStreams: false });
+}
+
 test(
   "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
   {
@@ -55,7 +139,12 @@ test(
     const actorId = "00000000-0000-4000-8000-000000000001";
     const runId = `${Date.now()}-${process.pid}`;
     const bridgeSource = await readFile(bridgePath, "utf8");
-    const loadedBaseBytes = await readFile(fixturePath);
+    const loadedBaseBytes = await makeWriterOrderFixture();
+    const baseInspection = await inspect({ bytes: loadedBaseBytes });
+    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "square").length, 1);
+    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "ink").length, 1);
+    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "highlight").length, 1);
+    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "underline").length, 1);
     const viewerHtml = await readFile(viewerHtmlPath, "utf8");
     const viewerWithBridge = viewerHtml.replace(
       /<head\b[^>]*>/i,
@@ -87,12 +176,13 @@ test(
             const documentId=${JSON.stringify(documentId)};
             const actorId=${JSON.stringify(actorId)};
             const iframe=document.querySelector('iframe');
-            const state=window.__syncHost={ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
+            const state=window.__syncHost={loadedBaseBytes:null,ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
             const bytesToBase64=value=>{const bytes=new Uint8Array(value);let binary='';for(let offset=0;offset<bytes.length;offset+=0x8000)binary+=String.fromCharCode(...bytes.subarray(offset,offset+0x8000));return btoa(binary)};
             const base64ToArrayBuffer=value=>{const binary=atob(value);const bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);return bytes.buffer};
             const sendOpen=async()=>{
-              const response=await fetch('/tests/fixtures/tracemonkey.pdf');
+            const response=await fetch('/tests/fixtures/tracemonkey.pdf');
               const data=await response.arrayBuffer();
+              state.loadedBaseBytes=bytesToBase64(data);
               iframe.contentWindow.postMessage({channel,type:'open',token,rendererGeneration,documentId,documentPath:'tests/fixtures/tracemonkey.pdf',filename:'tracemonkey.pdf',autoSave:false,openRequest:1,syncState:state.syncState,data},'*',[data]);
             };
             window.addEventListener('message',event=>{
@@ -116,7 +206,7 @@ test(
                   setTimeout(()=>iframe.contentWindow.postMessage(failed,'*'),50);
                   return;
                 }
-                void fetch('/prepare-local',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({checkpointBytes:state.preparedLocal?.bytesBase64||null,draftBytes:bytesToBase64(message.data),operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId})})
+                void fetch('/prepare-local',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseBytes:state.loadedBaseBytes,checkpointBytes:state.preparedLocal?.bytesBase64||null,draftBytes:bytesToBase64(message.data),operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId})})
                   .then(async response=>{const body=await response.json();if(!response.ok)throw new Error('prepareLocal returned HTTP '+response.status+' ('+(body.code||'unknown-code')+'): '+(body.error||'unknown merge error'));return body})
                   .then(prepared=>{
                     state.preparedLocal=prepared;
@@ -152,6 +242,7 @@ test(
               }else if(message.type==='sync-apply-prepared'||message.type==='sync-apply-rejected'){
                 state.prepared.push(message);
               }else if(message.type==='sync-applied'){
+                if(message.ok)state.loadedBaseBytes=state.preparedLocal.bytesBase64;
                 state.applied.push(message);
               }else if(message.type==='sync-apply-cancelled'){
                 state.cancelled.push(message);
@@ -175,7 +266,13 @@ test(
         return;
       }
       if (url.pathname === "/tests/fixtures/tracemonkey.pdf") {
-        target = fixturePath;
+        response.writeHead(200, {
+          "content-type": "application/pdf",
+          "content-length": loadedBaseBytes.length,
+          "x-content-type-options": "nosniff",
+        });
+        response.end(loadedBaseBytes);
+        return;
       } else if (url.pathname === "/prepare-local" && request.method === "POST") {
         let input = null;
         let draftPdfBytes = null;
@@ -189,7 +286,7 @@ test(
             ? Buffer.from(input.checkpointBytes, "base64")
             : null;
           const prepared = await prepareLocal({
-            baseBytes: loadedBaseBytes,
+            baseBytes: input.baseBytes ? Buffer.from(input.baseBytes, 'base64') : loadedBaseBytes,
             draftBytes: draftPdfBytes,
             checkpointBytes: checkpointPdfBytes || undefined,
             operations: input.operations,
@@ -333,6 +430,10 @@ test(
         );
       }, { timeout: 30_000 });
 
+      await viewer.evaluate(async () => {
+        PDFViewerApplication.pdfViewer.currentScaleValue = "page-fit";
+        await new Promise(requestAnimationFrame);
+      });
       await viewer.evaluate(() => {
         PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
           mode: 5,
@@ -375,8 +476,8 @@ test(
           [...map.values()].filter((value) => value?.annotationType === 5).length > before;
       }, { timeout: 15_000 }, priorSquares);
 
-      const requestCheckpoint = async (id, { includeBytes = false } = {}) => {
-        await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId }) => {
+      const requestCheckpoint = async (id, { includeBytes = false, openRequest = 1 } = {}) => {
+        await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId, openRequest: currentOpenRequest }) => {
           document.querySelector("iframe").contentWindow.postMessage({
             channel: messageChannel,
             type: "sync-checkpoint",
@@ -384,9 +485,9 @@ test(
             rendererGeneration: generation,
             id: requestId,
             documentId: currentDocumentId,
-            openRequest: 1,
+            openRequest: currentOpenRequest,
           }, "*");
-        }, { channel, token, rendererGeneration, documentId, id });
+        }, { channel, token, rendererGeneration, documentId, id, openRequest });
         await page.waitForFunction((requestId) =>
           window.__syncHost?.checkpoints.some((entry) => entry.id === requestId) ||
           window.__syncHost?.rejected.some((entry) => entry.id === requestId),
@@ -430,6 +531,83 @@ test(
         const host = await page.evaluate(() => window.__syncHost);
         assert.ok(host.preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
         return host;
+      };
+      const drawWithTool = async (mode, pageNumber, offset) => {
+        const before = await viewer.evaluate(() =>
+          PDFViewerApplication.pdfDocument.annotationStorage.size,
+        );
+        await viewer.evaluate(({ editorMode, targetPage }) => {
+          const app = PDFViewerApplication;
+          document.querySelector(`.page[data-page-number="${targetPage}"]`)
+            .scrollIntoView({ block: "start" });
+          app.eventBus.dispatch("switchannotationeditormode", {
+            mode: editorMode,
+            isFromKeyboard: true,
+            createNewEditor: false,
+          });
+        }, { editorMode: mode, targetPage: pageNumber });
+        await viewer.waitForFunction((targetPage) => {
+          const pageElement = document.querySelector(`.page[data-page-number="${targetPage}"]`);
+          const pageView = PDFViewerApplication.pdfViewer.getPageView(targetPage - 1);
+          const rect = pageElement?.getBoundingClientRect();
+          return Boolean(
+            pageView?.annotationEditorLayer?.div?.isConnected &&
+            rect?.width > 0 && rect?.height > 0 &&
+            rect.bottom > 0 && rect.top < window.innerHeight &&
+            PDFViewerApplication.pdfViewer.currentPageNumber === targetPage,
+          );
+        }, { timeout: 15_000 }, pageNumber);
+        const pageRect = await viewer.$eval(
+          `.page[data-page-number="${pageNumber}"]`,
+          (element) => {
+            const rect = element.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+          },
+        );
+        const iframeRect = await page.$eval("iframe", (element) => {
+          const rect = element.getBoundingClientRect();
+          return { x: rect.x, y: rect.y };
+        });
+        const start = {
+          x: iframeRect.x + pageRect.x + pageRect.width * (0.28 + (offset % 3) * 0.12),
+          y: iframeRect.y + pageRect.y + pageRect.height * (0.36 + (offset % 2) * 0.14),
+        };
+        const end = {
+          x: start.x + Math.min(64, pageRect.width * 0.1),
+          y: start.y + Math.min(46, pageRect.height * 0.06),
+        };
+        await page.mouse.move(start.x, start.y, { steps: 2 });
+        await page.mouse.down({ button: "left" });
+        await page.mouse.move(end.x, end.y, { steps: 6 });
+        await page.mouse.up({ button: "left" });
+        if (mode === 15) {
+          await viewer.evaluate(() => {
+            PDFViewerApplication.pdfViewer._layerProperties
+              .annotationEditorUIManager.currentLayer?.commitOrRemove?.();
+          });
+        }
+        try {
+          await viewer.waitForFunction((priorSize) =>
+            PDFViewerApplication.pdfDocument.annotationStorage.size > priorSize,
+          { timeout: 15_000 }, before);
+        } catch (error) {
+          const state = await viewer.evaluate((targetPage) => {
+            const app = PDFViewerApplication;
+            const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+            const pageView = app.pdfViewer.getPageView(targetPage - 1);
+            const rect = document.querySelector(`.page[data-page-number="${targetPage}"]`).getBoundingClientRect();
+            return {
+              annotationStorageSize: app.pdfDocument.annotationStorage.size,
+              annotationEditorMode: app.pdfViewer.annotationEditorMode,
+              managerMode: manager?.mode,
+              pageRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+              currentPageNumber: app.pdfViewer.currentPageNumber,
+              editorIds: manager?.getEditors?.(targetPage - 1)?.map((editor) => editor.id) || [],
+              layerConnected: pageView?.annotationEditorLayer?.div?.isConnected || false,
+            };
+          }, pageNumber);
+          throw new Error(`PDF.js did not store mode ${mode} editor on page ${pageNumber}; before=${before}; state=${JSON.stringify(state)}; cause=${error.message}`);
+        }
       };
 
       const first = await requestCheckpoint("checkpoint-first");
@@ -505,7 +683,7 @@ test(
       const cleanCheckpointBytes = Buffer.from(second.checkpointDataBase64, "base64");
       const cleanCheckpointInfo = await inspect({ bytes: cleanCheckpointBytes });
       assert.equal(cleanCheckpointInfo.identities.filter((identity) =>
-        identity.kind === "square" && !identity.deleted,
+        identity.pageIndex === 0 && identity.kind === "square" && !identity.deleted,
       ).length, 1, "The clean checkpoint PDF should still contain exactly one Square");
       const refreshedPrepared = await prepareLocal({
         baseBytes: loadedBaseBytes,
@@ -518,6 +696,94 @@ test(
       const refreshedIdentity = refreshedPrepared.identities.find((identity) => identity.uuid === uuid);
       assert.equal(refreshedIdentity?.runtimeId, runtimeId,
         "The clean checkpoint should rebind the same live editor UUID to its saved PDF ref");
+
+      // Exercise the frozen PDF.js writer's per-page editor order with mixed
+      // Ink and freehand Highlight editors on page 2 and page 10. Page 10 also
+      // has a pre-existing Square plus Popup, so the new refs follow unrelated
+      // existing refs and the popup entries the writer adds for comments.
+      await drawWithTool(15, 2, 0);
+      await drawWithTool(9, 10, 1);
+      await drawWithTool(9, 2, 2);
+      await drawWithTool(15, 10, 3);
+      await drawWithTool(15, 10, 4);
+      await drawWithTool(15, 2, 5);
+      const mixedSaveHost = await saveAndWaitForPreparation(2);
+      const mixedSave = mixedSaveHost.saves[1];
+      const mixedAssignments = mixedSave.newAnnotations;
+      assert.ok(mixedAssignments.length >= 7,
+        "The repeated save should include the retained Square and the mixed multi-page editor set");
+      const mixedAssignmentsByPage = new Map();
+      for (const assignment of mixedAssignments) {
+        const pageAssignments = mixedAssignmentsByPage.get(assignment.pageIndex) || [];
+        pageAssignments.push(assignment);
+        mixedAssignmentsByPage.set(assignment.pageIndex, pageAssignments);
+      }
+      for (const [pageIndex, assignments] of mixedAssignmentsByPage) {
+        assert.deepEqual(
+          assignments.map((assignment) => assignment.order).sort((left, right) => left - right),
+          Array.from({ length: assignments.length }, (_, index) => index),
+          `Page ${pageIndex + 1} writer assignments should be contiguous and deterministic`,
+        );
+      }
+      const mixedPreparedBytes = Buffer.from(mixedSaveHost.preparedLocal.bytesBase64, "base64");
+      const mixedPreparedInfo = await inspect({ bytes: mixedPreparedBytes });
+      const mixedPreparedDoc = await PDFDocument.load(mixedPreparedBytes, { updateMetadata: false });
+      const runtimeIdentities = new Map(
+        mixedSaveHost.preparedLocal.identities.map((identity) => [identity.uuid, identity]),
+      );
+      const positionsByPage = new Map();
+      for (const assignment of mixedAssignments) {
+        const identity = mixedPreparedInfo.identities.find((entry) => entry.uuid === assignment.uuid);
+        const runtimeIdentity = runtimeIdentities.get(assignment.uuid);
+        assert.equal(runtimeIdentity?.runtimeId, assignment.runtimeId,
+          `Writer order should bind ${assignment.runtimeId} to its own UUID`);
+        assert.equal(identity?.pageIndex, assignment.pageIndex,
+          `Writer order should preserve ${assignment.runtimeId} page`);
+        assert.equal(identity?.kind, assignment.kind.toLowerCase(),
+          `Writer subtype mapping should preserve ${assignment.runtimeId} kind`);
+        assert.equal(runtimeIdentity?.ref, identity?.ref,
+          `The runtime assignment and persisted UUID must resolve to one exact PDF ref for ${assignment.runtimeId}`);
+        const refMatch = /^(\d+)R(\d*)$/.exec(identity.ref);
+        assert.ok(refMatch, `Expected a PDF.js ref for ${assignment.runtimeId}`);
+        const ref = PDFRef.of(Number(refMatch[1]), Number(refMatch[2] || 0));
+        const page = mixedPreparedDoc.getPages()[assignment.pageIndex];
+        const annots = page.node.lookup(PDFName.of("Annots"), PDFArray);
+        const annotationIndex = Array.from({ length: annots.size() }, (_, index) => index)
+          .find((index) => annots.get(index) instanceof PDFRef && annots.get(index).toString() === ref.toString());
+        assert.notEqual(annotationIndex, undefined,
+          `The exact ref for ${assignment.runtimeId} must occur in its page /Annots array`);
+        const positions = positionsByPage.get(assignment.pageIndex) || [];
+        positions.push({ order: assignment.order, index: annotationIndex });
+        positionsByPage.set(assignment.pageIndex, positions);
+
+        const dict = mixedPreparedDoc.context.lookup(ref, PDFDict);
+        const subtype = dict.lookup(PDFName.of("Subtype"), PDFName).decodeText();
+        const intentObject = dict.get(PDFName.of("IT"));
+        const intent = intentObject instanceof PDFName
+          ? intentObject.decodeText()
+          : null;
+        const operation = mixedSave.operations.find((entry) => entry.uuid === assignment.uuid);
+        if (assignment.kind === "Highlight" && !operation?.serialized?.quadPoints) {
+          assert.equal(subtype, "Ink");
+          assert.equal(intent, "InkHighlight",
+            "A freehand HighlightEditor is physically Ink/InkHighlight in PDF.js output");
+        } else if (assignment.kind === "Ink") {
+          assert.equal(subtype, "Ink");
+          assert.notEqual(intent, "InkHighlight");
+        } else {
+          assert.equal(subtype.toLowerCase(), assignment.kind.toLowerCase());
+        }
+      }
+      for (const [pageIndex, positions] of positionsByPage) {
+        const ordered = positions.sort((left, right) => left.order - right.order);
+        assert.deepEqual(ordered.map(({ index }) => index),
+          [...ordered].map(({ index }) => index).sort((left, right) => left - right),
+          `Physical /Annots refs should follow the writer order on page ${pageIndex + 1}`);
+      }
+      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Ink"));
+      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Highlight"));
+      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Ink"));
+      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Highlight"));
 
       const checkpointIdentity = preparedLocal.identities.find((identity) =>
         identity.uuid === uuid,
@@ -591,6 +857,9 @@ test(
         (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
       ));
       const thirdSaveHost = await saveAndWaitForPreparation(3);
+      assert.ok(thirdSaveHost.preparedLocal.identities.some((identity) =>
+        typeof identity.runtimeId === "string" && identity.runtimeId.length > 0,
+      ), "The checkpoint host should exercise writer-local runtime IDs during sync apply");
       const revivedIdentity = thirdSaveHost.preparedLocal.identities.find(
         (identity) => identity.uuid === uuid,
       );
@@ -684,6 +953,17 @@ test(
       const expectedRect = revivedOperation.serialized?.rect;
       assert.ok(Array.isArray(expectedRect) && expectedRect.length === 4,
         "The revived Square operation should retain its serialized geometry");
+      await viewer.evaluate(async () => {
+        document.querySelector('.page[data-page-number="1"]')
+          .scrollIntoView({ block: "start" });
+        await new Promise(requestAnimationFrame);
+      });
+      await viewer.waitForFunction(() => {
+        const rect = document
+          .querySelector('.page[data-page-number="1"]')
+          ?.getBoundingClientRect();
+        return Boolean(rect?.bottom > 0 && rect?.top < window.innerHeight);
+      }, { timeout: 10_000 });
       await viewer.waitForFunction(async ({ annotationRef, rect }) => {
         const app = PDFViewerApplication;
         const pdfPage = await app.pdfDocument.getPage(1);
@@ -873,6 +1153,42 @@ test(
         operation.uuid === uuid && operation.action === "upsert" &&
         operation.serialized?.thickness === 5,
       ), "The edited Square should remain associated with its UUID operation");
+
+      // Preserve exact identities after a saved ACK as well as immediately after apply.
+      const nextSaveCount = await page.evaluate(() => window.__syncHost.saves.length + 1);
+      const acknowledgedSquareHost = await saveAndWaitForPreparation(nextSaveCount);
+      assert.ok(acknowledgedSquareHost.preparedLocal.identities.some((identity) =>
+        identity.uuid === uuid && identity.ref,
+      ), "The post-apply saved ACK should keep the edited Square identity");
+      const pageTenSquareIdentity = thirdSaveHost.preparedLocal.identities.find((identity) =>
+        identity.pageIndex === 9 && identity.kind?.toLowerCase() === "square" &&
+        identity.uuid !== uuid && identity.ref,
+      );
+      assert.ok(pageTenSquareIdentity);
+      await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]').scrollIntoView({ block: "start" }));
+      await viewer.waitForFunction((ref) => {
+        const app = PDFViewerApplication;
+        return app.pdfViewer.getPageView(9)?.renderingState === 3 &&
+          [...app.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(9)]
+            .some(editor => editor.annotationElementId === ref);
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      await viewer.evaluate((ref) => {
+        const app = PDFViewerApplication;
+        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+        const editor = [...manager.getEditors(9)].find(candidate => candidate.annotationElementId === ref);
+        manager.setSelected(editor);
+        app.eventBus.dispatch("switchannotationeditorparams", { source: window, type: 62, value: 7 });
+      }, pageTenSquareIdentity.ref);
+      await viewer.waitForFunction((ref) => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        return [...manager.getEditors(9)].find(editor => editor.annotationElementId === ref)?.serialize()?.thickness === 7;
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      const afterAckCheckpoint = await requestCheckpoint("checkpoint-post-ack-second-existing-edit", { openRequest: 2 });
+      assert.ok(afterAckCheckpoint.checkpoint.operations.some(operation =>
+        operation.uuid === pageTenSquareIdentity.uuid && operation.ref === pageTenSquareIdentity.ref &&
+        operation.pageIndex === 9 && operation.kind === "Square" && operation.action === "upsert" &&
+        operation.serialized?.thickness === 7,
+      ), "A post-ACK edit of another existing annotation must retain its UUID and exact ref");
 
       await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
         document.querySelector("iframe").contentWindow.postMessage({

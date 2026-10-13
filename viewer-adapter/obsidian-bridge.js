@@ -940,7 +940,19 @@
   }
 
   function applySyncIdentities(value, { reset = false } = {}) {
-    const syncState = normalizeSyncState(value);
+    const normalizedSyncState = normalizeSyncState(value);
+    const syncState = reset && normalizedSyncState
+      ? {
+          ...normalizedSyncState,
+          // Runtime editor IDs are local to the document that produced the
+          // checkpoint. Remove them from adopted state too, so a later
+          // same-document ACK cannot re-seed those stale IDs by merging.
+          identities: normalizedSyncState.identities.map((identity) => {
+            const { runtimeId: _runtimeId, ...stableIdentity } = identity;
+            return stableIdentity;
+          }),
+        }
+      : normalizedSyncState;
     if (reset) {
       state.annotationUuidByRuntimeId.clear();
       state.annotationRefByRuntimeId.clear();
@@ -984,7 +996,12 @@
     };
     for (const identity of mergedSyncState.identities) {
       const uuid = identity.uuid;
-      if (typeof identity.runtimeId === "string" && identity.runtimeId) {
+      // A sync apply opens a new PDF.js document, whose editor IDs are newly
+      // allocated. Runtime IDs in the host identity list belong to the writer
+      // document that produced the checkpoint, so only reuse them when
+      // adopting same-document state; the new document will rebuild them from
+      // exact annotation refs below.
+      if (!reset && typeof identity.runtimeId === "string" && identity.runtimeId) {
         state.annotationUuidByRuntimeId.set(identity.runtimeId, uuid);
         const reference = canonicalPdfAnnotationRef(identity.ref);
         if (reference) {
@@ -2985,7 +3002,11 @@
       if (!sessionIsCurrent()) {
         return false;
       }
-      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
+      if (
+        state.revision !== revisionBeforeLease ||
+        isEditBoundaryBusy() ||
+        state.pendingInkCommit
+      ) {
         return SAVE_RETRY_AFTER_IDLE;
       }
       if (
@@ -3021,7 +3042,8 @@
       if (
         !sessionIsCurrent() ||
         state.revision !== revisionAtStart ||
-        isEditBoundaryBusy()
+        isEditBoundaryBusy() ||
+        state.pendingInkCommit
       ) {
         if (willSaveDispatched) {
           await app.pdfScriptingManager?.dispatchDidSave?.();
@@ -3036,9 +3058,11 @@
         return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
       }
 
+      // A host ACK clears the dirty flags but does not replace PDF.js's loaded
+      // base; retained id:null editors still need saveDocument serialization.
       const hasAnnotationChanges =
         dirtySnapshot.hadAnnotationChanges || state.dirty ||
-        app._annotationStorageModified;
+        app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0;
       autoStartedAt = origin === "auto" ? Date.now() : null;
       if (autoStartedAt !== null) {
         state.lastAutoSaveStartedAt = autoStartedAt;
@@ -3179,6 +3203,18 @@
         }
         continue;
       }
+      if (state.pendingInkCommit) {
+        state.committingInkForSave = true;
+        try {
+          // A stroke can finish while an earlier Vault write is awaiting its
+          // ACK. Commit it at this revision boundary before serializing again.
+          state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager
+            ?.currentLayer?.commitOrRemove?.();
+        } finally {
+          state.committingInkForSave = false;
+          state.pendingInkCommit = false;
+        }
+      }
       lastResult = await saveOneRevision(origin);
       if (lastResult === SAVE_RETRY_AFTER_IDLE) {
         if (origin === "auto") {
@@ -3272,7 +3308,11 @@
         releaseHostHeavyLease(lease, documentId);
         return false;
       }
-      if (state.revision !== revisionBeforeLease || isEditBoundaryBusy()) {
+      if (
+        state.revision !== revisionBeforeLease ||
+        isEditBoundaryBusy() ||
+        state.pendingInkCommit
+      ) {
         releaseHostHeavyLease(lease, documentId);
         continue;
       }
@@ -3298,7 +3338,8 @@
         if (
           !sessionIsCurrent() ||
           state.revision !== revisionAtStart ||
-          isEditBoundaryBusy()
+          isEditBoundaryBusy() ||
+          state.pendingInkCommit
         ) {
           if (willSaveDispatched) {
             await app.pdfScriptingManager?.dispatchDidSave?.();
@@ -3313,9 +3354,10 @@
           }
           continue;
         }
+        // Recovery has the same loaded-base boundary as an ordinary save.
         const bytes =
           dirtySnapshot.hadAnnotationChanges || state.dirty ||
-          app._annotationStorageModified
+          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
             ? await pdfDocument.saveDocument()
             : await pdfDocument.getData();
         if (!bytes) {
@@ -3366,7 +3408,11 @@
           hadAnnotationChanges: true,
           hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
         });
-        if (state.revision === revisionAtStart && !isEditBoundaryBusy()) {
+        if (
+          state.revision === revisionAtStart &&
+          !isEditBoundaryBusy() &&
+          !state.pendingInkCommit
+        ) {
           state.lastRecoveredDocumentId = documentId;
           state.lastRecoveredRevision = revisionAtStart;
           return true;
@@ -6400,7 +6446,8 @@
         recovered &&
         state.lastRecoveredDocumentId === documentId &&
         state.lastRecoveredRevision === state.revision &&
-        !isEditBoundaryBusy()
+        !isEditBoundaryBusy() &&
+        !state.pendingInkCommit
       );
       const durable = (result === true && !dirty) || recoveryIsCurrent;
       if (
@@ -6553,7 +6600,8 @@
           dirty: isDirty(),
           recovered:
             state.lastRecoveredDocumentId === existing.documentId &&
-            state.lastRecoveredRevision === state.revision,
+            state.lastRecoveredRevision === state.revision &&
+            !state.pendingInkCommit,
           prepared: true,
         });
       }

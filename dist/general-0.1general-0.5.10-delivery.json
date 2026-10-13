@@ -1,0 +1,33 @@
+{
+  "version": "0.5.10",
+  "name": "0.1general",
+  "kind": "iPad candidate, physical revalidation pending",
+  "sourceBase": "42f8c60",
+  "sha256": "b1a23e399f16139c9da09d2b7290c693b1c8f501b8d53f7e21bfdfe402fac7b1",
+  "files": {
+    "main.js": {
+      "sha256": "1ba92f39e55800028b7b5d965ab829c10e1764bbfce375817c305c76c6b2253e",
+      "bytes": 6990266
+    },
+    "manifest.json": {
+      "sha256": "8c3718b55e956a6f1101114a85e0ccd91391b1d10e678ee8162175862f29ae7f",
+      "bytes": 270
+    },
+    "styles.css": {
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650",
+      "bytes": 637
+    }
+  },
+  "supersededLocalCandidateSha256": "a9d6d60fdd5c2373bff8988ba64c84008a7a1a18a3ee1ca838cb4155a813004c",
+  "evidence": "tests/artifacts/general-0.5.10-final-evidence-1791901849902456000.json",
+  "targetDeployment": "tests/artifacts/general-0.5.10-target-1791901733357089000.json",
+  "defaultTestExit": 1,
+  "offlineScriptExit": 1,
+  "physicalDeviceAcceptance": "iPad and Windows pending user verification",
+  "independentAudit": "tests/artifacts/general-0.5.10-independent-audit.json",
+  "evidenceArchive": {
+    "path": "dist/general-0.1general-0.5.10-evidence.zip",
+    "sha256": "c5baf2aaae8ba5b6bf8ff3e2742137b3d069d447f7d1a7f1af0b6363fa4344e5",
+    "files": 150
+  }
+}

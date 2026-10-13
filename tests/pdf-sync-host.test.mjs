@@ -18,7 +18,7 @@ async function until(check) {
 
 function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false,
   appendPatch = null, appendFailure = null, acquireHeavyLease = null, prepareIdentities = [],
-  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null,
+  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null, prepareFailure = null,
   checkpointReadGate = null, autoApply = true } = {}) {
   let disk = bytes([1]);
   let nextId = 0;
@@ -35,7 +35,11 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
     async list(path) { return { files: [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`)), folders: [] }; },
   };
   const client = {
-    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger }; },
+    async prepareLocal(input) {
+      calls.prepare += 1;
+      if (prepareFailure) throw prepareFailure;
+      return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger };
+    },
     async merge(input) {
       calls.merge.push(input);
       const result = { conflicts: [], identities: mergeIdentities, ledger: mergeLedger };
@@ -764,6 +768,35 @@ test("write failure retains the pending branch and prevents subsequent automatic
     h.host.schedule(h.file, "repeat"); await sleep(190);
     assert.equal(h.calls.writes, writes);
     assert.equal(h.posted.filter((m) => m.type === "sync-apply").length, 0);
+  } finally { h.host.dispose(); }
+});
+
+test("prepareLocal binding failure pauses sync only after preserving the raw Viewer checkpoint", async () => {
+  const rawViewerBytes = bytes([37, 80, 68, 70, 45, 49, 46, 55, 10, 105, 110, 107, 45, 101, 100, 105, 116]);
+  const operations = [{ uuid: "native-ink-11", pageIndex: 9, kind: "Ink", action: "upsert",
+    deleted: false, timestamp: 1791892800000, logical: 1, actorId: "native-ipad-device",
+    operationId: "native-ipad-device:1791892800000:0:1",
+    serialized: { subtype: "Ink", inkList: [[64, 80, 108, 117, 146, 99]] } }];
+  const h = harness({ local: rawViewerBytes, dirty: true, operations,
+    prepareFailure: new Error("annotation object binding failed for InkEditor11 on page 10") });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: rawViewerBytes.buffer, actorId: "native-ipad-device", operations, revision: 11,
+    }), /binding failed/);
+
+    assert.equal(h.calls.prepare, 1);
+    assert.equal(h.calls.writes, 0);
+    assert.equal(h.calls.appends, 0);
+    assert.deepEqual([...h.disk], [1], "a mapping failure never writes an unverified merge result to the source");
+    const record = h.records[0];
+    assert.equal(record.reason, "before-save");
+    assert.equal(record.revision, 11);
+    assert.deepEqual([...bytes(record.data)], [...rawViewerBytes],
+      "the raw PDF.js serialization was made durable before annotation mapping began");
+    assert.equal(record.metadata.status, "conflict");
+    assert.ok(record.retained, "the recovery entry remains available after the host pauses sync");
+    assert.match(h.view.status, /同步暂停/);
   } finally { h.host.dispose(); }
 });
 
