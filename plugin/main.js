@@ -19,6 +19,7 @@ const {
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require('./pdf-merge-client.cjs');
 /* BUILD:PDF_SYNC_HOST_REQUIRE */ const { createPdfSyncHost } = require('./pdf-sync-host.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
+/* BUILD:PDF_RECOVERY_REQUIRE */ const { writeDeltaRecovery, readDeltaRecovery } = require('./pdf-recovery.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -3630,11 +3631,25 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       candidateFile: `${safeId}.pdf`,
       createdAt: new Date().toISOString(),
       status,
+      completed: false,
     };
     await ensureAdapterDirectory(adapter, this.recoveryDirectory);
+    const deltaRecord = await writeDeltaRecovery({
+      adapter, root: this.recoveryDirectory, data,
+      bases: [originalBytes, view?.loadedBaseBytes], metadata,
+      ensureDirectory: ensureAdapterDirectory,
+    });
+    if (deltaRecord) return deltaRecord;
     await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
     try {
       await adapter.writeBinary(candidatePath, data);
+      const saved = await adapter.readBinary(candidatePath);
+      if (!bytesEqual(new Uint8Array(data), new Uint8Array(saved))) throw new Error("恢复 PDF 写后校验失败");
+      metadata.outputHash = fingerprint(data);
+      metadata.outputLength = data.byteLength;
+      metadata.completed = true;
+      await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      if (await adapter.read(metadataPath) !== `${JSON.stringify(metadata, null, 2)}\n`) throw new Error("恢复完成记录写后校验失败");
     } catch (error) {
       for (const filePath of [candidatePath, metadataPath]) {
         try {
@@ -3684,14 +3699,21 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       try {
         const metadata = JSON.parse(await adapter.read(metadataPath));
         if (!["pending", "conflict", "failed", "draft"].includes(metadata.status)) continue;
+        if (metadata.completed === false) continue;
         const safeId = metadata.candidateId?.replace(/[^a-zA-Z0-9_-]/g, "");
         if (!safeId) continue;
-        const candidatePath = `${this.recoveryDirectory}/${safeId}.pdf`;
+        const isDelta = metadata.schema === 2 && metadata.storage === "pdf-prefix-delta";
+        if (metadata.schema !== 1 && !isDelta) continue;
+        const candidatePath = `${this.recoveryDirectory}/${safeId}.${isDelta ? "delta" : "pdf"}`;
+        if (isDelta && metadata.candidateFile !== `${safeId}.delta`) continue;
         if (!(await adapter.exists(candidatePath))) continue;
         candidates.push({ metadata, candidatePath, metadataPath });
       } catch {
         // Ignore incomplete/corrupt metadata; the remaining candidates stay intact.
       }
+    }
+    if (typeof this.pdfSync?.listRecoveryCandidates === "function") {
+      candidates.push(...await this.pdfSync.listRecoveryCandidates());
     }
     return candidates.sort((left, right) =>
       String(right.metadata.updatedAt || right.metadata.createdAt || "").localeCompare(
@@ -3706,9 +3728,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       new Notice("没有可恢复的 PDF 自动保存副本。");
       return null;
     }
-    const candidate = candidates[0];
-    const adapter = this.app.vault.adapter;
-    const bytes = await adapter.readBinary(candidate.candidatePath);
+    let candidate, bytes;
+    for (const item of candidates) {
+      try { bytes = await this.readRecoveryBytes(item); candidate = item; break; }
+      catch { /* Preserve corrupt/new records and try an older intact branch. */ }
+    }
+    if (!candidate) throw new Error("恢复副本校验未通过；原记录已保留，请导出诊断。");
     const originalName = safeFileName(candidate.metadata.filename || candidate.metadata.originalPath);
     const baseName = originalName.replace(/\.pdf$/i, "") || "recovered";
     const date = new Date(candidate.metadata.createdAt || Date.now())
@@ -3729,6 +3754,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     await this.app.vault.createBinary(outputPath, bytes);
     new Notice(`已创建恢复副本：${outputPath}`);
     return outputPath;
+  }
+
+  async readRecoveryBytes(candidate) {
+    const adapter = this.app.vault.adapter;
+    const bytes = candidate.metadata.storage === "pdf-prefix-delta"
+      ? await readDeltaRecovery(adapter, this.recoveryDirectory, candidate)
+      : candidate.metadata.storage === "sync-journal"
+        ? await this.pdfSync.readRecoveryCandidate(candidate)
+        : await adapter.readBinary(candidate.candidatePath);
+    if (candidate.metadata.outputHash && (bytes.byteLength !== candidate.metadata.outputLength ||
+      fingerprint(bytes) !== candidate.metadata.outputHash)) throw new Error("恢复 PDF 完整性校验失败");
+    return bytes instanceof Uint8Array ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : bytes;
   }
 
   resourcePreparationMetrics(metrics) {

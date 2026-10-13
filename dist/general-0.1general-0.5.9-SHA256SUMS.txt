@@ -1,0 +1,5 @@
+645b83263a3074efb9a4c4050e9d4859c874f185ba51da77510dc01c8a49187f  pdf-web-reader-0.1general-0.5.9-candidate.zip
+a6b56fdbfcaad4b1e0fa63818bf7cf1b689d8b2fae9753a0f794fce481424d37  pdf-web-reader-0.1general-0.5.9-candidate.zip.json
+1e67af0c3e41629d742043a2d5b52fc3e313e8a19bbc8496fad55f31fc05fbed  general-0.1general-0.5.9-source.diff
+be14bf19d15fade7d0cd7985d150cddde7dec0a5462ea7a03f7190aaa4d26933  general-0.1general-0.5.9-evidence.zip
+fbeaf9e4ecdeb0dc69e9a49a189f2e44b613e40e8611132a45651ed832fccc91  general-0.1general-0.5.9-evidence.manifest.json

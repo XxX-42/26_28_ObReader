@@ -597,6 +597,12 @@
       return value;
     }
     if (ArrayBuffer.isView(value)) {
+      // PDF.js RPC returns a buffer owned by this request in the Viewer realm.
+      // Hand it to the host instead of retaining it and cloning the whole PDF.
+      if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength &&
+          Object.prototype.toString.call(value.buffer) === "[object ArrayBuffer]") {
+        return value.buffer;
+      }
       return value.buffer.slice(
         value.byteOffset,
         value.byteOffset + value.byteLength,
@@ -1474,8 +1480,11 @@
       if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
         throw new Error("Page reordering cannot be included in a sync checkpoint.");
       }
+      // A host-confirmed save does not replace the PDF.js Worker's loaded
+      // bytes. Clean live editors/tombstones still belong to this session;
+      // getData() would omit them and cannot match newAnnotations/operations.
       const bytes = dirtySnapshot.hadAnnotationChanges || state.dirty ||
-          app._annotationStorageModified
+          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
         ? await pdfDocument.saveDocument()
         : await pdfDocument.getData();
       if (!bytes) {

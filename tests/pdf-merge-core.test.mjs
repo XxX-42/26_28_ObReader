@@ -192,6 +192,67 @@ test("preparation binds all five editor kinds by storage order and preserves NM 
   assert.equal(loaded.getPages().length, 1);
 });
 
+test("prepared saves expose a verified append patch while preserving their exact source prefix", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", nm: "incremental source", contents: "before" }] });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const existing = baseInfo.identities.find((item) => item.kind === "freetext");
+  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  draft.context.lookup(refFromPdfJs(existing.ref), PDFDict).set(PDFName.of("Contents"), text("after"));
+  const draftBytes = await draft.save({ useObjectStreams: false });
+  const prepared = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes,
+    operations: [operation({ uuid: existing.uuid, ref: existing.ref, kind: "freetext", timestamp: 12, operationId: "incremental-edit" })],
+    newAnnotations: [],
+    actorId: "actor-device-01",
+    patchOnly: true,
+  });
+
+  assert.equal("bytes" in prepared, false);
+  assert.equal(prepared.patch.baseLength, draftBytes.length);
+  assert.ok(prepared.patch.suffix.length > 0);
+  const output = new Uint8Array(prepared.patch.outputLength);
+  output.set(draftBytes, 0);
+  output.set(prepared.patch.suffix, draftBytes.length);
+  assert.deepEqual(output.subarray(0, draftBytes.length), draftBytes);
+  const loaded = await PDFDocument.load(output, { updateMetadata: false });
+  assert.equal(loaded.context.lookup(refFromPdfJs(existing.ref), PDFDict).lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "after");
+  assert.equal((await inspect({ bytes: output })).stateDigest, prepared.stateDigest);
+});
+
+test("merge rebases prepared local state into the exact remote source and returns an append patch", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "FreeText", nm: "merge incremental", contents: "before" }] });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const existing = baseInfo.identities.find((item) => item.kind === "freetext");
+  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  draft.context.lookup(refFromPdfJs(existing.ref), PDFDict).set(PDFName.of("Contents"), text("local winner"));
+  const draftBytes = await draft.save({ useObjectStreams: false });
+  const prepared = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes,
+    operations: [operation({ uuid: existing.uuid, ref: existing.ref, kind: "freetext", timestamp: 20, operationId: "merge-local-edit" })],
+    newAnnotations: [],
+    actorId: "actor-device-01",
+  });
+  const merged = await merge({
+    baseBytes: base.bytes,
+    localBytes: prepared.bytes,
+    remoteBytes: base.bytes,
+    actorId: "actor-device-01",
+    patchOnly: true,
+  });
+
+  assert.equal("bytes" in merged, false);
+  assert.equal(merged.patch.baseLength, base.bytes.length);
+  const output = new Uint8Array(merged.patch.outputLength);
+  output.set(base.bytes, 0);
+  output.set(merged.patch.suffix, base.bytes.length);
+  assert.deepEqual(output.subarray(0, base.bytes.length), base.bytes);
+  const updated = await PDFDocument.load(output, { updateMetadata: false });
+  assert.equal(updated.context.lookup(refFromPdfJs(existing.ref), PDFDict).lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "local winner");
+  assert.equal((await inspect({ bytes: output })).stateDigest, merged.stateDigest);
+});
+
 test("text and freehand HighlightEditor output bind exact refs and retain semantic highlight identity", async () => {
   const base = await makeBase({ pageCount: 2 });
   const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
@@ -507,6 +568,122 @@ test("an unsaved create-delete can leave a null-ref tombstone, but unknown saved
   );
 });
 
+test("a clean PDF.js draft cannot hide a retained id-null editor behind checkpoint metadata", async () => {
+  const base = await makeBase();
+  const uuid = "clean-checkpoint-retained-square";
+  const newAnnotations = [{
+    runtimeId: "pdfjs_internal_editor_0",
+    uuid,
+    pageIndex: 0,
+    kind: "square",
+    order: 0,
+  }];
+  const operations = [operation({
+    uuid,
+    kind: "square",
+    timestamp: 100,
+    operationId: "clean-checkpoint-square-create",
+  })];
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: await editBranch(base.bytes, null, {}, [{ subtype: "Square", contents: "retained editor" }]).then(({ bytes }) => bytes),
+    operations,
+    newAnnotations,
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(firstSave, uuid).kind, "square");
+
+  // PDF.js getData() can return the original loaded bytes after a successful
+  // save even though the editor remains live with annotationStorage id:null.
+  // The checkpoint records the saved ref, but it cannot manufacture the
+  // missing Square object in that stale draft. Fail closed so the bridge
+  // requests saveDocument() and supplies a fresh draft containing the editor.
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: base.bytes,
+      checkpointBytes: firstSave.bytes,
+      operations,
+      newAnnotations,
+      actorId: "actor-device-01",
+    }),
+    (error) => error.code === "PDF_MERGE_NEW_ANNOTATION_BINDING_FAILED" &&
+      /pdfjs_internal_editor_0/.test(error.message),
+  );
+});
+
+test("concurrent annotation creates converge on canonical page order and retain untracked refs", async () => {
+  const base = await makeBase({ annotations: [
+    { subtype: "Square", contents: "base square" },
+    { subtype: "Line", contents: "untracked line", popup: true },
+  ] });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const original = baseInfo.identities.find((item) => item.kind === "square");
+  const prepareBranch = async ({ actorId, deleteBase, edit, create, timestamp }) => {
+    const draft = await editBranch(base.bytes, refFromPdfJs(original.ref), {
+      ...(edit ? { contents: edit } : {}),
+      ...(deleteBase ? { remove: true } : {}),
+    }, [create]);
+    const uuid = `${actorId}-created`;
+    return prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: draft.bytes,
+      actorId,
+      newAnnotations: [{ runtimeId: `${actorId}-runtime`, uuid, pageIndex: 0, kind: create.subtype.toLowerCase(), order: 0 }],
+      operations: [
+        ...(edit ? [operation({ uuid: original.uuid, ref: original.ref, kind: original.kind, timestamp, actorId, operationId: `${actorId}-edit` })] : []),
+        ...(deleteBase ? [operation({ uuid: original.uuid, ref: original.ref, kind: original.kind, action: "delete", timestamp, actorId, operationId: `${actorId}-delete` })] : []),
+        operation({ uuid, kind: create.subtype.toLowerCase(), timestamp: timestamp - 100, actorId, operationId: `${actorId}-create` }),
+      ],
+    });
+  };
+  const branchA = await prepareBranch({
+    actorId: "device-a",
+    deleteBase: true,
+    create: { subtype: "Square", contents: "A square", appearance: "A appearance" },
+    timestamp: 300,
+  });
+  const branchB = await prepareBranch({
+    actorId: "device-b",
+    edit: "edited on B",
+    create: { subtype: "Underline", contents: "B underline", appearance: "B appearance" },
+    timestamp: 200,
+  });
+  const [aOntoB, bOntoA] = await Promise.all([
+    merge({ baseBytes: base.bytes, localBytes: branchA.bytes, remoteBytes: branchB.bytes, actorId: "device-a" }),
+    merge({ baseBytes: base.bytes, localBytes: branchB.bytes, remoteBytes: branchA.bytes, actorId: "device-b" }),
+  ]);
+  const [stateAB, stateBA] = await Promise.all([
+    inspect({ bytes: aOntoB.bytes }),
+    inspect({ bytes: bOntoA.bytes }),
+  ]);
+  const semanticEntries = (state) => state.ledger.entries
+    .map(({ ref: _ref, ...entry }) => entry)
+    .sort((left, right) => left.uuid.localeCompare(right.uuid));
+  assert.deepEqual(semanticEntries(stateAB), semanticEntries(stateBA));
+  assert.equal(stateAB.stateDigest, stateBA.stateDigest);
+  const liveOrder = (state) => state.identities
+    .filter((item) => !item.deleted && ["device-a-created", "device-b-created"].includes(item.uuid))
+    .map(({ uuid, order }) => ({ uuid, order }))
+    .sort((left, right) => left.uuid.localeCompare(right.uuid));
+  assert.deepEqual(liveOrder(stateAB), liveOrder(stateBA));
+
+  for (const bytes of [aOntoB.bytes, bOntoA.bytes]) {
+    const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+    const annots = doc.getPages()[0].node.lookup(PDFName.of("Annots"), PDFArray);
+    const entries = Array.from({ length: annots.size() }, (_, index) => {
+      const ref = annots.get(index);
+      return { ref, dict: doc.context.lookup(ref, PDFDict) };
+    });
+    const types = entries.map(({ dict }) => dict.lookup(PDFName.of("Subtype"), PDFName).decodeText());
+    assert.deepEqual(types.slice(0, 2), ["Line", "Popup"], "untracked annotation refs keep their order and position");
+    const line = entries.find(({ dict }) => dict.lookup(PDFName.of("Subtype"), PDFName).decodeText() === "Line");
+    const popupRef = line.dict.get(PDFName.of("Popup"));
+    assert.ok(popupRef instanceof PDFRef);
+    assert.equal(doc.context.lookup(popupRef, PDFDict).get(PDFName.of("Parent")).toString(), line.ref.toString());
+  }
+});
+
 test("independent new annotations union, same-UUID LWW is deterministic, and merge is byte-idempotent", async () => {
   const base = await makeBase({ annotations: [{ subtype: "FreeText", contents: "base" }] });
   const baseInspection = await inspect({ bytes: base.bytes });
@@ -530,6 +707,21 @@ test("independent new annotations union, same-UUID LWW is deterministic, and mer
       operation({ uuid: "remote-new-square", ref: null, kind: "square", timestamp: 250, actorId: "actor-b", operationId: "create-square" }),
     ],
   });
+
+  const localOnlyPatch = await merge({
+    baseBytes: base.bytes,
+    localBytes: remote.bytes,
+    remoteBytes: base.bytes,
+    actorId: "actor-b",
+    patchOnly: true,
+  });
+  assert.ok(localOnlyPatch.patch, "a local-only annotation should produce an incremental patch against the base PDF");
+  assert.equal(localOnlyPatch.incremental, true);
+  assert.equal(localOnlyPatch.patch.baseLength, base.bytes.length);
+  const patchedBytes = new Uint8Array(localOnlyPatch.patch.outputLength);
+  patchedBytes.set(base.bytes, 0);
+  patchedBytes.set(localOnlyPatch.patch.suffix, base.bytes.length);
+  assert.ok(findIdentity(await inspect({ bytes: patchedBytes }), "remote-new-square"));
 
   const merged = await merge({ baseBytes: base.bytes, localBytes: local.bytes, remoteBytes: remote.bytes });
   const mergedInfo = await inspect({ bytes: merged.bytes });

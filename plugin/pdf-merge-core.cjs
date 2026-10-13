@@ -16,6 +16,11 @@ const {
   PDFString,
 } = require("pdf-lib");
 const { sha256 } = require("@noble/hashes/sha256");
+const {
+  captureIncrementalSnapshot,
+  createIncrementalPatch,
+  materializeIncrementalResult,
+} = require("./pdf-incremental.cjs");
 
 const LEDGER_KEY = PDFName.of("ObReaderMerge");
 const UUID_KEY = PDFName.of("ObReaderId");
@@ -104,6 +109,47 @@ async function loadPdf(bytes, label) {
     });
   } catch (error) {
     throw errorFromLoad(error, label);
+  }
+}
+
+async function savePdfWithIncremental({ sourceBytes, doc, snapshot, patchOnly = false, label }) {
+  let fallback = null;
+  if (snapshot) {
+    try {
+      const patch = createIncrementalPatch({ sourceBytes, document: doc, snapshot });
+      if (patch) {
+        return {
+          ...materializeIncrementalResult({ sourceBytes, patch, patchOnly }),
+          incremental: true,
+        };
+      }
+    } catch (error) {
+      if (error?.code === "PDF_INCREMENTAL_ENCRYPTED_DOCUMENT") {
+        throw new PdfMergeError("PDF_MERGE_ENCRYPTED_DOCUMENT", error.message, { cause: error });
+      }
+      fallback = error;
+    }
+  }
+  try {
+    return {
+      bytes: await doc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 }),
+      patch: null,
+      incremental: false,
+      ...(fallback ? { incrementalFallback: { code: fallback.code || "PDF_INCREMENTAL_UNSAFE_SOURCE", message: fallback.message } } : {}),
+    };
+  } catch (error) {
+    throw errorFromLoad(error, label);
+  }
+}
+
+function tryCaptureIncrementalSnapshot(sourceBytes, doc) {
+  try {
+    return { snapshot: captureIncrementalSnapshot({ sourceBytes, document: doc }), error: null };
+  } catch (error) {
+    if (error?.code === "PDF_INCREMENTAL_ENCRYPTED_DOCUMENT") {
+      throw new PdfMergeError("PDF_MERGE_ENCRYPTED_DOCUMENT", error.message, { cause: error });
+    }
+    return { snapshot: null, error };
   }
 }
 
@@ -724,7 +770,7 @@ function infoToIdentity(stateEntry, runtimeId = null) {
   return normalizeIdentity(stateEntry, runtimeId);
 }
 
-async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId }) {
+async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId, patchOnly = false }) {
   if (typeof actorId !== "string" || !actorId) fail("PDF_MERGE_INVALID_ACTOR", "actorId is required.");
   const checkpointMatchesBase = Boolean(checkpointBytes) && bytesEqual(baseBytes, checkpointBytes);
   const [baseDoc, draftDoc, checkpointDoc] = await Promise.all([
@@ -732,6 +778,7 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     loadPdf(draftBytes, "PDF.js draft PDF"),
     checkpointBytes && !checkpointMatchesBase ? loadPdf(checkpointBytes, "Saved local checkpoint PDF") : Promise.resolve(null),
   ]);
+  const draftSnapshot = tryCaptureIncrementalSnapshot(draftBytes, draftDoc);
   const baseInfo = inspectDocument(baseDoc);
   const draftInfo = inspectDocument(draftDoc);
   const checkpointInfo = checkpointBytes ? (checkpointMatchesBase ? baseInfo : inspectDocument(checkpointDoc)) : null;
@@ -983,6 +1030,7 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
   if (!removedCheckpointStaleAnnotation && previousLedger && stableJson(previousLedger.entries) === stableJson(ledger.entries)) {
     return {
       bytes: new Uint8Array(asBytes(draftBytes, "PDF.js draft PDF")),
+      patch: null,
       stateDigest: currentDigest,
       ledger,
       identities: currentIdentities,
@@ -990,20 +1038,29 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     };
   }
   writeLedger(draftDoc, ledger);
-  let bytes;
-  try {
-    bytes = await draftDoc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 });
-  } catch (error) {
-    throw errorFromLoad(error, "Prepared local PDF");
+  const saved = await savePdfWithIncremental({
+    sourceBytes: draftBytes,
+    doc: draftDoc,
+    snapshot: draftSnapshot.snapshot,
+    patchOnly,
+    label: "Prepared local PDF",
+  });
+  if (!saved.patch && draftSnapshot.error) {
+    saved.incrementalFallback = {
+      code: draftSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
+      message: draftSnapshot.error.message,
+    };
   }
-  return { bytes, stateDigest: currentDigest, ledger, identities: currentIdentities, annotations: currentIdentities };
+  return { ...saved, stateDigest: currentDigest, ledger, identities: currentIdentities, annotations: currentIdentities };
 }
 
 function digestEntries(entries) {
   return hashText(stableJson(
     entries.map((entry) => ({
       uuid: entry.uuid,
-      ref: entry.ref ?? null,
+      // Indirect object references are PDF-file-local. The semantic digest
+      // must converge even when peers allocate the same new objects at
+      // different numbers while retaining their own valid ref bindings.
       pageIndex: entry.pageIndex,
       kind: entry.kind,
       order: entry.order,
@@ -1236,6 +1293,41 @@ function appendRefToPage(doc, pageIndex, ref) {
   }
 }
 
+function canonicalizeSupportedAnnotationOrder(doc, entriesForOrder) {
+  const byPage = new Map();
+  for (const [uuid, state] of entriesForOrder) {
+    if (!state.live || !supportedSubtype(state.kind) || !(state.targetRef instanceof PDFRef)) continue;
+    const entries = byPage.get(state.pageIndex) || [];
+    entries.push({ uuid, state, ref: state.targetRef });
+    byPage.set(state.pageIndex, entries);
+  }
+
+  for (const [pageIndex, entries] of byPage) {
+    entries.sort((left, right) =>
+      (left.state.order - right.state.order) || left.uuid.localeCompare(right.uuid),
+    );
+    const array = rawAnnots(doc, pageIndex);
+    const supportedRefs = new Set(entries.map(({ ref }) => ref.toString()));
+    const slots = [];
+    for (let index = 0; index < array.size(); index += 1) {
+      const raw = array.get(index);
+      if (raw instanceof PDFRef && supportedRefs.has(raw.toString())) slots.push(index);
+    }
+    if (slots.length !== entries.length) {
+      fail(
+        "PDF_MERGE_ANNOTATION_ORDER_UNSAFE",
+        `The merged supported annotation list on page ${pageIndex + 1} cannot be reordered without losing a reference.`,
+      );
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      array.set(slots[index], entries[index].ref);
+      // Store the physical index so the embedded ledger and later inspections
+      // agree on the canonical order selected by the merge.
+      entries[index].state.order = slots[index];
+    }
+  }
+}
+
 function annotationEntry(info, uuid) {
   return info.liveEntries.find((entry) => entry.uuid === uuid) || null;
 }
@@ -1286,12 +1378,13 @@ function ledgerFromWinnerStates(baseInfo, winners) {
   };
 }
 
-async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = false }) {
   const [baseDoc, localDoc, remoteDoc] = await Promise.all([
     loadPdf(baseBytes, "Loaded base PDF"),
     loadPdf(localBytes, "Prepared local PDF"),
     loadPdf(remoteBytes, "Remote checkpoint PDF"),
   ]);
+  const remoteSnapshot = tryCaptureIncrementalSnapshot(remoteBytes, remoteDoc);
   const baseInfo = inspectDocument(baseDoc);
   const localInfo = inspectDocument(localDoc);
   const remoteInfo = inspectDocument(remoteDoc);
@@ -1299,19 +1392,10 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
   validatePageLineage(baseInfo, remoteInfo, "Remote checkpoint");
   if (localInfo.documentId !== remoteInfo.documentId) fail("PDF_MERGE_DOCUMENT_IDENTITY_MISMATCH", "Local and remote bytes do not share the loaded document lineage.");
 
-  if (bytesEqual(baseBytes, remoteBytes) && branchMatchesBase(baseInfo, remoteInfo)) {
-    return {
-      bytes: new Uint8Array(asBytes(localBytes, "Prepared local PDF")),
-      changed: !bytesEqual(localBytes, remoteBytes),
-      stateDigest: localInfo.stateDigest,
-      ledger: localInfo.ledger,
-      identities: localInfo.identities,
-      conflicts: [],
-    };
-  }
   if (branchMatchesBase(baseInfo, localInfo)) {
     return {
       bytes: new Uint8Array(asBytes(remoteBytes, "Remote checkpoint PDF")),
+      patch: null,
       changed: false,
       stateDigest: remoteInfo.stateDigest,
       ledger: remoteInfo.ledger,
@@ -1379,7 +1463,7 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
     state.targetRef = ref;
   }
 
-  const entriesForOrder = [...selected.entries()].filter(([, state]) => state.live).sort(([, left], [, right]) =>
+  const entriesForOrder = [...selected.entries()].filter(([, state]) => state.live && supportedSubtype(state.kind)).sort(([, left], [, right]) =>
     (left.pageIndex - right.pageIndex) || (left.order - right.order) || left.uuid.localeCompare(right.uuid),
   );
   for (const [uuid, state] of selected) {
@@ -1437,6 +1521,11 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
     }
   }
 
+  // Branch-local append order depends on which device happened to be remote.
+  // Sort only supported annotation slots; unsupported entries and popup refs
+  // keep their exact positions and relative order in /Annots.
+  canonicalizeSupportedAnnotationOrder(remoteDoc, entriesForOrder);
+
   const winners = new Map();
   for (const [uuid, state] of selected) {
     const remoteEntry = annotationEntry(remoteInfo, uuid);
@@ -1457,6 +1546,7 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
   if (stateDigest === remoteInfo.stateDigest) {
     return {
       bytes: new Uint8Array(asBytes(remoteBytes, "Remote checkpoint PDF")),
+      patch: null,
       changed: false,
       stateDigest,
       ledger: remoteInfo.ledger,
@@ -1465,15 +1555,22 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
     };
   }
   writeLedger(remoteDoc, ledger);
-  let bytes;
-  try {
-    bytes = await remoteDoc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 });
-  } catch (error) {
-    throw errorFromLoad(error, "Merged PDF");
+  const saved = await savePdfWithIncremental({
+    sourceBytes: remoteBytes,
+    doc: remoteDoc,
+    snapshot: remoteSnapshot.snapshot,
+    patchOnly,
+    label: "Merged PDF",
+  });
+  if (!saved.patch && remoteSnapshot.error) {
+    saved.incrementalFallback = {
+      code: remoteSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
+      message: remoteSnapshot.error.message,
+    };
   }
-  const resultInfo = inspectDocument(await loadPdf(bytes, "Merged PDF"));
+  const resultInfo = inspectDocument(remoteDoc);
   const identities = resultInfo.identities;
-  return { bytes, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts };
+  return { ...saved, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts };
 }
 
 function bytesEqual(left, right) {

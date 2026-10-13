@@ -6,14 +6,23 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.8)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.9)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
+The latest [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
+uses verified PDF incremental revisions and binary append where the host supports
+it. Shared recovery bases plus checksummed deltas retain complete local branches;
+old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,
+tombstones, merge behavior and safe close acknowledgement remain shared across
+platforms. Unsupported append sources keep a verified full-save fallback.
+PDF.js still produces full save buffers, and exact disk validation still reads
+the file; this does not make total memory usage proportional only to edits.
+
+The prior [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
 coordinates outstanding sync work before requesting a safe Reader close. It stops
 new refreshes, safely settles a running checkpoint/apply, then confirms saving or
 a current durable recovery copy before the native tab is detached. Failed
@@ -90,10 +99,10 @@ rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-T
 after verifying the actual vault and plugin identity; discover the owned loopback
 CDP endpoint for each run rather than assuming a fixed port. The earlier approved
 `远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequent
-0.5.5 scroll-fix replacement was separately authorized. The current 0.5.8 delivery
+0.5.5 scroll-fix replacement was separately authorized. The current 0.5.9 delivery
 has the same explicit authorization to replace only that plugin's three files,
 preserving settings, cache and recovery, with no PDF operations. Save and
-close Reader tabs before installing the three matching 0.5.8 files, and preserve
+close Reader tabs before installing the three matching 0.5.9 files, and preserve
 settings, cache, recovery and sync checkpoints. Git push status is tracked
 separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
 physical-device acceptance remain pending.

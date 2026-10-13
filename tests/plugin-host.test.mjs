@@ -2307,7 +2307,7 @@ test("recovery command creates a separate visible PDF copy", async () => {
     "Restore must leave the original recovery candidate intact");
 });
 
-test("recovery metadata is written before bytes and failed candidates leave no orphan", async () => {
+test("recovery completion follows verified bytes and failed candidates leave no orphan", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const view = harness.createView();
@@ -2333,7 +2333,7 @@ test("recovery metadata is written before bytes and failed candidates leave no o
     revision: 1,
     origin: "auto",
   });
-  assert.deepEqual(order, ["metadata", "binary"]);
+  assert.deepEqual(order, ["metadata", "binary", "metadata"]);
   await harness.plugin.removeRecoveryCandidate(record);
   assert.equal(harness.storedFiles.size, 0);
 

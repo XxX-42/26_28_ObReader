@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "releaseName": "0.1general",
+  "version": "0.5.9",
+  "sha256": "645b83263a3074efb9a4c4050e9d4859c874f185ba51da77510dc01c8a49187f",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6989072,
+      "sha256": "6bb1ff5a80e651b252294e8be5045db54652292648bb3d48fe7f63b650a1b2f4"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "3617c50cbb30e917b0a06d8b06624a642265cf8bd740b040f06c6110867ed3a1"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "platforms": [
+    "Windows",
+    "macOS",
+    "iPadOS"
+  ],
+  "physicalIpadValidated": false,
+  "validation": {
+    "version": "0.5.9",
+    "releaseName": "0.1general",
+    "baseCommit": "c2b69d93cb04a6273697ffa026f33ae9bf86fa54",
+    "status": "candidate; affected product verification passed; full default suite has retained failures",
+    "defaultSuite": {
+      "total": 273,
+      "passed": 269,
+      "failed": 3,
+      "cancelled": 1,
+      "skipped": 0,
+      "exitCode": 1,
+      "evidence": "tests/artifacts/general-0.5.9-default-frozen.log",
+      "failures": [
+        "annotation-interaction: functional checks completed, browser exit2",
+        "desktop-toolbar: functional checks completed, browser exit2",
+        "ipad-pointer-policy: artificial gesture arrival80ms precondition failed; remaining assertions not claimed",
+        "autosave-mobile: canceled60s under parallel load; isolated affected run1/1 exit0"
+      ]
+    },
+    "focused": {
+      "core": {
+        "passed": 114,
+        "exitCode": 0,
+        "evidence": "tests/artifacts/general-0.5.9-frozen-core.log"
+      },
+      "storageRuntime": {
+        "passed": 61,
+        "exitCode": 0,
+        "evidence": "tests/artifacts/general-0.5.9-frozen-storage-runtime.log"
+      },
+      "autosaveMobile": {
+        "passed": 1,
+        "exitCode": 0,
+        "evidence": "tests/artifacts/general-0.5.9-autosave-mobile-affected.log"
+      }
+    },
+    "offline": {
+      "exitCode": 0,
+      "evidence": "tests/artifacts/general-0.5.9-offline-frozen.log"
+    },
+    "nativeClose": {
+      "scenarios": 6,
+      "status": "passed",
+      "exitCode": 0,
+      "evidence": "tests/artifacts/general-0.5.9-close-native-1791894281309.json"
+    },
+    "performance": {
+      "fixture": "synthetic120pages+16MiB incompressible attachment",
+      "controlledComparison": "same frozen0.5.9; full fallback by temporary append capability removal in isolated test only",
+      "runs": {
+        "frozen-incremental": {
+          "evidence": "tests/artifacts/general-0.5.9-benchmark-frozen-incremental-1791894091916.json",
+          "status": "passed",
+          "saveMs": [
+            3594.996041999999,
+            4346.704666000001,
+            4625.213916999994,
+            4616.689749999998
+          ],
+          "meanSaveMs": 4295.901093749998,
+          "measuredJsAndBackingPeakBytes": 611915570,
+          "pdfWriteBytes": 154468,
+          "pdfWriteCalls": [
+            [
+              "appendBinary",
+              35682
+            ],
+            [
+              "appendBinary",
+              37486
+            ],
+            [
+              "appendBinary",
+              39595
+            ],
+            [
+              "appendBinary",
+              41705
+            ]
+          ],
+          "adapterBinaryWriteBytes": 26409320,
+          "cleanup": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "version": "0.5.9",
+            "mobile": false,
+            "views": 0
+          }
+        },
+        "frozen-full-fallback": {
+          "evidence": "tests/artifacts/general-0.5.9-benchmark-frozen-full-fallback-1791894173847.json",
+          "status": "passed",
+          "saveMs": [
+            4230.880542000001,
+            4791.268166999998,
+            4796.924791999998,
+            5243.723624999999
+          ],
+          "meanSaveMs": 4765.699281499999,
+          "measuredJsAndBackingPeakBytes": 612448364,
+          "pdfWriteBytes": 67558143,
+          "pdfWriteCalls": [
+            [
+              "modifyBinary",
+              16886054
+            ],
+            [
+              "modifyBinary",
+              16888375
+            ],
+            [
+              "modifyBinary",
+              16890696
+            ],
+            [
+              "modifyBinary",
+              16893018
+            ]
+          ],
+          "adapterBinaryWriteBytes": 151979516,
+          "cleanup": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "version": "0.5.9",
+            "mobile": false,
+            "views": 0
+          }
+        }
+      },
+      "meanTimeReductionPercent": 9.857906678537487,
+      "measuredMemoryPeakReductionPercent": 0.08699410943320274,
+      "pdfWriteReductionPercent": 99.77135546783754,
+      "limits": [
+        "one pair, not a distribution or physical iPad",
+        "includes discoverable isolated-app workers, not all native/canvas/GPU memory",
+        "0.5.8 continuous run failed second save and is not claimed a successful matched baseline",
+        "full generatedPDF.js output and whole-file verification remain",
+        "no dependency upgrade or frozen Viewer modification"
+      ]
+    },
+    "nativeEnvironment": {
+      "macOS": "27.2",
+      "architecture": "arm64",
+      "Obsidian": "1.12.7",
+      "targetMinAppVersion": "1.14.4",
+      "mobileEmulation": true,
+      "physicalIpadValidated": false
+    },
+    "targetDeployment": "tests/artifacts/general-0.5.9-target-deployment-1791894786082031000.json",
+    "independentAudit": "tests/artifacts/general-0.5.9-independent-audit.json",
+    "knownLimits": [
+      "Full PDF.js save output and whole-file integrity reads remain",
+      "No significant aggregate JS/backing-store peak reduction in this single comparison",
+      "No atomic compare-and-append; narrow external-write race remains",
+      "Incremental files and recovery segments accumulate; no automatic pruning",
+      "Existing third-party edits with stale plugin clocks retain conflict/LWW behavior",
+      "Physical Windows/iPad acceptance pending"
+    ],
+    "oldRollbackPreserved": "0.5.8"
+  }
+}

@@ -1,6 +1,9 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 "use strict";
 
+const { sha256 } = require("@noble/hashes/sha2");
+const { createPdfJournal } = require("./pdf-journal.cjs");
+
 // Browser-only host coordination. The frozen Viewer remains the annotation
 // writer; the lazy merge Worker adds identities and reconciles branches.
 function createPdfSyncHost(plugin, api) {
@@ -33,7 +36,98 @@ function createPdfSyncHost(plugin, api) {
   const copy = (value) => Uint8Array.from(bytesView(value));
   const buffer = (value) => copy(value).buffer;
   const fingerprint = (value) => sha256Bytes(bytesView(value));
+  const fingerprintChunks = (chunks) => {
+    const hash = sha256.create();
+    for (const chunk of chunks) hash.update(bytesView(chunk));
+    return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+  const createFingerprintAccumulator = () => {
+    const hash = sha256.create();
+    return {
+      update(value) { hash.update(bytesView(value)); },
+      digest() { return Array.from(hash.clone().digest(), (byte) => byte.toString(16).padStart(2, "0")).join(""); },
+    };
+  };
   const equal = (left, right) => bytesEqual(bytesView(left), bytesView(right));
+  const patchMatches = (patch, value) => !!patch && Number.isSafeInteger(patch.baseLength) &&
+    patch.baseLength === bytesView(value).byteLength && patch.baseFingerprint === fingerprint(value);
+  const prefixPatch = (output, base) => {
+    const outputBytes = bytesView(output);
+    const baseBytes = bytesView(base);
+    if (outputBytes.byteLength <= baseBytes.byteLength) return null;
+    for (let index = 0; index < baseBytes.byteLength; index += 1) {
+      if (outputBytes[index] !== baseBytes[index]) return null;
+    }
+    const suffix = outputBytes.subarray(baseBytes.byteLength);
+    return {
+      baseLength: baseBytes.byteLength,
+      baseFingerprint: fingerprint(baseBytes),
+      suffix,
+      outputLength: outputBytes.byteLength,
+      outputFingerprint: fingerprint(outputBytes),
+    };
+  };
+  const checkpointRoot = normalizePath(`${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.sync-checkpoints`);
+  const journal = createPdfJournal({
+    adapter: plugin.app.vault.adapter,
+    root: checkpointRoot,
+    normalizePath,
+    fingerprint,
+    fingerprintChunks,
+    createFingerprintAccumulator,
+    bytesEqual,
+    ensureDirectory: ensureAdapterDirectory,
+    makeToken,
+  });
+  const joinBytes = (left, right) => {
+    const a = bytesView(left), b = bytesView(right);
+    const output = new Uint8Array(a.byteLength + b.byteLength);
+    output.set(a, 0);
+    output.set(b, a.byteLength);
+    return output;
+  };
+  const semanticLedger = (result) => {
+    const ledger = result?.ledger;
+    const entries = ledger?.entries;
+    const identities = result?.identities || result?.annotations;
+    if (!Array.isArray(entries) || !Array.isArray(identities) ||
+        typeof ledger.documentId !== "string" || !Array.isArray(ledger.pageFingerprints)) return null;
+    const byUuid = (left, right) => String(left.uuid).localeCompare(String(right.uuid));
+    const semanticEntry = (entry) => ({
+      uuid: entry.uuid,
+      pageIndex: entry.pageIndex,
+      kind: entry.kind,
+      deleted: Boolean(entry.deleted),
+      hash: entry.hash ?? null,
+      timestamp: entry.timestamp || 0,
+      logical: entry.logical || 0,
+      actorId: entry.actorId || "legacy",
+      operationId: entry.operationId || "legacy",
+    });
+    const identityByUuid = new Map();
+    for (const identity of identities) {
+      if (typeof identity?.uuid !== "string" || identityByUuid.has(identity.uuid)) return null;
+      identityByUuid.set(identity.uuid, identity);
+    }
+    const semanticEntries = entries.map((entry) => {
+      if (typeof entry?.uuid !== "string") return null;
+      const identity = identityByUuid.get(entry.uuid);
+      if (!identity) return null;
+      const normalized = semanticEntry(entry);
+      const identityState = semanticEntry(identity);
+      delete identityState.hash;
+      delete normalized.hash;
+      if (JSON.stringify(identityState) !== JSON.stringify(normalized)) return null;
+      normalized.hash = entry.hash ?? null;
+      return normalized;
+    });
+    if (semanticEntries.some((entry) => entry === null)) return null;
+    return JSON.stringify({
+      documentId: ledger.documentId,
+      pageFingerprints: ledger.pageFingerprints,
+      entries: semanticEntries.sort(byUuid),
+    });
+  };
   const matchingSnapshot = (state, value) => [state.checkpoint, state.confirmedCheckpoint, state.base]
     .find((snapshot) => snapshot && equal(snapshot, value)) || value;
   const workerSnapshot = (value) => {
@@ -103,26 +197,18 @@ function createPdfSyncHost(plugin, api) {
     version: 1, actorId, identities: result.identities || result.annotations || [],
     ledger: result.ledger, stateDigest: result.stateDigest,
   });
-  const checkpointPaths = (file) => {
-    const root = normalizePath(`${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.sync-checkpoints`);
-    const id = sha256Bytes(new TextEncoder().encode(normalizePath(file.path)));
-    return { root, pdf: `${root}/${id}.pdf`, base: `${root}/${id}.base.pdf`, json: `${root}/${id}.json` };
-  };
   async function loadCheckpoint(file, state) {
     if (state.loadPromise) return state.loadPromise;
     if (state.loaded) return;
     const pending = (async () => {
-    const paths = checkpointPaths(file);
-    const adapter = plugin.app.vault.adapter;
     try {
-      if (!(await adapter.exists(paths.json))) return;
-      const metadata = JSON.parse(await adapter.read(paths.json));
-      if (metadata.schema !== 1 || metadata.path !== normalizePath(file.path)) return;
-      const [pdf, base] = await Promise.all([adapter.readBinary(paths.pdf), adapter.readBinary(paths.base)]);
-      if (fingerprint(pdf) !== metadata.hash || fingerprint(base) !== metadata.baseHash) throw new Error("Checkpoint verification failed");
-      state.checkpoint = copy(pdf);
-      state.base = equal(pdf, base) ? state.checkpoint : copy(base);
-      if (metadata.status === "confirmed") state.confirmedCheckpoint = state.checkpoint;
+      const loaded = await journal.load(file.path);
+      if (!loaded) return;
+      const checkpoint = bytesView(loaded.checkpointBytes);
+      const base = bytesView(loaded.baseBytes);
+      state.checkpoint = equal(checkpoint, base) ? base : checkpoint;
+      state.base = base;
+      if (loaded.status === "confirmed") state.confirmedCheckpoint = state.checkpoint;
       else { state.paused = true; state.failure = "上次同步检查点尚未确认写回，已保留本地版本"; }
     } catch (error) {
       state.paused = true;
@@ -132,20 +218,12 @@ function createPdfSyncHost(plugin, api) {
     state.loadPromise = pending;
     return pending;
   }
-  async function persistCheckpoint(file, state, bytes, base) {
+  async function persistCheckpoint(file, state, bytes, base, metadata = {}) {
     if (disposed || plugin.isUnloading) throw new Error("插件已卸载；本地恢复副本已保留");
-    const paths = checkpointPaths(file);
-    const adapter = plugin.app.vault.adapter;
-    await ensureAdapterDirectory(adapter, paths.root);
-    // The manifest is the completion record. Partial writes cannot be reused.
-    await adapter.writeBinary(paths.base, buffer(base));
-    await adapter.writeBinary(paths.pdf, buffer(bytes));
-    const [savedBase, savedPdf] = await Promise.all([adapter.readBinary(paths.base), adapter.readBinary(paths.pdf)]);
-    if (!equal(base, savedBase) || !equal(bytes, savedPdf)) throw new Error("同步检查点写后校验失败");
-    await adapter.write(paths.json, JSON.stringify({ schema: 1, status: "pending", path: normalizePath(file.path), hash: fingerprint(bytes), baseHash: fingerprint(base) }));
+    await journal.beginFull({ path: file.path, checkpointBytes: bytes, baseBytes: base, metadata });
     const checkpoint = state.checkpoint && equal(state.checkpoint, bytes)
       ? state.checkpoint
-      : copy(bytes);
+      : bytesView(bytes);
     const baseSnapshot = state.base && equal(state.base, base)
       ? state.base
       : equal(checkpoint, base) ? checkpoint : copy(base);
@@ -154,8 +232,7 @@ function createPdfSyncHost(plugin, api) {
     state.version += 1;
   }
   async function confirmCheckpoint(file, state, bytes) {
-    const paths = checkpointPaths(file);
-    await plugin.app.vault.adapter.write(paths.json, JSON.stringify({ schema: 1, status: "confirmed", path: normalizePath(file.path), hash: fingerprint(bytes), baseHash: fingerprint(state.base) }));
+    await journal.confirm(file.path, fingerprint(bytes), bytesView(bytes).byteLength);
     state.confirmedCheckpoint = state.checkpoint && equal(state.checkpoint, bytes)
       ? state.checkpoint
       : copy(bytes);
@@ -344,9 +421,39 @@ function createPdfSyncHost(plugin, api) {
     await plugin.app.vault.modifyBinary(file, buffer(bytes));
     if (plugin.app.vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 在写入期间被替换；已保留恢复副本");
     const after = await plugin.app.vault.readBinary(file);
-    if (!equal(after, bytes)) throw new Error("PDF 写后内容发生变化，已保留检查点");
-    plugin.setDocumentBaseline(file.path, matchingSnapshot(state, bytes));
-    return true;
+    const afterBytes = bytesView(after);
+    if (afterBytes.byteLength !== bytesView(bytes).byteLength || fingerprint(afterBytes) !== fingerprint(bytes)) {
+      throw new Error("PDF 写后内容发生变化，已保留检查点");
+    }
+    if (state.checkpoint && equal(state.checkpoint, afterBytes)) state.checkpoint = afterBytes;
+    if (state.confirmedCheckpoint && equal(state.confirmedCheckpoint, afterBytes)) state.confirmedCheckpoint = afterBytes;
+    if (state.base && equal(state.base, afterBytes)) state.base = afterBytes;
+    plugin.setDocumentBaseline(file.path, matchingSnapshot(state, afterBytes));
+    return afterBytes;
+  }
+  async function verifiedAppend(file, observed, patch, stillCurrent = () => true) {
+    const vault = plugin.app.vault;
+    if (typeof vault.appendBinary !== "function") return null;
+    if (disposed || plugin.isUnloading) throw new Error("插件已卸载，未覆盖原 PDF");
+    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 已被替换或移除");
+    const before = bytesView(await vault.readBinary(file));
+    if (!equal(before, observed) || !patchMatches(patch, before)) return null;
+    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 在磁盘检查期间被替换");
+    if (!stillCurrent()) throw new Error("Reader 已切换；未覆盖原 PDF");
+    if (disposed || plugin.isUnloading) throw new Error("插件已卸载，未覆盖原 PDF");
+    // appendBinary is deliberately issued once. If it rejects or readback is
+    // incomplete, the pending journal is the recovery source; a blind retry
+    // could duplicate a partially appended PDF revision.
+    const state = states.get(file);
+    if (state) state.ownHash = patch.outputFingerprint;
+    await vault.appendBinary(file, buffer(patch.suffix));
+    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 在追加期间被替换；已保留恢复副本");
+    const after = bytesView(await vault.readBinary(file));
+    if (after.byteLength !== patch.outputLength || fingerprint(after) !== patch.outputFingerprint) {
+      throw new Error("PDF 追加后的内容未通过校验；已保留检查点，未自动重试");
+    }
+    plugin.setDocumentBaseline(file.path, after);
+    return after;
   }
   async function save(view, captured, message) {
     const file = captured.file;
@@ -376,22 +483,62 @@ function createPdfSyncHost(plugin, api) {
           let result;
           let observed;
           for (let attempt = 0; attempt < 3; attempt++) {
-            observed = copy(await plugin.app.vault.readBinary(file));
+            observed = bytesView(await plugin.app.vault.readBinary(file));
             const diskMatchesBase = equal(observed, captured.originalBytes);
-            result = diskMatchesBase
-              ? { bytes, changed: true, conflicts: [] }
+            const localPatchApplies = patchMatches(local.patch, observed);
+            // PDF.js may already have appended the draft's object changes to
+            // the exact source PDF. If the prepared output is a strict byte
+            // prefix extension of the observed source, its tail is itself a
+            // safe patch; this avoids parsing/re-serializing all three PDFs.
+            const preparedPrefixPatch = diskMatchesBase ? prefixPatch(bytes, observed) : null;
+            result = diskMatchesBase && (preparedPrefixPatch || !local.patch || localPatchApplies)
+              ? { bytes, patch: preparedPrefixPatch || local.patch, changed: true, conflicts: [] }
               : await getClient().merge({
                 baseBytes: workerSnapshot(state.base), localBytes: workerSnapshot(bytes),
-                remoteBytes: workerSnapshot(observed), actorId,
+                remoteBytes: workerSnapshot(observed), actorId, patchOnly: true,
               });
-            bytes = result.bytes;
+            const patch = patchMatches(result.patch, observed) ? result.patch : null;
+            if (result.bytes !== undefined) bytes = result.bytes;
+            else if (!patch) throw new Error("增量保存结果与磁盘基线不匹配；恢复副本已保留");
             if ((result.identities || result.annotations) && result.ledger) metadata = result;
             else if (!diskMatchesBase) metadata = null;
             // Keep the unmerged local branch when a timestamp winner replaces it.
             if (result.conflicts?.length) await plugin.markRecoveryCandidate(record, { status: "draft", reason: "superseded-local-version" });
-            await persistCheckpoint(file, state, bytes, state.base);
-            if (await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured))) {
-              await confirmCheckpoint(file, state, bytes);
+            const journalMetadata = {
+              actorId: message.actorId || actorId,
+              revision: message.revision,
+              operations: message.operations || [],
+              newAnnotations: message.newAnnotations || [],
+              documentId: captured.documentId,
+            };
+            let wrote;
+            if (patch && typeof plugin.app.vault.appendBinary === "function") {
+              await journal.beginAppend({ path: file.path, baseBytes: state.base, parentBytes: observed,
+                suffix: patch.suffix, outputFingerprint: patch.outputFingerprint,
+                outputLength: patch.outputLength, metadata: journalMetadata });
+              wrote = await verifiedAppend(file, observed, patch, () => view.isCurrentSaveRequest(captured));
+              if (wrote) {
+                bytes = wrote;
+                state.checkpoint = bytes;
+                state.version += 1;
+                await confirmCheckpoint(file, state, bytes);
+              }
+            } else {
+              if (!bytes) {
+                bytes = joinBytes(observed, patch.suffix);
+                if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
+                  throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
+                }
+              }
+              await persistCheckpoint(file, state, bytes, state.base, journalMetadata);
+              wrote = await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured));
+              if (wrote) {
+                bytes = wrote;
+                state.checkpoint = bytes;
+                await confirmCheckpoint(file, state, bytes);
+              }
+            }
+            if (wrote) {
               break;
             }
             if (attempt === 2) throw new Error("同步持续更改磁盘文件，自动写回暂停");
@@ -423,7 +570,10 @@ function createPdfSyncHost(plugin, api) {
           view.failureNoticeShown = false;
           view.setStatus(`已保存：${file.path}`, { recoveryAction: false });
           if (message.origin === "manual") new Notice(`已保存 ${captured.filename}`);
-          if (!equal(bytes, local.bytes)) view.syncNeedsRefresh = true;
+          const localSemanticState = semanticLedger(local);
+          const mergedSemanticState = semanticLedger(metadata);
+          const sameAnnotationState = localSemanticState !== null && localSemanticState === mergedSemanticState;
+          if (!equal(bytes, local.bytes) && !sameAnnotationState) view.syncNeedsRefresh = true;
           schedule(file, "saved");
         } catch (error) {
           state.paused = true;
@@ -502,13 +652,26 @@ function createPdfSyncHost(plugin, api) {
       const merged = cleanWithoutCheckpoint ? { bytes: observed, changed: false, conflicts: [] }
         : await getClient().merge({
           baseBytes: workerSnapshot(mergeBase), localBytes: workerSnapshot(localBytes),
-          remoteBytes: workerSnapshot(observed), actorId,
+          remoteBytes: workerSnapshot(observed), actorId, patchOnly: true,
         });
-      const bytes = merged.bytes;
+      let bytes = merged.bytes;
+      const patch = patchMatches(merged.patch, observed) ? merged.patch : null;
+      if (bytes === undefined && !patch) throw new Error("同步合并结果与磁盘基线不匹配；恢复副本已保留");
+      const materializePatch = () => {
+        if (bytes === undefined) {
+          bytes = joinBytes(observed, patch.suffix);
+          if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
+            throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
+          }
+        }
+        return bytes;
+      };
       if ((merged.identities || merged.annotations) && merged.ledger) metadata = merged;
       else if (!cleanWithoutCheckpoint) metadata = null;
-      if (cleanWithoutCheckpoint || !((metadata?.identities || metadata?.annotations) && metadata?.ledger)) {
+      if (cleanWithoutCheckpoint || (!patch && !((metadata?.identities || metadata?.annotations) && metadata?.ledger))) {
         metadata = await getClient().inspect({ bytes: workerSnapshot(bytes) });
+      } else if (!((metadata?.identities || metadata?.annotations) && metadata?.ledger)) {
+        metadata = await getClient().inspect({ bytes: workerSnapshot(materializePatch()) });
       }
       if (closeRequested(view)) return;
       const prepared = await request(view, "sync-apply-prepare", {
@@ -542,15 +705,40 @@ function createPdfSyncHost(plugin, api) {
             throw error;
           }
           if (!equal(latest, observed)) { schedule(file, "disk-changed"); return; }
-          if (!cleanWithoutCheckpoint) await persistCheckpoint(file, state, bytes, mergeBase);
-          else { state.base = copy(bytes); state.version += 1; }
+          const journalMetadata = {
+            actorId: snapshot.actorId || actorId,
+            revision: snapshot.revision,
+            operations: snapshot.operations || [],
+            newAnnotations: snapshot.newAnnotations || [],
+            documentId: captured.documentId,
+          };
+          let wrote = false;
+          if (!cleanWithoutCheckpoint && patch && typeof plugin.app.vault.appendBinary === "function") {
+            await journal.beginAppend({ path: file.path, baseBytes: mergeBase, parentBytes: observed,
+              suffix: patch.suffix, outputFingerprint: patch.outputFingerprint,
+              outputLength: patch.outputLength, metadata: journalMetadata });
+            const appended = await verifiedAppend(file, observed, patch, () => view.isCurrentSaveRequest(captured));
+            if (!appended) { schedule(file, "disk-changed"); return; }
+            bytes = appended;
+            state.checkpoint = bytes;
+            state.version += 1;
+            await confirmCheckpoint(file, state, bytes);
+            wrote = true;
+          } else if (!cleanWithoutCheckpoint) {
+            materializePatch();
+            await persistCheckpoint(file, state, bytes, mergeBase, journalMetadata);
+            const written = await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured));
+            if (!written) { schedule(file, "disk-changed"); return; }
+            bytes = written;
+            await confirmCheckpoint(file, state, bytes);
+            wrote = true;
+          } else { state.base = copy(bytes); state.version += 1; }
           if (closeRequested(view)) {
             const error = new Error("Reader closing; sync checkpoint is preserved.");
             error.code = "SYNC_SESSION_CHANGED";
             throw error;
           }
-          if (!equal(bytes, observed) && !(await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured)))) { schedule(file, "disk-changed"); return; }
-          if (!cleanWithoutCheckpoint) await confirmCheckpoint(file, state, bytes);
+          if (!wrote && !equal(bytes, observed)) { schedule(file, "disk-changed"); return; }
           plugin.setDocumentBaseline(file.path, matchingSnapshot(state, bytes));
           const previousOpenRequest = view.openRequest;
           const newOpenRequest = previousOpenRequest + 1;
@@ -636,6 +824,25 @@ function createPdfSyncHost(plugin, api) {
   }
   return {
     actorId, initializeView, save, schedule, prepareRecovery, showFailure: failure,
+    async listRecoveryCandidates() {
+      const candidates = await journal.listRecoveries();
+      return candidates.filter((candidate) => candidate.status === "pending").map((candidate) => ({
+        path: candidate.path,
+        metadata: {
+          schema: candidate.schema,
+          storage: "sync-journal",
+          originalPath: candidate.path,
+          filename: candidate.path.split("/").at(-1),
+          status: candidate.status,
+          createdAt: candidate.updatedAt,
+          updatedAt: candidate.updatedAt,
+          outputHash: candidate.hash,
+          outputLength: candidate.length,
+          sequence: candidate.sequence,
+        },
+      }));
+    },
+    readRecoveryCandidate: (candidate) => journal.readRecovery(candidate),
     prepareClose(view) {
       closingViews.add(view);
       if (!view.syncRequests.size && !viewWork.has(view)) {

@@ -90,3 +90,33 @@ test("the Worker copies a partial or input-aliasing output before transfer", asy
   assert.notEqual(aliasWorker.posts[0].message.result.bytes.buffer, aliased.buffer);
   assert.deepEqual([...aliased], [2, 3]);
 });
+
+test("the Worker transfers a whole incremental patch suffix without copying", async () => {
+  const suffix = new Uint8Array([8, 9, 10]);
+  const worker = boot({ merge: async () => ({ patch: { baseLength: 2, suffix } }) });
+  worker.send({ id: 1, method: "merge", payload: { remoteBytes: new Uint8Array([1, 2]) } });
+  await until(() => worker.posts.length === 1);
+  assert.equal(worker.posts[0].message.result.patch.suffix.buffer, suffix.buffer);
+  assert.deepEqual(worker.posts[0].transfer, [suffix.buffer]);
+});
+
+test("the Worker copies partial and input-aliasing incremental patch suffixes", async () => {
+  const backing = new Uint8Array([0, 7, 8, 0]);
+  const partialWorker = boot({ merge: async () => ({ patch: { suffix: backing.subarray(1, 3) } }) });
+  partialWorker.send({ id: 1, method: "merge", payload: {} });
+  await until(() => partialWorker.posts.length === 1);
+  const partial = partialWorker.posts[0].message.result.patch.suffix;
+  assert.deepEqual([...partial], [7, 8]);
+  assert.notEqual(partial.buffer, backing.buffer);
+  assert.deepEqual(partialWorker.posts[0].transfer, [partial.buffer]);
+
+  const inputSuffix = new Uint8Array([2, 3]);
+  const aliasWorker = boot({ merge: async ({ suffix }) => ({ patch: { suffix } }) });
+  aliasWorker.send({ id: 2, method: "merge", payload: { suffix: inputSuffix } });
+  await until(() => aliasWorker.posts.length === 1);
+  const copied = aliasWorker.posts[0].message.result.patch.suffix;
+  assert.deepEqual([...copied], [2, 3]);
+  assert.notEqual(copied.buffer, inputSuffix.buffer);
+  assert.deepEqual([...inputSuffix], [2, 3]);
+  assert.deepEqual(aliasWorker.posts[0].transfer, [copied.buffer]);
+});

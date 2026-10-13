@@ -308,6 +308,7 @@ const syncHostMarker =
   /\/\* BUILD:PDF_SYNC_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfSyncHost\s*\}\s*=\s*require\((['"])\.\/pdf-sync-host\.cjs\1\);/s;
 const heavyWorkMarker =
   /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
+const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*writeDeltaRecovery\s*,\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
 assert.equal(
   [...sourceMain.matchAll(new RegExp(requireMarker.source, "gs"))].length,
@@ -382,11 +383,14 @@ const inlinedSyncHost = await inlineModule(
 );
 assert.equal([...sourceMain.matchAll(new RegExp(heavyWorkMarker.source, "gs"))].length, 1, "Expected one heavy-work build marker");
 const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyWork", "createHeavyWorkCoordinator");
+assert.equal([...sourceMain.matchAll(new RegExp(recoveryMarker.source, "gs"))].length, 1, "Expected one recovery build marker");
+const inlinedRecovery = await inlineModule("pdf-recovery.cjs", "__PDFReaderRecovery", "writeDeltaRecovery, readDeltaRecovery");
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
   .replace(mergeClientMarker, inlinedMergeClient)
   .replace(syncHostMarker, inlinedSyncHost)
   .replace(heavyWorkMarker, inlinedHeavyWork)
+  .replace(recoveryMarker, inlinedRecovery)
   .replace(
     payloadMarker,
     `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
@@ -395,6 +399,7 @@ assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
 assert.ok(!bundledMain.includes("./heavy-work.cjs"));
+assert.ok(!bundledMain.includes("./pdf-recovery.cjs"));
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
 const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
   (match) => match[2],

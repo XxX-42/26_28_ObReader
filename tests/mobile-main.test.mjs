@@ -304,7 +304,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
           contentHash: payload.contentHash,
         }) };
       }
-      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs"].includes(name)) return sourceRequire(name);
+      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);
     },

@@ -17,7 +17,7 @@ import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 
 const require = createRequire(import.meta.url);
-const { prepareLocal } = require("../plugin/pdf-merge-core.cjs");
+const { prepareLocal, inspect } = require("../plugin/pdf-merge-core.cjs");
 const browserPath = resolveBrowserPath();
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
@@ -125,7 +125,7 @@ test(
                     const saved={channel,type:'saved',token,rendererGeneration:message.rendererGeneration,documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,syncState:state.syncState};
                     if(state.saves.length===1){
                       iframe.contentWindow.postMessage({...saved,rendererGeneration:'stale-generation',syncState:{...state.syncState,actorId:'stale-generation-actor'}},'*');
-                      setTimeout(()=>{delete saved.rendererGeneration;iframe.contentWindow.postMessage(saved,'*');},50);
+                      setTimeout(()=>iframe.contentWindow.postMessage(saved,'*'),50);
                     }else{
                       iframe.contentWindow.postMessage(saved,'*');
                     }
@@ -375,7 +375,7 @@ test(
           [...map.values()].filter((value) => value?.annotationType === 5).length > before;
       }, { timeout: 15_000 }, priorSquares);
 
-      const requestCheckpoint = async (id) => {
+      const requestCheckpoint = async (id, { includeBytes = false } = {}) => {
         await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId }) => {
           document.querySelector("iframe").contentWindow.postMessage({
             channel: messageChannel,
@@ -391,14 +391,28 @@ test(
           window.__syncHost?.checkpoints.some((entry) => entry.id === requestId) ||
           window.__syncHost?.rejected.some((entry) => entry.id === requestId),
         { timeout: 30_000 }, id);
-        const result = await page.evaluate((requestId) => {
+        const result = await page.evaluate((requestId, captureBytes) => {
           const host = window.__syncHost;
+          const checkpoint = host.checkpoints.find((entry) => entry.id === requestId);
+          let checkpointDataBase64 = null;
+          if (captureBytes && checkpoint?.data) {
+            const bytes = new Uint8Array(checkpoint.data);
+            let binary = "";
+            for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+              binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+            }
+            checkpointDataBase64 = btoa(binary);
+          }
+          const checkpointMetadata = checkpoint
+            ? Object.fromEntries(Object.entries(checkpoint).filter(([key]) => key !== "data"))
+            : null;
           return {
-            checkpoint: host.checkpoints.find((entry) => entry.id === requestId),
+            checkpoint: checkpointMetadata,
+            checkpointDataBase64,
             rejected: host.rejected.find((entry) => entry.id === requestId) || null,
             saves: host.saves.length,
           };
-        }, id);
+        }, id, includeBytes);
         assert.equal(result.rejected, null, `Checkpoint ${id} should succeed`);
         assert.ok(result.checkpoint?.byteLength > 0, "A checkpoint should return a PDF ArrayBuffer");
         return result;
@@ -472,17 +486,38 @@ test(
         annotation.runtimeId === runtimeId && annotation.uuid === uuid,
       ), "A saved id-null editor must remain represented until merged reload");
 
-      const second = await requestCheckpoint("checkpoint-after-save");
+      const second = await requestCheckpoint("checkpoint-after-save", { includeBytes: true });
       assert.equal(second.checkpoint.actorId, actorId,
         "The stale-generation save ACK must not replace the active sync actor");
+      assert.equal(second.checkpoint.dirty, false,
+        "A current-generation saved ACK should leave a clean checkpoint");
+      assert.ok(second.checkpointDataBase64, "The clean checkpoint should return its serialized PDF bytes");
       const retainedOperation = second.checkpoint.operations.find(
         (operation) => operation.uuid === uuid,
       );
       assert.ok(retainedOperation, "The UUID operation must survive a successful save acknowledgment");
       assert.equal(retainedOperation.ref, null, "An id-null editor remains a new annotation against the loaded base");
-      assert.ok(second.checkpoint.newAnnotations.some((annotation) =>
+      const retainedAssignments = second.checkpoint.newAnnotations.filter((annotation) =>
         annotation.runtimeId === runtimeId && annotation.uuid === uuid,
-      ));
+      );
+      assert.equal(retainedAssignments.length, 1,
+        "The saved id-null editor should retain exactly one UUID assignment in the clean checkpoint");
+      const cleanCheckpointBytes = Buffer.from(second.checkpointDataBase64, "base64");
+      const cleanCheckpointInfo = await inspect({ bytes: cleanCheckpointBytes });
+      assert.equal(cleanCheckpointInfo.identities.filter((identity) =>
+        identity.kind === "square" && !identity.deleted,
+      ).length, 1, "The clean checkpoint PDF should still contain exactly one Square");
+      const refreshedPrepared = await prepareLocal({
+        baseBytes: loadedBaseBytes,
+        draftBytes: cleanCheckpointBytes,
+        checkpointBytes: Buffer.from(firstSaveHost.preparedLocal.bytesBase64, "base64"),
+        operations: second.checkpoint.operations,
+        newAnnotations: second.checkpoint.newAnnotations,
+        actorId: second.checkpoint.actorId,
+      });
+      const refreshedIdentity = refreshedPrepared.identities.find((identity) => identity.uuid === uuid);
+      assert.equal(refreshedIdentity?.runtimeId, runtimeId,
+        "The clean checkpoint should rebind the same live editor UUID to its saved PDF ref");
 
       const checkpointIdentity = preparedLocal.identities.find((identity) =>
         identity.uuid === uuid,

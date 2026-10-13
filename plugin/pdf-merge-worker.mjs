@@ -8,20 +8,30 @@ async function handleRequest(event) {
   if (!Number.isSafeInteger(id) || !methods.has(method)) return;
   try {
     const result = await core[method](payload || {});
-    if (result?.bytes instanceof Uint8Array) {
-      // A complete output buffer is already owned by this request. Avoid a
-      // second copy unless it aliases an input or only exposes part of a buffer.
-      const bytes = result.bytes;
+    if (result?.bytes instanceof Uint8Array || result?.patch?.suffix instanceof Uint8Array) {
+      // Complete outputs and incremental suffixes are owned by this request.
+      // Transfer whole buffers when they do not alias request input; copy only
+      // a view that is shared, partial, or duplicated by another result field.
       const payloadBuffers = new Set();
       collectBuffers(payload, payloadBuffers);
-      const wholeBuffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
-      if (wholeBuffer && !payloadBuffers.has(bytes.buffer) &&
-          Object.prototype.toString.call(bytes.buffer) === "[object ArrayBuffer]") {
-        globalThis.postMessage({ id, ok: true, result }, [bytes.buffer]);
-      } else {
-        result.bytes = bytes.slice();
-        globalThis.postMessage({ id, ok: true, result }, [result.bytes.buffer]);
+      const transfers = [];
+      const transferOutput = (bytes) => {
+        const wholeBuffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+        const transferable = wholeBuffer && !payloadBuffers.has(bytes.buffer) &&
+          !transfers.includes(bytes.buffer) && Object.prototype.toString.call(bytes.buffer) === "[object ArrayBuffer]";
+        if (transferable) {
+          transfers.push(bytes.buffer);
+          return bytes;
+        }
+        const copy = bytes.slice();
+        transfers.push(copy.buffer);
+        return copy;
+      };
+      if (result.bytes instanceof Uint8Array) result.bytes = transferOutput(result.bytes);
+      if (result.patch?.suffix instanceof Uint8Array) {
+        result.patch = { ...result.patch, suffix: transferOutput(result.patch.suffix) };
       }
+      globalThis.postMessage({ id, ok: true, result }, transfers);
     } else {
       globalThis.postMessage({ id, ok: true, result });
     }

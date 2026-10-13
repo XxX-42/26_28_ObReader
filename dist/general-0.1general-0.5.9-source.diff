@@ -1,0 +1,3198 @@
+diff --git a/GENERAL_ACCEPTANCE.md b/GENERAL_ACCEPTANCE.md
+index c8caf6f..d1028e2 100644
+--- a/GENERAL_ACCEPTANCE.md
++++ b/GENERAL_ACCEPTANCE.md
+@@ -1 +1 @@
+-# 0.1general 通用候选（插件 0.5.8）
++# 0.1general 通用候选（插件 0.5.9）
+@@ -3 +3,32 @@
+-## 当前：0.5.8 编辑后关闭协调（2026-10-13）
++## 当前：0.5.9 轻量恢复与后台增量保存（2026-10-13）
++
++三端统一 0.5.9，同一源码和三文件；依赖、冻结 Viewer、默认自动保存间隔保持不变。PDF.js 先生成完整保存结果，自有增量写入器只输出变化的间接对象、外观资源、页面批注数组、合并元数据和 xref/trailer。最终补丁绑定磁盘的完整指纹和长度，使用公开 `Vault.appendBinary`；追加只发起一次，失败或写后不一致保留恢复并暂停，不能盲目重试。无法安全生成增量或宿主没有追加能力时保留完整写入路径。比较与追加之间仍无原子 CAS，同步竞争窗口不能完全消除。
++
++恢复使用已验证共享基线加本修订的原始 PDF 增量段，包含可重建的外观字节；不是只保存无法独立恢复的操作 ID。JSON 完成标记在数据校验后提交，当前修订确认前不关闭脏 Reader。同步检查点以不可变增量记录串联，确认前保留 pending，支持旧 schema 1 读取。被替代分支、旧恢复副本不删除；损坏最新候选不会阻止尝试较旧完整副本。无自动清理／压缩，历史基线和段文件会累计；后续维护必须先证明引用已不需要。
++
++批注 UUID、UTC/逻辑时钟、删除记录和合并规则继续写入 PDF；物理对象编号不作为跨端身份。两端新增／编辑／删除的双向合并按语义收敛，保留非插件批注和 Popup 关系。减少缓冲区复制和 Worker 传输副本；流对象比较直接分段哈希，不复制大图像／附件流。后台同步合并同样采用磁盘基线补丁，真正有变化时才重载 Viewer。
++
++PDF.js 仍分配完整 `saveDocument()` 输出，磁盘核验仍完整读取；恢复确认在序列化后发生，不宣称每一笔已经立即落盘。Mac 的 JS 堆／缓冲区测量不等同于实体 iPad 总内存或崩溃验收。
++
++### 0.5.9 验证与性能
++
++冻结核心回归 **114/114**、存储与运行时检查 **61/61**，离线五工具／保存重开退出 **0**。默认并发 **273** 项：**269** 通过、**3** 失败、**1** 取消，退出 **1**，不称全套通过。annotation-interaction 与 desktop-toolbar 产品检查完成但 Chrome 退出 2；iPad pointer 用例停在模拟事件到达 80ms 前置条件，后续断言未执行；移动自动保存用例在并发下 60s 超时取消。受影响自动保存单独复验 **1/1**、退出 0，未改等待门槛、生产代码或隐藏重试。原始失败、取消和历史故障都保留，不继续 teardown 调查。
++
++原生真实关闭按钮六场景（桌面／移动模拟的未编辑、编辑后保存、模拟写入失败恢复）全部通过，退出 0。大 PDF 同一 Reader 连续四次编辑、保存、重开四条 Square 均通过，两组均恢复 desktop、Reader 0。过程中定位并修复了清洁检查点误用 PDF.js 初始 getData 的产品问题：已确认写回的 ref:null 编辑器仍须 saveDocument 生成其对象，不能只发送身份而遗漏对象。核心继续拒绝不匹配身份，不靠猜测绑定。
++
++同一冻结 0.5.9、120 页文本＋16MiB 随机附件合成 PDF 的单次成对对照：完整写入组仅在独立测试内临时禁用 append 能力，其他代码一致；不是旧版 0.5.8 的成功连续基线。旧版连续第二次保存失败的证据不重标成功。
++
++| 指标 | 增量路径 | 同版本完整回退 |
++|---|---:|---:|
++| 四次平均确认耗时 | 4.30s | 4.77s |
++| 原 PDF 写入总量 | 154,468 bytes | 67,558,143 bytes |
++| 观测 JS＋缓冲区峰值 | 611,915,570 bytes | 612,448,364 bytes |
++
++耗时约减少 **9.86%**，原 PDF 写入约减少 **99.77%**；观测内存峰值差 **0.087%**，不能视为明显下降。附件型合成 PDF、单次对照、Mac CDP 的渲染器与可发现 Worker 堆／backing storage 不能代表实体 iPad 总内存、GPU／原生画布或扫描书籍，也不能宣称崩溃已解决。冻结 PDF.js 的完整输出和全文件核验仍是剩余开销。实际 Mac 为 macOS27.2/arm64、Obsidian1.12.7；1.14.4 是目标最低版本，实体 iPad 待用户确认。
++
++独立审计无新 P0，源码哈希匹配冻结产物。[0.5.9 三文件包](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip) SHA-256：`645b83263a3074efb9a4c4050e9d4859c874f185ba51da77510dc01c8a49187f`。附 [源码差异](dist/general-0.1general-0.5.9-source.diff)、[证据包](dist/general-0.1general-0.5.9-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.9-SHA256SUMS.txt)。
++
++按明确授权备份并替换“远程仓库1”三文件，备份 `.deploy-backups/0.5.9-target-1791894786082031000`；其余 **2038** 文件哈希不变，未操作 PDF 或重载主实例。旧恢复记录、设置、缓存、同步检查点与 0.5.8 回滚包保留。同步后先保存当前编辑或确认恢复副本，再重启加载 0.5.9。正常推送 main，不创建 Release。
++
++
++## 历史：0.5.8 编辑后关闭协调（2026-10-13）
+diff --git a/MACOS_HANDOFF.md b/MACOS_HANDOFF.md
+index b23f225..2243305 100644
+--- a/MACOS_HANDOFF.md
++++ b/MACOS_HANDOFF.md
+@@ -3 +3,5 @@
+-## 当前 0.5.8 编辑后关闭协调（2026-10-13）
++## 当前 0.5.9 增量写入与恢复（2026-10-13）
++
++三端统一 0.5.9。自有增量写入器保持原 PDF 前缀，补丁绑定当前磁盘完整指纹与长度；可用时通过 Vault.appendBinary 写回。共享恢复基线、增量段和不可变同步日志减少重复写入，旧恢复格式与被替代本地分支保留；无法安全追加时完整保存。继承 0.5.8 安全关闭协调。冻结 Viewer 和依赖不变，0.5.8 保留回滚。完整 PDF.js 输出、全文件核验、非原子比较／追加及日志累计限制仍在；性能与指定独立库证据见 GENERAL_ACCEPTANCE.md，实体 iPad 不以 Mac 模拟替代。
++
++## 历史 0.5.8 编辑后关闭协调（2026-10-13）
+@@ -23 +27 @@
+-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.8），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
++本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.9），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+diff --git a/README.md b/README.md
+index f26de48..8ce8960 100644
+--- a/README.md
++++ b/README.md
+@@ -9 +9 @@ The current work is the **0.1general unified candidate (plugin
+-0.5.8)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
++0.5.9)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+@@ -16 +16,10 @@ acceptance remain for the user.
+-The latest [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
++The latest [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
++uses verified PDF incremental revisions and binary append where the host supports
++it. Shared recovery bases plus checksummed deltas retain complete local branches;
++old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,
++tombstones, merge behavior and safe close acknowledgement remain shared across
++platforms. Unsupported append sources keep a verified full-save fallback.
++PDF.js still produces full save buffers, and exact disk validation still reads
++the file; this does not make total memory usage proportional only to edits.
++
++The prior [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
+@@ -93 +102 @@ CDP endpoint for each run rather than assuming a fixed port. The earlier approve
+-0.5.5 scroll-fix replacement was separately authorized. The current 0.5.8 delivery
++0.5.5 scroll-fix replacement was separately authorized. The current 0.5.9 delivery
+@@ -96 +105 @@ preserving settings, cache and recovery, with no PDF operations. Save and
+-close Reader tabs before installing the three matching 0.5.8 files, and preserve
++close Reader tabs before installing the three matching 0.5.9 files, and preserve
+diff --git a/manifest.json b/manifest.json
+index 2db82d8..e28bdf0 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.8",
++  "version": "0.5.9",
+diff --git a/plugin/main.js b/plugin/main.js
+index 60421eb..3e3447d 100644
+--- a/plugin/main.js
++++ b/plugin/main.js
+@@ -21,0 +22 @@ const {
++/* BUILD:PDF_RECOVERY_REQUIRE */ const { writeDeltaRecovery, readDeltaRecovery } = require('./pdf-recovery.cjs');
+@@ -3632,0 +3634 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++      completed: false,
+@@ -3634,0 +3637,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++    const deltaRecord = await writeDeltaRecovery({
++      adapter, root: this.recoveryDirectory, data,
++      bases: [originalBytes, view?.loadedBaseBytes], metadata,
++      ensureDirectory: ensureAdapterDirectory,
++    });
++    if (deltaRecord) return deltaRecord;
+@@ -3637,0 +3646,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++      const saved = await adapter.readBinary(candidatePath);
++      if (!bytesEqual(new Uint8Array(data), new Uint8Array(saved))) throw new Error("恢复 PDF 写后校验失败");
++      metadata.outputHash = fingerprint(data);
++      metadata.outputLength = data.byteLength;
++      metadata.completed = true;
++      await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
++      if (await adapter.read(metadataPath) !== `${JSON.stringify(metadata, null, 2)}\n`) throw new Error("恢复完成记录写后校验失败");
+@@ -3686,0 +3702 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++        if (metadata.completed === false) continue;
+@@ -3689 +3705,4 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
+-        const candidatePath = `${this.recoveryDirectory}/${safeId}.pdf`;
++        const isDelta = metadata.schema === 2 && metadata.storage === "pdf-prefix-delta";
++        if (metadata.schema !== 1 && !isDelta) continue;
++        const candidatePath = `${this.recoveryDirectory}/${safeId}.${isDelta ? "delta" : "pdf"}`;
++        if (isDelta && metadata.candidateFile !== `${safeId}.delta`) continue;
+@@ -3695,0 +3715,3 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++    if (typeof this.pdfSync?.listRecoveryCandidates === "function") {
++      candidates.push(...await this.pdfSync.listRecoveryCandidates());
++    }
+@@ -3709,3 +3731,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
+-    const candidate = candidates[0];
+-    const adapter = this.app.vault.adapter;
+-    const bytes = await adapter.readBinary(candidate.candidatePath);
++    let candidate, bytes;
++    for (const item of candidates) {
++      try { bytes = await this.readRecoveryBytes(item); candidate = item; break; }
++      catch { /* Preserve corrupt/new records and try an older intact branch. */ }
++    }
++    if (!candidate) throw new Error("恢复副本校验未通过；原记录已保留，请导出诊断。");
+@@ -3733,0 +3759,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
++  async readRecoveryBytes(candidate) {
++    const adapter = this.app.vault.adapter;
++    const bytes = candidate.metadata.storage === "pdf-prefix-delta"
++      ? await readDeltaRecovery(adapter, this.recoveryDirectory, candidate)
++      : candidate.metadata.storage === "sync-journal"
++        ? await this.pdfSync.readRecoveryCandidate(candidate)
++        : await adapter.readBinary(candidate.candidatePath);
++    if (candidate.metadata.outputHash && (bytes.byteLength !== candidate.metadata.outputLength ||
++      fingerprint(bytes) !== candidate.metadata.outputHash)) throw new Error("恢复 PDF 完整性校验失败");
++    return bytes instanceof Uint8Array ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : bytes;
++  }
++
+diff --git a/plugin/manifest.json b/plugin/manifest.json
+index 2db82d8..e28bdf0 100644
+--- a/plugin/manifest.json
++++ b/plugin/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.8",
++  "version": "0.5.9",
+diff --git a/plugin/pdf-incremental.cjs b/plugin/pdf-incremental.cjs
+new file mode 100644
+index 0000000..0e5873b
+--- /dev/null
++++ b/plugin/pdf-incremental.cjs
+@@ -0,0 +1,449 @@
++"use strict";
++
++const { sha256 } = require("@noble/hashes/sha256");
++const {
++  PDFArray,
++  PDFCatalog,
++  PDFCrossRefSection,
++  PDFDict,
++  PDFName,
++  PDFNumber,
++  PDFRawStream,
++  PDFRef,
++} = require("pdf-lib");
++const PDFParser = require("pdf-lib/cjs/core/parser/PDFParser").default;
++const PDFStream = require("pdf-lib/cjs/core/objects/PDFStream").default;
++const PDFXRefStreamParser = require("pdf-lib/cjs/core/parser/PDFXRefStreamParser").default;
++const { Keywords } = require("pdf-lib/cjs/core/syntax/Keywords");
++
++const WS = new Set([0, 9, 10, 12, 13, 32]);
++const ASCII_EOF = [37, 37, 69, 79, 70]; // %%EOF
++const ASCII_STARTXREF = [115, 116, 97, 114, 116, 120, 114, 101, 102];
++const STREAM_OPEN = new TextEncoder().encode("\nstream\n");
++const STREAM_CLOSE = new TextEncoder().encode("\nendstream");
++
++class PdfIncrementalError extends Error {
++  constructor(code, message, cause = null) {
++    super(message);
++    this.name = "PdfIncrementalError";
++    this.code = code;
++    if (cause) this.cause = cause;
++  }
++}
++
++function fail(code, message, cause) {
++  throw new PdfIncrementalError(code, message, cause);
++}
++
++function asBytes(input) {
++  if (input instanceof Uint8Array) return input;
++  if (input instanceof ArrayBuffer) return new Uint8Array(input);
++  if (ArrayBuffer.isView(input)) return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
++  fail("PDF_INCREMENTAL_INVALID_BYTES", "The incremental PDF source must be a byte array.");
++}
++
++function toHex(bytes) {
++  let result = "";
++  for (const byte of bytes) result += byte.toString(16).padStart(2, "0");
++  return result;
++}
++
++function fingerprint(bytes) {
++  return toHex(sha256(bytes));
++}
++
++function fingerprintConcat(prefix, suffix) {
++  const hash = sha256.create();
++  hash.update(prefix);
++  hash.update(suffix);
++  return toHex(hash.digest());
++}
++
++function sameRef(left, right) {
++  return left instanceof PDFRef && right instanceof PDFRef && left.toString() === right.toString();
++}
++
++function parseFinalStartXref(bytes) {
++  let cursor = bytes.length;
++  while (cursor > 0 && WS.has(bytes[cursor - 1])) cursor -= 1;
++  if (cursor < ASCII_EOF.length) fail("PDF_INCREMENTAL_INVALID_EOF", "The PDF has no final %%EOF marker.");
++  for (let index = 0; index < ASCII_EOF.length; index += 1) {
++    if (bytes[cursor - ASCII_EOF.length + index] !== ASCII_EOF[index]) {
++      fail("PDF_INCREMENTAL_INVALID_EOF", "The PDF has no final %%EOF marker.");
++    }
++  }
++  cursor -= ASCII_EOF.length;
++  while (cursor > 0 && WS.has(bytes[cursor - 1])) cursor -= 1;
++
++  const digitsEnd = cursor;
++  while (cursor > 0 && bytes[cursor - 1] >= 48 && bytes[cursor - 1] <= 57) cursor -= 1;
++  if (cursor === digitsEnd) fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref offset is missing.");
++  if (digitsEnd - cursor > 16) fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref offset is too large.");
++  let xrefOffset = 0;
++  for (let index = cursor; index < digitsEnd; index += 1) {
++    xrefOffset = xrefOffset * 10 + bytes[index] - 48;
++  }
++  if (!Number.isSafeInteger(xrefOffset) || xrefOffset < 0 || xrefOffset >= bytes.length) {
++    fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref offset is outside the PDF.");
++  }
++  while (cursor > 0 && WS.has(bytes[cursor - 1])) cursor -= 1;
++  if (cursor < ASCII_STARTXREF.length) fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref keyword is missing.");
++  const keywordStart = cursor - ASCII_STARTXREF.length;
++  for (let index = 0; index < ASCII_STARTXREF.length; index += 1) {
++    if (bytes[keywordStart + index] !== ASCII_STARTXREF[index]) {
++      fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref keyword is missing.");
++    }
++  }
++  if (keywordStart > 0 && !WS.has(bytes[keywordStart - 1])) {
++    fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The final startxref keyword is not delimited.");
++  }
++  return xrefOffset;
++}
++
++function parserFor(bytes) {
++  try {
++    return PDFParser.forBytesWithOptions(bytes, Infinity, true, true);
++  } catch (error) {
++    fail("PDF_INCREMENTAL_INVALID_TRAILER", "The PDF trailer could not be parsed safely.", error);
++  }
++}
++
++function readXrefStreamAt(bytes, offset) {
++  const parser = parserFor(bytes);
++  try {
++    if (bytes[offset] < 48 || bytes[offset] > 57) {
++      fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The startxref offset does not point to an indirect xref stream object.");
++    }
++    parser.bytes.moveTo(offset);
++    const ref = parser.parseIndirectObjectHeader();
++    parser.skipWhitespaceAndComments();
++    const object = parser.parseObject();
++    parser.skipWhitespaceAndComments();
++    if (!parser.matchKeyword(Keywords.endobj)) {
++      fail("PDF_INCREMENTAL_INVALID_XREF_STREAM", "The xref stream object is missing endobj.");
++    }
++    if (!(object instanceof PDFRawStream) || object.dict.lookup(PDFName.of("Type")) !== PDFName.of("XRef")) {
++      fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The startxref offset does not point to an xref stream.");
++    }
++    const xrefParser = PDFXRefStreamParser.forStream(object);
++    xrefParser.parseIntoContext();
++    const dict = object.dict;
++    return { ref, dict, xrefParser };
++  } catch (error) {
++    if (error instanceof PdfIncrementalError) throw error;
++    fail("PDF_INCREMENTAL_INVALID_XREF_STREAM", "The xref stream could not be parsed safely.", error);
++  }
++}
++
++function readClassicXrefAt(bytes, offset) {
++  const parser = parserFor(bytes);
++  try {
++    parser.bytes.moveTo(offset);
++    if (!parser.matchKeyword(Keywords.xref)) {
++      fail("PDF_INCREMENTAL_INVALID_STARTXREF", "The startxref offset does not point to an xref table.");
++    }
++    parser.bytes.moveTo(offset);
++    parser.maybeParseCrossRefSection();
++    if (parser.bytes.offset() <= offset) {
++      fail("PDF_INCREMENTAL_INVALID_XREF_TABLE", "The xref table could not be parsed.");
++    }
++    parser.skipWhitespaceAndComments();
++    if (!parser.matchKeyword(Keywords.trailer)) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The xref table has no trailer dictionary.");
++    }
++    parser.skipWhitespaceAndComments();
++    const dict = parser.parseDict();
++    return { dict };
++  } catch (error) {
++    if (error instanceof PdfIncrementalError) throw error;
++    fail("PDF_INCREMENTAL_INVALID_XREF_TABLE", "The xref table or trailer could not be parsed safely.", error);
++  }
++}
++
++function readSourceTrailer(input, document = null) {
++  const bytes = asBytes(input);
++  const xrefOffset = parseFinalStartXref(bytes);
++  let current;
++  if (bytes[xrefOffset] === 120) current = readClassicXrefAt(bytes, xrefOffset);
++  else current = readXrefStreamAt(bytes, xrefOffset);
++  const dict = current.dict;
++  const root = dict.get(PDFName.of("Root"));
++  const size = dict.get(PDFName.of("Size"));
++  if (!(root instanceof PDFRef) || !(size instanceof PDFNumber)) {
++    fail("PDF_INCREMENTAL_INVALID_TRAILER", "The latest PDF trailer must include a valid /Root reference and /Size value.");
++  }
++  const declaredSize = size.asNumber();
++  if (!Number.isSafeInteger(declaredSize) || declaredSize < 1) {
++    fail("PDF_INCREMENTAL_INVALID_TRAILER", "The latest PDF trailer has an invalid /Size value.");
++  }
++  const previous = dict.get(PDFName.of("Prev"));
++  if (previous !== undefined && (!(previous instanceof PDFNumber) || !Number.isSafeInteger(previous.asNumber()) || previous.asNumber() < 0 || previous.asNumber() >= xrefOffset)) {
++    fail("PDF_INCREMENTAL_INVALID_TRAILER", "The latest PDF trailer has an invalid /Prev offset.");
++  }
++  const hybrid = dict.get(PDFName.of("XRefStm"));
++  if (hybrid !== undefined) {
++    if (!(hybrid instanceof PDFNumber) || !Number.isSafeInteger(hybrid.asNumber()) || hybrid.asNumber() < 0 || hybrid.asNumber() >= xrefOffset) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The hybrid xref stream offset is invalid.");
++    }
++    const hybridInfo = readXrefStreamAt(bytes, hybrid.asNumber());
++    if (!sameRef(hybridInfo.dict.get(PDFName.of("Root")), root)) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The hybrid xref table and stream disagree about the catalog root.");
++    }
++  }
++  const encrypt = dict.get(PDFName.of("Encrypt"));
++  if (encrypt !== undefined && document) {
++    fail("PDF_INCREMENTAL_ENCRYPTED_DOCUMENT", "Encrypted PDFs cannot be updated through the incremental writer.");
++  }
++  if (document) {
++    const context = document.context;
++    if (context.trailerInfo.Encrypt || encrypt) {
++      fail("PDF_INCREMENTAL_ENCRYPTED_DOCUMENT", "Encrypted PDFs cannot be updated through the incremental writer.");
++    }
++    if (!sameRef(context.trailerInfo.Root, root)) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The parsed document catalog does not match the final xref trailer.");
++    }
++    if (declaredSize < context.largestObjectNumber + 1) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The trailer /Size is smaller than the parsed object numbers.");
++    }
++    const catalog = context.lookup(root);
++    if (!(catalog instanceof PDFCatalog) || catalog.get(PDFName.of("Type")) !== PDFName.of("Catalog")) {
++      fail("PDF_INCREMENTAL_INVALID_TRAILER", "The final trailer /Root does not resolve to a usable catalog.");
++    }
++  }
++  return {
++    xrefOffset,
++    root,
++    declaredSize,
++    previous: previous instanceof PDFNumber ? previous.asNumber() : null,
++    info: dict.get(PDFName.of("Info")),
++    id: dict.get(PDFName.of("ID")),
++    encrypt,
++  };
++}
++
++function hashPdfStream(object, scratchState, measuredSize) {
++  let contents;
++  let dictionarySize;
++  try {
++    // PDFStream.sizeInBytes() refreshes /Length just as copyBytesInto() does.
++    // Hash the stream framing and its existing contents view separately so a
++    // multi-megabyte image never needs a same-sized scratch copy.
++    contents = object.getContents();
++    dictionarySize = object.dict.sizeInBytes();
++  } catch (error) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream could not be inspected for change detection.", error);
++  }
++  if (!(contents instanceof Uint8Array) || object.getContentsSize() !== contents.length) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream returned an inconsistent contents view.");
++  }
++  if (!Number.isSafeInteger(dictionarySize) || dictionarySize < 0 || measuredSize !== dictionarySize + contents.length + 18) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream reported an inconsistent serialized size.");
++  }
++  if (scratchState.buffer.length < dictionarySize) scratchState.buffer = new Uint8Array(dictionarySize);
++  let written;
++  try {
++    written = object.dict.copyBytesInto(scratchState.buffer, 0);
++  } catch (error) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream dictionary could not be serialized for change detection.", error);
++  }
++  if (written !== dictionarySize) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream dictionary reported an inconsistent serialized size.");
++  const hash = sha256.create();
++  hash.update(scratchState.buffer.subarray(0, written));
++  hash.update(STREAM_OPEN);
++  hash.update(contents);
++  hash.update(STREAM_CLOSE);
++  return toHex(hash.digest());
++}
++
++function hashPdfObject(object, scratchState) {
++  let size;
++  try {
++    size = object.sizeInBytes();
++  } catch (error) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object could not be measured for incremental serialization.", error);
++  }
++  if (!Number.isSafeInteger(size) || size < 0) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object has an invalid serialized size.");
++  if (object instanceof PDFStream) return hashPdfStream(object, scratchState, size);
++  if (scratchState.buffer.length < size) scratchState.buffer = new Uint8Array(size);
++  let written;
++  try {
++    written = object.copyBytesInto(scratchState.buffer, 0);
++  } catch (error) {
++    fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object could not be serialized for change detection.", error);
++  }
++  if (written !== size) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object reported an inconsistent serialized size.");
++  return toHex(sha256(scratchState.buffer.subarray(0, written)));
++}
++
++function snapshotObjects(document) {
++  const objectHashes = new Map();
++  const scratch = { buffer: new Uint8Array(0) };
++  try {
++    for (const [ref, object] of document.context.enumerateIndirectObjects()) {
++      objectHashes.set(ref.toString(), hashPdfObject(object, scratch));
++    }
++  } catch (error) {
++    if (error instanceof PdfIncrementalError) throw error;
++    fail("PDF_INCREMENTAL_SNAPSHOT_FAILED", "The source PDF objects could not be snapshotted safely.", error);
++  }
++  return objectHashes;
++}
++
++function captureIncrementalSnapshot({ sourceBytes, document }) {
++  const bytes = asBytes(sourceBytes);
++  const trailer = readSourceTrailer(bytes, document);
++  // pdf-lib chooses new object numbers from the highest parsed live object.
++  // A valid source can have free numbers above that object, so keep future
++  // allocations beyond the source trailer's complete object-number range.
++  document.context.largestObjectNumber = Math.max(
++    document.context.largestObjectNumber,
++    trailer.declaredSize - 1,
++  );
++  return {
++    baseLength: bytes.length,
++    baseFingerprint: fingerprint(bytes),
++    root: trailer.root.toString(),
++    xrefOffset: trailer.xrefOffset,
++    declaredSize: trailer.declaredSize,
++    objectHashes: snapshotObjects(document),
++  };
++}
++
++function textBytes(text) {
++  return new TextEncoder().encode(text);
++}
++
++function writeBytes(buffer, offset, bytes) {
++  buffer.set(bytes, offset);
++  return offset + bytes.length;
++}
++
++function writeObject(buffer, offset, ref, object) {
++  offset = writeBytes(buffer, offset, textBytes(`${ref.objectNumber} ${ref.generationNumber} obj\n`));
++  const written = object.copyBytesInto(buffer, offset);
++  offset += written;
++  offset = writeBytes(buffer, offset, textBytes("\nendobj\n\n"));
++  return offset;
++}
++
++function createIncrementalPatch({ sourceBytes, document, snapshot }) {
++  const base = asBytes(sourceBytes);
++  if (!snapshot || snapshot.baseLength !== base.length || snapshot.baseFingerprint !== fingerprint(base)) {
++    fail("PDF_INCREMENTAL_BASE_MISMATCH", "The incremental snapshot does not belong to these exact source bytes.");
++  }
++  // The target context can already contain merge-created refs above the
++  // source trailer's /Size. Validate the immutable source independently;
++  // output /Size is computed from the current context below.
++  const trailer = readSourceTrailer(base);
++  if (trailer.encrypt !== undefined || document.context.trailerInfo.Encrypt) {
++    fail("PDF_INCREMENTAL_ENCRYPTED_DOCUMENT", "Encrypted PDFs cannot be updated through the incremental writer.");
++  }
++  if (snapshot.root !== trailer.root.toString() || snapshot.xrefOffset !== trailer.xrefOffset) {
++    fail("PDF_INCREMENTAL_BASE_MISMATCH", "The incremental snapshot no longer matches the source PDF trailer.");
++  }
++
++  const context = document.context;
++  const scratch = { buffer: new Uint8Array(0) };
++  const objects = context.enumerateIndirectObjects()
++    .filter(([ref, object]) => snapshot.objectHashes.get(ref.toString()) !== hashPdfObject(object, scratch))
++    .sort(([left], [right]) => left.objectNumber - right.objectNumber || left.generationNumber - right.generationNumber);
++  if (!objects.length) return null;
++  for (let index = 1; index < objects.length; index += 1) {
++    if (objects[index - 1][0].objectNumber === objects[index][0].objectNumber) {
++      fail("PDF_INCREMENTAL_DUPLICATE_GENERATION", `Object ${objects[index][0].objectNumber} has multiple changed generations and cannot be updated in one classic xref section.`);
++    }
++  }
++
++  const currentRoot = context.trailerInfo.Root;
++  if (!(currentRoot instanceof PDFRef) || currentRoot.toString() !== snapshot.root) {
++    fail("PDF_INCREMENTAL_ROOT_CHANGED", "Changing the catalog root is not supported by the incremental writer.");
++  }
++  const maxObjectNumber = Math.max(context.largestObjectNumber, snapshot.declaredSize - 1);
++  const size = Math.max(snapshot.declaredSize, maxObjectNumber + 1);
++  const trailerDict = PDFDict.withContext(context);
++  trailerDict.set(PDFName.of("Size"), PDFNumber.of(size));
++  trailerDict.set(PDFName.of("Root"), trailer.root);
++  if (trailer.info !== undefined) trailerDict.set(PDFName.of("Info"), trailer.info);
++  if (trailer.id !== undefined) {
++    if (!(trailer.id instanceof PDFArray)) fail("PDF_INCREMENTAL_INVALID_TRAILER", "The final trailer /ID value is not an array.");
++    trailerDict.set(PDFName.of("ID"), trailer.id);
++  }
++  trailerDict.set(PDFName.of("Prev"), PDFNumber.of(snapshot.xrefOffset));
++
++  const xref = PDFCrossRefSection.createEmpty();
++  const sourcePrefix = 1; // One newline separates prior %%EOF from this revision.
++  let nextOffset = base.length + sourcePrefix;
++  const objectOffsets = [];
++  for (const [ref, object] of objects) {
++    objectOffsets.push(nextOffset);
++    const objectSize = ref.sizeInBytes() + 3 + object.sizeInBytes() + 9;
++    if (!Number.isSafeInteger(objectSize) || objectSize < 0) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", `Object ${ref} has an invalid serialized size.`);
++    nextOffset += objectSize;
++  }
++  const xrefOffset = nextOffset;
++  if (xrefOffset > 9_999_999_999) fail("PDF_INCREMENTAL_XREF_OFFSET_OVERFLOW", "The incremental xref table cannot address a PDF larger than ten billion bytes.");
++  for (let index = 0; index < objects.length; index += 1) xref.addEntry(objects[index][0], objectOffsets[index]);
++
++  const trailerText = `trailer\n${trailerDict.toString()}\n\nstartxref\n${xrefOffset}\n%%EOF\n`;
++  const trailerBytes = textBytes(trailerText);
++  const xrefSize = xref.sizeInBytes() + 1;
++  const suffixLength = sourcePrefix + (nextOffset - (base.length + sourcePrefix)) + xrefSize + trailerBytes.length;
++  const suffix = new Uint8Array(suffixLength);
++  let offset = 0;
++  suffix[offset++] = 10;
++  for (const [ref, object] of objects) offset = writeObject(suffix, offset, ref, object);
++  offset += xref.copyBytesInto(suffix, offset);
++  suffix[offset++] = 10;
++  offset = writeBytes(suffix, offset, trailerBytes);
++  if (offset !== suffix.length) fail("PDF_INCREMENTAL_SERIALIZATION_SIZE_MISMATCH", "The incremental update did not match its measured size.");
++
++  const outputLength = base.length + suffix.length;
++  return {
++    baseLength: base.length,
++    baseFingerprint: snapshot.baseFingerprint,
++    suffix,
++    outputLength,
++    outputFingerprint: fingerprintConcat(base, suffix),
++    xrefOffset,
++    changedObjectCount: objects.length,
++  };
++}
++
++function concatenate(base, suffix) {
++  const result = new Uint8Array(base.length + suffix.length);
++  result.set(base, 0);
++  result.set(suffix, base.length);
++  return result;
++}
++
++function materializeIncrementalResult({ sourceBytes, patch, patchOnly = false }) {
++  if (!patch) return { bytes: null, patch: null };
++  const base = asBytes(sourceBytes);
++  return {
++    ...(patchOnly ? {} : { bytes: concatenate(base, patch.suffix) }),
++    patch: {
++      baseLength: patch.baseLength,
++      baseFingerprint: patch.baseFingerprint,
++      suffix: patch.suffix,
++      outputLength: patch.outputLength,
++      outputFingerprint: patch.outputFingerprint,
++      xrefOffset: patch.xrefOffset,
++      changedObjectCount: patch.changedObjectCount,
++    },
++  };
++}
++
++module.exports = {
++  PdfIncrementalError,
++  captureIncrementalSnapshot,
++  createIncrementalPatch,
++  materializeIncrementalResult,
++  readSourceTrailer,
++  fingerprint,
++  _internals: {
++    parseFinalStartXref,
++    hashPdfObject,
++    snapshotObjects,
++    concatenate,
++  },
++};
+diff --git a/plugin/pdf-journal.cjs b/plugin/pdf-journal.cjs
+new file mode 100644
+index 0000000..ee659ba
+--- /dev/null
++++ b/plugin/pdf-journal.cjs
+@@ -0,0 +1,440 @@
++/* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
++"use strict";
++
++// Durable sync checkpoints. Schema 2 stores one merge baseline and represents
++// incremental checkpoints as a verified anchor plus checksummed append records.
++// Schema 1 remains readable so upgrades do not strand existing recovery files.
++function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqual,
++  fingerprintChunks, createFingerprintAccumulator, ensureDirectory,
++  makeToken = () => `${Date.now()}-${Math.random()}` }) {
++  const bytesView = (value) => {
++    const tag = Object.prototype.toString.call(value);
++    if (tag === "[object ArrayBuffer]" || tag === "[object SharedArrayBuffer]") return new Uint8Array(value);
++    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
++    throw new TypeError("Invalid PDF byte data.");
++  };
++  const copy = (value) => Uint8Array.from(bytesView(value));
++  const asBuffer = (value) => {
++    const view = bytesView(value);
++    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
++  };
++  const equal = (left, right) => bytesEqual(bytesView(left), bytesView(right));
++  const normalizedRoot = normalizePath(root);
++  const keyForPath = (path) => fingerprint(new TextEncoder().encode(normalizePath(path)));
++  const pathsFor = (path) => {
++    const key = keyForPath(path);
++    return {
++      key,
++      manifest: `${normalizedRoot}/${key}.json`,
++      previousManifest: `${normalizedRoot}/${key}.json.previous`,
++      schema1Pdf: `${normalizedRoot}/${key}.pdf`,
++      schema1Base: `${normalizedRoot}/${key}.base.pdf`,
++      base(hash) { return `${normalizedRoot}/${key}.base-${hash}.pdf`; },
++      preferredBase: `${normalizedRoot}/${key}.base.pdf`,
++      full(hash, token) { return `${normalizedRoot}/${key}.checkpoint-${hash}-${token}.pdf`; },
++      anchor(hash, token) { return `${normalizedRoot}/${key}.anchor-${hash}-${token}.pdf`; },
++      delta(sequence, token) { return `${normalizedRoot}/${key}.delta-${sequence}-${token}.bin`; },
++      record(sequence, token) { return `${normalizedRoot}/${key}.record-${sequence}-${token}.json`; },
++    };
++  };
++  const validPath = (path) => typeof path === "string" && path.startsWith(`${normalizedRoot}/`) &&
++    !path.split("/").some((part) => part === "..");
++  const invalid = (message) => Object.assign(new Error(message), { code: "PDF_JOURNAL_INVALID" });
++  const fingerprintRecord = (value) => ({ hash: fingerprint(bytesView(value)), length: bytesView(value).byteLength });
++  async function readVerified(path, hash, length) {
++    if (!validPath(path) || !(await adapter.exists(path))) throw invalid("Checkpoint segment is missing");
++    const saved = bytesView(await adapter.readBinary(path));
++    if (saved.byteLength !== length || fingerprint(saved) !== hash) throw invalid("Checkpoint segment verification failed");
++    return saved;
++  }
++  async function writeVerified(path, value) {
++    const data = bytesView(value);
++    await adapter.writeBinary(path, asBuffer(data));
++    const saved = await readVerified(path, fingerprint(data), data.byteLength);
++    return { path, file: path, hash: fingerprint(saved), length: saved.byteLength };
++  }
++  async function readManifestCandidates(path) {
++    const manifests = [];
++    for (const candidate of [path, `${path}.previous`]) {
++      if (!(await adapter.exists(candidate))) continue;
++      const raw = await adapter.read(candidate);
++      let metadata;
++      try { metadata = JSON.parse(raw); }
++      catch { continue; /* A torn newest manifest falls back to its previous verified copy. */ }
++      if (metadata && (metadata.schema === 1 || metadata.schema === 2)) manifests.push(metadata);
++    }
++    return manifests;
++  }
++  async function readManifest(path) {
++    return (await readManifestCandidates(path))[0] || null;
++  }
++  async function writeManifest(path, metadata) {
++    if (await adapter.exists(path)) {
++      const old = await adapter.read(path);
++      if (typeof old === "string") {
++        let validJson = false;
++        let oldMetadata;
++        try {
++          oldMetadata = JSON.parse(old);
++          validJson = true;
++        } catch { /* Keep the last previous manifest if the current one is torn. */ }
++        if (validJson) {
++          let oldIsValid = true;
++          try { await validateManifest(oldMetadata, metadata.path, { materialize: false }); }
++          catch (error) {
++            if (error.code !== "PDF_JOURNAL_INVALID") throw error;
++            oldIsValid = false;
++          }
++          if (oldIsValid) {
++            const previousPath = `${path}.previous`;
++            await adapter.write(previousPath, old);
++            if (await adapter.read(previousPath) !== old) {
++              throw new Error("Checkpoint backup manifest write verification failed");
++            }
++          }
++        }
++      }
++    }
++    const text = JSON.stringify(metadata);
++    await adapter.write(path, text);
++    const saved = await adapter.read(path);
++    if (saved !== text) throw new Error("Checkpoint manifest write verification failed");
++  }
++  async function ensureBase(paths, path, baseBytes) {
++    const info = fingerprintRecord(baseBytes);
++    let file = paths.preferredBase;
++    if (await adapter.exists(file)) {
++      try {
++        const existing = bytesView(await adapter.readBinary(file));
++        if (existing.byteLength !== info.length || fingerprint(existing) !== info.hash) file = paths.base(info.hash);
++      } catch { file = paths.base(info.hash); }
++    }
++    if (!(await adapter.exists(file))) await writeVerified(file, baseBytes);
++    else await readVerified(file, info.hash, info.length);
++    return { file, ...info };
++  }
++  function validatePath(metadata, requestedPath) {
++    if (metadata.path !== normalizePath(requestedPath)) throw invalid("Checkpoint path mismatch");
++  }
++  async function validateManifest(metadata, requestedPath, { materialize = true } = {}) {
++    const normalizedPath = normalizePath(requestedPath);
++    const paths = pathsFor(normalizedPath);
++    validatePath(metadata, normalizedPath);
++    if (metadata.schema === 1) {
++      const [pdf, base] = await Promise.all([
++        adapter.readBinary(paths.schema1Pdf), adapter.readBinary(paths.schema1Base),
++      ]);
++      const checkpointBytes = bytesView(pdf);
++      const baseBytes = bytesView(base);
++      if (fingerprint(checkpointBytes) !== metadata.hash || fingerprint(baseBytes) !== metadata.baseHash) {
++        throw invalid("Checkpoint verification failed");
++      }
++      return { schema: 1, status: metadata.status, path: normalizedPath,
++        checkpointBytes, checkpointChunks: [checkpointBytes], baseBytes,
++        hash: metadata.hash, length: checkpointBytes.byteLength,
++        baseHash: metadata.baseHash, baseLength: baseBytes.byteLength, metadata };
++    }
++    if (metadata.schema !== 2 || !metadata.base || !metadata.checkpoint) {
++      throw invalid("Unsupported checkpoint schema");
++    }
++    const baseBytes = await readVerified(metadata.base.file, metadata.base.hash, metadata.base.length);
++    const checkpoint = metadata.checkpoint;
++    if (!/^[a-f0-9]{64}$/i.test(checkpoint.hash || "") || !Number.isSafeInteger(checkpoint.length) || checkpoint.length < 1) {
++      throw invalid("Checkpoint metadata is invalid");
++    }
++    let checkpointBytes = null;
++    let checkpointChunks = materialize ? [] : null;
++    let accumulator = createFingerprintAccumulator?.() || null;
++    const addChunk = (chunk) => {
++      if (accumulator) accumulator.update(chunk);
++      if (checkpointChunks) checkpointChunks.push(chunk);
++      else if (!accumulator) checkpointChunks = [chunk];
++    };
++    if (checkpoint.kind === "full") {
++      const fullBytes = await readVerified(checkpoint.file, checkpoint.hash, checkpoint.length);
++      addChunk(fullBytes);
++      if (materialize) checkpointBytes = fullBytes;
++    } else if (checkpoint.kind === "append" && typeof checkpoint.head === "string") {
++      const reverseChain = [];
++      const seen = new Set();
++      let pointer = checkpoint.head;
++      while (pointer) {
++        if (!validPath(pointer) || seen.has(pointer) || reverseChain.length >= 100000) {
++          throw invalid("Checkpoint journal record chain is invalid");
++        }
++        seen.add(pointer);
++        const raw = await adapter.read(pointer);
++        let record;
++        try { record = JSON.parse(raw); }
++        catch { throw invalid("Checkpoint journal record is malformed"); }
++        if (!record || record.schema !== 1 || record.path !== normalizedPath ||
++            !Number.isSafeInteger(record.sequence) || !record.suffix ||
++            !/^[a-f0-9]{64}$/i.test(record.hash || "") || !Number.isSafeInteger(record.length)) {
++          throw invalid("Checkpoint journal record metadata is invalid");
++        }
++        reverseChain.push({ path: pointer, record });
++        if (record.parentRecord === null) break;
++        if (typeof record.parentRecord !== "string") throw invalid("Checkpoint journal parent link is invalid");
++        pointer = record.parentRecord;
++      }
++      if (!reverseChain.length || reverseChain.at(-1).record.parentRecord !== null) {
++        throw invalid("Checkpoint journal root record is missing");
++      }
++      const chain = reverseChain.reverse();
++      const rootRecord = chain[0].record;
++      const anchor = rootRecord.anchor;
++      if (!anchor || !Number.isSafeInteger(anchor.length) || anchor.length < 1 ||
++          !/^[a-f0-9]{64}$/i.test(anchor.hash || "")) {
++        throw invalid("Checkpoint journal anchor is invalid");
++      }
++      let anchorBytes;
++      if (anchor.kind === "base") {
++        if (anchor.file !== metadata.base.file || anchor.hash !== metadata.base.hash || anchor.length !== metadata.base.length) {
++          throw invalid("Checkpoint journal base anchor mismatch");
++        }
++        anchorBytes = baseBytes;
++      } else if (anchor.kind === "file") {
++        anchorBytes = await readVerified(anchor.file, anchor.hash, anchor.length);
++      } else throw invalid("Unsupported checkpoint journal anchor");
++
++      addChunk(anchorBytes);
++      let parentHash = anchor.hash;
++      let parentLength = anchor.length;
++      let finalLength = anchor.length;
++      let previousSequence = 0;
++      for (let index = 0; index < chain.length; index += 1) {
++        const { path: recordPath, record } = chain[index];
++        const parentRecord = index === 0 ? null : chain[index - 1].path;
++        if (record.parentRecord !== parentRecord || (index === 0 ? !record.anchor : record.anchor !== undefined) ||
++            !Number.isSafeInteger(record.suffix.length) || record.suffix.length < 1 ||
++            record.parentHash !== parentHash || record.parentLength !== parentLength ||
++            record.length !== record.parentLength + record.suffix.length ||
++            record.sequence <= previousSequence) {
++          throw invalid("Checkpoint journal ancestry verification failed");
++        }
++        const suffix = await readVerified(record.suffix.file, record.suffix.hash, record.suffix.length);
++        addChunk(suffix);
++        parentHash = record.hash;
++        parentLength = record.length;
++        finalLength += suffix.byteLength;
++        previousSequence = record.sequence;
++      }
++      if (parentHash !== checkpoint.hash || parentLength !== checkpoint.length || finalLength !== checkpoint.length ||
++          !Number.isSafeInteger(metadata.sequence) || previousSequence !== metadata.sequence ||
++          (accumulator ? accumulator.digest() : fingerprintChunks(checkpointChunks)) !== checkpoint.hash) {
++        throw invalid("Checkpoint journal watermark verification failed");
++      }
++    } else if (checkpoint.kind === "append") {
++      const anchor = checkpoint.anchor;
++      if (!anchor || !Number.isSafeInteger(anchor.length) || anchor.length < 1 ||
++          !/^[a-f0-9]{64}$/i.test(anchor.hash || "")) {
++        throw invalid("Checkpoint journal anchor is invalid");
++      }
++      let anchorBytes;
++      if (anchor.kind === "base") {
++        if (anchor.file !== metadata.base.file || anchor.hash !== metadata.base.hash || anchor.length !== metadata.base.length) {
++          throw invalid("Checkpoint journal base anchor mismatch");
++        }
++        anchorBytes = baseBytes;
++      } else if (anchor.kind === "file") {
++        anchorBytes = await readVerified(anchor.file, anchor.hash, anchor.length);
++      } else throw invalid("Unsupported checkpoint journal anchor");
++
++      const records = checkpoint.records;
++      if (!Array.isArray(records) || records.length === 0) throw invalid("Checkpoint journal has no committed records");
++      addChunk(anchorBytes);
++      let parentHash = anchor.hash;
++      let parentLength = anchor.length;
++      let finalLength = anchor.length;
++      let previousSequence = 0;
++      for (const record of records) {
++        if (!Number.isSafeInteger(record.sequence) || record.sequence <= previousSequence ||
++            record.parentHash !== parentHash || record.parentLength !== parentLength ||
++            !Number.isSafeInteger(record.suffixLength) || record.suffixLength < 1 ||
++            record.length !== record.parentLength + record.suffixLength ||
++            !/^[a-f0-9]{64}$/i.test(record.hash || "")) {
++          throw invalid("Checkpoint journal ancestry verification failed");
++        }
++        const suffix = await readVerified(record.file, record.suffixHash, record.suffixLength);
++        addChunk(suffix);
++        parentHash = record.hash;
++        parentLength = record.length;
++        finalLength += suffix.byteLength;
++        previousSequence = record.sequence;
++      }
++      if (parentHash !== checkpoint.hash || parentLength !== checkpoint.length || finalLength !== checkpoint.length ||
++          !Number.isSafeInteger(metadata.sequence) || previousSequence !== metadata.sequence ||
++          (accumulator ? accumulator.digest() : fingerprintChunks(checkpointChunks)) !== checkpoint.hash) {
++        throw invalid("Checkpoint journal watermark verification failed");
++      }
++    } else throw invalid("Unsupported checkpoint representation");
++    return { schema: 2, status: metadata.status, path: normalizedPath,
++      checkpointBytes, checkpointChunks, baseBytes, hash: checkpoint.hash, length: checkpoint.length,
++      baseHash: metadata.base.hash, baseLength: metadata.base.length,
++      sequence: metadata.sequence || 0, metadata };
++  }
++  async function load(path) {
++    const normalizedPath = normalizePath(path);
++    const paths = pathsFor(normalizedPath);
++    const candidates = await readManifestCandidates(paths.manifest);
++    if (!candidates.length) return null;
++    let lastError;
++    for (const metadata of candidates) {
++      try {
++        const verified = await validateManifest(metadata, normalizedPath);
++        const checkpointBytes = verified.checkpointBytes || new Uint8Array(verified.length);
++        if (!verified.checkpointBytes) {
++          let offset = 0;
++          for (const chunk of verified.checkpointChunks) {
++            checkpointBytes.set(chunk, offset);
++            offset += chunk.byteLength;
++          }
++        }
++        return { ...verified, checkpointBytes, checkpointChunks: undefined };
++      } catch (error) { lastError = error; }
++    }
++    throw lastError || new Error("Checkpoint verification failed");
++  }
++  async function beginFull({ path, baseBytes, checkpointBytes, metadata: extra = {} }) {
++    const normalizedPath = normalizePath(path);
++    const paths = pathsFor(normalizedPath);
++    await ensureDirectory(adapter, normalizedRoot);
++    const base = await ensureBase(paths, normalizedPath, baseBytes);
++    const checkpointInfo = fingerprintRecord(checkpointBytes);
++    let checkpoint;
++    if (checkpointInfo.hash === base.hash && checkpointInfo.length === base.length && equal(checkpointBytes, baseBytes)) {
++      checkpoint = { kind: "full", file: base.file, ...checkpointInfo };
++    } else {
++      const file = paths.full(checkpointInfo.hash, makeToken());
++      checkpoint = { kind: "full", ...(await writeVerified(file, checkpointBytes)) };
++    }
++    const prior = await readManifest(paths.manifest);
++    const sequence = Number.isSafeInteger(prior?.sequence) ? prior.sequence + 1 : 1;
++    const record = { schema: 2, status: "pending", path: normalizedPath, base,
++      checkpoint, sequence, metadata: extra, updatedAt: new Date().toISOString() };
++    await writeManifest(paths.manifest, record);
++    return record;
++  }
++  async function beginAppend({ path, baseBytes, parentBytes, suffix, outputFingerprint,
++    outputLength, metadata: extra = {} }) {
++    const normalizedPath = normalizePath(path);
++    const paths = pathsFor(normalizedPath);
++    const parent = bytesView(parentBytes);
++    const delta = bytesView(suffix);
++    const parentInfo = fingerprintRecord(parent);
++    if (!/^[a-f0-9]{64}$/i.test(outputFingerprint || "") ||
++        !Number.isSafeInteger(outputLength) || outputLength !== parentInfo.length + delta.byteLength) {
++      throw new Error("Incremental checkpoint metadata is invalid");
++    }
++    await ensureDirectory(adapter, normalizedRoot);
++    const base = await ensureBase(paths, normalizedPath, baseBytes);
++    const manifests = await readManifestCandidates(paths.manifest);
++    let prior = null;
++    let latest = null;
++    for (const candidate of manifests) {
++      try {
++        const verified = await validateManifest(candidate, normalizedPath, { materialize: false });
++        if (!latest) latest = verified;
++        if (!prior && verified.hash === parentInfo.hash && verified.length === parentInfo.length) prior = verified;
++      } catch { /* A damaged current record does not hide a valid previous one. */ }
++    }
++    const sequence = Math.max(Number.isSafeInteger(latest?.sequence) ? latest.sequence : 0,
++      Number.isSafeInteger(prior?.sequence) ? prior.sequence : 0, 0) + 1;
++    let anchor;
++    let anchorMetadata = null;
++    let parentRecord = null;
++    if (parentInfo.hash === base.hash && parentInfo.length === base.length && equal(parent, baseBytes)) {
++      // A matching checkpoint can still point at an older duplicate full
++      // file. Prefer the shared base directly so the first append never
++      // copies that full PDF into a separate journal anchor.
++      anchor = { kind: "base", file: base.file, hash: base.hash, length: base.length };
++    } else if (prior?.schema === 2 && prior.hash === parentInfo.hash && prior.length === parentInfo.length) {
++      const previous = prior.metadata.checkpoint;
++      if (previous.kind === "append" && typeof previous.head === "string") {
++        parentRecord = previous.head;
++      } else if (previous.kind === "full" && previous.file === base.file) {
++        anchor = { kind: "base", file: base.file, hash: base.hash, length: base.length };
++        anchorMetadata = prior.metadata.metadata || null;
++      } else if (previous.kind === "full") {
++        anchor = { kind: "file", file: previous.file, hash: previous.hash, length: previous.length };
++        anchorMetadata = prior.metadata.metadata || null;
++      } else {
++        // Migrate the earlier schema-2 array representation to linked records
++        // without rewriting its whole history into every new manifest.
++        const savedAnchor = await writeVerified(paths.anchor(parentInfo.hash, makeToken()), parent);
++        anchor = { kind: "file", ...savedAnchor };
++        anchorMetadata = prior.metadata.metadata || null;
++      }
++    } else {
++      const savedAnchor = await writeVerified(paths.anchor(parentInfo.hash, makeToken()), parent);
++      anchor = { kind: "file", ...savedAnchor };
++    }
++    const deltaFile = paths.delta(sequence, makeToken());
++    const suffixInfo = await writeVerified(deltaFile, delta);
++    const entry = { schema: 1, path: normalizedPath, sequence, parentRecord,
++      ...(parentRecord ? {} : { anchor, anchorMetadata }),
++      suffix: { file: suffixInfo.path, hash: suffixInfo.hash, length: suffixInfo.length },
++      parentHash: parentInfo.hash, parentLength: parentInfo.length,
++      hash: outputFingerprint, length: outputLength, metadata: extra };
++    const recordFile = paths.record(sequence, makeToken());
++    const recordText = JSON.stringify(entry);
++    await adapter.write(recordFile, recordText);
++    if (await adapter.read(recordFile) !== recordText) throw new Error("Checkpoint journal record write verification failed");
++    const record = { schema: 2, status: "pending", path: normalizedPath, base,
++      checkpoint: { kind: "append", head: recordFile,
++        hash: outputFingerprint, length: outputLength },
++      sequence, metadata: extra, updatedAt: new Date().toISOString() };
++    await writeManifest(paths.manifest, record);
++    return record;
++  }
++  async function confirm(path, outputFingerprint, outputLength) {
++    const normalizedPath = normalizePath(path);
++    const paths = pathsFor(normalizedPath);
++    const metadata = await readManifest(paths.manifest);
++    if (!metadata || metadata.schema !== 2 || metadata.path !== normalizedPath) {
++      throw new Error("Pending checkpoint is missing");
++    }
++    if (metadata.checkpoint.hash !== outputFingerprint || metadata.checkpoint.length !== outputLength) {
++      throw new Error("Confirmed checkpoint does not match the written PDF");
++    }
++    await validateManifest(metadata, normalizedPath, { materialize: false });
++    metadata.status = "confirmed";
++    metadata.updatedAt = new Date().toISOString();
++    metadata.confirmedSequence = metadata.sequence;
++    await writeManifest(paths.manifest, metadata);
++  }
++  async function listRecoveries() {
++    if (!(await adapter.exists(normalizedRoot))) return [];
++    const listing = await adapter.list(normalizedRoot);
++    const candidates = [];
++    for (const path of listing.files.filter((entry) => /^[a-f0-9]{64}\.json$/i.test(entry.split("/").at(-1)))) {
++      let manifests;
++      try { manifests = await readManifestCandidates(path); }
++      catch { continue; }
++      // A committed primary manifest means recovery was already acknowledged;
++      // do not surface its older pending backup as a new user recovery item.
++      if (manifests[0]?.status === "confirmed") continue;
++      for (const metadata of manifests) {
++        if (metadata.status !== "pending") continue;
++        try {
++          const verified = await validateManifest(metadata, metadata.path, { materialize: false });
++          if (!verified || verified.status !== "pending") continue;
++          candidates.push({ schema: verified.schema, path: verified.path, status: verified.status,
++            hash: verified.hash, length: verified.length,
++            updatedAt: verified.metadata.updatedAt || null, sequence: verified.sequence || 0 });
++          break;
++        } catch { /* Try the previous pending manifest before hiding this recovery. */ }
++      }
++    }
++    return candidates.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
++  }
++  async function readRecovery(candidate) {
++    if (!candidate || typeof candidate.path !== "string") throw new TypeError("Invalid checkpoint recovery candidate");
++    const loaded = await load(candidate.path);
++    if (!loaded) throw new Error("Checkpoint recovery candidate is missing");
++    return loaded.checkpointBytes;
++  }
++  return { load, beginFull, beginAppend, confirm, listRecoveries, readRecovery, pathsFor };
++}
++
++module.exports = { createPdfJournal };
+diff --git a/plugin/pdf-merge-core.cjs b/plugin/pdf-merge-core.cjs
+index 9b5b9a1..5e0209c 100644
+--- a/plugin/pdf-merge-core.cjs
++++ b/plugin/pdf-merge-core.cjs
+@@ -18,0 +19,5 @@ const { sha256 } = require("@noble/hashes/sha256");
++const {
++  captureIncrementalSnapshot,
++  createIncrementalPatch,
++  materializeIncrementalResult,
++} = require("./pdf-incremental.cjs");
+@@ -109,0 +115,41 @@ async function loadPdf(bytes, label) {
++async function savePdfWithIncremental({ sourceBytes, doc, snapshot, patchOnly = false, label }) {
++  let fallback = null;
++  if (snapshot) {
++    try {
++      const patch = createIncrementalPatch({ sourceBytes, document: doc, snapshot });
++      if (patch) {
++        return {
++          ...materializeIncrementalResult({ sourceBytes, patch, patchOnly }),
++          incremental: true,
++        };
++      }
++    } catch (error) {
++      if (error?.code === "PDF_INCREMENTAL_ENCRYPTED_DOCUMENT") {
++        throw new PdfMergeError("PDF_MERGE_ENCRYPTED_DOCUMENT", error.message, { cause: error });
++      }
++      fallback = error;
++    }
++  }
++  try {
++    return {
++      bytes: await doc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 }),
++      patch: null,
++      incremental: false,
++      ...(fallback ? { incrementalFallback: { code: fallback.code || "PDF_INCREMENTAL_UNSAFE_SOURCE", message: fallback.message } } : {}),
++    };
++  } catch (error) {
++    throw errorFromLoad(error, label);
++  }
++}
++
++function tryCaptureIncrementalSnapshot(sourceBytes, doc) {
++  try {
++    return { snapshot: captureIncrementalSnapshot({ sourceBytes, document: doc }), error: null };
++  } catch (error) {
++    if (error?.code === "PDF_INCREMENTAL_ENCRYPTED_DOCUMENT") {
++      throw new PdfMergeError("PDF_MERGE_ENCRYPTED_DOCUMENT", error.message, { cause: error });
++    }
++    return { snapshot: null, error };
++  }
++}
++
+@@ -727 +773 @@ function infoToIdentity(stateEntry, runtimeId = null) {
+-async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId }) {
++async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId, patchOnly = false }) {
+@@ -734,0 +781 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
++  const draftSnapshot = tryCaptureIncrementalSnapshot(draftBytes, draftDoc);
+@@ -985,0 +1033 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
++      patch: null,
+@@ -993,5 +1041,12 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
+-  let bytes;
+-  try {
+-    bytes = await draftDoc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 });
+-  } catch (error) {
+-    throw errorFromLoad(error, "Prepared local PDF");
++  const saved = await savePdfWithIncremental({
++    sourceBytes: draftBytes,
++    doc: draftDoc,
++    snapshot: draftSnapshot.snapshot,
++    patchOnly,
++    label: "Prepared local PDF",
++  });
++  if (!saved.patch && draftSnapshot.error) {
++    saved.incrementalFallback = {
++      code: draftSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
++      message: draftSnapshot.error.message,
++    };
+@@ -999 +1054 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
+-  return { bytes, stateDigest: currentDigest, ledger, identities: currentIdentities, annotations: currentIdentities };
++  return { ...saved, stateDigest: currentDigest, ledger, identities: currentIdentities, annotations: currentIdentities };
+@@ -1006 +1061,3 @@ function digestEntries(entries) {
+-      ref: entry.ref ?? null,
++      // Indirect object references are PDF-file-local. The semantic digest
++      // must converge even when peers allocate the same new objects at
++      // different numbers while retaining their own valid ref bindings.
+@@ -1238,0 +1296,35 @@ function appendRefToPage(doc, pageIndex, ref) {
++function canonicalizeSupportedAnnotationOrder(doc, entriesForOrder) {
++  const byPage = new Map();
++  for (const [uuid, state] of entriesForOrder) {
++    if (!state.live || !supportedSubtype(state.kind) || !(state.targetRef instanceof PDFRef)) continue;
++    const entries = byPage.get(state.pageIndex) || [];
++    entries.push({ uuid, state, ref: state.targetRef });
++    byPage.set(state.pageIndex, entries);
++  }
++
++  for (const [pageIndex, entries] of byPage) {
++    entries.sort((left, right) =>
++      (left.state.order - right.state.order) || left.uuid.localeCompare(right.uuid),
++    );
++    const array = rawAnnots(doc, pageIndex);
++    const supportedRefs = new Set(entries.map(({ ref }) => ref.toString()));
++    const slots = [];
++    for (let index = 0; index < array.size(); index += 1) {
++      const raw = array.get(index);
++      if (raw instanceof PDFRef && supportedRefs.has(raw.toString())) slots.push(index);
++    }
++    if (slots.length !== entries.length) {
++      fail(
++        "PDF_MERGE_ANNOTATION_ORDER_UNSAFE",
++        `The merged supported annotation list on page ${pageIndex + 1} cannot be reordered without losing a reference.`,
++      );
++    }
++    for (let index = 0; index < entries.length; index += 1) {
++      array.set(slots[index], entries[index].ref);
++      // Store the physical index so the embedded ledger and later inspections
++      // agree on the canonical order selected by the merge.
++      entries[index].state.order = slots[index];
++    }
++  }
++}
++
+@@ -1289 +1381 @@ function ledgerFromWinnerStates(baseInfo, winners) {
+-async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
++async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = false }) {
+@@ -1294,0 +1387 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
++  const remoteSnapshot = tryCaptureIncrementalSnapshot(remoteBytes, remoteDoc);
+@@ -1302,10 +1394,0 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+-  if (bytesEqual(baseBytes, remoteBytes) && branchMatchesBase(baseInfo, remoteInfo)) {
+-    return {
+-      bytes: new Uint8Array(asBytes(localBytes, "Prepared local PDF")),
+-      changed: !bytesEqual(localBytes, remoteBytes),
+-      stateDigest: localInfo.stateDigest,
+-      ledger: localInfo.ledger,
+-      identities: localInfo.identities,
+-      conflicts: [],
+-    };
+-  }
+@@ -1314,0 +1398 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
++      patch: null,
+@@ -1382 +1466 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+-  const entriesForOrder = [...selected.entries()].filter(([, state]) => state.live).sort(([, left], [, right]) =>
++  const entriesForOrder = [...selected.entries()].filter(([, state]) => state.live && supportedSubtype(state.kind)).sort(([, left], [, right]) =>
+@@ -1439,0 +1524,5 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
++  // Branch-local append order depends on which device happened to be remote.
++  // Sort only supported annotation slots; unsupported entries and popup refs
++  // keep their exact positions and relative order in /Annots.
++  canonicalizeSupportedAnnotationOrder(remoteDoc, entriesForOrder);
++
+@@ -1459,0 +1549 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
++      patch: null,
+@@ -1468,5 +1558,12 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+-  let bytes;
+-  try {
+-    bytes = await remoteDoc.save({ useObjectStreams: false, addDefaultPage: false, objectsPerTick: 100 });
+-  } catch (error) {
+-    throw errorFromLoad(error, "Merged PDF");
++  const saved = await savePdfWithIncremental({
++    sourceBytes: remoteBytes,
++    doc: remoteDoc,
++    snapshot: remoteSnapshot.snapshot,
++    patchOnly,
++    label: "Merged PDF",
++  });
++  if (!saved.patch && remoteSnapshot.error) {
++    saved.incrementalFallback = {
++      code: remoteSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
++      message: remoteSnapshot.error.message,
++    };
+@@ -1474 +1571 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+-  const resultInfo = inspectDocument(await loadPdf(bytes, "Merged PDF"));
++  const resultInfo = inspectDocument(remoteDoc);
+@@ -1476 +1573 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId }) {
+-  return { bytes, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts };
++  return { ...saved, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts };
+diff --git a/plugin/pdf-merge-worker.mjs b/plugin/pdf-merge-worker.mjs
+index 37fe5c4..2ba9c9e 100644
+--- a/plugin/pdf-merge-worker.mjs
++++ b/plugin/pdf-merge-worker.mjs
+@@ -11,4 +11,4 @@ async function handleRequest(event) {
+-    if (result?.bytes instanceof Uint8Array) {
+-      // A complete output buffer is already owned by this request. Avoid a
+-      // second copy unless it aliases an input or only exposes part of a buffer.
+-      const bytes = result.bytes;
++    if (result?.bytes instanceof Uint8Array || result?.patch?.suffix instanceof Uint8Array) {
++      // Complete outputs and incremental suffixes are owned by this request.
++      // Transfer whole buffers when they do not alias request input; copy only
++      // a view that is shared, partial, or duplicated by another result field.
+@@ -17,7 +17,16 @@ async function handleRequest(event) {
+-      const wholeBuffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+-      if (wholeBuffer && !payloadBuffers.has(bytes.buffer) &&
+-          Object.prototype.toString.call(bytes.buffer) === "[object ArrayBuffer]") {
+-        globalThis.postMessage({ id, ok: true, result }, [bytes.buffer]);
+-      } else {
+-        result.bytes = bytes.slice();
+-        globalThis.postMessage({ id, ok: true, result }, [result.bytes.buffer]);
++      const transfers = [];
++      const transferOutput = (bytes) => {
++        const wholeBuffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
++        const transferable = wholeBuffer && !payloadBuffers.has(bytes.buffer) &&
++          !transfers.includes(bytes.buffer) && Object.prototype.toString.call(bytes.buffer) === "[object ArrayBuffer]";
++        if (transferable) {
++          transfers.push(bytes.buffer);
++          return bytes;
++        }
++        const copy = bytes.slice();
++        transfers.push(copy.buffer);
++        return copy;
++      };
++      if (result.bytes instanceof Uint8Array) result.bytes = transferOutput(result.bytes);
++      if (result.patch?.suffix instanceof Uint8Array) {
++        result.patch = { ...result.patch, suffix: transferOutput(result.patch.suffix) };
+@@ -24,0 +34 @@ async function handleRequest(event) {
++      globalThis.postMessage({ id, ok: true, result }, transfers);
+diff --git a/plugin/pdf-recovery.cjs b/plugin/pdf-recovery.cjs
+new file mode 100644
+index 0000000..972c499
+--- /dev/null
++++ b/plugin/pdf-recovery.cjs
+@@ -0,0 +1,87 @@
++/* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
++"use strict";
++const { sha256 } = require("@noble/hashes/sha256");
++const verifiedBases = new WeakMap();
++function bytes(value) {
++  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
++  if (Object.prototype.toString.call(value) === "[object ArrayBuffer]") return new Uint8Array(value);
++  throw new TypeError("Invalid recovery bytes");
++}
++function hash(value) { return Array.from(sha256(bytes(value)), n => n.toString(16).padStart(2, "0")).join(""); }
++function whole(value) {
++  const a = bytes(value);
++  return a.byteOffset === 0 && a.byteLength === a.buffer.byteLength ? a.buffer : a.slice().buffer;
++}
++function prefix(data, base) {
++  if (!base || !base.length || data.length <= base.length) return false;
++  for (let i = 0; i < base.length; i++) if (data[i] !== base[i]) return false;
++  return true;
++}
++async function verify(adapter, file, expectedHash, expectedLength) {
++  const result = await adapter.readBinary(file);
++  if (result.byteLength !== expectedLength || hash(result) !== expectedHash) throw new Error("恢复记录写后校验失败");
++  return result;
++}
++async function sharedBase(adapter, root, base, ensureDirectory) {
++  const digest = hash(base), file = `${root}/.bases/${digest}.pdf`;
++  let cache = verifiedBases.get(adapter);
++  if (!cache) { cache = new Map(); verifiedBases.set(adapter, cache); }
++  const alreadyTracked = cache.has(file);
++  if (!cache.has(file)) {
++    const pending = (async () => {
++      await ensureDirectory(adapter, `${root}/.bases`);
++      if (!(await adapter.exists(file))) await adapter.writeBinary(file, whole(base));
++      await verify(adapter, file, digest, base.length);
++    })();
++    cache.set(file, pending);
++    pending.catch(() => { if (cache.get(file) === pending) cache.delete(file); });
++  }
++  await cache.get(file);
++  // Revalidate on every acknowledged revision. A shared base is immutable by
++  // convention, but sync/file providers can still change it outside our queue.
++  // Read and release sequentially rather than retaining another full snapshot.
++  if (alreadyTracked) await verify(adapter, file, digest, base.length);
++  return { file, hash: digest, length: base.length };
++}
++async function writeDeltaRecovery({ adapter, root, data, bases, metadata, ensureDirectory }) {
++  const output = bytes(data);
++  const base = bases.filter(Boolean).map(bytes).filter(a => prefix(output, a)).sort((a, b) => b.length - a.length)[0];
++  if (!base) return null;
++  // Store the byte-exact PDF.js/prepared branch, including appearance resources.
++  // This is not an operation-only log that would need a live Viewer to replay.
++  const shared = await sharedBase(adapter, root, base, ensureDirectory);
++  const suffix = output.subarray(base.length);
++  const candidatePath = `${root}/${metadata.candidateId}.delta`, metadataPath = `${root}/${metadata.candidateId}.json`;
++  const record = { ...metadata, schema: 2, storage: "pdf-prefix-delta", candidateFile: `${metadata.candidateId}.delta`,
++    completed: true,
++    recoveryBase: { file: shared.file.slice(root.length + 1), hash: shared.hash, length: shared.length },
++    deltaHash: hash(suffix), deltaLength: suffix.length, outputHash: hash(output), outputLength: output.length };
++  try {
++    await adapter.writeBinary(candidatePath, whole(suffix));
++    await verify(adapter, candidatePath, record.deltaHash, record.deltaLength);
++    // The JSON is the completion marker. No dirty-close acknowledgement before
++    // both the shared base and this exact revision's delta have been verified.
++    await adapter.write(metadataPath, JSON.stringify(record, null, 2) + "\n");
++    const saved = await adapter.read(metadataPath);
++    if (saved !== JSON.stringify(record, null, 2) + "\n") throw new Error("恢复完成记录校验失败");
++  } catch (error) {
++    for (const file of [metadataPath, candidatePath]) { try { if (await adapter.exists(file)) await adapter.remove(file); } catch {} }
++    throw error;
++  }
++  return { candidatePath, metadataPath, metadata: record };
++}
++async function readDeltaRecovery(adapter, root, record) {
++  const m = record.metadata, b = m.recoveryBase;
++  if (m.schema !== 2 || m.storage !== "pdf-prefix-delta" ||
++      !/^\.bases\/[a-f0-9]{64}\.pdf$/.test(b?.file || "") ||
++      !/^[a-zA-Z0-9_-]+\.delta$/.test(m.candidateFile || "") ||
++      !Number.isSafeInteger(b.length) || b.length < 1 ||
++      !Number.isSafeInteger(m.deltaLength) || m.deltaLength < 1 ||
++      m.outputLength !== b.length + m.deltaLength) throw new Error("恢复记录格式无效");
++  const baseline = new Uint8Array(await verify(adapter, `${root}/${b.file}`, b.hash, b.length));
++  const delta = new Uint8Array(await verify(adapter, `${root}/${m.candidateFile}`, m.deltaHash, m.deltaLength));
++  const output = new Uint8Array(m.outputLength); output.set(baseline); output.set(delta, baseline.length);
++  if (hash(output) !== m.outputHash) throw new Error("恢复 PDF 校验失败");
++  return output.buffer;
++}
++module.exports = { writeDeltaRecovery, readDeltaRecovery };
+diff --git a/plugin/pdf-sync-host.cjs b/plugin/pdf-sync-host.cjs
+index ea9ae0a..622535b 100644
+--- a/plugin/pdf-sync-host.cjs
++++ b/plugin/pdf-sync-host.cjs
+@@ -3,0 +4,3 @@
++const { sha256 } = require("@noble/hashes/sha2");
++const { createPdfJournal } = require("./pdf-journal.cjs");
++
+@@ -35,0 +39,12 @@ function createPdfSyncHost(plugin, api) {
++  const fingerprintChunks = (chunks) => {
++    const hash = sha256.create();
++    for (const chunk of chunks) hash.update(bytesView(chunk));
++    return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, "0")).join("");
++  };
++  const createFingerprintAccumulator = () => {
++    const hash = sha256.create();
++    return {
++      update(value) { hash.update(bytesView(value)); },
++      digest() { return Array.from(hash.clone().digest(), (byte) => byte.toString(16).padStart(2, "0")).join(""); },
++    };
++  };
+@@ -36,0 +52,79 @@ function createPdfSyncHost(plugin, api) {
++  const patchMatches = (patch, value) => !!patch && Number.isSafeInteger(patch.baseLength) &&
++    patch.baseLength === bytesView(value).byteLength && patch.baseFingerprint === fingerprint(value);
++  const prefixPatch = (output, base) => {
++    const outputBytes = bytesView(output);
++    const baseBytes = bytesView(base);
++    if (outputBytes.byteLength <= baseBytes.byteLength) return null;
++    for (let index = 0; index < baseBytes.byteLength; index += 1) {
++      if (outputBytes[index] !== baseBytes[index]) return null;
++    }
++    const suffix = outputBytes.subarray(baseBytes.byteLength);
++    return {
++      baseLength: baseBytes.byteLength,
++      baseFingerprint: fingerprint(baseBytes),
++      suffix,
++      outputLength: outputBytes.byteLength,
++      outputFingerprint: fingerprint(outputBytes),
++    };
++  };
++  const checkpointRoot = normalizePath(`${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.sync-checkpoints`);
++  const journal = createPdfJournal({
++    adapter: plugin.app.vault.adapter,
++    root: checkpointRoot,
++    normalizePath,
++    fingerprint,
++    fingerprintChunks,
++    createFingerprintAccumulator,
++    bytesEqual,
++    ensureDirectory: ensureAdapterDirectory,
++    makeToken,
++  });
++  const joinBytes = (left, right) => {
++    const a = bytesView(left), b = bytesView(right);
++    const output = new Uint8Array(a.byteLength + b.byteLength);
++    output.set(a, 0);
++    output.set(b, a.byteLength);
++    return output;
++  };
++  const semanticLedger = (result) => {
++    const ledger = result?.ledger;
++    const entries = ledger?.entries;
++    const identities = result?.identities || result?.annotations;
++    if (!Array.isArray(entries) || !Array.isArray(identities) ||
++        typeof ledger.documentId !== "string" || !Array.isArray(ledger.pageFingerprints)) return null;
++    const byUuid = (left, right) => String(left.uuid).localeCompare(String(right.uuid));
++    const semanticEntry = (entry) => ({
++      uuid: entry.uuid,
++      pageIndex: entry.pageIndex,
++      kind: entry.kind,
++      deleted: Boolean(entry.deleted),
++      hash: entry.hash ?? null,
++      timestamp: entry.timestamp || 0,
++      logical: entry.logical || 0,
++      actorId: entry.actorId || "legacy",
++      operationId: entry.operationId || "legacy",
++    });
++    const identityByUuid = new Map();
++    for (const identity of identities) {
++      if (typeof identity?.uuid !== "string" || identityByUuid.has(identity.uuid)) return null;
++      identityByUuid.set(identity.uuid, identity);
++    }
++    const semanticEntries = entries.map((entry) => {
++      if (typeof entry?.uuid !== "string") return null;
++      const identity = identityByUuid.get(entry.uuid);
++      if (!identity) return null;
++      const normalized = semanticEntry(entry);
++      const identityState = semanticEntry(identity);
++      delete identityState.hash;
++      delete normalized.hash;
++      if (JSON.stringify(identityState) !== JSON.stringify(normalized)) return null;
++      normalized.hash = entry.hash ?? null;
++      return normalized;
++    });
++    if (semanticEntries.some((entry) => entry === null)) return null;
++    return JSON.stringify({
++      documentId: ledger.documentId,
++      pageFingerprints: ledger.pageFingerprints,
++      entries: semanticEntries.sort(byUuid),
++    });
++  };
+@@ -106,5 +199,0 @@ function createPdfSyncHost(plugin, api) {
+-  const checkpointPaths = (file) => {
+-    const root = normalizePath(`${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.sync-checkpoints`);
+-    const id = sha256Bytes(new TextEncoder().encode(normalizePath(file.path)));
+-    return { root, pdf: `${root}/${id}.pdf`, base: `${root}/${id}.base.pdf`, json: `${root}/${id}.json` };
+-  };
+@@ -115,2 +203,0 @@ function createPdfSyncHost(plugin, api) {
+-    const paths = checkpointPaths(file);
+-    const adapter = plugin.app.vault.adapter;
+@@ -118,8 +205,7 @@ function createPdfSyncHost(plugin, api) {
+-      if (!(await adapter.exists(paths.json))) return;
+-      const metadata = JSON.parse(await adapter.read(paths.json));
+-      if (metadata.schema !== 1 || metadata.path !== normalizePath(file.path)) return;
+-      const [pdf, base] = await Promise.all([adapter.readBinary(paths.pdf), adapter.readBinary(paths.base)]);
+-      if (fingerprint(pdf) !== metadata.hash || fingerprint(base) !== metadata.baseHash) throw new Error("Checkpoint verification failed");
+-      state.checkpoint = copy(pdf);
+-      state.base = equal(pdf, base) ? state.checkpoint : copy(base);
+-      if (metadata.status === "confirmed") state.confirmedCheckpoint = state.checkpoint;
++      const loaded = await journal.load(file.path);
++      if (!loaded) return;
++      const checkpoint = bytesView(loaded.checkpointBytes);
++      const base = bytesView(loaded.baseBytes);
++      state.checkpoint = equal(checkpoint, base) ? base : checkpoint;
++      state.base = base;
++      if (loaded.status === "confirmed") state.confirmedCheckpoint = state.checkpoint;
+@@ -135 +221 @@ function createPdfSyncHost(plugin, api) {
+-  async function persistCheckpoint(file, state, bytes, base) {
++  async function persistCheckpoint(file, state, bytes, base, metadata = {}) {
+@@ -137,9 +223 @@ function createPdfSyncHost(plugin, api) {
+-    const paths = checkpointPaths(file);
+-    const adapter = plugin.app.vault.adapter;
+-    await ensureAdapterDirectory(adapter, paths.root);
+-    // The manifest is the completion record. Partial writes cannot be reused.
+-    await adapter.writeBinary(paths.base, buffer(base));
+-    await adapter.writeBinary(paths.pdf, buffer(bytes));
+-    const [savedBase, savedPdf] = await Promise.all([adapter.readBinary(paths.base), adapter.readBinary(paths.pdf)]);
+-    if (!equal(base, savedBase) || !equal(bytes, savedPdf)) throw new Error("同步检查点写后校验失败");
+-    await adapter.write(paths.json, JSON.stringify({ schema: 1, status: "pending", path: normalizePath(file.path), hash: fingerprint(bytes), baseHash: fingerprint(base) }));
++    await journal.beginFull({ path: file.path, checkpointBytes: bytes, baseBytes: base, metadata });
+@@ -148 +226 @@ function createPdfSyncHost(plugin, api) {
+-      : copy(bytes);
++      : bytesView(bytes);
+@@ -157,2 +235 @@ function createPdfSyncHost(plugin, api) {
+-    const paths = checkpointPaths(file);
+-    await plugin.app.vault.adapter.write(paths.json, JSON.stringify({ schema: 1, status: "confirmed", path: normalizePath(file.path), hash: fingerprint(bytes), baseHash: fingerprint(state.base) }));
++    await journal.confirm(file.path, fingerprint(bytes), bytesView(bytes).byteLength);
+@@ -347,3 +424,33 @@ function createPdfSyncHost(plugin, api) {
+-    if (!equal(after, bytes)) throw new Error("PDF 写后内容发生变化，已保留检查点");
+-    plugin.setDocumentBaseline(file.path, matchingSnapshot(state, bytes));
+-    return true;
++    const afterBytes = bytesView(after);
++    if (afterBytes.byteLength !== bytesView(bytes).byteLength || fingerprint(afterBytes) !== fingerprint(bytes)) {
++      throw new Error("PDF 写后内容发生变化，已保留检查点");
++    }
++    if (state.checkpoint && equal(state.checkpoint, afterBytes)) state.checkpoint = afterBytes;
++    if (state.confirmedCheckpoint && equal(state.confirmedCheckpoint, afterBytes)) state.confirmedCheckpoint = afterBytes;
++    if (state.base && equal(state.base, afterBytes)) state.base = afterBytes;
++    plugin.setDocumentBaseline(file.path, matchingSnapshot(state, afterBytes));
++    return afterBytes;
++  }
++  async function verifiedAppend(file, observed, patch, stillCurrent = () => true) {
++    const vault = plugin.app.vault;
++    if (typeof vault.appendBinary !== "function") return null;
++    if (disposed || plugin.isUnloading) throw new Error("插件已卸载，未覆盖原 PDF");
++    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 已被替换或移除");
++    const before = bytesView(await vault.readBinary(file));
++    if (!equal(before, observed) || !patchMatches(patch, before)) return null;
++    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 在磁盘检查期间被替换");
++    if (!stillCurrent()) throw new Error("Reader 已切换；未覆盖原 PDF");
++    if (disposed || plugin.isUnloading) throw new Error("插件已卸载，未覆盖原 PDF");
++    // appendBinary is deliberately issued once. If it rejects or readback is
++    // incomplete, the pending journal is the recovery source; a blind retry
++    // could duplicate a partially appended PDF revision.
++    const state = states.get(file);
++    if (state) state.ownHash = patch.outputFingerprint;
++    await vault.appendBinary(file, buffer(patch.suffix));
++    if (vault.getAbstractFileByPath(normalizePath(file.path)) !== file) throw new Error("PDF 在追加期间被替换；已保留恢复副本");
++    const after = bytesView(await vault.readBinary(file));
++    if (after.byteLength !== patch.outputLength || fingerprint(after) !== patch.outputFingerprint) {
++      throw new Error("PDF 追加后的内容未通过校验；已保留检查点，未自动重试");
++    }
++    plugin.setDocumentBaseline(file.path, after);
++    return after;
+@@ -379 +486 @@ function createPdfSyncHost(plugin, api) {
+-            observed = copy(await plugin.app.vault.readBinary(file));
++            observed = bytesView(await plugin.app.vault.readBinary(file));
+@@ -381,2 +488,8 @@ function createPdfSyncHost(plugin, api) {
+-            result = diskMatchesBase
+-              ? { bytes, changed: true, conflicts: [] }
++            const localPatchApplies = patchMatches(local.patch, observed);
++            // PDF.js may already have appended the draft's object changes to
++            // the exact source PDF. If the prepared output is a strict byte
++            // prefix extension of the observed source, its tail is itself a
++            // safe patch; this avoids parsing/re-serializing all three PDFs.
++            const preparedPrefixPatch = diskMatchesBase ? prefixPatch(bytes, observed) : null;
++            result = diskMatchesBase && (preparedPrefixPatch || !local.patch || localPatchApplies)
++              ? { bytes, patch: preparedPrefixPatch || local.patch, changed: true, conflicts: [] }
+@@ -385 +498 @@ function createPdfSyncHost(plugin, api) {
+-                remoteBytes: workerSnapshot(observed), actorId,
++                remoteBytes: workerSnapshot(observed), actorId, patchOnly: true,
+@@ -387 +500,3 @@ function createPdfSyncHost(plugin, api) {
+-            bytes = result.bytes;
++            const patch = patchMatches(result.patch, observed) ? result.patch : null;
++            if (result.bytes !== undefined) bytes = result.bytes;
++            else if (!patch) throw new Error("增量保存结果与磁盘基线不匹配；恢复副本已保留");
+@@ -392,3 +507,35 @@ function createPdfSyncHost(plugin, api) {
+-            await persistCheckpoint(file, state, bytes, state.base);
+-            if (await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured))) {
+-              await confirmCheckpoint(file, state, bytes);
++            const journalMetadata = {
++              actorId: message.actorId || actorId,
++              revision: message.revision,
++              operations: message.operations || [],
++              newAnnotations: message.newAnnotations || [],
++              documentId: captured.documentId,
++            };
++            let wrote;
++            if (patch && typeof plugin.app.vault.appendBinary === "function") {
++              await journal.beginAppend({ path: file.path, baseBytes: state.base, parentBytes: observed,
++                suffix: patch.suffix, outputFingerprint: patch.outputFingerprint,
++                outputLength: patch.outputLength, metadata: journalMetadata });
++              wrote = await verifiedAppend(file, observed, patch, () => view.isCurrentSaveRequest(captured));
++              if (wrote) {
++                bytes = wrote;
++                state.checkpoint = bytes;
++                state.version += 1;
++                await confirmCheckpoint(file, state, bytes);
++              }
++            } else {
++              if (!bytes) {
++                bytes = joinBytes(observed, patch.suffix);
++                if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
++                  throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
++                }
++              }
++              await persistCheckpoint(file, state, bytes, state.base, journalMetadata);
++              wrote = await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured));
++              if (wrote) {
++                bytes = wrote;
++                state.checkpoint = bytes;
++                await confirmCheckpoint(file, state, bytes);
++              }
++            }
++            if (wrote) {
+@@ -426 +573,4 @@ function createPdfSyncHost(plugin, api) {
+-          if (!equal(bytes, local.bytes)) view.syncNeedsRefresh = true;
++          const localSemanticState = semanticLedger(local);
++          const mergedSemanticState = semanticLedger(metadata);
++          const sameAnnotationState = localSemanticState !== null && localSemanticState === mergedSemanticState;
++          if (!equal(bytes, local.bytes) && !sameAnnotationState) view.syncNeedsRefresh = true;
+@@ -505 +655 @@ function createPdfSyncHost(plugin, api) {
+-          remoteBytes: workerSnapshot(observed), actorId,
++          remoteBytes: workerSnapshot(observed), actorId, patchOnly: true,
+@@ -507 +657,12 @@ function createPdfSyncHost(plugin, api) {
+-      const bytes = merged.bytes;
++      let bytes = merged.bytes;
++      const patch = patchMatches(merged.patch, observed) ? merged.patch : null;
++      if (bytes === undefined && !patch) throw new Error("同步合并结果与磁盘基线不匹配；恢复副本已保留");
++      const materializePatch = () => {
++        if (bytes === undefined) {
++          bytes = joinBytes(observed, patch.suffix);
++          if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
++            throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
++          }
++        }
++        return bytes;
++      };
+@@ -510 +671 @@ function createPdfSyncHost(plugin, api) {
+-      if (cleanWithoutCheckpoint || !((metadata?.identities || metadata?.annotations) && metadata?.ledger)) {
++      if (cleanWithoutCheckpoint || (!patch && !((metadata?.identities || metadata?.annotations) && metadata?.ledger))) {
+@@ -511,0 +673,2 @@ function createPdfSyncHost(plugin, api) {
++      } else if (!((metadata?.identities || metadata?.annotations) && metadata?.ledger)) {
++        metadata = await getClient().inspect({ bytes: workerSnapshot(materializePatch()) });
+@@ -545,2 +708,28 @@ function createPdfSyncHost(plugin, api) {
+-          if (!cleanWithoutCheckpoint) await persistCheckpoint(file, state, bytes, mergeBase);
+-          else { state.base = copy(bytes); state.version += 1; }
++          const journalMetadata = {
++            actorId: snapshot.actorId || actorId,
++            revision: snapshot.revision,
++            operations: snapshot.operations || [],
++            newAnnotations: snapshot.newAnnotations || [],
++            documentId: captured.documentId,
++          };
++          let wrote = false;
++          if (!cleanWithoutCheckpoint && patch && typeof plugin.app.vault.appendBinary === "function") {
++            await journal.beginAppend({ path: file.path, baseBytes: mergeBase, parentBytes: observed,
++              suffix: patch.suffix, outputFingerprint: patch.outputFingerprint,
++              outputLength: patch.outputLength, metadata: journalMetadata });
++            const appended = await verifiedAppend(file, observed, patch, () => view.isCurrentSaveRequest(captured));
++            if (!appended) { schedule(file, "disk-changed"); return; }
++            bytes = appended;
++            state.checkpoint = bytes;
++            state.version += 1;
++            await confirmCheckpoint(file, state, bytes);
++            wrote = true;
++          } else if (!cleanWithoutCheckpoint) {
++            materializePatch();
++            await persistCheckpoint(file, state, bytes, mergeBase, journalMetadata);
++            const written = await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured));
++            if (!written) { schedule(file, "disk-changed"); return; }
++            bytes = written;
++            await confirmCheckpoint(file, state, bytes);
++            wrote = true;
++          } else { state.base = copy(bytes); state.version += 1; }
+@@ -552,2 +741 @@ function createPdfSyncHost(plugin, api) {
+-          if (!equal(bytes, observed) && !(await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured)))) { schedule(file, "disk-changed"); return; }
+-          if (!cleanWithoutCheckpoint) await confirmCheckpoint(file, state, bytes);
++          if (!wrote && !equal(bytes, observed)) { schedule(file, "disk-changed"); return; }
+@@ -638,0 +827,19 @@ function createPdfSyncHost(plugin, api) {
++    async listRecoveryCandidates() {
++      const candidates = await journal.listRecoveries();
++      return candidates.filter((candidate) => candidate.status === "pending").map((candidate) => ({
++        path: candidate.path,
++        metadata: {
++          schema: candidate.schema,
++          storage: "sync-journal",
++          originalPath: candidate.path,
++          filename: candidate.path.split("/").at(-1),
++          status: candidate.status,
++          createdAt: candidate.updatedAt,
++          updatedAt: candidate.updatedAt,
++          outputHash: candidate.hash,
++          outputLength: candidate.length,
++          sequence: candidate.sequence,
++        },
++      }));
++    },
++    readRecoveryCandidate: (candidate) => journal.readRecovery(candidate),
+diff --git a/scripts/build.mjs b/scripts/build.mjs
+index 407efbc..946c048 100644
+--- a/scripts/build.mjs
++++ b/scripts/build.mjs
+@@ -310,0 +311 @@ const heavyWorkMarker =
++const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*writeDeltaRecovery\s*,\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery\.cjs\1\);/s;
+@@ -384,0 +386,2 @@ const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyW
++assert.equal([...sourceMain.matchAll(new RegExp(recoveryMarker.source, "gs"))].length, 1, "Expected one recovery build marker");
++const inlinedRecovery = await inlineModule("pdf-recovery.cjs", "__PDFReaderRecovery", "writeDeltaRecovery, readDeltaRecovery");
+@@ -389,0 +393 @@ const bundledMain = sourceMain
++  .replace(recoveryMarker, inlinedRecovery)
+@@ -397,0 +402 @@ assert.ok(!bundledMain.includes("./heavy-work.cjs"));
++assert.ok(!bundledMain.includes("./pdf-recovery.cjs"));
+diff --git a/tests/general-incremental-audit.test.mjs b/tests/general-incremental-audit.test.mjs
+new file mode 100644
+index 0000000..c19aaf4
+--- /dev/null
++++ b/tests/general-incremental-audit.test.mjs
+@@ -0,0 +1,224 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import {
++  PDFArray,
++  PDFDocument,
++  PDFDict,
++  PDFHexString,
++  PDFName,
++  PDFNumber,
++  PDFRawStream,
++  PDFRef,
++} from "pdf-lib";
++import mergeCore from "../plugin/pdf-merge-core.cjs";
++import incremental from "../plugin/pdf-incremental.cjs";
++
++const { inspect, merge, prepareLocal } = mergeCore;
++const encodeText = (value) => PDFHexString.fromText(value);
++
++function numberArray(doc, values) {
++  const array = PDFArray.withContext(doc.context);
++  for (const value of values) array.push(PDFNumber.of(value));
++  return array;
++}
++
++function addAnnotation(doc, { subtype, contents, nm, appearance: appearanceLabel = null }) {
++  const page = doc.getPages()[0];
++  let annotations = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
++  if (!annotations) {
++    annotations = PDFArray.withContext(doc.context);
++    page.node.set(PDFName.of("Annots"), annotations);
++  }
++  const annotation = PDFDict.withContext(doc.context);
++  annotation.set(PDFName.of("Type"), PDFName.of("Annot"));
++  annotation.set(PDFName.of("Subtype"), PDFName.of(subtype));
++  annotation.set(PDFName.of("Rect"), numberArray(doc, [20, 30, 120, 70]));
++  annotation.set(PDFName.of("NM"), encodeText(nm));
++  annotation.set(PDFName.of("Contents"), encodeText(contents));
++  annotation.set(PDFName.of("T"), encodeText("incremental audit"));
++  if (appearanceLabel) {
++    const streamDictionary = PDFDict.withContext(doc.context);
++    streamDictionary.set(PDFName.of("Type"), PDFName.of("XObject"));
++    streamDictionary.set(PDFName.of("Subtype"), PDFName.of("Form"));
++    streamDictionary.set(PDFName.of("FormType"), PDFNumber.of(1));
++    streamDictionary.set(PDFName.of("BBox"), numberArray(doc, [0, 0, 80, 30]));
++    streamDictionary.set(PDFName.of("Resources"), PDFDict.withContext(doc.context));
++    const appearanceRef = doc.context.register(PDFRawStream.of(
++      streamDictionary,
++      new TextEncoder().encode(`q\n% ${appearanceLabel}\nQ\n`),
++    ));
++    const appearance = PDFDict.withContext(doc.context);
++    appearance.set(PDFName.of("N"), appearanceRef);
++    annotation.set(PDFName.of("AP"), appearance);
++  }
++  const ref = doc.context.register(annotation);
++  annotations.push(ref);
++  return ref;
++}
++
++function refFromIdentity(identity) {
++  const match = /^(\d+)R(\d*)$/.exec(identity.ref);
++  assert.ok(match, `Expected an indirect PDF reference, received ${identity.ref}`);
++  return PDFRef.of(Number(match[1]), match[2] ? Number(match[2]) : 0);
++}
++
++function operation({ uuid, ref = null, kind, action = "upsert", timestamp, actorId, operationId }) {
++  return {
++    uuid,
++    ref,
++    pageIndex: 0,
++    kind,
++    action,
++    deleted: action === "delete",
++    timestamp,
++    logical: 0,
++    actorId,
++    operationId,
++  };
++}
++
++function materializeAppend(sourceBytes, patch, label) {
++  assert.ok(patch, `${label}: changed merge should return its incremental suffix`);
++  assert.equal(patch.baseLength, sourceBytes.length);
++  assert.equal(patch.baseFingerprint, incremental.fingerprint(sourceBytes));
++  const output = new Uint8Array(patch.outputLength);
++  output.set(sourceBytes, 0);
++  output.set(patch.suffix, sourceBytes.length);
++  assert.equal(incremental.fingerprint(output), patch.outputFingerprint);
++  assert.deepEqual(output.subarray(0, sourceBytes.length), sourceBytes);
++  return output;
++}
++
++function semanticLedger(result) {
++  return result.ledger.entries.map(({ ref: _ref, ...entry }) => entry)
++    .sort((left, right) => left.uuid.localeCompare(right.uuid));
++}
++
++async function createBase() {
++  const doc = await PDFDocument.create();
++  const page = doc.addPage([420, 540]);
++  page.drawText("Stable page body", { x: 24, y: 500, size: 12 });
++  addAnnotation(doc, { subtype: "Square", contents: "base value", nm: "base square" });
++  return doc.save({ useObjectStreams: false });
++}
++
++async function prepareActorBranch({ baseBytes, baseIdentity, actorId, edit, create, deleteBase, timestamp }) {
++  const draft = await PDFDocument.load(baseBytes, { updateMetadata: false });
++  const existingRef = refFromIdentity(baseIdentity);
++  if (edit) {
++    draft.context.lookup(existingRef, PDFDict).set(PDFName.of("Contents"), encodeText(edit.contents));
++  }
++  if (deleteBase) {
++    const annotations = draft.getPages()[0].node.lookup(PDFName.of("Annots"), PDFArray);
++    for (let index = annotations.size() - 1; index >= 0; index -= 1) {
++      const ref = annotations.get(index);
++      if (ref instanceof PDFRef && ref.toString() === existingRef.toString()) annotations.remove(index);
++    }
++  }
++  addAnnotation(draft, create);
++  const draftBytes = await draft.save({ useObjectStreams: false });
++  const createUuid = `${actorId}-created`;
++  const prepared = await prepareLocal({
++    baseBytes,
++    draftBytes,
++    actorId,
++    newAnnotations: [{ runtimeId: `${actorId}-runtime`, uuid: createUuid, pageIndex: 0, kind: create.subtype.toLowerCase(), order: 0 }],
++    operations: [
++      ...(edit ? [operation({
++        uuid: baseIdentity.uuid,
++        ref: baseIdentity.ref,
++        kind: baseIdentity.kind,
++        timestamp,
++        actorId,
++        operationId: `${actorId}-edit`,
++      })] : []),
++      ...(deleteBase ? [operation({
++        uuid: baseIdentity.uuid,
++        ref: baseIdentity.ref,
++        kind: baseIdentity.kind,
++        action: "delete",
++        timestamp,
++        actorId,
++        operationId: `${actorId}-delete`,
++      })] : []),
++      operation({
++        uuid: createUuid,
++        kind: create.subtype.toLowerCase(),
++        timestamp: timestamp - 100,
++        actorId,
++        operationId: `${actorId}-create`,
++      }),
++    ],
++  });
++  return prepared;
++}
++
++test("two-device create/edit/delete branches converge after materializing both incremental merge suffixes", async () => {
++  const baseBytes = await createBase();
++  const baseState = await inspect({ bytes: baseBytes });
++  const baseIdentity = baseState.identities.find((identity) => identity.kind === "square");
++  assert.ok(baseIdentity);
++
++  // Device A deletes the original while creating a Square. Device B edits the
++  // original while creating an Underline. A's later delete wins over B's edit.
++  const actorA = await prepareActorBranch({
++    baseBytes,
++    baseIdentity,
++    actorId: "device-a",
++    deleteBase: true,
++    create: { subtype: "Square", contents: "created on A", nm: "A square", appearance: "A form" },
++    timestamp: 300,
++  });
++  const actorB = await prepareActorBranch({
++    baseBytes,
++    baseIdentity,
++    actorId: "device-b",
++    edit: { contents: "edited on B" },
++    create: { subtype: "Underline", contents: "created on B", nm: "B underline", appearance: "B form" },
++    timestamp: 200,
++  });
++  const aOntoB = await merge({
++    baseBytes,
++    localBytes: actorA.bytes,
++    remoteBytes: actorB.bytes,
++    actorId: "device-a",
++    patchOnly: true,
++  });
++  const bOntoA = await merge({
++    baseBytes,
++    localBytes: actorB.bytes,
++    remoteBytes: actorA.bytes,
++    actorId: "device-b",
++    patchOnly: true,
++  });
++  const outputAB = materializeAppend(actorB.bytes, aOntoB.patch, "A onto B");
++  const outputBA = materializeAppend(actorA.bytes, bOntoA.patch, "B onto A");
++
++  const [stateAB, stateBA] = await Promise.all([
++    inspect({ bytes: outputAB }),
++    inspect({ bytes: outputBA }),
++  ]);
++  assert.deepEqual(semanticLedger(stateAB), semanticLedger(stateBA));
++  for (const [state, bytes] of [[stateAB, outputAB], [stateBA, outputBA]]) {
++    const deleted = state.identities.find((identity) => identity.uuid === baseIdentity.uuid);
++    assert.equal(deleted?.deleted, true, "the newer delete must survive the concurrent edit");
++    assert.equal(state.identities.find((identity) => identity.uuid === "device-a-created")?.deleted, false);
++    assert.equal(state.identities.find((identity) => identity.uuid === "device-b-created")?.deleted, false);
++
++    const reopened = await PDFDocument.load(bytes, { updateMetadata: false });
++    const annotations = reopened.getPages()[0].node.lookup(PDFName.of("Annots"), PDFArray);
++    const live = Array.from({ length: annotations.size() }, (_, index) => {
++      const ref = annotations.get(index);
++      return reopened.context.lookup(ref, PDFDict);
++    });
++    const contents = live.map((dictionary) => dictionary.lookup(PDFName.of("Contents"), PDFHexString).decodeText());
++    assert.deepEqual(contents.sort(), ["created on A", "created on B"].sort());
++    for (const dictionary of live) {
++      const appearanceRef = dictionary.lookup(PDFName.of("AP"), PDFDict).get(PDFName.of("N"));
++      assert.ok(appearanceRef instanceof PDFRef, "merged annotation must retain an indirect appearance reference");
++      assert.ok(reopened.context.lookup(appearanceRef, PDFRawStream), "appearance reference must resolve in the materialized xref");
++    }
++    assert.ok(aOntoB.patch.xrefOffset >= actorB.bytes.length);
++    assert.ok(bOntoA.patch.xrefOffset >= actorA.bytes.length);
++  }
++});
+diff --git a/tests/mobile-main.test.mjs b/tests/mobile-main.test.mjs
+index 22fadba..138ecd9 100644
+--- a/tests/mobile-main.test.mjs
++++ b/tests/mobile-main.test.mjs
+@@ -307 +307 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
+-      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs"].includes(name)) return sourceRequire(name);
++      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs"].includes(name)) return sourceRequire(name);
+diff --git a/tests/native-close-button.mjs b/tests/native-close-button.mjs
+index ada428e..4aa34d5 100644
+--- a/tests/native-close-button.mjs
++++ b/tests/native-close-button.mjs
+@@ -10 +10 @@ assert.equal(vault,'/Users/jiajia/Documents/ObReader-Apple-Test');assert.ok(cdpU
+-const version='0.5.8',run=`general-${version}-close-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
++const version='0.5.9',run=`general-${version}-close-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
+@@ -25 +25 @@ try{
+- await root(async prefix=>{if(!prefix.startsWith('PDF迁移测试/general-0.5.8-close-native-')||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},prefix);
++ await root(async prefix=>{if(!prefix.startsWith('PDF迁移测试/general-0.5.9-close-native-')||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},prefix);
+@@ -34 +34 @@ try{
+-   if(kind==='write-failure')await root(file=>{if(window.__closeFaultOriginal)throw Error('Existing test fault');const original=app.vault.modifyBinary;window.__closeFaultOriginal=original;app.vault.modifyBinary=function(f,...args){if(f.path===file)return Promise.reject(Error('Owned close regression write failure'));return original.call(this,f,...args);};},file);
++   if(kind==='write-failure')await root(file=>{if(window.__closeFaultOriginal)throw Error('Existing test fault');const original=app.vault.modifyBinary,append=app.vault.appendBinary;window.__closeFaultOriginal=original;window.__closeFaultAppend=append;app.vault.modifyBinary=function(f,...args){if(f.path===file)return Promise.reject(Error('Owned close regression write failure'));return original.call(this,f,...args);};if(append)app.vault.appendBinary=function(f,...args){if(f.path===file)return Promise.reject(Error('Owned close regression append failure'));return append.call(this,f,...args);};},file);
+@@ -49 +49 @@ try{
+-    assert.equal(hash(disk),hash(bytes));const records=await root(async file=>(await app.plugins.plugins['pdf-web-reader'].listRecoveryCandidates()).filter(r=>r.metadata.originalPath===file||r.metadata.documentPath===file).map(r=>({candidatePath:r.candidatePath,status:r.metadata.status,revision:r.metadata.revision})),file);assert.ok(records.length);const valid=[];for(const r of records){const count=await annotationCount(await fs.readFile(path.join(vault,r.candidatePath)));if(count===1)valid.push({...r,squares:count});}assert.ok(valid.length);recovery=valid;
++    assert.equal(hash(disk),hash(bytes));const records=await root(async file=>(await app.plugins.plugins['pdf-web-reader'].listRecoveryCandidates()).filter(r=>r.metadata.originalPath===file||r.metadata.documentPath===file).map(r=>({candidatePath:r.candidatePath,status:r.metadata.status,revision:r.metadata.revision})),file);assert.ok(records.length);const valid=[];for(const r of records){const recovered=await root(async id=>{const p=app.plugins.plugins['pdf-web-reader'];const candidate=(await p.listRecoveryCandidates()).find(c=>c.candidatePath===id||c.path===id);if(!candidate)throw Error('Recovery missing');return [...new Uint8Array(await p.readRecoveryBytes(candidate))];},r.candidatePath);const count=await annotationCount(new Uint8Array(recovered));if(count===1)valid.push({...r,squares:count});}assert.ok(valid.length);recovery=valid;
+@@ -52 +52 @@ try{
+-   await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;delete window.__closeFaultOriginal;}});
++   await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;if(window.__closeFaultAppend)app.vault.appendBinary=window.__closeFaultAppend;delete window.__closeFaultOriginal;delete window.__closeFaultAppend;}});
+@@ -58,2 +58,2 @@ finally{
+- try{await identity();await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;delete window.__closeFaultOriginal;}});await root(async prefix=>{for(const v of [...app.plugins.plugins['pdf-web-reader'].views])if(v.requestedPath?.startsWith(prefix+'/'))await v.leaf.detach();await app.workspace.saveLayout();},prefix);}catch(e){failure||=e;report.status='failed';report.cleanupError=e.message;}
+- try{if((await identity()).mobile!==original?.mobile)await mode(original?.mobile??false);report.restoredTestReaders=await root(async()=>{const rows=[];for(const v of [...app.plugins.plugins['pdf-web-reader'].views]){if(!/^PDF迁移测试\/general-0\.5\.8-close-native-\d+\/(?:desktop|mobile)-(?:clean|edited|write-failure)\.pdf$/.test(v.requestedPath||''))throw Error('Unrelated Reader after simulation restore');rows.push({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision});await v.leaf.detach();}await app.workspace.saveLayout();return rows;});await wait('Restored owned views cleaned',async()=>(await identity()).views===0);report.cleanup=await identity();assert.equal(report.cleanup.views,0);assert.equal(report.cleanup.mobile,false);}catch(e){failure||=e;report.status='failed';report.restoreError=e.message;}
++ try{await identity();await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;if(window.__closeFaultAppend)app.vault.appendBinary=window.__closeFaultAppend;delete window.__closeFaultOriginal;delete window.__closeFaultAppend;}});await root(async prefix=>{for(const v of [...app.plugins.plugins['pdf-web-reader'].views])if(v.requestedPath?.startsWith(prefix+'/'))await v.leaf.detach();await app.workspace.saveLayout();},prefix);}catch(e){failure||=e;report.status='failed';report.cleanupError=e.message;}
++ try{if((await identity()).mobile!==original?.mobile)await mode(original?.mobile??false);report.restoredTestReaders=await root(async()=>{const rows=[];for(const v of [...app.plugins.plugins['pdf-web-reader'].views]){if(!/^PDF迁移测试\/general-0\.5\.9-close-native-\d+\/(?:desktop|mobile)-(?:clean|edited|write-failure)\.pdf$/.test(v.requestedPath||''))throw Error('Unrelated Reader after simulation restore');rows.push({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision});await v.leaf.detach();}await app.workspace.saveLayout();return rows;});await wait('Restored owned views cleaned',async()=>(await identity()).views===0);report.cleanup=await identity();assert.equal(report.cleanup.views,0);assert.equal(report.cleanup.mobile,false);}catch(e){failure||=e;report.status='failed';report.restoreError=e.message;}
+diff --git a/tests/native-incremental-benchmark.mjs b/tests/native-incremental-benchmark.mjs
+new file mode 100644
+index 0000000..a1d5527
+--- /dev/null
++++ b/tests/native-incremental-benchmark.mjs
+@@ -0,0 +1,264 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs/promises';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import puppeteer from 'puppeteer-core';
++import { PDFDocument, PDFName } from 'pdf-lib';
++import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
++
++const { vault, configDir, cdpUrl } = nativeConfig;
++assert.equal(vault, '/Users/jiajia/Documents/ObReader-Apple-Test');
++assert.equal(cdpUrl, 'http://127.0.0.1:9230');
++const version = process.env.BENCH_VERSION || '0.5.9';
++const label = process.env.BENCH_LABEL || 'candidate';
++const editCount = Number(process.env.BENCH_EDITS || 4);
++assert.ok(Number.isInteger(editCount) && editCount >= 1 && editCount <= 4);
++const run = `general-0.5.9-benchmark-${label}-${Date.now()}`;
++const folder = `PDF迁移测试/${run}`, file = `${folder}/large.pdf`;
++const report = { run, version, vault, status: 'running', physicalIpadValidated: false,
++  writeMode: process.env.BENCH_FORCE_FULL === '1' ? 'controlled same-version fallback: append capability disabled in test only' : 'normal capability-selected production path',
++  memoryScope: 'CDP renderer plus discoverable isolated-app Worker JS heaps and backing storage; excludes native/canvas/GPU memory and physical iPad footprint',
++  checks: [], heapSamples: [] };
++const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
++await fs.mkdir('tests/artifacts', { recursive: true });
++const fixture = 'tests/artifacts/general-0.5.9-large-synthetic.pdf';
++let bytes;
++try { bytes = await fs.readFile(fixture); } catch (error) {
++  if (error.code !== 'ENOENT') throw error;
++  const pdf = await PDFDocument.create();
++  for (let i = 0; i < 120; i++) {
++    const page = pdf.addPage([420, 540]);
++    page.drawText(`Large benchmark page ${i + 1}`, { x: 25, y: 470, size: 15 });
++  }
++  await pdf.attach(crypto.randomBytes(16 * 1024 * 1024), 'synthetic-random-data.bin');
++  bytes = Buffer.from(await pdf.save({ useObjectStreams: false }));
++  await fs.writeFile(fixture, bytes, { flag: 'wx' });
++}
++report.fixture = { bytes: bytes.length, sha256: hash(bytes), pages: 120,
++  description: 'Synthetic text PDF with 16MiB incompressible attachment; isolates save workload, not scanned-page rendering' };
++await fs.writeFile(`tests/artifacts/${run}.driver.mjs`, await fs.readFile(import.meta.filename), { flag: 'wx' });
++const browser = await puppeteer.connect({ browserURL: cdpUrl, defaultViewport: null });
++const page = (await browser.pages()).find(p => p.url() === 'app://obsidian.md/index.html');
++assert.ok(page); const session = await page.createCDPSession();
++let original, failure, sampling = false, phase = 0;
++async function identity() {
++  const value = await page.evaluate(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir,
++    version: app.plugins.plugins['pdf-web-reader']?.manifest.version, mobile: !!app.isMobile,
++    views: app.plugins.plugins['pdf-web-reader']?.views.size }));
++  assertNativeVaultIdentity(value); assert.equal(value.version, version); return value;
++}
++async function root(fn, arg) {
++  await identity();
++  return page.evaluate(async ({ source, arg, vault }) => {
++    if (app.vault.adapter.basePath !== vault) throw Error('Wrong Vault');
++    return (0, eval)(`(${source})`)(arg);
++  }, { source: fn.toString(), arg, vault });
++}
++async function doc(fn, arg) {
++  return root(({ file, source, arg }) => {
++    const v = [...app.plugins.plugins['pdf-web-reader'].views].find(v => v.requestedPath === file);
++    if (!v?.iframe) throw Error('Own Reader missing');
++    const w = v.iframe.contentWindow;
++    return (0, eval)(`(${source})`)({ v, w, a: w.PDFViewerApplication, d: w.document, arg });
++  }, { file, source: fn.toString(), arg });
++}
++const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
++async function wait(label, fn, timeout = 120000) {
++  const end = Date.now() + timeout;
++  while (Date.now() < end) { if (await fn()) return; await pause(100); }
++  throw Error(`Timed out: ${label}`);
++}
++async function mode(mobile) {
++  assert.equal((await identity()).views, 0);
++  await root(async () => app.workspace.saveLayout());
++  const nav = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
++  await root(m => { setTimeout(() => app.emulateMobile(m), 0); }, mobile); await nav;
++  await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
++  await page.waitForFunction(m => app?.workspace?.layoutReady &&
++    app.plugins.plugins['pdf-web-reader']?.settings && !!app.isMobile === m,
++  { polling: 100, timeout: 30000 }, mobile); await identity();
++}
++async function closeOwn() {
++  await root(async folder => {
++    for (const v of [...app.plugins.plugins['pdf-web-reader'].views]) {
++      if (v.requestedPath?.startsWith(folder + '/')) await v.leaf.detach();
++    }
++    await app.workspace.saveLayout();
++  }, folder);
++}
++const sample = async () => {
++  await session.send('Performance.enable');
++  while (sampling) {
++    const { metrics } = await session.send('Performance.getMetrics');
++    const renderer = await session.send('Runtime.getHeapUsage');
++    const workers = [];
++    for (const t of browser.targets().filter(t => ['worker', 'other'].includes(t.type()))) {
++      try { const workerSession = await t.createCDPSession();
++        workers.push({ type: t.type(), usage: await workerSession.send('Runtime.getHeapUsage') });
++        await workerSession.detach();
++      } catch { /* Some Obsidian utility targets expose no JavaScript runtime. */ }
++    }
++    report.heapSamples.push({ at: performance.now(), phase, used: metrics.find(m => m.name === 'JSHeapUsedSize')?.value,
++      total: metrics.find(m => m.name === 'JSHeapTotalSize')?.value, renderer, workers,
++      measuredJsAndBackingBytes: renderer.usedSize + (renderer.backingStorageSize || 0) +
++        workers.reduce((sum, w) => sum + w.usage.usedSize + (w.usage.backingStorageSize || 0), 0) });
++    await pause(100);
++  }
++};
++try {
++  await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
++  original = await identity(); assert.equal(original.mobile, false); assert.equal(original.views, 0);
++  await mode(true);
++  for (const name of ['main.js', 'manifest.json', 'styles.css']) report[name] =
++    hash(await fs.readFile(path.join(vault, configDir, 'plugins/pdf-web-reader', name)));
++  // Streaming through Obsidian's adapter avoids transferring a large array over CDP.
++  await fs.mkdir(path.join(vault, folder)); await fs.writeFile(path.join(vault, file), bytes);
++  await wait('fixture indexed', () => root(file => !!app.vault.getAbstractFileByPath(file), file));
++  await root(({ file, folder, capture, forceFull }) => {
++    const v = app.vault, a = v.adapter, t = window.__incrementalBench = { writes: [], originals: [] };
++    t.messages = [];
++    t.onMessage = e => {
++      if (!e.data || e.data.documentPath !== file || !['save', 'recover', 'sync-checkpoint'].includes(e.data.type)) return;
++      t.messages.push({ type: e.data.type, revision: e.data.revision, actorId: e.data.actorId,
++        newAnnotations: e.data.newAnnotations, operations: e.data.operations, bytes: e.data.data?.byteLength });
++    };
++    window.addEventListener('message', t.onMessage, true);
++    if (forceFull) { t.originals.push({ owner: v, name: 'appendBinary', original: v.appendBinary }); v.appendBinary = undefined; }
++    if (capture) {
++      const sync = app.plugins.plugins['pdf-web-reader'].pdfSync, original = sync.save;
++      t.originals.push({ owner: sync, name: 'save', original });
++      sync.save = async function(view, captured, message) {
++        if (captured.documentPath === file) {
++          const stem = `${folder}/capture-${message.revision}-${Date.now()}`;
++          const toBuffer = value => { const a = new Uint8Array(value.buffer || value, value.byteOffset || 0, value.byteLength); return a.slice().buffer; };
++          await a.writeBinary(`${stem}-base.pdf`, toBuffer(captured.loadedBaseBytes || captured.originalBytes));
++          await a.writeBinary(`${stem}-original.pdf`, toBuffer(captured.originalBytes));
++          await a.writeBinary(`${stem}-draft.pdf`, toBuffer(message.data));
++          await a.write(`${stem}.json`, JSON.stringify({ operations: message.operations, newAnnotations: message.newAnnotations,
++            actorId: message.actorId, openRequest: captured.openRequest, revision: message.revision }));
++        }
++        return original.call(this, view, captured, message);
++      };
++      t.captureWrites = [];
++      const originalPost = Worker.prototype.postMessage;
++      t.originals.push({ owner: Worker.prototype, name: 'postMessage', original: originalPost });
++      Worker.prototype.postMessage = function(message, ...rest) {
++        if (message?.method === 'prepareLocal') {
++          const payload = message.payload, stem = `${folder}/worker-${message.id}-${Date.now()}`;
++          const work = (async () => {
++            const sources = {};
++            for (const name of ['baseBytes', 'draftBytes', 'checkpointBytes']) {
++              const value = payload[name];
++              if (value) sources[name] = new Uint8Array(value.buffer || value, value.byteOffset || 0, value.byteLength).slice().buffer;
++            }
++            const details = { operations: payload.operations, newAnnotations: payload.newAnnotations, actorId: payload.actorId };
++            for (const [name, value] of Object.entries(sources)) await a.writeBinary(`${stem}-${name}.pdf`, value);
++            await a.write(`${stem}.json`, JSON.stringify(details));
++          })(); t.captureWrites.push(work);
++        }
++        return originalPost.call(this, message, ...rest);
++      };
++    }
++    for (const [owner, name, scope] of [[v, 'modifyBinary', 'vault'], [v, 'appendBinary', 'vault'],
++      [a, 'writeBinary', 'adapter'], [a, 'appendBinary', 'adapter']]) {
++      if (typeof owner[name] !== 'function') continue;
++      const original = owner[name]; t.originals.push({ owner, name, original });
++      owner[name] = async function(target, data, ...rest) {
++        const started = performance.now(), targetPath = typeof target === 'string' ? target : target.path;
++        const row = { scope, method: name, path: targetPath, bytes: data.byteLength, started, ownPdf: targetPath === file };
++        t.writes.push(row);
++        try { const result = await original.call(this, target, data, ...rest); row.finished = performance.now(); return result; }
++        catch (error) { row.error = error.message; throw error; }
++      };
++    }
++  }, { file, folder, capture: process.env.BENCH_CAPTURE === '1', forceFull: process.env.BENCH_FORCE_FULL === '1' });
++  await root(file => app.plugins.plugins['pdf-web-reader'].openPdf(app.vault.getAbstractFileByPath(file)), file);
++  await wait('PDF rendered', () => doc(({ v, a }) => v.ready && a.pdfDocument?.numPages === 120 && a.pdfViewer.getPageView(0)?.renderingState === 3));
++  await doc(({ a, d }) => { a.pdfViewer.currentPageNumber = 1; a.pdfViewer.currentScaleValue = 'page-fit'; d.getElementById('viewerContainer').scrollTop = 0; });
++  await wait('visible page', () => doc(({ d }) => {
++    const r = d.querySelector('.page[data-page-number="1"]').getBoundingClientRect(), v = d.getElementById('viewerContainer').getBoundingClientRect();
++    return Math.min(r.bottom, v.bottom) - Math.max(r.top, v.top) > 140;
++  }));
++  const tool = await doc(({ v, d }) => { const r = d.getElementById('editorSquareButton').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width / 2, y: f.y + r.y + r.height / 2 }; });
++  await page.mouse.click(tool.x, tool.y);
++  await doc(({ w, d }) => {
++    w.__benchInput = [];
++    for (const type of ['pointerdown', 'pointerup', 'pointercancel']) d.addEventListener(type, e => {
++      w.__benchInput.push({ type, pointerType: e.pointerType, button: e.button, x: e.clientX, y: e.clientY,
++        target: e.target?.className, prevented: e.defaultPrevented });
++    });
++  });
++  sampling = true; const samplingPromise = sample();
++  for (let i = 0; i < editCount; i++) {
++    phase = i + 1;
++    // Clear the selected annotation's floating edit toolbar before the next
++    // real drawing gesture; otherwise it can cover that gesture's start point.
++    await page.keyboard.press('Escape');
++    if (await doc(({ a }) => a.pdfViewer.annotationEditorMode !== 5)) {
++      const t = await doc(({ v, d }) => { const r = d.getElementById('editorSquareButton').getBoundingClientRect(), f = v.iframe.getBoundingClientRect(); return { x: f.x + r.x + r.width / 2, y: f.y + r.y + r.height / 2 }; });
++      await page.mouse.click(t.x, t.y);
++    }
++    await wait('Square tool active', () => doc(({ a }) => a.pdfViewer.annotationEditorMode === 5));
++    await doc(({ a, d }) => { a.pdfViewer.currentPageNumber = 1; a.pdfViewer.currentScaleValue = 'page-fit'; d.getElementById('viewerContainer').scrollTop = 0; });
++    const revisionBefore = await doc(({ v }) => v.currentRevision);
++    const q = await doc(({ v, d, arg }) => {
++      const r = d.querySelector('.page[data-page-number="1"]').getBoundingClientRect(), view = d.getElementById('viewerContainer').getBoundingClientRect(), f = v.iframe.getBoundingClientRect();
++      const x = Math.max(r.left, view.left) + 35 + arg * 25, y = Math.max(r.top, view.top) + 100 + arg * 65;
++      if (!d.elementFromPoint(x, y)?.closest('.page[data-page-number="1"]')) throw Error('Drawing point not on page');
++      return { x: f.x + x, y: f.y + y };
++    }, i);
++    await page.mouse.move(q.x, q.y); await page.mouse.down(); await page.mouse.move(q.x + 60, q.y + 24, { steps: 5 }); await page.mouse.up();
++    await wait('edited revision', () => doc(({ v, arg }) => v.currentRevision > arg, revisionBefore), 10000);
++    const capturedRevision = await doc(({ v }) => v.currentRevision), started = performance.now();
++    // Cmd+S follows the production manual save path; no direct mock writer.
++    await page.keyboard.down('Meta'); await page.keyboard.press('s'); await page.keyboard.up('Meta');
++    await wait('confirmed revision', () => doc(({ v, arg }) => {
++      if (v.failureNoticeShown) throw Error('Production save reported failure; inspect preserved recovery metadata');
++      return v.confirmedRevision >= arg && !v.saving;
++    }, capturedRevision));
++    report.checks.push({ edit: i + 1, revision: capturedRevision, confirmedMs: performance.now() - started,
++      diskBytes: (await fs.stat(path.join(vault, file))).size });
++    await wait('post-save Viewer settled', () => doc(({ v, a }) => !v.syncNeedsRefresh && v.ready &&
++      a.pdfDocument?.numPages === 120 && a.pdfViewer.getPageView(0)?.renderingState === 3));
++    report.checks.at(-1).viewerSettledMs = performance.now() - started;
++  }
++  sampling = false; await samplingPromise;
++  report.writes = await root(() => window.__incrementalBench.writes);
++  report.heapPeakBytes = Math.max(...report.heapSamples.map(x => x.used || 0));
++  report.measuredJsAndBackingPeakBytes = Math.max(...report.heapSamples.map(x => x.measuredJsAndBackingBytes || 0));
++  await closeOwn();
++  const finalBytes = await fs.readFile(path.join(vault, file));
++  const parsed = await PDFDocument.load(finalBytes);
++  const squares = (parsed.getPage(0).node.Annots()?.asArray() || []).filter(ref =>
++    parsed.context.lookup(ref)?.get(PDFName.of('Subtype'))?.toString() === '/Square').length;
++  assert.equal(squares, editCount); report.savedSquares = squares; report.finalSha256 = hash(finalBytes);
++  // Reopen through the installed plugin and verify visible PDF annotations.
++  await root(file => app.plugins.plugins['pdf-web-reader'].openPdf(app.vault.getAbstractFileByPath(file)), file);
++  await wait('reopened', () => doc(({ v, a }) => v.ready && a.pdfDocument?.numPages === 120));
++  report.reopenedSquares = await doc(async ({ a }) => (await (await a.pdfDocument.getPage(1)).getAnnotations()).filter(x => x.subtype === 'Square').length);
++  assert.equal(report.reopenedSquares, editCount); await closeOwn(); report.status = 'passed';
++} catch (error) { failure = error; report.status = 'failed'; report.error = error.stack;
++  try { report.failedEditorState = await doc(({ v, w, a, d }) => ({ revision: v.currentRevision, confirmed: v.confirmedRevision,
++    mode: a.pdfViewer.annotationEditorMode, input: w.__benchInput, page: d.querySelector('.page')?.getBoundingClientRect().toJSON(),
++    editorLayerClass: d.querySelector('.annotationEditorLayer')?.className,
++    squareClasses: [...d.querySelectorAll('.squareEditor')].map(e => e.className),
++    editorManagerKeys: Object.keys(a.pdfViewer?._layerProperties?.annotationEditorUIManager || {}) })); } catch {}
++}
++finally {
++  sampling = false;
++  try {
++    await closeOwn(); await root(() => {
++      const t = window.__incrementalBench;
++      if (t) { for (const row of t.originals) row.owner[row.name] = row.original; window.removeEventListener('message', t.onMessage, true); }
++    });
++    await root(async () => { await Promise.all(window.__incrementalBench?.captureWrites || []); });
++    report.saveInputs = await root(() => window.__incrementalBench?.messages);
++    await root(() => { delete window.__incrementalBench; });
++    if (original && (await identity()).mobile !== original.mobile) await mode(original.mobile);
++    await closeOwn(); report.cleanup = await identity(); assert.equal(report.cleanup.mobile, false); assert.equal(report.cleanup.views, 0);
++  } catch (error) { failure ||= error; report.status = 'failed'; report.cleanupError = error.message; }
++  await session.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {});
++  browser.disconnect(); await fs.writeFile(`tests/artifacts/${run}.json`, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
++  console.log(run, report.status, report.checks.map(x => Math.round(x.confirmedMs)));
++}
++if (failure) throw failure;
+diff --git a/tests/packaging.test.mjs b/tests/packaging.test.mjs
+index b1ef5a5..3b9626a 100644
+--- a/tests/packaging.test.mjs
++++ b/tests/packaging.test.mjs
+@@ -130 +130 @@ test("community release output is exactly the three installer assets", async ()
+-  assert.equal(manifest.version, "0.5.8");
++  assert.equal(manifest.version, "0.5.9");
+diff --git a/tests/pdf-incremental.test.mjs b/tests/pdf-incremental.test.mjs
+new file mode 100644
+index 0000000..12d879c
+--- /dev/null
++++ b/tests/pdf-incremental.test.mjs
+@@ -0,0 +1,142 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import {
++  PDFArray,
++  PDFDocument,
++  PDFDict,
++  PDFHexString,
++  PDFName,
++  PDFNumber,
++  PDFRawStream,
++} from "pdf-lib";
++import incremental from "../plugin/pdf-incremental.cjs";
++
++const { captureIncrementalSnapshot, createIncrementalPatch, readSourceTrailer, fingerprint } = incremental;
++
++async function sourcePdf({ objectStreams = false } = {}) {
++  const document = await PDFDocument.create();
++  document.addPage([320, 240]);
++  const documentId = PDFArray.withContext(document.context);
++  documentId.push(PDFHexString.fromText("source-file-id"));
++  documentId.push(PDFHexString.fromText("source-revision-id"));
++  document.context.trailerInfo.ID = documentId;
++  const streamDict = PDFDict.withContext(document.context);
++  streamDict.set(PDFName.of("Type"), PDFName.of("XObject"));
++  streamDict.set(PDFName.of("Subtype"), PDFName.of("Form"));
++  streamDict.set(PDFName.of("BBox"), document.context.obj([0, 0, 16, 16]));
++  const payload = new Uint8Array(64 * 1024);
++  payload.fill(37);
++  const streamRef = document.context.register(PDFRawStream.of(streamDict, payload));
++  document.catalog.set(PDFName.of("UnchangedAppearance"), streamRef);
++  return document.save({ useObjectStreams: objectStreams });
++}
++
++function append(baseBytes, suffix) {
++  const output = new Uint8Array(baseBytes.length + suffix.length);
++  output.set(baseBytes, 0);
++  output.set(suffix, baseBytes.length);
++  return output;
++}
++
++test("incremental updates keep the exact source prefix and omit untouched streams", async () => {
++  for (const objectStreams of [false, true]) {
++    const base = await sourcePdf({ objectStreams });
++    const document = await PDFDocument.load(base, { updateMetadata: false });
++    const untouchedStream = [...document.context.enumerateIndirectObjects()]
++      .map(([, object]) => object)
++      .find((object) => object instanceof PDFRawStream);
++    assert.ok(untouchedStream);
++    untouchedStream.copyBytesInto = () => {
++      throw new Error("unchanged stream was copied into a scratch buffer");
++    };
++    const snapshot = captureIncrementalSnapshot({ sourceBytes: base, document });
++    document.catalog.set(PDFName.of("RevisionMarker"), PDFHexString.fromText(`revision-${objectStreams}`));
++    const patch = createIncrementalPatch({ sourceBytes: base, document, snapshot });
++    assert.ok(patch);
++    assert.equal(patch.baseLength, base.length);
++    assert.equal(patch.changedObjectCount, 1, "only the catalog changed; the large stream remains in the original revision");
++
++    const output = append(base, patch.suffix);
++    assert.deepEqual(output.subarray(0, base.length), base);
++    assert.equal(patch.baseFingerprint, fingerprint(base));
++    assert.equal(patch.outputFingerprint, fingerprint(output));
++    const reopened = await PDFDocument.load(output, { updateMetadata: false });
++    assert.equal(reopened.catalog.lookup(PDFName.of("RevisionMarker"), PDFHexString).decodeText(), `revision-${objectStreams}`);
++    assert.equal(reopened.catalog.get(PDFName.of("UnchangedAppearance")).toString(), document.catalog.get(PDFName.of("UnchangedAppearance")).toString());
++    const outputId = readSourceTrailer(output).id;
++    assert.equal(outputId.lookup(0, PDFHexString).decodeText(), "source-file-id");
++    assert.equal(outputId.lookup(1, PDFHexString).decodeText(), "source-revision-id");
++  }
++});
++
++test("repeated saves chain /Prev to the previous incremental xref", async () => {
++  const source = await sourcePdf();
++  const firstDoc = await PDFDocument.load(source, { updateMetadata: false });
++  const firstSnapshot = captureIncrementalSnapshot({ sourceBytes: source, document: firstDoc });
++  firstDoc.catalog.set(PDFName.of("FirstRevision"), PDFNumber.of(1));
++  const firstPatch = createIncrementalPatch({ sourceBytes: source, document: firstDoc, snapshot: firstSnapshot });
++  const firstOutput = append(source, firstPatch.suffix);
++
++  const secondDoc = await PDFDocument.load(firstOutput, { updateMetadata: false });
++  const secondSnapshot = captureIncrementalSnapshot({ sourceBytes: firstOutput, document: secondDoc });
++  secondDoc.catalog.set(PDFName.of("SecondRevision"), PDFNumber.of(2));
++  const secondPatch = createIncrementalPatch({ sourceBytes: firstOutput, document: secondDoc, snapshot: secondSnapshot });
++  const secondOutput = append(firstOutput, secondPatch.suffix);
++
++  assert.deepEqual(secondOutput.subarray(0, firstOutput.length), firstOutput);
++  const firstTrailer = readSourceTrailer(firstOutput);
++  const secondTrailer = readSourceTrailer(secondOutput);
++  assert.equal(secondTrailer.previous, firstTrailer.xrefOffset);
++  const reopened = await PDFDocument.load(secondOutput, { updateMetadata: false });
++  assert.equal(reopened.catalog.lookup(PDFName.of("FirstRevision"), PDFNumber).asNumber(), 1);
++  assert.equal(reopened.catalog.lookup(PDFName.of("SecondRevision"), PDFNumber).asNumber(), 2);
++});
++
++test("invalid startxref pointers are rejected before a patch can be produced", async () => {
++  const source = await sourcePdf();
++  const trailer = readSourceTrailer(source);
++  const output = new Uint8Array(source);
++  const marker = new TextEncoder().encode(`startxref\n${trailer.xrefOffset}`);
++  let start = -1;
++  outer: for (let offset = output.length - marker.length; offset >= 0; offset -= 1) {
++    for (let index = 0; index < marker.length; index += 1) {
++      if (output[offset + index] !== marker[index]) continue outer;
++    }
++    start = offset;
++    break;
++  }
++  assert.notEqual(start, -1);
++  const digitOffset = start + "startxref\n".length;
++  output[digitOffset] = 57;
++  await assert.rejects(
++    async () => readSourceTrailer(output),
++    (error) => error.code === "PDF_INCREMENTAL_INVALID_STARTXREF",
++  );
++});
++
++test("trailers with unusable size values are rejected", async () => {
++  const source = await sourcePdf();
++  const output = new Uint8Array(source);
++  const sourceText = new TextDecoder().decode(source);
++  const sizeMarker = sourceText.lastIndexOf("/Size ");
++  assert.notEqual(sizeMarker, -1);
++  const sizeDigit = sizeMarker + "/Size ".length;
++  output[sizeDigit] = 48;
++  assert.throws(
++    () => readSourceTrailer(output),
++    (error) => error.code === "PDF_INCREMENTAL_INVALID_TRAILER",
++  );
++});
++
++test("encrypted trailers are refused by the incremental snapshotter", async () => {
++  const document = await PDFDocument.create();
++  document.addPage([100, 100]);
++  const fakeEncryptionDictionary = PDFDict.withContext(document.context);
++  const encryptionRef = document.context.register(fakeEncryptionDictionary);
++  document.context.trailerInfo.Encrypt = encryptionRef;
++  const source = await document.save({ useObjectStreams: false });
++  await assert.rejects(
++    async () => captureIncrementalSnapshot({ sourceBytes: source, document }),
++    (error) => error.code === "PDF_INCREMENTAL_ENCRYPTED_DOCUMENT",
++  );
++});
+diff --git a/tests/pdf-journal.test.mjs b/tests/pdf-journal.test.mjs
+new file mode 100644
+index 0000000..4fe522d
+--- /dev/null
++++ b/tests/pdf-journal.test.mjs
+@@ -0,0 +1,226 @@
++import assert from "node:assert/strict";
++import { createRequire } from "node:module";
++import { createHash } from "node:crypto";
++import test from "node:test";
++
++const require = createRequire(import.meta.url);
++const { createPdfJournal } = require("../plugin/pdf-journal.cjs");
++const bytes = (value) => new Uint8Array(value).slice();
++const hash = (value) => createHash("sha256").update(value).digest("hex");
++
++function harness() {
++  const stored = new Map();
++  const adapter = {
++    async exists(path) { return stored.has(path); },
++    async mkdir(path) { stored.set(path, true); },
++    async read(path) { if (!stored.has(path)) throw new Error("missing"); return stored.get(path); },
++    async write(path, value) { stored.set(path, value); },
++    async readBinary(path) { if (!stored.has(path)) throw new Error("missing"); return bytes(stored.get(path)).buffer; },
++    async writeBinary(path, value) { stored.set(path, bytes(value)); },
++    async list(path) {
++      const files = [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`) && !entry.endsWith("/"));
++      return { files, folders: [] };
++    },
++  };
++  let token = 0;
++  const journal = createPdfJournal({
++    adapter, root: ".obsidian/plugins/pdf/.sync-checkpoints",
++    normalizePath: (value) => value, fingerprint: hash,
++    fingerprintChunks(chunks) { const digest = createHash("sha256"); for (const chunk of chunks) digest.update(chunk); return digest.digest("hex"); },
++    createFingerprintAccumulator() {
++      const digest = createHash("sha256");
++      return { update(chunk) { digest.update(chunk); }, digest() { return digest.copy().digest("hex"); } };
++    },
++    bytesEqual: (left, right) => left.length === right.length && left.every((value, i) => value === right[i]),
++    ensureDirectory: async (target, path) => target.mkdir(path), makeToken: () => `token-${++token}`,
++  });
++  return { journal, stored, adapter };
++}
++
++test("schema 2 stores an append suffix and reconstructs a confirmed PDF from its shared baseline", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1, 2, 3]);
++  const suffix = bytes([4, 5]);
++  const output = bytes([1, 2, 3, 4, 5]);
++  const record = await journal.beginAppend({ path: "notes/book.pdf", baseBytes: base,
++    parentBytes: base, suffix, outputFingerprint: hash(output), outputLength: output.length,
++    metadata: { actorId: "actor-a", revision: 7, operations: [{ uuid: "u1", kind: "upsert" }], newAnnotations: [] } });
++
++  assert.equal(record.schema, 2);
++  assert.equal(record.status, "pending");
++  assert.equal(record.checkpoint.kind, "append");
++  const appendRecord = JSON.parse(stored.get(record.checkpoint.head));
++  assert.equal(appendRecord.anchor.kind, "base");
++  assert.ok(stored.has(record.base.file));
++  assert.ok(stored.has(appendRecord.suffix.file));
++  assert.deepEqual(appendRecord.metadata.operations,
++    [{ uuid: "u1", kind: "upsert" }], "each suffix retains its replayable stable operation envelope");
++  assert.equal([...stored.keys()].some((path) => /checkpoint-.*\.pdf$/.test(path)), false,
++    "the append checkpoint does not write a second full PDF");
++  assert.deepEqual([...await journal.readRecovery({ path: "notes/book.pdf" })], [...output]);
++
++  await journal.confirm("notes/book.pdf", hash(output), output.length);
++  const loaded = await journal.load("notes/book.pdf");
++  assert.equal(loaded.status, "confirmed");
++  assert.deepEqual([...loaded.checkpointBytes], [...output]);
++  assert.deepEqual(loaded.metadata.metadata.operations, [{ uuid: "u1", kind: "upsert" }]);
++});
++
++test("successive append records continue only from the exact prior checkpoint", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1]);
++  const first = bytes([1, 2]);
++  const second = bytes([1, 2, 3]);
++  const initial = await journal.beginAppend({ path: "notes/book.pdf", baseBytes: base, parentBytes: base,
++    suffix: bytes([2]), outputFingerprint: hash(first), outputLength: first.length,
++    metadata: { revision: 7, operations: [{ uuid: "created", action: "upsert", timestamp: 7, logical: 0,
++      actorId: "actor-a", operationId: "actor-a:7:0:1" }] } });
++  await journal.confirm("notes/book.pdf", hash(first), first.length);
++  const next = await journal.beginAppend({ path: "notes/book.pdf", baseBytes: base,
++    parentBytes: first, suffix: bytes([3]), outputFingerprint: hash(second), outputLength: second.length,
++    metadata: { actorId: "actor-b", revision: 8, operations: [{ uuid: "deleted", action: "delete", deleted: true }] } });
++  const initialRecord = JSON.parse(stored.get(initial.checkpoint.head));
++  const nextRecord = JSON.parse(stored.get(next.checkpoint.head));
++  assert.equal(nextRecord.parentRecord, initial.checkpoint.head,
++    "the new suffix points to the prior immutable record instead of copying its chain into the manifest");
++  assert.equal(nextRecord.metadata.revision, 8,
++    "the first append metadata survives when the checkpoint chain advances");
++  assert.equal(initialRecord.metadata.revision, 7);
++  assert.equal(nextRecord.metadata.operations[0].action, "delete",
++    "tombstone envelopes survive as part of the durable append record");
++  assert.deepEqual([...await journal.readRecovery({ path: "notes/book.pdf" })], [...second]);
++});
++
++test("a checkpoint matching the shared base reuses that file as its journal anchor", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1, 2]);
++  const prior = await journal.beginFull({ path: "notes/base-anchor.pdf", baseBytes: base, checkpointBytes: base });
++  const paths = journal.pathsFor("notes/base-anchor.pdf");
++  const duplicate = `${paths.root}/duplicate-full.pdf`;
++  stored.set(duplicate, base);
++  stored.set(paths.manifest, JSON.stringify({ ...prior,
++    checkpoint: { kind: "full", file: duplicate, hash: hash(base), length: base.length } }));
++
++  const output = bytes([1, 2, 3]);
++  const next = await journal.beginAppend({ path: "notes/base-anchor.pdf", baseBytes: base,
++    parentBytes: base, suffix: bytes([3]), outputFingerprint: hash(output), outputLength: output.length });
++  const linked = JSON.parse(stored.get(next.checkpoint.head));
++  assert.equal(linked.anchor.kind, "base");
++  assert.equal(linked.anchor.file, next.base.file);
++  assert.equal([...stored.keys()].some((path) => path.includes(".anchor-")), false,
++    "the first append does not duplicate the baseline into an anchor file");
++});
++
++test("a full-write fallback is recoverable and a failed write remains pending", async () => {
++  const { journal } = harness();
++  const base = bytes([1, 2]);
++  const output = bytes([8, 9, 10]);
++  const pending = await journal.beginFull({ path: "notes/fallback.pdf", baseBytes: base,
++    checkpointBytes: output, metadata: { revision: 8, operations: [{ uuid: "deleted", kind: "delete" }] } });
++  assert.equal(pending.status, "pending");
++  assert.equal(pending.checkpoint.kind, "full");
++  assert.deepEqual([...await journal.readRecovery({ path: "notes/fallback.pdf" })], [...output]);
++  const reopened = await journal.load("notes/fallback.pdf");
++  assert.equal(reopened.status, "pending");
++  assert.deepEqual([...reopened.checkpointBytes], [...output]);
++});
++
++test("schema 1 full checkpoints remain readable", async () => {
++  const { journal, stored } = harness();
++  const paths = journal.pathsFor("notes/legacy.pdf");
++  const base = bytes([1, 2, 3]);
++  const pdf = bytes([1, 2, 3, 4]);
++  stored.set(paths.schema1Pdf, pdf);
++  stored.set(paths.schema1Base, base);
++  stored.set(paths.manifest, JSON.stringify({ schema: 1, status: "confirmed", path: "notes/legacy.pdf",
++    hash: hash(pdf), baseHash: hash(base) }));
++
++  const loaded = await journal.load("notes/legacy.pdf");
++  assert.equal(loaded.schema, 1);
++  assert.equal(loaded.status, "confirmed");
++  assert.deepEqual([...loaded.checkpointBytes], [...pdf]);
++  assert.deepEqual([...loaded.baseBytes], [...base]);
++});
++
++test("a corrupt newest checkpoint falls back to the prior complete manifest", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1]);
++  const first = bytes([1, 2]);
++  const second = bytes([1, 2, 3]);
++  const initial = await journal.beginFull({ path: "notes/backup.pdf", baseBytes: base, checkpointBytes: first });
++  await journal.confirm("notes/backup.pdf", hash(first), first.length);
++  const newer = await journal.beginFull({ path: "notes/backup.pdf", baseBytes: base, checkpointBytes: second });
++  stored.set(newer.checkpoint.file, bytes([0]));
++
++  const loaded = await journal.load("notes/backup.pdf");
++  assert.equal(loaded.status, "confirmed");
++  assert.equal(loaded.metadata.checkpoint.file, initial.checkpoint.file);
++  assert.deepEqual([...loaded.checkpointBytes], [...first]);
++});
++
++test("a later write preserves the prior complete manifest when current segments are damaged", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1]);
++  const first = await journal.beginFull({ path: "notes/repair.pdf", baseBytes: base, checkpointBytes: bytes([1, 2]) });
++  await journal.confirm("notes/repair.pdf", hash(bytes([1, 2])), 2);
++  const second = await journal.beginFull({ path: "notes/repair.pdf", baseBytes: base, checkpointBytes: bytes([1, 3]) });
++  stored.set(second.checkpoint.file, bytes([0]));
++
++  const third = await journal.beginFull({ path: "notes/repair.pdf", baseBytes: base, checkpointBytes: bytes([1, 4]) });
++  const previous = JSON.parse(stored.get(`${journal.pathsFor("notes/repair.pdf").manifest}.previous`));
++  assert.equal(previous.checkpoint.file, first.checkpoint.file,
++    "a valid prior manifest is kept instead of backing up a syntactically valid but damaged current one");
++  assert.equal((await journal.load("notes/repair.pdf")).metadata.checkpoint.file, third.checkpoint.file);
++  stored.set(journal.pathsFor("notes/repair.pdf").manifest, "torn");
++  const recovered = await journal.load("notes/repair.pdf");
++  assert.equal(recovered.metadata.checkpoint.file, first.checkpoint.file);
++  assert.deepEqual([...recovered.checkpointBytes], [1, 2]);
++});
++
++test("the recovery list exposes only checkpoints whose complete payload verifies", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1]);
++  const output = bytes([2, 3]);
++  const record = await journal.beginFull({ path: "notes/listed.pdf", baseBytes: base, checkpointBytes: output });
++  assert.equal((await journal.listRecoveries()).length, 1);
++  stored.set(record.checkpoint.file, bytes([0]));
++  assert.deepEqual(await journal.listRecoveries(), []);
++});
++
++test("the recovery list falls back to a verified prior pending manifest", async () => {
++  const { journal, stored } = harness();
++  const base = bytes([1]);
++  const first = await journal.beginFull({ path: "notes/pending-backup.pdf", baseBytes: base,
++    checkpointBytes: bytes([1, 2]) });
++  const newer = await journal.beginFull({ path: "notes/pending-backup.pdf", baseBytes: base,
++    checkpointBytes: bytes([1, 3]) });
++  stored.set(newer.checkpoint.file, bytes([0]));
++
++  const [candidate] = await journal.listRecoveries();
++  assert.equal(candidate.hash, first.checkpoint.hash);
++  assert.equal(candidate.status, "pending");
++  assert.deepEqual([...await journal.readRecovery(candidate)], [1, 2]);
++});
++
++test("a failed previous-manifest backup leaves the current manifest untouched", async () => {
++  const { journal, stored, adapter } = harness();
++  const base = bytes([1]);
++  const initial = await journal.beginFull({ path: "notes/backup-failure.pdf", baseBytes: base,
++    checkpointBytes: bytes([1, 2]) });
++  const manifestPath = journal.pathsFor("notes/backup-failure.pdf").manifest;
++  const previous = stored.get(manifestPath);
++  const write = adapter.write.bind(adapter);
++  adapter.write = async (path, value) => {
++    if (path === `${manifestPath}.previous`) {
++      stored.set(path, `${value} `);
++      return;
++    }
++    await write(path, value);
++  };
++
++  await assert.rejects(journal.beginFull({ path: "notes/backup-failure.pdf", baseBytes: base,
++    checkpointBytes: bytes([1, 3]) }), /backup manifest write verification failed/);
++  assert.equal(stored.get(manifestPath), previous,
++    "the valid current manifest is not overwritten until its backup reads back exactly");
++  assert.equal((await journal.load("notes/backup-failure.pdf")).metadata.checkpoint.file, initial.checkpoint.file);
++});
+diff --git a/tests/pdf-merge-core.test.mjs b/tests/pdf-merge-core.test.mjs
+index 4a2949c..36c4962 100644
+--- a/tests/pdf-merge-core.test.mjs
++++ b/tests/pdf-merge-core.test.mjs
+@@ -194,0 +195,61 @@ test("preparation binds all five editor kinds by storage order and preserves NM
++test("prepared saves expose a verified append patch while preserving their exact source prefix", async () => {
++  const base = await makeBase({ annotations: [{ subtype: "FreeText", nm: "incremental source", contents: "before" }] });
++  const baseInfo = await inspect({ bytes: base.bytes });
++  const existing = baseInfo.identities.find((item) => item.kind === "freetext");
++  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
++  draft.context.lookup(refFromPdfJs(existing.ref), PDFDict).set(PDFName.of("Contents"), text("after"));
++  const draftBytes = await draft.save({ useObjectStreams: false });
++  const prepared = await prepareLocal({
++    baseBytes: base.bytes,
++    draftBytes,
++    operations: [operation({ uuid: existing.uuid, ref: existing.ref, kind: "freetext", timestamp: 12, operationId: "incremental-edit" })],
++    newAnnotations: [],
++    actorId: "actor-device-01",
++    patchOnly: true,
++  });
++
++  assert.equal("bytes" in prepared, false);
++  assert.equal(prepared.patch.baseLength, draftBytes.length);
++  assert.ok(prepared.patch.suffix.length > 0);
++  const output = new Uint8Array(prepared.patch.outputLength);
++  output.set(draftBytes, 0);
++  output.set(prepared.patch.suffix, draftBytes.length);
++  assert.deepEqual(output.subarray(0, draftBytes.length), draftBytes);
++  const loaded = await PDFDocument.load(output, { updateMetadata: false });
++  assert.equal(loaded.context.lookup(refFromPdfJs(existing.ref), PDFDict).lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "after");
++  assert.equal((await inspect({ bytes: output })).stateDigest, prepared.stateDigest);
++});
++
++test("merge rebases prepared local state into the exact remote source and returns an append patch", async () => {
++  const base = await makeBase({ annotations: [{ subtype: "FreeText", nm: "merge incremental", contents: "before" }] });
++  const baseInfo = await inspect({ bytes: base.bytes });
++  const existing = baseInfo.identities.find((item) => item.kind === "freetext");
++  const draft = await PDFDocument.load(base.bytes, { updateMetadata: false });
++  draft.context.lookup(refFromPdfJs(existing.ref), PDFDict).set(PDFName.of("Contents"), text("local winner"));
++  const draftBytes = await draft.save({ useObjectStreams: false });
++  const prepared = await prepareLocal({
++    baseBytes: base.bytes,
++    draftBytes,
++    operations: [operation({ uuid: existing.uuid, ref: existing.ref, kind: "freetext", timestamp: 20, operationId: "merge-local-edit" })],
++    newAnnotations: [],
++    actorId: "actor-device-01",
++  });
++  const merged = await merge({
++    baseBytes: base.bytes,
++    localBytes: prepared.bytes,
++    remoteBytes: base.bytes,
++    actorId: "actor-device-01",
++    patchOnly: true,
++  });
++
++  assert.equal("bytes" in merged, false);
++  assert.equal(merged.patch.baseLength, base.bytes.length);
++  const output = new Uint8Array(merged.patch.outputLength);
++  output.set(base.bytes, 0);
++  output.set(merged.patch.suffix, base.bytes.length);
++  assert.deepEqual(output.subarray(0, base.bytes.length), base.bytes);
++  const updated = await PDFDocument.load(output, { updateMetadata: false });
++  assert.equal(updated.context.lookup(refFromPdfJs(existing.ref), PDFDict).lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "local winner");
++  assert.equal((await inspect({ bytes: output })).stateDigest, merged.stateDigest);
++});
++
+@@ -509,0 +571,116 @@ test("an unsaved create-delete can leave a null-ref tombstone, but unknown saved
++test("a clean PDF.js draft cannot hide a retained id-null editor behind checkpoint metadata", async () => {
++  const base = await makeBase();
++  const uuid = "clean-checkpoint-retained-square";
++  const newAnnotations = [{
++    runtimeId: "pdfjs_internal_editor_0",
++    uuid,
++    pageIndex: 0,
++    kind: "square",
++    order: 0,
++  }];
++  const operations = [operation({
++    uuid,
++    kind: "square",
++    timestamp: 100,
++    operationId: "clean-checkpoint-square-create",
++  })];
++  const firstSave = await prepareLocal({
++    baseBytes: base.bytes,
++    draftBytes: await editBranch(base.bytes, null, {}, [{ subtype: "Square", contents: "retained editor" }]).then(({ bytes }) => bytes),
++    operations,
++    newAnnotations,
++    actorId: "actor-device-01",
++  });
++  assert.equal(findIdentity(firstSave, uuid).kind, "square");
++
++  // PDF.js getData() can return the original loaded bytes after a successful
++  // save even though the editor remains live with annotationStorage id:null.
++  // The checkpoint records the saved ref, but it cannot manufacture the
++  // missing Square object in that stale draft. Fail closed so the bridge
++  // requests saveDocument() and supplies a fresh draft containing the editor.
++  await assert.rejects(
++    prepareLocal({
++      baseBytes: base.bytes,
++      draftBytes: base.bytes,
++      checkpointBytes: firstSave.bytes,
++      operations,
++      newAnnotations,
++      actorId: "actor-device-01",
++    }),
++    (error) => error.code === "PDF_MERGE_NEW_ANNOTATION_BINDING_FAILED" &&
++      /pdfjs_internal_editor_0/.test(error.message),
++  );
++});
++
++test("concurrent annotation creates converge on canonical page order and retain untracked refs", async () => {
++  const base = await makeBase({ annotations: [
++    { subtype: "Square", contents: "base square" },
++    { subtype: "Line", contents: "untracked line", popup: true },
++  ] });
++  const baseInfo = await inspect({ bytes: base.bytes });
++  const original = baseInfo.identities.find((item) => item.kind === "square");
++  const prepareBranch = async ({ actorId, deleteBase, edit, create, timestamp }) => {
++    const draft = await editBranch(base.bytes, refFromPdfJs(original.ref), {
++      ...(edit ? { contents: edit } : {}),
++      ...(deleteBase ? { remove: true } : {}),
++    }, [create]);
++    const uuid = `${actorId}-created`;
++    return prepareLocal({
++      baseBytes: base.bytes,
++      draftBytes: draft.bytes,
++      actorId,
++      newAnnotations: [{ runtimeId: `${actorId}-runtime`, uuid, pageIndex: 0, kind: create.subtype.toLowerCase(), order: 0 }],
++      operations: [
++        ...(edit ? [operation({ uuid: original.uuid, ref: original.ref, kind: original.kind, timestamp, actorId, operationId: `${actorId}-edit` })] : []),
++        ...(deleteBase ? [operation({ uuid: original.uuid, ref: original.ref, kind: original.kind, action: "delete", timestamp, actorId, operationId: `${actorId}-delete` })] : []),
++        operation({ uuid, kind: create.subtype.toLowerCase(), timestamp: timestamp - 100, actorId, operationId: `${actorId}-create` }),
++      ],
++    });
++  };
++  const branchA = await prepareBranch({
++    actorId: "device-a",
++    deleteBase: true,
++    create: { subtype: "Square", contents: "A square", appearance: "A appearance" },
++    timestamp: 300,
++  });
++  const branchB = await prepareBranch({
++    actorId: "device-b",
++    edit: "edited on B",
++    create: { subtype: "Underline", contents: "B underline", appearance: "B appearance" },
++    timestamp: 200,
++  });
++  const [aOntoB, bOntoA] = await Promise.all([
++    merge({ baseBytes: base.bytes, localBytes: branchA.bytes, remoteBytes: branchB.bytes, actorId: "device-a" }),
++    merge({ baseBytes: base.bytes, localBytes: branchB.bytes, remoteBytes: branchA.bytes, actorId: "device-b" }),
++  ]);
++  const [stateAB, stateBA] = await Promise.all([
++    inspect({ bytes: aOntoB.bytes }),
++    inspect({ bytes: bOntoA.bytes }),
++  ]);
++  const semanticEntries = (state) => state.ledger.entries
++    .map(({ ref: _ref, ...entry }) => entry)
++    .sort((left, right) => left.uuid.localeCompare(right.uuid));
++  assert.deepEqual(semanticEntries(stateAB), semanticEntries(stateBA));
++  assert.equal(stateAB.stateDigest, stateBA.stateDigest);
++  const liveOrder = (state) => state.identities
++    .filter((item) => !item.deleted && ["device-a-created", "device-b-created"].includes(item.uuid))
++    .map(({ uuid, order }) => ({ uuid, order }))
++    .sort((left, right) => left.uuid.localeCompare(right.uuid));
++  assert.deepEqual(liveOrder(stateAB), liveOrder(stateBA));
++
++  for (const bytes of [aOntoB.bytes, bOntoA.bytes]) {
++    const doc = await PDFDocument.load(bytes, { updateMetadata: false });
++    const annots = doc.getPages()[0].node.lookup(PDFName.of("Annots"), PDFArray);
++    const entries = Array.from({ length: annots.size() }, (_, index) => {
++      const ref = annots.get(index);
++      return { ref, dict: doc.context.lookup(ref, PDFDict) };
++    });
++    const types = entries.map(({ dict }) => dict.lookup(PDFName.of("Subtype"), PDFName).decodeText());
++    assert.deepEqual(types.slice(0, 2), ["Line", "Popup"], "untracked annotation refs keep their order and position");
++    const line = entries.find(({ dict }) => dict.lookup(PDFName.of("Subtype"), PDFName).decodeText() === "Line");
++    const popupRef = line.dict.get(PDFName.of("Popup"));
++    assert.ok(popupRef instanceof PDFRef);
++    assert.equal(doc.context.lookup(popupRef, PDFDict).get(PDFName.of("Parent")).toString(), line.ref.toString());
++  }
++});
++
+@@ -533,0 +711,15 @@ test("independent new annotations union, same-UUID LWW is deterministic, and mer
++  const localOnlyPatch = await merge({
++    baseBytes: base.bytes,
++    localBytes: remote.bytes,
++    remoteBytes: base.bytes,
++    actorId: "actor-b",
++    patchOnly: true,
++  });
++  assert.ok(localOnlyPatch.patch, "a local-only annotation should produce an incremental patch against the base PDF");
++  assert.equal(localOnlyPatch.incremental, true);
++  assert.equal(localOnlyPatch.patch.baseLength, base.bytes.length);
++  const patchedBytes = new Uint8Array(localOnlyPatch.patch.outputLength);
++  patchedBytes.set(base.bytes, 0);
++  patchedBytes.set(localOnlyPatch.patch.suffix, base.bytes.length);
++  assert.ok(findIdentity(await inspect({ bytes: patchedBytes }), "remote-new-square"));
++
+diff --git a/tests/pdf-merge-worker.test.mjs b/tests/pdf-merge-worker.test.mjs
+index fd2ebdc..0148107 100644
+--- a/tests/pdf-merge-worker.test.mjs
++++ b/tests/pdf-merge-worker.test.mjs
+@@ -92,0 +93,30 @@ test("the Worker copies a partial or input-aliasing output before transfer", asy
++
++test("the Worker transfers a whole incremental patch suffix without copying", async () => {
++  const suffix = new Uint8Array([8, 9, 10]);
++  const worker = boot({ merge: async () => ({ patch: { baseLength: 2, suffix } }) });
++  worker.send({ id: 1, method: "merge", payload: { remoteBytes: new Uint8Array([1, 2]) } });
++  await until(() => worker.posts.length === 1);
++  assert.equal(worker.posts[0].message.result.patch.suffix.buffer, suffix.buffer);
++  assert.deepEqual(worker.posts[0].transfer, [suffix.buffer]);
++});
++
++test("the Worker copies partial and input-aliasing incremental patch suffixes", async () => {
++  const backing = new Uint8Array([0, 7, 8, 0]);
++  const partialWorker = boot({ merge: async () => ({ patch: { suffix: backing.subarray(1, 3) } }) });
++  partialWorker.send({ id: 1, method: "merge", payload: {} });
++  await until(() => partialWorker.posts.length === 1);
++  const partial = partialWorker.posts[0].message.result.patch.suffix;
++  assert.deepEqual([...partial], [7, 8]);
++  assert.notEqual(partial.buffer, backing.buffer);
++  assert.deepEqual(partialWorker.posts[0].transfer, [partial.buffer]);
++
++  const inputSuffix = new Uint8Array([2, 3]);
++  const aliasWorker = boot({ merge: async ({ suffix }) => ({ patch: { suffix } }) });
++  aliasWorker.send({ id: 2, method: "merge", payload: { suffix: inputSuffix } });
++  await until(() => aliasWorker.posts.length === 1);
++  const copied = aliasWorker.posts[0].message.result.patch.suffix;
++  assert.deepEqual([...copied], [2, 3]);
++  assert.notEqual(copied.buffer, inputSuffix.buffer);
++  assert.deepEqual([...inputSuffix], [2, 3]);
++  assert.deepEqual(aliasWorker.posts[0].transfer, [copied.buffer]);
++});
+diff --git a/tests/pdf-recovery.test.mjs b/tests/pdf-recovery.test.mjs
+new file mode 100644
+index 0000000..dc521a6
+--- /dev/null
++++ b/tests/pdf-recovery.test.mjs
+@@ -0,0 +1,52 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { createRequire } from 'node:module';
++const require = createRequire(import.meta.url);
++const { writeDeltaRecovery, readDeltaRecovery } = require('../plugin/pdf-recovery.cjs');
++function harness() {
++  const files = new Map(), writes = [];
++  const adapter = { exists: async p => files.has(p),
++    writeBinary: async (p, a) => { files.set(p, a.slice(0)); writes.push({ p, bytes: a.byteLength }); },
++    readBinary: async p => { if (!files.has(p)) throw Error('missing'); return files.get(p).slice(0); },
++    write: async (p, a) => { files.set(p, a); writes.push({ p }); },
++    read: async p => files.get(p), remove: async p => files.delete(p) };
++  return { files, writes, adapter };
++}
++const root = '.obsidian/plugins/pdf-web-reader/.recovery';
++const base = Uint8Array.from({ length: 100000 }, (_, i) => i % 251);
++const output = new Uint8Array(base.length + 8); output.set(base); output.set([9,8,7,6,5,4,3,2], base.length);
++function input(h, id = 'first') { return { adapter: h.adapter, root, data: output, bases: [base],
++  metadata: { candidateId: id, revision: 2, status: 'pending' }, ensureDirectory: async () => {} }; }
++test('durable compact recovery shares one baseline and reconstructs exact independent bytes', async () => {
++  const h = harness(), a = await writeDeltaRecovery(input(h)), b = await writeDeltaRecovery(input(h, 'second'));
++  assert.equal(h.writes.filter(x => x.p.includes('/.bases/')).length, 1);
++  assert.equal(h.writes.filter(x => x.p.endsWith('.delta')).every(x => x.bytes === 8), true);
++  assert.deepEqual(new Uint8Array(await readDeltaRecovery(h.adapter, root, b)), output);
++  assert.equal(a.metadata.recoveryBase.file, b.metadata.recoveryBase.file);
++  assert.equal(h.writes.at(-1).p, b.metadataPath, 'completion marker is committed last');
++});
++test('non-prefix branch keeps the full recovery fallback available', async () => {
++  const h = harness(); assert.equal(await writeDeltaRecovery({ ...input(h), data: Uint8Array.from([8,7]) }), null);
++  assert.equal(h.writes.length, 0);
++});
++test('base changed after first revision cannot acknowledge a later compact recovery', async () => {
++  const h = harness(), a = await writeDeltaRecovery(input(h));
++  h.files.set(`${root}/${a.metadata.recoveryBase.file}`, new Uint8Array(base.length).buffer);
++  await assert.rejects(writeDeltaRecovery(input(h, 'second')), /校验失败/);
++  assert.equal(h.files.has(`${root}/second.json`), false);
++  await assert.rejects(readDeltaRecovery(h.adapter, root, a), /校验失败/);
++});
++test('partial delta write produces no completed revision and preserves shared baseline', async () => {
++  const h = harness(), write = h.adapter.writeBinary;
++  h.adapter.writeBinary = async (p, bytes) => write(p, p.endsWith('.delta') ? bytes.slice(0, 2) : bytes);
++  await assert.rejects(writeDeltaRecovery(input(h)), /校验失败/);
++  assert.equal(h.files.has(`${root}/first.json`), false); assert.equal(h.files.has(`${root}/first.delta`), false);
++  assert.equal([...h.files.keys()].filter(x => x.includes('/.bases/')).length, 1);
++});
++test('recovery rejects malicious paths and detects corruption at reconstruction', async () => {
++  const h = harness(), a = await writeDeltaRecovery(input(h));
++  await assert.rejects(readDeltaRecovery(h.adapter, root, { ...a, metadata: { ...a.metadata,
++    recoveryBase: { ...a.metadata.recoveryBase, file: '../user.pdf' } } }), /格式无效/);
++  h.files.set(a.candidatePath, new Uint8Array(8).buffer);
++  await assert.rejects(readDeltaRecovery(h.adapter, root, a), /校验失败/);
++});
+diff --git a/tests/pdf-sync-host.test.mjs b/tests/pdf-sync-host.test.mjs
+index 0a83202..b0ef627 100644
+--- a/tests/pdf-sync-host.test.mjs
++++ b/tests/pdf-sync-host.test.mjs
+@@ -19 +19,4 @@ async function until(check) {
+-function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false, acquireHeavyLease = null, prepareIdentities = [], mergeIdentities = [], checkpointReadGate = null, autoApply = true } = {}) {
++function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false,
++  appendPatch = null, appendFailure = null, acquireHeavyLease = null, prepareIdentities = [],
++  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null,
++  checkpointReadGate = null, autoApply = true } = {}) {
+@@ -25 +28 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+-  const calls = { merge: [], writes: 0, prepare: 0, inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, baselines: [] };
++  const calls = { merge: [], writes: 0, appends: 0, prepare: 0, inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, baselines: [] };
+@@ -31,0 +35 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
++    async list(path) { return { files: [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`)), folders: [] }; },
+@@ -34,2 +38,8 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+-    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(input.draftBytes), identities: prepareIdentities, ledger: {} }; },
+-    async merge(input) { calls.merge.push(input); return { bytes: bytes(mergeResult), conflicts: [], identities: mergeIdentities, ledger: {} }; },
++    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger }; },
++    async merge(input) {
++      calls.merge.push(input);
++      const result = { conflicts: [], identities: mergeIdentities, ledger: mergeLedger };
++      if (!mergePatch?.omitBytes) result.bytes = bytes(mergePatch?.bytes || mergeResult);
++      if (mergePatch?.patch) result.patch = mergePatch.patch;
++      return result;
++    },
+@@ -43,0 +54,11 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
++      async appendBinary(target, value) {
++        assert.equal(target, file);
++        calls.appends += 1;
++        const suffix = bytes(value);
++        if (appendFailure === "partial") {
++          disk = Uint8Array.from([...disk, ...suffix.slice(0, 1)]);
++          throw new Error("injected interrupted append");
++        }
++        if (appendFailure === "before") throw new Error("injected append failure");
++        disk = Uint8Array.from([...disk, ...suffix]);
++      },
+@@ -60 +81 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+-    ensureAdapterDirectory: async () => {}, Notice: class {},
++    ensureAdapterDirectory: async (target, path) => target.mkdir(path), Notice: class {},
+@@ -68 +89 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+-    syncCheckpointRejections: 0,
++    syncCheckpointRejections: 0, syncNeedsRefresh: false,
+@@ -677 +698,2 @@ test("last-reader release clears cached bytes, preserves checkpoint files, and f
+-    manifest.hash = "invalid-after-close";
++    if (manifest.schema === 2) manifest.checkpoint.hash = "invalid-after-close";
++    else manifest.hash = "invalid-after-close";
+@@ -781,0 +804,134 @@ test("unload aborts a queued original-file write and leaves its recovery branch
++
++test("an exact incremental patch is journaled then appended once and verified", async () => {
++  const original = bytes([1]);
++  const suffix = bytes([2, 3]);
++  const output = bytes([1, 2, 3]);
++  const h = harness({ appendPatch: { bytes: output, patch: {
++    baseLength: original.length, baseFingerprint: hash(original), suffix,
++    outputLength: output.length, outputFingerprint: hash(output),
++  } } });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    await h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
++      revision: 1, requestId: "save-append",
++    });
++    assert.equal(h.calls.appends, 1);
++    assert.equal(h.calls.writes, 0, "an exact patch uses Vault.appendBinary");
++    assert.deepEqual([...h.disk], [...output]);
++    assert.deepEqual(await h.host.listRecoveryCandidates(), [],
++      "a confirmed checkpoint remains internal merge state, not an unsaved recovery branch");
++    assert.deepEqual([...await h.host.readRecoveryCandidate({ path: h.file.path })], [...output],
++      "confirmed bytes remain available to the host after their source PDF changes");
++  } finally { h.host.dispose(); }
++});
++
++test("a prepared PDF.js prefix tail skips the full three-way merge", async () => {
++  const output = bytes([1, 4, 5]);
++  const h = harness({ appendPatch: { bytes: output } });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    await h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
++    });
++    assert.equal(h.calls.merge.length, 0,
++      "the byte-verified PDF.js tail composes with prepare metadata without reparsing three PDFs");
++    assert.equal(h.calls.appends, 1);
++    assert.equal(h.calls.writes, 0);
++    assert.deepEqual([...h.disk], [...output]);
++    assert.deepEqual([...await h.host.readRecoveryCandidate({ path: h.file.path })], [...output]);
++  } finally { h.host.dispose(); }
++});
++
++test("a partially interrupted append stays pending and is never retried blindly", async () => {
++  const original = bytes([1]);
++  const suffix = bytes([2, 3]);
++  const output = bytes([1, 2, 3]);
++  const h = harness({ appendFailure: "partial", appendPatch: { bytes: output, patch: {
++    baseLength: original.length, baseFingerprint: hash(original), suffix,
++    outputLength: output.length, outputFingerprint: hash(output),
++  } } });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
++      revision: 1, requestId: "save-interrupted-append",
++    }), /injected interrupted append/);
++    assert.equal(h.calls.appends, 1);
++    assert.equal(h.calls.writes, 0, "a partial append never falls back to a second full rewrite");
++    assert.deepEqual([...h.disk], [1, 2]);
++    const [candidate] = await h.host.listRecoveryCandidates();
++    assert.equal(candidate.metadata.status, "pending");
++    assert.equal(candidate.metadata.storage, "sync-journal");
++    assert.equal(candidate.metadata.outputLength, output.length);
++    assert.equal(candidate.metadata.outputHash, hash(output));
++    assert.deepEqual([...await h.host.readRecoveryCandidate(candidate)], [...output],
++      "the pending journal reconstructs the full intended PDF after an interrupted append");
++    h.host.schedule(h.file, "no-blind-retry");
++    await sleep(190);
++    assert.equal(h.calls.appends, 1);
++  } finally { h.host.dispose(); }
++});
++
++test("an incremental patch whose base differs from disk is never appended to that disk", async () => {
++  const h = harness({ mergeResult: [7, 7], appendPatch: { bytes: [7, 7], patch: {
++    baseLength: 2, baseFingerprint: hash(bytes([8, 8])), suffix: bytes([9]),
++    outputLength: 3, outputFingerprint: hash(bytes([8, 8, 9])),
++  } } });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    await h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
++    });
++    assert.equal(h.calls.appends, 0);
++    assert.equal(h.calls.writes, 1, "unsafe patch falls back to the verified full-write path");
++    assert.deepEqual([...h.disk], [7, 7]);
++  } finally { h.host.dispose(); }
++});
++
++test("rebase serialization alone does not request a Viewer refresh when annotation state is unchanged", async () => {
++  const identity = { uuid: "annotation-a", pageIndex: 0, kind: "square", deleted: false,
++    timestamp: 10, logical: 2, actorId: "actor-a", operationId: "operation-a" };
++  const localLedger = { documentId: "stable-document", pageFingerprints: ["page-a"], entries: [
++    { ...identity, ref: "12R", order: 0, hash: "annotation-hash" },
++  ] };
++  const rebasedLedger = { documentId: "stable-document", pageFingerprints: ["page-a"], entries: [
++    { ...identity, ref: "98R", order: 4, hash: "annotation-hash" },
++  ] };
++  const h = harness({ local: [4], mergeResult: [9, 9], prepareIdentities: [identity],
++    mergeIdentities: [identity], prepareLedger: localLedger, mergeLedger: rebasedLedger });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    await h.host.save(h.view, h.view.captureSaveRequest(), {
++      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
++    });
++    assert.equal(h.calls.merge.length, 1, "the local draft is rebased over the changed disk PDF");
++    assert.deepEqual([...h.disk], [9, 9]);
++    assert.equal(h.view.syncNeedsRefresh, false,
++      "new PDF serialization refs/order alone do not trigger a reload of the live Viewer");
++  } finally { h.host.dispose(); }
++});
++
++test("background sync rebases append a verified suffix and materialize only the Viewer reload bytes", async () => {
++  const output = bytes([2, 3]);
++  const suffix = bytes([3]);
++  const h = harness({ local: [1], dirty: true, mergePatch: { omitBytes: true, patch: {
++    baseLength: 1, baseFingerprint: hash(bytes([2])), suffix,
++    outputLength: output.length, outputFingerprint: hash(output),
++  } }, mergeResult: output, mergeLedger: { documentId: "stable-document", pageFingerprints: [], entries: [] } });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    h.host.schedule(h.file, "external-change");
++    await until(() => h.view.status.startsWith("已同步并刷新"));
++    assert.equal(h.calls.merge.at(-1).patchOnly, true);
++    assert.equal(h.calls.appends, 1);
++    assert.equal(h.calls.writes, 0, "background reconciliation uses Vault.appendBinary too");
++    assert.deepEqual([...h.disk], [...output]);
++    const apply = h.posted.find((message) => message.type === "sync-apply");
++    assert.deepEqual([...new Uint8Array(apply.data)], [...output],
++      "the verified readback is the complete buffer sent to PDF.js for its required reload");
++    assert.deepEqual(await h.host.listRecoveryCandidates(), [], "confirmed sync state is not exposed as an unsaved recovery branch");
++  } finally { h.host.dispose(); }
++});
+diff --git a/tests/plugin-host.test.mjs b/tests/plugin-host.test.mjs
+index 5168e11..a9bf898 100644
+--- a/tests/plugin-host.test.mjs
++++ b/tests/plugin-host.test.mjs
+@@ -2310 +2310 @@ test("recovery command creates a separate visible PDF copy", async () => {
+-test("recovery metadata is written before bytes and failed candidates leave no orphan", async () => {
++test("recovery completion follows verified bytes and failed candidates leave no orphan", async () => {
+@@ -2336 +2336 @@ test("recovery metadata is written before bytes and failed candidates leave no o
+-  assert.deepEqual(order, ["metadata", "binary"]);
++  assert.deepEqual(order, ["metadata", "binary", "metadata"]);
+diff --git a/tests/sync-bridge-regression.test.mjs b/tests/sync-bridge-regression.test.mjs
+index c23ece0..64b4199 100644
+--- a/tests/sync-bridge-regression.test.mjs
++++ b/tests/sync-bridge-regression.test.mjs
+@@ -20 +20 @@ const require = createRequire(import.meta.url);
+-const { prepareLocal } = require("../plugin/pdf-merge-core.cjs");
++const { prepareLocal, inspect } = require("../plugin/pdf-merge-core.cjs");
+@@ -128 +128 @@ test(
+-                      setTimeout(()=>{delete saved.rendererGeneration;iframe.contentWindow.postMessage(saved,'*');},50);
++                      setTimeout(()=>iframe.contentWindow.postMessage(saved,'*'),50);
+@@ -378 +378 @@ test(
+-      const requestCheckpoint = async (id) => {
++      const requestCheckpoint = async (id, { includeBytes = false } = {}) => {
+@@ -394 +394 @@ test(
+-        const result = await page.evaluate((requestId) => {
++        const result = await page.evaluate((requestId, captureBytes) => {
+@@ -395,0 +396,13 @@ test(
++          const checkpoint = host.checkpoints.find((entry) => entry.id === requestId);
++          let checkpointDataBase64 = null;
++          if (captureBytes && checkpoint?.data) {
++            const bytes = new Uint8Array(checkpoint.data);
++            let binary = "";
++            for (let offset = 0; offset < bytes.length; offset += 0x8000) {
++              binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
++            }
++            checkpointDataBase64 = btoa(binary);
++          }
++          const checkpointMetadata = checkpoint
++            ? Object.fromEntries(Object.entries(checkpoint).filter(([key]) => key !== "data"))
++            : null;
+@@ -397 +410,2 @@ test(
+-            checkpoint: host.checkpoints.find((entry) => entry.id === requestId),
++            checkpoint: checkpointMetadata,
++            checkpointDataBase64,
+@@ -401 +415 @@ test(
+-        }, id);
++        }, id, includeBytes);
+@@ -475 +489 @@ test(
+-      const second = await requestCheckpoint("checkpoint-after-save");
++      const second = await requestCheckpoint("checkpoint-after-save", { includeBytes: true });
+@@ -477,0 +492,3 @@ test(
++      assert.equal(second.checkpoint.dirty, false,
++        "A current-generation saved ACK should leave a clean checkpoint");
++      assert.ok(second.checkpointDataBase64, "The clean checkpoint should return its serialized PDF bytes");
+@@ -483 +500 @@ test(
+-      assert.ok(second.checkpoint.newAnnotations.some((annotation) =>
++      const retainedAssignments = second.checkpoint.newAnnotations.filter((annotation) =>
+@@ -485 +502,19 @@ test(
+-      ));
++      );
++      assert.equal(retainedAssignments.length, 1,
++        "The saved id-null editor should retain exactly one UUID assignment in the clean checkpoint");
++      const cleanCheckpointBytes = Buffer.from(second.checkpointDataBase64, "base64");
++      const cleanCheckpointInfo = await inspect({ bytes: cleanCheckpointBytes });
++      assert.equal(cleanCheckpointInfo.identities.filter((identity) =>
++        identity.kind === "square" && !identity.deleted,
++      ).length, 1, "The clean checkpoint PDF should still contain exactly one Square");
++      const refreshedPrepared = await prepareLocal({
++        baseBytes: loadedBaseBytes,
++        draftBytes: cleanCheckpointBytes,
++        checkpointBytes: Buffer.from(firstSaveHost.preparedLocal.bytesBase64, "base64"),
++        operations: second.checkpoint.operations,
++        newAnnotations: second.checkpoint.newAnnotations,
++        actorId: second.checkpoint.actorId,
++      });
++      const refreshedIdentity = refreshedPrepared.identities.find((identity) => identity.uuid === uuid);
++      assert.equal(refreshedIdentity?.runtimeId, runtimeId,
++        "The clean checkpoint should rebind the same live editor UUID to its saved PDF ref");
+diff --git a/versions.json b/versions.json
+index 38b3032..ada0a95 100644
+--- a/versions.json
++++ b/versions.json
+@@ -19 +19,2 @@
+-  "0.5.8": "1.14.4"
++  "0.5.8": "1.14.4",
++  "0.5.9": "1.14.4"
+diff --git a/viewer-adapter/obsidian-bridge.js b/viewer-adapter/obsidian-bridge.js
+index cce4cb5..1e4ef67 100644
+--- a/viewer-adapter/obsidian-bridge.js
++++ b/viewer-adapter/obsidian-bridge.js
+@@ -599,0 +600,6 @@
++      // PDF.js RPC returns a buffer owned by this request in the Viewer realm.
++      // Hand it to the host instead of retaining it and cloning the whole PDF.
++      if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength &&
++          Object.prototype.toString.call(value.buffer) === "[object ArrayBuffer]") {
++        return value.buffer;
++      }
+@@ -1476,0 +1483,3 @@
++      // A host-confirmed save does not replace the PDF.js Worker's loaded
++      // bytes. Clean live editors/tombstones still belong to this session;
++      // getData() would omit them and cannot match newAnnotations/operations.
+@@ -1478 +1487 @@
+-          app._annotationStorageModified
++          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0

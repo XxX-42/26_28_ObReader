@@ -16,23 +16,33 @@ async function until(check) {
   while (!check()) { if (Date.now() > deadline) throw new Error("host condition timed out"); await sleep(15); }
 }
 
-function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false, acquireHeavyLease = null, prepareIdentities = [], mergeIdentities = [], checkpointReadGate = null, autoApply = true } = {}) {
+function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false,
+  appendPatch = null, appendFailure = null, acquireHeavyLease = null, prepareIdentities = [],
+  mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null,
+  checkpointReadGate = null, autoApply = true } = {}) {
   let disk = bytes([1]);
   let nextId = 0;
   const stored = new Map();
   const records = [];
   const posted = [];
-  const calls = { merge: [], writes: 0, prepare: 0, inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, baselines: [] };
+  const calls = { merge: [], writes: 0, appends: 0, prepare: 0, inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, baselines: [] };
   const file = { path: "only-test-vault.pdf", basename: "only-test-vault", extension: "pdf" };
   const adapter = {
     async exists(path) { if (path.endsWith(".json")) calls.checkpointReads += 1; if (checkpointReadGate) await checkpointReadGate(); return stored.has(path); }, async mkdir(path) { stored.set(path, true); },
     async read(path) { return stored.get(path); }, async write(path, value) { stored.set(path, value); },
     async readBinary(path) { if (!stored.has(path)) throw new Error("missing"); return bytes(stored.get(path)).buffer; },
     async writeBinary(path, value) { stored.set(path, bytes(value)); },
+    async list(path) { return { files: [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`)), folders: [] }; },
   };
   const client = {
-    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(input.draftBytes), identities: prepareIdentities, ledger: {} }; },
-    async merge(input) { calls.merge.push(input); return { bytes: bytes(mergeResult), conflicts: [], identities: mergeIdentities, ledger: {} }; },
+    async prepareLocal(input) { calls.prepare += 1; return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger }; },
+    async merge(input) {
+      calls.merge.push(input);
+      const result = { conflicts: [], identities: mergeIdentities, ledger: mergeLedger };
+      if (!mergePatch?.omitBytes) result.bytes = bytes(mergePatch?.bytes || mergeResult);
+      if (mergePatch?.patch) result.patch = mergePatch.patch;
+      return result;
+    },
     async inspect(input) { calls.inspect += 1; calls.inspectInputs.push(input); return { identities: [], ledger: {} }; }, dispose() {},
   };
   const plugin = {
@@ -41,6 +51,17 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
       getAbstractFileByPath(path) { return path === file.path ? file : null; },
       async readBinary() { return disk.slice().buffer; },
       async modifyBinary(target, value) { assert.equal(target, file); calls.writes += 1; if (failWrite) throw new Error("injected disk failure"); disk = bytes(value); },
+      async appendBinary(target, value) {
+        assert.equal(target, file);
+        calls.appends += 1;
+        const suffix = bytes(value);
+        if (appendFailure === "partial") {
+          disk = Uint8Array.from([...disk, ...suffix.slice(0, 1)]);
+          throw new Error("injected interrupted append");
+        }
+        if (appendFailure === "before") throw new Error("injected append failure");
+        disk = Uint8Array.from([...disk, ...suffix]);
+      },
     } },
     enqueueSave(operation) { const promise = this.saveQueue.then(operation, operation); this.saveQueue = promise.catch(() => {}); return promise; },
     async acquireHeavyLease(view, target, reason, leaseId) {
@@ -57,7 +78,7 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
     createPdfMergeClient: () => client, sha256Bytes: hash, normalizePath: (v) => v,
     isPdfFile: (f) => f?.extension === "pdf", bytesEqual: eq,
     toArrayBuffer: (v) => bytes(v).buffer, makeToken: () => `test-actor-${++nextId}`,
-    ensureAdapterDirectory: async () => {}, Notice: class {},
+    ensureAdapterDirectory: async (target, path) => target.mkdir(path), Notice: class {},
   });
   const makeView = (documentId = "stable-document") => Object.assign(Object.create({
     syncState() { return { sdkViewState: true }; },
@@ -65,7 +86,7 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
     documentFile: file, file, ready: true, documentId, openRequest: 1, rendererGeneration: "renderer-a",
     originalBytes: bytes([1]), loadedBaseBytes: bytes([1]), currentRevision: dirty ? 2 : 0,
     confirmedRevision: 0, syncRequests: new Map(), status: "", rejectPrepare: false,
-    syncCheckpointRejections: 0,
+    syncCheckpointRejections: 0, syncNeedsRefresh: false,
     captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
     isCurrentSaveRequest(captured) { return captured.documentId === this.documentId && captured.openRequest === this.openRequest; },
     setStatus(value) { this.status = value; },
@@ -674,7 +695,8 @@ test("last-reader release clears cached bytes, preserves checkpoint files, and f
       "release only clears memory and leaves persisted recovery state intact");
 
     const manifest = JSON.parse(h.stored.get(manifestPath));
-    manifest.hash = "invalid-after-close";
+    if (manifest.schema === 2) manifest.checkpoint.hash = "invalid-after-close";
+    else manifest.hash = "invalid-after-close";
     h.stored.set(manifestPath, JSON.stringify(manifest));
     const reopened = h.makeView("reopened-document");
     reopened.ready = false;
@@ -778,4 +800,138 @@ test("unload aborts a queued original-file write and leaves its recovery branch 
   await assert.rejects(save, /卸载/);
   assert.equal(h.calls.writes, 0);
   assert.ok(h.records.some((record) => record.retained));
+});
+
+test("an exact incremental patch is journaled then appended once and verified", async () => {
+  const original = bytes([1]);
+  const suffix = bytes([2, 3]);
+  const output = bytes([1, 2, 3]);
+  const h = harness({ appendPatch: { bytes: output, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
+      revision: 1, requestId: "save-append",
+    });
+    assert.equal(h.calls.appends, 1);
+    assert.equal(h.calls.writes, 0, "an exact patch uses Vault.appendBinary");
+    assert.deepEqual([...h.disk], [...output]);
+    assert.deepEqual(await h.host.listRecoveryCandidates(), [],
+      "a confirmed checkpoint remains internal merge state, not an unsaved recovery branch");
+    assert.deepEqual([...await h.host.readRecoveryCandidate({ path: h.file.path })], [...output],
+      "confirmed bytes remain available to the host after their source PDF changes");
+  } finally { h.host.dispose(); }
+});
+
+test("a prepared PDF.js prefix tail skips the full three-way merge", async () => {
+  const output = bytes([1, 4, 5]);
+  const h = harness({ appendPatch: { bytes: output } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+    });
+    assert.equal(h.calls.merge.length, 0,
+      "the byte-verified PDF.js tail composes with prepare metadata without reparsing three PDFs");
+    assert.equal(h.calls.appends, 1);
+    assert.equal(h.calls.writes, 0);
+    assert.deepEqual([...h.disk], [...output]);
+    assert.deepEqual([...await h.host.readRecoveryCandidate({ path: h.file.path })], [...output]);
+  } finally { h.host.dispose(); }
+});
+
+test("a partially interrupted append stays pending and is never retried blindly", async () => {
+  const original = bytes([1]);
+  const suffix = bytes([2, 3]);
+  const output = bytes([1, 2, 3]);
+  const h = harness({ appendFailure: "partial", appendPatch: { bytes: output, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
+      revision: 1, requestId: "save-interrupted-append",
+    }), /injected interrupted append/);
+    assert.equal(h.calls.appends, 1);
+    assert.equal(h.calls.writes, 0, "a partial append never falls back to a second full rewrite");
+    assert.deepEqual([...h.disk], [1, 2]);
+    const [candidate] = await h.host.listRecoveryCandidates();
+    assert.equal(candidate.metadata.status, "pending");
+    assert.equal(candidate.metadata.storage, "sync-journal");
+    assert.equal(candidate.metadata.outputLength, output.length);
+    assert.equal(candidate.metadata.outputHash, hash(output));
+    assert.deepEqual([...await h.host.readRecoveryCandidate(candidate)], [...output],
+      "the pending journal reconstructs the full intended PDF after an interrupted append");
+    h.host.schedule(h.file, "no-blind-retry");
+    await sleep(190);
+    assert.equal(h.calls.appends, 1);
+  } finally { h.host.dispose(); }
+});
+
+test("an incremental patch whose base differs from disk is never appended to that disk", async () => {
+  const h = harness({ mergeResult: [7, 7], appendPatch: { bytes: [7, 7], patch: {
+    baseLength: 2, baseFingerprint: hash(bytes([8, 8])), suffix: bytes([9]),
+    outputLength: 3, outputFingerprint: hash(bytes([8, 8, 9])),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+    });
+    assert.equal(h.calls.appends, 0);
+    assert.equal(h.calls.writes, 1, "unsafe patch falls back to the verified full-write path");
+    assert.deepEqual([...h.disk], [7, 7]);
+  } finally { h.host.dispose(); }
+});
+
+test("rebase serialization alone does not request a Viewer refresh when annotation state is unchanged", async () => {
+  const identity = { uuid: "annotation-a", pageIndex: 0, kind: "square", deleted: false,
+    timestamp: 10, logical: 2, actorId: "actor-a", operationId: "operation-a" };
+  const localLedger = { documentId: "stable-document", pageFingerprints: ["page-a"], entries: [
+    { ...identity, ref: "12R", order: 0, hash: "annotation-hash" },
+  ] };
+  const rebasedLedger = { documentId: "stable-document", pageFingerprints: ["page-a"], entries: [
+    { ...identity, ref: "98R", order: 4, hash: "annotation-hash" },
+  ] };
+  const h = harness({ local: [4], mergeResult: [9, 9], prepareIdentities: [identity],
+    mergeIdentities: [identity], prepareLedger: localLedger, mergeLedger: rebasedLedger });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+    });
+    assert.equal(h.calls.merge.length, 1, "the local draft is rebased over the changed disk PDF");
+    assert.deepEqual([...h.disk], [9, 9]);
+    assert.equal(h.view.syncNeedsRefresh, false,
+      "new PDF serialization refs/order alone do not trigger a reload of the live Viewer");
+  } finally { h.host.dispose(); }
+});
+
+test("background sync rebases append a verified suffix and materialize only the Viewer reload bytes", async () => {
+  const output = bytes([2, 3]);
+  const suffix = bytes([3]);
+  const h = harness({ local: [1], dirty: true, mergePatch: { omitBytes: true, patch: {
+    baseLength: 1, baseFingerprint: hash(bytes([2])), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } }, mergeResult: output, mergeLedger: { documentId: "stable-document", pageFingerprints: [], entries: [] } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    h.host.schedule(h.file, "external-change");
+    await until(() => h.view.status.startsWith("已同步并刷新"));
+    assert.equal(h.calls.merge.at(-1).patchOnly, true);
+    assert.equal(h.calls.appends, 1);
+    assert.equal(h.calls.writes, 0, "background reconciliation uses Vault.appendBinary too");
+    assert.deepEqual([...h.disk], [...output]);
+    const apply = h.posted.find((message) => message.type === "sync-apply");
+    assert.deepEqual([...new Uint8Array(apply.data)], [...output],
+      "the verified readback is the complete buffer sent to PDF.js for its required reload");
+    assert.deepEqual(await h.host.listRecoveryCandidates(), [], "confirmed sync state is not exposed as an unsaved recovery branch");
+  } finally { h.host.dispose(); }
 });
