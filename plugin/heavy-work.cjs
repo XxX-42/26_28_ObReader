@@ -61,6 +61,18 @@ function createHeavyWorkCoordinator({ enabled, makeId }) {
       finish(active);
     }
   }
+  function cancelQueued(owner, { requestId = null, reason = null } = {}) {
+    let cancelledCount = 0;
+    for (let index = waiting.length - 1; index >= 0; index--) {
+      const entry = waiting[index];
+      if (entry.owner !== owner || (requestId !== null && entry.requestId !== requestId) ||
+          (reason !== null && entry.context?.reason !== reason)) continue;
+      waiting.splice(index, 1);
+      entry.reject(error("PDF work request was cancelled."));
+      cancelledCount += 1;
+    }
+    return cancelledCount;
+  }
   function release(owner, id) {
     if (active?.owner !== owner || active.id !== id) return false;
     active.releaseRequested = true;
@@ -72,7 +84,7 @@ function createHeavyWorkCoordinator({ enabled, makeId }) {
     for (const entry of waiting.splice(0)) entry.reject(error("PDF work coordinator is disposed."));
     if (active) { active.releaseRequested = true; finish(active); }
   }
-  return { acquire, borrow, cancel, release, dispose };
+  return { acquire, borrow, cancel, cancelQueued, release, dispose };
 }
 
 module.exports = { createHeavyWorkCoordinator };

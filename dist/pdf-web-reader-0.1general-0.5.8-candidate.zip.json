@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "releaseName": "0.1general",
+  "version": "0.5.8",
+  "sha256": "8065df558694b41121facbf636d0e908432bae727062b4d2a126b9ab98bb1f19",
+  "files": [
+    {
+      "name": "main.js",
+      "bytes": 6865750,
+      "sha256": "ea26cf307f26c411ffb61ea02102f15436bbb669412ff1a85870879bde15edfe"
+    },
+    {
+      "name": "manifest.json",
+      "bytes": 269,
+      "sha256": "77847f7c3e7848bf6d9a99861ddd18872ce2dcce4a4caf2c0e61918aec8756c5"
+    },
+    {
+      "name": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "platforms": [
+    "Windows",
+    "macOS",
+    "iPadOS"
+  ],
+  "physicalIpadValidated": false,
+  "physicalWindowsValidated": false,
+  "validation": {
+    "version": "0.5.8",
+    "baseCommit": "43cda6c3f6800c0f7dabbb0c0e6d54042ec1d0f2",
+    "status": "candidate; close functionality asserted; native cleanup failures retained",
+    "validation": {
+      "focused_close_suite": {
+        "exit_code": 0,
+        "passed": 79,
+        "failed": 0,
+        "cancelled": 0,
+        "evidence": "tests/artifacts/general-0.5.8-close-focused.log"
+      },
+      "package_runtime_suite": {
+        "passed": 14,
+        "failed": 0,
+        "evidence": "tests/artifacts/general-0.5.8-package-runtime.log"
+      },
+      "offline_smoke": {
+        "status": "passed",
+        "result": "Opened the fixture, created all five annotation types, saved and reopened them; normal browser exit.",
+        "evidence": "tests/artifacts/general-0.5.8-offline.log"
+      },
+      "native_visible_close": {
+        "environment": "ObReader-Apple-Test vault with mobile emulation; not a physical iPad test.",
+        "scenario_matrix": [
+          "desktop clean",
+          "desktop edited",
+          "desktop injected write failure",
+          "mobile-emulation clean",
+          "mobile-emulation edited",
+          "mobile-emulation injected write failure"
+        ],
+        "functional_assertions": "All six scenarios were recorded with a real visible tab close button. Edited cases began at revision 2, confirmed revision 0, and annotation storage size 1; the saved PDF contained one Square. In write-failure cases the original PDF bytes remained unchanged and at least one recovery PDF parsed successfully with one Square and revision-2 recovery metadata. Clean cases retained the original PDF bytes and no Square.",
+        "overall_run_status": "Both six-scenario runs exited with code 1 during test cleanup because one Reader view remained. The first JSON says status=passed despite its restoreError; that status is not treated as a successful run. The second JSON reports failed. Functional assertions are reported separately from process exit.",
+        "independent_cleanup": "A later cleanup record confirms only the owned unedited fixture Reader was detached, and a separate restore record confirms mobile=false and views=0.",
+        "runs": [
+          {
+            "evidence": "tests/artifacts/general-0.5.8-close-native-1791851049408.json",
+            "raw_exit_code": 1,
+            "reported_status": "passed",
+            "cleanup_views": 1,
+            "restore_error": "Expected views 0; observed 1"
+          },
+          {
+            "evidence": "tests/artifacts/general-0.5.8-close-native-1791851198280.json",
+            "raw_exit_code": 1,
+            "reported_status": "failed",
+            "restore_error": "Expected views 0; observed 1"
+          }
+        ],
+        "cleanup_evidence": [
+          "tests/artifacts/general-0.5.8-layout-cleanup.json",
+          "tests/artifacts/general-0.5.8-restored-mode.json"
+        ],
+        "earlier_attempts": "Earlier native attempts are retained. The first did not reach the close scenarios because the Square/revision setup assertion failed; later attempts failed page-visibility or precondition checks before close assertions. They are not counted as successful close checks.",
+        "physical_ipad_validated": false
+      },
+      "test_vault_deployment": {
+        "status": "passed",
+        "old_version": "0.5.7",
+        "backup": ".deploy-backups/0.5.8-target-1791851792089482000",
+        "installed_files": [
+          "main.js",
+          "manifest.json",
+          "styles.css"
+        ],
+        "preserved_file_count": 2038,
+        "retained_bytes_unchanged": true,
+        "pdf_touched": false,
+        "app_reloaded": false,
+        "evidence": "tests/artifacts/general-0.5.8-target-deployment-1791851792089482000.json"
+      },
+      "build": {
+        "status": "passed",
+        "embedded_runtime_assets": 406,
+        "verified_frozen_vendor_files": 402,
+        "payload_bytes_before_release_compression": 6567577,
+        "evidence": "tests/artifacts/general-0.5.8-final-build.log"
+      },
+      "default_suite": {
+        "full_default_suite_rerun": false,
+        "note": "The focused close suite, package runtime suite, offline smoke test, and native close scenarios are recorded separately; no full default-suite pass is claimed."
+      }
+    },
+    "independentAudit": "tests/artifacts/general-0.5.8-independent-audit.json",
+    "limits": {
+      "physical_ipad_validated": false,
+      "physical_windows_validated": false,
+      "user_pdf_touched": false,
+      "dependency_changes_in_reviewed_diff": false,
+      "frozen_vendor_changes_in_reviewed_diff": false
+    },
+    "assessment": {
+      "blocking_source_finding": false,
+      "new_product_p0_found": false,
+      "retracted_finding": "The earlier close-deadline/checkpoint timer-race concern was retracted after reviewing request ordering: an in-flight checkpoint necessarily starts before close intent, and the Viewer manual-save path waits on syncCheckpointPromise.",
+      "conclusion": "The reviewed close/quiesce and queued-only cancellation paths have no blocking source defect. Six real-button functional scenarios are evidenced for desktop and mobile emulation, including saving revision-2 edits and preserving a valid recovery PDF on injected write failure. Both native scenario processes nevertheless exited 1 on leftover-view cleanup; independent cleanup later confirmed the test vault returned to desktop mode with zero Reader views. These results do not establish a clean native-run exit or physical iPad behavior."
+    }
+  }
+}

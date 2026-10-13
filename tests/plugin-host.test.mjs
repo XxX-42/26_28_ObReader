@@ -1610,6 +1610,100 @@ test("controlled detach waits for a prepared ack and skips duplicate onClose flu
   assert.equal(view.iframe, null);
 });
 
+test("controlled close quiesces sync before prepare-close and resumes sync after a failed flush", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const { leaf, view, sent, replyClose } = await createControlledReader(
+    harness,
+    new harness.TFile("Books/close-quiesce-order.pdf"),
+  );
+  const calls = [];
+  view.plugin.pdfSync.prepareClose = async () => {
+    calls.push("quiesce");
+    assert.equal(sent.some((message) => message.type === "prepare-close"), false,
+      "sync must quiesce before the Viewer starts its close flush");
+    return true;
+  };
+  view.plugin.pdfSync.resumeClose = () => {
+    calls.push("resume");
+    return true;
+  };
+
+  const detaching = leaf.detach();
+  await Promise.resolve();
+  assert.deepEqual(calls, ["quiesce"]);
+  assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
+  replyClose({ ok: false, dirty: true, prepared: false });
+  assert.equal(await detaching, false);
+  assert.deepEqual(calls, ["quiesce", "resume"],
+    "a failed safe-save gate must release the temporary sync pause");
+  assert.equal(leaf.detached, undefined);
+  assert.equal(view.preparedClose, null);
+});
+
+test("controlled close starts its full Viewer ack budget after sync quiescence", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const { view, sent, replyClose } = await createControlledReader(
+    harness,
+    new harness.TFile("Books/close-quiesce-ack-budget.pdf"),
+  );
+  const originalNow = Date.now;
+  let now = originalNow();
+  let requestDuringQuiescence = null;
+  let ownerWindow = null;
+  Date.now = () => now;
+  view.plugin.pdfSync.prepareClose = async () => {
+    ownerWindow = view.ownerWindow;
+    requestDuringQuiescence = [...view.flushRequests.values()].at(-1);
+    assert.ok(requestDuringQuiescence);
+    assert.equal(requestDuringQuiescence.timer, null,
+      "sync quiescence must not consume the Viewer close acknowledgement timer");
+    now += 120001;
+    assert.equal(ownerWindow.fireTimeout(requestDuringQuiescence.timer), false,
+      "there must be no armed Viewer timeout while a checkpoint/cancel is settling");
+    return true;
+  };
+
+  try {
+    const preparing = view.prepareControlledClose("detach");
+    await settleMicrotasks();
+    assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
+    assert.equal(requestDuringQuiescence.deadline, now + 120000,
+      "the full 120 second budget begins at the send boundary");
+    const timer = ownerWindow.timers.get(requestDuringQuiescence.timer);
+    assert.equal(timer?.delay, 120000);
+    replyClose({ revision: 0 });
+    assert.equal(await preparing, true);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("controlled close does not message a stale or no-longer-ready Viewer after quiescence", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const { view, sent } = await createControlledReader(
+    harness,
+    new harness.TFile("Books/close-quiesce-stale-session.pdf"),
+  );
+  let resumed = 0;
+  view.plugin.pdfSync.prepareClose = async () => {
+    view.ready = false;
+    return true;
+  };
+  view.plugin.pdfSync.resumeClose = () => {
+    resumed += 1;
+    return true;
+  };
+
+  assert.equal(await view.prepareControlledClose("detach"), false);
+  assert.equal(sent.some((message) => message.type === "prepare-close"), false,
+    "the captured renderer is revalidated after close-intent quiescence");
+  assert.equal(view.flushRequests.size, 0);
+  assert.equal(resumed, 1);
+});
+
 test("failed controlled detach keeps the Reader leaf open and sends cancel-close", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

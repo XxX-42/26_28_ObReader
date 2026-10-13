@@ -10,6 +10,8 @@ function createPdfSyncHost(plugin, api) {
   const states = new WeakMap();
   const timers = new Map();
   const running = new Map();
+  const closingViews = new WeakSet();
+  const viewWork = new WeakMap();
   let disposed = false;
   let client;
   let actorId;
@@ -40,7 +42,8 @@ function createPdfSyncHost(plugin, api) {
   };
   const currentFile = (view) => view.documentFile || view.file;
   const fileViews = (file) => [...plugin.views].filter((view) =>
-    currentFile(view) === file && view.ready && !view.teardownStarted);
+    currentFile(view) === file && view.ready && !view.teardownStarted && !closingViews.has(view));
+  const closeRequested = (view) => closingViews.has(view) || view.teardownStarted;
   const hasLiveView = (file, state) => [...plugin.views].some((view) =>
     !state?.releasedViews?.has(view) && currentFile(view) === file && !view.teardownStarted);
   const getState = (file) => {
@@ -161,7 +164,11 @@ function createPdfSyncHost(plugin, api) {
     return view.postToViewer({ channel, token: view.token, rendererGeneration: view.rendererGeneration, ...message }, transfer);
   }
   function request(view, type, fields, replies, timeoutMs = 20000, transfer = []) {
-    if (disposed || view.teardownStarted || !view.ready) return Promise.reject(new Error("Reader is unavailable"));
+    if (disposed || closeRequested(view) || !view.ready) {
+      const error = new Error("Reader is unavailable");
+      error.code = "SYNC_SESSION_CHANGED";
+      return Promise.reject(error);
+    }
     const id = fields.id || makeToken();
     const documentId = view.documentId;
     const openRequest = view.openRequest;
@@ -215,11 +222,53 @@ function createPdfSyncHost(plugin, api) {
       }, timeoutMs);
       const wait = () => requestPromise.then(() => undefined, () => undefined);
       view.syncRequests.set(id, { finish, cancel, cancelFailed: failCancellation, wait, replies, documentId,
-        openRequest, rendererGeneration, type });
+        openRequest, rendererGeneration, type, fields });
       if (!post(view, { type, id, documentId, openRequest, ...fields, rendererGeneration }, transfer)) finish(null, new Error("无法发送同步请求"));
     });
     return requestPromise;
   }
+  async function quiesceView(view, { force = false } = {}) {
+    closingViews.add(view);
+    // A reconcile may be waiting for the mobile slot before it has sent a
+    // Viewer request. Cancel only that queued host job; accepted work keeps
+    // its lease until its own finally block settles.
+    plugin.heavyWork?.cancelQueued?.(view, { reason: "sync-reconcile" });
+    const unavailable = new Error("Reader is closing; the sync checkpoint is preserved.");
+    unavailable.code = "SYNC_SESSION_CHANGED";
+    const waits = [];
+    for (const [id, pending] of [...view.syncRequests.entries()]) {
+      if (force) {
+        pending.finish(null, unavailable);
+      } else if (pending.type === "sync-apply") {
+        waits.push(pending.cancel());
+      } else if (pending.type === "sync-checkpoint") {
+        // PDF.js saveDocument cannot be interrupted safely. Wait for that one
+        // serialization to finish; never start a second checkpoint for close.
+        waits.push(pending.wait());
+      } else if (pending.type === "sync-apply-prepare") {
+        // The bridge can freeze an apply before the host posts sync-apply.
+        // Cancel that prepared control so the close save can safely proceed.
+        const sent = post(view, {
+          type: "sync-apply-cancel",
+          id,
+          documentId: pending.documentId,
+          openRequest: pending.openRequest,
+        });
+        if (!sent) {
+          const error = new Error("Could not cancel the prepared PDF sync refresh.");
+          error.code = "SYNC_APPLY_CANCEL_FAILED";
+          throw error;
+        }
+        waits.push(pending.wait());
+      } else {
+        pending.finish(null, unavailable);
+      }
+    }
+    await Promise.all(waits);
+    const activeWork = viewWork.get(view);
+    if (activeWork) await activeWork;
+  }
+
   function failure(view, message) {
     view.setStatus(`同步暂停：${message}。可恢复本地副本。`, { recoveryAction: true });
     if (!view.syncFailureShown) {
@@ -391,22 +440,35 @@ function createPdfSyncHost(plugin, api) {
     }
   }
   async function reconcile(view, file) {
+    if (closeRequested(view)) return;
+    let finishViewWork;
+    const activeWork = new Promise((resolve) => { finishViewWork = resolve; });
+    viewWork.set(view, activeWork);
     const state = getState(file);
     const settle = beginState(file, state);
     let lease;
     try {
-      if (state.paused || view.syncDisabledReason) return;
+      if (closeRequested(view) || state.paused || view.syncDisabledReason) return;
       const version = state.version;
       const captured = view.captureSaveRequest();
       if (captured.file !== file) return;
       const observedRead = await plugin.app.vault.readBinary(file);
-      if (!view.isCurrentSaveRequest(captured)) return;
+      if (closeRequested(view) || !view.isCurrentSaveRequest(captured)) return;
       // Test a possible self-write before allocating base/checkpoint snapshots.
       if (equal(observedRead, captured.originalBytes) && !view.syncNeedsRefresh &&
           (!state.checkpoint || equal(observedRead, state.checkpoint))) return;
 
-      lease = await acquireHeavyLease(view, file, "sync-reconcile");
-      if (disposed || plugin.isUnloading || view.teardownStarted || currentFile(view) !== file ||
+      try {
+        lease = await acquireHeavyLease(view, file, "sync-reconcile");
+      } catch (error) {
+        if (closeRequested(view)) {
+          const cancelled = new Error("Reader closed while its sync reconcile was waiting for the shared work slot.");
+          cancelled.code = "SYNC_SESSION_CHANGED";
+          throw cancelled;
+        }
+        throw error;
+      }
+      if (disposed || plugin.isUnloading || closeRequested(view) || currentFile(view) !== file ||
           !view.isCurrentSaveRequest(captured)) return;
       if (state.version !== version) { schedule(file, "state-changed"); return; }
 
@@ -415,6 +477,7 @@ function createPdfSyncHost(plugin, api) {
       const mergeBase = copy(state.base || view.loadedBaseBytes || view.originalBytes);
       const checkpoint = state.checkpoint ? workerSnapshot(state.checkpoint) : null;
       const snapshot = await request(view, "sync-checkpoint", { heavyLeaseId: lease.id }, ["sync-checkpoint-ready", "sync-checkpoint-rejected"], 120000);
+      if (closeRequested(view)) return;
       if (snapshot.type === "sync-checkpoint-rejected" && snapshot.reason === "save-in-progress") {
         // The save queue may be waiting for this heavy lease. Release and retry
         // after this reconciliation exits instead of waiting while holding it.
@@ -423,7 +486,7 @@ function createPdfSyncHost(plugin, api) {
       }
       if (snapshot.type !== "sync-checkpoint-ready" || snapshot.ok === false || !snapshot.data) throw new Error(snapshot.reason || "无法捕获安全编辑检查点");
       let record = await recovery(view, snapshot.data, snapshot.revision, "before-auto-merge", "draft", captured);
-      if (!view.isCurrentSaveRequest(captured)) return;
+      if (closeRequested(view) || !view.isCurrentSaveRequest(captured)) return;
       const cleanWithoutCheckpoint = !checkpoint && !snapshot.operations?.length && !snapshot.newAnnotations?.length && snapshot.dirty !== true;
       const local = cleanWithoutCheckpoint ? { bytes: captured.originalBytes } : await prepare(view, snapshot, captured);
       let localBytes = local.bytes;
@@ -447,18 +510,45 @@ function createPdfSyncHost(plugin, api) {
       if (cleanWithoutCheckpoint || !((metadata?.identities || metadata?.annotations) && metadata?.ledger)) {
         metadata = await getClient().inspect({ bytes: workerSnapshot(bytes) });
       }
+      if (closeRequested(view)) return;
       const prepared = await request(view, "sync-apply-prepare", {
         expectedRevision: snapshot.revision, heavyLeaseId: lease.id,
-      }, ["sync-apply-prepared", "sync-apply-rejected"], 120000);
+      }, ["sync-apply-prepared", "sync-apply-rejected", "sync-apply-cancelled"], 120000);
+      if (closeRequested(view)) {
+        if (prepared.prepared === true) {
+          post(view, {
+            type: "sync-apply-cancel",
+            id: prepared.id,
+            documentId: captured.documentId,
+            openRequest: captured.openRequest,
+            heavyLeaseId: lease.id,
+          });
+        }
+        return;
+      }
       if (prepared.ok !== true || prepared.prepared !== true) { schedule(file, "new-revision"); return; }
       try {
         await plugin.enqueueSave(async () => {
-          if (disposed || plugin.isUnloading || view.teardownStarted) throw new Error("Reader 已关闭；同步检查点已保留");
+          if (disposed || plugin.isUnloading || closeRequested(view)) {
+            const error = new Error("Reader closing; sync checkpoint is preserved.");
+            error.code = "SYNC_SESSION_CHANGED";
+            throw error;
+          }
           if (!view.isCurrentSaveRequest(captured) || state.version !== version) { schedule(file, "queue-changed"); return; }
           const latest = await plugin.app.vault.readBinary(file);
+          if (closeRequested(view)) {
+            const error = new Error("Reader closing; sync checkpoint is preserved.");
+            error.code = "SYNC_SESSION_CHANGED";
+            throw error;
+          }
           if (!equal(latest, observed)) { schedule(file, "disk-changed"); return; }
           if (!cleanWithoutCheckpoint) await persistCheckpoint(file, state, bytes, mergeBase);
           else { state.base = copy(bytes); state.version += 1; }
+          if (closeRequested(view)) {
+            const error = new Error("Reader closing; sync checkpoint is preserved.");
+            error.code = "SYNC_SESSION_CHANGED";
+            throw error;
+          }
           if (!equal(bytes, observed) && !(await verifiedWrite(file, bytes, observed, state, () => view.isCurrentSaveRequest(captured)))) { schedule(file, "disk-changed"); return; }
           if (!cleanWithoutCheckpoint) await confirmCheckpoint(file, state, bytes);
           plugin.setDocumentBaseline(file.path, matchingSnapshot(state, bytes));
@@ -474,6 +564,22 @@ function createPdfSyncHost(plugin, api) {
           // forward. Match that next request within the captured renderer realm.
           view.openRequest = newOpenRequest;
           const applied = await apply;
+          if (applied.type === "sync-apply-cancelled" && closeRequested(view)) {
+            // The host advances openRequest before awaiting the Viewer apply so
+            // an eventual sync-applied can be matched to its new session. A
+            // confirmed close cancellation leaves the old Viewer document
+            // live, so restore that request before the close flush is sent.
+            if (view.documentId === captured.documentId &&
+                view.openRequest === newOpenRequest &&
+                view.rendererGeneration === captured.rendererGeneration &&
+                currentFile(view) === file && !view.teardownStarted) {
+              view.openRequest = previousOpenRequest;
+              view.syncNeedsRefresh = true;
+            }
+            const error = new Error("Reader close canceled the pending sync refresh; its recovery checkpoint is preserved.");
+            error.code = "SYNC_SESSION_CHANGED";
+            throw error;
+          }
           if (applied.ok !== true || applied.type !== "sync-applied") throw new Error(applied.reason || "合并后 Viewer 刷新失败");
           if (currentFile(view) !== file || view.documentId !== captured.documentId || view.openRequest !== newOpenRequest || (captured.rendererGeneration && view.rendererGeneration !== captured.rendererGeneration) || view.teardownStarted) throw new Error("刷新完成时 Reader 已切换；保留原文档恢复副本");
           const baseline = matchingSnapshot(state, bytes);
@@ -489,7 +595,9 @@ function createPdfSyncHost(plugin, api) {
           if (!merged.conflicts?.length) await plugin.removeRecoveryCandidate(record);
         });
       } catch (error) {
-        await plugin.markRecoveryCandidate(record, { status: "conflict", error: error.message });
+        if (error.code !== "SYNC_SESSION_CHANGED") {
+          await plugin.markRecoveryCandidate(record, { status: "conflict", error: error.message });
+        }
         throw error;
       } finally {
         post(view, { type: "sync-apply-cancel", id: prepared.id, documentId: captured.documentId, openRequest: captured.openRequest, heavyLeaseId: lease.id });
@@ -497,6 +605,8 @@ function createPdfSyncHost(plugin, api) {
     } finally {
       lease?.release();
       settle();
+      if (viewWork.get(view) === activeWork) viewWork.delete(view);
+      finishViewWork();
     }
   }
   function schedule(file, reason) {
@@ -511,7 +621,7 @@ function createPdfSyncHost(plugin, api) {
         for (const view of fileViews(file)) {
           try { await reconcile(view, file); }
           catch (error) {
-            if (view.teardownStarted || disposed || currentFile(view) !== file || error.code === "SYNC_SESSION_CHANGED") continue;
+            if (closeRequested(view) || disposed || currentFile(view) !== file || error.code === "SYNC_SESSION_CHANGED") continue;
             const state = getState(file);
             state.paused = true;
             state.failure = error.message;
@@ -526,6 +636,20 @@ function createPdfSyncHost(plugin, api) {
   }
   return {
     actorId, initializeView, save, schedule, prepareRecovery, showFailure: failure,
+    prepareClose(view) {
+      closingViews.add(view);
+      if (!view.syncRequests.size && !viewWork.has(view)) {
+        return Promise.resolve(true);
+      }
+      return quiesceView(view).then(() => true);
+    },
+    resumeClose(view) {
+      if (view.teardownStarted || !closingViews.has(view)) return false;
+      closingViews.delete(view);
+      const file = currentFile(view);
+      if (file && view.ready) schedule(file, "close-cancelled");
+      return true;
+    },
     checkOpenViews(reason) { for (const view of plugin.views) schedule(currentFile(view), reason); },
     handleMessage(view, message) {
       if (!message.type?.startsWith("sync-")) return false;
@@ -565,15 +689,7 @@ function createPdfSyncHost(plugin, api) {
     },
     async closeView(view, reason = "Reader closed", { force = false } = {}) {
       force = force || reason === "renderer-replaced";
-      const error = new Error(reason);
-      error.code = "SYNC_SESSION_CHANGED";
-      const waits = [];
-      for (const pending of [...view.syncRequests.values()]) {
-        if (pending.type === "sync-apply" && !force) waits.push(pending.cancel());
-        else if (pending.type === "sync-checkpoint" && !force) waits.push(pending.wait());
-        else pending.finish(null, error);
-      }
-      await Promise.all(waits);
+      await quiesceView(view, { force });
     },
     releaseView(view, file = currentFile(view)) {
       if (!file) return false;

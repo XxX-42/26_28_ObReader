@@ -1,6 +1,10 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-## 当前 0.5.7 iPad 手指导航（2026-10-13）
+## 当前 0.5.8 编辑后关闭协调（2026-10-13）
+
+三端统一 0.5.8。关闭意图先协调该 Reader 的同步 checkpoint／apply，阻止后续刷新，然后等待当前修订保存或持久恢复确认后执行原生关闭。失败关闭恢复调度；预期取消不误记为永久同步冲突，不强制丢弃编辑或提前释放重任务槽。只修改共用生命周期与相应桥接入口，冻结 Viewer 和锁定依赖不变。指定测试库验证与交付状态见 GENERAL_ACCEPTANCE.md；iPad 实机待用户确认，0.5.7 保留回滚。
+
+## 历史 0.5.7 iPad 手指导航（2026-10-13）
 
 三端统一 0.5.7。工具启用后，PDF 页面手指只能滑动，不可选中文本；Pencil、鼠标、工具控件与文字输入保留原功能。只修改自有输入适配层，冻结 Viewer、保存和同步协议保持不变。当前验证范围与交付记录见 GENERAL_ACCEPTANCE.md；0.5.6 包保留回滚，实体 iPad 行为仍待用户确认。
 
@@ -16,7 +20,7 @@
 本轮原生验证仅 `/Users/jiajia/Documents/ObReader-Apple-Test`，主库和此前 `远程仓库1` 部署目录不操作。保留 0.5.4 回滚包；当前验证与交付见 GENERAL_ACCEPTANCE.md。Mac 移动模拟不代表实体 iPad 内存／崩溃验收。
 
 
-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.7），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.8），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
 
 ## 历史：0.5.4 自适应工具栏、惯性滚动与 Pencil 高亮
 

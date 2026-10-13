@@ -1917,6 +1917,12 @@
     }
     if (control.phase !== "applying") {
       clearSyncApplyControl(control);
+      postToHost("sync-apply-cancelled", {
+        id: control.id,
+        documentId: control.documentId,
+        openRequest: control.openRequest,
+        ok: true,
+      });
       return;
     }
     let result;

@@ -1,0 +1,915 @@
+diff --git a/GENERAL_ACCEPTANCE.md b/GENERAL_ACCEPTANCE.md
+index a842ea8..c8caf6f 100644
+--- a/GENERAL_ACCEPTANCE.md
++++ b/GENERAL_ACCEPTANCE.md
+@@ -1 +1 @@
+-# 0.1general 通用候选（插件 0.5.7）
++# 0.1general 通用候选（插件 0.5.8）
+@@ -3 +3,17 @@
+-## 当前：0.5.7 iPad 工具启用时手指仅导航（2026-10-13）
++## 当前：0.5.8 编辑后关闭协调（2026-10-13）
++
++关闭标签页先登记关闭意图，阻止该 Reader 启动新的同步刷新；已有 checkpoint 安全完成，已准备／进行中的 apply 使用现有取消协议确认结束，再向 Viewer 请求关闭保存或当前修订的持久恢复副本。预期的关闭取消不伪装成成功刷新，也不将文件永久暂停。撤销／失败关闭会恢复同步调度。关闭确认计时在协调完成后启动，不向 Viewer 发送已失效的关闭请求。
++
++不强制丢弃编辑，不将失败取消当成功，不提前释放重任务槽。大 PDF 的序列化、已接受写回或失败恢复仍可能需要等待；只有确认当前修订安全后才关闭。Windows、macOS、iPadOS 共用源码与三文件，版本 0.5.8。依赖、冻结 Viewer、自动保存间隔和恢复格式保持不变；0.5.7 回滚包保留。实机 iPad 仍待用户复验。
++
++### 0.5.8 验证与交付
++
++关闭协调回归 **79/79**、打包与无 Node 启动 **14/14**、离线五工具及保存重开退出 **0**。指定独立测试库中，桌面／移动模拟各自的未编辑、编辑后保存关闭、写入失败保留恢复副本，共六项真实关闭按钮功能断言通过。两次完整原生驱动均在恢复模拟状态时因残留测试 Reader 退出 **1**；第一份原始 JSON 错记 passed，不作为整次通过。后续独立清理与恢复记录确认 desktop、Reader 为 0。不修改失败原始证据，不以模拟耗时代替 iPad 实机表现。
++
++未重跑默认全套，不重标历史失败；本轮只验证关闭影响范围。独立审计无阻断项。此前关闭计时／checkpoint 竞争的推测经顺序复核已撤回，不作为已证实根因。已有同步 apply 未结束而阻塞关闭的顺序问题已通过关闭意图与终态取消握手修复；PDF 序列化及已接受写入仍安全等待。
++
++[0.5.8 三文件候选](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip) SHA-256：`8065df558694b41121facbf636d0e908432bae727062b4d2a126b9ab98bb1f19`。附 [源码差异](dist/general-0.1general-0.5.8-source.diff)、[证据包](dist/general-0.1general-0.5.8-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.8-SHA256SUMS.txt)。独立审计、原生失败和恢复记录均归档。
++
++按明确授权先备份再替换“远程仓库1”三文件，备份 `.deploy-backups/0.5.8-target-1791851792089482000`；其他 **2038** 个文件哈希不变，保留设置、缓存、恢复和同步检查点，未操作 PDF 或重载主实例。0.5.7 回滚包保持原哈希。旧版本标签页已卡住时，先尝试手动保存或确认恢复副本，再重启加载 0.5.8；不要强退来证明安全关闭。Windows／实体 iPad 待用户复验。正常推送 main，不创建 Release。
++
++## 历史：0.5.7 iPad 工具启用时手指仅导航（2026-10-13）
+diff --git a/MACOS_HANDOFF.md b/MACOS_HANDOFF.md
+index af5a6c3..b23f225 100644
+--- a/MACOS_HANDOFF.md
++++ b/MACOS_HANDOFF.md
+@@ -3 +3,5 @@
+-## 当前 0.5.7 iPad 手指导航（2026-10-13）
++## 当前 0.5.8 编辑后关闭协调（2026-10-13）
++
++三端统一 0.5.8。关闭意图先协调该 Reader 的同步 checkpoint／apply，阻止后续刷新，然后等待当前修订保存或持久恢复确认后执行原生关闭。失败关闭恢复调度；预期取消不误记为永久同步冲突，不强制丢弃编辑或提前释放重任务槽。只修改共用生命周期与相应桥接入口，冻结 Viewer 和锁定依赖不变。指定测试库验证与交付状态见 GENERAL_ACCEPTANCE.md；iPad 实机待用户确认，0.5.7 保留回滚。
++
++## 历史 0.5.7 iPad 手指导航（2026-10-13）
+@@ -19 +23 @@
+-本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.7），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
++本项目将带自定义批注功能的 Mozilla PDF.js Viewer 集成到 Obsidian 插件。当前阶段是 0.1general 通用候选（插件 0.5.8），目标为 Windows、macOS 和 iPadOS 共用同一源码与三文件插件。当前范围及验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 保留 0.3.0 iPad 鼠标候选的历史记录与验收矩阵，[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md) 保留早期 macOS 证据。
+diff --git a/README.md b/README.md
+index 1dcbe07..f26de48 100644
+--- a/README.md
++++ b/README.md
+@@ -9 +9 @@ The current work is the **0.1general unified candidate (plugin
+-0.5.7)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
++0.5.8)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+@@ -16 +16,8 @@ acceptance remain for the user.
+-The latest [0.5.7 three-file package](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip)
++The latest [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
++coordinates outstanding sync work before requesting a safe Reader close. It stops
++new refreshes, safely settles a running checkpoint/apply, then confirms saving or
++a current durable recovery copy before the native tab is detached. Failed
++cancellation or unconfirmed edits keep the Reader open; slow PDF serialization
++still needs to finish safely.
++
++The prior [0.5.7 package](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip)
+@@ -86 +93 @@ CDP endpoint for each run rather than assuming a fixed port. The earlier approve
+-0.5.5 scroll-fix replacement was separately authorized. The current 0.5.7 delivery
++0.5.5 scroll-fix replacement was separately authorized. The current 0.5.8 delivery
+@@ -89 +96 @@ preserving settings, cache and recovery, with no PDF operations. Save and
+-close Reader tabs before installing the three matching 0.5.7 files, and preserve
++close Reader tabs before installing the three matching 0.5.8 files, and preserve
+diff --git a/manifest.json b/manifest.json
+index ffb952d..2db82d8 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.7",
++  "version": "0.5.8",
+diff --git a/plugin/heavy-work.cjs b/plugin/heavy-work.cjs
+index 96f3030..ca3e847 100644
+--- a/plugin/heavy-work.cjs
++++ b/plugin/heavy-work.cjs
+@@ -63,0 +64,12 @@ function createHeavyWorkCoordinator({ enabled, makeId }) {
++  function cancelQueued(owner, { requestId = null, reason = null } = {}) {
++    let cancelledCount = 0;
++    for (let index = waiting.length - 1; index >= 0; index--) {
++      const entry = waiting[index];
++      if (entry.owner !== owner || (requestId !== null && entry.requestId !== requestId) ||
++          (reason !== null && entry.context?.reason !== reason)) continue;
++      waiting.splice(index, 1);
++      entry.reject(error("PDF work request was cancelled."));
++      cancelledCount += 1;
++    }
++    return cancelledCount;
++  }
+@@ -75 +87 @@ function createHeavyWorkCoordinator({ enabled, makeId }) {
+-  return { acquire, borrow, cancel, release, dispose };
++  return { acquire, borrow, cancel, cancelQueued, release, dispose };
+diff --git a/plugin/main.js b/plugin/main.js
+index d89b16e..60421eb 100644
+--- a/plugin/main.js
++++ b/plugin/main.js
+@@ -1521,0 +1522,5 @@ class PdfReaderView extends EditableFileView {
++    // A controlled close does not consume its Viewer-ack budget while the
++    // host is quiescing sync work. Its deadline is assigned immediately before
++    // prepare-close is posted; owner-window rebinding during quiesce can call
++    // this method, so leave an unarmed request alone until then.
++    if (!Number.isFinite(request.deadline)) return;
+@@ -1631,0 +1637 @@ class PdfReaderView extends EditableFileView {
++      this.plugin.pdfSync?.resumeClose(this);
+@@ -1687 +1693 @@ class PdfReaderView extends EditableFileView {
+-      deadline: Date.now() + 120000,
++      deadline: null,
+@@ -1715,0 +1722 @@ class PdfReaderView extends EditableFileView {
++    let keepCloseIntent = false;
+@@ -1716,0 +1724,30 @@ class PdfReaderView extends EditableFileView {
++      try {
++        // Stop cross-device reconciliation before asking the Viewer to flush.
++        // In particular, an in-flight apply must reach its cancellation gate
++        // before prepare-close can freeze the annotation editor.
++        await this.plugin.pdfSync?.prepareClose?.(this);
++      } catch (error) {
++        request.finish({ ok: false, dirty: true });
++        new Notice(
++          `PDF 标签保持打开：同步刷新未能安全结束，恢复副本已保留。${error?.message ? ` ${error.message}` : ""}`,
++          8000,
++        );
++        return false;
++      }
++      const stillCurrent =
++        !request.settled &&
++        !this.plugin.isUnloading &&
++        this.documentId === documentId &&
++        this.openRequest === openRequest &&
++        this.ready &&
++        this.iframe === request.iframe &&
++        this.closePreparation === pending;
++      if (!stillCurrent) {
++        request.finish({ ok: false, dirty: true });
++        return false;
++      }
++      // Quiescing can safely spend time stopping a background sync checkpoint
++      // or apply. Give the Viewer a fresh, complete acknowledgement window
++      // only after that work has settled and the captured session is rechecked.
++      request.deadline = Date.now() + 120000;
++      this.scheduleFlushTimeout(request, this.ownerWindow);
+@@ -1754,0 +1792 @@ class PdfReaderView extends EditableFileView {
++      keepCloseIntent = true;
+@@ -1765,0 +1804 @@ class PdfReaderView extends EditableFileView {
++      if (!keepCloseIntent) this.plugin.pdfSync?.resumeClose(this);
+@@ -3441 +3480 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
+-    const context = { file, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
++    const context = { file, reason, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+diff --git a/plugin/manifest.json b/plugin/manifest.json
+index ffb952d..2db82d8 100644
+--- a/plugin/manifest.json
++++ b/plugin/manifest.json
+@@ -4 +4 @@
+-  "version": "0.5.7",
++  "version": "0.5.8",
+diff --git a/plugin/pdf-sync-host.cjs b/plugin/pdf-sync-host.cjs
+index 2f6f217..ea9ae0a 100644
+--- a/plugin/pdf-sync-host.cjs
++++ b/plugin/pdf-sync-host.cjs
+@@ -12,0 +13,2 @@ function createPdfSyncHost(plugin, api) {
++  const closingViews = new WeakSet();
++  const viewWork = new WeakMap();
+@@ -43 +45,2 @@ function createPdfSyncHost(plugin, api) {
+-    currentFile(view) === file && view.ready && !view.teardownStarted);
++    currentFile(view) === file && view.ready && !view.teardownStarted && !closingViews.has(view));
++  const closeRequested = (view) => closingViews.has(view) || view.teardownStarted;
+@@ -164 +167,5 @@ function createPdfSyncHost(plugin, api) {
+-    if (disposed || view.teardownStarted || !view.ready) return Promise.reject(new Error("Reader is unavailable"));
++    if (disposed || closeRequested(view) || !view.ready) {
++      const error = new Error("Reader is unavailable");
++      error.code = "SYNC_SESSION_CHANGED";
++      return Promise.reject(error);
++    }
+@@ -218 +225 @@ function createPdfSyncHost(plugin, api) {
+-        openRequest, rendererGeneration, type });
++        openRequest, rendererGeneration, type, fields });
+@@ -222,0 +230,42 @@ function createPdfSyncHost(plugin, api) {
++  async function quiesceView(view, { force = false } = {}) {
++    closingViews.add(view);
++    // A reconcile may be waiting for the mobile slot before it has sent a
++    // Viewer request. Cancel only that queued host job; accepted work keeps
++    // its lease until its own finally block settles.
++    plugin.heavyWork?.cancelQueued?.(view, { reason: "sync-reconcile" });
++    const unavailable = new Error("Reader is closing; the sync checkpoint is preserved.");
++    unavailable.code = "SYNC_SESSION_CHANGED";
++    const waits = [];
++    for (const [id, pending] of [...view.syncRequests.entries()]) {
++      if (force) {
++        pending.finish(null, unavailable);
++      } else if (pending.type === "sync-apply") {
++        waits.push(pending.cancel());
++      } else if (pending.type === "sync-checkpoint") {
++        // PDF.js saveDocument cannot be interrupted safely. Wait for that one
++        // serialization to finish; never start a second checkpoint for close.
++        waits.push(pending.wait());
++      } else if (pending.type === "sync-apply-prepare") {
++        // The bridge can freeze an apply before the host posts sync-apply.
++        // Cancel that prepared control so the close save can safely proceed.
++        const sent = post(view, {
++          type: "sync-apply-cancel",
++          id,
++          documentId: pending.documentId,
++          openRequest: pending.openRequest,
++        });
++        if (!sent) {
++          const error = new Error("Could not cancel the prepared PDF sync refresh.");
++          error.code = "SYNC_APPLY_CANCEL_FAILED";
++          throw error;
++        }
++        waits.push(pending.wait());
++      } else {
++        pending.finish(null, unavailable);
++      }
++    }
++    await Promise.all(waits);
++    const activeWork = viewWork.get(view);
++    if (activeWork) await activeWork;
++  }
++
+@@ -393,0 +443,4 @@ function createPdfSyncHost(plugin, api) {
++    if (closeRequested(view)) return;
++    let finishViewWork;
++    const activeWork = new Promise((resolve) => { finishViewWork = resolve; });
++    viewWork.set(view, activeWork);
+@@ -398 +451 @@ function createPdfSyncHost(plugin, api) {
+-      if (state.paused || view.syncDisabledReason) return;
++      if (closeRequested(view) || state.paused || view.syncDisabledReason) return;
+@@ -403 +456 @@ function createPdfSyncHost(plugin, api) {
+-      if (!view.isCurrentSaveRequest(captured)) return;
++      if (closeRequested(view) || !view.isCurrentSaveRequest(captured)) return;
+@@ -408,2 +461,11 @@ function createPdfSyncHost(plugin, api) {
+-      lease = await acquireHeavyLease(view, file, "sync-reconcile");
+-      if (disposed || plugin.isUnloading || view.teardownStarted || currentFile(view) !== file ||
++      try {
++        lease = await acquireHeavyLease(view, file, "sync-reconcile");
++      } catch (error) {
++        if (closeRequested(view)) {
++          const cancelled = new Error("Reader closed while its sync reconcile was waiting for the shared work slot.");
++          cancelled.code = "SYNC_SESSION_CHANGED";
++          throw cancelled;
++        }
++        throw error;
++      }
++      if (disposed || plugin.isUnloading || closeRequested(view) || currentFile(view) !== file ||
+@@ -417,0 +480 @@ function createPdfSyncHost(plugin, api) {
++      if (closeRequested(view)) return;
+@@ -426 +489 @@ function createPdfSyncHost(plugin, api) {
+-      if (!view.isCurrentSaveRequest(captured)) return;
++      if (closeRequested(view) || !view.isCurrentSaveRequest(captured)) return;
+@@ -449,0 +513 @@ function createPdfSyncHost(plugin, api) {
++      if (closeRequested(view)) return;
+@@ -452 +516,13 @@ function createPdfSyncHost(plugin, api) {
+-      }, ["sync-apply-prepared", "sync-apply-rejected"], 120000);
++      }, ["sync-apply-prepared", "sync-apply-rejected", "sync-apply-cancelled"], 120000);
++      if (closeRequested(view)) {
++        if (prepared.prepared === true) {
++          post(view, {
++            type: "sync-apply-cancel",
++            id: prepared.id,
++            documentId: captured.documentId,
++            openRequest: captured.openRequest,
++            heavyLeaseId: lease.id,
++          });
++        }
++        return;
++      }
+@@ -456 +532,5 @@ function createPdfSyncHost(plugin, api) {
+-          if (disposed || plugin.isUnloading || view.teardownStarted) throw new Error("Reader 已关闭；同步检查点已保留");
++          if (disposed || plugin.isUnloading || closeRequested(view)) {
++            const error = new Error("Reader closing; sync checkpoint is preserved.");
++            error.code = "SYNC_SESSION_CHANGED";
++            throw error;
++          }
+@@ -458,0 +539,5 @@ function createPdfSyncHost(plugin, api) {
++          if (closeRequested(view)) {
++            const error = new Error("Reader closing; sync checkpoint is preserved.");
++            error.code = "SYNC_SESSION_CHANGED";
++            throw error;
++          }
+@@ -461,0 +547,5 @@ function createPdfSyncHost(plugin, api) {
++          if (closeRequested(view)) {
++            const error = new Error("Reader closing; sync checkpoint is preserved.");
++            error.code = "SYNC_SESSION_CHANGED";
++            throw error;
++          }
+@@ -476,0 +567,16 @@ function createPdfSyncHost(plugin, api) {
++          if (applied.type === "sync-apply-cancelled" && closeRequested(view)) {
++            // The host advances openRequest before awaiting the Viewer apply so
++            // an eventual sync-applied can be matched to its new session. A
++            // confirmed close cancellation leaves the old Viewer document
++            // live, so restore that request before the close flush is sent.
++            if (view.documentId === captured.documentId &&
++                view.openRequest === newOpenRequest &&
++                view.rendererGeneration === captured.rendererGeneration &&
++                currentFile(view) === file && !view.teardownStarted) {
++              view.openRequest = previousOpenRequest;
++              view.syncNeedsRefresh = true;
++            }
++            const error = new Error("Reader close canceled the pending sync refresh; its recovery checkpoint is preserved.");
++            error.code = "SYNC_SESSION_CHANGED";
++            throw error;
++          }
+@@ -492 +598,3 @@ function createPdfSyncHost(plugin, api) {
+-        await plugin.markRecoveryCandidate(record, { status: "conflict", error: error.message });
++        if (error.code !== "SYNC_SESSION_CHANGED") {
++          await plugin.markRecoveryCandidate(record, { status: "conflict", error: error.message });
++        }
+@@ -499,0 +608,2 @@ function createPdfSyncHost(plugin, api) {
++      if (viewWork.get(view) === activeWork) viewWork.delete(view);
++      finishViewWork();
+@@ -514 +624 @@ function createPdfSyncHost(plugin, api) {
+-            if (view.teardownStarted || disposed || currentFile(view) !== file || error.code === "SYNC_SESSION_CHANGED") continue;
++            if (closeRequested(view) || disposed || currentFile(view) !== file || error.code === "SYNC_SESSION_CHANGED") continue;
+@@ -528,0 +639,14 @@ function createPdfSyncHost(plugin, api) {
++    prepareClose(view) {
++      closingViews.add(view);
++      if (!view.syncRequests.size && !viewWork.has(view)) {
++        return Promise.resolve(true);
++      }
++      return quiesceView(view).then(() => true);
++    },
++    resumeClose(view) {
++      if (view.teardownStarted || !closingViews.has(view)) return false;
++      closingViews.delete(view);
++      const file = currentFile(view);
++      if (file && view.ready) schedule(file, "close-cancelled");
++      return true;
++    },
+@@ -568,9 +692 @@ function createPdfSyncHost(plugin, api) {
+-      const error = new Error(reason);
+-      error.code = "SYNC_SESSION_CHANGED";
+-      const waits = [];
+-      for (const pending of [...view.syncRequests.values()]) {
+-        if (pending.type === "sync-apply" && !force) waits.push(pending.cancel());
+-        else if (pending.type === "sync-checkpoint" && !force) waits.push(pending.wait());
+-        else pending.finish(null, error);
+-      }
+-      await Promise.all(waits);
++      await quiesceView(view, { force });
+diff --git a/tests/heavy-work.test.mjs b/tests/heavy-work.test.mjs
+index 54c3e5d..e5964c9 100644
+--- a/tests/heavy-work.test.mjs
++++ b/tests/heavy-work.test.mjs
+@@ -86,0 +87,53 @@ test('closing a Reader cannot unlock a still-running host-owned parser', async (
++
++test('cancelQueued rejects only the owner and reason match without touching active work or borrowers', async () => {
++  const work = harness(), owner = {}, otherOwner = {}, file = {};
++  const base = { file, documentId: 'doc', openRequest: 1, rendererGeneration: 'r' };
++  const active = await work.acquire(owner, { ...base, reason: 'sync-reconcile' });
++  const borrower = work.borrow(owner, base, active.id);
++  const grants = [];
++
++  const target = work.acquire(owner, { ...base, reason: 'sync-reconcile' }, { requestId: 'reconcile-queued' });
++  const targetRejected = assert.rejects(target, /cancelled/);
++  const sameOwnerSave = work.acquire(owner, { ...base, reason: 'save' }).then((lease) => {
++    grants.push('save'); return lease;
++  });
++  const sameOwnerOtherReason = work.acquire(owner, { ...base, reason: 'sync-initialize' }).then((lease) => {
++    grants.push('initialize'); return lease;
++  });
++  const otherOwnerReconcile = work.acquire(otherOwner, { ...base, reason: 'sync-reconcile' }).then((lease) => {
++    grants.push('other-owner'); return lease;
++  });
++
++  assert.equal(work.cancelQueued(owner, { reason: 'sync-reconcile' }), 1);
++  await targetRejected;
++  assert.equal(work.cancelQueued(owner, { reason: 'sync-reconcile' }), 0);
++  active.release();
++  await turn();
++  assert.deepEqual(grants, [], 'release request cannot unlock active host parsing while a borrower remains');
++
++  borrower.release();
++  const saveLease = await sameOwnerSave;
++  assert.deepEqual(grants, ['save'], 'same-owner save remains queued and runs first');
++  saveLease.release();
++  const initializeLease = await sameOwnerOtherReason;
++  assert.deepEqual(grants, ['save', 'initialize'], 'same-owner work with another reason remains queued');
++  initializeLease.release();
++  const otherLease = await otherOwnerReconcile;
++  assert.deepEqual(grants, ['save', 'initialize', 'other-owner'], 'another owner remains untouched');
++  otherLease.release();
++  work.dispose();
++});
++
++test('cancelQueued can additionally narrow a queued cancellation by request id', async () => {
++  const work = harness(), owner = {};
++  const active = await work.acquire({}, {});
++  const target = work.acquire(owner, { reason: 'sync-reconcile' }, { requestId: 'target' });
++  const targetRejected = assert.rejects(target, /cancelled/);
++  const survivor = work.acquire(owner, { reason: 'sync-reconcile' }, { requestId: 'survivor' });
++  assert.equal(work.cancelQueued(owner, { requestId: 'target', reason: 'sync-reconcile' }), 1);
++  await targetRejected;
++  active.release();
++  const survivorLease = await survivor;
++  survivorLease.release();
++  work.dispose();
++});
+diff --git a/tests/native-close-button.mjs b/tests/native-close-button.mjs
+new file mode 100644
+index 0000000..ada428e
+--- /dev/null
++++ b/tests/native-close-button.mjs
+@@ -0,0 +1,62 @@
++import assert from 'node:assert/strict';
++import fs from 'node:fs/promises';
++import path from 'node:path';
++import crypto from 'node:crypto';
++import puppeteer from 'puppeteer-core';
++import { PDFDocument, PDFName } from 'pdf-lib';
++import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
++const {vault,configDir,cdpUrl}=nativeConfig;
++assert.equal(vault,'/Users/jiajia/Documents/ObReader-Apple-Test');assert.ok(cdpUrl);
++const version='0.5.8',run=`general-${version}-close-native-${Date.now()}`,prefix=`PDF迁移测试/${run}`,report={run,version,vault,status:'running',physicalIpadValidated:false,primaryVaultTouched:false,checks:[]};
++const bytes=await fs.readFile('tests/fixtures/tracemonkey.pdf'),hash=x=>crypto.createHash('sha256').update(x).digest('hex');
++await fs.writeFile(`tests/artifacts/${run}.driver.mjs`,await fs.readFile(import.meta.filename),{flag:'wx'});
++const b=await puppeteer.connect({browserURL:cdpUrl,defaultViewport:null});const p=(await b.pages()).find(p=>p.url()==='app://obsidian.md/index.html');assert.ok(p);const c=await p.createCDPSession();let original,failure;
++async function identity(){const s=await p.evaluate(()=>({vault:app.vault.adapter.basePath,configDir:app.vault.configDir,version:app.plugins.plugins['pdf-web-reader']?.manifest.version,mobile:!!app.isMobile,views:app.plugins.plugins['pdf-web-reader']?.views.size}));assertNativeVaultIdentity(s);assert.equal(s.version,version);return s;}
++async function root(fn,arg){await identity();return p.evaluate(async({source,arg,vault})=>{if(app.vault.adapter.basePath!==vault)throw Error('Wrong Vault');return (0,eval)(`(${source})`)(arg);},{source:fn.toString(),arg,vault});}
++async function doc(file,fn,arg){return root(({file,source,arg})=>{const v=[...app.plugins.plugins['pdf-web-reader'].views].find(v=>v.requestedPath===file);if(!v)throw Error('Own Reader missing');const w=v.iframe.contentWindow;return (0,eval)(`(${source})`)({v,w,d:w.document,a:w.PDFViewerApplication,arg});},{file,source:fn.toString(),arg});}
++const pause=ms=>new Promise(r=>setTimeout(r,ms));
++async function wait(label,fn,timeout=20000){const end=Date.now()+timeout;let last;while(Date.now()<end){last=await fn();if(last)return last;await pause(50);}throw Error(`${label}: ${JSON.stringify(last)}`);}
++async function mode(mobile){assert.equal((await identity()).views,0);await root(async()=>app.workspace.saveLayout());const nav=p.waitForNavigation({waitUntil:'domcontentloaded',timeout:30000});await root(m=>{setTimeout(()=>app.emulateMobile(m),0);},mobile);await nav;await c.send('Emulation.setFocusEmulationEnabled',{enabled:true});await p.waitForFunction(wanted=>app?.workspace?.layoutReady&&!!app.plugins.plugins['pdf-web-reader']?.settings&&!!app.isMobile===wanted,{polling:100,timeout:30000},mobile);await identity();}
++async function annotationCount(data){const pdf=await PDFDocument.load(data);return (pdf.getPage(0).node.Annots()?.asArray()||[]).filter(ref=>pdf.context.lookup(ref)?.get(PDFName.of('Subtype'))?.toString()==='/Square').length;}
++try{
++ await c.send('Emulation.setFocusEmulationEnabled',{enabled:true});original=await identity();assert.equal(original.mobile,false);assert.equal(original.views,0);
++ assert.equal(await root(()=>app.plugins.plugins['pdf-web-reader'].settings.autoSave),true);
++ report.productHashes={};for(const name of ['main.js','manifest.json','styles.css']){const actual=await fs.readFile(path.join(vault,configDir,'plugins/pdf-web-reader',name));assert.deepEqual(actual,await fs.readFile(`dist/pdf-web-reader/${name}`));report.productHashes[name]=hash(actual);}
++ await root(async prefix=>{if(!prefix.startsWith('PDF迁移测试/general-0.5.8-close-native-')||app.vault.getAbstractFileByPath(prefix))throw Error('Unsafe fixture');await app.vault.createFolder(prefix);},prefix);
++ for(const mobile of [false,true]){
++  if(mobile)await mode(true);
++  for(const kind of ['clean','edited','write-failure']){
++   const file=`${prefix}/${mobile?'mobile':'desktop'}-${kind}.pdf`;
++   await root(async({file,bytes})=>{if(app.vault.getAbstractFileByPath(file))throw Error('Existing fixture');const f=await app.vault.createBinary(file,new Uint8Array(bytes).buffer);await app.plugins.plugins['pdf-web-reader'].openPdf(f);},{file,bytes:[...bytes]});
++   await wait('Own PDF rendered',()=>doc(file,({v,a})=>v.ready&&!!a.pdfDocument&&a.pdfViewer.getPageView(0)?.renderingState===3));
++   await doc(file,({a,d})=>{a.pdfViewer.currentPageNumber=1;a.pdfViewer.currentScaleValue='page-fit';d.getElementById('viewerContainer').scrollTop=0;});
++   await wait('First page visible',()=>doc(file,({a,d})=>{const page=d.querySelector('.page[data-page-number="1"]'),r=page.getBoundingClientRect(),v=d.getElementById('viewerContainer').getBoundingClientRect();return a.pdfViewer.currentPageNumber===1&&a.pdfViewer.getPageView(0)?.renderingState===3&&Math.min(r.bottom,v.bottom)-Math.max(r.top,v.top)>140&&Math.min(r.right,v.right)-Math.max(r.left,v.left)>140;}));
++   if(kind==='write-failure')await root(file=>{if(window.__closeFaultOriginal)throw Error('Existing test fault');const original=app.vault.modifyBinary;window.__closeFaultOriginal=original;app.vault.modifyBinary=function(f,...args){if(f.path===file)return Promise.reject(Error('Owned close regression write failure'));return original.call(this,f,...args);};},file);
++   if(kind!=='clean'){
++    const tool=await doc(file,({v,d})=>{const r=d.getElementById('editorSquareButton').getBoundingClientRect(),f=v.iframe.getBoundingClientRect();return{x:f.x+r.x+r.width/2,y:f.y+r.y+r.height/2};});await p.mouse.click(tool.x,tool.y);
++    await wait('Square selected',()=>doc(file,({a})=>a.pdfViewer.annotationEditorMode===5));
++    const point=await doc(file,({v,d})=>{const r=d.querySelector('.page[data-page-number="1"]').getBoundingClientRect(),view=d.getElementById('viewerContainer').getBoundingClientRect(),f=v.iframe.getBoundingClientRect();const left=Math.max(r.left,view.left)+10,right=Math.min(r.right,view.right)-10,top=Math.max(r.top,view.top)+20,bottom=Math.min(r.bottom,view.bottom)-20;if(right-left<120||bottom-top<120)throw Error('No visible drawing area');const x=left+20,y=top+(bottom-top-60)*.55;const hit=d.elementFromPoint(x,y);if(!hit?.closest('.page[data-page-number="1"]'))throw Error('Square point not on visible first page');return{x:f.x+x,y:f.y+y};});
++    await p.mouse.move(point.x,point.y);await p.mouse.down();await p.mouse.move(point.x+90,point.y+55,{steps:5});await p.mouse.up();
++    await wait('Actual Square and revision',()=>doc(file,({v,a,d})=>v.currentRevision>0&&[...(a.pdfDocument.annotationStorage.serializable.map||new Map()).values()].filter(e=>e.annotationType===5&&!e.deleted).length===1&&a.pdfDocument.annotationStorage.size>0));
++   }
++   const before=await doc(file,({v,a})=>({revision:v.currentRevision,confirmed:v.confirmedRevision,storage:a.pdfDocument.annotationStorage.size}));
++   const closePoint=await root(file=>{const v=[...app.plugins.plugins['pdf-web-reader'].views].find(v=>v.requestedPath===file);const el=v.leaf.tabHeaderEl.querySelector('.workspace-tab-header-inner-close-button');const r=el?.getBoundingClientRect();if(!r?.width||!r.height)throw Error('Real close button not visible');return{x:r.x+r.width/2,y:r.y+r.height/2};},file);
++   const started=performance.now();if(mobile){await c.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...closePoint,id:73,radiusX:3,radiusY:3,force:1}]});await c.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});}else await p.mouse.click(closePoint.x,closePoint.y);
++   await wait('Real button removed own Reader',()=>root(file=>![...app.plugins.plugins['pdf-web-reader'].views].some(v=>v.requestedPath===file)&&!app.workspace.getLeavesOfType('pdf-web-reader-view').some(l=>l.view.requestedPath===file),file));
++   const closeMs=performance.now()-started;
++   const disk=await fs.readFile(path.join(vault,file));const squares=await annotationCount(disk);let recovery;
++   if(kind==='clean'){assert.equal(hash(disk),hash(bytes));assert.equal(squares,0);}else if(kind==='edited')assert.equal(squares,1);else{
++    assert.equal(hash(disk),hash(bytes));const records=await root(async file=>(await app.plugins.plugins['pdf-web-reader'].listRecoveryCandidates()).filter(r=>r.metadata.originalPath===file||r.metadata.documentPath===file).map(r=>({candidatePath:r.candidatePath,status:r.metadata.status,revision:r.metadata.revision})),file);assert.ok(records.length);const valid=[];for(const r of records){const count=await annotationCount(await fs.readFile(path.join(vault,r.candidatePath)));if(count===1)valid.push({...r,squares:count});}assert.ok(valid.length);recovery=valid;
++   }
++   report.checks.push({mobile,kind,before,closeMs,squares,recovery,realVisibleCloseButton:true});
++   await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;delete window.__closeFaultOriginal;}});
++  }
++ }
++ report.status='passed';
++}catch(e){failure=e;report.status='failed';report.error=e.stack;try{report.failureState=await root(prefix=>[...app.plugins.plugins['pdf-web-reader'].views].filter(v=>v.requestedPath?.startsWith(prefix+'/')).map(v=>({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision,page:v.iframe?.contentWindow?.PDFViewerApplication?.pdfViewer.currentPageNumber,pageBounds:(()=>{const r=v.iframe?.contentWindow?.document.querySelector('.page[data-page-number="1"]')?.getBoundingClientRect();return r?{x:r.x,y:r.y,width:r.width,height:r.height}:null;})(),storage:v.iframe?.contentWindow?.PDFViewerApplication?.pdfDocument?.annotationStorage.serializable.map? [...v.iframe.contentWindow.PDFViewerApplication.pdfDocument.annotationStorage.serializable.map.values()].map(e=>({type:e.annotationType,deleted:e.deleted})):[],closing:!!v.closePreparation,prepared:!!v.preparedClose})),prefix);}catch(x){report.failureStateError=x.message;}}
++finally{
++ try{await identity();await root(()=>{if(window.__closeFaultOriginal){app.vault.modifyBinary=window.__closeFaultOriginal;delete window.__closeFaultOriginal;}});await root(async prefix=>{for(const v of [...app.plugins.plugins['pdf-web-reader'].views])if(v.requestedPath?.startsWith(prefix+'/'))await v.leaf.detach();await app.workspace.saveLayout();},prefix);}catch(e){failure||=e;report.status='failed';report.cleanupError=e.message;}
++ try{if((await identity()).mobile!==original?.mobile)await mode(original?.mobile??false);report.restoredTestReaders=await root(async()=>{const rows=[];for(const v of [...app.plugins.plugins['pdf-web-reader'].views]){if(!/^PDF迁移测试\/general-0\.5\.8-close-native-\d+\/(?:desktop|mobile)-(?:clean|edited|write-failure)\.pdf$/.test(v.requestedPath||''))throw Error('Unrelated Reader after simulation restore');rows.push({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision});await v.leaf.detach();}await app.workspace.saveLayout();return rows;});await wait('Restored owned views cleaned',async()=>(await identity()).views===0);report.cleanup=await identity();assert.equal(report.cleanup.views,0);assert.equal(report.cleanup.mobile,false);}catch(e){failure||=e;report.status='failed';report.restoreError=e.message;}
++ await c.send('Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});b.disconnect();await fs.writeFile(`tests/artifacts/${run}.json`,JSON.stringify(report,null,2)+'\n',{flag:'wx'});console.log(run,report.status);
++}
++if(failure)throw failure;
+diff --git a/tests/packaging.test.mjs b/tests/packaging.test.mjs
+index 8a29530..b1ef5a5 100644
+--- a/tests/packaging.test.mjs
++++ b/tests/packaging.test.mjs
+@@ -130 +130 @@ test("community release output is exactly the three installer assets", async ()
+-  assert.equal(manifest.version, "0.5.7");
++  assert.equal(manifest.version, "0.5.8");
+diff --git a/tests/pdf-sync-host.test.mjs b/tests/pdf-sync-host.test.mjs
+index 2e0f5ef..0a83202 100644
+--- a/tests/pdf-sync-host.test.mjs
++++ b/tests/pdf-sync-host.test.mjs
+@@ -8,0 +9 @@ const { createPdfSyncHost } = require("../plugin/pdf-sync-host.cjs");
++const { createHeavyWorkCoordinator } = require("../plugin/heavy-work.cjs");
+@@ -68 +69 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
+-    captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
++    captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
+@@ -286,0 +288,275 @@ test("failed sync-apply cancellation keeps the lease until frame teardown forces
++test("a clean close intent does not allocate a duplicate full-PDF checkpoint", async () => {
++  const h = harness();
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    const checkpointReads = h.calls.checkpointReads;
++    const postedBefore = h.posted.length;
++    assert.equal(await h.host.prepareClose(h.view), true);
++    assert.equal(h.posted.length, postedBefore,
++      "closing a clean Viewer should not serialize or copy another PDF");
++    assert.equal(h.calls.checkpointReads, checkpointReads);
++    assert.equal(h.view.syncRequests.size, 0);
++  } finally {
++    h.host.dispose();
++  }
++});
++
++test("close intent cancels a queued reconcile lease without releasing accepted work", async () => {
++  const h = harness();
++  const coordinator = createHeavyWorkCoordinator({ enabled: () => true, makeId: (() => { let id = 0; return () => `lease-${++id}`; })() });
++  assert.equal(typeof coordinator.cancelQueued, "function",
++    "the shared work coordinator exposes a safe queued-only cancellation path");
++  const blockerOwner = {};
++  let reconcileQueued;
++  const queued = new Promise((resolve) => { reconcileQueued = resolve; });
++  let cancelledReason = null;
++  const cancelQueued = coordinator.cancelQueued?.bind(coordinator);
++  if (cancelQueued) {
++    coordinator.cancelQueued = (owner, options) => {
++      if (owner === h.view) cancelledReason = options?.reason;
++      return cancelQueued(owner, options);
++    };
++  }
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.plugin.heavyWork = coordinator;
++    h.plugin.acquireHeavyLease = (view, target, reason, leaseId = null, requestId = null) => {
++      const context = {
++        file: target,
++        reason,
++        documentId: view.documentId,
++        openRequest: view.openRequest,
++        rendererGeneration: view.rendererGeneration,
++      };
++      if (leaseId) return Promise.resolve(coordinator.borrow(view, context, leaseId));
++      if (reason === "sync-reconcile") reconcileQueued();
++      return coordinator.acquire(view, context, {
++        requestId,
++        valid: () => view.documentId === context.documentId &&
++          view.openRequest === context.openRequest && view.rendererGeneration === context.rendererGeneration,
++      });
++    };
++    const blocker = await coordinator.acquire(blockerOwner, {
++      file: {}, reason: "blocker", documentId: "blocker", openRequest: 1, rendererGeneration: "blocker",
++    });
++    h.setDisk([2]);
++    h.host.schedule(h.file, "queue-close-reconcile");
++    await queued;
++
++    assert.equal(await h.host.prepareClose(h.view), true,
++      "the close waits only until its queued reconciliation is canceled");
++    assert.equal(cancelledReason, "sync-reconcile");
++    assert.equal(h.posted.some((message) => message.type === "sync-checkpoint"), false,
++      "a queued reconcile never starts Viewer serialization after close intent");
++    assert.equal(h.view.status, "", "expected close cancellation does not pause sync");
++
++    blocker.release();
++    assert.equal(h.host.resumeClose(h.view), true);
++    await until(() => h.posted.some((message) => message.type === "sync-apply"));
++    await until(() => h.view.status.startsWith("已同步并刷新"));
++    assert.deepEqual([...h.view.originalBytes], [2],
++      "after an uncommitted close the queued sync can acquire the slot and refresh normally");
++  } finally {
++    coordinator.dispose();
++    h.host.dispose();
++  }
++});
++
++test("close intent waits for one active PDF checkpoint and prevents a follow-up apply", async () => {
++  const h = harness();
++  let heldCheckpoint = null;
++  const originalPost = h.view.postToViewer;
++  h.view.postToViewer = function (message, transfer = []) {
++    if (message.type === "sync-checkpoint") {
++      h.posted.push(message);
++      heldCheckpoint = message;
++      return true;
++    }
++    return originalPost.call(this, message, transfer);
++  };
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    h.host.schedule(h.file, "close-during-checkpoint");
++    await until(() => heldCheckpoint !== null);
++
++    let closed = false;
++    const closing = h.host.prepareClose(h.view).then((result) => {
++      closed = true;
++      return result;
++    });
++    await sleep(25);
++    assert.equal(closed, false, "the close waits for PDF.js serialization to settle safely");
++    assert.equal(h.posted.filter((message) => message.type === "sync-checkpoint").length, 1,
++      "the close must not start a second checkpoint");
++
++    h.host.handleMessage(h.view, {
++      type: "sync-checkpoint-ready",
++      id: heldCheckpoint.id,
++      documentId: heldCheckpoint.documentId,
++      openRequest: heldCheckpoint.openRequest,
++      rendererGeneration: heldCheckpoint.rendererGeneration,
++      revision: 0,
++      ok: true,
++      dirty: false,
++      data: bytes([1]).buffer,
++      operations: [],
++      newAnnotations: [],
++      viewState: {},
++    });
++    assert.equal(await closing, true);
++    assert.equal(h.posted.some((message) => message.type === "sync-apply-prepare"), false,
++      "close intent stops reconciliation after the already-running checkpoint");
++    assert.equal(h.calls.leaseReleases, 2,
++      "the reconciliation lease is released before the close boundary proceeds");
++  } finally {
++    h.host.dispose();
++  }
++});
++
++test("close intent cancels an already prepared apply and retains the recovery draft", async () => {
++  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
++  let heldPrepare = null;
++  const originalPost = h.view.postToViewer;
++  h.view.postToViewer = function (message, transfer = []) {
++    if (message.type === "sync-apply-prepare") {
++      h.posted.push(message);
++      heldPrepare = message;
++      return true;
++    }
++    return originalPost.call(this, message, transfer);
++  };
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    h.host.schedule(h.file, "close-during-prepared-apply");
++    await until(() => heldPrepare !== null);
++    const prepare = heldPrepare;
++
++    let closed = false;
++    const closing = h.host.prepareClose(h.view).then((result) => {
++      closed = true;
++      return result;
++    });
++    await until(() => h.posted.some((message) =>
++      message.type === "sync-apply-cancel" && message.id === prepare.id));
++    assert.equal(closed, false);
++    h.host.handleMessage(h.view, {
++      type: "sync-apply-cancelled",
++      id: prepare.id,
++      documentId: prepare.documentId,
++      openRequest: prepare.openRequest,
++      rendererGeneration: prepare.rendererGeneration,
++      ok: true,
++    });
++
++    assert.equal(await closing, true);
++    assert.equal(h.posted.some((message) => message.type === "sync-apply"), false,
++      "close intent must stop before the merged bytes replace the Viewer");
++    assert.ok(h.records.some((record) => record.retained),
++      "the local recovery draft remains available when apply is canceled for close");
++    assert.equal(h.view.syncRequests.size, 0);
++  } finally {
++    h.host.dispose();
++  }
++});
++
++test("close intent waits for an active apply cancellation and keeps its recovery draft", async () => {
++  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    h.host.schedule(h.file, "close-during-active-apply");
++    await until(() => h.posted.some((message) => message.type === "sync-apply"));
++    const apply = h.posted.find((message) => message.type === "sync-apply");
++    const releasesBeforeClose = h.calls.leaseReleases;
++
++    let closed = false;
++    const closing = h.host.prepareClose(h.view).then((result) => {
++      closed = true;
++      return result;
++    });
++    await until(() => h.posted.some((message) =>
++      message.type === "sync-apply-cancel" && message.id === apply.id));
++    await sleep(25);
++    assert.equal(closed, false, "the close awaits confirmed PDF.js cancellation");
++    assert.equal(h.calls.leaseReleases, releasesBeforeClose);
++
++    h.host.handleMessage(h.view, {
++      type: "sync-apply-cancelled",
++      id: apply.id,
++      documentId: apply.documentId,
++      openRequest: apply.openRequest,
++      rendererGeneration: apply.rendererGeneration,
++      ok: true,
++    });
++    assert.equal(await closing, true);
++    await until(() => h.calls.leaseReleases === releasesBeforeClose + 1);
++    assert.ok(h.records.some((record) => record.retained),
++      "canceling the refresh keeps the durable local recovery copy");
++    assert.deepEqual([...h.view.originalBytes], [1],
++      "canceled refresh does not advance the live Reader baseline");
++    assert.equal(h.view.openRequest, apply.previousOpenRequest,
++      "the Viewer remains on its pre-apply request after confirmed cancellation");
++    assert.equal(h.view.syncNeedsRefresh, true,
++      "the durable disk change remains pending for a later refresh");
++    assert.ok(h.records.every((record) => record.metadata.status !== "conflict"),
++      "an expected close cancellation is not recorded as a merge conflict");
++    assert.equal(h.view.syncRequests.has(apply.id), false);
++
++    h.host.resumeClose(h.view);
++    await until(() => h.posted.filter((message) => message.type === "sync-apply").length === 2);
++    const retry = h.posted.filter((message) => message.type === "sync-apply").at(-1);
++    h.host.handleMessage(h.view, {
++      type: "sync-applied", id: retry.id, documentId: retry.documentId,
++      openRequest: retry.newOpenRequest, rendererGeneration: retry.rendererGeneration,
++      revision: 4, ok: true,
++    });
++    await until(() => h.view.status.startsWith("已同步并刷新"));
++    assert.deepEqual([...h.view.originalBytes], [3],
++      "resuming a canceled close can apply the still-durable merge instead of remaining paused");
++    assert.equal(h.view.openRequest, retry.newOpenRequest);
++    assert.equal(h.view.syncNeedsRefresh, false);
++  } finally {
++    h.host.dispose();
++  }
++});
++
++test("close intent refuses to proceed when active apply cancellation fails", async () => {
++  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
++  try {
++    await h.host.initializeView(h.view, h.view.originalBytes);
++    h.setDisk([2]);
++    h.host.schedule(h.file, "close-during-active-apply");
++    await until(() => h.posted.some((message) => message.type === "sync-apply"));
++    const apply = h.posted.find((message) => message.type === "sync-apply");
++    const releasesBeforeClose = h.calls.leaseReleases;
++
++    const closing = h.host.prepareClose(h.view);
++    await until(() => h.posted.some((message) =>
++      message.type === "sync-apply-cancel" && message.id === apply.id));
++    h.host.handleMessage(h.view, {
++      type: "sync-apply-cancel-failed",
++      id: apply.id,
++      documentId: apply.documentId,
++      openRequest: apply.openRequest,
++      rendererGeneration: apply.rendererGeneration,
++      reason: "injected close failure",
++    });
++    await assert.rejects(closing, (error) =>
++      error.code === "SYNC_APPLY_CANCEL_FAILED" && /injected close failure/.test(error.message));
++    assert.equal(h.view.syncRequests.has(apply.id), true,
++      "a failed stop remains nonterminal and blocks a successful close ACK");
++    assert.equal(h.calls.leaseReleases, releasesBeforeClose,
++      "the active apply keeps its heavy lease until explicit frame teardown");
++    assert.ok(h.records.some((record) => record.retained));
++
++    h.view.teardownStarted = true;
++    await h.host.closeView(h.view, "test frame destroyed", { force: true });
++    await until(() => h.calls.leaseReleases === releasesBeforeClose + 1);
++    assert.equal(h.view.syncRequests.has(apply.id), false);
++  } finally {
++    h.host.dispose();
++  }
++});
++
+diff --git a/tests/plugin-host.test.mjs b/tests/plugin-host.test.mjs
+index 556b7c6..5168e11 100644
+--- a/tests/plugin-host.test.mjs
++++ b/tests/plugin-host.test.mjs
+@@ -1612,0 +1613,94 @@ test("controlled detach waits for a prepared ack and skips duplicate onClose flu
++test("controlled close quiesces sync before prepare-close and resumes sync after a failed flush", async () => {
++  const harness = createHarness();
++  await harness.plugin.onload();
++  const { leaf, view, sent, replyClose } = await createControlledReader(
++    harness,
++    new harness.TFile("Books/close-quiesce-order.pdf"),
++  );
++  const calls = [];
++  view.plugin.pdfSync.prepareClose = async () => {
++    calls.push("quiesce");
++    assert.equal(sent.some((message) => message.type === "prepare-close"), false,
++      "sync must quiesce before the Viewer starts its close flush");
++    return true;
++  };
++  view.plugin.pdfSync.resumeClose = () => {
++    calls.push("resume");
++    return true;
++  };
++
++  const detaching = leaf.detach();
++  await Promise.resolve();
++  assert.deepEqual(calls, ["quiesce"]);
++  assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
++  replyClose({ ok: false, dirty: true, prepared: false });
++  assert.equal(await detaching, false);
++  assert.deepEqual(calls, ["quiesce", "resume"],
++    "a failed safe-save gate must release the temporary sync pause");
++  assert.equal(leaf.detached, undefined);
++  assert.equal(view.preparedClose, null);
++});
++
++test("controlled close starts its full Viewer ack budget after sync quiescence", async () => {
++  const harness = createHarness();
++  await harness.plugin.onload();
++  const { view, sent, replyClose } = await createControlledReader(
++    harness,
++    new harness.TFile("Books/close-quiesce-ack-budget.pdf"),
++  );
++  const originalNow = Date.now;
++  let now = originalNow();
++  let requestDuringQuiescence = null;
++  let ownerWindow = null;
++  Date.now = () => now;
++  view.plugin.pdfSync.prepareClose = async () => {
++    ownerWindow = view.ownerWindow;
++    requestDuringQuiescence = [...view.flushRequests.values()].at(-1);
++    assert.ok(requestDuringQuiescence);
++    assert.equal(requestDuringQuiescence.timer, null,
++      "sync quiescence must not consume the Viewer close acknowledgement timer");
++    now += 120001;
++    assert.equal(ownerWindow.fireTimeout(requestDuringQuiescence.timer), false,
++      "there must be no armed Viewer timeout while a checkpoint/cancel is settling");
++    return true;
++  };
++
++  try {
++    const preparing = view.prepareControlledClose("detach");
++    await settleMicrotasks();
++    assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
++    assert.equal(requestDuringQuiescence.deadline, now + 120000,
++      "the full 120 second budget begins at the send boundary");
++    const timer = ownerWindow.timers.get(requestDuringQuiescence.timer);
++    assert.equal(timer?.delay, 120000);
++    replyClose({ revision: 0 });
++    assert.equal(await preparing, true);
++  } finally {
++    Date.now = originalNow;
++  }
++});
++
++test("controlled close does not message a stale or no-longer-ready Viewer after quiescence", async () => {
++  const harness = createHarness();
++  await harness.plugin.onload();
++  const { view, sent } = await createControlledReader(
++    harness,
++    new harness.TFile("Books/close-quiesce-stale-session.pdf"),
++  );
++  let resumed = 0;
++  view.plugin.pdfSync.prepareClose = async () => {
++    view.ready = false;
++    return true;
++  };
++  view.plugin.pdfSync.resumeClose = () => {
++    resumed += 1;
++    return true;
++  };
++
++  assert.equal(await view.prepareControlledClose("detach"), false);
++  assert.equal(sent.some((message) => message.type === "prepare-close"), false,
++    "the captured renderer is revalidated after close-intent quiescence");
++  assert.equal(view.flushRequests.size, 0);
++  assert.equal(resumed, 1);
++});
++
+diff --git a/tests/sync-bridge-regression.test.mjs b/tests/sync-bridge-regression.test.mjs
+index 1a6377b..c23ece0 100644
+--- a/tests/sync-bridge-regression.test.mjs
++++ b/tests/sync-bridge-regression.test.mjs
+@@ -932,0 +933,38 @@ test(
++      const preparedCancelId = "sync-apply-prepared-close-cancel";
++      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
++        document.querySelector("iframe").contentWindow.postMessage({
++          channel: messageChannel,
++          type: "sync-apply-prepare",
++          token: sessionToken,
++          rendererGeneration: generation,
++          id,
++          documentId: currentDocumentId,
++          openRequest: 2,
++          expectedRevision,
++        }, "*");
++      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId, expectedRevision: cancelCheckpoint.revision });
++      await page.waitForFunction((id) => window.__syncHost?.prepared.some(
++        (entry) => entry.id === id && entry.type === "sync-apply-prepared",
++      ), { timeout: 30_000 }, preparedCancelId);
++      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id }) => {
++        document.querySelector("iframe").contentWindow.postMessage({
++          channel: messageChannel,
++          type: "sync-apply-cancel",
++          token: sessionToken,
++          rendererGeneration: generation,
++          id,
++          documentId: currentDocumentId,
++          openRequest: 2,
++        }, "*");
++      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId });
++      await page.waitForFunction((id) => window.__syncHost?.cancelled.some(
++        (entry) => entry.id === id,
++      ), { timeout: 15_000 }, preparedCancelId);
++      const preparedCancel = await page.evaluate((id) => window.__syncHost.cancelled.find(
++        (entry) => entry.id === id,
++      ), preparedCancelId);
++      assert.equal(preparedCancel.ok, true,
++        "a prepared sync apply must acknowledge cancellation so close can continue");
++      assert.equal(preparedCancel.openRequest, 2,
++        "prepared cancellation is tied to the original PDF session");
++
+diff --git a/versions.json b/versions.json
+index 840aa03..38b3032 100644
+--- a/versions.json
++++ b/versions.json
+@@ -18 +18,2 @@
+-  "0.5.7": "1.14.4"
++  "0.5.7": "1.14.4",
++  "0.5.8": "1.14.4"
+diff --git a/viewer-adapter/obsidian-bridge.js b/viewer-adapter/obsidian-bridge.js
+index 518ce2b..cce4cb5 100644
+--- a/viewer-adapter/obsidian-bridge.js
++++ b/viewer-adapter/obsidian-bridge.js
+@@ -1919,0 +1920,6 @@
++      postToHost("sync-apply-cancelled", {
++        id: control.id,
++        documentId: control.documentId,
++        openRequest: control.openRequest,
++        ok: true,
++      });

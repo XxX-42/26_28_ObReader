@@ -930,6 +930,44 @@ test(
       ));
       assert.equal(cancelCheckpoint.ok, true);
 
+      const preparedCancelId = "sync-apply-prepared-close-cancel";
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-apply-prepare",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id,
+          documentId: currentDocumentId,
+          openRequest: 2,
+          expectedRevision,
+        }, "*");
+      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId, expectedRevision: cancelCheckpoint.revision });
+      await page.waitForFunction((id) => window.__syncHost?.prepared.some(
+        (entry) => entry.id === id && entry.type === "sync-apply-prepared",
+      ), { timeout: 30_000 }, preparedCancelId);
+      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel,
+          type: "sync-apply-cancel",
+          token: sessionToken,
+          rendererGeneration: generation,
+          id,
+          documentId: currentDocumentId,
+          openRequest: 2,
+        }, "*");
+      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId });
+      await page.waitForFunction((id) => window.__syncHost?.cancelled.some(
+        (entry) => entry.id === id,
+      ), { timeout: 15_000 }, preparedCancelId);
+      const preparedCancel = await page.evaluate((id) => window.__syncHost.cancelled.find(
+        (entry) => entry.id === id,
+      ), preparedCancelId);
+      assert.equal(preparedCancel.ok, true,
+        "a prepared sync apply must acknowledge cancellation so close can continue");
+      assert.equal(preparedCancel.openRequest, 2,
+        "prepared cancellation is tied to the original PDF session");
+
       const cancelApplyId = "sync-apply-controlled-cancel";
       await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
         document.querySelector("iframe").contentWindow.postMessage({

@@ -1519,6 +1519,11 @@ class PdfReaderView extends EditableFileView {
       request.timer = null;
       request.timerWindow = null;
     }
+    // A controlled close does not consume its Viewer-ack budget while the
+    // host is quiescing sync work. Its deadline is assigned immediately before
+    // prepare-close is posted; owner-window rebinding during quiesce can call
+    // this method, so leave an unarmed request alone until then.
+    if (!Number.isFinite(request.deadline)) return;
     if (!timerWindow) {
       request.finish({ ok: false, dirty: true, timeout: true });
       return;
@@ -1629,6 +1634,7 @@ class PdfReaderView extends EditableFileView {
     ) {
       this.sendCancelClose(prepared);
       this.preparedClose = null;
+      this.plugin.pdfSync?.resumeClose(this);
     }
   }
 
@@ -1684,7 +1690,7 @@ class PdfReaderView extends EditableFileView {
       documentId,
       openRequest,
       iframe: this.iframe,
-      deadline: Date.now() + 120000,
+      deadline: null,
       timer: null,
       timerWindow: null,
       settled: false,
@@ -1713,7 +1719,38 @@ class PdfReaderView extends EditableFileView {
       openRequest,
       promise: null,
     };
+    let keepCloseIntent = false;
     pending.promise = (async () => {
+      try {
+        // Stop cross-device reconciliation before asking the Viewer to flush.
+        // In particular, an in-flight apply must reach its cancellation gate
+        // before prepare-close can freeze the annotation editor.
+        await this.plugin.pdfSync?.prepareClose?.(this);
+      } catch (error) {
+        request.finish({ ok: false, dirty: true });
+        new Notice(
+          `PDF 标签保持打开：同步刷新未能安全结束，恢复副本已保留。${error?.message ? ` ${error.message}` : ""}`,
+          8000,
+        );
+        return false;
+      }
+      const stillCurrent =
+        !request.settled &&
+        !this.plugin.isUnloading &&
+        this.documentId === documentId &&
+        this.openRequest === openRequest &&
+        this.ready &&
+        this.iframe === request.iframe &&
+        this.closePreparation === pending;
+      if (!stillCurrent) {
+        request.finish({ ok: false, dirty: true });
+        return false;
+      }
+      // Quiescing can safely spend time stopping a background sync checkpoint
+      // or apply. Give the Viewer a fresh, complete acknowledgement window
+      // only after that work has settled and the captured session is rechecked.
+      request.deadline = Date.now() + 120000;
+      this.scheduleFlushTimeout(request, this.ownerWindow);
       const sent = this.postToViewer(
         {
           channel: CHANNEL,
@@ -1752,6 +1789,7 @@ class PdfReaderView extends EditableFileView {
         );
         return false;
       }
+      keepCloseIntent = true;
       this.preparedClose = {
         id: request.id,
         documentId,
@@ -1763,6 +1801,7 @@ class PdfReaderView extends EditableFileView {
       };
       return true;
     })().finally(() => {
+      if (!keepCloseIntent) this.plugin.pdfSync?.resumeClose(this);
       if (this.closePreparation === pending) this.closePreparation = null;
     });
     this.closePreparation = pending;
@@ -3438,7 +3477,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   acquireHeavyLease(view, file, reason, leaseId = null, requestId = null) {
-    const context = { file, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+    const context = { file, reason, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
     if (!this.heavyWork) return Promise.resolve({ id: null, release() {} });
     if (leaseId) return Promise.resolve(this.heavyWork.borrow(view, context, leaseId));
     return this.heavyWork.acquire(view, context, {

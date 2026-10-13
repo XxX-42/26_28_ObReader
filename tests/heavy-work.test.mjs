@@ -84,3 +84,56 @@ test('closing a Reader cannot unlock a still-running host-owned parser', async (
   (await next).release();
   work.dispose();
 });
+
+test('cancelQueued rejects only the owner and reason match without touching active work or borrowers', async () => {
+  const work = harness(), owner = {}, otherOwner = {}, file = {};
+  const base = { file, documentId: 'doc', openRequest: 1, rendererGeneration: 'r' };
+  const active = await work.acquire(owner, { ...base, reason: 'sync-reconcile' });
+  const borrower = work.borrow(owner, base, active.id);
+  const grants = [];
+
+  const target = work.acquire(owner, { ...base, reason: 'sync-reconcile' }, { requestId: 'reconcile-queued' });
+  const targetRejected = assert.rejects(target, /cancelled/);
+  const sameOwnerSave = work.acquire(owner, { ...base, reason: 'save' }).then((lease) => {
+    grants.push('save'); return lease;
+  });
+  const sameOwnerOtherReason = work.acquire(owner, { ...base, reason: 'sync-initialize' }).then((lease) => {
+    grants.push('initialize'); return lease;
+  });
+  const otherOwnerReconcile = work.acquire(otherOwner, { ...base, reason: 'sync-reconcile' }).then((lease) => {
+    grants.push('other-owner'); return lease;
+  });
+
+  assert.equal(work.cancelQueued(owner, { reason: 'sync-reconcile' }), 1);
+  await targetRejected;
+  assert.equal(work.cancelQueued(owner, { reason: 'sync-reconcile' }), 0);
+  active.release();
+  await turn();
+  assert.deepEqual(grants, [], 'release request cannot unlock active host parsing while a borrower remains');
+
+  borrower.release();
+  const saveLease = await sameOwnerSave;
+  assert.deepEqual(grants, ['save'], 'same-owner save remains queued and runs first');
+  saveLease.release();
+  const initializeLease = await sameOwnerOtherReason;
+  assert.deepEqual(grants, ['save', 'initialize'], 'same-owner work with another reason remains queued');
+  initializeLease.release();
+  const otherLease = await otherOwnerReconcile;
+  assert.deepEqual(grants, ['save', 'initialize', 'other-owner'], 'another owner remains untouched');
+  otherLease.release();
+  work.dispose();
+});
+
+test('cancelQueued can additionally narrow a queued cancellation by request id', async () => {
+  const work = harness(), owner = {};
+  const active = await work.acquire({}, {});
+  const target = work.acquire(owner, { reason: 'sync-reconcile' }, { requestId: 'target' });
+  const targetRejected = assert.rejects(target, /cancelled/);
+  const survivor = work.acquire(owner, { reason: 'sync-reconcile' }, { requestId: 'survivor' });
+  assert.equal(work.cancelQueued(owner, { requestId: 'target', reason: 'sync-reconcile' }), 1);
+  await targetRejected;
+  active.release();
+  const survivorLease = await survivor;
+  survivorLease.release();
+  work.dispose();
+});

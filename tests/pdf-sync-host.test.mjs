@@ -6,6 +6,7 @@ import test from "node:test";
 
 const require = createRequire(import.meta.url);
 const { createPdfSyncHost } = require("../plugin/pdf-sync-host.cjs");
+const { createHeavyWorkCoordinator } = require("../plugin/heavy-work.cjs");
 const bytes = (value) => new Uint8Array(value instanceof ArrayBuffer ? value : value).slice();
 const eq = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
 const hash = (a) => createHash("sha256").update(a).digest("hex");
@@ -65,7 +66,7 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
     originalBytes: bytes([1]), loadedBaseBytes: bytes([1]), currentRevision: dirty ? 2 : 0,
     confirmedRevision: 0, syncRequests: new Map(), status: "", rejectPrepare: false,
     syncCheckpointRejections: 0,
-    captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
+    captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
     isCurrentSaveRequest(captured) { return captured.documentId === this.documentId && captured.openRequest === this.openRequest; },
     setStatus(value) { this.status = value; },
     postToViewer(message, transfer = []) {
@@ -280,6 +281,281 @@ test("failed sync-apply cancellation keeps the lease until frame teardown forces
     assert.deepEqual([...h.view.originalBytes], [1], "failed cancellation never advances the old baseline");
   } finally {
     timer?.restore();
+    h.host.dispose();
+  }
+});
+
+test("a clean close intent does not allocate a duplicate full-PDF checkpoint", async () => {
+  const h = harness();
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    const checkpointReads = h.calls.checkpointReads;
+    const postedBefore = h.posted.length;
+    assert.equal(await h.host.prepareClose(h.view), true);
+    assert.equal(h.posted.length, postedBefore,
+      "closing a clean Viewer should not serialize or copy another PDF");
+    assert.equal(h.calls.checkpointReads, checkpointReads);
+    assert.equal(h.view.syncRequests.size, 0);
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("close intent cancels a queued reconcile lease without releasing accepted work", async () => {
+  const h = harness();
+  const coordinator = createHeavyWorkCoordinator({ enabled: () => true, makeId: (() => { let id = 0; return () => `lease-${++id}`; })() });
+  assert.equal(typeof coordinator.cancelQueued, "function",
+    "the shared work coordinator exposes a safe queued-only cancellation path");
+  const blockerOwner = {};
+  let reconcileQueued;
+  const queued = new Promise((resolve) => { reconcileQueued = resolve; });
+  let cancelledReason = null;
+  const cancelQueued = coordinator.cancelQueued?.bind(coordinator);
+  if (cancelQueued) {
+    coordinator.cancelQueued = (owner, options) => {
+      if (owner === h.view) cancelledReason = options?.reason;
+      return cancelQueued(owner, options);
+    };
+  }
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.plugin.heavyWork = coordinator;
+    h.plugin.acquireHeavyLease = (view, target, reason, leaseId = null, requestId = null) => {
+      const context = {
+        file: target,
+        reason,
+        documentId: view.documentId,
+        openRequest: view.openRequest,
+        rendererGeneration: view.rendererGeneration,
+      };
+      if (leaseId) return Promise.resolve(coordinator.borrow(view, context, leaseId));
+      if (reason === "sync-reconcile") reconcileQueued();
+      return coordinator.acquire(view, context, {
+        requestId,
+        valid: () => view.documentId === context.documentId &&
+          view.openRequest === context.openRequest && view.rendererGeneration === context.rendererGeneration,
+      });
+    };
+    const blocker = await coordinator.acquire(blockerOwner, {
+      file: {}, reason: "blocker", documentId: "blocker", openRequest: 1, rendererGeneration: "blocker",
+    });
+    h.setDisk([2]);
+    h.host.schedule(h.file, "queue-close-reconcile");
+    await queued;
+
+    assert.equal(await h.host.prepareClose(h.view), true,
+      "the close waits only until its queued reconciliation is canceled");
+    assert.equal(cancelledReason, "sync-reconcile");
+    assert.equal(h.posted.some((message) => message.type === "sync-checkpoint"), false,
+      "a queued reconcile never starts Viewer serialization after close intent");
+    assert.equal(h.view.status, "", "expected close cancellation does not pause sync");
+
+    blocker.release();
+    assert.equal(h.host.resumeClose(h.view), true);
+    await until(() => h.posted.some((message) => message.type === "sync-apply"));
+    await until(() => h.view.status.startsWith("已同步并刷新"));
+    assert.deepEqual([...h.view.originalBytes], [2],
+      "after an uncommitted close the queued sync can acquire the slot and refresh normally");
+  } finally {
+    coordinator.dispose();
+    h.host.dispose();
+  }
+});
+
+test("close intent waits for one active PDF checkpoint and prevents a follow-up apply", async () => {
+  const h = harness();
+  let heldCheckpoint = null;
+  const originalPost = h.view.postToViewer;
+  h.view.postToViewer = function (message, transfer = []) {
+    if (message.type === "sync-checkpoint") {
+      h.posted.push(message);
+      heldCheckpoint = message;
+      return true;
+    }
+    return originalPost.call(this, message, transfer);
+  };
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    h.host.schedule(h.file, "close-during-checkpoint");
+    await until(() => heldCheckpoint !== null);
+
+    let closed = false;
+    const closing = h.host.prepareClose(h.view).then((result) => {
+      closed = true;
+      return result;
+    });
+    await sleep(25);
+    assert.equal(closed, false, "the close waits for PDF.js serialization to settle safely");
+    assert.equal(h.posted.filter((message) => message.type === "sync-checkpoint").length, 1,
+      "the close must not start a second checkpoint");
+
+    h.host.handleMessage(h.view, {
+      type: "sync-checkpoint-ready",
+      id: heldCheckpoint.id,
+      documentId: heldCheckpoint.documentId,
+      openRequest: heldCheckpoint.openRequest,
+      rendererGeneration: heldCheckpoint.rendererGeneration,
+      revision: 0,
+      ok: true,
+      dirty: false,
+      data: bytes([1]).buffer,
+      operations: [],
+      newAnnotations: [],
+      viewState: {},
+    });
+    assert.equal(await closing, true);
+    assert.equal(h.posted.some((message) => message.type === "sync-apply-prepare"), false,
+      "close intent stops reconciliation after the already-running checkpoint");
+    assert.equal(h.calls.leaseReleases, 2,
+      "the reconciliation lease is released before the close boundary proceeds");
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("close intent cancels an already prepared apply and retains the recovery draft", async () => {
+  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
+  let heldPrepare = null;
+  const originalPost = h.view.postToViewer;
+  h.view.postToViewer = function (message, transfer = []) {
+    if (message.type === "sync-apply-prepare") {
+      h.posted.push(message);
+      heldPrepare = message;
+      return true;
+    }
+    return originalPost.call(this, message, transfer);
+  };
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    h.host.schedule(h.file, "close-during-prepared-apply");
+    await until(() => heldPrepare !== null);
+    const prepare = heldPrepare;
+
+    let closed = false;
+    const closing = h.host.prepareClose(h.view).then((result) => {
+      closed = true;
+      return result;
+    });
+    await until(() => h.posted.some((message) =>
+      message.type === "sync-apply-cancel" && message.id === prepare.id));
+    assert.equal(closed, false);
+    h.host.handleMessage(h.view, {
+      type: "sync-apply-cancelled",
+      id: prepare.id,
+      documentId: prepare.documentId,
+      openRequest: prepare.openRequest,
+      rendererGeneration: prepare.rendererGeneration,
+      ok: true,
+    });
+
+    assert.equal(await closing, true);
+    assert.equal(h.posted.some((message) => message.type === "sync-apply"), false,
+      "close intent must stop before the merged bytes replace the Viewer");
+    assert.ok(h.records.some((record) => record.retained),
+      "the local recovery draft remains available when apply is canceled for close");
+    assert.equal(h.view.syncRequests.size, 0);
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("close intent waits for an active apply cancellation and keeps its recovery draft", async () => {
+  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    h.host.schedule(h.file, "close-during-active-apply");
+    await until(() => h.posted.some((message) => message.type === "sync-apply"));
+    const apply = h.posted.find((message) => message.type === "sync-apply");
+    const releasesBeforeClose = h.calls.leaseReleases;
+
+    let closed = false;
+    const closing = h.host.prepareClose(h.view).then((result) => {
+      closed = true;
+      return result;
+    });
+    await until(() => h.posted.some((message) =>
+      message.type === "sync-apply-cancel" && message.id === apply.id));
+    await sleep(25);
+    assert.equal(closed, false, "the close awaits confirmed PDF.js cancellation");
+    assert.equal(h.calls.leaseReleases, releasesBeforeClose);
+
+    h.host.handleMessage(h.view, {
+      type: "sync-apply-cancelled",
+      id: apply.id,
+      documentId: apply.documentId,
+      openRequest: apply.openRequest,
+      rendererGeneration: apply.rendererGeneration,
+      ok: true,
+    });
+    assert.equal(await closing, true);
+    await until(() => h.calls.leaseReleases === releasesBeforeClose + 1);
+    assert.ok(h.records.some((record) => record.retained),
+      "canceling the refresh keeps the durable local recovery copy");
+    assert.deepEqual([...h.view.originalBytes], [1],
+      "canceled refresh does not advance the live Reader baseline");
+    assert.equal(h.view.openRequest, apply.previousOpenRequest,
+      "the Viewer remains on its pre-apply request after confirmed cancellation");
+    assert.equal(h.view.syncNeedsRefresh, true,
+      "the durable disk change remains pending for a later refresh");
+    assert.ok(h.records.every((record) => record.metadata.status !== "conflict"),
+      "an expected close cancellation is not recorded as a merge conflict");
+    assert.equal(h.view.syncRequests.has(apply.id), false);
+
+    h.host.resumeClose(h.view);
+    await until(() => h.posted.filter((message) => message.type === "sync-apply").length === 2);
+    const retry = h.posted.filter((message) => message.type === "sync-apply").at(-1);
+    h.host.handleMessage(h.view, {
+      type: "sync-applied", id: retry.id, documentId: retry.documentId,
+      openRequest: retry.newOpenRequest, rendererGeneration: retry.rendererGeneration,
+      revision: 4, ok: true,
+    });
+    await until(() => h.view.status.startsWith("已同步并刷新"));
+    assert.deepEqual([...h.view.originalBytes], [3],
+      "resuming a canceled close can apply the still-durable merge instead of remaining paused");
+    assert.equal(h.view.openRequest, retry.newOpenRequest);
+    assert.equal(h.view.syncNeedsRefresh, false);
+  } finally {
+    h.host.dispose();
+  }
+});
+
+test("close intent refuses to proceed when active apply cancellation fails", async () => {
+  const h = harness({ local: [3], dirty: true, autoApply: false, mergeResult: [3] });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([2]);
+    h.host.schedule(h.file, "close-during-active-apply");
+    await until(() => h.posted.some((message) => message.type === "sync-apply"));
+    const apply = h.posted.find((message) => message.type === "sync-apply");
+    const releasesBeforeClose = h.calls.leaseReleases;
+
+    const closing = h.host.prepareClose(h.view);
+    await until(() => h.posted.some((message) =>
+      message.type === "sync-apply-cancel" && message.id === apply.id));
+    h.host.handleMessage(h.view, {
+      type: "sync-apply-cancel-failed",
+      id: apply.id,
+      documentId: apply.documentId,
+      openRequest: apply.openRequest,
+      rendererGeneration: apply.rendererGeneration,
+      reason: "injected close failure",
+    });
+    await assert.rejects(closing, (error) =>
+      error.code === "SYNC_APPLY_CANCEL_FAILED" && /injected close failure/.test(error.message));
+    assert.equal(h.view.syncRequests.has(apply.id), true,
+      "a failed stop remains nonterminal and blocks a successful close ACK");
+    assert.equal(h.calls.leaseReleases, releasesBeforeClose,
+      "the active apply keeps its heavy lease until explicit frame teardown");
+    assert.ok(h.records.some((record) => record.retained));
+
+    h.view.teardownStarted = true;
+    await h.host.closeView(h.view, "test frame destroyed", { force: true });
+    await until(() => h.calls.leaseReleases === releasesBeforeClose + 1);
+    assert.equal(h.view.syncRequests.has(apply.id), false);
+  } finally {
     h.host.dispose();
   }
 });
