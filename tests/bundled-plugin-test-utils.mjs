@@ -7,6 +7,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -308,13 +309,17 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
       normalized === ".obsidian" ||
         normalized === ".obsidian/plugins" ||
         normalized === pluginRoot ||
-        normalized.startsWith(`${pluginRoot}/`),
+        normalized.startsWith(`${pluginRoot}/`) ||
+        normalized === "00_Archive/20_PDFData" ||
+        normalized.startsWith("00_Archive/20_PDFData/"),
       `Adapter path escaped the plugin root: ${vaultPath}`,
     );
     const relative =
       normalized === ".obsidian" || normalized === ".obsidian/plugins"
         ? normalized
-        : normalized.slice(pluginRoot.length).replace(/^\//, "");
+        : normalized.startsWith("00_Archive/")
+          ? normalized
+          : normalized.slice(pluginRoot.length).replace(/^\//, "");
     const target = path.resolve(
       rootPath,
       ...relative.split("/").filter(Boolean),
@@ -365,6 +370,25 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
     },
     async remove(vaultPath) {
       await rm(resolve(vaultPath), { force: true });
+    },
+    async rename(fromPath, toPath) {
+      const source = resolve(fromPath);
+      const target = resolve(toPath);
+      await mkdir(path.dirname(target), { recursive: true });
+      await rename(source, target);
+    },
+    async list(vaultPath) {
+      const target = resolve(vaultPath);
+      try {
+        const entries = await readdir(target, { withFileTypes: true });
+        return {
+          files: entries.filter((entry) => entry.isFile()).map((entry) => `${vaultPath}/${entry.name}`),
+          folders: entries.filter((entry) => entry.isDirectory()).map((entry) => `${vaultPath}/${entry.name}`),
+        };
+      } catch (error) {
+        if (error?.code === "ENOENT") return { files: [], folders: [] };
+        throw error;
+      }
     },
     async read(vaultPath) {
       return readFile(resolve(vaultPath), "utf8");

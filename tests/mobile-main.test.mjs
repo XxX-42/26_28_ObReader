@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
 const assetRuntime = sourceRequire("./asset-runtime.cjs");
+const pdfHashRuntime = await sourceRequire("./pdf-hash-runtime.cjs").createPdfHashRuntime();
 const source = await readFile(path.join(root, "plugin", "main.js"), "utf8");
 const encoder = new TextEncoder();
 
@@ -251,7 +252,29 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     getResourcePath(assetPath) { return `app://local/${assetPath}`; },
     async exists(assetPath) { return folders.has(assetPath) || stored.has(assetPath); },
     async mkdir(assetPath) { folders.add(assetPath); },
-    async list(directory) { return { files: [...stored.keys()].filter(path => path.startsWith(`${directory}/`)), folders: [] }; },
+    async list(directory) {
+      const prefix = `${directory}/`;
+      const files = [];
+      const childFolders = new Set();
+      for (const path of stored.keys()) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        if (rest.includes("/")) childFolders.add(`${directory}/${rest.split("/")[0]}`);
+        else files.push(path);
+      }
+      for (const path of folders) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        if (rest) childFolders.add(`${directory}/${rest.split("/")[0]}`);
+      }
+      return { files, folders: [...childFolders] };
+    },
+    async rename(from, to) {
+      if (!stored.has(from)) throw new Error(`missing rename source: ${from}`);
+      if (stored.has(to)) throw new Error(`rename target exists: ${to}`);
+      stored.set(to, stored.get(from));
+      stored.delete(from);
+    },
     async write(path, text) { stored.set(path, new TFile(path, new TextEncoder().encode(text))); },
     async writeBinary() {},
     async remove() {},
@@ -305,7 +328,11 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
           contentHash: payload.contentHash,
         }) };
       }
-      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
+      if (name === "./pdf-hash-runtime.cjs") {
+        return { createPdfHashRuntime: async () => pdfHashRuntime };
+      }
+      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs",
+        "./pdf-recovery-read.cjs", "./pdf-annotation-host.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);
     },
@@ -671,7 +698,7 @@ test("status bar defaults off, toggles live Readers without reload, and restores
   let restoreCalls = 0;
   harness.plugin.restoreLatestRecovery = () => { restoreCalls += 1; };
   const privatePath = "Private/Confidential.pdf";
-  harness.plugin.pdfSync.showFailure(readers[0], `checkpoint conflict for ${privatePath}`);
+  readers[0].setStatus(`同步暂停：checkpoint conflict for ${privatePath}`, { recoveryAction: true });
   assert.equal(readers[0].statusRecoveryAction, true);
   assert.equal(readers[0].statusEl, null,
     "hidden status state and recovery action are retained without creating DOM");

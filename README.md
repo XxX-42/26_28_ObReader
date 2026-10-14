@@ -1,22 +1,41 @@
 # PDF Web Reader for Obsidian
 
-An offline Obsidian plugin containing the modified Mozilla
-PDF.js Viewer. It opens PDFs from the vault and saves standard PDF annotations
-back to the same file. No local web server, Windows launcher, external browser,
-Python, separately installed Node.js, or network service is needed at runtime.
+An offline Obsidian plugin containing the modified Mozilla PDF.js Viewer. It
+opens vault PDFs and keeps this plugin's annotations in a synced, external
+operation log. The original PDF stays byte-for-byte unchanged during ordinary
+editing. No local web server, external browser, Python, separately installed
+Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.20)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.6.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest [0.5.20 three-file package](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)
-adds transaction-linked host timing for recovery, revision checks, merge, source read/write/readback,
-checkpoint confirmation, and cleanup. It adds timing instrumentation only; it does not claim a save-speed improvement.
-The prior [0.5.19 three-file package](dist/pdf-web-reader-0.1general-0.5.19-candidate.zip)
+The current [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
+stores immutable per-device annotation operation batches and rebuilds a JSON
+snapshot cache from them. Undo/delete tombstones and deterministic LWW clocks
+remain in the operation history. Size and tail samples reject obvious PDF
+changes; full tagged `xxh64-v1` equality plus ordered page identity is required
+before external annotations are hydrated. Legacy SHA-256 hashes remain readable;
+resource integrity, build artifacts, vendor provenance, and stable document
+identifiers continue to use SHA-256.
+
+The external store is under `00_Archive/20_PDFData`. A copied PDF at a new path
+gets a new document identity; Vault rename/move keeps the existing identity.
+Older plugin annotations are associated through exact PDF object references;
+their existing geometry stays in the immutable PDF until edited, after which
+the latest editor payload is recorded externally. If the legacy identity worker
+cannot verify those references, the PDF opens read-only. Unchanged source PDF
+annotations from other applications remain visible. External applications do
+not see plugin annotations in the original PDF; use **将当前 PDF 与外置批注合并导出为独立 PDF** to create a separate annotated copy.
+
+The pinned `xxhash-wasm` 1.1.0 runtime is bundled for offline content-consistency
+checks and is not a tamper-detection primitive. See [HASH_BENCHMARK.md](HASH_BENCHMARK.md)
+for earlier hash timing samples; those samples are not 0.6.0 save benchmarks.
+The prior [0.5.20 three-file package](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)
 decodes large embedded merge ledgers in bounded chunks and hardens PDF.js Ink
 drawing-session cleanup against stale pointer listeners and missing in-flight
 stroke state. It addresses the `Maximum call stack size exceeded` failure and
@@ -147,8 +166,9 @@ hidden in both primary and secondary toolbars; their code and DOM nodes remain
 in the frozen Viewer. The zoom group is 64 pixels wide, and the page-number input
 is 36 pixels wide plus 8 pixels for each digit beyond four. The four existing
 zoom glyphs, percentage and custom zoom values remain. **↕** is described as
-**适合整页** (the existing page-fit value), not fit-height. The modified PDF.js
-Viewer and dependency versions are unchanged.
+**适合整页** (the existing page-fit value), not fit-height. The frozen PDF.js
+Viewer version is unchanged; this branch adds the pinned `xxhash-wasm` runtime
+dependency without adding a network or CDN requirement.
 
 The 0.5.1 background prewarm and incremental cache index are unchanged. The
 frozen 0.5.4 default suite passed 194/194 with natural Node exit 0; the final
@@ -213,15 +233,18 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.5.6 candidate uses one source and one three-file package for Windows, macOS,
+0.6.0 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
 The desktop entry uses Obsidian resource URLs and popout coordination; the mobile
 entry uses blob-backed module and Worker paths without desktop popout
-coordination. Editing, save/recovery, and pointer logic are shared. The 402-file
-frozen Viewer is unchanged, and the packaged runtime contains 406 assets,
-including the lazy browser merge Worker and its third-party notices.
+coordination. Editing and annotation operation storage are shared. Daily save,
+recovery, checkpoint and close paths do not serialize or write PDF bytes. The
+explicit export command creates a new PDF file. XXH64 checks content consistency
+only; SHA-256 still protects resources and stable document identifiers. The
+frozen Viewer is unchanged, and the packaged runtime includes the legacy
+identity-inspection Worker and its third-party notices.
 
 These implementation details do not establish physical-device acceptance.
 Windows and iPad device acceptance remain pending, and desktop mobile emulation
@@ -388,8 +411,10 @@ Node 22.12 or newer, npm and `puppeteer-core` are development/test dependencies
 only. The browser test driver is pinned to Puppeteer 25.12.0, whose supported
 Chrome line is 154. The native Obsidian connection is verified separately because
 it uses the application's embedded Chromium.
-The installed plugin uses Obsidian APIs, standard browser APIs, and bundled SHA-256;
-it does not load Node or Electron modules.
+The installed plugin uses Obsidian APIs and standard browser APIs. SHA-256 remains
+bundled for resource integrity and stable identities; XXH64 checks PDF, recovery,
+and sync content. Both are included in the offline package; it does not load Node
+or Electron modules.
 The desktop popout entry retains an optional host-provided Electron quit check;
 the mobile entry does not install that coordination.
 The offline browser harness may create a temporary local test server to serve

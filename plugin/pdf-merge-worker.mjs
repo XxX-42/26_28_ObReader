@@ -1,4 +1,11 @@
 import core from "./pdf-merge-core.cjs";
+import hashRuntimeModule from "./pdf-hash-runtime.cjs";
+
+const hashRuntimeReady = hashRuntimeModule.createPdfHashRuntime()
+  .then((runtime) => {
+    core.setHashRuntime?.(runtime);
+    return runtime;
+  });
 
 const methods = new Set(["prepareLocal", "merge", "inspect"]);
 let requestQueue = Promise.resolve();
@@ -9,6 +16,7 @@ async function handleRequest(event, enqueuedAt) {
   if (!Number.isSafeInteger(id) || !methods.has(method)) return;
   const startedAt = timingNow();
   try {
+    await hashRuntimeReady;
     let result = await core[method](["prepareLocal", "merge"].includes(method)
       ? { ...(payload || {}), __collectTimings: true }
       : (payload || {}));

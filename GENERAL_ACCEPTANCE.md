@@ -1,3 +1,36 @@
+# 0.1general 通用候选（插件 0.6.0）
+
+## 当前：只读 PDF 与外置批注操作日志（2026-10-15）
+
+0.6.0 将日常自动保存、手动保存、关闭恢复和跨端合并从 PDF 二进制写回切换为 `00_Archive/20_PDFData` 下的不可变设备操作批次。JSON 快照由操作日志重放生成，只作缓存；批注采用 UUID、逻辑时钟、设备／操作 ID 的确定性 LWW，删除墓碑持续保留。正常保存不调用 PDF.js `saveDocument()`，也不调用 PDF 源文件写入 API。PDF.js 二进制序列化只保留在用户显式执行“导出为独立 PDF”时，结果作为新文件创建。
+
+### 已完成验证
+
+- 构建 **406** 个运行时资源，逐项核验 **402** 个冻结 Viewer 文件，发布目录仅含 `main.js`、`manifest.json`、`styles.css`；三端统一 0.6.0，`isDesktopOnly: false`。资源、构建产物和 vendor 哈希仍为 SHA-256；PDF 来源与恢复状态使用算法标记哈希并兼容旧 SHA-256 记录。
+- 定向测试 **63/63 通过**：外置日志存储、跨设备 LWW、乱序／重复操作、删除墓碑、rename/copy 身份、源文件变化阻断、哈希兼容、移动无 Node 启动、移动 Blob fallback、关闭与保存不调用 PDF 序列化／源写 API。
+- 离线真实浏览器 smoke 通过且 Chrome 正常退出：五种工具写入外置操作记录，重开后可见；二次编辑 Square、删除 Underline 并保存重开；源 PDF 未作为保存目标。
+- 无 Node 浏览器保存回归两种加载模式均通过，并记录了测试 PDF 保存前后的 SHA-256 与 XXH64 完全一致，`sourcePdfWrites: 0`。报告：`tests/artifacts/mobile-browser-startup-1792003084048.json`、`tests/artifacts/mobile-browser-startup-1792003066482.json`。这些是浏览器／模拟验收，不是实体 iPad 或 Windows 实机验收。
+- 只读独立审计未发现 P0/P1。审计报告指出的迁移与设备识别限制列在下方。
+
+### 完整套件结果与限制
+
+本轮完整 `npm test` 有失败项，原始输出保存在 `tests/artifacts/0.6.0-full-suite-20261015.log`；因此不宣称全套通过。新架构定向测试与离线 smoke 通过。遗留的 PDF 原位写回协议测试仍需按外置操作日志协议迁移；其他浏览器交互失败须结合各自失败证据逐项确认，不因定向通过而标为已解决。Chrome teardown 不作扩展调查。
+
+完整运行统计为 **380 项、330 通过、50 失败**。其中 `plugin-host.test.mjs` 有 40 项仍依赖被替换的 `pdfSync`／二进制恢复接口；其余 10 项分布在自动保存、工具交互、窄工具栏、鼠标／手势、打开生命周期和同步桥接等旧浏览器 harness 中，包含等待超时。它们保留在原始日志和各自失败证据中，不能用定向通过覆盖。该完整运行发生在最终按钮文案调整之前；最终三文件上的离线 smoke 已重新通过。
+
+当前尚未完成 120 页／16.85 MB 连续保存耗时、落盘字节与内存峰值基准；不宣称达到 10 ms 保存或 70% 内存下降目标。未完成实体 iPad、macOS Obsidian 和 Windows 实机验收，也未验证两个真实同步客户端的离线重连场景。
+
+- 首次迁移只确认旧批注 UUID 与 PDF 对象引用；存活批注完整编辑器 payload 采用首次实际编辑时的精确引用懒迁移。无法验证旧身份的带标记 PDF 只读打开，不按坐标猜测。
+- `documentId` 当前为 Vault 相对路径派生的 UUID 形 ID，并存入可同步索引；这样同一路径首次在两台离线设备同时打开时仍得到一致身份。它不是随机 UUID；rename 由路径索引事件保留身份，新路径副本得到新身份。
+- 浏览器端到端水合目前覆盖矩形批注的可见重开、编辑和删除；离线 smoke 另覆盖五种批注类型，但不代表对所有外部 PDF 原生批注组合和 InkHighlight 画面外观的完整实机验收。第三方 PDF 批注保持在只读底本中。
+- 浏览器无法提供稳定设备 localStorage 时，设备 ID 回退为会话 ID，跨重启稳定性需宿主持久设置验证。
+- 保存前通过源文件对象、路径、大小／mtime 检查；Vault modify 事件执行全量内容哈希。若平台同时漏掉修改事件且同一文件对象的大小与 mtime 未变，写操作批次可能先被接受，但新打开时全量哈希不符会阻止批注水合。该同步通知边界仍需多端实测。
+- 外置批注在系统预览、Acrobat 等外部阅读器中不会显示；显式导出会生成单独 PDF，不修改底本。旧二进制 `.recovery` 保留原样，0.6.0 不生成新的二进制 PDF 恢复包，也不清理或压缩历史日志。
+
+最终包为 [0.6.0 三文件候选 ZIP](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)，SHA-256 `460aefee72a88f19c48c682de0a5d7e1e018e20534ef92fd7a25edebb9636c92`；清单在 `dist/pdf-web-reader-0.1general-0.6.0-checksums.sha256`。归档结构校验确认只含三个安装文件。完整源码差异：[0.6.0 source patch](dist/general-0.1general-0.6.0-source.patch)，其哈希见 [patch checksum](dist/general-0.1general-0.6.0-source.patch.sha256)。仅独立测试环境使用；不推送、不部署、不创建 Release，不操作主库 PDF。
+
+---
+
 # 0.1general 通用候选（插件 0.5.20）
 
 ## 当前：0.5.20 保存阶段计时

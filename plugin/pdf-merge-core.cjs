@@ -17,15 +17,17 @@ const {
 } = require("pdf-lib");
 const { sha256 } = require("@noble/hashes/sha256");
 const { pdfDocEncodingDecode } = require("pdf-lib/cjs/utils/pdfDocEncoding.js");
+const incremental = require("./pdf-incremental.cjs");
 const {
   captureIncrementalSnapshot,
   createIncrementalPatch,
   materializeIncrementalResult,
   readSourceTrailer,
-} = require("./pdf-incremental.cjs");
+} = incremental;
 
 const timingNow = () => globalThis.performance?.now?.() ?? Date.now();
 const PDF_STRING_DECODE_CHUNK_SIZE = 8192;
+let activeHashRuntime = null;
 
 const LEDGER_KEY = PDFName.of("ObReaderMerge");
 const UUID_KEY = PDFName.of("ObReaderId");
@@ -81,6 +83,9 @@ function toHex(bytes) {
 }
 
 function hashBytes(bytes) {
+  // These SHA-256 values define stable page/document lineage IDs embedded in
+  // PDFs. They are deliberately separate from replaceable whole-file
+  // verification fingerprints so updating a device never changes annotation IDs.
   return toHex(sha256(bytes));
 }
 
@@ -2236,8 +2241,18 @@ function bytesEqual(left, right) {
   const a = asBytes(left, "PDF bytes");
   const b = asBytes(right, "PDF bytes");
   if (a.length !== b.length) return false;
+  if (activeHashRuntime?.compare) return activeHashRuntime.compare(a, b);
+  const sampleLength = Math.min(64 * 1024, a.length);
+  for (let index = a.length - sampleLength; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
   for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return false;
   return true;
+}
+
+function setHashRuntime(runtime) {
+  activeHashRuntime = runtime;
+  incremental.setHashRuntime(runtime);
 }
 
 async function inspect({ bytes, fastOpen = false, sourceMtimeMs = null }) {
@@ -2265,6 +2280,7 @@ module.exports = {
   prepareLocal,
   merge,
   inspect,
+  setHashRuntime,
   _internals: {
     canonicalValue,
     decodePdfString,

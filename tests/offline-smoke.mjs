@@ -193,10 +193,40 @@ try {
         const iframe = document.querySelector('iframe');
         const state = window.__hostState = {
           ready: false, opened: 0, saves: 0, ignoredSource: 0,
-          ignoredToken: 0, rejectedDocument: 0, savedData: null,
+          ignoredToken: 0, rejectedDocument: 0, sourceIdentity: null,
+          openRequest: 0, annotationRows: new Map(),
           invalidAcksSent: 0, errors: [], inbound: [],
         };
         let fixtureBytes;
+
+        const makeSnapshot = () => ({
+          schemaVersion: 1,
+          kind: 'pdf-annotation-snapshot',
+          documentId,
+          docKey: 'offline-smoke',
+          revision: state.annotationRows.size,
+          updatedAt: Date.now(),
+          legacyIdentities: [],
+          source: state.sourceIdentity ? {
+            sourcePath: documentId,
+            sourceHash: 'xxh64-v1:offline-smoke-source',
+            pageCount: state.sourceIdentity.pageCount,
+            orderedPageIdentities: state.sourceIdentity.orderedPageIdentities,
+          } : null,
+          annotations: [...state.annotationRows.values()],
+        });
+
+        const sendOpen = () => {
+          const data = fixtureBytes.slice(0);
+          state.openRequest += 1;
+          iframe.contentWindow.postMessage({
+            channel, type: 'open', token, data, documentId,
+            openRequest: state.openRequest,
+            deviceId: 'offline-smoke-device',
+            externalAnnotations: state.sourceIdentity ? makeSnapshot() : null,
+            readOnly: false, autoSave: false,
+          }, '*', [data]);
+        };
 
         window.addEventListener('message', event => {
           const message = event.data;
@@ -217,13 +247,21 @@ try {
           }
           if (message.type === 'ready') {
             state.ready = true;
-            const data = fixtureBytes.slice(0);
-            iframe.contentWindow.postMessage({
-              channel, type: 'open', token, data,
-              documentId, readOnly: false, autoSave: false,
-            }, '*', [data]);
+            sendOpen();
           } else if (message.type === 'opened') {
             state.opened += 1;
+          } else if (message.type === 'annotation-source-identity') {
+            state.sourceIdentity = {
+              pageCount: message.pageCount,
+              orderedPageIdentities: message.orderedPageIdentities,
+            };
+            iframe.contentWindow.postMessage({
+              channel, type: 'external-annotations-update', token, documentId,
+              openRequest: message.openRequest,
+              sourceMatch: state.annotationRows.size ? 'MATCH' : 'BASELINE_ESTABLISHED',
+              identityConfirmed: true,
+              externalAnnotations: makeSnapshot(),
+            }, '*');
           } else if (message.type === 'save') {
             if (message.documentId !== documentId) {
               state.rejectedDocument += 1;
@@ -237,23 +275,41 @@ try {
               return;
             }
             state.saves += 1;
-            state.savedData = message.data.slice(0);
+            for (const operation of message.operations || []) {
+              state.annotationRows.set(operation.uuid, {
+                uuid: operation.uuid,
+                kind: operation.kind,
+                pageIndex: operation.pageIndex,
+                embeddedRef: operation.embeddedRef || null,
+                deleted: operation.deleted === true,
+                clock: operation.clock,
+                ...(operation.deleted ? {} : { payload: operation.payload }),
+              });
+            }
             state.invalidAcksSent += 2;
             iframe.contentWindow.postMessage({
               channel, type: 'saved', token, documentId,
+              openRequest: message.openRequest,
               requestId: 'wrong-request-id',
             }, '*');
             iframe.contentWindow.postMessage({
               channel, type: 'saved', token,
               documentId: 'another/document.pdf',
+              openRequest: message.openRequest,
               requestId: message.requestId, revision: message.revision,
             }, '*');
             setTimeout(() => iframe.contentWindow.postMessage({
               channel, type: 'saved', token, documentId,
+              openRequest: message.openRequest,
               requestId: message.requestId, revision: message.revision,
             }, '*'), 25);
           } else if (message.type === 'error') {
-            state.errors.push(message.code || message.message || 'viewer error');
+            state.errors.push({
+              code: message.code || null,
+              message: message.message || null,
+              requestId: message.requestId || null,
+              revision: message.revision ?? null,
+            });
           }
         });
 
@@ -272,13 +328,7 @@ try {
           window.__spoofSourceFrame?.remove();
           window.__spoofSourceFrame = null;
         };
-        window.__reopenSavedData = () => {
-          const data = state.savedData.slice(0);
-          iframe.contentWindow.postMessage({
-            channel, type: 'open', token, data,
-            documentId, readOnly: false, autoSave: false,
-          }, '*', [data]);
-        };
+        window.__reopenExternalSnapshot = sendOpen;
 
         (async () => {
           fixtureBytes = await fetch('/fixtures/tracemonkey.pdf').then(r => {
@@ -759,10 +809,14 @@ try {
   assert.equal(await page.evaluate(() => window.__hostState.saves), 0);
 
   const getSavedAnnotations = () =>
-    viewer.evaluate(async () => {
-      const pdfPage = await PDFViewerApplication.pdfDocument.getPage(1);
-      return pdfPage.getAnnotations();
-    });
+    page.evaluate(() => [...window.__hostState.annotationRows.values()]
+      .filter((row) => !row.deleted)
+      .map((row) => ({
+        subtype: row.kind,
+        pageIndex: row.pageIndex,
+        color: row.payload?.editor?.color || null,
+        uuid: row.uuid,
+      })));
   const saveAndReopen = async (_historicalSaveCount, openCount) => {
     const before = await page.evaluate(() => window.__hostState.saves);
     const dirty = await viewer.evaluate(() => PDFViewerApplication._hasChanges());
@@ -781,23 +835,46 @@ try {
       ariaLabel: button.getAttribute("aria-label"),
       localizationId: button.getAttribute("data-l10n-id"),
     }));
-    assert.equal(saveLabel.text, "保存到仓库");
-    assert.equal(saveLabel.title, "保存 PDF 到仓库（覆盖当前文件）");
+    assert.equal(saveLabel.text, "保存批注");
+    assert.equal(saveLabel.title, "保存批注到外置记录");
     assert.equal(saveLabel.ariaLabel, saveLabel.title);
     assert.equal(saveLabel.localizationId, null);
     await viewer.click("#secondaryDownload");
     await page.waitForFunction(
       (expected) => window.__hostState.saves === expected,
-      { timeout: 60_000 },
+      { timeout: 15_000 },
       saveCount,
-    );
+    ).catch(async (error) => {
+      const state = await page.evaluate(() => {
+        const frame = document.querySelector('iframe[name="pdf-reader"]')?.contentWindow;
+        const app = frame?.PDFViewerApplication;
+        return {
+          host: window.__hostState && {
+            saves: window.__hostState.saves,
+            opened: window.__hostState.opened,
+            inbound: window.__hostState.inbound?.slice(-12),
+            errors: window.__hostState.errors,
+            operationCount: [...window.__hostState.annotationRows.values()].length,
+          },
+          viewer: app && {
+            dirty: app._hasChanges?.(),
+            saveInProgress: app._saveInProgress,
+            readOnly: frame.document.documentElement.hasAttribute('data-pdf-reader-readonly'),
+            mode: app.pdfViewer?.annotationEditorMode,
+            storedRows: app.pdfDocument?.annotationStorage?.serializable?.map?.size,
+            pendingSave: Boolean(frame.__pdfReaderBridgeState?.pendingSave),
+          },
+        };
+      });
+      error.message = `${error.message}\nOffline external-save diagnostic: ${JSON.stringify(state)}`;
+      throw error;
+    });
     await viewer.waitForFunction(() => !PDFViewerApplication._saveInProgress, {
       timeout: 60_000,
     });
     assert.ok(
-      await page.evaluate(
-        () => window.__hostState.savedData instanceof ArrayBuffer,
-      ),
+      await page.evaluate(() => window.__hostState.annotationRows.size > 0),
+      "The host should persist annotation operations instead of PDF bytes",
     );
     await page.evaluate(
       (expected) => {
@@ -805,7 +882,7 @@ try {
       },
       openCount,
     );
-    await page.evaluate(() => window.__reopenSavedData());
+    await page.evaluate(() => window.__reopenExternalSnapshot());
     try {
       await page.waitForFunction(
         (expected) => window.__hostState.opened === expected,
@@ -856,7 +933,7 @@ try {
               ready: window.__hostState?.ready,
               opened: window.__hostState?.opened,
               saves: window.__hostState?.saves,
-              savedDataByteLength: window.__hostState?.savedData?.byteLength ?? null,
+              sidecarOperationCount: window.__hostState?.annotationRows?.size ?? null,
               inbound: window.__hostState?.inbound,
               errors: window.__hostState?.errors,
             },
@@ -872,14 +949,14 @@ try {
         snapshot = { snapshotError: snapshotError?.message || String(snapshotError) };
       }
       const artifact = {
-        test: "offline smoke saved-data reopen",
+        test: "offline smoke external-annotation reopen",
         result: "failed while waiting for the exact opened acknowledgement",
         capturedAt: new Date().toISOString(),
         expectedOpened: openCount,
         savesBeforeReopen: before,
         latestSaveExpected: saveCount,
-        savedDataByteLength: await page
-          .evaluate(() => window.__hostState?.savedData?.byteLength ?? null)
+        sidecarOperationCount: await page
+          .evaluate(() => window.__hostState?.annotationRows?.size ?? null)
           .catch(() => null),
         pageErrors: errors,
         consoleErrors,
@@ -913,8 +990,8 @@ try {
     "Underline",
   ]);
 
-  // Save again without editing to ensure previously written marks survive and
-  // remain single PDF annotations.
+  // Reopen again without editing to ensure the external snapshot remains
+  // visible and does not create duplicate editors.
   await saveAndReopen(2, 3);
   const repeatedSave = await getSavedAnnotations();
   assert.deepEqual(
@@ -959,7 +1036,7 @@ try {
   const savedSquare = colorRoundTrip.find(
     (annotation) => annotation.subtype === "Square",
   );
-  assert.deepEqual(Object.values(savedSquare?.color || {}), [255, 0, 0]);
+  assert.deepEqual(Array.from(savedSquare?.color || []), [255, 0, 0]);
   assert.deepEqual(
     colorRoundTrip.map((annotation) => annotation.subtype).sort(),
     savedSubtypes,
@@ -1039,4 +1116,4 @@ try {
 }
 const finalError = attachCleanupErrors(primaryError, cleanupReport);
 if (finalError) throw finalError;
-console.log("Offline viewer smoke test passed: open, tools 1–5, bridge validation, save/reopen; normal browser exit.");
+  console.log("Offline viewer smoke test passed: open, tools 1–5, bridge validation, external operation save/reopen; normal browser exit.");

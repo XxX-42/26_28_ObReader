@@ -2,6 +2,8 @@ import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
@@ -9,6 +11,8 @@ import { resolveBrowserPath } from "./browser-path.mjs";
 import { cleanupBrowserTestResources, attachCleanupErrors } from "./browser-test-cleanup.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+const { createPdfHashRuntime } = createRequire(import.meta.url)("../plugin/pdf-hash-runtime.cjs");
+const hashRuntime = await createPdfHashRuntime();
 
 for (const blockDirectScripts of [false, true]) {
 test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectScripts ? "forced Blob fallback" : "resource imports"})`, { timeout: 120_000 }, async () => {
@@ -16,8 +20,10 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
   const source = await readFile(path.join(root, "dist/pdf-web-reader/main.js"), "utf8");
   const styles = await readFile(path.join(root, "dist/pdf-web-reader/styles.css"), "utf8");
   const fixture = await readFile(path.join(root, "tests/fixtures/tracemonkey.pdf"));
+  const sourceSha256Before = createHash("sha256").update(fixture).digest("hex");
+  const sourceXxh64Before = hashRuntime.fingerprint(fixture);
   const files = new Map([["sample.pdf", fixture]]), directories = new Set([".obsidian"]);
-  let pdfWrites = 0, browser, page, primaryError;
+  let sourcePdfWrites = 0, annotationWrites = 0, browser, page, primaryError;
   const report = { status: "running", mode: "real-browser-no-node/mobile", physicalIpadValidated: false, blockDirectScripts, checks: {}, errors: [] };
   const server = createServer(async (req, res) => {
     try {
@@ -33,13 +39,20 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         if (op === "exists") { res.end(JSON.stringify(files.has(key) || directories.has(key))); return; }
         if (op === "mkdir") { directories.add(key); res.end("null"); return; }
         if (op === "remove") { files.delete(key); res.end("null"); return; }
+        if (op === "rename") {
+          const destination = url.searchParams.get("to");
+          if (!destination || !files.has(key)) throw Error("Invalid fixture rename");
+          files.set(destination, files.get(key)); files.delete(key); res.end("null"); return;
+        }
         if (op === "list") {
           const prefix = `${key}/`;
           res.end(JSON.stringify({ files: [...files.keys()].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")), folders: [...directories].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")) })); return;
         }
         if (op === "write") {
           const chunks = []; for await (const chunk of req) chunks.push(chunk);
-          files.set(key, Buffer.concat(chunks)); if (key === "sample.pdf") pdfWrites++;
+          files.set(key, Buffer.concat(chunks));
+          if (key === "sample.pdf") sourcePdfWrites++;
+          else if (key.startsWith("00_Archive/20_PDFData/")) annotationWrites++;
           res.end("null"); return;
         }
         if (op !== "read") throw Error("Unknown fixture operation");
@@ -86,6 +99,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         readBinary: target => api("read", target), writeBinary: (target, bytes) => api("write", target, bytes),
         read: async target => new TextDecoder().decode(await api("read", target)),
         write: (target, text) => api("write", target, text), remove: target => api("remove", target),
+        rename: (from, to) => fetch(`${base}/adapter?op=rename&path=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(response => { if (!response.ok) throw Error("Adapter rename failed"); return response.json(); }),
         list: target => api("list", target),
         getResourcePath: target => `${base}/resource/${encodeURIComponent(target)}`,
       };
@@ -106,7 +120,12 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
           if (!this.view) { this.view = factory(this); await this.view.onOpen(); }
           await this.view.setState(state.state, {}); return this.view;
         }
-        async detach() { await this.view?.onClose(); this.view?.contentEl.remove(); leaves.splice(leaves.indexOf(this), 1); }
+        async detach() {
+          const index = leaves.indexOf(this);
+          if (index >= 0) leaves.splice(index, 1);
+          await this.view?.onClose();
+          this.view?.contentEl.remove();
+        }
       }
       class Plugin {
         constructor(app, manifest) { this.app = app; this.manifest = manifest; this.commands = []; }
@@ -132,12 +151,28 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         workspace: { on: () => ({}), getActiveFile: () => vaultFiles.get("sample.pdf"), getLeavesOfType: type => leaves.filter(l => l.view?.getViewType() === type),
           getLeaf: () => new WorkspaceLeaf(app), iterateAllLeaves: fn => leaves.forEach(fn), detachLeavesOfType() {}, },
       };
+      window.fixtureAdapter = adapter;
       const module = { exports: {} };
       const source = await (await fetch(`${base}/bundle`)).text();
       Function("require", "module", "exports", source)(name => { if (name !== "obsidian") throw Error(`Forbidden module ${name}`); return obsidian; }, module, module.exports);
       const plugin = new module.exports(app, manifest); await plugin.onload(); plugin.tab.display();
       window.fixturePlugin = plugin; window.fixtureApp = app; window.fixtureLeaves = leaves; window.fixtureFile = vaultFiles.get("sample.pdf");
+      window.fixtureProtocol = [];
+      window.addEventListener("message", event => {
+        const message = event.data;
+        if (message?.channel === "pdf-web-reader" && ["annotation-source-identity", "saved", "external-annotations-update", "annotation-source-mismatch"].includes(message.type)) {
+          window.fixtureProtocol.push({ direction: "viewer-to-host", type: message.type, documentId: message.documentId, openRequest: message.openRequest, revision: message.revision, pageCount: message.pageCount });
+        }
+      });
       await plugin.openPdf(window.fixtureFile);
+      const view = plugin.views.values().next().value;
+      const originalOnMessage = view.onMessage.bind(view);
+      view.onMessage = event => {
+        if (event?.data?.type === "annotation-source-identity" || event?.data?.type === "external-annotations-update" || event?.data?.type === "annotation-source-mismatch") {
+          window.fixtureProtocol.push({ type: event.data.type, documentId: event.data.documentId, openRequest: event.data.openRequest, pageCount: event.data.pageCount, identityStatus: event.data.identityStatus, revision: event.data.externalAnnotations?.revision, annotations: event.data.externalAnnotations?.annotations?.length });
+        }
+        return originalOnMessage(event);
+      };
       return { nodeGlobalsAbsent: typeof Buffer === "undefined" && typeof process === "undefined", mobile: plugin.isMobileRuntime, settingsOpened: true, pluginLoaded: true };
     }, { manifest, base });
     assert.equal(report.checks.boot.nodeGlobalsAbsent, true); assert.equal(report.checks.boot.mobile, true);
@@ -147,6 +182,12 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     const frame = (await page.frames()).find(f => f.parentFrame() === page.mainFrame()); assert.ok(frame);
     await frame.waitForFunction(() => window.PDFViewerApplication?.pdfDocument?.numPages === 14 && document.querySelector('.page[data-page-number="1"] canvas'), { timeout: 30_000 });
     report.checks.viewer = await frame.evaluate(() => ({ pages: PDFViewerApplication.pdfDocument.numPages, canvas: document.querySelector(".page canvas").width, worker: !!PDFViewerApplication.pdfLoadingTask?._worker?.port }));
+    // Editing is fail-closed until the host confirms source bytes and ordered
+    // page references. Wait for that handshake before synthesizing input.
+    await frame.waitForFunction(() => {
+      const button = document.querySelector("#editorSquareButton");
+      return button && !button.disabled;
+    }, { timeout: 20_000 });
     await frame.click("#editorSquareButton");
     const position = await frame.$eval('.page[data-page-number="1"] .annotationEditorLayer', el => { const r = el.getBoundingClientRect(); return { x: r.x + 100, y: r.y + 180 }; });
     const iframeBox = await page.$eval("iframe", el => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y }; });
@@ -155,22 +196,84 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     await page.mouse.move(iframeBox.x + position.x, iframeBox.y + position.y); await page.mouse.down();
     await page.mouse.move(iframeBox.x + position.x + 90, iframeBox.y + position.y + 65, { steps: 10 }); await page.mouse.up();
     await page.waitForFunction(() => { const v = fixtureLeaves[0].view; return v.currentRevision > 0 && v.confirmedRevision === v.currentRevision && !v.saving; }, { timeout: 20_000 });
-    assert.ok(pdfWrites > 0); assert.notDeepEqual(files.get("sample.pdf"), fixture);
-    report.checks.saved = { writes: pdfWrites, changed: true };
+    assert.ok(annotationWrites > 0, "Annotation operations must be persisted to the external store");
+    assert.equal(sourcePdfWrites, 0, "The original PDF must remain immutable");
+    assert.deepEqual(files.get("sample.pdf"), fixture, "The source PDF bytes must be unchanged");
+    const sourceAfter = files.get("sample.pdf");
+    const sourceSha256After = createHash("sha256").update(sourceAfter).digest("hex");
+    const sourceXxh64After = hashRuntime.fingerprint(sourceAfter);
+    assert.equal(sourceSha256After, sourceSha256Before);
+    assert.equal(sourceXxh64After, sourceXxh64Before);
+    report.checks.saved = {
+      annotationWrites,
+      sourcePdfWrites,
+      sourceBytesUnchanged: true,
+      sourceSha256Before,
+      sourceSha256After,
+      sourceXxh64Before,
+      sourceXxh64After,
+    };
     report.checks.mobileLoader = await page.evaluate(() => ({...fixtureLeaves[0].view.mobileRuntime}));
     if (blockDirectScripts) { assert.equal(report.checks.mobileLoader.moduleSources.pdf, "blob"); assert.equal(report.checks.mobileLoader.moduleSources.viewer, "blob"); }
     await page.evaluate(async () => {
       window.fixtureClosedViews = [fixtureLeaves[0].view];
-      await fixtureLeaves[0].detach(); await fixturePlugin.openPdf(fixtureFile);
+      const leaf = fixtureApp.workspace.getLeaf(true);
+      await leaf.setViewState({ type: "pdf-web-reader-view", active: true, state: { file: "sample.pdf" } });
+      window.fixtureReopenedLeaf = leaf;
+      window.fixtureReopenedView = leaf.view;
+      window.fixtureHostMessages = [];
+      const originalPost = leaf.view.postToViewer.bind(leaf.view);
+      leaf.view.postToViewer = (message, ...args) => {
+        if (message?.type === "external-annotations-update" || message?.type === "annotation-source-mismatch") {
+          window.fixtureHostMessages.push({ type: message.type, sourceMatch: message.sourceMatch, identityConfirmed: message.identityConfirmed, readOnly: message.readOnly, revision: message.externalAnnotations?.revision, annotations: message.externalAnnotations?.annotations?.length, pages: message.externalAnnotations?.annotations?.map(row => row.pageIndex) });
+        }
+        return originalPost(message, ...args);
+      };
     });
-    await page.waitForFunction(() => fixtureLeaves[0]?.view.ready, { timeout: 40_000 });
-    const reopened = (await page.frames()).find(f => f.parentFrame() === page.mainFrame());
-    await reopened.waitForFunction(() => window.PDFViewerApplication?.pdfDocument?.numPages === 14, { timeout: 30_000 });
-    report.checks.reopened = await reopened.evaluate(async () => { const app = PDFViewerApplication; const annotations = await (await app.pdfDocument.getPage(1)).getAnnotations(); return { square: annotations.filter(a => a.subtype === "Square").length, pages: app.pdfDocument.numPages }; });
-    assert.ok(report.checks.reopened.square >= 1);
+    await page.waitForFunction(() => fixtureReopenedView?.ready, { timeout: 40_000 });
+    await page.waitForFunction(() => {
+      const child = fixtureReopenedView?.iframe?.contentWindow;
+      return child?.PDFViewerApplication?.pdfDocument?.numPages === 14;
+    }, { timeout: 30_000 });
+    try {
+      await page.waitForFunction(() => {
+        const child = fixtureReopenedView?.iframe?.contentWindow;
+        return child?.document?.querySelectorAll('.page[data-page-number="1"] .annotationEditorLayer [data-l10n-id="pdfjs-editor-square-editor"]').length > 0;
+      }, { timeout: 8_000 });
+      report.checks.externalEditorHydrated = true;
+    } catch (error) {
+      report.checks.externalEditorHydrated = false;
+      report.checks.hydrationWaitError = error.message;
+    }
+    report.checks.reopened = await page.evaluate(() => {
+      const child = fixtureReopenedView?.iframe?.contentWindow;
+      return {
+        square: child?.document?.querySelectorAll('.page[data-page-number="1"] .annotationEditorLayer [data-l10n-id="pdfjs-editor-square-editor"]').length ?? 0,
+        pages: child?.PDFViewerApplication?.pdfDocument?.numPages ?? null,
+        editorChildren: child?.document?.querySelector('.page[data-page-number="1"] .annotationEditorLayer')?.childElementCount ?? null,
+        squareLabels: [...(child?.document?.querySelectorAll('.page[data-page-number="1"] .annotationEditorLayer [data-l10n-id="pdfjs-editor-square-editor"]') || [])].map(el => el.getAttribute('aria-label')),
+      };
+    });
+    report.checks.reopenedHost = await page.evaluate(() => ({
+      snapshot: fixtureReopenedView?.annotationSnapshot ?? null,
+      hydrationAllowed: fixtureReopenedView?.annotationHydrationAllowed,
+      sourceMismatch: fixtureReopenedView?.annotationSourceMismatch,
+      status: fixtureReopenedView?.lastStatusMessage,
+      leaves: fixtureLeaves.length,
+      pluginViews: fixturePlugin.views.size,
+      viewId: fixtureReopenedView?.documentId,
+      openRequest: fixtureReopenedView?.openRequest,
+      filePath: fixtureReopenedView?.documentFile?.path,
+      closedViewIds: fixtureClosedViews.map(view => ({ id: view.documentId, openRequest: view.openRequest, ready: view.ready })),
+      sameAsClosedView: fixtureReopenedView === fixtureClosedViews[0],
+    }));
+    report.checks.protocol = await page.evaluate(() => fixtureProtocol);
+    report.checks.hostMessages = await page.evaluate(() => fixtureHostMessages);
+    assert.ok(report.checks.reopened.square >= 1, JSON.stringify(report.checks.reopened));
     await page.evaluate(async () => {
-      fixtureClosedViews.push(fixtureLeaves[0].view);
-      await fixtureLeaves[0].detach(); fixturePlugin.onunload();
+      fixtureClosedViews.push(fixtureReopenedView);
+      await Promise.all([...new Set(fixtureClosedViews)].map(view => view.onClose()));
+      fixturePlugin.onunload();
     });
     await page.waitForFunction(() => fixtureClosedViews.every(view => !view.mobileResourceLease), { timeout: 7_000 });
     report.checks.disposed = await page.evaluate(() => ({
@@ -190,6 +293,8 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
       revision: window.fixtureLeaves?.[0]?.view.currentRevision,
       confirmed: window.fixtureLeaves?.[0]?.view.confirmedRevision,
       paused: window.fixtureLeaves?.[0]?.view.autoSavePaused,
+      annotationSnapshot: window.fixtureLeaves?.[0]?.view.annotationSnapshot ?? null,
+      annotationHydrationAllowed: window.fixtureLeaves?.[0]?.view.annotationHydrationAllowed,
       notices: window.notices || [],
       frameHeight: document.querySelector("iframe")?.getBoundingClientRect().height,
     })).catch(() => null);
