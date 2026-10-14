@@ -896,6 +896,21 @@ test(
       await viewer.waitForFunction(
         () => !document.getElementById("editorUnderlineButton").disabled,
       );
+      // Check the locally requested 80% middle-button wheel size against the
+      // merged 0.5.20 Viewer, then close it before recording interaction events.
+      const wheelCenter = { x: 700, y: 500 };
+      await page.mouse.move(wheelCenter.x, wheelCenter.y);
+      await page.mouse.down({ button: "middle" });
+      await viewer.waitForSelector(".pdfToolWheel");
+      const wheelSize = await viewer.$eval(".pdfToolWheel", (element) => ({
+        diameter: element.getBoundingClientRect().width,
+        center: element.querySelector(".pdfToolWheelCenter").getBoundingClientRect().width,
+      }));
+      assert.equal(wheelSize.diameter, 192);
+      assert.ok(Math.abs(wheelSize.center - 38.4) < 0.1);
+      await page.mouse.up({ button: "middle" });
+      await page.keyboard.press("Escape");
+      assert.equal(await viewer.$(".pdfToolWheel"), null);
       await viewer.evaluate(() => {
         window.__pdfLifecycleEvents = [];
         for (const type of ["documentloaded", "documenterror"]) {

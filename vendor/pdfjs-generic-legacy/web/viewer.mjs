@@ -26523,7 +26523,7 @@ function toolWheelSector(wheel, evt) {
   const dx = evt.clientX - wheel.x,
     dy = evt.clientY - wheel.y;
   const distance = Math.hypot(dx, dy);
-  if (distance < 24 || distance > wheel.radius) {
+  if (distance < wheel.radius / 5 || distance > wheel.radius) {
     return -1;
   }
   return Math.floor(
@@ -26587,7 +26587,7 @@ function onToolWheelDown(evt) {
   this._toolWheelPointer = evt.pointerId;
   this._toolWheelSuppressUntil = performance.now() + 1000;
   const radius = Math.min(
-    120,
+    96,
     evt.clientX,
     evt.clientY,
     window.innerWidth - evt.clientX,
