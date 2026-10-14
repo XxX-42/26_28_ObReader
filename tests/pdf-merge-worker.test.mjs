@@ -7,19 +7,25 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerSource = await readFile(path.join(root, "plugin/pdf-merge-worker.mjs"), "utf8");
+const testHashRuntime = {
+  fingerprint(value) { return `xxh64-v1:${String(value?.byteLength || 0).padStart(16, "0")}`; },
+};
 
 function boot(core) {
   let onMessage;
   const posts = [];
   const context = {
     __core: core,
+    __hashRuntimeModule: { createPdfHashRuntime: async () => testHashRuntime },
     Uint8Array,
     addEventListener(type, listener) { if (type === "message") onMessage = listener; },
     postMessage(message, transfer = []) { posts.push({ message, transfer: [...transfer] }); },
   };
   context.globalThis = context;
   vm.runInNewContext(
-    workerSource.replace('import core from "./pdf-merge-core.cjs";', "const core = globalThis.__core;"),
+    workerSource
+      .replace('import core from "./pdf-merge-core.cjs";', "const core = globalThis.__core;")
+      .replace('import hashRuntimeModule from "./pdf-hash-runtime.cjs";', "const hashRuntimeModule = globalThis.__hashRuntimeModule;"),
     context,
   );
   return { posts, send: (data) => onMessage({ data }) };

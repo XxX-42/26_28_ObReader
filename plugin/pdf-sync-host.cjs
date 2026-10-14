@@ -7,7 +7,7 @@ const { createPdfJournal } = require("./pdf-journal.cjs");
 // Browser-only host coordination. The frozen Viewer remains the annotation
 // writer; the lazy merge Worker adds identities and reconciles branches.
 function createPdfSyncHost(plugin, api) {
-  const { createPdfMergeClient, sha256Bytes, normalizePath, isPdfFile,
+  const { createPdfMergeClient, sha256Bytes, hashRuntime, normalizePath, isPdfFile,
     bytesEqual, makeToken, ensureAdapterDirectory, Notice } = api;
   const channel = "pdf-web-reader";
   const states = new WeakMap();
@@ -58,13 +58,27 @@ function createPdfSyncHost(plugin, api) {
   };
   const copy = (value) => Uint8Array.from(bytesView(value));
   const buffer = (value) => copy(value).buffer;
-  const fingerprint = (value) => sha256Bytes(bytesView(value));
+  const fingerprint = (value) => hashRuntime
+    ? hashRuntime.fingerprint(bytesView(value))
+    : sha256Bytes(bytesView(value));
+  const fingerprintMatches = (value, expected) => {
+    if (hashRuntime) return hashRuntime.matches(bytesView(value), expected);
+    const digest = sha256Bytes(bytesView(value));
+    return expected === digest || String(expected || "").toLowerCase() === `sha256-v1:${digest}`.toLowerCase();
+  };
+  const hashFileKey = (value) => hashRuntime?.hashFileKey(value) ||
+    String(value).replace(/^xxh64-v1:/i, "xxh64-v1-").replace(/^sha256-v1:/i, "sha256-v1-");
+  const isSupportedHash = (value) => hashRuntime?.isSupportedHash(value) ??
+    (typeof value === "string" && (/^[a-f0-9]{64}$/i.test(value) ||
+      /^sha256-v1:[a-f0-9]{64}$/i.test(value) || /^xxh64-v1:[a-f0-9]{16}$/i.test(value)));
   const fingerprintChunks = (chunks) => {
+    if (hashRuntime) return hashRuntime.fingerprintChunks(chunks);
     const hash = sha256.create();
     for (const chunk of chunks) hash.update(bytesView(chunk));
     return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, "0")).join("");
   };
-  const createFingerprintAccumulator = () => {
+  const createFingerprintAccumulator = (expectedHash = null) => {
+    if (hashRuntime) return hashRuntime.createAccumulator(expectedHash);
     const hash = sha256.create();
     return {
       update(value) { hash.update(bytesView(value)); },
@@ -73,7 +87,7 @@ function createPdfSyncHost(plugin, api) {
   };
   const equal = (left, right) => bytesEqual(bytesView(left), bytesView(right));
   const patchMatches = (patch, value) => !!patch && Number.isSafeInteger(patch.baseLength) &&
-    patch.baseLength === bytesView(value).byteLength && patch.baseFingerprint === fingerprint(value);
+    patch.baseLength === bytesView(value).byteLength && fingerprintMatches(value, patch.baseFingerprint);
   const prefixPatch = (output, base) => {
     const outputBytes = bytesView(output);
     const baseBytes = bytesView(base);
@@ -96,6 +110,10 @@ function createPdfSyncHost(plugin, api) {
     root: checkpointRoot,
     normalizePath,
     fingerprint,
+    fingerprintMatches,
+    hashFileKey,
+    isSupportedHash,
+    pathKey: (path) => sha256Bytes(new TextEncoder().encode(normalizePath(path))),
     fingerprintChunks,
     createFingerprintAccumulator,
     bytesEqual,
@@ -284,7 +302,7 @@ function createPdfSyncHost(plugin, api) {
       current.base?.hash === loaded.baseHash &&
       current.base?.length === loaded.baseLength;
   }
-  function validHash(value) { return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value); }
+  function validHash(value) { return isSupportedHash(value); }
   async function pendingWriteParent(file, loaded) {
     const manifest = loaded.metadata;
     const metadata = manifest?.metadata || {};
@@ -307,7 +325,7 @@ function createPdfSyncHost(plugin, api) {
           !Number.isSafeInteger(suffixLength) || suffixLength < 1 ||
           parentLength + suffixLength !== checkpoint.byteLength) return null;
       const parent = checkpoint.subarray(0, parentLength);
-      if (fingerprint(parent) !== record.parentHash) return null;
+      if (!fingerprintMatches(parent, record.parentHash)) return null;
       return { hash: record.parentHash, length: parentLength };
     }
     if (metadata.writePhase === "preflight" &&
@@ -329,7 +347,6 @@ function createPdfSyncHost(plugin, api) {
     const allowlistedErrors = new Set(["PDF 已被替换或移除", "PDF 在磁盘检查期间被替换"]);
     const journalTime = Date.parse(manifest.updatedAt || "");
     if (!Number.isFinite(journalTime)) return false;
-    const diskHash = fingerprint(disk);
     const allCandidates = await plugin.listRecoveryCandidates();
     const isMatch = (candidate) => {
       const recovery = candidate?.metadata;
@@ -346,7 +363,7 @@ function createPdfSyncHost(plugin, api) {
           !allowlistedErrors.has(recovery.error) ||
           normalizePath(recovery.originalPath || "") !== normalizePath(file.path) ||
           recovery.documentId !== metadata.documentId || recovery.revision !== metadata.revision ||
-          recovery.baseFingerprint !== diskHash || !validHash(recovery.outputHash) ||
+          !fingerprintMatches(disk, recovery.baseFingerprint) || !validHash(recovery.outputHash) ||
           !Number.isSafeInteger(recovery.outputLength) || recovery.outputLength < 1) return false;
       if (metadata.requestId !== undefined && metadata.requestId !== null) {
         if (recovery.requestId !== metadata.requestId) return false;
@@ -362,7 +379,7 @@ function createPdfSyncHost(plugin, api) {
     const bytes = bytesView(await plugin.readRecoveryBytes(candidate));
     const originalMetadata = candidate.metadata;
     if (bytes.byteLength !== originalMetadata.outputLength ||
-        fingerprint(bytes) !== originalMetadata.outputHash) return false;
+        !fingerprintMatches(bytes, originalMetadata.outputHash)) return false;
     const fresh = await plugin.listRecoveryCandidates();
     const identity = originalMetadata.candidateId || candidate.candidatePath || candidate.metadataPath;
     if (typeof identity !== "string" || !identity) return false;
@@ -440,7 +457,7 @@ function createPdfSyncHost(plugin, api) {
           const recordedParentMatches = parent && metadata.writeParentHash === parent.hash &&
             metadata.writeParentLength === parent.length;
           const safePreflight = metadata.writePhase === "preflight" && appendPreflight && recordedParentMatches &&
-            parent.length === disk.byteLength && parent.hash === fingerprint(disk);
+            parent.length === disk.byteLength && fingerprintMatches(disk, parent.hash);
           const legacyProof = !loaded.metadata?.metadata?.writePhase &&
             await hasLegacyPrewriteFailure(file, loaded, disk);
           if (!safePreflight && !legacyProof) {
@@ -720,7 +737,7 @@ function createPdfSyncHost(plugin, api) {
     if (!targetIsCurrent()) throw new Error("PDF 在写后校验期间已移动或被替换；已保留恢复副本");
     const afterBytes = bytesView(after);
     if (!measureSyncStage(onStage, "sourceReadbackVerifyMs", () =>
-      afterBytes.byteLength === bytesView(bytes).byteLength && fingerprint(afterBytes) === fingerprint(bytes))) {
+      equal(afterBytes, bytes))) {
       throw new Error("PDF 写后内容发生变化，已保留检查点");
     }
     if (state.checkpoint && equal(state.checkpoint, afterBytes)) state.checkpoint = afterBytes;
@@ -813,7 +830,7 @@ function createPdfSyncHost(plugin, api) {
     const after = await measureStage(onStage, "sourceReadbackMs", () => readStablePdf(file, requestedPath, strictTarget));
     if (!after) throw new Error("PDF 在追加期间被替换；已保留恢复副本");
     if (!measureSyncStage(onStage, "sourceReadbackVerifyMs", () =>
-      after.byteLength === patch.outputLength && fingerprint(after) === patch.outputFingerprint)) {
+      after.byteLength === patch.outputLength && fingerprintMatches(after, patch.outputFingerprint))) {
       throw new Error("PDF 追加后的内容未通过校验；已保留检查点，未自动重试");
     }
     updateBaselineForLiveViews(file, states.get(file), after, requestedPath);
@@ -1157,7 +1174,7 @@ function createPdfSyncHost(plugin, api) {
             } else {
               if (!bytes) {
                 bytes = joinBytes(observed, patch.suffix);
-                if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
+                if (bytes.byteLength !== patch.outputLength || !fingerprintMatches(bytes, patch.outputFingerprint)) {
                   throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
                 }
               }
@@ -1352,8 +1369,8 @@ function createPdfSyncHost(plugin, api) {
       /^[a-zA-Z0-9_-]{8,128}$/.test(intent.actorId || "") &&
       intent.draft?.hash === metadata.outputHash &&
       intent.draft?.length === metadata.outputLength &&
-      /^\.bases\/[a-f0-9]{64}\.pdf$/i.test(intent.base?.file || "") &&
-      /^[a-f0-9]{64}$/i.test(intent.base?.hash || "") &&
+      /^\.bases\/(?:[a-f0-9]{64}|xxh64-v1-[a-f0-9]{16}|sha256-v1-[a-f0-9]{64})\.pdf$/i.test(intent.base?.file || "") &&
+      validHash(intent.base?.hash) &&
       Number.isSafeInteger(intent.base?.length) && intent.base.length > 0 &&
       Array.isArray(intent.operations) && Array.isArray(intent.newAnnotations) &&
       boundedJsonValue([intent.operations, intent.newAnnotations]) &&
@@ -1400,7 +1417,7 @@ function createPdfSyncHost(plugin, api) {
       throw new Error("关闭恢复副本完整性或身份验证失败");
     }
     const raw = bytesView(await plugin.readRecoveryBytes(fresh));
-    if (raw.byteLength !== intent.draft.length || fingerprint(raw) !== intent.draft.hash) {
+    if (raw.byteLength !== intent.draft.length || !fingerprintMatches(raw, intent.draft.hash)) {
       throw new Error("关闭恢复 PDF 与持久意图不匹配");
     }
     // Use fresh storage paths while retaining an isolated serializable intent.
@@ -1602,7 +1619,7 @@ function createPdfSyncHost(plugin, api) {
   async function readCloseBase(intent) {
     const path = `${plugin.recoveryDirectory}/${intent.base.file}`;
     const bytes = bytesView(await plugin.app.vault.adapter.readBinary(path));
-    if (bytes.byteLength !== intent.base.length || fingerprint(bytes) !== intent.base.hash) {
+    if (bytes.byteLength !== intent.base.length || !fingerprintMatches(bytes, intent.base.hash)) {
       throw new Error("关闭恢复基线校验失败");
     }
     return copy(bytes);
@@ -1612,14 +1629,14 @@ function createPdfSyncHost(plugin, api) {
     if (patchMatches(result?.patch, observed)) {
       const output = joinBytes(observed, result.patch.suffix);
       if (output.byteLength === result.patch.outputLength &&
-          fingerprint(output) === result.patch.outputFingerprint) return output;
+          fingerprintMatches(output, result.patch.outputFingerprint)) return output;
     }
     throw new Error("本地与磁盘分支合并结果未通过完整性验证");
   }
   async function recoverInvokedCloseWrite(candidate, intent, file, targetPath, state) {
     const disk = await readStablePdf(file, targetPath, true);
     if (!disk) throw new Error("PDF 已移动或被替换；原恢复副本仍保留");
-    if (intent.writeHash && disk.byteLength === intent.writeLength && fingerprint(disk) === intent.writeHash) {
+    if (intent.writeHash && disk.byteLength === intent.writeLength && fingerprintMatches(disk, intent.writeHash)) {
       await loadCheckpoint(file, state);
       if (!exactCloseTarget(file, targetPath)) throw new Error("PDF 写回后已移动或被替换");
       if (state.paused) throw new Error(state.failure || "同步检查点未能确认后台写回");
@@ -2124,7 +2141,7 @@ function createPdfSyncHost(plugin, api) {
       const materializePatch = () => {
         if (bytes === undefined) {
           bytes = joinBytes(observed, patch.suffix);
-          if (bytes.byteLength !== patch.outputLength || fingerprint(bytes) !== patch.outputFingerprint) {
+          if (bytes.byteLength !== patch.outputLength || !fingerprintMatches(bytes, patch.outputFingerprint)) {
             throw new Error("无法重建完整 PDF 检查点；恢复副本已保留");
           }
         }

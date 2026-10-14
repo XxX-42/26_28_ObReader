@@ -21,6 +21,7 @@ const ASCII_EOF = [37, 37, 69, 79, 70]; // %%EOF
 const ASCII_STARTXREF = [115, 116, 97, 114, 116, 120, 114, 101, 102];
 const STREAM_OPEN = new TextEncoder().encode("\nstream\n");
 const STREAM_CLOSE = new TextEncoder().encode("\nendstream");
+let activeHashRuntime = null;
 
 class PdfIncrementalError extends Error {
   constructor(code, message, cause = null) {
@@ -49,14 +50,20 @@ function toHex(bytes) {
 }
 
 function fingerprint(bytes) {
+  if (activeHashRuntime) return activeHashRuntime.fingerprint(bytes);
   return toHex(sha256(bytes));
 }
 
 function fingerprintConcat(prefix, suffix) {
+  if (activeHashRuntime) return activeHashRuntime.fingerprintChunks([prefix, suffix]);
   const hash = sha256.create();
   hash.update(prefix);
   hash.update(suffix);
   return toHex(hash.digest());
+}
+
+function setHashRuntime(runtime) {
+  activeHashRuntime = runtime || null;
 }
 
 function sameRef(left, right) {
@@ -247,11 +254,10 @@ function hashPdfStream(object, scratchState, measuredSize) {
     fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream dictionary could not be serialized for change detection.", error);
   }
   if (written !== dictionarySize) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF stream dictionary reported an inconsistent serialized size.");
+  const chunks = [scratchState.buffer.subarray(0, written), STREAM_OPEN, contents, STREAM_CLOSE];
+  if (activeHashRuntime) return activeHashRuntime.fingerprintChunks(chunks);
   const hash = sha256.create();
-  hash.update(scratchState.buffer.subarray(0, written));
-  hash.update(STREAM_OPEN);
-  hash.update(contents);
-  hash.update(STREAM_CLOSE);
+  for (const chunk of chunks) hash.update(chunk);
   return toHex(hash.digest());
 }
 
@@ -272,7 +278,7 @@ function hashPdfObject(object, scratchState) {
     fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object could not be serialized for change detection.", error);
   }
   if (written !== size) fail("PDF_INCREMENTAL_UNSERIALIZABLE_OBJECT", "A PDF object reported an inconsistent serialized size.");
-  return toHex(sha256(scratchState.buffer.subarray(0, written)));
+  return fingerprint(scratchState.buffer.subarray(0, written));
 }
 
 function snapshotObjects(document) {
@@ -440,6 +446,7 @@ module.exports = {
   materializeIncrementalResult,
   readSourceTrailer,
   fingerprint,
+  setHashRuntime,
   _internals: {
     parseFinalStartXref,
     hashPdfObject,

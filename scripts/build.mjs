@@ -118,6 +118,7 @@ for (const file of [
   path.join(pluginSource, "pdf-merge-worker.mjs"),
   path.join(pluginSource, "pdf-merge-client.cjs"),
   path.join(pluginSource, "pdf-sync-host.cjs"),
+  path.join(pluginSource, "pdf-hash-runtime.cjs"),
 ]) {
   try {
     await access(file);
@@ -204,6 +205,7 @@ const mergeWorkerLicense = [
     "3. This notice may not be removed or altered from any source distribution.\n",
   await readBundledDependencyLicense("tslib", ["LICENSE.txt", "LICENSE"]),
   await readBundledDependencyLicense("@noble/hashes", ["LICENSE", "LICENSE.md"]),
+  await readBundledDependencyLicense("xxhash-wasm", ["LICENSE.md", "LICENSE"]),
 ].join("");
 
 const runtimeInputs = [
@@ -243,6 +245,7 @@ for (const packageName of [
   "pako",
   "tslib",
   "@noble/hashes",
+  "xxhash-wasm",
 ]) {
   assert.ok(
     Object.keys(mergeWorkerBundle.metafile.inputs).some((input) =>
@@ -309,15 +312,15 @@ const requireMarker =
   /\/\* BUILD:ASSET_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*ensureViewerAssets\s*,\s*(?:sha256Bytes\s*,?\s*)?\}\s*=\s*require\((["'])\.\/asset-runtime\.cjs\1\);/s;
 const payloadMarker =
   "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
-const mergeClientMarker =
-  /\/\* BUILD:PDF_MERGE_CLIENT_REQUIRE \*\/\s*const\s*\{\s*createPdfMergeClient\s*\}\s*=\s*require\((['"])\.\/pdf-merge-client\.cjs\1\);/s;
-const syncHostMarker =
-  /\/\* BUILD:PDF_SYNC_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfSyncHost\s*\}\s*=\s*require\((['"])\.\/pdf-sync-host\.cjs\1\);/s;
+const annotationHostMarker =
+  /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
 const heavyWorkMarker =
   /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
-const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*writeDeltaRecovery\s*,\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery\.cjs\1\);/s;
+const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery-read\.cjs\1\);/s;
 const sessionLogMarker = /\/\* BUILD:SESSION_LOG_REQUIRE \*\/\s*const\s*\{\s*createSessionLog\s*,\s*traceFunction\s*,\s*traceMethods\s*\}\s*=\s*require\((['"])\.\/session-log\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
+const hashRuntimeMarker = /\/\* BUILD:PDF_HASH_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*createPdfHashRuntime\s*\}\s*=\s*require\((['"])\.\/pdf-hash-runtime\.cjs\1\);/s;
+const mergeClientMarker = /\/\* BUILD:PDF_MERGE_CLIENT_REQUIRE \*\/\s*const\s*\{\s*createPdfMergeClient\s*\}\s*=\s*require\((['"])\.\/pdf-merge-client\.cjs\1\);/s;
 assert.equal(
   [...sourceMain.matchAll(new RegExp(requireMarker.source, "gs"))].length,
   1,
@@ -329,14 +332,14 @@ assert.equal(
   "Expected exactly one viewer-payload build marker in plugin/main.js",
 );
 assert.equal(
-  [...sourceMain.matchAll(new RegExp(mergeClientMarker.source, "gs"))].length,
+  [...sourceMain.matchAll(new RegExp(annotationHostMarker.source, "gs"))].length,
   1,
-  "Expected exactly one PDF merge client build marker in plugin/main.js",
+  "Expected exactly one PDF annotation host build marker in plugin/main.js",
 );
 assert.equal(
-  [...sourceMain.matchAll(new RegExp(syncHostMarker.source, "gs"))].length,
+  [...sourceMain.matchAll(new RegExp(hashRuntimeMarker.source, "gs"))].length,
   1,
-  "Expected exactly one PDF sync host build marker in plugin/main.js",
+  "Expected exactly one PDF hash runtime build marker in plugin/main.js",
 );
 const noblePackage = JSON.parse(
   await readFile(path.join(root, "node_modules", "@noble", "hashes", "package.json"), "utf8"),
@@ -379,27 +382,33 @@ async function inlineModule(entry, globalName, exportName) {
   assert.equal(bundle.outputFiles.length, 1, `Expected one bundle for ${entry}`);
   return `const { ${exportName} } = (() => {\n${bundle.outputFiles[0].text.trimEnd()}\n  return ${globalName};\n})();`;
 }
+const inlinedAnnotationHost = await inlineModule(
+  "pdf-annotation-host.cjs",
+  "__PDFReaderAnnotationHost",
+  "createPdfAnnotationHost",
+);
+const inlinedHashRuntime = await inlineModule(
+  "pdf-hash-runtime.cjs",
+  "__PDFReaderHashRuntime",
+  "createPdfHashRuntime",
+);
 const inlinedMergeClient = await inlineModule(
   "pdf-merge-client.cjs",
   "__PDFReaderMergeClient",
   "createPdfMergeClient",
 );
-const inlinedSyncHost = await inlineModule(
-  "pdf-sync-host.cjs",
-  "__PDFReaderSyncHost",
-  "createPdfSyncHost",
-);
 assert.equal([...sourceMain.matchAll(new RegExp(heavyWorkMarker.source, "gs"))].length, 1, "Expected one heavy-work build marker");
 const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyWork", "createHeavyWorkCoordinator");
 assert.equal([...sourceMain.matchAll(new RegExp(recoveryMarker.source, "gs"))].length, 1, "Expected one recovery build marker");
-const inlinedRecovery = await inlineModule("pdf-recovery.cjs", "__PDFReaderRecovery", "writeDeltaRecovery, readDeltaRecovery");
+const inlinedRecovery = await inlineModule("pdf-recovery-read.cjs", "__PDFReaderRecovery", "readDeltaRecovery");
 assert.equal([...sourceMain.matchAll(new RegExp(sessionLogMarker.source, "gs"))].length, 1);
 const inlinedSessionLog = await inlineModule("session-log.cjs", "__PDFReaderSessionLog", "createSessionLog, traceFunction, traceMethods");
 const hostTrace = [...sourceMain.matchAll(/^(?:async )?function (\w+)\(/gm)].map(match => `${match[1]} = traceFunction(${match[1]}, ${JSON.stringify(`Host.${match[1]}`)}, () => activeSessionLog);`).join("\n");
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
+  .replace(hashRuntimeMarker, inlinedHashRuntime)
   .replace(mergeClientMarker, inlinedMergeClient)
-  .replace(syncHostMarker, inlinedSyncHost)
+  .replace(annotationHostMarker, inlinedAnnotationHost)
   .replace(heavyWorkMarker, inlinedHeavyWork)
   .replace(recoveryMarker, inlinedRecovery)
   .replace(sessionLogMarker, inlinedSessionLog)
@@ -411,8 +420,11 @@ const bundledMain = sourceMain
 assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
+assert.ok(!bundledMain.includes("./pdf-hash-runtime.cjs"));
+assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./heavy-work.cjs"));
 assert.ok(!bundledMain.includes("./pdf-recovery.cjs"));
+assert.ok(!bundledMain.includes("writeDeltaRecovery"), "0.6.0 runtime must not contain the legacy binary recovery writer");
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
 const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
   (match) => match[2],

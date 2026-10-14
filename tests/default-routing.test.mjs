@@ -195,10 +195,22 @@ function createHarness() {
     vault: {
       configDir: ".obsidian",
       adapter: {
-        exists: async () => false,
-        mkdir: async () => {},
-        write: async () => {},
-        list: async () => ({ files: [] }),
+        exists: async (target) => files.has(target),
+        mkdir: async (target) => { if (!files.has(target)) files.set(target, { directory: true }); },
+        read: async (target) => {
+          if (!files.has(target)) throw new Error(`Missing test adapter file: ${target}`);
+          return files.get(target);
+        },
+        write: async (target, value) => { files.set(target, String(value)); },
+        rename: async (from, to) => {
+          if (!files.has(from)) throw new Error(`Missing test adapter file: ${from}`);
+          files.set(to, files.get(from));
+          files.delete(from);
+        },
+        list: async (target) => ({
+          files: [...files.keys()].filter((key) => key.startsWith(`${target}/`) && !key.slice(target.length + 1).includes("/")),
+          folders: [],
+        }),
       },
       getAbstractFileByPath: (filePath) => files.get(filePath) ?? null,
       readBinary: async (file) => {

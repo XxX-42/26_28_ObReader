@@ -108,8 +108,6 @@
     openSessionSequence: 0,
     queuedOpens: [],
     savePromise: null,
-    saveSerializationPromise: null,
-    lastSerializedSave: null,
     recoveryPromise: null,
     recoveryCloseIntent: false,
     manualSaveRequestedDuringFlight: false,
@@ -117,6 +115,16 @@
     pendingRecovery: null,
     syncState: null,
     syncActorId: null,
+    syncDeviceId: null,
+    externalAnnotationRows: new Map(),
+    externalAnnotationHydration: new Map(),
+    externalAnnotationRefs: new Set(),
+    externalSource: null,
+    externalSourceConfirmed: false,
+    actualSourceIdentity: null,
+    externalSourceMismatch: false,
+    hydratingExternalAnnotations: false,
+    pendingExternalAnnotationsUpdate: null,
     annotationUuidByRuntimeId: new Map(),
     annotationRefByRuntimeId: new Map(),
     annotationUuidByPdfRef: new Map(),
@@ -384,7 +392,7 @@
   }
 
   function labelSaveControls() {
-    const title = "保存 PDF 到仓库（覆盖当前文件）";
+    const title = "保存批注到外置记录";
     const button = document.getElementById("secondaryDownload");
     if (!button) {
       return;
@@ -398,7 +406,7 @@
     if (label) {
       label.removeAttribute("data-l10n-id");
       label.removeAttribute("data-l10n-args");
-      label.textContent = "保存到仓库";
+      label.textContent = "保存批注";
     }
   }
 
@@ -799,8 +807,246 @@
         highlight: "Highlight",
         underline: "Underline",
         ink: "Ink",
+        inkhighlight: "InkHighlight",
       }[lower] || value
     );
+  }
+
+  const EXTERNAL_ANNOTATION_KINDS = new Set([
+    "Underline",
+    "Square",
+    "Highlight",
+    "Ink",
+    "InkHighlight",
+    "FreeText",
+  ]);
+
+  function decodeExternalValue(value, seen = new Set()) {
+    if (value === null || typeof value !== "object") return value;
+    if (value instanceof ArrayBuffer) return value.slice(0);
+    if (ArrayBuffer.isView(value)) {
+      return value.constructor.from
+        ? value.constructor.from(value)
+        : new value.constructor(value);
+    }
+    if (seen.has(value)) throw new Error("External annotation payload contains a cycle.");
+    seen.add(value);
+    let result;
+    if (value.$type === "NonFiniteNumber" &&
+        ["NaN", "+Infinity", "-Infinity"].includes(value.value)) {
+      result = value.value === "NaN" ? Number.NaN
+        : value.value === "+Infinity" ? Number.POSITIVE_INFINITY
+          : Number.NEGATIVE_INFINITY;
+    } else if (value.$type === "BigInt" && typeof value.value === "string" &&
+        /^-?\d+$/.test(value.value) && typeof BigInt === "function") {
+      result = BigInt(value.value);
+    } else if (value.$type === "ArrayBuffer" && Array.isArray(value.values)) {
+      result = Uint8Array.from(value.values).buffer;
+    } else if (typeof value.$type === "string" && Array.isArray(value.values)) {
+      const constructors = {
+        Int8Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        Float32Array,
+        Float64Array,
+        BigInt64Array: typeof BigInt64Array === "function" ? BigInt64Array : null,
+        BigUint64Array: typeof BigUint64Array === "function" ? BigUint64Array : null,
+      };
+      const Constructor = constructors[value.$type];
+      if (!Constructor) throw new Error(`Unsupported external annotation byte type: ${value.$type}`);
+      result = Constructor.from(value.values.map((item) => decodeExternalValue(item, seen)));
+    } else if (value.$type === "Map" && Array.isArray(value.entries)) {
+      result = new Map(value.entries.map(([key, item]) => [
+        String(key),
+        decodeExternalValue(item, seen),
+      ]));
+    } else if (Array.isArray(value)) {
+      result = value.map((item) => decodeExternalValue(item, seen));
+    } else {
+      result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = decodeExternalValue(item, seen);
+      }
+    }
+    seen.delete(value);
+    return result;
+  }
+
+  function encodeExternalValue(value, seen = new Set()) {
+    if (value === null || typeof value === "string" || typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        return { $type: "NonFiniteNumber", value: Number.isNaN(value)
+          ? "NaN" : value > 0 ? "+Infinity" : "-Infinity" };
+      }
+      return value;
+    }
+    if (typeof value === "bigint") return { $type: "BigInt", value: value.toString() };
+    if (typeof value === "undefined" || typeof value === "function") return undefined;
+    if (value instanceof ArrayBuffer) {
+      return { $type: "ArrayBuffer", values: Array.from(new Uint8Array(value)) };
+    }
+    if (ArrayBuffer.isView(value)) {
+      return {
+        $type: value.constructor?.name || "TypedArray",
+        values: Array.from(value, (item) => encodeExternalValue(item, seen)),
+      };
+    }
+    if (seen.has(value)) throw new Error("External annotation payload contains a cycle.");
+    seen.add(value);
+    let result;
+    if (Array.isArray(value)) {
+      result = value.map((item) => encodeExternalValue(item, seen));
+    } else if (value instanceof Map) {
+      result = {
+        $type: "Map",
+        entries: [...value.entries()]
+          .map(([key, item]) => [String(key), encodeExternalValue(item, seen)])
+          .sort(([left], [right]) => left.localeCompare(right)),
+      };
+    } else {
+      result = {};
+      for (const key of Object.keys(value).sort()) {
+        const normalized = encodeExternalValue(value[key], seen);
+        if (typeof normalized !== "undefined") result[key] = normalized;
+      }
+    }
+    seen.delete(value);
+    return result;
+  }
+
+  function externalKindForEditor(value, editor = null) {
+    const normalized = normalizeSyncKind(
+      editor?.editorType ?? value?.annotationType ?? value?.type,
+    );
+    if (
+      normalized === "Highlight" &&
+      (Array.isArray(value?.inkLists) ||
+        (value?.quadPoints == null &&
+          (Array.isArray(value?.outlines?.points) ||
+            Array.isArray(value?.paths?.points))))
+    ) {
+      return "InkHighlight";
+    }
+    return normalized;
+  }
+
+  function validateExternalAnnotations(value) {
+    if (value == null) return { source: null, annotations: [] };
+    if (!value || typeof value !== "object" || value.schemaVersion !== 1) {
+      throw new Error("Unsupported external annotation schema.");
+    }
+    const rows = Array.isArray(value.annotations) ? value.annotations : [];
+    if (value.legacyIdentities !== undefined && !Array.isArray(value.legacyIdentities)) {
+      throw new Error("Legacy PDF annotation identities must be a list.");
+    }
+    const rawLegacyIdentities = Array.isArray(value.legacyIdentities) ? value.legacyIdentities : [];
+    if (rawLegacyIdentities.length > 100000) {
+      throw new Error("Too many legacy PDF annotation identities were supplied.");
+    }
+    const legacyIdentityUuids = new Set();
+    const legacyIdentityRefs = new Set();
+    const legacyIdentities = rawLegacyIdentities.map((row) => {
+      const ref = canonicalPdfAnnotationRef(row?.ref);
+      if (!row || typeof row.uuid !== "string" || !row.uuid || !ref ||
+          !Number.isSafeInteger(row.pageIndex) || row.pageIndex < 0 ||
+          typeof row.kind !== "string" || !row.kind ||
+          legacyIdentityUuids.has(row.uuid) || legacyIdentityRefs.has(`${row.pageIndex}\0${ref}`)) {
+        throw new Error("Legacy PDF annotation identities are incomplete or ambiguous.");
+      }
+      legacyIdentityUuids.add(row.uuid);
+      legacyIdentityRefs.add(`${row.pageIndex}\0${ref}`);
+      return { uuid: row.uuid, ref, pageIndex: row.pageIndex, kind: normalizeSyncKind(row.kind) };
+    });
+    const seen = new Set();
+    const annotations = [];
+    for (const row of rows) {
+      if (
+        !row || typeof row !== "object" ||
+        typeof row.uuid !== "string" || !row.uuid || seen.has(row.uuid) ||
+        !EXTERNAL_ANNOTATION_KINDS.has(normalizeSyncKind(row.kind)) ||
+        !Number.isSafeInteger(row.pageIndex) || row.pageIndex < 0 ||
+        !row.clock || !Number.isSafeInteger(row.clock.timestamp) ||
+        !Number.isSafeInteger(row.clock.logical) ||
+        typeof row.clock.deviceId !== "string" ||
+        typeof row.clock.opId !== "string"
+      ) {
+        throw new Error("External annotation record is incomplete or ambiguous.");
+      }
+      const embeddedRef = row.embeddedRef == null
+        ? null
+        : canonicalPdfAnnotationRef(row.embeddedRef);
+      if (row.embeddedRef != null && !embeddedRef) {
+        throw new Error(`External annotation ${row.uuid} has an invalid embedded reference.`);
+      }
+      const kind = normalizeSyncKind(row.kind);
+      const deleted = row.deleted === true;
+      let editor = null;
+      if (!deleted) {
+        if (!row.payload || typeof row.payload.editor !== "object") {
+          throw new Error(`External annotation ${row.uuid} has no editor payload.`);
+        }
+        editor = decodeExternalValue(row.payload.editor);
+        if (
+          !editor || typeof editor !== "object" ||
+          !Number.isSafeInteger(editor.pageIndex) ||
+          editor.pageIndex !== row.pageIndex
+        ) {
+          throw new Error(`External annotation ${row.uuid} has an invalid editor payload.`);
+        }
+        const actualKind = externalKindForEditor(editor);
+        if (actualKind !== kind) {
+          throw new Error(`External annotation ${row.uuid} type does not match its editor payload.`);
+        }
+      }
+      if (row.clock.timestamp < 0 || row.clock.logical < 0) {
+        throw new Error(`External annotation ${row.uuid} has an invalid logical clock.`);
+      }
+      seen.add(row.uuid);
+      annotations.push({
+        uuid: row.uuid,
+        kind,
+        pageIndex: row.pageIndex,
+        embeddedRef,
+        deleted,
+        clock: {
+          timestamp: row.clock.timestamp,
+          logical: row.clock.logical,
+          deviceId: row.clock.deviceId,
+          opId: row.clock.opId,
+        },
+        editor,
+      });
+    }
+    return {
+      source: value.source && typeof value.source === "object"
+        ? normalizeSyncValue(value.source)
+        : null,
+      legacyIdentities,
+      annotations,
+    };
+  }
+
+  function applyLegacyAnnotationIdentities(identities = []) {
+    if (!Array.isArray(identities)) return;
+    for (const identity of identities) {
+      if (!identity || !Number.isSafeInteger(identity.pageIndex) ||
+          identity.pageIndex < 0 || identity.pageIndex >= (state.app?.pdfDocument?.numPages || 0)) continue;
+      const ref = canonicalPdfAnnotationRef(identity.ref);
+      if (!ref || typeof identity.uuid !== "string" || !identity.uuid) continue;
+      const key = pdfAnnotationRefKey(ref);
+      const prior = state.annotationUuidByPdfRef.get(key);
+      if (prior && prior !== identity.uuid) {
+        throw new Error(`Legacy annotation reference ${ref} maps to more than one UUID.`);
+      }
+      state.annotationUuidByPdfRef.set(key, identity.uuid);
+    }
   }
 
   function normalizeSyncValue(value, seen = new Set()) {
@@ -823,7 +1069,7 @@
       };
     }
     if (seen.has(value)) {
-      return "[Circular]";
+      throw new Error("PDF.js annotation data contains a cycle and cannot be saved losslessly.");
     }
     seen.add(value);
     if (Array.isArray(value)) {
@@ -855,7 +1101,7 @@
     }
     const pdfJsMatch = /^(\d+)R(\d+)?$/.exec(value);
     if (pdfJsMatch) {
-      return `${pdfJsMatch[1]}R${pdfJsMatch[2] || ""}`;
+      return `${pdfJsMatch[1]}R${pdfJsMatch[2] === "0" ? "" : pdfJsMatch[2] || ""}`;
     }
     const pdfLibMatch = /^(\d+)\s+(\d+)\s+R$/.exec(value);
     if (pdfLibMatch) {
@@ -922,10 +1168,10 @@
             : Number.isSafeInteger(identity?.pageIndex)
               ? identity.pageIndex
               : null;
-      const kind = normalizeSyncKind(
-        value?.annotationType ?? value?.type ?? editor?.editorType ??
-          identity?.kind,
-      );
+      const kind = externalKindForEditor(
+        value,
+        editor,
+      ) || normalizeSyncKind(identity?.kind);
       let uuid = runtimeUuid || null;
       if (!uuid && referenceKey) {
         uuid = state.annotationUuidByPdfRef.get(referenceKey) || null;
@@ -1214,6 +1460,7 @@
 
   function makeSyncStamp() {
     const actorId = state.syncActorId || (state.syncActorId = makeSyncUuid());
+    const deviceId = state.syncDeviceId || actorId;
     const now = Date.now();
     const prior = state.syncClockTimestamp;
     if (now > prior) {
@@ -1227,8 +1474,551 @@
       timestamp: state.syncClockTimestamp,
       logical: state.syncClockLogical,
       actorId,
+      deviceId,
       operationId: `${actorId}:${state.syncClockTimestamp}:${state.syncClockLogical}:${state.syncOperationSequence}`,
     };
+  }
+
+  function externalOperation(operation) {
+    if (!operation || typeof operation.uuid !== "string") return null;
+    const deleted = operation.deleted === true || operation.action === "delete";
+    const serialized = operation.payload?.editor ?? operation.serialized;
+    let editor = null;
+    if (!deleted) {
+      if (!serialized || typeof serialized !== "object") {
+        throw new Error(`Annotation ${operation.uuid} has no lossless editor snapshot.`);
+      }
+      editor = encodeExternalValue(serialized);
+    }
+    const timestamp = Number.isSafeInteger(operation.timestamp)
+      ? operation.timestamp
+      : Number.isSafeInteger(operation.clock?.timestamp)
+        ? operation.clock.timestamp
+        : 0;
+    const logical = Number.isSafeInteger(operation.logical)
+      ? operation.logical
+      : Number.isSafeInteger(operation.clock?.logical)
+        ? operation.clock.logical
+        : 0;
+    const deviceId = String(
+      operation.deviceId || operation.clock?.deviceId || operation.actorId || state.syncDeviceId || state.syncActorId || "",
+    );
+    const opId = String(
+      operation.operationId || operation.clock?.opId || "",
+    );
+    if (!deviceId || !opId || !Number.isSafeInteger(operation.pageIndex) || operation.pageIndex < 0) {
+      throw new Error(`Annotation ${operation.uuid} is missing stable operation identity.`);
+    }
+    const kind = normalizeSyncKind(operation.kind);
+    if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) {
+      throw new Error(`Annotation ${operation.uuid} has unsupported type ${kind}.`);
+    }
+    return {
+      uuid: operation.uuid,
+      kind,
+      pageIndex: operation.pageIndex,
+      deleted,
+      embeddedRef: canonicalPdfAnnotationRef(operation.embeddedRef || operation.ref),
+      clock: { timestamp, logical, deviceId, opId },
+      ...(!deleted ? { payload: { editor } } : {}),
+    };
+  }
+
+  function captureSyncOperations(revision = state.revision) {
+    const dirtyIds = new Set(captureDirtySyncState(revision).dirtyAnnotationIds);
+    return state.annotationOperations
+      .filter(({ revision: changedAt, operation }) =>
+        changedAt <= revision && dirtyIds.has(operation.uuid),
+      )
+      .map(({ operation }) => externalOperation(operation))
+      .filter(Boolean);
+  }
+
+  function recoverySourceIdentity() {
+    const source = state.externalSource;
+    if (
+      !source || typeof source.sourceHash !== "string" ||
+      !Number.isSafeInteger(source.pageCount) || source.pageCount < 0 ||
+      !Array.isArray(source.orderedPageIdentities) ||
+      source.orderedPageIdentities.length !== source.pageCount ||
+      source.orderedPageIdentities.some((identity) => typeof identity !== "string")
+    ) {
+      throw new Error("Cannot quarantine recovery operations without the loaded PDF source identity.");
+    }
+    return {
+      sourceHash: source.sourceHash,
+      pageCount: source.pageCount,
+      orderedPageIdentities: [...source.orderedPageIdentities],
+    };
+  }
+
+  function getAnnotationEditorManager(app = state.app) {
+    return app?.pdfViewer?._layerProperties?.annotationEditorUIManager || null;
+  }
+
+  function getAnnotationEditorLayer(app, pageIndex) {
+    const pageView = app?.pdfViewer?.getPageView?.(pageIndex);
+    return pageView?.annotationEditorLayer?.annotationEditorLayer || null;
+  }
+
+  function canonicalPdfPageRef(reference) {
+    if (reference && Number.isSafeInteger(reference.num)) {
+      const generation = Number.isSafeInteger(reference.gen) ? reference.gen : 0;
+      return `${reference.num}R${generation || ""}`;
+    }
+    if (typeof reference?.toString === "function") {
+      return canonicalPdfAnnotationRef(reference.toString());
+    }
+    return canonicalPdfAnnotationRef(reference);
+  }
+
+  async function reportAnnotationSourceIdentity(pdfDocument, externalAnnotations) {
+    const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
+    const pageCount = Number.isSafeInteger(pdfDocument?.numPages)
+      ? pdfDocument.numPages
+      : 0;
+    const identities = Array(pageCount).fill(null);
+    const pageRefs = Array(pageCount).fill(null);
+    // getPage resolves page-tree references only. It does not request page
+    // content streams, render pages, or compute content fingerprints.
+    for (let start = 0; start < pageCount; start += 8) {
+      const end = Math.min(pageCount, start + 8);
+      const batch = await Promise.all(Array.from({ length: end - start }, async (_, offset) => {
+        const pageIndex = start + offset;
+        try {
+          const page = await pdfDocument.getPage(pageIndex + 1);
+          return [pageIndex, canonicalPdfPageRef(page?.ref)];
+        } catch {
+          return [pageIndex, null];
+        }
+      }));
+      for (const [pageIndex, reference] of batch) pageRefs[pageIndex] = reference;
+    }
+    const counts = new Map();
+    for (const reference of pageRefs) {
+      if (reference) counts.set(reference, (counts.get(reference) || 0) + 1);
+    }
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const reference = pageRefs[pageIndex];
+      if (reference && counts.get(reference) === 1) {
+        identities[pageIndex] = `ref:${reference}`;
+      }
+    }
+    const identityStatus = identities.every((identity) => typeof identity === "string")
+      ? "KNOWN"
+      : "UNKNOWN";
+    const source = externalAnnotations?.source;
+    const actualIdentity = {
+      pageCount,
+      orderedPageIdentities: identities,
+      identityStatus,
+      sourceHash: typeof source?.sourceHash === "string" ? source.sourceHash : null,
+    };
+    if (
+      !documentId || state.activeDocumentId !== documentId ||
+      state.activeOpenRequest !== openRequest ||
+      state.app?.pdfDocument !== pdfDocument
+    ) return null;
+    state.actualSourceIdentity = actualIdentity;
+    postToHost("annotation-source-identity", {
+      documentId,
+      openRequest,
+      sourceHash: actualIdentity.sourceHash,
+      pageCount,
+      orderedPageIdentities: identities,
+      identityStatus,
+    });
+    return actualIdentity;
+  }
+
+  async function hydrateRenderedExternalPages(app = state.app) {
+    const pageViews = app?.pdfViewer?._pages;
+    if (!Array.isArray(pageViews) || !state.externalAnnotationRows.size) return;
+    for (const pageView of pageViews) {
+      const layer = pageView?.annotationEditorLayer?.annotationEditorLayer;
+      if (!layer || !Number.isSafeInteger(layer.pageIndex)) continue;
+      const hydrated = await hydrateExternalAnnotationsForPage(layer.pageIndex);
+      if (!hydrated) scheduleExternalAnnotationHydrationRetry(layer.pageIndex);
+    }
+  }
+
+  function scheduleExternalAnnotationHydrationRetry(pageIndex, attempt = 0) {
+    if (attempt >= 6 || state.disposed) return;
+    setDeferredTimeout(() => {
+      void hydrateExternalAnnotationsForPage(pageIndex).then((hydrated) => {
+        if (!hydrated) scheduleExternalAnnotationHydrationRetry(pageIndex, attempt + 1);
+      }).catch((error) => {
+        runtimeLogRecord("external-annotation.hydrate-retry-error", {
+          pageIndex,
+          attempt,
+          error: runtimeLogError(error),
+        });
+      });
+    }, 50 * (attempt + 1));
+  }
+
+  function sameAnnotationPayload(left, right) {
+    const comparable = (value) => {
+      if (!value || typeof value !== "object") return value;
+      const copy = { ...value };
+      delete copy.id;
+      delete copy.annotationElementId;
+      delete copy.deleted;
+      delete copy.popupRef;
+      return JSON.stringify(copy);
+    };
+    return comparable(left) === comparable(right);
+  }
+
+  function suppressEmbeddedAnnotation(pageIndex, reference) {
+    const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
+    const layer = pageView?.div;
+    if (!layer || !reference) return false;
+    const canonical = canonicalPdfAnnotationRef(reference);
+    const element = [...layer.querySelectorAll("[data-annotation-id]")].find((candidate) => {
+      const value = candidate.getAttribute("data-annotation-id");
+      return canonicalPdfAnnotationRef(value) === canonical || value === reference;
+    });
+    if (!element) return false;
+    if (!element.hasAttribute("data-pdf-reader-external-hidden")) {
+      element.setAttribute("data-pdf-reader-external-hidden", "1");
+      element.dataset.pdfReaderPreviousDisplay = element.style.display;
+      element.dataset.pdfReaderPreviousAriaHidden = element.getAttribute("aria-hidden") ?? "__absent__";
+    }
+    element.style.display = "none";
+    element.setAttribute("aria-hidden", "true");
+    return true;
+  }
+
+  function restoreSuppressedEmbeddedAnnotations(excludedReferences = new Set()) {
+    for (const element of document.querySelectorAll(
+      '[data-pdf-reader-external-hidden="1"]',
+    )) {
+      const annotationReference = canonicalPdfAnnotationRef(
+        element.getAttribute("data-annotation-id"),
+      );
+      if (annotationReference && excludedReferences.has(annotationReference)) continue;
+      element.style.display = element.dataset.pdfReaderPreviousDisplay || "";
+      if (element.dataset.pdfReaderPreviousAriaHidden === "__absent__") {
+        element.removeAttribute("aria-hidden");
+      } else if (typeof element.dataset.pdfReaderPreviousAriaHidden === "string") {
+        element.setAttribute("aria-hidden", element.dataset.pdfReaderPreviousAriaHidden);
+      }
+      delete element.dataset.pdfReaderPreviousDisplay;
+      delete element.dataset.pdfReaderPreviousAriaHidden;
+      element.removeAttribute("data-pdf-reader-external-hidden");
+    }
+  }
+
+  function clearExternalHydration({
+    clearRows = false,
+    restoreEmbedded = false,
+    preserveDirty = false,
+  } = {}) {
+    const manager = getAnnotationEditorManager();
+    const dirtyIds = new Set(captureDirtySyncState(state.revision).dirtyAnnotationIds);
+    const retainedEmbeddedRefs = new Set();
+    state.hydratingExternalAnnotations = true;
+    try {
+      for (const [uuid, binding] of state.externalAnnotationHydration) {
+        if (preserveDirty && dirtyIds.has(uuid)) {
+          if (binding.embeddedRef) retainedEmbeddedRefs.add(binding.embeddedRef);
+          continue;
+        }
+        if (binding.runtimeId && !binding.adoptedEmbedded) {
+          manager?.getEditor?.(binding.runtimeId)?.remove?.();
+        }
+        if (binding.runtimeId) {
+          state.annotationUuidByRuntimeId.delete(binding.runtimeId);
+          state.annotationRefByRuntimeId.delete(binding.runtimeId);
+        }
+        if (restoreEmbedded && binding.adoptedEmbedded) {
+          // Adopted source editors remain part of the PDF's original annotation
+          // layer; removing only their external binding leaves them visible.
+          state.annotationUuidByPdfRef.delete(pdfAnnotationRefKey(binding.embeddedRef));
+        }
+        state.externalAnnotationHydration.delete(uuid);
+      }
+    } finally {
+      state.hydratingExternalAnnotations = false;
+    }
+    if (restoreEmbedded) restoreSuppressedEmbeddedAnnotations(retainedEmbeddedRefs);
+    if (clearRows) {
+      state.externalAnnotationRows.clear();
+      state.externalAnnotationRefs.clear();
+      state.externalSource = null;
+      state.pendingExternalAnnotationsUpdate = null;
+    }
+  }
+
+  function findEmbeddedEditor(manager, pageIndex, reference) {
+    const canonical = canonicalPdfAnnotationRef(reference);
+    if (!canonical) return null;
+    const editors = manager?.getEditors?.(pageIndex);
+    if (!editors || typeof editors[Symbol.iterator] !== "function") return null;
+    const matches = [...editors].filter((editor) =>
+      canonicalPdfAnnotationRef(editor?.annotationElementId) === canonical &&
+      editor.deleted !== true,
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function externalAnnotationMatchesClock(left, right) {
+    if (!left || !right) return false;
+    const a = left.clock || {};
+    const b = right.clock || {};
+    return a.timestamp === b.timestamp && a.logical === b.logical &&
+      a.deviceId === b.deviceId && a.opId === b.opId;
+  }
+
+  async function hydrateExternalAnnotation(row, { replace = false } = {}) {
+    const app = state.app;
+    const manager = getAnnotationEditorManager(app);
+    const layer = getAnnotationEditorLayer(app, row.pageIndex);
+    if (!manager || !layer) return false;
+    if (row.embeddedRef && !suppressEmbeddedAnnotation(row.pageIndex, row.embeddedRef)) {
+      // The reference is exact, but the source layer did not expose its node.
+      // Do not add an overlay that could duplicate a visible base annotation.
+      return false;
+    }
+    const currentBinding = state.externalAnnotationHydration.get(row.uuid);
+    if (
+      !replace && currentBinding &&
+      externalAnnotationMatchesClock(currentBinding.row, row)
+    ) return true;
+    const existing = currentBinding?.runtimeId
+      ? manager.getEditor?.(currentBinding.runtimeId)
+      : row.embeddedRef
+        ? findEmbeddedEditor(manager, row.pageIndex, row.embeddedRef)
+        : null;
+    if (
+      existing && !replace &&
+      sameAnnotationPayload(
+        encodeExternalValue(existing.serialize?.(true)),
+        encodeExternalValue(row.editor),
+      )
+    ) {
+      state.annotationUuidByRuntimeId.set(String(existing.id), row.uuid);
+      if (row.embeddedRef) {
+        state.annotationRefByRuntimeId.set(String(existing.id), row.embeddedRef);
+        state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(row.embeddedRef), row.uuid);
+      }
+      state.externalAnnotationHydration.set(row.uuid, {
+        runtimeId: String(existing.id),
+        pageIndex: row.pageIndex,
+        embeddedRef: row.embeddedRef,
+        row,
+        adoptedEmbedded: true,
+      });
+      return true;
+    }
+    if (currentBinding?.runtimeId) {
+      state.hydratingExternalAnnotations = true;
+      try {
+        manager.getEditor?.(currentBinding.runtimeId)?.remove?.();
+      } finally {
+        state.hydratingExternalAnnotations = false;
+      }
+      state.externalAnnotationHydration.delete(row.uuid);
+    } else if (existing && row.embeddedRef) {
+      // Replace only the exact legacy editor whose source ref is being hidden.
+      state.hydratingExternalAnnotations = true;
+      try {
+        existing.remove?.();
+      } finally {
+        state.hydratingExternalAnnotations = false;
+      }
+    }
+    const payload = decodeExternalValue(row.editor);
+    delete payload.annotationElementId;
+    delete payload.id;
+    delete payload.deleted;
+    payload.pageIndex = row.pageIndex;
+    const editor = await layer.deserialize(payload);
+    if (!editor) {
+      throw new Error(`PDF.js refused to hydrate ${row.kind} annotation ${row.uuid}.`);
+    }
+    state.hydratingExternalAnnotations = true;
+    try {
+      layer.add(editor);
+      // PDF.js leaves an empty editor layer hidden after its first render.
+      // Hydrating an external annotation later adds an editor without going
+      // through PDF.js's toolbar path, so explicitly reveal the builder once
+      // it is no longer empty.
+      app.pdfViewer?.getPageView?.(row.pageIndex)?.annotationEditorLayer?.show?.();
+      const runtimeId = String(editor.id);
+      state.annotationUuidByRuntimeId.set(runtimeId, row.uuid);
+      if (row.embeddedRef) {
+        state.annotationRefByRuntimeId.set(runtimeId, row.embeddedRef);
+        state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(row.embeddedRef), row.uuid);
+      }
+      state.externalAnnotationHydration.set(row.uuid, {
+        runtimeId,
+        pageIndex: row.pageIndex,
+        embeddedRef: row.embeddedRef,
+        row,
+        adoptedEmbedded: false,
+      });
+    } finally {
+      state.hydratingExternalAnnotations = false;
+      app.pdfDocument?.annotationStorage?.resetModified?.();
+      state.annotationSnapshot = getAnnotationStorageRows(app);
+      state.dirty = false;
+      restoreChanges(app, { hadAnnotationChanges: false, hadStructuralChanges: false });
+    }
+    return true;
+  }
+
+  async function hydrateExternalAnnotationsForPage(pageIndex) {
+    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || state.disposed) return true;
+    const rows = [...state.externalAnnotationRows.values()]
+      .filter((row) => row.pageIndex === pageIndex);
+    if (!rows.length) return true;
+    const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
+    if (!getAnnotationEditorManager() || !pageView?.annotationEditorLayer?.annotationEditorLayer) {
+      return false;
+    }
+    let complete = true;
+    for (const row of rows) {
+      if (row.embeddedRef) suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
+      if (row.deleted) {
+        const binding = state.externalAnnotationHydration.get(row.uuid);
+        if (binding?.runtimeId) {
+          state.hydratingExternalAnnotations = true;
+          try {
+            getAnnotationEditorManager()?.getEditor?.(binding.runtimeId)?.remove?.();
+          } finally {
+            state.hydratingExternalAnnotations = false;
+          }
+        }
+        state.externalAnnotationHydration.delete(row.uuid);
+        continue;
+      }
+      try {
+        const current = state.externalAnnotationHydration.get(row.uuid)?.row;
+        const newer = !current || compareSyncStamps(
+          { timestamp: row.clock.timestamp, logical: row.clock.logical, actorId: row.clock.deviceId, operationId: row.clock.opId },
+          { timestamp: current.clock.timestamp, logical: current.clock.logical, actorId: current.clock.deviceId, operationId: current.clock.opId },
+        ) > 0;
+        if (newer && !(await hydrateExternalAnnotation(row, { replace: Boolean(current) }))) {
+          complete = false;
+          continue;
+        }
+      } catch (error) {
+        runtimeLogRecord("external-annotation.hydrate-error", {
+          uuid: row.uuid,
+          pageIndex,
+          kind: row.kind,
+          error: runtimeLogError(error),
+        });
+        sendError(error.message || "Could not restore external PDF annotation.", {
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+          code: "external-annotation-hydration-failed",
+          annotationId: row.uuid,
+        });
+      }
+    }
+    return complete;
+  }
+
+  function applyExternalAnnotationsSnapshot(value, { reset = false } = {}) {
+    const normalized = validateExternalAnnotations(value);
+    if (!externalSourceIdentityMatchesViewer(normalized.source)) {
+      throw new Error("External PDF annotations are not confirmed against this document's page identity.");
+    }
+    const incoming = new Map(normalized.annotations.map((row) => [row.uuid, row]));
+    const dirtyIds = new Set(captureDirtySyncState(state.revision).dirtyAnnotationIds);
+    const merged = reset ? new Map() : new Map(state.externalAnnotationRows);
+    const deferredUuids = [];
+    for (const row of incoming.values()) {
+      if (dirtyIds.has(row.uuid)) {
+        deferredUuids.push(row.uuid);
+        continue;
+      }
+      const previous = merged.get(row.uuid);
+      if (!previous || compareSyncStamps(
+        { timestamp: row.clock.timestamp, logical: row.clock.logical, actorId: row.clock.deviceId, operationId: row.clock.opId },
+        { timestamp: previous.clock.timestamp, logical: previous.clock.logical, actorId: previous.clock.deviceId, operationId: previous.clock.opId },
+      ) >= 0) {
+        merged.set(row.uuid, row);
+      }
+    }
+    state.externalAnnotationRows = merged;
+    state.externalAnnotationRefs = new Set(
+      [...merged.values()].filter((row) => row.embeddedRef).map((row) => row.embeddedRef),
+    );
+    state.externalSource = normalized.source;
+    applyLegacyAnnotationIdentities(normalized.legacyIdentities);
+    // Seed editor UUIDs from exact PDF object references before the next
+    // AnnotationStorage diff. This preserves pre-0.6 UUIDs when an embedded
+    // annotation is first edited and lazily migrated into the sidecar log.
+    state.annotationSnapshot = getAnnotationStorageRows();
+    state.externalSourceConfirmed = true;
+    for (const row of merged.values()) seedSyncClock({ identities: [row.clock] });
+    return {
+      pages: [...incoming.values()].map((row) => row.pageIndex),
+      deferredUuids,
+    };
+  }
+
+  function externalSourceIdentityMatchesViewer(source) {
+    const actual = state.actualSourceIdentity;
+    if (
+      !source || !actual || actual.identityStatus !== "KNOWN" ||
+      !Number.isSafeInteger(source.pageCount) ||
+      source.pageCount !== actual.pageCount ||
+      !Array.isArray(source.orderedPageIdentities) ||
+      source.orderedPageIdentities.length !== actual.orderedPageIdentities.length ||
+      source.orderedPageIdentities.some((identity, index) =>
+        typeof identity !== "string" || identity !== actual.orderedPageIdentities[index]
+      )
+    ) return false;
+    if (
+      typeof source.sourceHash === "string" &&
+      typeof actual.sourceHash === "string" &&
+      source.sourceHash !== actual.sourceHash
+    ) return false;
+    return true;
+  }
+
+  function schedulePendingExternalAnnotationUpdate() {
+    if (!state.pendingExternalAnnotationsUpdate || state.disposed) return;
+    if (isEditBoundaryBusy() || state.pendingInkCommit || state.hydratingExternalAnnotations) return;
+    const pending = state.pendingExternalAnnotationsUpdate;
+    state.pendingExternalAnnotationsUpdate = null;
+    setDeferredTimeout(() => {
+      if (
+        state.disposed || state.activeDocumentId !== pending.documentId ||
+        state.activeOpenRequest !== pending.openRequest
+      ) return;
+      void (async () => {
+        try {
+          const identityConfirmed = pending.identityConfirmed === true || state.externalSourceConfirmed;
+          if (!identityConfirmed) return;
+          const result = applyExternalAnnotationsSnapshot(pending.externalAnnotations);
+          for (const pageIndex of new Set(result.pages)) {
+          const hydrated = await hydrateExternalAnnotationsForPage(pageIndex);
+          if (!hydrated) scheduleExternalAnnotationHydrationRetry(pageIndex);
+          }
+          // Opening stays fail-closed until the host has verified both the
+          // full source hash and ordered page identities. Only that response
+          // may enable editing for this document revision.
+          state.readOnly = pending.readOnly === true || !identityConfirmed;
+          setReadOnlyState(state.readOnly);
+          if (result.deferredUuids.length) {
+            state.pendingExternalAnnotationsUpdate = pending;
+          }
+        } catch (error) {
+          sendError(error.message || "Could not apply synchronized PDF annotations.", {
+            documentId: pending.documentId,
+            openRequest: pending.openRequest,
+            code: "external-annotation-update-failed",
+          });
+        }
+      })();
+    }, 0);
   }
 
   function exactSavedIdentityForOperation(operation) {
@@ -1361,6 +2151,9 @@
       action,
       ...stamp,
       serialized: action === "delete" ? { deleted: true } : serialized,
+      payload: action === "delete" || !serialized
+        ? null
+        : { editor: serialized },
     };
     const existingIndex = state.annotationOperations.findIndex(
       (entry) => entry.operation.uuid === identity.uuid,
@@ -1433,8 +2226,8 @@
         action: deleted ? "delete" : "upsert",
         ...stamp,
         ...(deleted
-          ? { serialized: { deleted: true } }
-          : { serialized: currentRow.value }),
+          ? { serialized: { deleted: true }, payload: null }
+          : { serialized: currentRow.value, payload: { editor: currentRow.value } }),
       };
       const existingIndex = state.annotationOperations.findIndex(
         (entry) => entry.operation.uuid === operation.uuid,
@@ -1460,11 +2253,6 @@
         }
       }
     }
-  }
-
-  function captureSyncOperations(revision = state.revision) {
-    return state.annotationOperations
-      .map(({ operation }) => ({ ...operation }));
   }
 
   function markDirtyAnnotation(uuid, pageIndex, action, revision, isNew) {
@@ -1502,28 +2290,6 @@
     for (const [pageIndex, changedAt] of state.dirtyPageRevisions) {
       if (changedAt <= revision) state.dirtyPageRevisions.delete(pageIndex);
     }
-  }
-
-  function captureNewSyncAnnotations() {
-    const rows = getAnnotationStorageRows();
-    const result = [];
-    const pageOrder = new Map();
-    for (const row of rows.values()) {
-      if (row.annotationElementId || row.deleted) {
-        continue;
-      }
-      const pageIndex = Number.isSafeInteger(row.pageIndex) ? row.pageIndex : 0;
-      const order = pageOrder.get(pageIndex) || 0;
-      pageOrder.set(pageIndex, order + 1);
-      result.push({
-        runtimeId: row.runtimeId,
-        uuid: row.uuid,
-        pageIndex,
-        kind: row.kind,
-        order,
-      });
-    }
-    return result;
   }
 
   function captureSyncViewState(app = state.app) {
@@ -1864,30 +2630,11 @@
       return postSyncCheckpointRejected(message, "revision-changed-at-boundary");
     }
     const dirtySnapshot = snapshotChanges(app);
-    let willSaveDispatched = false;
-    app._saveInProgress = true;
-    app._updateOverwriteOriginalState?.();
-    let data = null;
-    let error = null;
+    const operations = captureSyncOperations(revisionAtStart);
+    const dirtyState = captureDirtySyncState(revisionAtStart);
     try {
-      await app.pdfScriptingManager?.dispatchWillSave?.();
-      willSaveDispatched = true;
       if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
-        throw new Error("Page reordering cannot be included in a sync checkpoint.");
-      }
-      // A host-confirmed save does not replace the PDF.js Worker's loaded
-      // bytes. Clean live editors/tombstones still belong to this session;
-      // getData() would omit them and cannot match newAnnotations/operations.
-      const bytes = dirtySnapshot.hadAnnotationChanges || state.dirty ||
-          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
-        ? await pdfDocument.saveDocument()
-        : await pdfDocument.getData();
-      if (!bytes) {
-        throw new Error("PDF.js did not produce checkpoint data.");
-      }
-      if (willSaveDispatched) {
-        await app.pdfScriptingManager?.dispatchDidSave?.();
-        willSaveDispatched = false;
+        throw new Error("Page reordering cannot be synchronized while the PDF source is immutable.");
       }
       if (
         state.disposed ||
@@ -1896,19 +2643,9 @@
         app.pdfDocument !== pdfDocument ||
         state.revision !== revisionAtStart
       ) {
-        throw new Error("The PDF changed while creating the sync checkpoint.");
+        throw new Error("The annotation state changed while creating the sync checkpoint.");
       }
-      data = makeArrayBuffer(bytes);
     } catch (caught) {
-      error = caught;
-    } finally {
-      if (willSaveDispatched) {
-        try {
-          await app.pdfScriptingManager?.dispatchDidSave?.();
-        } catch {
-          // Preserve the checkpoint serialization error.
-        }
-      }
       if (app.pdfDocument === pdfDocument) {
         restoreChanges(app, {
           hadAnnotationChanges:
@@ -1918,12 +2655,7 @@
           hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
         });
       }
-      app._saveInProgress = false;
-      app._updateOverwriteOriginalState?.();
-      app.setTitle?.();
-    }
-    if (error) {
-      return postSyncCheckpointRejected(message, error.message);
+      return postSyncCheckpointRejected(message, caught?.message || "checkpoint-failed");
     }
     const fields = {
       id: message.id,
@@ -1933,14 +2665,12 @@
       confirmedRevision: state.confirmedRevision,
       dirty: isDirty(),
       ok: true,
-      data,
-      operations: captureSyncOperations(revisionAtStart),
-      newAnnotations: captureNewSyncAnnotations(),
-          dirtyState: captureDirtySyncState(revisionAtStart),
+      operations,
+      dirtyState,
       actorId: state.syncActorId,
       viewState: captureSyncViewState(app),
     };
-    const posted = postToHost("sync-checkpoint-ready", fields, [data]);
+    const posted = postToHost("sync-checkpoint-ready", fields);
     if (!posted) {
       postSyncCheckpointRejected(message, "checkpoint-message-failed");
     }
@@ -2374,183 +3104,24 @@
     postToHost(ok ? "sync-apply-prepared" : "sync-apply-rejected", fields);
   }
 
-  async function handleSyncApplyPrepare(message) {
-    if (
-      !validSyncRequest(message) ||
-      !Number.isSafeInteger(message.expectedRevision) ||
-      message.expectedRevision < 0
-    ) {
-      return;
-    }
-    const reject = (reason) => {
-      postSyncApplyPrepared(
-        {
-          id: message.id,
-          documentId: message.documentId,
-          openRequest: message.openRequest,
-        },
-        false,
-        reason,
-      );
-    };
-    if (
-      state.activeDocumentId !== message.documentId ||
-      state.activeOpenRequest !== message.openRequest ||
-      !state.app?.pdfDocument
-    ) {
-      reject("document-session-changed");
-      return;
-    }
-    if (state.syncApplyControl) {
-      if (
-        state.syncApplyControl.id === message.id &&
-        state.syncApplyControl.documentId === message.documentId &&
-        state.syncApplyControl.openRequest === message.openRequest &&
-        state.syncApplyControl.revision === message.expectedRevision &&
-        state.syncApplyControl.phase === "prepared"
-      ) {
-        postSyncApplyPrepared(state.syncApplyControl, true);
-      } else {
-        reject("another-sync-apply-is-prepared");
-      }
-      return;
-    }
-    if (
-      state.closeControl ||
-      state.savePromise ||
-      state.pendingSave ||
-      state.pendingRecovery ||
-      state.syncCheckpointPromise ||
-      state.app._saveInProgress
-    ) {
-      reject("document-operation-in-progress");
-      return;
-    }
-    if (state.revision !== message.expectedRevision) {
-      reject("revision-changed");
-      return;
-    }
-    const control = {
-      id: message.id,
-      documentId: message.documentId,
-      openRequest: message.openRequest,
-      revision: message.expectedRevision,
-      phase: "preparing",
-      cancelled: false,
-    };
-    state.syncApplyControl = control;
-    const boundaryReached = await waitForInputBoundary(110000);
-    if (
-      state.syncApplyControl !== control ||
-      control.cancelled
-    ) {
-      return;
-    }
-    if (!boundaryReached) {
-      clearSyncApplyControl(control);
-      reject("input-boundary-timeout");
-      return;
-    }
-    if (
-      state.disposed ||
-      state.activeDocumentId !== control.documentId ||
-      state.activeOpenRequest !== control.openRequest ||
-      state.revision !== control.revision ||
-      isEditBoundaryBusy() ||
-      state.savePromise ||
-      state.pendingSave ||
-      state.app?._saveInProgress
-    ) {
-      clearSyncApplyControl(control);
-      reject("revision-or-boundary-changed");
-      return;
-    }
-    if (!setSyncApplyInert(control)) {
-      clearSyncApplyControl(control);
-      reject("could-not-freeze-input");
-      return;
-    }
-    postSyncApplyPrepared(control, true);
+  function handleSyncApplyPrepare(message) {
+    if (!validSyncRequest(message)) return;
+    postSyncApplyPrepared(
+      {
+        id: message.id,
+        documentId: message.documentId,
+        openRequest: message.openRequest,
+      },
+      false,
+      "immutable-source-annotations-only",
+    );
   }
 
-  async function applySyncSnapshot(message) {
-    if (message?.rendererGeneration !== rendererGeneration) {
-      return;
-    }
+  function applySyncSnapshot(message) {
+    if (message?.rendererGeneration !== rendererGeneration) return;
     const control = state.syncApplyControl;
-    const valid = !!(
-      control &&
-      control.phase === "prepared" &&
-      control.id === message.id &&
-      control.documentId === message.documentId &&
-      control.openRequest === message.previousOpenRequest &&
-      control.revision === message.expectedRevision &&
-      state.activeDocumentId === control.documentId &&
-      state.activeOpenRequest === control.openRequest &&
-      state.revision === control.revision &&
-      Number.isSafeInteger(message.newOpenRequest) &&
-      message.newOpenRequest === message.previousOpenRequest + 1 &&
-      message.data instanceof ArrayBuffer &&
-      message.syncState &&
-      Number.isSafeInteger(message.syncState.version)
-    );
-    if (!valid) {
-      if (control?.id === message.id) {
-        clearSyncApplyControl(control);
-      }
-      postSyncApplyRejected(message, "prepared-revision-or-payload-mismatch");
-      return;
-    }
-    control.phase = "applying";
-    const openMessage = {
-      documentId: control.documentId,
-      documentPath: state.activeDocumentPath,
-      filename: state.activeFilename || "document.pdf",
-      openRequest: message.newOpenRequest,
-      revision: control.revision,
-      confirmedRevision: control.revision,
-      restoreDirty: false,
-      restorePaused: false,
-      autoSave: state.autoSaveEnabled,
-      syncState: message.syncState,
-      viewState: message.viewState,
-      data: message.data,
-      syncApplyControlId: control.id,
-    };
-    state.requestedOpenRequest = message.newOpenRequest;
-    let opened = false;
-    let openError = null;
-    try {
-      control.openDocumentPromise = openDocument(openMessage);
-      opened = await control.openDocumentPromise;
-    } catch (error) {
-      openError = error;
-    }
-    if (control.cancelRequested) {
-      const result = await control.cancelPromise;
-      if (result?.ok && state.syncApplyControl === control) {
-        clearSyncApplyControl(control);
-      }
-      return;
-    }
-    if (opened) {
-      postToHost("sync-applied", {
-        id: message.id,
-        documentId: control.documentId,
-        previousOpenRequest: control.openRequest,
-        newOpenRequest: message.newOpenRequest,
-        openRequest: message.newOpenRequest,
-        revision: state.revision,
-        ok: true,
-        viewState: captureSyncViewState(),
-      });
-    } else {
-      postSyncApplyRejected(
-        message,
-        openError?.message || "merged-pdf-open-failed",
-      );
-    }
-    clearSyncApplyControl(control);
+    if (control?.id === message.id) clearSyncApplyControl(control);
+    postSyncApplyRejected(message, "immutable-source-annotations-only");
   }
 
   function waitForInputBoundary(timeoutMs = 110000, closeControl = null) {
@@ -2588,6 +3159,7 @@
       waiter.resolve(result);
     }
     state.inputBoundaryWaiters = remaining;
+    if (result) schedulePendingExternalAnnotationUpdate();
   }
 
   function closeControlMatches(control, message) {
@@ -2853,7 +3425,7 @@
   }
 
   function noteMutation({ schedule = true } = {}) {
-    if (!state.activeDocumentId || state.disposed) {
+    if (!state.activeDocumentId || state.disposed || state.hydratingExternalAnnotations) {
       return;
     }
     state.revision += 1;
@@ -3214,20 +3786,11 @@
   }
 
   function waitForHostSave({
-    data,
     documentId,
-    filename,
-    documentPath,
     requestId,
     revision,
-    origin,
     openRequest,
     operations,
-    newAnnotations,
-    dirtyState,
-    saveTransactionId,
-    actorId,
-    heavyLeaseId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -3242,12 +3805,11 @@
         documentId,
         requestId,
         revision,
-        origin,
         openRequest,
-        resolve: (syncState) => {
+        resolve: (message) => {
           clearTimeout(timeout);
           state.pendingSave = null;
-          resolve(syncState);
+          resolve(message);
         },
         reject: (error) => {
           clearTimeout(timeout);
@@ -3260,22 +3822,12 @@
         !postToHost(
           "save",
           {
-            data,
             documentId,
-            documentPath,
-            filename,
+            openRequest,
             requestId,
             revision,
-            origin,
-            openRequest,
             operations,
-            newAnnotations,
-            dirtyState,
-            saveTransactionId,
-            actorId,
-            ...(heavyLeaseId ? { heavyLeaseId } : {}),
           },
-          [data],
         )
       ) {
         clearTimeout(timeout);
@@ -3286,20 +3838,13 @@
   }
 
   function waitForHostRecovery({
-    data,
     documentId,
-    documentPath,
-    filename,
-    reason,
     requestId,
     revision,
     timeoutMs,
     openRequest,
     operations,
-    newAnnotations,
-    actorId,
-    heavyLeaseId,
-    closeRecovery = false,
+    source,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -3307,7 +3852,7 @@
           return;
         }
         state.pendingRecovery = null;
-        reject(new Error("Timed out waiting for Obsidian to save the recovery copy."));
+        reject(new Error("Timed out waiting for Obsidian to persist the annotation recovery batch."));
       }, timeoutMs);
 
       state.pendingRecovery = {
@@ -3331,26 +3876,18 @@
         !postToHost(
           "recover",
           {
-            data,
             documentId,
-            documentPath,
-            filename,
-            reason,
+            openRequest,
             requestId,
             revision,
-            openRequest,
             operations,
-            newAnnotations,
-            actorId,
-            closeRecovery,
-            ...(heavyLeaseId ? { heavyLeaseId } : {}),
+            source,
           },
-          [data],
         )
       ) {
         clearTimeout(timeout);
         state.pendingRecovery = null;
-        reject(new Error("Could not send the PDF recovery copy to Obsidian."));
+        reject(new Error("Could not send the annotation recovery batch to Obsidian."));
       }
     });
   }
@@ -3363,62 +3900,38 @@
     if (!app || !pdfDocument || !documentId) {
       return false;
     }
+    if (state.externalSourceMismatch) {
+      showStatus("PDF 来源已变化；普通保存已暂停，当前批注保留在恢复记录中。");
+      return false;
+    }
+    if (!state.externalSourceConfirmed) {
+      showStatus("正在核对 PDF 页面身份；核对完成前不会保存外置批注。");
+      return false;
+    }
     if (state.readOnly) {
       showStatus("This PDF is read-only.");
       return false;
     }
 
-    const revisionBeforeLease = state.revision;
     const sessionIsCurrent = () =>
       !state.disposed &&
       state.app === app &&
       state.activeDocumentId === documentId &&
       state.activeOpenRequest === openRequest &&
       app.pdfDocument === pdfDocument;
-    let lease = null;
     let revisionAtStart = null;
     let dirtySnapshot = null;
     let requestId = null;
-    let saveTransactionId = null;
-    let dirtyStateAtStart = null;
-    let willSaveDispatched = false;
     let saveStarted = false;
     let autoStartedAt = null;
-    let finishSerialization;
-    const serializationPromise = new Promise((resolve) => {
-      finishSerialization = resolve;
-    });
-    const serializationRequest = { documentId, openRequest, promise: serializationPromise };
-    state.saveSerializationPromise = serializationRequest;
-    const finishSaveSerialization = (snapshot = null) => {
-      if (state.saveSerializationPromise === serializationRequest) {
-        state.saveSerializationPromise = null;
-      }
-      if (finishSerialization) {
-        finishSerialization(snapshot);
-        finishSerialization = null;
-      }
-    };
-    const finishPdfSavePhase = () => {
+    const finishSavePhase = () => {
       if (!saveStarted) return;
       app._saveInProgress = false;
       app._updateOverwriteOriginalState?.();
       app.setTitle?.();
       saveStarted = false;
     };
-
     try {
-      lease = await waitForHostHeavyLease({ documentId, openRequest });
-      if (!sessionIsCurrent() || state.closeControl) {
-        return false;
-      }
-      if (
-        state.revision !== revisionBeforeLease ||
-        isEditBoundaryBusy() ||
-        state.pendingInkCommit
-      ) {
-        return SAVE_RETRY_AFTER_IDLE;
-      }
       if (
         origin === "auto" &&
         (!state.autoSaveEnabled || state.autoSavePaused)
@@ -3429,22 +3942,16 @@
       revisionAtStart = state.revision;
       dirtySnapshot = snapshotChanges(app);
       if (!isDirty(app)) {
-        finishSaveSerialization(null);
         return true;
       }
       const operationsAtStart = captureSyncOperations(revisionAtStart);
-      const newAnnotationsAtStart = captureNewSyncAnnotations();
-      dirtyStateAtStart = captureDirtySyncState(revisionAtStart);
-      const actorIdAtStart = state.syncActorId;
+      if (!operationsAtStart.length) {
+        throw new Error("The current PDF edits have no lossless annotation operation payload.");
+      }
       requestId = makeSaveRequestId();
-      saveTransactionId = makeSyncUuid();
       app._saveInProgress = true;
       saveStarted = true;
       app._updateOverwriteOriginalState?.();
-
-      await app.pdfScriptingManager?.dispatchWillSave?.();
-      willSaveDispatched = true;
-
       const hasStructuralChanges =
         app.pdfThumbnailViewer?.hasStructuralChanges?.() || false;
       if (hasStructuralChanges) {
@@ -3458,10 +3965,6 @@
         isEditBoundaryBusy() ||
         state.pendingInkCommit
       ) {
-        if (willSaveDispatched) {
-          await app.pdfScriptingManager?.dispatchDidSave?.();
-          willSaveDispatched = false;
-        }
         if (sessionIsCurrent()) {
           restoreChanges(app, {
             hadAnnotationChanges: true,
@@ -3470,45 +3973,10 @@
         }
         return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
       }
-
-      // A host ACK clears the dirty flags but does not replace PDF.js's loaded
-      // base; retained id:null editors still need saveDocument serialization.
-      const hasAnnotationChanges =
-        dirtySnapshot.hadAnnotationChanges || state.dirty ||
-        app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0;
       autoStartedAt = origin === "auto" ? Date.now() : null;
       if (autoStartedAt !== null) {
         state.lastAutoSaveStartedAt = autoStartedAt;
       }
-      const bytes = hasAnnotationChanges
-        ? await pdfDocument.saveDocument()
-        : await pdfDocument.getData();
-
-      if (!bytes) {
-        throw new Error("PDF.js did not produce PDF data to save.");
-      }
-      const serializedSnapshot = {
-        documentId,
-        openRequest,
-        revision: revisionAtStart,
-        bytes: new Uint8Array(bytes).slice(),
-        operations: operationsAtStart,
-        newAnnotations: newAnnotationsAtStart,
-        dirtyState: dirtyStateAtStart,
-        saveTransactionId,
-        actorId: actorIdAtStart,
-      };
-      state.lastSerializedSave = serializedSnapshot;
-      if (willSaveDispatched) {
-        await app.pdfScriptingManager?.dispatchDidSave?.();
-        willSaveDispatched = false;
-      }
-
-      // PDF.js has finished serializing. The Vault write may take much longer;
-      // close can now serialize a newer frozen revision independently.
-      finishPdfSavePhase();
-      finishSaveSerialization(serializedSnapshot);
-
       if (!sessionIsCurrent()) {
         return false;
       }
@@ -3517,8 +3985,7 @@
         origin === "auto" &&
         (!state.autoSaveEnabled || state.autoSavePaused)
       ) {
-        // The setting can change while PDF.js is serializing. Preserve the
-        // revision as dirty without sending an auto-origin host write.
+        // The setting may change while the host is durably writing this batch.
         state.dirty = true;
         restoreChanges(app, {
           hadAnnotationChanges: true,
@@ -3526,33 +3993,17 @@
         });
         return false;
       }
-
-      // saveDocument clears PDF.js's modified flag before the Vault write.
-      // Restore it until the host confirms this exact revision was written.
-      const changedDuringSerialization = state.revision !== revisionAtStart;
-      restoreChanges(app, {
-        hadAnnotationChanges:
-          dirtySnapshot.hadAnnotationChanges || changedDuringSerialization,
-        hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-      });
       await waitForHostSave({
-        data: makeArrayBuffer(bytes),
         documentId,
-        documentPath: state.activeDocumentPath,
-        filename: state.activeFilename || "document.pdf",
         requestId,
         revision: revisionAtStart,
-        origin,
         openRequest,
         operations: operationsAtStart,
-        newAnnotations: newAnnotationsAtStart,
-        dirtyState: dirtyStateAtStart,
-        saveTransactionId,
-        actorId: actorIdAtStart,
-        heavyLeaseId: lease?.leaseId,
       });
       if (sessionIsCurrent()) {
         state.confirmedRevision = revisionAtStart;
+        clearConfirmedDirtyState(revisionAtStart);
+        schedulePendingExternalAnnotationUpdate();
         if (state.revision === revisionAtStart) {
           state.dirty = false;
           pdfDocument.annotationStorage?.resetModified?.();
@@ -3570,20 +4021,13 @@
       }
       return true;
     } catch (error) {
-      if (!sessionIsCurrent() || (error?.cancelled && !error?.leaseTimeout)) {
+      if (!sessionIsCurrent() || error?.cancelled) {
         return false;
       }
       state.autoSavePaused = true;
       clearAutoSaveTimer();
       const failedSnapshot = dirtySnapshot || snapshotChanges(app);
       state.dirty = true;
-      if (willSaveDispatched) {
-        try {
-          await app.pdfScriptingManager?.dispatchDidSave?.();
-        } catch {
-          // Keep the original save error as the user-visible failure.
-        }
-      }
       if (sessionIsCurrent()) {
         restoreChanges(app, {
           hadAnnotationChanges: true,
@@ -3601,12 +4045,10 @@
       }
       return false;
     } finally {
-      finishPdfSavePhase();
-      finishSaveSerialization(null);
+      finishSavePhase();
       if (autoStartedAt !== null) {
         state.lastAutoSaveDurationMs = Math.max(0, Date.now() - autoStartedAt);
       }
-      releaseHostHeavyLease(lease, documentId);
     }
   }
 
@@ -3672,7 +4114,11 @@
   async function runRecoverySequence(reason, deadline, { closeRecovery = false } = {}) {
     const documentId = state.activeDocumentId;
     const openRequest = state.activeOpenRequest;
-    if (!documentId || !state.app?.pdfDocument || state.readOnly) {
+    if (
+      !documentId || !state.app?.pdfDocument ||
+      (state.readOnly && !state.externalSourceMismatch) ||
+      (!state.externalSourceConfirmed && !state.externalSourceMismatch)
+    ) {
       return false;
     }
     const app = state.app;
@@ -3711,177 +4157,65 @@
         }
       }
 
-      const revisionBeforeLease = state.revision;
-      let lease = null;
-      try {
-        if (deadline <= Date.now()) {
-          return false;
-        }
-        if (!closeRecovery) {
-          lease = await waitForHostHeavyLease({
-            documentId,
-            openRequest,
-            timeoutMs: Math.max(0, deadline - Date.now()),
-          });
-        }
-      } catch (error) {
-        if (!sessionIsCurrent() || error?.cancelled) {
-          return false;
-        }
-        state.dirty = true;
-        restoreChanges(app, {
-          hadAnnotationChanges: true,
-          hadStructuralChanges: snapshotChanges(app).hadStructuralChanges,
-        });
-        showStatus(error?.message || "Could not request the PDF recovery lease.");
-        return false;
-      }
-      if (!sessionIsCurrent()) {
-        releaseHostHeavyLease(lease, documentId);
-        return false;
-      }
-      if (
-        state.revision !== revisionBeforeLease ||
-        isEditBoundaryBusy() ||
-        state.pendingInkCommit
-      ) {
-        releaseHostHeavyLease(lease, documentId);
-        continue;
-      }
-
       const revisionAtStart = state.revision;
-      const cached = closeRecovery &&
-        !state.pendingInkCommit &&
-        !state.freeTextInputPending &&
-        state.lastSerializedSave?.documentId === documentId &&
-        state.lastSerializedSave?.openRequest === openRequest &&
-        state.lastSerializedSave?.revision === revisionAtStart
-        ? state.lastSerializedSave
-        : null;
-      const operationsAtStart = cached?.operations || captureSyncOperations(revisionAtStart);
-      const newAnnotationsAtStart = cached?.newAnnotations || captureNewSyncAnnotations();
-      const actorIdAtStart = cached?.actorId || state.syncActorId;
+      const operationsAtStart = captureSyncOperations(revisionAtStart);
       const dirtySnapshot = snapshotChanges(app);
-      let willSaveDispatched = false;
+      const source = recoverySourceIdentity();
       let saveStarted = false;
-      let bytes;
       try {
-        if (cached) {
-          bytes = cached.bytes;
-        } else {
-          app._saveInProgress = true;
-          saveStarted = true;
-          if (deadline <= Date.now()) {
-            return false;
-          }
-          await app.pdfScriptingManager?.dispatchWillSave?.();
-          willSaveDispatched = true;
-          if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
-            throw new Error("Page reordering cannot be included in a PDF recovery copy.");
-          }
-          if (
-            !sessionIsCurrent() ||
-            state.revision !== revisionAtStart ||
-            isEditBoundaryBusy() ||
-            state.pendingInkCommit
-          ) {
-            if (willSaveDispatched) {
-              await app.pdfScriptingManager?.dispatchDidSave?.();
-              willSaveDispatched = false;
-            }
-            if (sessionIsCurrent()) {
-              state.dirty = true;
-              restoreChanges(app, {
-                hadAnnotationChanges: true,
-                hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-              });
-            }
-            continue;
-          }
-          // Recovery has the same loaded-base boundary as an ordinary save.
-          bytes =
-            dirtySnapshot.hadAnnotationChanges || state.dirty ||
-            app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
-              ? await pdfDocument.saveDocument()
-              : await pdfDocument.getData();
-          if (!bytes) {
-            throw new Error("PDF.js did not produce recovery data.");
-          }
-          if (willSaveDispatched) {
-            await app.pdfScriptingManager?.dispatchDidSave?.();
-            willSaveDispatched = false;
-          }
-          const serializedSnapshot = {
-            documentId,
-            openRequest,
-            revision: revisionAtStart,
-            bytes: new Uint8Array(bytes).slice(),
-            operations: operationsAtStart,
-            newAnnotations: newAnnotationsAtStart,
-            actorId: actorIdAtStart,
-          };
-          state.lastSerializedSave = serializedSnapshot;
-          if (closeRecovery) {
-            app._saveInProgress = false;
-            app._updateOverwriteOriginalState?.();
-            app.setTitle?.();
-            saveStarted = false;
-          }
-        }
-        if (
-          !sessionIsCurrent()
-        ) {
-          return false;
-        }
-        state.dirty = true;
-        restoreChanges(app, {
-          hadAnnotationChanges:
-            dirtySnapshot.hadAnnotationChanges ||
-            state.dirty ||
-            state.revision !== revisionAtStart,
-          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-        });
         const timeoutMs = Math.max(0, deadline - Date.now());
         if (!timeoutMs) {
           return false;
         }
+        if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
+          throw new Error("Page reordering cannot be included while the PDF source is immutable.");
+        }
+        if (!operationsAtStart.length) {
+          throw new Error("The current PDF edits have no lossless recovery operation payload.");
+        }
+        if (
+          !sessionIsCurrent() || state.revision !== revisionAtStart ||
+          isEditBoundaryBusy() || state.pendingInkCommit
+        ) continue;
+        app._saveInProgress = true;
+        saveStarted = true;
+        app._updateOverwriteOriginalState?.();
         const requestId = makeRecoveryRequestId();
         const recoveryAck = await waitForHostRecovery({
-          data: makeArrayBuffer(bytes),
           documentId,
-          documentPath: state.activeDocumentPath,
-          filename: state.activeFilename || "document.pdf",
-          reason,
           requestId,
           revision: revisionAtStart,
           timeoutMs,
           openRequest: state.activeOpenRequest,
           operations: operationsAtStart,
-          newAnnotations: newAnnotationsAtStart,
-          actorId: actorIdAtStart,
-          heavyLeaseId: lease?.leaseId,
-          closeRecovery,
+          source,
         });
-        if (!sessionIsCurrent()) {
-          return false;
+        if (!sessionIsCurrent()) return false;
+        if (recoveryAck?.ok !== true) {
+          throw new Error(recoveryAck?.message || "Obsidian did not confirm the external recovery batch.");
         }
-        state.dirty = true;
-        restoreChanges(app, {
-          hadAnnotationChanges: true,
-          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-        });
         if (
           state.revision === revisionAtStart &&
           !isEditBoundaryBusy() &&
           !state.pendingInkCommit
         ) {
+          state.confirmedRevision = revisionAtStart;
+          clearConfirmedDirtyState(revisionAtStart);
+          schedulePendingExternalAnnotationUpdate();
+          state.dirty = false;
+          pdfDocument.annotationStorage?.resetModified?.();
+          restoreChanges(app, {
+            hadAnnotationChanges: false,
+            hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+          });
           state.lastRecoveredDocumentId = documentId;
           state.lastRecoveredRevision = revisionAtStart;
           state.lastCloseWritebackAck = {
             documentId,
             openRequest,
             revision: revisionAtStart,
-            queued: closeRecovery && recoveryAck?.closeWritebackQueued === true,
+            queued: false,
+            durable: true,
           };
           return true;
         }
@@ -3894,7 +4228,7 @@
           hadAnnotationChanges: true,
           hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
         });
-        showStatus(error?.message || "Could not save the PDF recovery copy.");
+        showStatus(error?.message || "Could not save the annotation recovery batch.");
         return false;
       } finally {
         if (saveStarted) {
@@ -3902,7 +4236,6 @@
           app._updateOverwriteOriginalState?.();
           app.setTitle?.();
         }
-        releaseHostHeavyLease(lease, documentId);
       }
     }
     return sessionIsCurrent() && !isDirty();
@@ -6854,9 +7187,8 @@
             if (!state.pendingSave && state.heavyLeaseWaiters.size > 0) {
               cancelPendingHeavyLeaseWaiters("Close is capturing a durable recovery revision.");
             }
-            const serialization = state.saveSerializationPromise;
-            if (serialization?.documentId === documentId) {
-              await serialization.promise;
+            if (state.savePromise) {
+              await state.savePromise;
             }
             if (
               state.closeControl !== closeControl ||
@@ -6876,12 +7208,15 @@
                 closeRecovery: true,
               });
               const recoveryAck = state.lastCloseWritebackAck;
-              closeControl.closeWritebackQueued = Boolean(
+              closeControl.annotationBatchDurable = Boolean(
                 recovered && recoveryAck?.documentId === documentId &&
                 recoveryAck?.openRequest === state.activeOpenRequest &&
-                recoveryAck?.revision === state.revision && recoveryAck.queued,
+                recoveryAck?.revision === state.revision && recoveryAck.durable,
               );
-              result = false;
+              // The close may proceed as soon as the structured recovery
+              // operation batch has been durably acknowledged. No PDF
+              // serialization or background binary writeback is required.
+              result = closeControl.annotationBatchDurable;
             }
           }
         } else {
@@ -6964,6 +7299,7 @@
         dirty,
         recovered,
         closeWritebackQueued: closeControl.closeWritebackQueued === true,
+        annotationBatchDurable: closeControl.annotationBatchDurable === true,
         prepared,
       });
       if (!posted && prepared) {
@@ -6979,6 +7315,145 @@
       dirty,
       ...(recovered ? { recovered: true } : {}),
     });
+  }
+
+  function handleExternalAnnotationsUpdate(message) {
+    if (
+      message.documentId !== state.activeDocumentId ||
+      message.openRequest !== state.activeOpenRequest
+    ) return;
+    if (message.sourceMatch === "MISMATCH") {
+      handleAnnotationSourceMismatch(message);
+      return;
+    }
+    if (!(["MATCH", "BASELINE_ESTABLISHED"].includes(message.sourceMatch))) {
+      state.externalSourceConfirmed = false;
+      sendError("Obsidian has not confirmed that the external annotations belong to this PDF revision.", {
+        documentId: message.documentId,
+        openRequest: message.openRequest,
+        code: "external-annotation-source-unconfirmed",
+      });
+      return;
+    }
+    if (!message.externalAnnotations || typeof message.externalAnnotations !== "object") {
+      sendError("Obsidian sent an invalid external annotation snapshot.", {
+        documentId: message.documentId,
+        openRequest: message.openRequest,
+        code: "external-annotation-snapshot-invalid",
+      });
+      return;
+    }
+    if (!state.externalSourceConfirmed && message.identityConfirmed !== true) {
+      // A sidecar notification can race the initial source-identity reply.
+      // Keep the Reader locked; the confirming host response will carry a
+      // fresh replayed snapshot after hash/page-identity validation.
+      return;
+    }
+    state.pendingExternalAnnotationsUpdate = message;
+    schedulePendingExternalAnnotationUpdate();
+  }
+
+  function handleAnnotationSourceMismatch(message) {
+    if (
+      message.documentId !== state.activeDocumentId ||
+      message.openRequest !== state.activeOpenRequest
+    ) return;
+    clearAutoSaveTimer();
+    state.autoSavePaused = true;
+    state.externalSourceConfirmed = false;
+    state.externalSourceMismatch = true;
+    state.readOnly = true;
+    const loadedSource = state.externalSource;
+    clearExternalHydration({
+      clearRows: true,
+      restoreEmbedded: true,
+      preserveDirty: true,
+    });
+    state.externalSource = loadedSource;
+    setReadOnlyState(true);
+    showStatus(
+      "PDF 来源已变化；外置批注已暂停加载和保存，原 PDF 未修改。请核对恢复记录。",
+    );
+  }
+
+  async function handleExportCopy(message) {
+    const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
+    const app = state.app;
+    const pdfDocument = app?.pdfDocument;
+    const requestId = message.requestId;
+    const fail = (error) => postToHost("export-error", {
+      requestId,
+      documentId: message.documentId,
+      openRequest: message.openRequest,
+      message: String(error?.message || error || "PDF export failed."),
+    });
+    if (
+      typeof requestId !== "string" || !requestId ||
+      message.documentId !== documentId ||
+      message.openRequest !== openRequest ||
+      !pdfDocument
+    ) {
+      return fail(new Error("The PDF export request belongs to an inactive document session."));
+    }
+    const boundaryReached = await waitForInputBoundary(110000);
+    if (!boundaryReached) return fail(new Error("Finish the current PDF annotation before exporting."));
+    if (state.pendingInkCommit) {
+      state.committingInkForSave = true;
+      try {
+        app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+      } finally {
+        state.committingInkForSave = false;
+        state.pendingInkCommit = false;
+      }
+    }
+    prepareContentForSave();
+    const revision = state.revision;
+    const startedAt = performance.now();
+    try {
+      // This full PDF serialization is intentionally reachable only through
+      // the explicit “export annotated copy” command. The result is returned
+      // as a new file; it never replaces the immutable source PDF.
+      const output = await pdfDocument.saveDocument();
+      if (
+        state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
+        state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest ||
+        state.revision !== revision
+      ) {
+        throw new Error("The document changed during export; no output copy was created. Retry the export.");
+      }
+      const data = output instanceof ArrayBuffer
+        ? output.slice(0)
+        : ArrayBuffer.isView(output)
+          ? output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength)
+          : null;
+      if (!data || !data.byteLength) throw new Error("PDF.js returned an empty export.");
+      const outputBytes = data.byteLength;
+      const posted = postToHost("export-ready", {
+        requestId,
+        documentId,
+        openRequest,
+        revision,
+        data,
+      }, [data]);
+      if (!posted) throw new Error("Could not return the exported PDF to Obsidian.");
+      runtimeLogRecord("pdf.export-copy", {
+        documentId,
+        openRequest,
+        revision,
+        bytes: outputBytes,
+        durationMs: +(performance.now() - startedAt).toFixed(3),
+      });
+    } catch (error) {
+      runtimeLogRecord("pdf.export-copy.error", {
+        documentId,
+        openRequest,
+        revision,
+        durationMs: +(performance.now() - startedAt).toFixed(3),
+        error: runtimeLogError(error),
+      });
+      fail(error);
+    }
   }
 
   function handlePrepareClose(message) {
@@ -7432,6 +7907,10 @@
       }
       state.activeDocumentId = null;
       updatePageNumberWidth(0);
+      clearExternalHydration({ clearRows: true, restoreEmbedded: true });
+      state.externalSourceConfirmed = false;
+      state.actualSourceIdentity = null;
+      state.externalSourceMismatch = false;
       state.activeDocumentPath = null;
       state.activeFilename = null;
       state.activeOpenRequest = null;
@@ -7477,20 +7956,29 @@
       }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
-      state.lastSerializedSave = null;
-      state.saveSerializationPromise = null;
       updatePageNumberWidth(pdfDocument.numPages);
       state.activeDocumentPath = documentPath;
       state.activeFilename = filename;
       state.activeOpenRequest = Number.isInteger(message.openRequest)
         ? message.openRequest
         : null;
-      state.readOnly = message.readOnly === true;
+      // Source identity is asynchronous; never accept edits before the host
+      // confirms the source hash and ordered page identity after PDF parse.
+      state.readOnly = true;
       state.dirty = restoreDirty;
       state.revision = isSyncApply ? 0 : restoredRevision;
       state.confirmedRevision = isSyncApply ? 0 : restoredConfirmedRevision;
       state.autoSavePaused = restorePaused;
       applySyncIdentities(message.syncState, { reset: true });
+      state.syncDeviceId =
+        (typeof message.deviceId === "string" && message.deviceId) ||
+        (typeof message.actorId === "string" && message.actorId) ||
+        state.syncActorId;
+      const provisionalExternal = validateExternalAnnotations(message.externalAnnotations);
+      state.externalSource = provisionalExternal.source;
+      applyLegacyAnnotationIdentities(provisionalExternal.legacyIdentities);
+      state.externalAnnotationRows.clear();
+      state.externalAnnotationRefs.clear();
       state.annotationSnapshot = getAnnotationStorageRows(app);
       const loadedSnapshot = snapshotChanges(app);
       restoreChanges(app, {
@@ -7503,6 +7991,7 @@
       observeAnnotationStorage(app.pdfDocument?.annotationStorage);
       observeEditorManager(app);
       observeAccessibilityManagers(app);
+      await hydrateRenderedExternalPages(app);
       setReadOnlyState(state.readOnly);
 
       if (isSyncApply) {
@@ -7512,6 +8001,21 @@
       if (state.activeDocumentId !== documentId || state.disposed) {
         return false;
       }
+      void reportAnnotationSourceIdentity(pdfDocument, message.externalAnnotations).catch((error) => {
+        runtimeLogRecord("annotation-source-identity.error", {
+          documentId,
+          openRequest: state.activeOpenRequest,
+          error: runtimeLogError(error),
+        });
+        postToHost("annotation-source-identity", {
+          documentId,
+          openRequest: state.activeOpenRequest,
+          sourceHash: message.externalAnnotations?.source?.sourceHash || null,
+          pageCount: pdfDocument.numPages,
+          orderedPageIdentities: Array(pdfDocument.numPages).fill(null),
+          identityStatus: "UNKNOWN",
+        });
+      });
       if (!isSyncApply) {
         const startupTimings = captureOpenStartupTimings({
           startedAt,
@@ -7552,6 +8056,10 @@
       cleanupStorageObserver();
       state.activeDocumentId = null;
       updatePageNumberWidth(0);
+      clearExternalHydration({ clearRows: true, restoreEmbedded: true });
+      state.externalSourceConfirmed = false;
+      state.actualSourceIdentity = null;
+      state.externalSourceMismatch = false;
       state.activeDocumentPath = null;
       state.activeFilename = null;
       state.activeOpenRequest = null;
@@ -7733,6 +8241,21 @@
       return;
     }
 
+    if (message.type === "external-annotations-update") {
+      handleExternalAnnotationsUpdate(message);
+      return;
+    }
+
+    if (message.type === "annotation-source-mismatch") {
+      handleAnnotationSourceMismatch(message);
+      return;
+    }
+
+    if (message.type === "export-copy") {
+      void handleExportCopy(message);
+      return;
+    }
+
     if (message.type === "flush") {
       void handleFlush(message);
       return;
@@ -7863,6 +8386,10 @@
         );
         return;
       }
+      if (message.ok !== true) {
+        pending.reject(new Error(message.message || "Obsidian did not durably acknowledge the recovery batch."));
+        return;
+      }
       pending.resolve(message);
       return;
     }
@@ -7877,6 +8404,7 @@
         recovery &&
         message.requestId === recovery.requestId &&
         message.documentId === recovery.documentId &&
+        message.openRequest === recovery.openRequest &&
         message.revision === recovery.revision &&
         hasCompatibleHostAckGeneration(message)
       ) {
@@ -7893,6 +8421,7 @@
         !pending ||
         message.requestId !== pending.requestId ||
         message.documentId !== pending.documentId ||
+        message.openRequest !== pending.openRequest ||
         message.revision !== pending.revision ||
         !hasCompatibleHostAckGeneration(message)
       ) {
@@ -7906,15 +8435,6 @@
           return;
         }
         if (
-          Number.isSafeInteger(message.openRequest) &&
-          message.openRequest !== pending.openRequest
-        ) {
-          pending.reject(
-            new Error("Obsidian acknowledged a different PDF open request."),
-          );
-          return;
-        }
-        if (
           message.syncState &&
           state.activeDocumentId === pending.documentId &&
           state.activeOpenRequest === pending.openRequest
@@ -7922,7 +8442,15 @@
           applySyncIdentities(message.syncState);
         }
         clearConfirmedDirtyState(message.revision);
-        pending.resolve(message.syncState);
+        if (message.externalAnnotations) {
+          state.pendingExternalAnnotationsUpdate = {
+            documentId: message.documentId,
+            openRequest: message.openRequest,
+            externalAnnotations: message.externalAnnotations,
+          };
+        }
+        schedulePendingExternalAnnotationUpdate();
+        pending.resolve(message);
       } else {
         const error = new Error(
           message.message || "Obsidian could not save the PDF.",
@@ -8029,6 +8557,25 @@
           ({ pagesCount } = {}) => {
             updatePageNumberWidth(pagesCount);
             observeAccessibilityManagers(app);
+            void hydrateRenderedExternalPages(app).catch((error) => {
+              runtimeLogRecord("external-annotation.hydrate-pages-error", {
+                error: runtimeLogError(error),
+              });
+            });
+          },
+          { signal: state.eventAbortController.signal },
+        );
+        app.eventBus?._on(
+          "annotationlayerrendered",
+          ({ pageNumber }) => {
+            if (state.activeDocumentId && Number.isInteger(pageNumber)) {
+              const pageIndex = pageNumber - 1;
+              for (const row of state.externalAnnotationRows.values()) {
+                if (row.pageIndex === pageIndex && row.embeddedRef) {
+                  suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
+                }
+              }
+            }
           },
           { signal: state.eventAbortController.signal },
         );
@@ -8040,6 +8587,14 @@
                 app,
                 app.pdfViewer?.getPageView?.(pageNumber - 1),
               );
+              void hydrateExternalAnnotationsForPage(pageNumber - 1).then((hydrated) => {
+                if (!hydrated) scheduleExternalAnnotationHydrationRetry(pageNumber - 1);
+              }).catch((error) => {
+                runtimeLogRecord("external-annotation.hydrate-page-error", {
+                  pageIndex: pageNumber - 1,
+                  error: runtimeLogError(error),
+                });
+              });
             }
           },
           { signal: state.eventAbortController.signal },

@@ -25,10 +25,11 @@ function drainViewerRuntimeLog(view) {
 }
 
 /* BUILD:ASSET_RUNTIME_REQUIRE */ const { ensureViewerAssets, sha256Bytes } = require("./asset-runtime.cjs");
-/* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require('./pdf-merge-client.cjs');
-/* BUILD:PDF_SYNC_HOST_REQUIRE */ const { createPdfSyncHost } = require('./pdf-sync-host.cjs');
+/* BUILD:PDF_HASH_RUNTIME_REQUIRE */ const { createPdfHashRuntime } = require("./pdf-hash-runtime.cjs");
+/* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
+/* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
-/* BUILD:PDF_RECOVERY_REQUIRE */ const { writeDeltaRecovery, readDeltaRecovery } = require('./pdf-recovery.cjs');
+/* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -68,6 +69,8 @@ const MOBILE_STAGE_LABELS = Object.freeze({
   "resource-failed": "资源加载失败",
   disposed: "阅读器已关闭",
 });
+
+let activePdfHashRuntime = null;
 
 function isMobilePlatform(app) {
   return app?.isMobile === true || Platform?.isMobile === true;
@@ -456,6 +459,19 @@ function makeToken() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function localAnnotationDeviceId() {
+  const key = "pdf-web-reader.annotation-device-id.v1";
+  try {
+    const saved = globalThis.localStorage?.getItem(key);
+    if (typeof saved === "string" && /^[a-zA-Z0-9_-]{8,128}$/.test(saved)) return saved;
+    const created = makeToken().replace(/[^a-zA-Z0-9_-]/g, "");
+    globalThis.localStorage?.setItem(key, created);
+    return created;
+  } catch {
+    return makeToken().replace(/[^a-zA-Z0-9_-]/g, "");
+  }
+}
+
 function toArrayBuffer(value) {
   // The viewer may be hosted in another Electron window/realm, where
   // instanceof ArrayBuffer is false even though the value is an ArrayBuffer.
@@ -480,6 +496,12 @@ function bytesEqual(left, right) {
   if (!left || !right || left.byteLength !== right.byteLength) {
     return false;
   }
+  if (activePdfHashRuntime) return activePdfHashRuntime.compare(left, right);
+  const sampleLength = Math.min(64 * 1024, left.byteLength);
+  const sampleStart = left.byteLength - sampleLength;
+  for (let index = sampleStart; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
   for (let index = 0; index < left.byteLength; index += 1) {
     if (left[index] !== right[index]) {
       return false;
@@ -489,7 +511,25 @@ function bytesEqual(left, right) {
 }
 
 function fingerprint(bytes) {
-  return sha256Bytes(bytes);
+  return activePdfHashRuntime?.fingerprint(bytes) || `sha256-v1:${sha256Bytes(bytes)}`;
+}
+
+function fingerprintMatches(bytes, expected) {
+  if (activePdfHashRuntime) return activePdfHashRuntime.matches(bytes, expected);
+  const value = String(expected || "");
+  const digest = sha256Bytes(bytes);
+  return value === digest || value.toLowerCase() === `sha256-v1:${digest}`.toLowerCase();
+}
+
+function hashFileKey(value) {
+  if (activePdfHashRuntime) return activePdfHashRuntime.hashFileKey(value);
+  return String(value).replace(/^xxh64-v1:/i, "xxh64-v1-").replace(/^sha256-v1:/i, "sha256-v1-");
+}
+
+function isSupportedFingerprint(value) {
+  if (activePdfHashRuntime) return activePdfHashRuntime.isSupportedHash(value);
+  return typeof value === "string" && (/^[a-f0-9]{64}$/i.test(value) ||
+    /^sha256-v1:[a-f0-9]{64}$/i.test(value) || /^xxh64-v1:[a-f0-9]{16}$/i.test(value));
 }
 
 function clampDiagnosticInteger(value, minimum, maximum) {
@@ -836,6 +876,7 @@ class PdfReaderView extends EditableFileView {
     this.ownerWindow = null;
     this.ownerWindowMessageSender = null;
     this.flushRequests = new Map();
+    this.exportRequests = new Map();
     this.pendingSaves = 0;
     this.preparedClose = null;
     this.closePreparation = null;
@@ -843,7 +884,7 @@ class PdfReaderView extends EditableFileView {
     this.bridgeTimeoutWindow = null;
     this.bridgeTimeoutDeadline = null;
     this.messageListener = (event) => this.onMessage(event);
-    this.syncForegroundListener = () => this.plugin.pdfSync?.schedule(this.documentFile || this.file, "reader-focus");
+    this.syncForegroundListener = () => {};
   }
 
   getViewType() {
@@ -888,7 +929,6 @@ class PdfReaderView extends EditableFileView {
       this.navigationState = { ...normalizedState };
     }
     await super.setState(normalizedState, result);
-    if (file) this.plugin.pdfSync?.schedule(file, "activate");
   }
 
   async onLoadFile(file) {
@@ -950,9 +990,8 @@ class PdfReaderView extends EditableFileView {
       this.requestedPath = null;
       this.documentFile = null;
       this.navigationState = {};
-      this.plugin.releaseDocumentBaseline(file.path, this);
       this.plugin.heavyWork?.cancel(this);
-      this.plugin.pdfSync?.releaseView(this, file);
+      this.plugin.annotationHost?.releaseView(this);
     }
   }
 
@@ -1021,39 +1060,20 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
-    let failedApplyRendererStopped = false;
-    try {
-      await this.plugin.pdfSync?.closeView(this);
-    } catch (error) {
-      if (error.code !== "SYNC_APPLY_CANCEL_FAILED") throw error;
-      // This is an explicit Reader close. The apply phase already persisted
-      // and verified its local recovery/checkpoint before replacing the PDF.
-      // Destroy the failed renderer before force-settling its host lease;
-      // never automatically reload it or claim its cancellation succeeded.
-      if (this.iframe) {
-        drainViewerRuntimeLog(this);
-        this.iframe.srcdoc = "";
-        this.iframe.remove();
-        this.iframe = null;
-      }
-      failedApplyRendererStopped = true;
-      await this.plugin.pdfSync?.closeView(this, "Reader renderer destroyed", { force: true });
-      new Notice(`PDF 同步刷新关闭失败：${error.message}。阅读器已关闭，本地恢复副本保留。`, 8000);
-    }
     const closingFile = this.documentFile || this.file;
-    const closingPath = this.requestedPath || closingFile?.path || null;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
-    if (!closeWasPrepared && !failedApplyRendererStopped) {
+    if (!closeWasPrepared) {
       const flush = await this.flushDocument();
       this.notifyFlushOutcome(flush);
     }
-    // A detached source writer may now proceed: the latest Viewer revision is
-    // clean or durably recoverable, and PDF.js is about to be torn down.
     this.releasePendingOpenAdmission();
     this.finishFlushRequests({ ok: false, dirty: true });
-    for (const request of [...this.mobileInputDiagnosticsRequests.values()]) {
-      request.finish(null);
+    for (const request of this.exportRequests.values()) {
+      globalThis.clearTimeout(request.timer);
+      request.reject(new Error("PDF 阅读器已关闭，导出已取消。"));
     }
+    this.exportRequests.clear();
+    for (const request of [...this.mobileInputDiagnosticsRequests.values()]) request.finish(null);
     this.clearBridgeTimeout();
     await super.onClose();
     const mobileGeneration = this.mobileResourceLease?.generation || null;
@@ -1064,12 +1084,9 @@ class PdfReaderView extends EditableFileView {
       this.iframe.remove();
       this.iframe = null;
     }
-    if (!mobileGeneration) {
-      this.unbindOwnerWindow();
-    } else {
-      this.mobileCleanupTimer = globalThis.setTimeout(() => {
-        this.revokeMobileResources(mobileGeneration, { force: true });
-      }, 5000);
+    if (!mobileGeneration) this.unbindOwnerWindow();
+    else {
+      this.mobileCleanupTimer = globalThis.setTimeout(() => this.revokeMobileResources(mobileGeneration, { force: true }), 5000);
     }
     this.iframeLoadListener = null;
     this.viewerDocumentHtml = null;
@@ -1086,6 +1103,8 @@ class PdfReaderView extends EditableFileView {
     this.originalBytes = null;
     this.loadedBaseBytes = null;
     this.annotationSyncState = null;
+    this.annotationDocument = null;
+    this.annotationHydrationAllowed = false;
     this.currentRevision = 0;
     this.confirmedRevision = 0;
     this.latestRecoveryDraft = null;
@@ -1099,10 +1118,9 @@ class PdfReaderView extends EditableFileView {
     this.navigationState = {};
     this.preparedClose = null;
     this.closePreparation = null;
-    if (closingPath) this.plugin.releaseDocumentBaseline(closingPath, this);
     this.plugin.views.delete(this);
     this.plugin.heavyWork?.cancel(this);
-    this.plugin.pdfSync?.releaseView(this, closingFile);
+    this.plugin.annotationHost?.releaseView(this);
     this.contentEl.removeClass("pdf-web-reader-content");
   }
 
@@ -1153,53 +1171,30 @@ class PdfReaderView extends EditableFileView {
       return;
     }
 
-    // A renderer can be adopted or reloaded outside the controlled SDK move
-    // path. Reopen the last durable bytes and warn that edits newer than the
-    // saved/recovery checkpoint might not be in that renderer.
+    // Renderer state is not durable. Reopen the unchanged source PDF and
+    // rehydrate the confirmed external operation log instead of retaining a
+    // second full PDF/recovery buffer in the host.
+    const file = this.documentFile || this.file;
     this.ready = false;
     this.rendererStateUnknown = true;
     this.preparedClose = null;
-    this.openRequest += 1;
-    const draft = this.latestRecoveryDraft;
-    const usableDraft = Boolean(
-      draft &&
-        draft.documentId === this.documentId &&
-        draft.revision === this.currentRevision &&
-        draft.revision > this.confirmedRevision &&
-        draft.baseFingerprint === fingerprint(this.originalBytes || []),
-    );
-    const bytes = usableDraft ? draft.bytes : this.originalBytes;
-    if (bytes) {
-      this.pendingOpenState = {
-        bytes: new Uint8Array(bytes),
-        revision: usableDraft ? draft.revision : this.confirmedRevision,
-        confirmedRevision: this.confirmedRevision,
-        restoreDirty: usableDraft,
-        restorePaused: usableDraft && draft.restorePaused,
-        sent: false,
-      };
-    }
+    this.pendingOpenState = null;
+    this.pendingBytes = null;
     this.clearBridgeTimeout();
     this.bridgeTimeoutDeadline = Date.now() + 20000;
-    if (!this.rotateRendererGeneration()) {
-      this.showError(
-        "PDF 阅读器页面意外重载，但无法建立新的安全通信会话。请重新打开此 PDF。",
-      );
+    if (!file || !this.rotateRendererGeneration()) {
+      this.showError("PDF 阅读器页面意外重载，无法恢复安全会话。请重新打开此 PDF。");
       return;
     }
     this.awaitingRendererLoad = true;
     this.iframe.srcdoc = this.viewerDocumentHtml;
     this.scheduleBridgeTimeout();
-    this.showError(
-      usableDraft
-        ? "PDF 阅读器页面意外重载；已恢复最近的编辑副本，重载前未保存的额外更改可能未包含。"
-        : "PDF 阅读器页面意外重载；已重新打开最近确认保存的 PDF，重载前未提交的更改可能需要从恢复副本取回。",
-    );
+    void this.openFile(file);
+    this.showError("PDF 阅读器页面意外重载；已从只读底本与已确认的外置批注日志重新打开。未确认的最后操作可能未保存。");
   }
 
   rotateRendererGeneration() {
     this.openAcknowledged = false;
-    this.plugin.pdfSync?.closeView(this, "renderer-replaced");
     const currentHtml = this.viewerDocumentHtml;
     const currentAttribute = `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`;
     if (typeof currentHtml !== "string" || !currentHtml.includes(currentAttribute)) {
@@ -1219,71 +1214,23 @@ class PdfReaderView extends EditableFileView {
       !prepared ||
       prepared.documentId !== this.documentId ||
       prepared.openRequest !== this.openRequest ||
-      !Number.isSafeInteger(prepared.revision) ||
-      prepared.revision < 0 ||
-      !this.originalBytes ||
-      !this.viewerDocumentHtml?.includes(
-        `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`,
-      )
-    ) {
-      return null;
-    }
-
-    const draft = this.latestRecoveryDraft;
-    if (prepared.recovered) {
-      if (
-        !draft ||
-        draft.documentId !== this.documentId ||
-        draft.revision !== prepared.revision ||
-        draft.revision <= this.confirmedRevision ||
-        draft.baseFingerprint !== fingerprint(this.originalBytes)
-      ) {
-        return null;
-      }
-      return {
-        bytes: new Uint8Array(draft.bytes),
-        revision: draft.revision,
-        confirmedRevision: this.confirmedRevision,
-        restoreDirty: true,
-        restorePaused: draft.restorePaused,
-      };
-    }
-
-    // A clean preparation must match the last original-PDF acknowledgement.
-    // Never substitute a recovery draft for the conflict-checking baseline.
-    if (
-      this.rendererStateUnknown ||
-      prepared.revision !== this.confirmedRevision ||
-      this.currentRevision !== this.confirmedRevision
-    ) {
-      return null;
-    }
-    return {
-      bytes: new Uint8Array(this.originalBytes),
-      revision: this.confirmedRevision,
-      confirmedRevision: this.confirmedRevision,
-      restoreDirty: false,
-      restorePaused: false,
-    };
+      !Number.isSafeInteger(prepared.revision) || prepared.revision < 0 ||
+      !this.annotationDocument ||
+      !this.viewerDocumentHtml?.includes(`data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"`)
+    ) return null;
+    if (prepared.revision !== this.confirmedRevision || this.currentRevision !== this.confirmedRevision) return null;
+    return { revision: this.confirmedRevision, confirmedRevision: this.confirmedRevision };
   }
 
   restartViewerAfterPopoutMove(checkpoint, transaction) {
     if (
-      !this.iframe ||
-      !this.viewerDocumentHtml ||
-      transaction.documentId !== this.documentId ||
-      transaction.openRequest !== this.openRequest
-    ) {
-      return false;
-    }
-    if (!this.rotateRendererGeneration()) return false;
-    this.openRequest += 1;
+      !this.iframe || !this.viewerDocumentHtml ||
+      transaction.documentId !== this.documentId || transaction.openRequest !== this.openRequest
+    ) return false;
+    const file = this.documentFile || this.file;
+    if (!file || !this.rotateRendererGeneration()) return false;
     this.pendingBytes = null;
-    this.pendingOpenState = {
-      ...checkpoint,
-      openRequest: this.openRequest,
-      sent: false,
-    };
+    this.pendingOpenState = null;
     this.preparedClose = null;
     this.closePreparation = null;
     this.popoutMoveTransaction = null;
@@ -1296,10 +1243,9 @@ class PdfReaderView extends EditableFileView {
     this.bridgeTimeoutDeadline = Date.now() + 20000;
     this.bindOwnerWindow();
     this.scheduleBridgeTimeout();
-    this.setStatus("正在恢复 PDF 阅读器…");
-    // Reassigning the cached srcdoc forces a fresh PDF.js realm in the new
-    // Obsidian window; its ready message will send the durable checkpoint.
+    this.setStatus("正在从外置批注记录恢复 PDF 阅读器…");
     this.iframe.srcdoc = this.viewerDocumentHtml;
+    void this.openFile(file);
     return true;
   }
 
@@ -1662,7 +1608,6 @@ class PdfReaderView extends EditableFileView {
     ) {
       this.sendCancelClose(prepared);
       this.preparedClose = null;
-      this.plugin.pdfSync?.resumeClose(this);
     }
   }
 
@@ -1671,17 +1616,9 @@ class PdfReaderView extends EditableFileView {
     const openRequest = this.openRequest;
     if (this.hasPreparedClose(documentId, openRequest)) return true;
     if (!this.ready) {
-      const draft = this.latestRecoveryDraft;
-      const exactDraft = Boolean(
-        draft &&
-          draft.documentId === documentId &&
-          draft.revision === this.currentRevision &&
-          draft.revision > this.confirmedRevision &&
-          draft.baseFingerprint === fingerprint(this.originalBytes || []),
-      );
-      if (this.pendingSaves > 0 || (this.currentRevision > this.confirmedRevision && !exactDraft)) {
+      if (this.pendingSaves > 0 || this.currentRevision > this.confirmedRevision) {
         new Notice(
-          "PDF 标签保持打开：阅读器正在恢复，且尚未确认最新更改已保存或写入恢复副本。",
+          "PDF 标签保持打开：尚未确认最新批注操作已写入外置记录。",
           8000,
         );
         return false;
@@ -1691,7 +1628,7 @@ class PdfReaderView extends EditableFileView {
         documentId,
         openRequest,
         revision: this.currentRevision,
-        recovered: exactDraft,
+        recovered: false,
         iframe: this.iframe,
       };
       return true;
@@ -1747,21 +1684,7 @@ class PdfReaderView extends EditableFileView {
       openRequest,
       promise: null,
     };
-    let keepCloseIntent = false;
     pending.promise = (async () => {
-      try {
-        // Stop cross-device reconciliation before asking the Viewer to flush.
-        // In particular, an in-flight apply must reach its cancellation gate
-        // before prepare-close can freeze the annotation editor.
-        await this.plugin.pdfSync?.prepareClose?.(this);
-      } catch (error) {
-        request.finish({ ok: false, dirty: true });
-        new Notice(
-          `PDF 标签保持打开：同步刷新未能安全结束，恢复副本已保留。${error?.message ? ` ${error.message}` : ""}`,
-          8000,
-        );
-        return false;
-      }
       const stillCurrent =
         !request.settled &&
         !this.plugin.isUnloading &&
@@ -1818,7 +1741,6 @@ class PdfReaderView extends EditableFileView {
         );
         return false;
       }
-      keepCloseIntent = true;
       this.preparedClose = {
         id: request.id,
         documentId,
@@ -1830,7 +1752,6 @@ class PdfReaderView extends EditableFileView {
       };
       return true;
     })().finally(() => {
-      if (!keepCloseIntent) this.plugin.pdfSync?.resumeClose(this);
       if (this.closePreparation === pending) this.closePreparation = null;
     });
     this.closePreparation = pending;
@@ -1841,7 +1762,7 @@ class PdfReaderView extends EditableFileView {
     if (this.failureNoticeShown) return;
     this.failureNoticeShown = true;
     new Notice(
-      "PDF 尚有未确认的更改。若自动保存曾失败，可使用“恢复最近的 PDF 自动保存副本”取回副本。",
+      "PDF 尚有未确认的批注操作写入外置记录；请保持标签打开后重试保存。",
       8000,
     );
   }
@@ -1850,15 +1771,13 @@ class PdfReaderView extends EditableFileView {
     if (this.failureNoticeShown) return;
     this.failureNoticeShown = true;
     new Notice(
-      "原 PDF 未写回；关闭前已保留恢复副本。使用“恢复最近的 PDF 自动保存副本”取回。",
+      "关闭前的批注操作已写入外置恢复记录；原始 PDF 保持不变。",
       8000,
     );
   }
 
   notifyFlushOutcome(flush) {
-    if (flush?.recovered) {
-      if (flush.closeWritebackQueued !== true) this.notifyRecoveredDraft();
-    } else if (!flush?.ok || flush?.dirty) {
+    if (!flush?.ok || flush?.dirty) {
       this.notifyUnflushed();
     }
   }
@@ -2122,11 +2041,14 @@ class PdfReaderView extends EditableFileView {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
     }
-    // A new request supersedes the previous request's open lease. Its local
-    // openFile finally is also idempotent and will release the same lease.
     this.releasePendingOpenAdmission();
+    const openingPath = normalizePath(file.path);
     if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
       this.documentId = makeToken();
+      this.annotationDocument = null;
+      this.annotationSyncState = null;
+      this.annotationHydrationAllowed = false;
+      this.annotationSourceMismatch = false;
       this.preparedClose = null;
       this.closePreparation = null;
       this.currentRevision = 0;
@@ -2138,67 +2060,41 @@ class PdfReaderView extends EditableFileView {
     }
     const request = ++this.openRequest;
     this.openAcknowledged = false;
-    const openingPath = normalizePath(file.path);
     this.openStartedAt = Date.now();
     this.documentFile = file;
     this.requestedPath = file.path;
+      this.annotationLegacyIdentityUncertain = false;
     this.pendingBytes = null;
     this.pendingOpenGeneration = null;
     try {
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const admission = this.plugin.pdfSync?.beginCloseWritebackOpen
-          ? await this.plugin.pdfSync.beginCloseWritebackOpen(openingPath)
-          : (await this.plugin.pdfSync?.waitForCloseWriteback?.(openingPath), {
-            generation: this.plugin.pdfSync?.closeWritebackGeneration?.(openingPath) ?? null,
-            release() {},
-          });
-        let retainAdmission = false;
-        try {
-          if (request !== this.openRequest) return;
-          if (
-            normalizePath(file.path) !== openingPath ||
-            this.app.vault.getAbstractFileByPath(openingPath) !== file
-          ) {
-            throw new Error("PDF 在等待后台写回时已移动或被替换；原恢复副本仍保留。");
-          }
-          const bytes = await this.app.vault.readBinary(file);
-          if (request !== this.openRequest) return;
-          if (
-            normalizePath(file.path) !== openingPath ||
-            this.app.vault.getAbstractFileByPath(openingPath) !== file
-          ) {
-            throw new Error("PDF 在读取期间已移动或被替换；原恢复副本仍保留。");
-          }
-          // Keep a private copy for overwrite conflict detection. The original
-          // buffer can then be transferred to the viewer without another copy.
-          this.originalBytes = new Uint8Array(bytes.slice(0));
-          this.loadedBaseBytes = this.originalBytes;
-          this.annotationSyncState = await this.plugin.pdfSync?.initializeView(this, this.originalBytes);
-          if (request !== this.openRequest) return;
-          const latestGeneration = this.plugin.pdfSync?.closeWritebackGeneration?.(openingPath);
-          if (admission.generation !== null && latestGeneration !== admission.generation) {
-            if (attempt < 3) continue;
-            throw new Error("PDF 在打开期间连续更新；请稍后重新打开，恢复副本仍保留。");
-          }
-          this.pendingBytes = bytes;
-          this.pendingOpenGeneration = admission.generation;
-          this.pendingOpenAdmission = {
-            documentId: this.documentId,
-            openRequest: request,
-            path: openingPath,
-            file,
-            generation: admission.generation,
-            release: () => admission?.release?.(),
-          };
-          retainAdmission = true;
-          this.plugin.setDocumentBaseline(file.path, this.originalBytes);
-          this.setStatus(`正在打开：${file.path}`);
-          if (this.ready) this.sendPendingDocument();
-          return;
-        } finally {
-          if (!retainAdmission) admission?.release?.();
-        }
+      const bytes = await this.app.vault.readBinary(file);
+      if (request !== this.openRequest) return;
+      if (normalizePath(file.path) !== openingPath ||
+          this.app.vault.getAbstractFileByPath(openingPath) !== file) {
+        throw new Error("PDF 在读取期间已移动或被替换；批注尚未写入外置记录。");
       }
+      const externalAnnotations = await this.plugin.annotationHost.initializeView(this, bytes);
+      if (request !== this.openRequest) {
+        this.plugin.annotationHost.releaseView(this);
+        return;
+      }
+      this.documentId = externalAnnotations.documentId;
+      this.annotationDocument = this.annotationDocument || {
+        documentId: externalAnnotations.documentId,
+        sourcePath: openingPath,
+      };
+      this.annotationSyncState = externalAnnotations;
+      this.originalBytes = null;
+      this.loadedBaseBytes = null;
+      this.pendingBytes = bytes;
+      this.pendingOpenState = null;
+      this.lastOpenSentRequest = null;
+      this.setStatus(this.annotationLegacyIdentityUncertain
+        ? (this.annotationSourceMismatch
+          ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
+          : "检测到旧版 PDF 批注，但无法验证其身份；已进入只读模式，原 PDF 未修改。")
+        : `正在打开：${file.path}`);
+      if (this.ready) this.sendPendingDocument();
     } catch (error) {
       if (request === this.openRequest) {
         this.showError(`无法读取 ${file.path}：${error.message}`);
@@ -2247,6 +2143,12 @@ class PdfReaderView extends EditableFileView {
       }
       return;
     }
+    if (message.type === "annotation-source-identity") {
+      void this.plugin.annotationHost.handleMessage(this, message).catch((error) => {
+        this.showError(`无法确认外置批注对应的 PDF 页面：${error.message}`);
+      });
+      return;
+    }
     this.plugin.sessionLog?.record("protocol", { documentId: this.documentId, type: message.type, revision: message.revision, openRequest: message.openRequest, code: message.code, bytes: message.data?.byteLength });
     if (this.handleMobileRuntimeMessage(message)) return;
     if (message.rendererGeneration === this.rendererGeneration) {
@@ -2259,7 +2161,6 @@ class PdfReaderView extends EditableFileView {
         return;
       }
     }
-    if (this.plugin.pdfSync?.handleMessage(this, message)) return;
     if (message.type === "close-prepared") {
       const request = this.flushRequests.get(message.id);
       if (!request) return;
@@ -2349,7 +2250,6 @@ class PdfReaderView extends EditableFileView {
         this.pendingOpenGeneration = null;
         this.startupTimings.openMs = this.openStartedAt ? Date.now() - this.openStartedAt : null;
         this.startupTimings.viewer = message.startupTimings || null;
-        this.plugin.pdfSync?.schedule(this.documentFile || this.file, "opened");
         break;
       case "startup-timings": {
         if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId || message.openRequest !== this.openRequest) return;
@@ -2397,11 +2297,20 @@ class PdfReaderView extends EditableFileView {
           if (released) {
             this.openAcknowledged = false;
             this.pendingOpenGeneration = null;
-            this.plugin.pdfSync?.checkOpenViews?.("open-failed");
           }
         }
         this.showError(message.message || "PDF 阅读器报告了错误。");
         break;
+      case "export-ready":
+      case "export-error": {
+        const request = this.exportRequests.get(message.requestId);
+        if (!request || request.documentId !== message.documentId || request.openRequest !== message.openRequest) return;
+        this.exportRequests.delete(message.requestId);
+        globalThis.clearTimeout(request.timer);
+        if (message.type === "export-error") request.reject(new Error(message.message || "导出 PDF 失败。"));
+        else request.resolve(message.data);
+        break;
+      }
     }
   }
 
@@ -2419,19 +2328,11 @@ class PdfReaderView extends EditableFileView {
     ) {
       return;
     }
-    if (!restore && this.pendingOpenGeneration !== null &&
-        this.plugin.pdfSync?.closeWritebackGeneration?.(normalizePath(file.path)) !== this.pendingOpenGeneration) {
-      if (!this.pendingOpenRefreshPromise) {
-        this.setStatus(`正在等待 PDF 后台写回后打开：${file.path}`);
-        const refresh = this.openFile(file);
-        this.pendingOpenRefreshPromise = refresh.finally(() => {
-          if (this.pendingOpenRefreshPromise === wrapped) this.pendingOpenRefreshPromise = null;
-        });
-        const wrapped = this.pendingOpenRefreshPromise;
-      }
-      return;
-    }
-    const data = new Uint8Array(sourceBytes).slice().buffer;
+    const data = sourceBytes instanceof ArrayBuffer
+      ? sourceBytes
+      : sourceBytes instanceof Uint8Array
+        ? sourceBytes.buffer.slice(sourceBytes.byteOffset, sourceBytes.byteOffset + sourceBytes.byteLength)
+        : sourceBytes.buffer.slice(sourceBytes.byteOffset, sourceBytes.byteOffset + sourceBytes.byteLength);
     const message = {
       channel: CHANNEL,
       type: "open",
@@ -2448,14 +2349,17 @@ class PdfReaderView extends EditableFileView {
         restore?.confirmedRevision ?? this.confirmedRevision,
       restoreDirty: restore?.restoreDirty === true,
       restorePaused: restore?.restorePaused === true,
-      readOnly: false,
-      syncState: this.annotationSyncState,
+      // The Viewer may finish parsing before ordered page identities are
+      // confirmed by the host. Keep all editing disabled until the verified
+      // external-annotations-update handshake arrives.
+      readOnly: true,
+      externalAnnotations: this.annotationHydrationAllowed === false
+        ? { ...this.annotationSyncState, annotations: [] }
+        : this.annotationSyncState,
     };
     if (!this.postToViewer(message, [data])) return;
-    // PDF baselines are immutable: saves replace the reference, never mutate
-    // these bytes. Sharing the loaded snapshot is safe across async saves.
-    this.loadedBaseBytes = !restore && this.originalBytes ? this.originalBytes :
-      Object.prototype.toString.call(sourceBytes) === "[object ArrayBuffer]" ? new Uint8Array(sourceBytes) : sourceBytes;
+    this.originalBytes = null;
+    this.loadedBaseBytes = null;
     this.lastOpenSentRequest = this.openRequest;
     if (restore) {
       restore.sent = true;
@@ -2517,393 +2421,122 @@ class PdfReaderView extends EditableFileView {
   }
 
   async saveFile(value, documentId, requestId, revision = null, origin = "manual", annotationSync = null) {
-    const saveOrigin = origin === "auto" ? "auto" : "manual";
-    const saveRequest = this.captureSaveRequest();
-    const iframe = saveRequest.iframe;
+    const request = this.captureSaveRequest();
     this.pendingSaves += 1;
-    let heavyLease;
     try {
-      if (!saveRequest.file || !saveRequest.originalBytes) {
-        throw new Error("当前没有打开的 PDF 文件。");
+      if (!request.file || !request.documentId || documentId !== request.documentId) {
+        throw Object.assign(new Error("保存请求对应的 PDF 与当前打开的文件不一致。"), { code: "document-mismatch" });
       }
-      if (documentId !== saveRequest.documentId) {
-        const mismatch = new Error(
-          "保存请求对应的 PDF 与当前打开的文件不一致。",
-        );
-        mismatch.code = "document-mismatch";
-        throw mismatch;
-      }
-      if (Number.isSafeInteger(revision) && revision >= 0) {
-        this.currentRevision = Math.max(this.currentRevision, revision);
-      }
-      const data = receivedArrayBuffer(value);
-      if (annotationSync?.actorId && this.plugin.pdfSync) {
-        await this.plugin.pdfSync.save(this, saveRequest, { ...annotationSync, data, documentId, requestId, revision, origin: saveOrigin });
-        return;
-      }
-      heavyLease = await this.plugin.acquireHeavyLease(this, saveRequest.file, "save", annotationSync?.heavyLeaseId);
-      const savedBytes = new Uint8Array(data.slice(0));
-      await this.plugin.enqueueSave(async () => {
-        const record = await this.plugin.writeRecoveryCandidate({
-          view: this,
-          documentId: saveRequest.documentId,
-          filename: saveRequest.filename,
-          data,
-          originalBytes: saveRequest.originalBytes,
-          documentPath: saveRequest.documentPath,
-          openRequest: saveRequest.openRequest,
-          revision,
-          origin: saveOrigin,
-        });
-        try {
-          if (!this.isCurrentSaveRequest(saveRequest)) {
-            const changed = new Error(
-              "此保存请求已属于切换前的 PDF。恢复副本已保留，没有写入当前文件。",
-            );
-            changed.code = "document-changed";
-            throw changed;
-          }
-          const targetPath = normalizePath(saveRequest.file.path);
-          const latestFile = this.app.vault.getAbstractFileByPath(targetPath);
-          if (!isPdfFile(latestFile)) {
-            const missing = new Error("原 PDF 已不在当前仓库中。");
-            missing.code = "file-missing";
-            throw missing;
-          }
-          if (latestFile !== saveRequest.file) {
-            const replaced = new Error(
-              "原 PDF 对象已被替换。恢复副本已保留，没有覆盖替换后的文件。",
-            );
-            replaced.code = "conflict";
-            throw replaced;
-          }
-          const baseline = this.plugin.documentBaselines.get(targetPath);
-          const latestBytes = new Uint8Array(
-            await this.app.vault.readBinary(latestFile),
-          );
-          if (
-            !baseline ||
-            !bytesEqual(saveRequest.originalBytes, baseline) ||
-            !bytesEqual(latestBytes, baseline)
-          ) {
-            const conflict = new Error(
-              "PDF 已被其他视图或操作修改。当前注释已保存在恢复副本中；请检查后再合并。",
-            );
-            conflict.code = "conflict";
-            throw conflict;
-          }
-          if (
-            !this.isCurrentSaveRequest(saveRequest) ||
-            normalizePath(saveRequest.file.path) !== targetPath
-          ) {
-            const changed = new Error(
-              "PDF 在检查期间被切换或移动。恢复副本已保留，请重试保存。",
-            );
-            changed.code = "document-changed";
-            throw changed;
-          }
-          await this.app.vault.modifyBinary(latestFile, data);
-          const savedPath = normalizePath(latestFile.path);
-          const fileAfterWrite = this.app.vault.getAbstractFileByPath(savedPath);
-          if (fileAfterWrite !== latestFile) {
-            const changed = new Error(
-              "PDF 在保存期间被移动或替换。恢复副本已保留，请检查目标文件。",
-            );
-            changed.code = "conflict";
-            throw changed;
-          }
-          const verifiedBytes = new Uint8Array(
-            await this.app.vault.readBinary(fileAfterWrite),
-          );
-          if (!bytesEqual(verifiedBytes, savedBytes)) {
-            const conflict = new Error(
-              "写入后 PDF 内容与保存内容不一致。恢复副本已保留，请检查文件冲突。",
-            );
-            conflict.code = "conflict";
-            throw conflict;
-          }
-          if (savedPath !== targetPath) {
-            this.plugin.documentBaselines.delete(targetPath);
-          }
-          this.plugin.setDocumentBaseline(savedPath, savedBytes);
-          if (Number.isSafeInteger(revision) && revision >= 0) {
-            this.currentRevision = Math.max(this.currentRevision, revision);
-            this.confirmedRevision = Math.max(
-              this.confirmedRevision,
-              revision,
-            );
-          }
-          if (
-            (this.documentFile || this.file) === saveRequest.file &&
-            this.documentId === saveRequest.documentId
-          ) {
-            this.originalBytes = savedBytes;
-          }
-          await this.plugin.removeRecoveryCandidate(record);
-          const previousDraft = this.latestRecoveryDraft;
-          if (
-            previousDraft?.documentId === saveRequest.documentId &&
-            Number.isSafeInteger(revision) &&
-            revision >= previousDraft.revision
-          ) {
-            await this.plugin.removeRecoveryCandidate(previousDraft.record);
-            this.latestRecoveryDraft = null;
-          }
-          this.postToViewer(
-            {
-              channel: CHANNEL,
-              type: "saved",
-              token: this.token,
-              documentId: saveRequest.documentId,
-              requestId,
-              revision,
-            },
-            [],
-            saveRequest.iframe,
-          );
-          this.failureNoticeShown = false;
-          if (this.isCurrentSaveRequest(saveRequest)) {
-            this.setStatus(`已保存：${savedPath}`);
-          }
-          if (saveOrigin === "manual") {
-            new Notice(`已保存 ${saveRequest.filename}`);
-          }
-        } catch (error) {
-          await this.plugin.markRecoveryCandidate(record, {
-            status: error.code === "conflict" ? "conflict" : "failed",
-            error: error.message,
-          });
-          throw error;
-        }
-      });
+      const message = {
+        ...(annotationSync && typeof annotationSync === "object" ? annotationSync : {}),
+        type: "save",
+        documentId,
+        requestId,
+        revision,
+        origin,
+      };
+      await this.plugin.annotationHost.handleMessage(this, message);
     } catch (error) {
-      this.postToViewer(
-        {
-          channel: CHANNEL,
-          type: "error",
-          token: this.token,
-          code: error.code || "save-failed",
-          message: error.message,
-          documentId: saveRequest.documentId,
-          requestId,
-          revision,
-        },
-        [],
-        saveRequest.iframe,
-      );
-      if (
-        iframe &&
-        this.iframe === iframe &&
-        this.documentId === saveRequest.documentId
-      ) {
-        this.setStatus(error.message);
-        if (annotationSync?.actorId) this.plugin.pdfSync?.showFailure(this, error.message);
-      }
-      if (!this.failureNoticeShown) {
-        this.failureNoticeShown = true;
-        new Notice(
-          `PDF 保存失败：${error.message}。如恢复副本已写入，可使用“恢复最近的 PDF 自动保存副本”取回。`,
-          8000,
-        );
-      }
+      this.postToViewer({
+        channel: CHANNEL, token: this.token, type: "error",
+        code: error.code || "save-failed", message: error.message,
+        documentId, requestId, revision,
+      }, [], request.iframe);
     } finally {
-      heavyLease?.release();
-      this.pendingSaves -= 1;
+      this.pendingSaves = Math.max(0, this.pendingSaves - 1);
     }
   }
 
   async recoverFile(value, documentId, requestId, revision, reason, annotationSync = null) {
-    const recoveryRequest = this.captureSaveRequest();
+    const request = this.captureSaveRequest();
     this.pendingSaves += 1;
-    let heavyLease;
     try {
-      if (
-        !isPdfFile(recoveryRequest.file) ||
-        !recoveryRequest.originalBytes ||
-        !recoveryRequest.documentPath
-      ) {
-        throw new Error("当前没有可恢复的 PDF 文件。");
+      if (!request.file || !request.documentId || documentId !== request.documentId) {
+        throw Object.assign(new Error("恢复请求对应的 PDF 与当前打开的文件不一致。"), { code: "document-mismatch" });
       }
-      if (documentId !== recoveryRequest.documentId) {
-        const mismatch = new Error("恢复请求对应的 PDF 与当前打开的文件不一致。");
-        mismatch.code = "document-mismatch";
-        throw mismatch;
-      }
-      if (
-        typeof requestId !== "string" ||
-        requestId.length === 0 ||
-        !Number.isSafeInteger(revision) ||
-        revision < 0 ||
-        !["auto-save-disabled", "save-conflict"].includes(reason) &&
-        !(reason === "close-writeback" && annotationSync?.closeRecovery === true)
-      ) {
-        const invalid = new Error("PDF 恢复请求无效。");
-        invalid.code = "invalid-recovery-request";
-        throw invalid;
-      }
-      if (
-        annotationSync?.openRequest !== undefined &&
-        annotationSync.openRequest !== recoveryRequest.openRequest
-      ) {
-        const mismatch = new Error("恢复请求对应的 PDF 打开会话已更改。");
-        mismatch.code = "document-mismatch";
-        throw mismatch;
-      }
-      if (revision < this.currentRevision) {
-        const stale = new Error("恢复请求落后于宿主已知的 PDF 修订；请重试关闭。");
-        stale.code = "stale-recovery-request";
-        throw stale;
-      }
-      this.currentRevision = Math.max(this.currentRevision, revision);
-      const closeRecovery = annotationSync?.closeRecovery === true;
-      if (!closeRecovery) {
-        heavyLease = await this.plugin.acquireHeavyLease(this, recoveryRequest.file, "recovery", annotationSync?.heavyLeaseId);
-      }
-      // Keep the PDF.js serialization untouched until the recovery record has
-      // been durably verified. Annotation-ID preparation is best-effort: a
-      // binding failure must fall back to these exact bytes, never an empty or
-      // partially constructed prepared buffer.
-      const serializedData = receivedArrayBuffer(value);
-      let data = serializedData;
-      if (!closeRecovery && annotationSync?.actorId && this.plugin.pdfSync) {
-          try {
-            const prepared = await this.plugin.pdfSync.prepareRecovery(this, { ...annotationSync, data, heavyLeaseId: heavyLease?.id }, recoveryRequest);
-            const preparedData = receivedArrayBuffer(prepared?.bytes);
-            if (preparedData.byteLength === 0) {
-              throw new Error("Prepared recovery output is empty.");
-            }
-            data = preparedData.slice(0);
-          } catch {
-            // Unsupported merge metadata must never prevent recovery of the
-            // frozen writer's valid draft; this path does not overwrite PDF.
-            data = serializedData;
-          }
-      }
-      const record = await this.plugin.writeRecoveryCandidate({
-          view: this,
-          documentId: recoveryRequest.documentId,
-          filename: recoveryRequest.filename,
-          data,
-          originalBytes: recoveryRequest.originalBytes,
-          documentPath: recoveryRequest.documentPath,
-          openRequest: recoveryRequest.openRequest,
-          revision,
-          requestId,
-          origin: "recovery",
-          reason,
-          status: "draft",
-        });
-      if (closeRecovery) this.plugin.pdfSync?.noteCloseRecoveryCandidate?.(record);
-      let closeWritebackQueued = false;
-      if (closeRecovery && reason === "close-writeback" && annotationSync?.actorId && this.plugin.pdfSync) {
-        try {
-          const intent = await this.plugin.attachCloseWritebackIntent(record, {
-            baseBytes: recoveryRequest.loadedBaseBytes || recoveryRequest.originalBytes,
-            documentId: recoveryRequest.documentId,
-            originalPath: recoveryRequest.documentPath,
-            filename: recoveryRequest.filename,
-            openRequest: recoveryRequest.openRequest,
-            revision,
-            requestId,
-            actorId: annotationSync.actorId,
-            operations: annotationSync.operations,
-            newAnnotations: annotationSync.newAnnotations,
-          });
-          const task = this.plugin.pdfSync.scheduleCloseWriteback(record, intent);
-          closeWritebackQueued = Boolean(task);
-          if (!closeWritebackQueued) {
-            this.plugin.updateCloseWritebackStatus({
-              jobId: record.metadata.candidateId,
-              originalPath: recoveryRequest.documentPath,
-              status: "paused",
-              reason: "恢复副本已保留，但插件未能安全排入后台写回",
-            });
-          }
-        } catch (error) {
-          // The exact PDF.js bytes are already durably recoverable. Optional
-          // merge metadata must never make close depend on a prepared mapping.
-          this.plugin.updateCloseWritebackStatus({
-            jobId: record.metadata.candidateId,
-            originalPath: recoveryRequest.documentPath,
-            status: "paused",
-            reason: `恢复副本已保留，后台写回准备失败：${error.message || "元数据不可用"}`,
-          });
-        }
-      } else if (closeRecovery) {
-        this.plugin.updateCloseWritebackStatus({
-          jobId: record.metadata.candidateId,
-          originalPath: recoveryRequest.documentPath,
-          revision,
-          status: "paused",
-          reason: reason === "auto-save-disabled"
-            ? "自动保存已关闭；恢复副本已保留，原 PDF 未写回"
-            : "同步冲突期间已保留恢复副本；后台写回已暂停",
-        });
-      }
-      if (this.isCurrentSaveRequest(recoveryRequest)) {
-        const draftBytes = new Uint8Array(data.slice(0));
-        this.latestRecoveryDraft = {
-          documentId: recoveryRequest.documentId,
-          openRequest: recoveryRequest.openRequest,
-          revision,
-          confirmedRevision: this.confirmedRevision,
-          baseFingerprint: fingerprint(recoveryRequest.originalBytes),
-          bytes: draftBytes,
-          restorePaused: reason === "save-conflict",
-          reason,
-          record,
-        };
-      }
-      this.postToViewer(
-        {
-            channel: CHANNEL,
-            type: "recovered",
-            token: this.token,
-            documentId: recoveryRequest.documentId,
-            openRequest: recoveryRequest.openRequest,
-            requestId,
-            revision,
-            ...(closeWritebackQueued ? { closeWritebackQueued: true } : {}),
-          },
-          [],
-          recoveryRequest.iframe,
-        );
-      if (this.isCurrentSaveRequest(recoveryRequest)) {
-        this.setStatus(closeWritebackQueued
-          ? `已保留恢复副本，正在后台写回：${recoveryRequest.filename}`
-          : `已保留恢复副本：${recoveryRequest.filename}`);
-      }
+      const message = {
+        ...(annotationSync && typeof annotationSync === "object" ? annotationSync : {}),
+        type: "recover",
+        documentId,
+        requestId,
+        revision,
+        reason,
+      };
+      await this.plugin.annotationHost.handleMessage(this, message);
     } catch (error) {
-      this.postToViewer(
-        {
-          channel: CHANNEL,
-          type: "error",
-          token: this.token,
-          code: error.code || "recovery-failed",
-          message: error.message,
-          documentId: recoveryRequest.documentId,
-          requestId,
-          revision,
-        },
-        [],
-        recoveryRequest.iframe,
-      );
-      if (
-        recoveryRequest.iframe &&
-        this.iframe === recoveryRequest.iframe &&
-        this.documentId === recoveryRequest.documentId &&
-        !this.failureNoticeShown
-      ) {
-        this.failureNoticeShown = true;
-        new Notice(
-          `PDF 恢复副本未能写入：${error.message}。原 PDF 未更改。`,
-          8000,
-        );
-      }
+      this.postToViewer({
+        channel: CHANNEL, token: this.token, type: "error",
+        code: error.code || "recovery-failed", message: error.message,
+        documentId, requestId, revision,
+      }, [], request.iframe);
     } finally {
-      heavyLease?.release();
-      this.pendingSaves -= 1;
+      this.pendingSaves = Math.max(0, this.pendingSaves - 1);
     }
+  }
+
+  async exportAnnotatedCopy() {
+    const file = this.documentFile || this.file;
+    if (!isPdfFile(file) || !this.ready || !this.iframe) {
+      throw new Error("请先在 PDF 阅读器中打开一个 PDF。");
+    }
+    const requestId = makeToken();
+    const request = {
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      rendererGeneration: this.rendererGeneration,
+      file,
+      timer: null,
+      resolve: null,
+      reject: null,
+    };
+    const response = new Promise((resolve, reject) => {
+      request.resolve = resolve;
+      request.reject = reject;
+      request.timer = globalThis.setTimeout(() => {
+        this.exportRequests.delete(requestId);
+        reject(new Error("PDF 导出等待 Viewer 响应超时。"));
+      }, 120000);
+    });
+    this.exportRequests.set(requestId, request);
+    const sent = this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "export-copy",
+      requestId,
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      revision: this.currentRevision,
+    });
+    if (!sent) {
+      this.exportRequests.delete(requestId);
+      globalThis.clearTimeout(request.timer);
+      throw new Error("无法向 PDF 阅读器发送导出请求。");
+    }
+    let bytes;
+    try {
+      bytes = await response;
+    } finally {
+      globalThis.clearTimeout(request.timer);
+      if (this.exportRequests.get(requestId) === request) this.exportRequests.delete(requestId);
+    }
+    if (this.documentId !== request.documentId || this.openRequest !== request.openRequest ||
+        (this.documentFile || this.file) !== file || this.rendererGeneration !== request.rendererGeneration) {
+      throw new Error("PDF 阅读器会话在导出过程中已变化；没有创建输出文件。");
+    }
+    const array = bytes instanceof ArrayBuffer ? bytes :
+      bytes instanceof Uint8Array ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : null;
+    if (!array || array.byteLength === 0) throw new Error("Viewer 没有返回有效的 PDF 导出数据。");
+    const folder = normalizePath(file.path).split("/").slice(0, -1).join("/");
+    const base = file.basename.replace(/\.pdf$/i, "") || "PDF";
+    let outputPath = normalizePath(`${folder ? `${folder}/` : ""}${base} (PDF Reader Export).pdf`);
+    let index = 2;
+    while (this.app.vault.getAbstractFileByPath(outputPath)) {
+      outputPath = normalizePath(`${folder ? `${folder}/` : ""}${base} (PDF Reader Export ${index}).pdf`);
+      index += 1;
+    }
+    await this.app.vault.createBinary(outputPath, array);
+    new Notice(`已导出带批注的独立 PDF：${outputPath}`);
+    return outputPath;
   }
 
   isCurrentSaveRequest(request) {
@@ -2928,8 +2561,6 @@ class PdfReaderView extends EditableFileView {
       file: file.path,
       path: file.path,
     };
-    this.plugin.moveDocumentBaseline(oldPath, file.path);
-    this.plugin.pdfSync?.renamed(file, oldPath);
     this.postToViewer({
       channel: CHANNEL,
       type: "rename",
@@ -3019,6 +2650,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.platformRuntimeAdapter = isMobilePlatform(this.app)
       ? MOBILE_RUNTIME_ADAPTER : DESKTOP_RUNTIME_ADAPTER;
     this.mobileRuntimeSelected = this.runtimeAdapter.mobile;
+    this.pdfHashRuntime = await createPdfHashRuntime();
+    activePdfHashRuntime = this.pdfHashRuntime;
+    this.sessionLog?.record("hashRuntime", {
+      algorithm: this.pdfHashRuntime.algorithm,
+      fallback: this.pdfHashRuntime.algorithm !== "xxh64-v1",
+      fallbackReason: this.pdfHashRuntime.fallbackReason,
+    });
     this.settings = {
       autoSave: true,
       showStatusBar: false,
@@ -3031,11 +2669,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.popoutProtectionWarnings = new WeakSet();
     this.isQuitting = false;
     this.isUnloading = false;
-    this.documentBaselines = new Map();
-    this.saveQueue = Promise.resolve();
-    this.closeWritebackJobs = new Map();
-    this.closeWritebackNotice = null;
-    this.closeWritebackStatusEl = this.addStatusBarItem?.() || null;
     this.heavyWork = createHeavyWorkCoordinator({ enabled: () => this.isMobileRuntime, makeId: makeToken });
     this.verifiedAssetBytes = new Map();
     this.verifiedAssetTexts = new Map();
@@ -3045,22 +2678,22 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     };
     this.prewarmPromise = null;
     this.prewarmTimer = null;
-    this.pdfSync = createPdfSyncHost(this, {
-      createPdfMergeClient: options => traceMethods(createPdfMergeClient(options), "PdfMergeClient", () => this.sessionLog), sha256Bytes, normalizePath, isPdfFile,
-      bytesEqual, toArrayBuffer, makeToken, ensureAdapterDirectory, Notice,
+    this.annotationHost = createPdfAnnotationHost({
+      app: this.app,
+      hashRuntime: this.pdfHashRuntime,
+      identityHash: (bytes) => sha256Bytes(bytes),
+      inspectLegacy: (bytes) => this.getLegacyMergeClient().inspect({ bytes, fastOpen: true }),
+      normalizePath,
+      makeToken,
+      deviceId: localAnnotationDeviceId(),
+      Notice,
+      log: (event, details) => this.sessionLog?.record("annotationStore", { event, ...details }),
     });
-    traceMethods(this.pdfSync, "PdfSync", () => this.sessionLog);
+    traceMethods(this.annotationHost, "PdfAnnotationHost", () => this.sessionLog);
     traceMethods(this.heavyWork, "HeavyWork", () => this.sessionLog);
     this.recoveryDirectory = normalizePath(
       `${this.app.vault.configDir}/plugins/${this.manifest.id}/.recovery`,
     );
-    const closeWritebackResume = this.pdfSync.resumeCloseWritebacks?.();
-    if (closeWritebackResume?.catch) {
-      void closeWritebackResume.catch((error) => new Notice(
-        `PDF 后台恢复任务扫描失败：${error?.message || "读取恢复副本时出错"}。重新打开文件时会再次检查。`,
-        120000,
-      ));
-    }
     this.registerView(VIEW_TYPE, (leaf) => {
       const view = new PdfReaderView(leaf, this);
       this.views.add(view);
@@ -3084,8 +2717,20 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
     this.addCommand({
       id: "restore-latest-pdf-recovery",
-      name: "恢复最近的 PDF 自动保存副本",
+      name: "恢复旧版 PDF 自动保存副本",
       callback: () => void this.restoreLatestRecovery(),
+    });
+    this.addCommand({
+      id: "export-pdf-with-external-annotations",
+      name: "将当前 PDF 与外置批注合并导出为独立 PDF",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) {
+          new Notice("请先在 PDF 阅读器中打开一个 PDF。");
+          return;
+        }
+        void view.exportAnnotatedCopy().catch((error) => new Notice(`PDF 导出失败：${error.message || error}`, 8000));
+      },
     });
     this.addCommand({
       id: "export-mobile-pdf-diagnostics",
@@ -3114,13 +2759,34 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     );
     if (typeof this.app.vault.on === "function") {
       this.registerEvent(
-        this.app.vault.on("modify", (file) => this.pdfSync.schedule(file, "modify")),
+        this.app.vault.on("modify", (file) => {
+          void this.annotationHost.handleSidecarChange(file).then((handled) => {
+            if (!handled && isPdfFile(file)) return this.annotationHost.handleSourceModify(file);
+            return undefined;
+          }).catch((error) => this.sessionLog?.record("annotationStore", {
+            event: "vault-modify-check-failed", path: safeFileName(file?.path), code: error.code || "unknown",
+          }));
+        }),
+      );
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
+            event: "vault-create-check-failed", code: error.code || "unknown",
+          }));
+        }),
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
-          this.pdfSync.renamed?.(file, normalizePath(oldPath));
-          if (!isPdfFile(file)) return;
+          if (!isPdfFile(file)) {
+            void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
+              event: "sidecar-rename-check-failed", path: safeFileName(file?.path), code: error.code || "unknown",
+            }));
+            return;
+          }
           const normalizedOldPath = normalizePath(oldPath);
+          void this.annotationHost.renamed(file, normalizedOldPath).catch((error) => this.sessionLog?.record("annotationStore", {
+            event: "rename-index-failed", path: safeFileName(file.path), code: error.code || "unknown",
+          }));
           for (const view of this.views) {
             view.onDocumentRenamed(file, normalizedOldPath);
           }
@@ -3128,9 +2794,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
     }
     if (typeof this.app.workspace.on === "function") {
-      this.registerEvent(
-        this.app.workspace.on("active-leaf-change", () => this.pdfSync.checkOpenViews("active")),
-      );
       this.registerEvent(
         this.app.workspace.on("layout-change", () => {
           for (const view of this.views) view.bindOwnerWindow();
@@ -3153,7 +2816,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const foreground = () => {
       if (globalThis.document?.visibilityState !== "hidden") {
         this.scheduleViewerPrewarm("foreground");
-        this.pdfSync.checkOpenViews("foreground");
       }
     };
     if (typeof this.registerDomEvent === "function" && globalThis.window?.addEventListener) {
@@ -3164,14 +2826,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
     this.prewarmTimer = null;
     if (this.resourcePrewarm) this.resourcePrewarm.status = "disposed";
-    this.pdfSync?.dispose();
-    this.closeWritebackNotice?.hide?.();
-    this.closeWritebackNotice = null;
-    this.closeWritebackStatusEl?.remove?.();
-    this.closeWritebackStatusEl = null;
+    this.annotationHost?.dispose();
+    this.legacyMergeClient?.dispose();
+    this.legacyMergeClient = null;
     this.heavyWork?.dispose();
     this.viewerAssetsResult = null;
     this.verifiedAssetBytes?.clear();
@@ -3666,192 +3327,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return pending;
   }
 
-  setDocumentBaseline(documentPath, bytes) {
-    const snapshot = ArrayBuffer.isView(bytes)
-      ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
-    this.documentBaselines.set(normalizePath(documentPath), snapshot);
-  }
-
-  releaseDocumentBaseline(documentPath, leavingView) {
-    const normalizedPath = normalizePath(documentPath);
-    const stillOpen = [...this.views].some(
-      (view) => view !== leavingView && !view.teardownStarted &&
-        view.openAcknowledged !== false && normalizePath(view.requestedPath || "") === normalizedPath,
-    );
-    if (!stillOpen) this.documentBaselines.delete(normalizedPath);
-  }
-
-  moveDocumentBaseline(oldPath, newPath) {
-    const oldKey = normalizePath(oldPath);
-    const newKey = normalizePath(newPath);
-    if (oldKey === newKey) return;
-    const baseline = this.documentBaselines.get(oldKey);
-    this.documentBaselines.delete(oldKey);
-    if (baseline && !this.documentBaselines.has(newKey)) {
-      this.documentBaselines.set(newKey, baseline);
-    }
-  }
-
-  enqueueSave(operation) {
-    const next = this.saveQueue.then(operation, operation);
-    this.saveQueue = next.catch(() => {});
-    return next;
-  }
-
-  updateCloseWritebackStatus(job) {
-    if (!job || typeof job.jobId !== "string") return;
-    const snapshot = { ...job, updatedAt: Date.now() };
-    this.closeWritebackJobs ||= new Map();
-    this.closeWritebackJobs.set(job.jobId, snapshot);
-    const labels = {
-      queued: "PDF 后台写回：正在排队",
-      "waiting-for-writer": "PDF 后台写回：等待当前文件写入完成",
-      preparing: "PDF 后台写回：正在准备 PDF 注释合并",
-      merging: "PDF 后台写回：正在合并本地与磁盘更改",
-      "write-invoked": "PDF 后台写回：正在验证源 PDF 写入",
-      completed: "PDF 后台写回：已完成",
-      "completed-with-conflicts": "PDF 后台写回：已合并，恢复副本仍保留冲突分支",
-      paused: `PDF 后台写回已暂停：${job.reason || "恢复副本已保留"}`,
-      conflict: `PDF 后台写回遇到冲突：${job.reason || "恢复副本已保留"}`,
-      superseded: `PDF 后台写回已由较新恢复副本取代：${job.reason || "旧恢复副本仍保留"}`,
-    };
-    const message = labels[job.status] || "PDF 后台写回：恢复副本已保留";
-    const active = ["queued", "waiting-for-writer", "preparing", "merging", "write-invoked"].includes(job.status);
-    const persistentStatuses = ["paused", "conflict", "completed-with-conflicts", "superseded"];
-    const persistentJobs = [...this.closeWritebackJobs.values()].filter((item) =>
-      persistentStatuses.includes(item.status));
-    const persistent = persistentStatuses.includes(job.status);
-    const activeJobs = [...this.closeWritebackJobs.values()].filter((item) =>
-      ["queued", "waiting-for-writer", "preparing", "merging", "write-invoked"].includes(item.status));
-    const visibleJob = active || persistent ? job : persistentJobs.at(-1) || job;
-    const visibleMessage = labels[visibleJob.status] || message;
-    if (active || persistentJobs.length) {
-      if (this.closeWritebackNotice?.setMessage) {
-        this.closeWritebackNotice.setMessage(visibleMessage);
-      } else {
-        this.closeWritebackNotice?.hide?.();
-        this.closeWritebackNotice = new Notice(visibleMessage, 120000);
-      }
-    } else {
-      this.closeWritebackNotice?.hide?.();
-      this.closeWritebackNotice = new Notice(message, 5000);
-    }
-    if (this.closeWritebackStatusEl?.setText) {
-      this.closeWritebackStatusEl.setText(activeJobs.length
-        ? `PDF 写回 ${activeJobs.length} 项`
-        : persistentJobs.length ? "PDF 恢复副本待处理" : "");
-      this.closeWritebackStatusEl.setAttribute?.("aria-label", visibleMessage);
-    }
-  }
-
-  async attachCloseWritebackIntent(record, {
-    baseBytes, documentId, originalPath, filename, openRequest, revision,
-    requestId, actorId, operations, newAnnotations,
-  }) {
-    if (!record?.metadata || record.metadata.completed !== true) {
-      throw new Error("恢复副本尚未完成写后验证");
-    }
-    if (
-      typeof documentId !== "string" || !documentId ||
-      typeof originalPath !== "string" || !originalPath ||
-      !Number.isSafeInteger(openRequest) || openRequest < 0 ||
-      !Number.isSafeInteger(revision) || revision < 0 ||
-      typeof requestId !== "string" || !requestId ||
-      !/^[a-zA-Z0-9_-]{8,128}$/.test(actorId || "")
-    ) throw new Error("后台写回意图字段无效");
-    if (!Array.isArray(operations) || !Array.isArray(newAnnotations)) {
-      throw new Error("同步操作记录缺失；仅保留原始恢复副本");
-    }
-    const adapter = this.app.vault.adapter;
-    const base = new Uint8Array(baseBytes).slice();
-    if (!base.byteLength) throw new Error("原始 PDF 基线为空");
-    const baseHash = fingerprint(base);
-    const relativeBase = `.bases/${baseHash}.pdf`;
-    const basePath = `${this.recoveryDirectory}/${relativeBase}`;
-    await ensureAdapterDirectory(adapter, `${this.recoveryDirectory}/.bases`);
-    if (!(await adapter.exists(basePath))) {
-      await adapter.writeBinary(basePath, base.buffer.slice(base.byteOffset, base.byteOffset + base.byteLength));
-    }
-    const savedBase = new Uint8Array(await adapter.readBinary(basePath));
-    if (savedBase.byteLength !== base.byteLength || fingerprint(savedBase) !== baseHash) {
-      throw new Error("原始 PDF 基线写后验证失败");
-    }
-    const copyJson = (value) => {
-      let visited = 0;
-      const active = new Set();
-      const validate = (entry, depth = 0) => {
-        visited += 1;
-        if (visited > 100000 || depth > 64) return false;
-        if (entry === null || typeof entry === "string" || typeof entry === "boolean") return true;
-        if (typeof entry === "number") return Number.isFinite(entry);
-        if (typeof entry !== "object" || active.has(entry)) return false;
-        const prototype = Object.getPrototypeOf(entry);
-        if (!Array.isArray(entry) && prototype !== Object.prototype && prototype !== null) return false;
-        if (Object.getOwnPropertySymbols(entry).length) return false;
-        active.add(entry);
-        let valid = true;
-        if (Array.isArray(entry)) {
-          if (Object.keys(entry).length !== entry.length) valid = false;
-          for (let index = 0; valid && index < entry.length; index += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(entry, String(index));
-            valid = Boolean(descriptor && Object.hasOwn(descriptor, "value") && validate(descriptor.value, depth + 1));
-          }
-        } else {
-          for (const key of Object.keys(entry)) {
-            const descriptor = Object.getOwnPropertyDescriptor(entry, key);
-            if (!descriptor || !Object.hasOwn(descriptor, "value") || !validate(descriptor.value, depth + 1)) {
-              valid = false;
-              break;
-            }
-          }
-        }
-        active.delete(entry);
-        return valid;
-      };
-      if (!validate(value)) throw new Error("同步操作元数据不是受支持的 JSON 数据");
-      const serialized = JSON.stringify(value);
-      if (typeof serialized !== "string" || serialized.length > 2_000_000) throw new Error("同步操作元数据过大");
-      return JSON.parse(serialized);
-    };
-    const intent = {
-      schema: 1,
-      jobId: record.metadata.candidateId,
-      documentId,
-      originalPath: normalizePath(originalPath),
-      filename: filename || safeFileName(originalPath),
-      openRequest,
-      revision,
-      requestId,
-      actorId,
-      base: { file: relativeBase, hash: baseHash, length: base.byteLength },
-      draft: { hash: record.metadata.outputHash, length: record.metadata.outputLength },
-      operations: copyJson(operations),
-      newAnnotations: copyJson(newAnnotations),
-      phase: "queued",
-      status: "queued",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    // Close-writeback phase updates are mutable and may run after the Reader
-    // has detached. Keep a small immutable copy of the original recovery
-    // descriptor so a torn phase update can never make the verified PDF
-    // bytes undiscoverable as a raw recovery candidate.
-    const rawMetadataPath = `${this.recoveryDirectory}/${record.metadata.candidateId}.rawmeta`;
-    const rawMetadataText = `${JSON.stringify(record.metadata, null, 2)}\n`;
-    await adapter.write(rawMetadataPath, rawMetadataText);
-    if (await adapter.read(rawMetadataPath) !== rawMetadataText) {
-      throw new Error("原始恢复元数据保护副本写后验证失败");
-    }
-    const nextMetadata = { ...record.metadata, closeWriteback: intent };
-    const text = `${JSON.stringify(nextMetadata, null, 2)}\n`;
-    await adapter.write(record.metadataPath, text);
-    if (await adapter.read(record.metadataPath) !== text) {
-      throw new Error("后台写回意图写后验证失败");
-    }
-    record.metadata = nextMetadata;
-    return intent;
-  }
-
   acquireHeavyLease(view, file, reason, leaseId = null, requestId = null) {
     const context = { file, reason, documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
     if (!this.heavyWork) return Promise.resolve({ id: null, release() {} });
@@ -3861,22 +3336,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       valid: () => !this.isUnloading && (view.documentFile || view.file) === file &&
         view.documentId === context.documentId && view.openRequest === context.openRequest &&
         view.rendererGeneration === context.rendererGeneration,
-    });
-  }
-
-  acquireCloseWritebackLease(owner, file, intent, targetPath) {
-    if (!this.heavyWork) return Promise.resolve({ id: null, release() {} });
-    const context = {
-      file,
-      reason: "close-writeback",
-      documentId: intent.documentId,
-      openRequest: intent.openRequest,
-      rendererGeneration: intent.jobId,
-    };
-    return this.heavyWork.acquire(owner, context, {
-      valid: () => !this.isUnloading && owner?.jobId === intent.jobId &&
-        normalizePath(file?.path || "") === targetPath &&
-        this.app.vault.getAbstractFileByPath(targetPath) === file && isPdfFile(file),
     });
   }
 
@@ -4001,119 +3460,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return outputPath;
   }
 
-  async writeRecoveryCandidate({
-    view,
-    documentId = view.documentId,
-    filename = view.file?.basename,
-    data,
-    originalBytes,
-    documentPath,
-    openRequest = null,
-    revision,
-    origin,
-    requestId = null,
-    reason = null,
-    status = "pending",
-  }) {
-    const adapter = this.app.vault.adapter;
-    const safeId = `${documentId}-${makeToken()}`.replace(/[^a-zA-Z0-9_-]/g, "");
-    const candidatePath = `${this.recoveryDirectory}/${safeId}.pdf`;
-    const metadataPath = `${this.recoveryDirectory}/${safeId}.json`;
-    const metadata = {
-      schema: 1,
-      documentId,
-      candidateId: safeId,
-      originalPath: documentPath,
-      filename: filename || safeFileName(documentPath),
-      openRequest,
-      revision,
-      origin,
-      requestId,
-      reason,
-      baseFingerprint: fingerprint(originalBytes),
-      candidateFile: `${safeId}.pdf`,
-      createdAt: new Date().toISOString(),
-      status,
-      completed: false,
-    };
-    await ensureAdapterDirectory(adapter, this.recoveryDirectory);
-    const deltaRecord = await writeDeltaRecovery({
-      adapter, root: this.recoveryDirectory, data,
-      bases: [originalBytes, view?.loadedBaseBytes], metadata,
-      ensureDirectory: ensureAdapterDirectory,
-    });
-    if (deltaRecord) return deltaRecord;
-    await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-    try {
-      await adapter.writeBinary(candidatePath, data);
-      const saved = await adapter.readBinary(candidatePath);
-      if (!bytesEqual(new Uint8Array(data), new Uint8Array(saved))) throw new Error("恢复 PDF 写后校验失败");
-      metadata.outputHash = fingerprint(data);
-      metadata.outputLength = data.byteLength;
-      metadata.completed = true;
-      await adapter.write(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-      if (await adapter.read(metadataPath) !== `${JSON.stringify(metadata, null, 2)}\n`) throw new Error("恢复完成记录写后校验失败");
-    } catch (error) {
-      for (const filePath of [candidatePath, metadataPath]) {
-        try {
-          if (await adapter.exists(filePath)) await adapter.remove(filePath);
-        } catch {
-          // Best-effort cleanup keeps incomplete candidates out of the list.
-        }
-      }
-      throw error;
-    }
-    return { candidatePath, metadataPath, metadata };
-  }
-
-  async markRecoveryCandidate(record, updates) {
-    if (!record) return;
-    Object.assign(record.metadata, updates);
-    record.metadata.updatedAt = new Date().toISOString();
-    try {
-      await this.app.vault.adapter.write(
-        record.metadataPath,
-        `${JSON.stringify(record.metadata, null, 2)}\n`,
-      );
-    } catch {
-      // The binary candidate is still present even if its metadata update fails.
-    }
-  }
-
-  async removeRecoveryCandidate(record) {
-    if (!record) return;
-    const adapter = this.app.vault.adapter;
-    await this.markRecoveryCandidate(record, { status: "saved" });
-    const rawMetadataPath = record.metadata?.candidateId
-      ? `${this.recoveryDirectory}/${record.metadata.candidateId}.rawmeta`
-      : null;
-    let candidateRemoved = !record.candidatePath;
-    let rawMetadataRemoved = !rawMetadataPath;
-    for (const [filePath, label] of [
-      [record.candidatePath, "candidate"],
-      [rawMetadataPath, "raw metadata"],
-    ]) {
-      if (!filePath) continue;
-      try {
-        if (await adapter.exists(filePath)) await adapter.remove(filePath);
-        if (label === "candidate") candidateRemoved = true;
-        if (label === "raw metadata") rawMetadataRemoved = true;
-      } catch {
-        // Keep the valid saved tombstone until both the payload and raw
-        // fallback descriptor are gone, so a surviving sidecar cannot revive
-        // a completed candidate after a partial cleanup.
-      }
-    }
-    if (!candidateRemoved || !rawMetadataRemoved) return;
-    try {
-      if (record.metadataPath && await adapter.exists(record.metadataPath)) {
-        await adapter.remove(record.metadataPath);
-      }
-    } catch {
-      // The valid saved tombstone remains authoritative if cleanup is partial.
-    }
-  }
-
   async listRecoveryCandidates() {
     const adapter = this.app.vault.adapter;
     if (!(await adapter.exists(this.recoveryDirectory))) return [];
@@ -4125,7 +3471,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         (value.schema === 2 && value.storage === "pdf-prefix-delta" &&
           value.candidateFile === `${id}.delta`)),
     );
-    const hasVerifiedOutput = (value) => /^[a-f0-9]{64}$/i.test(value?.outputHash || "") &&
+    const hasVerifiedOutput = (value) => isSupportedFingerprint(value?.outputHash) &&
       Number.isSafeInteger(value?.outputLength) && value.outputLength > 0;
     const requiresVerifiedOutput = (value) => value?.schema === 2 ||
       value?.reason === "close-writeback" || value?.closeWriteback !== undefined;
@@ -4193,9 +3539,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         // Leave malformed sidecars and their bytes untouched for inspection.
       }
     }
-    if (typeof this.pdfSync?.listRecoveryCandidates === "function") {
-      candidates.push(...await this.pdfSync.listRecoveryCandidates());
-    }
     return candidates.sort((left, right) =>
       String(right.metadata.updatedAt || right.metadata.createdAt || "").localeCompare(
         String(left.metadata.updatedAt || left.metadata.createdAt || ""),
@@ -4240,12 +3583,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   async readRecoveryBytes(candidate) {
     const adapter = this.app.vault.adapter;
     const bytes = candidate.metadata.storage === "pdf-prefix-delta"
-      ? await readDeltaRecovery(adapter, this.recoveryDirectory, candidate)
-      : candidate.metadata.storage === "sync-journal"
-        ? await this.pdfSync.readRecoveryCandidate(candidate)
-        : await adapter.readBinary(candidate.candidatePath);
+        ? await readDeltaRecovery(adapter, this.recoveryDirectory, candidate, this.pdfHashRuntime)
+      : await adapter.readBinary(candidate.candidatePath);
     if (candidate.metadata.outputHash && (bytes.byteLength !== candidate.metadata.outputLength ||
-      fingerprint(bytes) !== candidate.metadata.outputHash)) throw new Error("恢复 PDF 完整性校验失败");
+      !fingerprintMatches(bytes, candidate.metadata.outputHash))) throw new Error("恢复 PDF 完整性校验失败");
     return bytes instanceof Uint8Array ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : bytes;
   }
 
@@ -4387,6 +3728,30 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     })().catch((error) => { this.invalidateViewerAssets(); throw error; });
     this.verifiedAssetBytes.set(relativePath, pending);
     return pending;
+  }
+
+  getLegacyMergeClient() {
+    if (!this.legacyMergeClient) {
+      this.legacyMergeClient = createPdfMergeClient({
+        loadWorkerSource: async () => {
+          const assets = await this.ensureViewerAssets();
+          const bytes = await this.readVerifiedAsset("web/pdf-merge-worker.js");
+          return {
+            bytes,
+            sha256: sha256Bytes(bytes),
+            url: this.app.vault.adapter.getResourcePath(`${assets.rootPath}/web/pdf-merge-worker.js`),
+          };
+        },
+        WorkerClass: globalThis.Worker,
+        URLApi: globalThis.URL,
+        BlobClass: globalThis.Blob,
+        onTaskTiming: (timing) => {
+          if (timing?.method !== "inspect") return;
+          this.sessionLog?.record("legacyAnnotationMigration", timing);
+        },
+      });
+    }
+    return this.legacyMergeClient;
   }
 
   async readVerifiedAssetText(relativePath) {

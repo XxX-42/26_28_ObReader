@@ -5,6 +5,7 @@
 // incremental checkpoints as a verified anchor plus checksummed append records.
 // Schema 1 remains readable so upgrades do not strand existing recovery files.
 function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqual,
+  fingerprintMatches, isSupportedHash, hashFileKey, pathKey,
   fingerprintChunks, createFingerprintAccumulator, ensureDirectory,
   makeToken = () => `${Date.now()}-${Math.random()}` }) {
   const bytesView = (value) => {
@@ -20,7 +21,10 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
   };
   const equal = (left, right) => bytesEqual(bytesView(left), bytesView(right));
   const normalizedRoot = normalizePath(root);
-  const keyForPath = (path) => fingerprint(new TextEncoder().encode(normalizePath(path)));
+  const keyForPath = (path) => pathKey
+    ? pathKey(normalizePath(path))
+    : (hashFileKey ? hashFileKey(fingerprint(new TextEncoder().encode(normalizePath(path))))
+      : fingerprint(new TextEncoder().encode(normalizePath(path))));
   const pathsFor = (path) => {
     const key = keyForPath(path);
     return {
@@ -29,10 +33,10 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
       previousManifest: `${normalizedRoot}/${key}.json.previous`,
       schema1Pdf: `${normalizedRoot}/${key}.pdf`,
       schema1Base: `${normalizedRoot}/${key}.base.pdf`,
-      base(hash) { return `${normalizedRoot}/${key}.base-${hash}.pdf`; },
+      base(hash) { return `${normalizedRoot}/${key}.base-${hashFileKey ? hashFileKey(hash) : hash}.pdf`; },
       preferredBase: `${normalizedRoot}/${key}.base.pdf`,
-      full(hash, token) { return `${normalizedRoot}/${key}.checkpoint-${hash}-${token}.pdf`; },
-      anchor(hash, token) { return `${normalizedRoot}/${key}.anchor-${hash}-${token}.pdf`; },
+      full(hash, token) { return `${normalizedRoot}/${key}.checkpoint-${hashFileKey ? hashFileKey(hash) : hash}-${token}.pdf`; },
+      anchor(hash, token) { return `${normalizedRoot}/${key}.anchor-${hashFileKey ? hashFileKey(hash) : hash}-${token}.pdf`; },
       delta(sequence, token) { return `${normalizedRoot}/${key}.delta-${sequence}-${token}.bin`; },
       record(sequence, token) { return `${normalizedRoot}/${key}.record-${sequence}-${token}.json`; },
     };
@@ -40,11 +44,15 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
   const validPath = (path) => typeof path === "string" && path.startsWith(`${normalizedRoot}/`) &&
     !path.split("/").some((part) => part === "..");
   const invalid = (message) => Object.assign(new Error(message), { code: "PDF_JOURNAL_INVALID" });
+  const hashIsValid = (value) => isSupportedHash ? isSupportedHash(value) : /^[a-f0-9]{64}$/i.test(value || "");
+  const hashMatches = (value, expected) => fingerprintMatches
+    ? fingerprintMatches(bytesView(value), expected)
+    : fingerprint(bytesView(value)) === expected;
   const fingerprintRecord = (value) => ({ hash: fingerprint(bytesView(value)), length: bytesView(value).byteLength });
   async function readVerified(path, hash, length) {
     if (!validPath(path) || !(await adapter.exists(path))) throw invalid("Checkpoint segment is missing");
     const saved = bytesView(await adapter.readBinary(path));
-    if (saved.byteLength !== length || fingerprint(saved) !== hash) throw invalid("Checkpoint segment verification failed");
+    if (saved.byteLength !== length || !hashMatches(saved, hash)) throw invalid("Checkpoint segment verification failed");
     return saved;
   }
   async function writeVerified(path, value) {
@@ -106,7 +114,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
     if (await adapter.exists(file)) {
       try {
         const existing = bytesView(await adapter.readBinary(file));
-        if (existing.byteLength !== info.length || fingerprint(existing) !== info.hash) file = paths.base(info.hash);
+        if (existing.byteLength !== info.length || !hashMatches(existing, info.hash)) file = paths.base(info.hash);
       } catch { file = paths.base(info.hash); }
     }
     if (!(await adapter.exists(file))) await writeVerified(file, baseBytes);
@@ -126,7 +134,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
       ]);
       const checkpointBytes = bytesView(pdf);
       const baseBytes = bytesView(base);
-      if (fingerprint(checkpointBytes) !== metadata.hash || fingerprint(baseBytes) !== metadata.baseHash) {
+      if (!hashMatches(checkpointBytes, metadata.hash) || !hashMatches(baseBytes, metadata.baseHash)) {
         throw invalid("Checkpoint verification failed");
       }
       return { schema: 1, status: metadata.status, path: normalizedPath,
@@ -139,12 +147,12 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
     }
     const baseBytes = await readVerified(metadata.base.file, metadata.base.hash, metadata.base.length);
     const checkpoint = metadata.checkpoint;
-    if (!/^[a-f0-9]{64}$/i.test(checkpoint.hash || "") || !Number.isSafeInteger(checkpoint.length) || checkpoint.length < 1) {
+    if (!hashIsValid(checkpoint.hash) || !Number.isSafeInteger(checkpoint.length) || checkpoint.length < 1) {
       throw invalid("Checkpoint metadata is invalid");
     }
     let checkpointBytes = null;
     let checkpointChunks = materialize ? [] : null;
-    let accumulator = createFingerprintAccumulator?.() || null;
+    let accumulator = createFingerprintAccumulator?.(checkpoint.hash) || null;
     const addChunk = (chunk) => {
       if (accumulator) accumulator.update(chunk);
       if (checkpointChunks) checkpointChunks.push(chunk);
@@ -169,7 +177,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
         catch { throw invalid("Checkpoint journal record is malformed"); }
         if (!record || record.schema !== 1 || record.path !== normalizedPath ||
             !Number.isSafeInteger(record.sequence) || !record.suffix ||
-            !/^[a-f0-9]{64}$/i.test(record.hash || "") || !Number.isSafeInteger(record.length)) {
+            !hashIsValid(record.hash) || !Number.isSafeInteger(record.length)) {
           throw invalid("Checkpoint journal record metadata is invalid");
         }
         reverseChain.push({ path: pointer, record });
@@ -184,7 +192,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
       const rootRecord = chain[0].record;
       const anchor = rootRecord.anchor;
       if (!anchor || !Number.isSafeInteger(anchor.length) || anchor.length < 1 ||
-          !/^[a-f0-9]{64}$/i.test(anchor.hash || "")) {
+          !hashIsValid(anchor.hash)) {
         throw invalid("Checkpoint journal anchor is invalid");
       }
       let anchorBytes;
@@ -227,7 +235,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
     } else if (checkpoint.kind === "append") {
       const anchor = checkpoint.anchor;
       if (!anchor || !Number.isSafeInteger(anchor.length) || anchor.length < 1 ||
-          !/^[a-f0-9]{64}$/i.test(anchor.hash || "")) {
+          !hashIsValid(anchor.hash)) {
         throw invalid("Checkpoint journal anchor is invalid");
       }
       let anchorBytes;
@@ -252,7 +260,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
             record.parentHash !== parentHash || record.parentLength !== parentLength ||
             !Number.isSafeInteger(record.suffixLength) || record.suffixLength < 1 ||
             record.length !== record.parentLength + record.suffixLength ||
-            !/^[a-f0-9]{64}$/i.test(record.hash || "")) {
+            !hashIsValid(record.hash)) {
           throw invalid("Checkpoint journal ancestry verification failed");
         }
         const suffix = await readVerified(record.file, record.suffixHash, record.suffixLength);
@@ -322,7 +330,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
     const parent = bytesView(parentBytes);
     const delta = bytesView(suffix);
     const parentInfo = fingerprintRecord(parent);
-    if (!/^[a-f0-9]{64}$/i.test(outputFingerprint || "") ||
+    if (!hashIsValid(outputFingerprint) ||
         !Number.isSafeInteger(outputLength) || outputLength !== parentInfo.length + delta.byteLength) {
       throw new Error("Incremental checkpoint metadata is invalid");
     }
@@ -335,7 +343,7 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
       try {
         const verified = await validateManifest(candidate, normalizedPath, { materialize: false });
         if (!latest) latest = verified;
-        if (!prior && verified.hash === parentInfo.hash && verified.length === parentInfo.length) prior = verified;
+        if (!prior && verified.length === parentInfo.length && hashMatches(parent, verified.hash)) prior = verified;
       } catch { /* A damaged current record does not hide a valid previous one. */ }
     }
     const sequence = Math.max(Number.isSafeInteger(latest?.sequence) ? latest.sequence : 0,
@@ -343,12 +351,12 @@ function createPdfJournal({ adapter, root, normalizePath, fingerprint, bytesEqua
     let anchor;
     let anchorMetadata = null;
     let parentRecord = null;
-    if (parentInfo.hash === base.hash && parentInfo.length === base.length && equal(parent, baseBytes)) {
+    if (parentInfo.length === base.length && equal(parent, baseBytes)) {
       // A matching checkpoint can still point at an older duplicate full
       // file. Prefer the shared base directly so the first append never
       // copies that full PDF into a separate journal anchor.
       anchor = { kind: "base", file: base.file, hash: base.hash, length: base.length };
-    } else if (prior?.schema === 2 && prior.hash === parentInfo.hash && prior.length === parentInfo.length) {
+    } else if (prior?.schema === 2 && prior.length === parentInfo.length) {
       const previous = prior.metadata.checkpoint;
       if (previous.kind === "append" && typeof previous.head === "string") {
         parentRecord = previous.head;

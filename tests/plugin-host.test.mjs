@@ -370,6 +370,12 @@ function createHarness() {
         async write(filePath, value) {
           storedFiles.set(filePath, String(value));
         },
+        async rename(fromPath, toPath) {
+          if (!storedFiles.has(fromPath)) throw new Error(`Missing rename source: ${fromPath}`);
+          if (storedFiles.has(toPath)) throw new Error(`Rename target exists: ${toPath}`);
+          storedFiles.set(toPath, storedFiles.get(fromPath));
+          storedFiles.delete(fromPath);
+        },
         async read(filePath) {
           if (!storedFiles.has(filePath)) throw new Error(`Missing ${filePath}`);
           return String(storedFiles.get(filePath));
