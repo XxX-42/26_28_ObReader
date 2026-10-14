@@ -7,21 +7,21 @@ editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.6.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.7.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The current [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
+The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON
-snapshot cache from them. Undo/delete tombstones and deterministic LWW clocks
-remain in the operation history. Size and tail samples reject obvious PDF
-changes; full tagged `xxh64-v1` equality plus ordered page identity is required
-before external annotations are hydrated. Legacy SHA-256 hashes remain readable;
-resource integrity, build artifacts, vendor provenance, and stable document
-identifiers continue to use SHA-256.
+snapshot cache from them. Version 0.7.0 adds lossless Float32 encoding and
+verified, replayable storage checkpoints; size and tail samples still reject
+obvious PDF changes, while full tagged `xxh64-v1` equality plus ordered page
+identity is required before external annotations are hydrated. Legacy SHA-256
+hashes remain readable; resource integrity, build artifacts, vendor provenance,
+and stable document identifiers continue to use SHA-256.
 
 The external store is under `00_Archive/20_PDFData`. A copied PDF at a new path
 gets a new document identity; Vault rename/move keeps the existing identity.
@@ -31,6 +31,28 @@ the latest editor payload is recorded externally. If the legacy identity worker
 cannot verify those references, the PDF opens read-only. Unchanged source PDF
 annotations from other applications remain visible. External applications do
 not see plugin annotations in the original PDF; use **将当前 PDF 与外置批注合并导出为独立 PDF** to create a separate annotated copy.
+
+### 0.7.0 annotation storage
+
+Ink `lines` and `/InkList` `points` remain separate, semantically required data.
+Float32 arrays are encoded as little-endian binary Base64 with an explicit item
+count, preserving Float32 values (including NaN separators) without lossy point
+sampling. Older `Float32Array` JSON wrappers remain readable. The current
+four-Ink sidecar fixture shrinks from 78,000 bytes to 25,056 bytes (67.9%) when
+converted; this is a measured fixture result, not a size guarantee for every PDF.
+
+The checkpoint stores live annotations separately from a compact deletion ledger
+and records exact batch digests, operation digests, known devices and metadata
+identity. A verified backup is kept for recovery. Existing operation batches
+remain available for replay until every registered device has upgraded and
+acknowledged the same compact checkpoint. The old snapshot and full legacy index
+also remain readable during that rollout; only then are they replaced by a small
+checkpoint pointer and path-to-`docKey` index. Missing or stale per-document
+metadata fails closed rather than minting a replacement identity. To review
+per-PDF devices or retire a long-offline device after confirming it has no
+unsynced changes, use the command **审查当前 PDF 的批注同步设备**. A retired
+device's later-arriving operations are ignored. None of this storage migration
+rewrites PDF bytes.
 
 The pinned `xxhash-wasm` 1.1.0 runtime is bundled for offline content-consistency
 checks and is not a tamper-detection primitive. See [HASH_BENCHMARK.md](HASH_BENCHMARK.md)
@@ -233,7 +255,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.6.0 candidate uses one source and one three-file package for Windows, macOS,
+0.7.0 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.

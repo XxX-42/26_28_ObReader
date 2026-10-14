@@ -305,6 +305,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
   const app = { isMobile: appMobile, vault, workspace };
   const obsidian = {
     EditableFileView,
+    Modal: class Modal {},
     Notice: class Notice { constructor(message) { notices.push(message); } },
     Platform: { isMobile: platformMobile, isIosApp: platformIos, isDesktopApp: platformDesktop },
     Plugin,

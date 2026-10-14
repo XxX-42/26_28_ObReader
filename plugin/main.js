@@ -5,6 +5,7 @@
  */
 const {
   EditableFileView,
+  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
@@ -469,6 +470,62 @@ function localAnnotationDeviceId() {
     return created;
   } catch {
     return makeToken().replace(/[^a-zA-Z0-9_-]/g, "");
+  }
+}
+
+class AnnotationDeviceReviewModal extends Modal {
+  constructor(app, plugin, document, checkpointHash, devices) {
+    super(app);
+    this.plugin = plugin;
+    this.document = document;
+    this.checkpointHash = checkpointHash;
+    this.devices = devices;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "审查此 PDF 的批注同步设备" });
+    contentEl.createEl("p", {
+      text: "设备必须升级到当前版本并确认同一检查点后，旧操作批次才会压实。长期离线设备可在确认没有未同步批注后退役。",
+    });
+    const select = contentEl.createEl("select");
+    select.add(new Option("选择要退役的设备…", ""));
+    for (const device of this.devices.filter((entry) => !entry.isCurrent && !entry.retired)) {
+      const status = device.acknowledged
+        ? "已确认当前检查点"
+        : `未确认（版本 ${device.pluginVersion || "未知/旧版"}）`;
+      select.add(new Option(`${device.deviceId} — ${status}`, device.deviceId));
+    }
+    contentEl.createEl("p", {
+      text: "退役是按此 PDF 生效的不可逆同步决定；该设备之后重新出现的旧格式操作会被忽略。",
+      cls: "mod-warning",
+    });
+    const button = contentEl.createEl("button", { text: "确认退役所选设备" });
+    button.addEventListener("click", () => {
+      const targetDeviceId = select.value;
+      if (!targetDeviceId) return;
+      button.disabled = true;
+      void (async () => {
+        try {
+          await this.plugin.annotationHost.store.retireDevice({
+            document: this.document,
+            targetDeviceId,
+            confirmedCheckpointHash: this.checkpointHash,
+          });
+          await this.plugin.annotationHost.store.materializeSnapshot(this.document);
+          new Notice(`已将设备 ${targetDeviceId} 从此 PDF 的批注同步中退役。`);
+          this.close();
+        } catch (error) {
+          new Notice(`设备退役失败：${error.message || error}`, 8000);
+          button.disabled = false;
+        }
+      })();
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
   }
 }
 
@@ -2737,6 +2794,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       name: "导出 PDF 阅读器诊断 JSON",
       callback: () => void this.exportMobileDiagnostics().catch(error => new Notice(`诊断导出失败：${error.message || error}`)),
     });
+    this.addCommand({
+      id: "review-pdf-annotation-devices",
+      name: "审查当前 PDF 的批注同步设备",
+      callback: () => void this.reviewPdfAnnotationDevices(),
+    });
     /* 单独 .log 路径命令保留但不启用；完整运行记录并入“导出诊断 JSON”。
     this.addCommand({
       id: "flush-local-runtime-log",
@@ -2821,6 +2883,29 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (typeof this.registerDomEvent === "function" && globalThis.window?.addEventListener) {
       this.registerDomEvent(globalThis.window, "focus", foreground);
       if (globalThis.document?.addEventListener) this.registerDomEvent(globalThis.document, "visibilitychange", foreground);
+    }
+  }
+
+  async reviewPdfAnnotationDevices() {
+    const view = this.app.workspace.activeLeaf?.view;
+    if (!(view instanceof PdfReaderView) || !view.annotationDocument) {
+      new Notice("请先在 PDF 阅读器中打开并完成身份校验的 PDF。", 6000);
+      return;
+    }
+    try {
+      const { checkpointHash, devices } = await this.annotationHost.store.inspectDevices(view.annotationDocument);
+      if (!checkpointHash) {
+        new Notice("此 PDF 尚无可审查的批注检查点。", 6000);
+        return;
+      }
+      const pending = devices.filter((device) => !device.isCurrent && !device.retired && !device.acknowledged);
+      if (!pending.length) {
+        new Notice("所有已登记设备均已确认当前检查点；已退役设备不再参与同步。", 6000);
+        return;
+      }
+      new AnnotationDeviceReviewModal(this.app, this, view.annotationDocument, checkpointHash, devices).open();
+    } catch (error) {
+      new Notice(`读取批注设备状态失败：${error.message || error}`, 8000);
     }
   }
 

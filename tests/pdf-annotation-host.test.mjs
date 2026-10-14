@@ -191,9 +191,10 @@ test("legacy delete tombstones migrate to the immutable operation log without gu
   const snapshot = await host.initializeView(view, view.sourceBytes);
   assert.equal(snapshot.annotations.length, 0, "unconfirmed page identity keeps the returned Viewer snapshot empty");
   const importedSnapshot = view.annotationSnapshot;
-  const tombstone = importedSnapshot.annotations.find((entry) => entry.uuid === "a0000000-0000-4000-8000-000000000002");
+  const tombstone = importedSnapshot.tombstones.find((entry) => entry.uuid === "a0000000-0000-4000-8000-000000000002");
   assert.ok(tombstone);
-  assert.equal(tombstone.deleted, true);
+  assert.equal(Object.hasOwn(tombstone, "deleted"), false,
+    "the compact tombstone ledger does not store deleted:true annotation rows");
   assert.equal(importedSnapshot.legacyIdentities.some((entry) => entry.uuid === "a0000000-0000-4000-8000-000000000001"), true);
   assert.equal(importedSnapshot.legacyIdentities.some((entry) => entry.uuid === "a0000000-0000-4000-8000-000000000002"), false,
     "deleted rows are represented as LWW tombstones, not sent to PDF.js for ref binding");
@@ -245,8 +246,9 @@ test("legacy delete history sharing a ref with a live annotation migrates withou
   const batches = await host.store.listOperationBatches(view.annotationDocument);
   assert.equal(batches.length, 1, "the deleted historical UUID is preserved as a tombstone operation");
   const stored = await host.store.readDocument(view.annotationDocument);
-  const deleted = stored.annotations.find((row) => row.uuid === "old-deleted-uuid");
-  assert.equal(deleted.deleted, true);
+  const deleted = stored.tombstones.find((row) => row.uuid === "old-deleted-uuid");
+  assert.ok(deleted);
+  assert.equal(Object.hasOwn(deleted, "deleted"), false);
   assert.equal(deleted.embeddedRef, null,
     "a tombstone must not suppress the live annotation that reused its PDF object reference");
   assert.deepEqual(new Uint8Array(app.vault.bytes), originalBytes,

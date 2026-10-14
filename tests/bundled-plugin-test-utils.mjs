@@ -156,6 +156,7 @@ export function loadBundledPlugin(
 
   const obsidian = {
     EditableFileView,
+    Modal: class Modal {},
     Notice: class Notice {},
     Plugin,
     PluginSettingTab: class PluginSettingTab {},

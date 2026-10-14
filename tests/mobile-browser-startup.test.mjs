@@ -139,7 +139,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         addToggle(fn) { const toggle = { setValue: () => toggle, onChange: () => toggle }; fn(toggle); return this; }
         addButton(fn) { const button = { setButtonText: () => button, onClick: () => button }; fn(button); return this; }
       }
-      const obsidian = { EditableFileView, WorkspaceLeaf, Plugin, TFile, PluginSettingTab, Setting, Platform: { isMobile: true, isDesktop: false, isIosApp: true }, Notice: class { constructor(text) { (window.notices ||= []).push(text); } }, normalizePath: target => target.replaceAll("\\", "/") };
+      const obsidian = { EditableFileView, WorkspaceLeaf, Plugin, TFile, Modal: class Modal {}, PluginSettingTab, Setting, Platform: { isMobile: true, isDesktop: false, isIosApp: true }, Notice: class { constructor(text) { (window.notices ||= []).push(text); } }, normalizePath: target => target.replaceAll("\\", "/") };
       const app = {
         isMobile: true,
         vault: { adapter, configDir: ".obsidian", on: () => ({}), getAbstractFileByPath: target => vaultFiles.get(target) || null,

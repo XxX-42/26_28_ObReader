@@ -172,6 +172,7 @@ function createHarness() {
         notices.push(message);
       }
     },
+    Modal: class Modal {},
     Plugin,
     PluginSettingTab,
     Setting,

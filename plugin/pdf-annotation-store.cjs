@@ -1,23 +1,27 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 "use strict";
 
-// External, append-only annotation operation storage. This module deliberately
-// depends only on injected browser/Vault facilities; it has no Node/Electron
-// runtime imports. Operation batches are authoritative. The JSON snapshot is
-// an expendable materialized cache and is always checked against replayed ops.
+// External annotation storage with immutable operation suffixes and verified,
+// replayable per-document checkpoints. This module deliberately depends only on
+// injected Vault facilities; it has no Node/Electron runtime imports. Covered
+// batches are removed only after device acknowledgements and a verified backup.
 //
 // Minimal API:
 //   registerDocument({ sourcePath, source }) -> stable document + sourceMatch
 //   updateSourceIdentity({ document, sourceHash, pageCount, orderedPageIdentities, ... })
 //   appendOperations({ document, operations, batchId }) -> durable write acknowledgement
-//   readDocument(document) -> replayed annotation snapshot; repairs stale cache
-//   materializeSnapshot(document) -> optional background cache write
+//   readDocument(document) -> checkpoint-backed Viewer snapshot
+//   materializeSnapshot(document) -> verified checkpoint/pointer write
 //   renameDocument({ documentId, fromPath, toPath }) -> updated path association
 // `source.sourceHash` is the full hash (`xxh64-v1:` or `sha256-v1:`); a tail
-// sample alone never authorizes reuse/hydration. Snapshot writes are not part
-// of append/close acknowledgement and can be deferred to background work.
+// sample alone never authorizes reuse/hydration. Checkpoints are outside the
+// PDF save/close acknowledgement path and can be materialized in background.
 
 const STORE_SCHEMA = 1;
+const INDEX_SCHEMA = 2;
+const CHECKPOINT_SCHEMA = 2;
+const CURRENT_PLUGIN_VERSION = "0.7.0";
+const COMPACT_PAYLOAD_ENCODING = "float32le-base64-v1";
 const VALID_TYPES = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
 const HASH_PREFIX = /^(xxh64-v1|sha256-v1):([a-f0-9]+)$/i;
 
@@ -53,6 +57,10 @@ function createPdfAnnotationStore({
     return {
       root: baseRoot,
       snapshot: `${baseRoot}/${safeBasename(normalized.sourcePath)}--${normalized.docKey}.pdfdata.json`,
+      metadata: `${baseRoot}/documents/${normalized.docKey}.json`,
+      checkpoint: `${baseRoot}/checkpoints/${normalized.docKey}.json`,
+      checkpointBackup: `${baseRoot}/checkpoints/${normalized.docKey}.previous.json`,
+      deviceStates: `${baseRoot}/checkpoints/${normalized.docKey}.devices`,
       operations: `${operationsRoot}/${normalized.docKey}`,
       deviceOperations: `${operationsRoot}/${normalized.docKey}/${deviceSegment}`,
       identityEvents: `${identityEventsRoot}/${normalized.docKey}`,
@@ -71,6 +79,7 @@ function createPdfAnnotationStore({
         : normalizeDocument({ ...stored, source: mergeSource(stored.source, source) });
       if (canonicalJson(document.source) !== canonicalJson(stored.source)) {
         index.documents[normalizedPath] = document;
+        await writeDocumentMetadata(document);
         await writeIndex(index);
       }
       const incomingHasHash = Boolean(source && (source.sourceHash || source.fastHash));
@@ -94,9 +103,11 @@ function createPdfAnnotationStore({
       }
     }
     index.documents[normalizedPath] = document;
+    await writeDocumentMetadata(document);
     const identityEvent = await appendIdentityEvent({ kind: "create", document, path: normalizedPath });
     document = normalizeDocument({ ...document, identityEventHeads: [identityEvent.eventId] });
     index.documents[normalizedPath] = document;
+    await writeDocumentMetadata(document);
     await writeIndex(index);
     return { ...document, sourceMatch: document.source.sourceHash ? "BASELINE_ESTABLISHED" : "UNKNOWN", sourceMismatch: false };
   }
@@ -118,9 +129,11 @@ function createPdfAnnotationStore({
       source: mergeSource(existing.source, source, { path: to }) });
     delete index.documents[from];
     index.documents[to] = updated;
-    const identityEvent = await appendIdentityEvent({ kind: "rename", document: updated, fromPath: from, path: to });
+    const identityEvent = await appendIdentityEvent({ kind: "rename", document: updated, previous: existing,
+      fromPath: from, path: to });
     const renamed = normalizeDocument({ ...updated, identityEventHeads: [...updated.identityEventHeads, identityEvent.eventId] });
     index.documents[to] = renamed;
+    await writeDocumentMetadata(renamed);
     await writeIndex(index);
 
     // A snapshot is only a cache, so write the renamed cache at its new path.
@@ -139,6 +152,9 @@ function createPdfAnnotationStore({
 
   async function appendOperations({ document, operations, batchId, sourceHash, quarantined = false } = {}) {
     const normalizedDocument = await resolveDocument(document);
+    if ((await readDeviceState(normalizedDocument, deviceId))?.retired === true) {
+      throw codedError("PDF_ANNOTATION_DEVICE_RETIRED", "This device has been retired from the PDF annotation history and cannot append changes.");
+    }
     if (!Array.isArray(operations) || operations.length === 0) {
       throw new TypeError("appendOperations requires at least one annotation operation.");
     }
@@ -175,7 +191,9 @@ function createPdfAnnotationStore({
     const createdAt = finiteNumber(await clock(), "clock()");
     const batch = {
       schemaVersion: STORE_SCHEMA,
+      formatVersion: 2,
       kind: "annotation-operation-batch",
+      pluginVersion: CURRENT_PLUGIN_VERSION,
       documentId: normalizedDocument.documentId,
       docKey: normalizedDocument.docKey,
       deviceId,
@@ -216,20 +234,34 @@ function createPdfAnnotationStore({
   async function readDocument(document) {
     const normalizedDocument = await resolveDocument(document);
     const state = await replay(normalizedDocument);
-    const snapshotText = await readTextIfExists(pathsFor(normalizedDocument).snapshot);
-    const expected = makeSnapshot(normalizedDocument, state);
-    const expectedText = canonicalJson(expected);
-    if (snapshotText !== expectedText) await writeSnapshot(normalizedDocument, state);
-    return expected;
+    let checkpoint = await writeCheckpoint(normalizedDocument, state);
+    let currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
+    let deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
+    const allDevicesConfirmed = () => deviceStates.every((entry) => entry.retired || entry.acknowledged);
+    if (allDevicesConfirmed() && checkpoint.payloadEncoding !== COMPACT_PAYLOAD_ENCODING) {
+      compactStatePayloads(state);
+      state.payloadEncoding = COMPACT_PAYLOAD_ENCODING;
+      checkpoint = await writeCheckpoint(normalizedDocument, state);
+      currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
+      deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
+    }
+    const compactInkEncoding = deviceStates.every((entry) => entry.retired ||
+      (entry.pluginVersion === CURRENT_PLUGIN_VERSION && entry.checkpointHash === checkpoint.integrity));
+    const snapshot = makeSnapshot(normalizedDocument, state, checkpoint, compactInkEncoding);
+    if (currentDeviceState.retired !== true && compactInkEncoding) {
+      // Keep the legacy materialized snapshot intact until every registered
+      // device has upgraded and confirmed the exact compact checkpoint.
+      await writeSnapshotPointer(normalizedDocument, checkpoint);
+      await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates);
+      await maybeCompactRootIndex();
+    }
+    return snapshot;
   }
 
   // Call off the save/close hot path. The operation files remain authoritative;
   // interruption here merely leaves a stale cache that readDocument repairs.
   async function materializeSnapshot(document) {
-    const normalizedDocument = await resolveDocument(document);
-    const state = await replay(normalizedDocument);
-    await writeSnapshot(normalizedDocument, state);
-    return makeSnapshot(normalizedDocument, state);
+    return readDocument(document);
   }
 
   // Called after PDF.js parses the source. A changed full hash, page count,
@@ -264,10 +296,12 @@ function createPdfAnnotationStore({
       const identityEvent = await appendIdentityEvent({
         kind: sourceMatch === "UNKNOWN" ? "source-baseline" : "source-update",
         document: updated,
+        previous: stored,
         path: updated.sourcePath,
       });
       updated.identityEventHeads = [...updated.identityEventHeads, identityEvent.eventId];
     }
+    await writeDocumentMetadata(updated);
     await writeIndex(index);
     return { document: updated, sourceMatch: sourceMatch === "UNKNOWN" ? "BASELINE_ESTABLISHED" : sourceMatch,
       sourceMismatch: false };
@@ -291,9 +325,11 @@ function createPdfAnnotationStore({
     }
     if (stored.legacyIdentityScanComplete &&
         canonicalJson(stored.legacyIdentities || []) === canonicalJson(normalizedIdentities)) return stored;
-    const identityEvent = await appendIdentityEvent({ kind: "legacy-identities", document: updated, path: updated.sourcePath });
+    const identityEvent = await appendIdentityEvent({ kind: "legacy-identities", document: updated,
+      previous: stored, path: updated.sourcePath });
     updated.identityEventHeads = [...updated.identityEventHeads, identityEvent.eventId];
     index.documents[updated.sourcePath] = updated;
+    await writeDocumentMetadata(updated);
     await writeIndex(index);
     return updated;
   }
@@ -309,12 +345,45 @@ function createPdfAnnotationStore({
   async function replay(document) {
     const normalizedDocument = await resolveDocument(document);
     const batchFiles = await listOperationBatches(normalizedDocument);
-    const operationsById = new Map();
+    const checkpoint = await readCheckpoint(normalizedDocument);
+    const latest = new Map();
+    const operationDigests = new Map();
+    const coveredBatches = checkpoint ? cloneBatchManifest(checkpoint.coveredBatches) : {};
+    const knownDevices = new Set([
+      ...(checkpoint?.knownDevices || []),
+      deviceId,
+      ...await listRegisteredDeviceIds(normalizedDocument),
+    ]);
+    let revision = checkpoint?.revision || 0;
+    let updatedAt = checkpoint?.updatedAt || 0;
+    if (checkpoint) {
+      for (const row of checkpoint.annotations) latest.set(row.uuid, normalizeOperation(row));
+      for (const row of checkpoint.tombstones) latest.set(row.uuid, normalizeOperation({ ...row, deleted: true }));
+      for (const [key, digest] of Object.entries(checkpoint.operationDigests)) operationDigests.set(key, digest);
+    }
     for (const batchPath of batchFiles) {
       let batch;
       try { batch = JSON.parse(await adapter.read(batchPath)); }
       catch { throw codedError("PDF_ANNOTATION_BATCH_INVALID", `Malformed operation batch: ${batchPath}`); }
       validateBatch(batch, normalizedDocument);
+      knownDevices.add(batch.deviceId);
+      const batchDigest = await digestText(canonicalJson(batch));
+      const coveredDigest = coveredBatches[batch.deviceId]?.[batch.batchId];
+      if (coveredDigest) {
+        if (coveredDigest !== batchDigest) {
+          throw codedError("PDF_ANNOTATION_BATCH_COLLISION", "A batch covered by a verified checkpoint changed content.");
+        }
+        continue;
+      }
+      const deviceState = await readDeviceState(normalizedDocument, batch.deviceId);
+      if (deviceState?.retired === true ||
+          (deviceState?.pluginVersion === CURRENT_PLUGIN_VERSION && batch.formatVersion !== 2)) {
+        // A retired or upgraded device may not reintroduce stale legacy
+        // operations through a downgrade or delayed sync.
+        if (!coveredBatches[batch.deviceId]) coveredBatches[batch.deviceId] = {};
+        coveredBatches[batch.deviceId][batch.batchId] = batchDigest;
+        continue;
+      }
       if (batch.sourceHash && normalizedDocument.source.sourceHash &&
           canonicalHash(batch.sourceHash) !== canonicalHash(normalizedDocument.source.sourceHash)) {
         // Operation data belongs to the exact immutable PDF revision it was
@@ -328,19 +397,22 @@ function createPdfAnnotationStore({
           throw codedError("PDF_ANNOTATION_BATCH_INVALID", "Operation actor does not match its immutable batch device.");
         }
         const opKey = `${normalized.clock.deviceId}\0${normalized.clock.opId}`;
-        const prior = operationsById.get(opKey);
         const encoded = canonicalJson(normalized);
-        if (prior && prior.encoded !== encoded) {
+        const digest = await digestText(encoded);
+        const priorDigest = operationDigests.get(opKey);
+        if (priorDigest && priorDigest !== digest) {
           throw codedError("PDF_ANNOTATION_OPERATION_COLLISION", "The same device/opId identifies different operation content.");
         }
-        if (!prior) operationsById.set(opKey, { operation: normalized, encoded });
+        if (!priorDigest) {
+          operationDigests.set(opKey, digest);
+          revision += 1;
+          updatedAt = Math.max(updatedAt, normalized.clock.timestamp);
+          const prior = latest.get(normalized.uuid);
+          if (!prior || compareClock(normalized.clock, prior.clock) > 0) latest.set(normalized.uuid, normalized);
+        }
       }
-    }
-
-    const latest = new Map();
-    for (const { operation } of operationsById.values()) {
-      const prior = latest.get(operation.uuid);
-      if (!prior || compareClock(operation.clock, prior.clock) > 0) latest.set(operation.uuid, operation);
+      if (!coveredBatches[batch.deviceId]) coveredBatches[batch.deviceId] = {};
+      coveredBatches[batch.deviceId][batch.batchId] = batchDigest;
     }
     const annotations = {};
     for (const uuidKey of [...latest.keys()].sort()) {
@@ -349,10 +421,13 @@ function createPdfAnnotationStore({
     return {
       batchFiles,
       annotations,
-      revision: operationsById.size,
-      operationCount: operationsById.size,
-      updatedAt: [...operationsById.values()].reduce((latestAt, entry) =>
-        Math.max(latestAt, entry.operation.clock.timestamp), 0),
+      revision,
+      operationCount: revision,
+      updatedAt,
+      payloadEncoding: checkpoint?.payloadEncoding || "json-legacy",
+      coveredBatches,
+      operationDigests: Object.fromEntries([...operationDigests.entries()].sort(([left], [right]) => compareString(left, right))),
+      knownDevices: [...knownDevices].sort(compareString),
     };
   }
 
@@ -423,33 +498,97 @@ function createPdfAnnotationStore({
 
   async function readIndex() {
     const raw = await readTextIfExists(registryPath);
-    let index = { schemaVersion: STORE_SCHEMA, documents: {} };
-    let invalidCache = false;
+    const cachedDocuments = {};
+    const pendingRoutes = new Map();
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        if (parsed?.schemaVersion === STORE_SCHEMA && parsed.documents && typeof parsed.documents === "object") {
-          index = { schemaVersion: STORE_SCHEMA, documents: { ...parsed.documents } };
-        } else invalidCache = true;
-        // `_index.json` is a disposable cache; invalid data is reconstructed
-        // from immutable identity events below.
-      } catch { invalidCache = true; /* Rebuild the disposable index from identity events. */ }
+        if (parsed?.documents && typeof parsed.documents === "object" &&
+            parsed.schemaVersion === INDEX_SCHEMA) {
+          for (const [pathValue, route] of Object.entries(parsed.documents)) {
+            if (typeof route !== "string" || !/^[a-f0-9]{12}$/i.test(route)) continue;
+            const sourcePath = normalizeSourcePath(pathValue);
+            const metadata = await readDocumentMetadata(route, sourcePath);
+            if (metadata) cachedDocuments[sourcePath] = metadata;
+            else pendingRoutes.set(sourcePath, route.toLowerCase());
+          }
+        } else if (parsed?.schemaVersion === STORE_SCHEMA && parsed.documents && typeof parsed.documents === "object") {
+          for (const [pathValue, value] of Object.entries(parsed.documents)) {
+            try {
+              const document = normalizeDocument({ ...value, sourcePath: pathValue });
+              cachedDocuments[document.sourcePath] = document;
+            } catch { /* The event stream can reconstruct a damaged legacy route. */ }
+          }
+        }
+      } catch { /* Rebuild from the immutable identity events below. */ }
     }
     const rebuilt = await rebuildIndexFromIdentityEvents();
-    const eventDocuments = rebuilt.documents;
-    const eventDocumentIds = new Set(Object.values(eventDocuments).map((record) => record.documentId));
-    const merged = { ...eventDocuments };
-    // A valid index may contain a newer cache-only timestamp/metadata field;
-    // identity/path transitions are always recovered from immutable events.
-    for (const [path, cachedValue] of Object.entries(index.documents)) {
-      let cached;
-      try { cached = normalizeDocument(cachedValue); }
-      catch { continue; }
+    const merged = { ...rebuilt.documents };
+    const eventDocumentIds = new Set(Object.values(merged).map((record) => record.documentId));
+    // Full page references and legacy ids are loaded only from the per-document
+    // metadata file, never copied into the root route index.
+    for (const [path, eventDocument] of Object.entries(merged)) {
+      const storedMetadata = await readDocumentMetadata(eventDocument.docKey, path);
+      const rootRecord = Object.values(cachedDocuments)
+        .find((record) => record.documentId === eventDocument.documentId);
+      const metadata = storedMetadata?.documentId === eventDocument.documentId
+        ? storedMetadata : rootRecord;
+      if (metadata?.documentId === eventDocument.documentId) {
+        const eventHeads = new Set(eventDocument.identityEventHeads);
+        const metadataHeads = new Set(metadata.identityEventHeads);
+        const metadataHasEvents = [...eventHeads].every((head) => metadataHeads.has(head));
+        const eventsHaveMetadata = [...metadataHeads].every((head) => eventHeads.has(head));
+        if (!metadataHasEvents && !eventsHaveMetadata) {
+          throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+            `Concurrent identity branches for ${path} have not converged; refusing to overwrite the saved document metadata.`);
+        }
+        if (metadataHasEvents) {
+          merged[path] = normalizeDocument({
+            ...eventDocument,
+            ...metadata,
+            sourcePath: path,
+            source: { ...eventDocument.source, ...metadata.source },
+          });
+        } else {
+          const eventPageIds = eventDocument.source.orderedPageIdentities;
+          const metadataPageIds = metadata.source.orderedPageIdentities;
+          const pageCount = eventDocument.source.pageCount ?? metadata.source.pageCount;
+          const sourceHashChanged = eventDocument.source.sourceHash && metadata.source.sourceHash &&
+            eventDocument.source.sourceHash !== metadata.source.sourceHash;
+          if (!Array.isArray(eventPageIds) &&
+              (sourceHashChanged || eventDocument.source.pageCount !== undefined &&
+                metadata.source.pageCount !== eventDocument.source.pageCount ||
+                !Array.isArray(metadataPageIds) || Number.isSafeInteger(pageCount) &&
+                  metadataPageIds.length !== pageCount)) {
+            throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+              `Updated page identity metadata for ${path} has not synced; refusing to combine different PDF revisions.`);
+          }
+          const source = { ...metadata.source, ...eventDocument.source };
+          if (!Array.isArray(eventPageIds) && Array.isArray(metadataPageIds)) {
+            source.orderedPageIdentities = metadataPageIds;
+          }
+          if (Number.isSafeInteger(pageCount) &&
+              (!Array.isArray(source.orderedPageIdentities) || source.orderedPageIdentities.length !== pageCount)) {
+            throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+              `Complete ordered page identities for ${path} have not synced.`);
+          }
+          merged[path] = normalizeDocument({
+            ...metadata,
+            ...eventDocument,
+            sourcePath: path,
+            source,
+          });
+        }
+      } else if (Number.isSafeInteger(eventDocument.source.pageCount) &&
+          (!Array.isArray(eventDocument.source.orderedPageIdentities) ||
+            eventDocument.source.orderedPageIdentities.length !== eventDocument.source.pageCount)) {
+        throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+          `The per-document page identity metadata for ${path} has not synced; refusing to use an incomplete identity.`);
+      }
+    }
+    // A valid route cache may lead an identity event that has not synced yet.
+    for (const [path, cached] of Object.entries(cachedDocuments)) {
       if (eventDocumentIds.has(cached.documentId)) {
-        // File sync can deliver the mutable index before one of its immutable
-        // event parents. Keep a cache head that is not yet represented by the
-        // locally available causal stream; replay will converge when files
-        // finish syncing.
         const cacheAhead = cached.identityEventHeads.some((head) => !rebuilt.appliedEventIds.has(head));
         if (!cacheAhead) continue;
         for (const [oldPath, oldRecord] of Object.entries(merged)) {
@@ -461,9 +600,89 @@ function createPdfAnnotationStore({
           source: { ...(merged[path]?.source || {}), ...(cached.source || {}) } };
       }
     }
+    for (const [path, docKey] of pendingRoutes) {
+      const recovered = merged[path];
+      if (!recovered || recovered.docKey !== docKey) {
+        throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+          `The per-document identity metadata for ${path} has not synced; refusing to create a replacement identity.`);
+      }
+      throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+        `The per-document identity metadata for ${path} is missing; event data cannot safely replace its page and legacy identity payloads.`);
+    }
+    for (const [path, document] of Object.entries(merged)) {
+      const metadata = await readDocumentMetadata(document.docKey, path);
+      if (!metadata) {
+        if (Number.isSafeInteger(document.source.pageCount) &&
+            (!Array.isArray(document.source.orderedPageIdentities) ||
+              document.source.orderedPageIdentities.length !== document.source.pageCount)) {
+          throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+            `The per-document page identity metadata for ${path} has not synced.`);
+        }
+        await writeDocumentMetadata(document);
+        continue;
+      }
+      const metadataHeads = new Set(metadata.identityEventHeads);
+      const documentHeads = new Set(document.identityEventHeads);
+      const metadataIsOlder = [...metadataHeads].every((head) => documentHeads.has(head));
+      const documentIsOlder = [...documentHeads].every((head) => metadataHeads.has(head));
+      if (!metadataIsOlder && !documentIsOlder) {
+        throw codedError("PDF_ANNOTATION_METADATA_PENDING",
+          `Identity metadata for ${path} has conflicting heads; waiting for sync convergence.`);
+      }
+      if (metadataIsOlder && !documentIsOlder) await writeDocumentMetadata(document);
+    }
     const result = { schemaVersion: STORE_SCHEMA, documents: merged };
-    if (invalidCache && rebuilt.appliedEventIds.size) await writeIndex(result);
     return result;
+  }
+
+  async function readDocumentMetadata(docKey, sourcePath) {
+    const path = `${baseRoot}/documents/${String(docKey).toLowerCase()}.json`;
+    const text = await readTextIfExists(path);
+    if (text === null) return null;
+    try {
+      const metadata = JSON.parse(text);
+      if (metadata?.schemaVersion !== 1 || metadata.docKey !== String(docKey).toLowerCase()) return null;
+      return normalizeDocument({ ...metadata, sourcePath: sourcePath || metadata.sourcePath });
+    } catch { return null; }
+  }
+
+  function documentMetadataValue(document) {
+    const normalized = normalizeDocument(document);
+    return {
+      schemaVersion: 1,
+      documentId: normalized.documentId,
+      docKey: normalized.docKey,
+      sourcePath: normalized.sourcePath,
+      source: normalized.source,
+      legacyIdentities: normalized.legacyIdentities,
+      legacyIdentityScanComplete: normalized.legacyIdentityScanComplete,
+      identityEventHeads: normalized.identityEventHeads,
+    };
+  }
+
+  async function writeDocumentMetadata(document) {
+    const normalized = normalizeDocument(document);
+    const path = pathsFor(normalized).metadata;
+    await ensureDirectory(`${baseRoot}/documents`);
+    const value = documentMetadataValue(normalized);
+    const text = canonicalJson(value);
+    const current = await readTextIfExists(path);
+    if (current) {
+      try {
+        const existing = JSON.parse(current);
+        if (existing.documentId && existing.documentId !== normalized.documentId) {
+          throw codedError("PDF_ANNOTATION_METADATA_COLLISION", "A different document identity already occupies this metadata key.");
+        }
+      } catch (error) {
+        if (error.code === "PDF_ANNOTATION_METADATA_COLLISION") throw error;
+      }
+    }
+    if (current !== text) {
+      await adapter.write(path, text);
+      if (await adapter.read(path) !== text) {
+        throw codedError("PDF_ANNOTATION_METADATA_UNCONFIRMED", "Per-document metadata write could not be verified.");
+      }
+    }
   }
 
   async function rebuildIndexFromIdentityEvents() {
@@ -564,7 +783,9 @@ function createPdfAnnotationStore({
         docKey: event.docKey,
         sourcePath,
         source: { ...previous.source, ...source, ...(event.kind === "document-rename" ? { path: sourcePath } : {}) },
-        legacyIdentities: event.legacyIdentities ?? previous.legacyIdentities,
+        legacyIdentities: event.legacyDeltas && typeof event.legacyDeltas === "object"
+          ? applyLegacyIdentityDeltas(previous.legacyIdentities, event.legacyDeltas)
+          : event.legacyIdentities ?? previous.legacyIdentities,
         legacyIdentityScanComplete: event.legacyIdentityScanComplete ?? previous.legacyIdentityScanComplete,
         identityEventHeads: [
           ...previous.identityEventHeads.filter((head) => !(event.parentEventIds || []).includes(head)),
@@ -577,34 +798,75 @@ function createPdfAnnotationStore({
     return { documents, appliedEventIds: appliedIds };
   }
 
-  async function writeIndex(index) {
+  async function writeIndex(index, { compactRoutes = false } = {}) {
     await ensureDirectory(baseRoot);
-    // `_index.json` is a mutable lookup cache. Immutable identity events are
-    // persisted before this write. Merge-on-retry reduces concurrent lost
-    // entries; it is not a cross-device lock or transaction.
-    let desired = { schemaVersion: STORE_SCHEMA, documents: { ...index.documents } };
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const existingText = await readTextIfExists(registryPath);
-      if (existingText) {
-        try {
-          const existing = JSON.parse(existingText);
-          if (existing?.schemaVersion === STORE_SCHEMA && existing.documents) {
-            const merged = { ...existing.documents };
-            for (const [path, record] of Object.entries(desired.documents)) {
-              for (const [oldPath, oldRecord] of Object.entries(merged)) {
-                if (oldPath !== path && oldRecord.documentId === record.documentId) delete merged[oldPath];
-              }
-              merged[path] = record;
-            }
-            desired = { schemaVersion: STORE_SCHEMA, documents: merged };
+      let existing = null;
+      try { existing = existingText ? JSON.parse(existingText) : null; } catch { /* Rebuild from identity events. */ }
+      const existingIsRouteOnly = existing?.schemaVersion === INDEX_SCHEMA && existing.documents;
+      const legacyDocuments = {};
+      const routes = {};
+      if (existing?.documents && typeof existing.documents === "object") {
+        for (const [pathValue, value] of Object.entries(existing.documents)) {
+          const sourcePath = normalizeSourcePath(pathValue);
+          if (typeof value === "string" && /^[a-f0-9]{12}$/i.test(value)) {
+            routes[sourcePath] = value.toLowerCase();
+          } else if (value && typeof value === "object") {
+            try { legacyDocuments[sourcePath] = normalizeDocument({ ...value, sourcePath }); }
+            catch { /* Immutable identity events remain the recoverable record. */ }
           }
-        } catch { /* Identity event files remain the recoverable record. */ }
+        }
       }
+      for (const [pathValue, record] of Object.entries(index.documents)) {
+        const sourcePath = normalizeSourcePath(pathValue);
+        for (const [oldPath, oldRecord] of Object.entries(legacyDocuments)) {
+          if (oldPath !== sourcePath && oldRecord.documentId === record.documentId) delete legacyDocuments[oldPath];
+        }
+        for (const [oldPath, oldDocKey] of Object.entries(routes)) {
+          if (oldPath !== sourcePath && oldDocKey === record.docKey) delete routes[oldPath];
+        }
+        legacyDocuments[sourcePath] = normalizeDocument({ ...record, sourcePath });
+        routes[sourcePath] = record.docKey;
+      }
+
+      const routeOnly = existingIsRouteOnly || compactRoutes;
+      if (routeOnly && !(await areDocumentRoutesReady(legacyDocuments))) {
+        // Keep writing the old, readable index until every known per-document
+        // device has confirmed the compact checkpoint. This lets older plugin
+        // versions continue to resolve their existing paths during rollout.
+        const desired = { schemaVersion: STORE_SCHEMA, documents: legacyDocuments };
+        const text = canonicalJson(desired);
+        await adapter.write(registryPath, text);
+        if (await adapter.read(registryPath) === text) return;
+        continue;
+      }
+
+      const desired = routeOnly
+        ? { schemaVersion: INDEX_SCHEMA, documents: routes }
+        : { schemaVersion: STORE_SCHEMA, documents: legacyDocuments };
       const text = canonicalJson(desired);
       await adapter.write(registryPath, text);
       if (await adapter.read(registryPath) === text) return;
     }
     throw codedError("PDF_ANNOTATION_INDEX_UNCONFIRMED", "Document index cache could not be merged and verified.");
+  }
+
+  async function maybeCompactRootIndex() {
+    const index = await readIndex();
+    await writeIndex(index, { compactRoutes: true });
+  }
+
+  async function areDocumentRoutesReady(documents) {
+    for (const document of Object.values(documents)) {
+      const checkpoint = await readCheckpoint(document);
+      if (!checkpoint || checkpoint.payloadEncoding !== COMPACT_PAYLOAD_ENCODING) return false;
+      const metadataHash = await digestText(canonicalJson(documentMetadataValue(document)));
+      if (checkpoint.metadataHash !== metadataHash) return false;
+      const states = await collectDeviceStatus(document, checkpoint);
+      if (!states.every((entry) => entry.retired || entry.acknowledged)) return false;
+    }
+    return Object.keys(documents).length > 0;
   }
 
   async function appendIdentityEvent(event) {
@@ -620,8 +882,10 @@ function createPdfAnnotationStore({
       docKey: document.docKey,
       sourcePath: event.path,
       ...(event.fromPath ? { fromPath: event.fromPath } : {}),
-      source: document.source,
-      legacyIdentities: document.legacyIdentities.filter((identity) => identity.deleted !== true && identity.ref),
+      source: sourceEventDelta(event.previous?.source || {}, document.source, event.kind),
+      ...(event.kind === "legacy-identities"
+        ? { legacyDeltas: legacyIdentityDeltas(event.previous?.legacyIdentities || [], document.legacyIdentities) }
+        : {}),
       legacyIdentityScanComplete: document.legacyIdentityScanComplete,
       parentEventIds: document.identityEventHeads,
       createdAt: finiteNumber(await clock(), "clock()"),
@@ -643,27 +907,38 @@ function createPdfAnnotationStore({
     return { eventId: id };
   }
 
-  async function writeSnapshot(document, state) {
-    const location = pathsFor(document).snapshot;
-    await ensureDirectory(baseRoot);
-    const text = canonicalJson(makeSnapshot(document, state));
-    const current = await readTextIfExists(location);
-    if (current === text) return;
-    if (current) {
-      try {
-        const prior = JSON.parse(current);
-        if (prior.documentId && prior.documentId !== document.documentId) {
-          throw codedError("PDF_ANNOTATION_SNAPSHOT_COLLISION", "A different document identity already occupies this snapshot path.");
-        }
-      } catch (error) {
-        if (error.code === "PDF_ANNOTATION_SNAPSHOT_COLLISION") throw error;
-        // Malformed snapshots are disposable cache and can be reconstructed.
-      }
+  function sourceEventDelta(previous, current, kind) {
+    const delta = {};
+    for (const [key, value] of Object.entries(current || {})) {
+      if (key === "orderedPageIdentities") continue;
+      if (canonicalJson(previous?.[key]) !== canonicalJson(value)) delta[key] = value;
     }
-    await adapter.write(location, text);
-    if (await adapter.read(location) !== text) {
-      throw codedError("PDF_ANNOTATION_SNAPSHOT_UNCONFIRMED", "Materialized annotation snapshot write could not be verified.");
+    if (kind === "create" && !Object.keys(delta).length) return {};
+    return delta;
+  }
+
+  function legacyIdentityDeltas(previous, current) {
+    const before = new Map(normalizeLegacyIdentities(previous).filter((row) => !row.deleted && row.ref)
+      .map((row) => [row.uuid, row]));
+    const after = new Map(normalizeLegacyIdentities(current).filter((row) => !row.deleted && row.ref)
+      .map((row) => [row.uuid, row]));
+    const upsert = [];
+    const remove = [];
+    for (const [id, row] of after) {
+      if (canonicalJson(before.get(id)) !== canonicalJson(row)) upsert.push(row);
     }
+    for (const id of before.keys()) if (!after.has(id)) remove.push(id);
+    return { upsert, remove: remove.sort(compareString), scanComplete: true };
+  }
+
+  function applyLegacyIdentityDeltas(previous, delta) {
+    if (!delta || !Array.isArray(delta.upsert) || !Array.isArray(delta.remove)) {
+      throw codedError("PDF_ANNOTATION_IDENTITY_EVENT_INVALID", "Legacy identity delta event is malformed.");
+    }
+    const rows = new Map(normalizeLegacyIdentities(previous || []).map((row) => [row.uuid, row]));
+    for (const id of delta.remove) rows.delete(id);
+    for (const row of delta.upsert) rows.set(row.uuid, row);
+    return [...rows.values()];
   }
 
   async function ensureDirectory(path) {
@@ -693,6 +968,355 @@ function createPdfAnnotationStore({
     return value;
   }
 
+  async function digestText(text) {
+    return canonicalHash(await hash(utf8(text)));
+  }
+
+  async function readCheckpoint(document) {
+    const locations = pathsFor(document);
+    let primaryError = null;
+    for (const path of [locations.checkpoint, locations.checkpointBackup]) {
+      const text = await readTextIfExists(path);
+      if (text === null) continue;
+      try {
+        const checkpoint = JSON.parse(text);
+        if (path === locations.checkpoint && checkpoint?.kind === "pdf-annotation-snapshot" &&
+            checkpoint.schemaVersion === STORE_SCHEMA) {
+          // The pre-0.7 file was only a replay cache; immutable batches remain
+          // the migration source. It is replaced only after a new checkpoint
+          // has been verified and backed up.
+          continue;
+        }
+        await validateCheckpoint(checkpoint, document);
+        return checkpoint;
+      } catch (error) {
+        if (!primaryError) primaryError = error;
+      }
+    }
+    if (primaryError) {
+      throw codedError("PDF_ANNOTATION_CHECKPOINT_INVALID",
+        `No verified annotation checkpoint is available: ${primaryError.message}`);
+    }
+    return null;
+  }
+
+  async function validateCheckpoint(checkpoint, document) {
+    if (!checkpoint || checkpoint.schemaVersion !== CHECKPOINT_SCHEMA ||
+        checkpoint.kind !== "pdf-annotation-checkpoint" ||
+        checkpoint.documentId !== document.documentId || checkpoint.docKey !== document.docKey ||
+        typeof checkpoint.integrity !== "string" || !Array.isArray(checkpoint.annotations) ||
+        !Array.isArray(checkpoint.tombstones) || !Array.isArray(checkpoint.knownDevices) ||
+        !["json-legacy", COMPACT_PAYLOAD_ENCODING].includes(checkpoint.payloadEncoding) ||
+        !Number.isSafeInteger(checkpoint.revision) || checkpoint.revision < 0 ||
+        !Number.isSafeInteger(checkpoint.updatedAt) || checkpoint.updatedAt < 0 ||
+        !checkpoint.coveredBatches || typeof checkpoint.coveredBatches !== "object" ||
+        !checkpoint.operationDigests || typeof checkpoint.operationDigests !== "object" ||
+        typeof checkpoint.metadataHash !== "string") {
+      throw new TypeError("Checkpoint metadata is incomplete.");
+    }
+    const annotationIds = new Set();
+    for (const row of checkpoint.annotations) {
+      if (!row || typeof row !== "object" || row.deleted === true) {
+        throw new TypeError("Checkpoint annotations may contain only live operations.");
+      }
+      const normalized = normalizeOperation({ ...row, deleted: false });
+      if (!normalized.payload) throw new TypeError("Checkpoint live annotation payload is missing.");
+      if (annotationIds.has(normalized.uuid)) throw new TypeError("Checkpoint annotation UUID is duplicated.");
+      annotationIds.add(normalized.uuid);
+    }
+    for (const row of checkpoint.tombstones) {
+      if (!row || typeof row !== "object" || Object.hasOwn(row, "deleted") || row.payload !== undefined) {
+        throw new TypeError("Checkpoint tombstones must be compact ledger entries without deleted rows.");
+      }
+      const normalized = normalizeOperation({ ...row, deleted: true });
+      if (annotationIds.has(normalized.uuid)) throw new TypeError("Checkpoint annotation UUID is duplicated.");
+      annotationIds.add(normalized.uuid);
+    }
+    if (checkpoint.payloadEncoding === COMPACT_PAYLOAD_ENCODING &&
+        checkpoint.annotations.some((row) => containsLegacyFloat32(row.payload))) {
+      throw new TypeError("Compact checkpoint still contains a legacy Float32Array wrapper.");
+    }
+    if (checkpoint.knownDevices.some((id) => typeof id !== "string" || !id.trim()) ||
+        new Set(checkpoint.knownDevices).size !== checkpoint.knownDevices.length) {
+      throw new TypeError("Checkpoint device registry is invalid.");
+    }
+    for (const [device, batches] of Object.entries(checkpoint.coveredBatches)) {
+      if (!device || !batches || typeof batches !== "object" || Array.isArray(batches)) {
+        throw new TypeError("Checkpoint covered-batch manifest is invalid.");
+      }
+      for (const [batchId, digest] of Object.entries(batches)) {
+        if (!batchId || typeof digest !== "string") throw new TypeError("Checkpoint batch digest is invalid.");
+        canonicalHash(digest);
+      }
+    }
+    for (const digest of Object.values(checkpoint.operationDigests)) canonicalHash(digest);
+    canonicalHash(checkpoint.metadataHash);
+    const unsigned = { ...checkpoint };
+    delete unsigned.integrity;
+    if (await digestText(canonicalJson(unsigned)) !== checkpoint.integrity) {
+      throw new TypeError("Checkpoint integrity hash does not match its contents.");
+    }
+  }
+
+  async function writeCheckpoint(document, state) {
+    const locations = pathsFor(document);
+    const checkpoint = await makeCheckpoint(document, state);
+    await ensureDirectory(locations.checkpoint.slice(0, locations.checkpoint.lastIndexOf("/")));
+    await ensureDirectory(locations.checkpointBackup.slice(0, locations.checkpointBackup.lastIndexOf("/")));
+    const text = canonicalJson(checkpoint);
+    // Keep a verified recovery copy before replacing the primary checkpoint.
+    // Covered operation batches are never eligible for GC until both copies
+    // can represent their state.
+    for (const location of [locations.checkpointBackup, locations.checkpoint]) {
+      const existing = await readTextIfExists(location);
+      if (existing === text) continue;
+      await adapter.write(location, text);
+      if (await adapter.read(location) !== text) {
+        throw codedError("PDF_ANNOTATION_CHECKPOINT_UNCONFIRMED", "Verified annotation checkpoint write could not be confirmed.");
+      }
+    }
+    return checkpoint;
+  }
+
+  async function writeSnapshotPointer(document, checkpoint) {
+    const location = pathsFor(document).snapshot;
+    const pointer = {
+      schemaVersion: 2,
+      kind: "pdf-annotation-snapshot-pointer",
+      documentId: document.documentId,
+      docKey: document.docKey,
+      pluginVersion: CURRENT_PLUGIN_VERSION,
+      checkpointPath: pathsFor(document).checkpoint,
+      checkpointHash: checkpoint.integrity,
+      revision: checkpoint.revision,
+      updatedAt: checkpoint.updatedAt,
+    };
+    const text = canonicalJson(pointer);
+    if (await readTextIfExists(location) === text) return;
+    const existing = await readTextIfExists(location);
+    if (existing) {
+      try {
+        const prior = JSON.parse(existing);
+        if (prior.documentId && prior.documentId !== document.documentId) {
+          throw codedError("PDF_ANNOTATION_SNAPSHOT_COLLISION", "A different document identity already occupies this snapshot path.");
+        }
+      } catch (error) {
+        if (error.code === "PDF_ANNOTATION_SNAPSHOT_COLLISION") throw error;
+      }
+    }
+    await adapter.write(location, text);
+    if (await adapter.read(location) !== text) {
+      throw codedError("PDF_ANNOTATION_SNAPSHOT_UNCONFIRMED", "Annotation snapshot pointer write could not be verified.");
+    }
+  }
+
+  async function makeCheckpoint(document, state) {
+    const all = Object.values(state.annotations).sort((left, right) => compareString(left.uuid, right.uuid));
+    const annotations = all.filter((row) => row.deleted !== true).map((row) => ({
+      ...row,
+      ...(row.payload ? {
+        payload: state.payloadEncoding === COMPACT_PAYLOAD_ENCODING
+          ? compactExternalValue(row.payload) : row.payload,
+      } : {}),
+      deleted: false,
+    }));
+    const tombstones = all.filter((row) => row.deleted === true).map((row) => ({
+      uuid: row.uuid,
+      kind: row.kind,
+      pageIndex: row.pageIndex,
+      embeddedRef: row.embeddedRef ?? null,
+      clock: { ...row.clock },
+    }));
+    const unsigned = {
+      schemaVersion: CHECKPOINT_SCHEMA,
+      kind: "pdf-annotation-checkpoint",
+      documentId: document.documentId,
+      docKey: document.docKey,
+      pluginVersion: CURRENT_PLUGIN_VERSION,
+      sourceHash: document.source.sourceHash || null,
+      metadataHash: await digestText(canonicalJson(documentMetadataValue(document))),
+      payloadEncoding: state.payloadEncoding || "json-legacy",
+      // Keep the checkpoint hash stable across readers that have replayed the
+      // same immutable batches. Wall-clock time would prevent cross-device ACK.
+      createdAt: state.updatedAt,
+      revision: state.revision,
+      updatedAt: state.updatedAt,
+      annotations,
+      tombstones,
+      coveredBatches: cloneBatchManifest(state.coveredBatches),
+      operationDigests: { ...state.operationDigests },
+      knownDevices: [...new Set(state.knownDevices)].sort(compareString),
+    };
+    return { ...unsigned, integrity: await digestText(canonicalJson(unsigned)) };
+  }
+
+  async function acknowledgeDevice(document, checkpointHash) {
+    const location = pathsFor(document).deviceStates;
+    await ensureDirectory(location);
+    const path = `${location}/${pathSegment(deviceId)}.json`;
+    const previous = await readDeviceState(document, deviceId);
+    if (previous?.retired === true) return previous;
+    const record = {
+      schemaVersion: 1,
+      deviceId,
+      pluginVersion: CURRENT_PLUGIN_VERSION,
+      checkpointHash,
+      retired: false,
+      updatedAt: finiteNumber(await clock(), "clock()"),
+    };
+    const text = canonicalJson(record);
+    if (await readTextIfExists(path) !== text) {
+      await adapter.write(path, text);
+      if (await adapter.read(path) !== text) {
+        throw codedError("PDF_ANNOTATION_DEVICE_ACK_UNCONFIRMED", "Device checkpoint acknowledgement could not be verified.");
+      }
+    }
+    return record;
+  }
+
+  async function readDeviceState(document, targetDeviceId) {
+    const path = `${pathsFor(document).deviceStates}/${pathSegment(targetDeviceId)}.json`;
+    const text = await readTextIfExists(path);
+    if (text === null) return null;
+    let state;
+    try { state = JSON.parse(text); }
+    catch { throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A device checkpoint acknowledgement is malformed."); }
+    if (state?.schemaVersion !== 1 || state.deviceId !== targetDeviceId ||
+        (state.retired !== true && state.retired !== false)) {
+      throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A device checkpoint acknowledgement is invalid.");
+    }
+    return state;
+  }
+
+  async function listDeviceStatus(document, checkpoint = null) {
+    const normalized = await resolveDocument(document);
+    return collectDeviceStatus(normalized, checkpoint);
+  }
+
+  async function collectDeviceStatus(normalized, checkpoint = null) {
+    const ids = new Set([
+      ...(checkpoint?.knownDevices || []),
+      deviceId,
+      ...await listRegisteredDeviceIds(normalized),
+    ]);
+    for (const path of await listOperationBatches(normalized)) {
+      try {
+        const batch = JSON.parse(await adapter.read(path));
+        if (typeof batch.deviceId === "string" && batch.deviceId) ids.add(batch.deviceId);
+      } catch { /* replay reports malformed batches with the actionable path */ }
+    }
+    const result = [];
+    for (const id of [...ids].sort(compareString)) {
+      const state = await readDeviceState(normalized, id);
+      result.push({
+        deviceId: id,
+        isCurrent: id === deviceId,
+        pluginVersion: state?.pluginVersion || null,
+        checkpointHash: state?.checkpointHash || null,
+        retired: state?.retired === true,
+        acknowledged: Boolean(checkpoint && state?.checkpointHash === checkpoint.integrity &&
+          state?.pluginVersion === CURRENT_PLUGIN_VERSION),
+      });
+    }
+    return result;
+  }
+
+  async function listRegisteredDeviceIds(document) {
+    const directory = pathsFor(document).deviceStates;
+    if (!(await adapter.exists(directory))) return [];
+    const ids = new Set();
+    for (const path of (await listFilesRecursive(directory)).filter((entry) => entry.endsWith(".json"))) {
+      let parsed;
+      try { parsed = JSON.parse(await adapter.read(path)); }
+      catch {
+        throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A registered device acknowledgement is malformed.");
+      }
+      if (typeof parsed?.deviceId !== "string" || !parsed.deviceId.trim() ||
+          path !== `${directory}/${pathSegment(parsed.deviceId)}.json`) {
+        throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A registered device acknowledgement has an invalid identity.");
+      }
+      await readDeviceState(document, parsed.deviceId);
+      ids.add(parsed.deviceId);
+    }
+    return [...ids].sort(compareString);
+  }
+
+  async function inspectDevices(document) {
+    const normalized = await resolveDocument(document);
+    const checkpoint = await readCheckpoint(normalized);
+    return {
+      checkpointHash: checkpoint?.integrity || null,
+      devices: await listDeviceStatus(normalized, checkpoint),
+    };
+  }
+
+  async function garbageCollectCoveredBatches(document, checkpoint, deviceStates) {
+    if (typeof adapter.remove !== "function" ||
+        !deviceStates.every((entry) => entry.retired || entry.acknowledged)) return 0;
+    const paths = pathsFor(document);
+    const currentCheckpointText = await readTextIfExists(paths.checkpoint);
+    if (!currentCheckpointText || JSON.parse(currentCheckpointText).integrity !== checkpoint.integrity) return 0;
+    const backupText = canonicalJson(checkpoint);
+    await adapter.write(paths.checkpointBackup, backupText);
+    if (await adapter.read(paths.checkpointBackup) !== backupText) {
+      throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED", "Checkpoint backup could not be verified; batch cleanup was skipped.");
+    }
+    let removed = 0;
+    for (const batchPath of await listOperationBatches(document)) {
+      const batch = JSON.parse(await adapter.read(batchPath));
+      const expected = checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+      if (!expected || expected !== await digestText(canonicalJson(batch))) continue;
+      await adapter.remove(batchPath);
+      if (await adapter.exists(batchPath)) {
+        throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
+      }
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async function retireDevice({ document, targetDeviceId, confirmedCheckpointHash } = {}) {
+    const normalized = await resolveDocument(document);
+    if (typeof targetDeviceId !== "string" || !targetDeviceId.trim() || targetDeviceId === deviceId) {
+      throw codedError("PDF_ANNOTATION_DEVICE_RETIRE_INVALID", "Choose another registered device to retire.");
+    }
+    const checkpoint = await readCheckpoint(normalized);
+    if (!checkpoint || confirmedCheckpointHash !== checkpoint.integrity) {
+      throw codedError("PDF_ANNOTATION_DEVICE_RETIRE_STALE", "The document checkpoint changed; review the device list again before retirement.");
+    }
+    const statuses = await listDeviceStatus(normalized, checkpoint);
+    if (!statuses.some((entry) => entry.deviceId === targetDeviceId)) {
+      throw codedError("PDF_ANNOTATION_DEVICE_RETIRE_UNKNOWN", "The selected device is not registered for this PDF.");
+    }
+    const folder = pathsFor(normalized).deviceStates;
+    await ensureDirectory(folder);
+    const path = `${folder}/${pathSegment(targetDeviceId)}.json`;
+    const record = {
+      schemaVersion: 1,
+      deviceId: targetDeviceId,
+      pluginVersion: CURRENT_PLUGIN_VERSION,
+      checkpointHash: checkpoint.integrity,
+      retired: true,
+      retiredAt: finiteNumber(await clock(), "clock()"),
+    };
+    const text = canonicalJson(record);
+    await adapter.write(path, text);
+    if (await adapter.read(path) !== text) {
+      throw codedError("PDF_ANNOTATION_DEVICE_RETIRE_UNCONFIRMED", "Device retirement could not be verified.");
+    }
+    return { deviceId: targetDeviceId, checkpointHash: checkpoint.integrity, retired: true };
+  }
+
+  function compactStatePayloads(state) {
+    for (const [id, operation] of Object.entries(state.annotations)) {
+      if (operation.deleted === true || !operation.payload) continue;
+      state.annotations[id] = {
+        ...operation,
+        payload: compactExternalValue(operation.payload),
+      };
+    }
+  }
+
   return Object.freeze({
     registerDocument,
     renameDocument,
@@ -703,23 +1327,35 @@ function createPdfAnnotationStore({
     materializeSnapshot,
     updateSourceIdentity,
     updateLegacyIdentities,
+    listDeviceStatus,
+    inspectDevices,
+    retireDevice,
     pathsFor,
   });
 
-  function makeSnapshot(document, state) {
+  function makeSnapshot(document, state, checkpoint, compactInkEncoding) {
+    const rows = Object.values(state.annotations).sort((left, right) => compareString(left.uuid, right.uuid));
     return {
-      schemaVersion: STORE_SCHEMA,
+      schemaVersion: 2,
       kind: "pdf-annotation-snapshot",
       documentId: document.documentId,
       docKey: document.docKey,
-      pluginVersion: "0.6.0",
+      pluginVersion: CURRENT_PLUGIN_VERSION,
       source: { ...document.source, sourcePath: document.sourcePath },
-      legacyIdentities: document.legacyIdentities,
+      legacyIdentities: document.legacyIdentities.filter((identity) => identity.deleted !== true && identity.ref),
       legacyIdentityScanComplete: document.legacyIdentityScanComplete,
       revision: state.revision,
       updatedAt: state.updatedAt,
-      batchFiles: state.batchFiles,
-      annotations: Object.values(state.annotations),
+      checkpointHash: checkpoint.integrity,
+      compactInkEncoding,
+      annotations: rows.filter((row) => row.deleted !== true),
+      tombstones: rows.filter((row) => row.deleted === true).map((row) => ({
+        uuid: row.uuid,
+        kind: row.kind,
+        pageIndex: row.pageIndex,
+        embeddedRef: row.embeddedRef ?? null,
+        clock: { ...row.clock },
+      })),
     };
   }
 
@@ -732,6 +1368,12 @@ function createPdfAnnotationStore({
     if (batch.sourceHash !== undefined) canonicalHash(batch.sourceHash);
     if (batch.quarantined !== undefined && typeof batch.quarantined !== "boolean") {
       throw codedError("PDF_ANNOTATION_BATCH_INVALID", "Operation batch quarantine marker is invalid.");
+    }
+    if (batch.formatVersion !== undefined && batch.formatVersion !== 2) {
+      throw codedError("PDF_ANNOTATION_BATCH_INVALID", "The operation batch uses an unsupported format version.");
+    }
+    if (batch.pluginVersion !== undefined && typeof batch.pluginVersion !== "string") {
+      throw codedError("PDF_ANNOTATION_BATCH_INVALID", "The operation batch plugin version is invalid.");
     }
   }
 
@@ -896,6 +1538,74 @@ function pathSegment(value) {
   const encoded = encodeURIComponent(String(value)).replace(/[!'()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
   return encoded === "." || encoded === ".." ? `_${encoded}` : encoded;
+}
+
+function cloneBatchManifest(value = {}) {
+  const result = {};
+  for (const device of Object.keys(value || {}).sort(compareString)) {
+    const batches = value[device];
+    if (!batches || typeof batches !== "object" || Array.isArray(batches)) continue;
+    result[device] = {};
+    for (const batchId of Object.keys(batches).sort(compareString)) {
+      const digest = batches[batchId];
+      if (typeof digest === "string") result[device][batchId] = digest;
+    }
+  }
+  return result;
+}
+
+function compactExternalValue(value) {
+  if (Array.isArray(value)) return value.map(compactExternalValue);
+  if (!value || typeof value !== "object") return value;
+  if (value.$type === "Float32ArrayLE") return value;
+  if (value.$type === "Float32Array" && Array.isArray(value.values)) {
+    const values = value.values.map((item) => {
+      if (item?.$type === "NonFiniteNumber") {
+        if (item.value === "NaN") return Number.NaN;
+        if (item.value === "+Infinity") return Number.POSITIVE_INFINITY;
+        if (item.value === "-Infinity") return Number.NEGATIVE_INFINITY;
+      }
+      return Number(item);
+    });
+    const floatValues = Float32Array.from(values);
+    const bytes = new Uint8Array(floatValues.length * 4);
+    const view = new DataView(bytes.buffer);
+    for (let index = 0; index < floatValues.length; index += 1) {
+      view.setFloat32(index * 4, floatValues[index], true);
+    }
+    return {
+      $type: "Float32ArrayLE",
+      length: floatValues.length,
+      base64: encodeBase64(bytes),
+    };
+  }
+  const result = {};
+  for (const [key, item] of Object.entries(value)) result[key] = compactExternalValue(item);
+  return result;
+}
+
+function containsLegacyFloat32(value) {
+  if (Array.isArray(value)) return value.some(containsLegacyFloat32);
+  if (!value || typeof value !== "object") return false;
+  if (value.$type === "Float32Array") return true;
+  return Object.values(value).some(containsLegacyFloat32);
+}
+
+function encodeBase64(bytes) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let result = "";
+  for (let offset = 0; offset < bytes.length; offset += 3) {
+    const first = bytes[offset];
+    const hasSecond = offset + 1 < bytes.length;
+    const hasThird = offset + 2 < bytes.length;
+    const second = hasSecond ? bytes[offset + 1] : 0;
+    const third = hasThird ? bytes[offset + 2] : 0;
+    result += alphabet[first >> 2];
+    result += alphabet[((first & 0x03) << 4) | (second >> 4)];
+    result += hasSecond ? alphabet[((second & 0x0f) << 2) | (third >> 6)] : "=";
+    result += hasThird ? alphabet[third & 0x3f] : "=";
+  }
+  return result;
 }
 
 function canonicalHash(value) {

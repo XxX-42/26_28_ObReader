@@ -116,6 +116,7 @@
     syncState: null,
     syncActorId: null,
     syncDeviceId: null,
+    compactInkEncoding: false,
     externalAnnotationRows: new Map(),
     externalAnnotationHydration: new Map(),
     externalAnnotationRefs: new Set(),
@@ -840,6 +841,18 @@
     } else if (value.$type === "BigInt" && typeof value.value === "string" &&
         /^-?\d+$/.test(value.value) && typeof BigInt === "function") {
       result = BigInt(value.value);
+    } else if (value.$type === "Float32ArrayLE" &&
+        Number.isSafeInteger(value.length) && value.length >= 0 &&
+        typeof value.base64 === "string") {
+      const bytes = decodeBase64(value.base64);
+      if (bytes.byteLength !== value.length * 4) {
+        throw new Error("Invalid compact Float32Array payload length.");
+      }
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      result = new Float32Array(value.length);
+      for (let index = 0; index < value.length; index += 1) {
+        result[index] = view.getFloat32(index * 4, true);
+      }
     } else if (value.$type === "ArrayBuffer" && Array.isArray(value.values)) {
       result = Uint8Array.from(value.values).buffer;
     } else if (typeof value.$type === "string" && Array.isArray(value.values)) {
@@ -876,7 +889,7 @@
     return result;
   }
 
-  function encodeExternalValue(value, seen = new Set()) {
+  function encodeExternalValue(value, seen = new Set(), compactFloat32 = false) {
     if (value === null || typeof value === "string" || typeof value === "boolean") {
       return value;
     }
@@ -893,32 +906,63 @@
       return { $type: "ArrayBuffer", values: Array.from(new Uint8Array(value)) };
     }
     if (ArrayBuffer.isView(value)) {
+      if (compactFloat32 && value instanceof Float32Array) {
+        const bytes = new Uint8Array(value.length * 4);
+        const view = new DataView(bytes.buffer);
+        for (let index = 0; index < value.length; index += 1) {
+          view.setFloat32(index * 4, value[index], true);
+        }
+        return {
+          $type: "Float32ArrayLE",
+          length: value.length,
+          base64: encodeBase64(bytes),
+        };
+      }
       return {
         $type: value.constructor?.name || "TypedArray",
-        values: Array.from(value, (item) => encodeExternalValue(item, seen)),
+        values: Array.from(value, (item) => encodeExternalValue(item, seen, compactFloat32)),
       };
     }
     if (seen.has(value)) throw new Error("External annotation payload contains a cycle.");
     seen.add(value);
     let result;
     if (Array.isArray(value)) {
-      result = value.map((item) => encodeExternalValue(item, seen));
+      result = value.map((item) => encodeExternalValue(item, seen, compactFloat32));
     } else if (value instanceof Map) {
       result = {
         $type: "Map",
         entries: [...value.entries()]
-          .map(([key, item]) => [String(key), encodeExternalValue(item, seen)])
+          .map(([key, item]) => [String(key), encodeExternalValue(item, seen, compactFloat32)])
           .sort(([left], [right]) => left.localeCompare(right)),
       };
     } else {
       result = {};
       for (const key of Object.keys(value).sort()) {
-        const normalized = encodeExternalValue(value[key], seen);
+        const normalized = encodeExternalValue(value[key], seen, compactFloat32);
         if (typeof normalized !== "undefined") result[key] = normalized;
       }
     }
     seen.delete(value);
     return result;
+  }
+
+  function encodeBase64(bytes) {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function decodeBase64(value) {
+    if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+      throw new Error("Invalid compact Float32Array base64 payload.");
+    }
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
   }
 
   function externalKindForEditor(value, editor = null) {
@@ -939,10 +983,22 @@
 
   function validateExternalAnnotations(value) {
     if (value == null) return { source: null, annotations: [] };
-    if (!value || typeof value !== "object" || value.schemaVersion !== 1) {
+    if (!value || typeof value !== "object" || ![1, 2].includes(value.schemaVersion)) {
       throw new Error("Unsupported external annotation schema.");
     }
-    const rows = Array.isArray(value.annotations) ? value.annotations : [];
+    const rows = Array.isArray(value.annotations) ? [...value.annotations] : [];
+    if (value.schemaVersion === 2 && rows.some((row) => row?.deleted === true)) {
+      throw new Error("External annotation snapshots must keep tombstones in their separate ledger.");
+    }
+    if (value.schemaVersion === 2) {
+      if (!Array.isArray(value.tombstones)) throw new Error("External annotation tombstone ledger is invalid.");
+      for (const tombstone of value.tombstones) {
+        if (!tombstone || typeof tombstone !== "object" || Object.hasOwn(tombstone, "deleted")) {
+          throw new Error("External annotation tombstones must not contain deleted operation rows.");
+        }
+        rows.push({ ...tombstone, deleted: true });
+      }
+    }
     if (value.legacyIdentities !== undefined && !Array.isArray(value.legacyIdentities)) {
       throw new Error("Legacy PDF annotation identities must be a list.");
     }
@@ -1030,6 +1086,7 @@
         : null,
       legacyIdentities,
       annotations,
+      compactInkEncoding: value.compactInkEncoding === true,
     };
   }
 
@@ -1488,7 +1545,7 @@
       if (!serialized || typeof serialized !== "object") {
         throw new Error(`Annotation ${operation.uuid} has no lossless editor snapshot.`);
       }
-      editor = encodeExternalValue(serialized);
+      editor = encodeExternalValue(serialized, new Set(), state.compactInkEncoding === true);
     }
     const timestamp = Number.isSafeInteger(operation.timestamp)
       ? operation.timestamp
@@ -1950,6 +2007,7 @@
       [...merged.values()].filter((row) => row.embeddedRef).map((row) => row.embeddedRef),
     );
     state.externalSource = normalized.source;
+    state.compactInkEncoding = normalized.compactInkEncoding === true;
     applyLegacyAnnotationIdentities(normalized.legacyIdentities);
     // Seed editor UUIDs from exact PDF object references before the next
     // AnnotationStorage diff. This preserves pre-0.6 UUIDs when an embedded
@@ -7976,6 +8034,7 @@
         state.syncActorId;
       const provisionalExternal = validateExternalAnnotations(message.externalAnnotations);
       state.externalSource = provisionalExternal.source;
+      state.compactInkEncoding = provisionalExternal.compactInkEncoding === true;
       applyLegacyAnnotationIdentities(provisionalExternal.legacyIdentities);
       state.externalAnnotationRows.clear();
       state.externalAnnotationRefs.clear();

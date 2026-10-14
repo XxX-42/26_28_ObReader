@@ -319,10 +319,20 @@ function createHarness() {
     }
   }
 
+  class Modal {
+    constructor(app) {
+      this.app = app;
+      this.contentEl = { empty() {}, createEl() { return {}; } };
+    }
+    open() { this.onOpen?.(); }
+    close() { this.onClose?.(); }
+  }
+
   const obsidian = {
     EditableFileView,
     FileView,
     ItemView,
+    Modal,
     Notice: class Notice {
       constructor(message) {
         notices.push(message);

@@ -98,7 +98,7 @@ test("daily save, recovery, checkpoint, sync and close never serialize a PDF", (
 
 test("external annotation operation batches preserve identity, tombstones and binary editor state", () => {
   const { externalOperation, encodeExternalValue, decodeExternalValue } = evaluateHelpers(
-    ["encodeExternalValue", "decodeExternalValue", "externalOperation"],
+    ["encodeExternalValue", "decodeExternalValue", "encodeBase64", "decodeBase64", "externalOperation"],
     `
       const EXTERNAL_ANNOTATION_KINDS = new Set(["Underline", "Square", "Highlight", "Ink", "InkHighlight", "FreeText"]);
       const state = { syncDeviceId: "device-a", syncActorId: "actor-a" };
@@ -125,6 +125,27 @@ test("external annotation operation batches preserve identity, tombstones and bi
   ));
   assert.deepEqual(Array.from(decoded.imageData), [0, 7, 255]);
   assert.deepEqual([...decoded.metadata.entries()], [["a", 1], ["z", 2]]);
+
+  const inkValues = Float32Array.from({ length: 4150 }, (_, index) =>
+    index % 148 === 0 ? Number.NaN : Math.fround((index % 997) * 0.1234567));
+  const legacyInkJson = JSON.stringify(encodeExternalValue({ lines: inkValues, points: inkValues }));
+  const compactInk = encodeExternalValue({ lines: inkValues, points: inkValues }, new Set(), true);
+  const compactInkJson = JSON.stringify(compactInk);
+  assert.ok(compactInkJson.length <= legacyInkJson.length * 0.4,
+    `compact Float32 representation should save at least 60% (${legacyInkJson.length} -> ${compactInkJson.length})`);
+  assert.equal(compactInk.lines.$type, "Float32ArrayLE");
+  assert.equal(compactInk.points.$type, "Float32ArrayLE", "visual lines and PDF points are both preserved");
+  assert.doesNotMatch(compactInkJson, /NonFiniteNumber/);
+  const compactRoundTrip = decodeExternalValue(compactInk);
+  assert.equal(compactRoundTrip.lines.length, inkValues.length);
+  assert.equal(compactRoundTrip.points.length, inkValues.length);
+  for (let index = 0; index < inkValues.length; index += 1) {
+    if (Number.isNaN(inkValues[index])) {
+      assert.equal(Number.isNaN(compactRoundTrip.lines[index]), true, `NaN marker at ${index} must round-trip`);
+    } else {
+      assert.equal(compactRoundTrip.lines[index], inkValues[index], `Float32 precision at ${index} must be exact`);
+    }
+  }
 
   const operation = externalOperation({
     uuid: "annotation-1",
@@ -175,6 +196,44 @@ test("free-highlight payloads are distinguished from text highlights for lossles
   assert.equal(externalKindForEditor({ annotationType: 9, quadPoints: [1, 2, 3, 4], outlines: { points: [] } }), "Highlight");
   assert.equal(externalKindForEditor({ annotationType: 9, quadPoints: null, outlines: { points: [0, 1, 2] } }), "InkHighlight");
   assert.equal(externalKindForEditor({ annotationType: 9, inkLists: [[0, 1, 2]] }), "InkHighlight");
+});
+
+test("schema 2 snapshots synthesize deletion operations from a compact tombstone ledger", () => {
+  const { validateExternalAnnotations, decodeExternalValue, decodeBase64 } = evaluateHelpers(
+    ["validateExternalAnnotations", "decodeExternalValue", "decodeBase64"],
+    `
+      const EXTERNAL_ANNOTATION_KINDS = new Set(["Underline", "Square", "Highlight", "Ink", "InkHighlight", "FreeText"]);
+      function normalizeSyncKind(value) { return value; }
+      function canonicalPdfAnnotationRef(value) {
+        if (typeof value !== "string") return null;
+        const match = /^(\\d+)\\s*(?:R)?(\\d+)?$/.exec(value);
+        return match ? match[1] + "R" + (match[2] === "0" ? "" : match[2] || "") : null;
+      }
+      function normalizeSyncValue(value) { return value; }
+    `,
+  );
+  const tombstone = {
+    uuid: "deleted-annotation",
+    kind: "Ink",
+    pageIndex: 3,
+    embeddedRef: null,
+    clock: { timestamp: 123, logical: 1, deviceId: "device-a", opId: "delete-1" },
+  };
+  const normalized = validateExternalAnnotations({
+    schemaVersion: 2,
+    annotations: [],
+    tombstones: [tombstone],
+    compactInkEncoding: true,
+  });
+  assert.equal(normalized.annotations.length, 1);
+  assert.equal(normalized.annotations[0].deleted, true);
+  assert.equal(normalized.annotations[0].editor, null);
+  assert.equal(normalized.compactInkEncoding, true);
+  assert.throws(() => validateExternalAnnotations({
+    schemaVersion: 2,
+    annotations: [],
+    tombstones: [{ ...tombstone, deleted: true }],
+  }), /must not contain deleted operation rows/);
 });
 
 test("hydration waits for host source confirmation and touches only exact embedded references", () => {

@@ -31,6 +31,7 @@ function makeAdapter(shared = { files: new Map(), folders: new Set() }) {
       files.set(to, files.get(from));
       files.delete(from);
     },
+    async remove(path) { files.delete(path); },
     async list(path) {
       const prefix = `${path}/`;
       const directFiles = [];
@@ -134,8 +135,10 @@ test("overlapping path-index writes merge unrelated documents without making the
     storeB.registerDocument({ sourcePath: "FolderB/same.pdf" }),
   ]);
   const index = JSON.parse(shared.files.get("00_Archive/20_PDFData/_index.json"));
-  assert.equal(index.documents["FolderA/same.pdf"].documentId, a.documentId);
-  assert.equal(index.documents["FolderB/same.pdf"].documentId, b.documentId);
+  assert.equal(index.schemaVersion, 1,
+    "the legacy-readable index remains active until each registered device confirms a compact checkpoint");
+  assert.equal(index.documents["FolderA/same.pdf"].docKey, a.docKey);
+  assert.equal(index.documents["FolderB/same.pdf"].docKey, b.docKey);
   assert.notEqual(a.docKey, b.docKey);
 });
 
@@ -196,11 +199,15 @@ test("delete tombstones win over older updates regardless of arrival order and r
   await annotationsB.appendOperations({ document: documentB, batchId: "delete", operations: [tombstone("ann", "Ink", "B", 30)] });
   await annotationsA.appendOperations({ document, batchId: "late-old-edit", operations: [live("ann", "Ink", "A", 25)] });
   let snapshot = await annotationsA.readDocument(document);
-  assert.equal(snapshot.annotations[0].deleted, true);
+  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.annotations.length, 0);
+  assert.deepEqual(snapshot.tombstones.map((row) => row.uuid), ["ann"]);
+  assert.equal(Object.hasOwn(snapshot.tombstones[0], "deleted"), false);
 
   await annotationsA.appendOperations({ document, batchId: "newer-edit", operations: [live("ann", "Ink", "A", 31, { points: [1, 2] })] });
   snapshot = await annotationsA.readDocument(document);
-  assert.equal(snapshot.annotations[0].deleted, false, "newer edit deterministically supersedes the tombstone");
+  assert.equal(snapshot.tombstones.length, 0, "a newer edit deterministically supersedes the tombstone");
+  assert.equal(snapshot.annotations[0].deleted, false);
   assert.deepEqual(snapshot.annotations[0].payload, { points: [1, 2] });
 });
 
@@ -260,7 +267,7 @@ test("LWW tie breaks deterministically by logical counter, deviceId, then opId",
   assert.equal(snapshot.annotations[0].payload.text, "opid-wins");
 });
 
-test("snapshot is replay-derived cache: stale contents are rebuilt from immutable operation batches", async () => {
+test("verified checkpoint is a replay base and snapshot stores live annotations separately from tombstones", async () => {
   const { adapter, files } = makeAdapter();
   const annotations = store({ adapter, deviceId: "A", clock: () => 100 });
   const document = await annotations.registerDocument({ sourcePath: "book.pdf", source: { sourceHash: hash("pdf bytes") } });
@@ -272,10 +279,121 @@ test("snapshot is replay-derived cache: stale contents are rebuilt from immutabl
   assert.equal(first.annotations[0].uuid, "u1");
   assert.equal(first.source.sourcePath, "book.pdf");
   assert.equal(first.source.sourceHash, hash("pdf bytes"), "full source hashes keep their exact algorithm prefix");
+  const storedSnapshot = JSON.parse(files.get(path));
+  assert.equal(storedSnapshot.schemaVersion, 2);
+  assert.equal(storedSnapshot.kind, "pdf-annotation-snapshot-pointer");
+  assert.equal(storedSnapshot.checkpointPath, annotations.pathsFor(document).checkpoint);
+  assert.equal(Object.hasOwn(storedSnapshot, "annotations"), false,
+    "the basename cache points at the checkpoint without duplicating document payloads");
+  const checkpoint = JSON.parse(files.get(annotations.pathsFor(document).checkpoint));
+  assert.ok(checkpoint.integrity);
+  assert.equal(checkpoint.annotations[0].deleted, false);
+  assert.deepEqual(checkpoint.tombstones, []);
+  assert.equal(checkpoint.annotations.some((row) => row.deleted === true), false);
   files.set(path, JSON.stringify({ schemaVersion: 1, annotations: [], batchFiles: first.batchFiles }));
   const rebuilt = await annotations.readDocument(document);
   assert.equal(rebuilt.annotations[0].uuid, "u1");
-  assert.equal(JSON.parse(files.get(path)).annotations[0].uuid, "u1");
+  assert.equal(JSON.parse(files.get(path)).kind, "pdf-annotation-snapshot-pointer");
+  assert.equal(JSON.parse(files.get(annotations.pathsFor(document).checkpoint)).annotations[0].uuid, "u1");
+  assert.equal((await annotations.listOperationBatches(document)).length, 0,
+    "after checkpoint acknowledgement, covered batches can be physically compacted");
+});
+
+test("checkpoint backup restores compacted state and late covered batches cannot resurrect annotations", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "solo-device" });
+  const document = await annotations.registerDocument({ sourcePath: "checkpoint.pdf" });
+  await annotations.appendOperations({ document, batchId: "live", operations: [live("ann", "Ink", "solo-device", 10)] });
+  await annotations.appendOperations({ document, batchId: "delete", operations: [tombstone("ann", "Ink", "solo-device", 20)] });
+  const operationPath = `${annotations.pathsFor(document).deviceOperations}/delete.json`;
+  const deletedBatch = files.get(operationPath);
+  const before = await annotations.readDocument(document);
+  assert.deepEqual(before.tombstones.map((row) => row.uuid), ["ann"]);
+  files.set(operationPath, deletedBatch);
+  const primary = annotations.pathsFor(document).checkpoint;
+  files.set(primary, "corrupt checkpoint");
+  const recovered = await annotations.readDocument(document);
+  assert.deepEqual(recovered.tombstones.map((row) => row.uuid), ["ann"],
+    "the verified backup is a sufficient replay base after the primary is damaged");
+  assert.equal(files.get(primary).includes('"kind":"pdf-annotation-checkpoint"'), true);
+  assert.equal((await annotations.listOperationBatches(document)).length, 0,
+    "an exact covered batch that reappears after sync is ignored and compacted again");
+});
+
+test("legacy Float32 wrappers are losslessly compacted only after the checkpoint upgrade barrier", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "upgrade-device" });
+  const document = await annotations.registerDocument({ sourcePath: "legacy-ink.pdf" });
+  const oldEditor = {
+    annotationType: "Ink",
+    pageIndex: 0,
+    paths: {
+      lines: { $type: "Float32Array", values: [0.125, 1.5, { $type: "NonFiniteNumber", value: "NaN" }, -0] },
+      points: { $type: "Float32Array", values: [0.125, 1.5, { $type: "NonFiniteNumber", value: "NaN" }, -0] },
+    },
+  };
+  await annotations.appendOperations({ document, batchId: "old-ink", operations: [live(
+    "ink", "Ink", "upgrade-device", 20, { editor: oldEditor },
+  )] });
+  const upgraded = await annotations.readDocument(document);
+  assert.equal(upgraded.compactInkEncoding, true);
+  assert.equal(upgraded.annotations[0].payload.editor.paths.lines.$type, "Float32ArrayLE");
+  assert.equal(upgraded.annotations[0].payload.editor.paths.points.$type, "Float32ArrayLE");
+  const checkpoint = JSON.parse(files.get(annotations.pathsFor(document).checkpoint));
+  assert.equal(checkpoint.payloadEncoding, "float32le-base64-v1");
+  assert.equal(JSON.stringify(checkpoint).includes('"$type":"Float32Array"'), false);
+  assert.equal(checkpoint.annotations[0].payload.editor.paths.lines.length, 4);
+});
+
+test("every registered device must acknowledge the same checkpoint before GC; retirement rejects late writes", async () => {
+  const shared = makeAdapter();
+  const adapterA = makeAdapter(shared.shared).adapter;
+  const adapterB = makeAdapter(shared.shared).adapter;
+  const a = store({ adapter: adapterA, deviceId: "device-A" });
+  const b = store({ adapter: adapterB, deviceId: "device-B" });
+  const documentA = await a.registerDocument({ sourcePath: "shared.pdf" });
+  const documentB = await b.registerDocument({ sourcePath: "shared.pdf" });
+  await a.appendOperations({ document: documentA, batchId: "a", operations: [live("a1", "Ink", "device-A", 10)] });
+  await b.appendOperations({ document: documentB, batchId: "b", operations: [live("b1", "Ink", "device-B", 11)] });
+  const legacySnapshotPath = a.pathsFor(documentA).snapshot;
+  const legacySnapshotText = JSON.stringify({ schemaVersion: 1, kind: "pdf-annotation-snapshot", annotations: [] });
+  shared.files.set(legacySnapshotPath, legacySnapshotText);
+  const first = await a.readDocument(documentA);
+  assert.equal(shared.files.get(legacySnapshotPath), legacySnapshotText,
+    "a pre-upgrade device can still read its legacy snapshot until all devices confirm the compact checkpoint");
+  assert.equal((await a.listOperationBatches(documentA)).length, 2,
+    "the unacknowledged second device prevents garbage collection");
+  const firstStatus = await a.inspectDevices(documentA);
+  assert.equal(firstStatus.devices.find((row) => row.deviceId === "device-B").acknowledged, false);
+  const second = await b.readDocument(documentB);
+  assert.notEqual(second.checkpointHash, first.checkpointHash,
+    "the last legacy-format acknowledgement starts a separate compact-checkpoint phase");
+  assert.equal((await b.listOperationBatches(documentB)).length, 2,
+    "the old checkpoint acknowledgement is not enough to collect batches");
+  const acksAfterConversion = await b.inspectDevices(documentB);
+  assert.equal(acksAfterConversion.devices.find((row) => row.deviceId === "device-A").acknowledged, false);
+  const final = await a.readDocument(documentA);
+  assert.equal(final.checkpointHash, second.checkpointHash,
+    "the upgraded device must read and confirm the exact compact checkpoint");
+  assert.equal(final.compactInkEncoding, true);
+  assert.equal((await a.listOperationBatches(documentA)).length, 0,
+    "covered batches are removed only after every current checkpoint acknowledgement");
+  assert.equal(JSON.parse(shared.files.get(legacySnapshotPath)).kind, "pdf-annotation-snapshot-pointer",
+    "the compact pointer replaces the legacy snapshot only after the final acknowledgement");
+  const oldBatch = {
+    schemaVersion: 1, formatVersion: 2, pluginVersion: "0.7.0",
+    kind: "annotation-operation-batch", documentId: documentA.documentId, docKey: documentA.docKey,
+    deviceId: "device-B", batchId: "late-retired", createdAt: 50,
+    operations: [live("revive", "Ink", "device-B", 50)],
+  };
+  const oldPath = `${a.pathsFor(documentA).operations}/device-B/late-retired.json`;
+  shared.files.set(oldPath, JSON.stringify(oldBatch));
+  await a.retireDevice({ document: documentA, targetDeviceId: "device-B", confirmedCheckpointHash: final.checkpointHash });
+  await assert.rejects(b.appendOperations({ document: documentB, batchId: "after-retire",
+    operations: [live("blocked", "Ink", "device-B", 60)] }), { code: "PDF_ANNOTATION_DEVICE_RETIRED" });
+  const afterRetirement = await a.readDocument(documentA);
+  assert.equal(afterRetirement.annotations.some((row) => row.uuid === "revive"), false,
+    "a late batch from a retired device cannot alter the checkpoint projection");
 });
 
 test("rename preserves identity and updates source mapping; a later path copy gets a new identity", async () => {
@@ -308,8 +426,9 @@ test("rename preserves identity and updates source mapping; a later path copy ge
   const repaired = await annotations.documentForPath("B/Renamed.pdf");
   assert.equal(repaired.documentId, original.documentId,
     "a malformed disposable index is reconstructed from immutable identity events");
-  assert.equal(JSON.parse(files.get("00_Archive/20_PDFData/_index.json")).documents["B/Renamed.pdf"].documentId,
-    original.documentId, "the recovered index is rewritten after event replay");
+  const metadata = JSON.parse(files.get(annotations.pathsFor(repaired).metadata));
+  assert.equal(metadata.documentId, original.documentId);
+  assert.deepEqual(metadata.source.orderedPageIdentities, ["p1"]);
 
   const copy = await annotations.registerDocument({ sourcePath: "B/Copy.pdf" });
   assert.notEqual(copy.documentId, original.documentId);
@@ -411,4 +530,173 @@ test("legacy UUID/ref mappings survive index loss and are tied to the source ide
     document: rebuilt,
     identities: [rows[0], { ...rows[0], ref: "78 0 R" }],
   }), { code: "PDF_ANNOTATION_LEGACY_IDENTITY_AMBIGUOUS" });
+});
+
+test("0.7 migrates page and legacy identity payloads out of the root index and emits incremental identity events", async () => {
+  const { adapter, files } = makeAdapter();
+  const originalStore = store({ adapter, deviceId: "migration-writer" });
+  const source = {
+    sourceHash: hash("migration PDF"),
+    size: 500_000,
+    pageCount: 357,
+    orderedPageIdentities: Array.from({ length: 357 }, (_, index) => `ref:${index + 1}R`),
+  };
+  const document = await originalStore.registerDocument({ sourcePath: "Books/Large.pdf", source });
+  const legacyIdentities = Array.from({ length: 53 }, (_, index) => ({
+    uuid: `legacy-${String(index).padStart(3, "0")}`,
+    ref: `${index + 1} 0 R`,
+    pageIndex: index,
+    kind: "Ink",
+    deleted: false,
+    timestamp: 1,
+    logical: 0,
+    actorId: "legacy",
+    operationId: `legacy-${index}`,
+  }));
+  const oldRecord = { ...document, legacyIdentities, legacyIdentityScanComplete: true };
+  files.set("00_Archive/20_PDFData/_index.json", JSON.stringify({
+    schemaVersion: 1,
+    documents: { "Books/Large.pdf": oldRecord },
+  }));
+  files.delete(originalStore.pathsFor(document).metadata);
+
+  const upgraded = store({ adapter, deviceId: "migration-reader" });
+  const migrated = await upgraded.documentForPath("Books/Large.pdf");
+  assert.equal(migrated.documentId, document.documentId);
+  assert.equal(migrated.source.orderedPageIdentities.length, 357);
+  assert.equal(migrated.legacyIdentities.length, 53);
+  const compatibilityIndex = JSON.parse(files.get("00_Archive/20_PDFData/_index.json"));
+  assert.equal(compatibilityIndex.schemaVersion, 1,
+    "the legacy index stays readable while a device has not confirmed the checkpoint");
+  assert.equal(compatibilityIndex.documents["Books/Large.pdf"].docKey, document.docKey);
+  const metadata = JSON.parse(files.get(upgraded.pathsFor(migrated).metadata));
+  assert.equal(metadata.source.orderedPageIdentities.length, 357);
+  assert.equal(metadata.legacyIdentities.length, 53);
+
+  await upgraded.readDocument(migrated);
+  const indexText = files.get("00_Archive/20_PDFData/_index.json");
+  const index = JSON.parse(indexText);
+  assert.deepEqual(index.documents, { "Books/Large.pdf": document.docKey });
+  assert.doesNotMatch(indexText, /orderedPageIdentities|legacyIdentities/);
+
+  const eventRoot = upgraded.pathsFor(migrated).identityEvents;
+  const eventFiles = (await adapter.list(eventRoot)).files;
+  const createEvent = JSON.parse(files.get(eventFiles[0]));
+  assert.equal(Object.hasOwn(createEvent.source, "orderedPageIdentities"), false);
+  assert.equal(Object.hasOwn(createEvent, "legacyIdentities"), false);
+
+  const nextIdentities = [...legacyIdentities, {
+    uuid: "legacy-new",
+    ref: "900 0 R",
+    pageIndex: 356,
+    kind: "Square",
+    deleted: false,
+    timestamp: 2,
+    logical: 0,
+    actorId: "legacy",
+    operationId: "legacy-new",
+  }];
+  await upgraded.updateLegacyIdentities({ document: migrated, identities: nextIdentities });
+  const latestEvents = (await upgraded.listOperationBatches(migrated));
+  assert.equal(latestEvents.length, 0, "identity changes do not create annotation operation batches");
+  const eventPaths = await (async () => {
+    const listing = await adapter.list(eventRoot);
+    return listing.files;
+  })();
+  const deltaEvent = eventPaths.map((path) => JSON.parse(files.get(path)))
+    .find((row) => row.kind === "document-legacy-identities" && row.legacyDeltas?.upsert?.length === 1);
+  assert.ok(deltaEvent, "subsequent identity updates append only the changed identity");
+  assert.equal(Object.hasOwn(deltaEvent, "legacyIdentities"), false);
+});
+
+test("idle registered devices block compact-format and root-index cutover until they acknowledge", async () => {
+  const shared = makeAdapter();
+  const adapterA = makeAdapter(shared.shared).adapter;
+  const adapterB = makeAdapter(shared.shared).adapter;
+  const a = store({ adapter: adapterA, deviceId: "idle-device-A" });
+  const b = store({ adapter: adapterB, deviceId: "idle-device-B" });
+  const documentA = await a.registerDocument({ sourcePath: "Books/Idle.pdf",
+    source: { pageCount: 1, orderedPageIdentities: ["page-1"] } });
+  const deviceDirectory = a.pathsFor(documentA).deviceStates;
+  shared.folders.add("00_Archive");
+  shared.folders.add("00_Archive/20_PDFData");
+  shared.folders.add("00_Archive/20_PDFData/checkpoints");
+  shared.folders.add(deviceDirectory);
+  shared.files.set(`${deviceDirectory}/idle-device-B.json`, JSON.stringify({
+    schemaVersion: 1,
+    deviceId: "idle-device-B",
+    pluginVersion: "0.6.0",
+    checkpointHash: "sha256-v1:" + "0".repeat(64),
+    retired: false,
+    updatedAt: 1,
+  }));
+
+  const initial = await a.readDocument(documentA);
+  assert.equal(initial.compactInkEncoding, false);
+  const firstCheckpoint = JSON.parse(shared.files.get(a.pathsFor(documentA).checkpoint));
+  assert.deepEqual(firstCheckpoint.knownDevices, ["idle-device-A", "idle-device-B"]);
+  const oldIndex = JSON.parse(shared.files.get("00_Archive/20_PDFData/_index.json"));
+  assert.equal(oldIndex.schemaVersion, 1,
+    "route-only index migration remains gated while any registered device is old");
+
+  const documentB = await b.registerDocument({ sourcePath: "Books/Idle.pdf" });
+  const compactPending = await b.readDocument(documentB);
+  assert.equal(compactPending.compactInkEncoding, false,
+    "one device acknowledging the compact checkpoint is not enough");
+  assert.equal((await b.inspectDevices(documentB)).devices.find((row) => row.deviceId === "idle-device-A").acknowledged, false);
+  const final = await a.readDocument(documentA);
+  assert.equal(final.compactInkEncoding, true);
+  const routeIndex = JSON.parse(shared.files.get("00_Archive/20_PDFData/_index.json"));
+  assert.equal(routeIndex.schemaVersion, 2);
+  assert.deepEqual(routeIndex.documents, { "Books/Idle.pdf": documentA.docKey });
+});
+
+test("a missing per-document metadata file behind a route index fails closed", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "metadata-reader" });
+  const document = await annotations.registerDocument({ sourcePath: "Books/Metadata.pdf",
+    source: { pageCount: 1, orderedPageIdentities: ["page-ref"] } });
+  const metadataPath = annotations.pathsFor(document).metadata;
+  files.delete(metadataPath);
+  files.set("00_Archive/20_PDFData/_index.json", JSON.stringify({
+    schemaVersion: 2,
+    documents: { "Books/Metadata.pdf": document.docKey },
+  }));
+
+  await assert.rejects(annotations.documentForPath("Books/Metadata.pdf"), {
+    code: "PDF_ANNOTATION_METADATA_PENDING",
+  });
+  assert.equal(files.has(metadataPath), false,
+    "identity events cannot silently replace missing page and legacy metadata");
+});
+
+test("a stale legacy index cannot overwrite newer per-document identity metadata", async () => {
+  const { adapter, files } = makeAdapter();
+  const writer = store({ adapter, deviceId: "metadata-writer" });
+  const initial = await writer.registerDocument({ sourcePath: "Books/MetadataRace.pdf",
+    source: { sourceHash: hash("stable PDF"), pageCount: 1, orderedPageIdentities: ["page-ref"] } });
+  const legacy = {
+    uuid: "legacy-current",
+    ref: "42 0 R",
+    pageIndex: 0,
+    kind: "Ink",
+    deleted: false,
+    timestamp: 1,
+    logical: 0,
+    actorId: "legacy",
+    operationId: "legacy-current",
+  };
+  const current = await writer.updateLegacyIdentities({ document: initial, identities: [legacy] });
+  const metadataPath = writer.pathsFor(current).metadata;
+  const metadataBefore = files.get(metadataPath);
+  files.set("00_Archive/20_PDFData/_index.json", JSON.stringify({
+    schemaVersion: 1,
+    documents: { "Books/MetadataRace.pdf": initial },
+  }));
+
+  const reader = store({ adapter, deviceId: "metadata-reader" });
+  const recovered = await reader.documentForPath("Books/MetadataRace.pdf");
+  assert.deepEqual(recovered.legacyIdentities.map((row) => row.uuid), ["legacy-current"]);
+  assert.equal(files.get(metadataPath), metadataBefore,
+    "reading an old-format route cache must not replace newer document metadata");
 });
