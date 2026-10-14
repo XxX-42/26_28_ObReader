@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -931,6 +932,50 @@ test("open uses a stable session ID and sends current path, filename, and defaul
   assert.equal(frame.sent[0].autoSave, true);
 });
 
+test("opening admission stays held through PDF parse until the matching opened ACK", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/open-admission.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  const view = harness.createView();
+  const frame = { sent: [], postMessage(message) { this.sent.push(message); } };
+  view.iframe = { contentWindow: frame };
+
+  await view.openFile(file);
+  assert.equal(view.openAcknowledged, false,
+    "a requested open is not eligible for sync until PDF.js confirms parsing");
+  const admission = view.pendingOpenAdmission;
+  assert.ok(admission, "the host retains the path admission after read/initialize");
+  view.ready = true;
+  view.sendPendingDocument();
+  assert.equal(frame.sent.at(-1).type, "open");
+  assert.equal(view.pendingOpenAdmission, admission,
+    "posting open is not treated as proof that PDF.js finished parsing");
+
+  const opened = {
+    source: frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: view.token,
+      type: "opened",
+      documentId: view.documentId,
+      openRequest: view.openRequest - 1,
+    },
+  };
+  view.onMessage(opened);
+  assert.equal(view.pendingOpenAdmission, admission, "a stale open ACK cannot release the lease");
+  assert.equal(view.openAcknowledged, false, "a stale ACK cannot enable reconciliation");
+  opened.data.openRequest = view.openRequest;
+  opened.data.revision = 0;
+  opened.data.confirmedRevision = 0;
+  view.onMessage(opened);
+  assert.equal(view.pendingOpenAdmission, null,
+    "only the matching parsed open releases the path admission");
+  assert.equal(view.openAcknowledged, true,
+    "only the matching parsed open enables reconciliation");
+  harness.plugin.pdfSync.dispose();
+});
+
 test("a not-ready Reader closes only when clean or backed by an exact durable draft", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -1394,6 +1439,7 @@ test("recovery protocol persists a draft without writing the original PDF", asyn
     type: "recovered",
     token: view.token,
     documentId: view.documentId,
+    openRequest: view.openRequest,
     requestId: "recover-disabled-autosave",
     revision: 17,
     rendererGeneration: view.rendererGeneration,
@@ -1409,6 +1455,221 @@ test("recovery protocol persists a draft without writing the original PDF", asyn
   const restoredPath = await harness.plugin.restoreLatestRecovery();
   assert.match(restoredPath, /^PDF Recovery\/recovery-draft \(Recovered /);
   assert.deepEqual([...harness.files.get(restoredPath).bytes], [4, 5, 6]);
+});
+
+test("startup discovers close recovery only after initializing its recovery directory", async () => {
+  const harness = createHarness();
+  const recoveryDirectory = ".obsidian/plugins/pdf-web-reader/.recovery";
+  const candidateId = "startup-recovery-order";
+  const raw = Uint8Array.from([6, 5, 4]);
+  const outputHash = createHash("sha256").update(raw).digest("hex");
+  await harness.app.vault.adapter.mkdir(recoveryDirectory);
+  harness.storedFiles.set(`${recoveryDirectory}/${candidateId}.pdf`, raw);
+  harness.storedFiles.set(`${recoveryDirectory}/${candidateId}.json`, JSON.stringify({
+    schema: 1,
+    documentId: "startup-document",
+    candidateId,
+    originalPath: "Books/startup-order.pdf",
+    filename: "startup-order.pdf",
+    openRequest: 1,
+    revision: 1,
+    origin: "recovery",
+    requestId: "startup-recovery-order",
+    reason: "auto-save-disabled",
+    candidateFile: `${candidateId}.pdf`,
+    createdAt: "2026-10-14T01:00:00.000Z",
+    status: "draft",
+    completed: true,
+    outputHash,
+    outputLength: raw.byteLength,
+  }));
+
+  await harness.plugin.onload();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(harness.plugin.recoveryDirectory, recoveryDirectory);
+  assert.equal(harness.plugin.closeWritebackJobs.get(candidateId)?.status, "paused",
+    "startup scan sees the recovery-only candidate and records its persistent status");
+});
+
+test("a torn close-intent metadata write leaves the raw recovery PDF discoverable", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/torn-close-intent.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  const view = harness.createView();
+  const replies = [];
+  view.file = file;
+  view.documentFile = file;
+  view.requestedPath = file.path;
+  view.originalBytes = Uint8Array.from([1, 2, 3]);
+  view.loadedBaseBytes = view.originalBytes;
+  view.currentRevision = 1;
+  view.iframe = { contentWindow: { postMessage: (message) => replies.push(message) } };
+  harness.plugin.setDocumentBaseline(file.path, view.originalBytes);
+
+  const adapter = harness.app.vault.adapter;
+  const originalWrite = adapter.write.bind(adapter);
+  let torn = false;
+  adapter.write = async (targetPath, value) => {
+    if (targetPath.endsWith(".json") && String(value).includes('"closeWriteback"')) {
+      torn = true;
+      harness.storedFiles.set(targetPath, "{\"truncated\":");
+      throw new Error("injected torn metadata write");
+    }
+    return originalWrite(targetPath, value);
+  };
+
+  const raw = Uint8Array.from([9, 8, 7, 6]);
+  await view.recoverFile(raw.buffer, view.documentId, "close-writeback-torn", 1,
+    "close-writeback", {
+      closeRecovery: true,
+      openRequest: view.openRequest,
+      actorId: "close-actor-123",
+      operations: [],
+      newAnnotations: [],
+    });
+
+  assert.equal(torn, true, "the failure is injected after the raw PDF and immutable descriptor are verified");
+  assert.equal(replies.at(-1).type, "recovered",
+    "the already verified raw recovery remains sufficient for a close ACK");
+  assert.equal(replies.at(-1).closeWritebackQueued, undefined,
+    "a failed intent attachment must not claim background writeback");
+  assert.equal(file.writes, 0);
+  const candidates = await harness.plugin.listRecoveryCandidates();
+  assert.equal(candidates.length, 1, "the immutable raw metadata descriptor recovers the torn candidate index");
+  assert.equal(candidates[0].metadata.closeWriteback, undefined,
+    "the fallback exposes the original recovery candidate without a damaged intent");
+  assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(candidates[0]))], [...raw]);
+});
+
+test("saved tombstones suppress rawmeta replay and missing primary JSON still restores raw bytes", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/rawmeta-fallback.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  const view = harness.createView();
+  view.file = file;
+  view.documentFile = file;
+  view.requestedPath = file.path;
+  view.originalBytes = Uint8Array.from([1, 2, 3]);
+  view.loadedBaseBytes = view.originalBytes;
+
+  const makeCandidate = async (requestId, data) => {
+    const record = await harness.plugin.writeRecoveryCandidate({
+      view,
+      documentId: view.documentId,
+      filename: file.basename,
+      data: Uint8Array.from(data),
+      originalBytes: view.originalBytes,
+      documentPath: file.path,
+      openRequest: view.openRequest,
+      revision: 1,
+      origin: "recovery",
+      requestId,
+      reason: "close-writeback",
+      status: "draft",
+    });
+    await harness.plugin.attachCloseWritebackIntent(record, {
+      baseBytes: view.originalBytes,
+      documentId: view.documentId,
+      originalPath: file.path,
+      filename: file.basename,
+      openRequest: view.openRequest,
+      revision: 1,
+      requestId,
+      actorId: "rawmeta-test-actor",
+      operations: [],
+      newAnnotations: [],
+    });
+    return record;
+  };
+
+  const completed = await makeCandidate("saved-close-candidate", [1, 2, 9]);
+  const completedRawMeta = `${harness.plugin.recoveryDirectory}/${completed.metadata.candidateId}.rawmeta`;
+  await harness.plugin.markRecoveryCandidate(completed, { status: "saved" });
+  assert.equal(harness.storedFiles.has(completedRawMeta), true,
+    "the test leaves a crash-window rawmeta sidecar behind the valid tombstone");
+
+  const primaryMissing = await makeCandidate("missing-primary-candidate", [1, 2, 8]);
+  await harness.app.vault.adapter.remove(primaryMissing.metadataPath);
+
+  const incompletePrimary = await makeCandidate("incomplete-primary-candidate", [1, 2, 7]);
+  const incompleteMetadata = { ...incompletePrimary.metadata };
+  delete incompleteMetadata.outputHash;
+  delete incompleteMetadata.outputLength;
+  await harness.app.vault.adapter.write(incompletePrimary.metadataPath,
+    `${JSON.stringify(incompleteMetadata, null, 2)}\n`);
+
+  const candidates = await harness.plugin.listRecoveryCandidates();
+  assert.equal(candidates.some(({ metadata }) => metadata.candidateId === completed.metadata.candidateId), false,
+    "a valid saved tombstone must not fall back to the old raw draft");
+  const restored = candidates.find(({ metadata }) => metadata.candidateId === primaryMissing.metadata.candidateId);
+  assert.ok(restored, "the immutable raw descriptor reconstructs a candidate whose primary JSON is missing");
+  assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(restored))], [1, 2, 8]);
+  const restoredIncomplete = candidates.find(({ metadata }) => metadata.candidateId === incompletePrimary.metadata.candidateId);
+  assert.ok(restoredIncomplete,
+    "syntactically valid but incomplete close metadata falls back to the verified raw descriptor");
+  assert.equal(restoredIncomplete.metadata.outputHash, incompletePrimary.metadata.outputHash);
+  assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(restoredIncomplete))], [1, 2, 7]);
+});
+
+test("recovery cleanup keeps a saved tombstone while candidate or rawmeta deletion fails", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/partial-close-cleanup.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  const view = harness.createView();
+  view.file = file;
+  view.documentFile = file;
+  view.requestedPath = file.path;
+  view.originalBytes = Uint8Array.from([1, 2, 3]);
+  view.loadedBaseBytes = view.originalBytes;
+  const record = await harness.plugin.writeRecoveryCandidate({
+    view,
+    documentId: view.documentId,
+    filename: file.basename,
+    data: Uint8Array.from([1, 2, 4]),
+    originalBytes: view.originalBytes,
+    documentPath: file.path,
+    openRequest: view.openRequest,
+    revision: 1,
+    origin: "recovery",
+    requestId: "partial-cleanup-close",
+    reason: "close-writeback",
+    status: "draft",
+  });
+  await harness.plugin.attachCloseWritebackIntent(record, {
+    baseBytes: view.originalBytes,
+    documentId: view.documentId,
+    originalPath: file.path,
+    filename: file.basename,
+    openRequest: view.openRequest,
+    revision: 1,
+    requestId: "partial-cleanup-close",
+    actorId: "cleanup-test-actor",
+    operations: [],
+    newAnnotations: [],
+  });
+
+  const rawMetadataPath = `${harness.plugin.recoveryDirectory}/${record.metadata.candidateId}.rawmeta`;
+  const adapter = harness.app.vault.adapter;
+  const originalRemove = adapter.remove.bind(adapter);
+  adapter.remove = async (targetPath) => {
+    if (targetPath === record.candidatePath || targetPath === rawMetadataPath) {
+      throw new Error("injected partial recovery cleanup");
+    }
+    return originalRemove(targetPath);
+  };
+  await harness.plugin.removeRecoveryCandidate(record);
+
+  const primary = JSON.parse(await adapter.read(record.metadataPath));
+  assert.equal(primary.status, "saved", "the saved tombstone remains if a sidecar or payload survives");
+  assert.equal(await adapter.exists(record.candidatePath), true);
+  assert.equal(await adapter.exists(rawMetadataPath), true);
+  assert.equal((await harness.plugin.listRecoveryCandidates()).some(({ metadata }) =>
+    metadata.candidateId === record.metadata.candidateId), false,
+  "partial cleanup cannot resurrect a completed raw branch");
 });
 
 test("mapping failure still persists the exact serialized Ink draft before acknowledging recovery", async () => {
@@ -2425,8 +2686,9 @@ test("recovery completion follows verified bytes and failed candidates leave no 
   const write = adapter.write.bind(adapter);
   const writeBinary = adapter.writeBinary.bind(adapter);
   const order = [];
+  const isRecovery = path => path.startsWith(`${harness.plugin.recoveryDirectory}/`);
   adapter.write = async (...args) => {
-    order.push("metadata");
+    if (isRecovery(args[0])) order.push("metadata");
     return write(...args);
   };
   adapter.writeBinary = async (...args) => {
@@ -2444,10 +2706,11 @@ test("recovery completion follows verified bytes and failed candidates leave no 
   });
   assert.deepEqual(order, ["metadata", "binary", "metadata"]);
   await harness.plugin.removeRecoveryCandidate(record);
-  assert.equal(harness.storedFiles.size, 0);
+  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0);
 
   order.length = 0;
   adapter.write = async (...args) => {
+    if (!isRecovery(args[0])) return write(...args);
     order.push("metadata");
     throw new Error("metadata write failed");
   };
@@ -2463,7 +2726,7 @@ test("recovery completion follows verified bytes and failed candidates leave no 
     /metadata write failed/,
   );
   assert.deepEqual(order, ["metadata"]);
-  assert.equal(harness.storedFiles.size, 0, "No unindexed recovery bytes are written");
+  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0, "No unindexed recovery bytes are written");
 
   adapter.write = write;
   adapter.writeBinary = async (...args) => {
@@ -2481,6 +2744,6 @@ test("recovery completion follows verified bytes and failed candidates leave no 
     }),
     /binary write failed/,
   );
-  assert.equal(harness.storedFiles.size, 0, "A failed binary write removes its pending metadata");
+  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0, "A failed binary write removes its pending metadata");
   assert.equal((await harness.plugin.listRecoveryCandidates()).length, 0);
 });

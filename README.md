@@ -6,14 +6,67 @@ back to the same file. No local web server, Windows launcher, external browser,
 Python, separately installed Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.5.10)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.5.20)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
 
-The latest [0.5.10 three-file package](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip)
+The latest [0.5.20 three-file package](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)
+adds transaction-linked host timing for recovery, revision checks, merge, source read/write/readback,
+checkpoint confirmation, and cleanup. It adds timing instrumentation only; it does not claim a save-speed improvement.
+The prior [0.5.19 three-file package](dist/pdf-web-reader-0.1general-0.5.19-candidate.zip)
+decodes large embedded merge ledgers in bounded chunks and hardens PDF.js Ink
+drawing-session cleanup against stale pointer listeners and missing in-flight
+stroke state. It addresses the `Maximum call stack size exceeded` failure and
+the reported pen-state errors; the iPad still needs a device-side recheck.
+The prior [0.5.18 three-file package](dist/pdf-web-reader-0.1general-0.5.18-candidate.zip)
+added stack-overflow context and the originating PDF merge Worker stack to
+diagnostic JSON. The prior [0.5.17 three-file package](dist/pdf-web-reader-0.1general-0.5.17-candidate.zip)
+removes full-page fingerprinting from ordinary opens and from later ordinary saves,
+including the checkpoint three-way merge. On a 120-page, 16.85 MB synthetic PDF,
+the first save fingerprints the legacy baseline once; each of the next nine saves
+uses zero baseline pages and one dirty draft page. `prepareLocal` P50/P90 measured
+855/1,132 ms on desktop and 727/942 ms in Obsidian mobile simulation. Total save
+P50 remained 6.21/5.30 seconds, so the remaining write and recovery work still
+dominates. See [the acceptance record](GENERAL_ACCEPTANCE.md) for test results,
+memory scope, failure evidence, and the limitation that mobile simulation is not
+physical iPad validation.
+The prior [0.5.16 three-file package](dist/pdf-web-reader-0.1general-0.5.16-candidate.zip)
+added page-count guards and persisted ordered page identities.
+The prior [0.5.15 three-file package](dist/pdf-web-reader-0.1general-0.5.15-candidate.zip)
+adds per-stage PDF save timing to diagnostic JSON. The prior
+[0.5.14 three-file package](dist/pdf-web-reader-0.1general-0.5.14-candidate.zip)
+handles a PDF.js draft that removes a saved annotation but still carries the
+previous live merge ledger. Only a newer, exact-identity delete operation can
+explain that missing annotation; the output persists its deletion tombstone.
+Undo/Redo tracks restored saved editors even when PDF.js serializes them to null.
+A same-content upsert with a newer operation clock participates in LWW.
+Unexplained missing annotations, corrupt base/checkpoint ledgers and uncertain
+writes still stop saving. Old recovery candidates remain untouched.
+
+The prior [0.5.13 three-file package](dist/pdf-web-reader-0.1general-0.5.13-candidate.zip)
+closes an edited Reader after its latest frozen revision has a verified durable
+recovery copy, then completes PDF writeback in a plugin-owned background job.
+Saving progress remains visible after the Reader closes. Cross-device merge and
+phase-aware disk verification remain required; recovery is retained on failure.
+PDF.js serialization and recovery verification still precede closing. App
+suspension or termination can stop background work; a durable intent is required
+for safe resumption, and uncertain writes must not be blindly replayed.
+
+The prior [0.5.12 three-file package](dist/pdf-web-reader-0.1general-0.5.12-candidate.zip)
+accepts verified prefix-delta recovery evidence as well as full recovery PDFs.
+The 0.5.11 physical iPad log still showed five blocked saves: its compatibility
+filter excluded the delta format emitted by the actual recovery writer.
+
+The prior [0.5.11 three-file package](dist/pdf-web-reader-0.1general-0.5.11-candidate.zip)
+addresses the pending-checkpoint save block found in the exported iPad runtime
+JSON. Detailed failure evidence is retained locally; physical iPad verification
+of this candidate remains pending. Runtime records now export through the visible
+diagnostic JSON folder; see [LOCAL_RUNTIME_LOG.md](LOCAL_RUNTIME_LOG.md).
+
+The prior [0.5.10 three-file package](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip)
 fixes retained live Ink serialization and commits strokes completed during an
 in-flight save before capturing the next revision. Host-confirmed clean flags
 do not mean the PDF.js loaded bytes already contain those editors. Save and

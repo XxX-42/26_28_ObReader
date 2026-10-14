@@ -14,7 +14,7 @@ import {
 import mergeCore from "../plugin/pdf-merge-core.cjs";
 
 const { prepareLocal, merge, inspect } = mergeCore;
-const { getPageFingerprint, refMaps } = mergeCore._internals;
+const { decodePdfString, getFastPageIdentities, getPageFingerprint, getDocumentRevisionToken, refMaps } = mergeCore._internals;
 const text = (value) => PDFHexString.fromText(value);
 
 function numberArray(doc, values) {
@@ -112,20 +112,24 @@ async function makeBase({ annotations = [], taggedRoot = false, pageCount = 1 } 
 
 async function editBranch(baseBytes, ref, changes = {}, extraAnnotations = []) {
   const doc = await PDFDocument.load(baseBytes, { updateMetadata: false });
-  const page = doc.getPages()[0];
+  const page = ref
+    ? doc.getPages().find((candidate) => candidate.node.lookupMaybe(PDFName.of("Annots"), PDFArray)
+      ?.asArray().some((item) => item instanceof PDFRef && item.toString() === ref.toString()))
+    : doc.getPages()[0];
+  const targetPage = page || doc.getPages()[0];
   if (ref) {
     const dict = doc.context.lookup(ref, PDFDict);
     if (changes.contents !== undefined) dict.set(PDFName.of("Contents"), text(changes.contents));
     if (changes.appearance !== undefined) addAppearance(doc, dict, changes.appearance);
     if (changes.remove) {
-      const annots = page.node.lookup(PDFName.of("Annots"), PDFArray);
+      const annots = targetPage.node.lookup(PDFName.of("Annots"), PDFArray);
       for (let index = annots.size() - 1; index >= 0; index -= 1) {
         const item = annots.get(index);
         if (item instanceof PDFRef && item.toString() === ref.toString()) annots.remove(index);
       }
     }
   }
-  const extraRefs = extraAnnotations.map((annotation) => addAnnotation(doc, 0, annotation));
+  const extraRefs = extraAnnotations.map((annotation) => addAnnotation(doc, annotation.pageIndex || 0, annotation));
   return { bytes: await doc.save({ useObjectStreams: false }), extraRefs };
 }
 
@@ -461,6 +465,371 @@ test("checkpoint UUIDs survive repeat-save, delete, tombstone carry-forward, and
   assert.equal(findIdentity(redone, uuid).ref, restored.ref);
 });
 
+test("prepareLocal accepts only an exact delete operation for an absent annotation in a stale draft ledger", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "saved before deletion" }] });
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(firstSave, (await inspect({ bytes: base.bytes })).identities[0].uuid);
+
+  // This models a PDF.js draft that inherits the last saved catalog ledger,
+  // while the editor has already removed the annotation from /Annots.
+  const draft = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+  const annots = draft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  const savedRef = refFromPdfJs(identity.ref);
+  for (let index = annots.size() - 1; index >= 0; index -= 1) {
+    const item = annots.get(index);
+    if (item instanceof PDFRef && item.toString() === savedRef.toString()) annots.remove(index);
+  }
+  const deletedDraftBytes = await draft.save({ useObjectStreams: false });
+
+  await assert.rejects(
+    inspect({ bytes: deletedDraftBytes }),
+    (error) => error.code === "PDF_MERGE_MISSING_TOMBSTONE",
+    "ordinary inspection must still reject a live ledger identity with no annotation or tombstone",
+  );
+
+  const deleted = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: deletedDraftBytes,
+    checkpointBytes: firstSave.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 200,
+      operationId: "delete-saved-square",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(deleted, identity.uuid).deleted, true);
+
+  const wrongRefOperation = operation({
+    uuid: identity.uuid,
+    ref: "999R",
+    kind: identity.kind,
+    timestamp: 201,
+    operationId: "delete-wrong-reference",
+    action: "delete",
+    pageIndex: identity.pageIndex,
+  });
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: firstSave.bytes,
+      draftBytes: deletedDraftBytes,
+      checkpointBytes: firstSave.bytes,
+      operations: [wrongRefOperation],
+      actorId: "actor-device-01",
+    }),
+    (error) => error.code === "PDF_MERGE_MISSING_TOMBSTONE",
+    "an unrelated reference must not explain the missing live annotation",
+  );
+
+  for (const [label, invalidOperation] of [
+    ["wrong page", operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 202,
+      operationId: "delete-wrong-page",
+      action: "delete",
+      pageIndex: identity.pageIndex + 1,
+    })],
+    ["missing page", operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 202,
+      operationId: "delete-missing-page",
+      action: "delete",
+      pageIndex: null,
+    })],
+    ["wrong kind", operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: "highlight",
+      timestamp: 203,
+      operationId: "delete-wrong-kind",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    ["missing kind", operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: null,
+      timestamp: 203,
+      operationId: "delete-missing-kind",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    ["unknown UUID", operation({
+      uuid: "not-a-saved-annotation",
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 205,
+      operationId: "delete-unknown-uuid",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+  ]) {
+    await assert.rejects(
+      prepareLocal({
+        baseBytes: firstSave.bytes,
+        draftBytes: deletedDraftBytes,
+        checkpointBytes: firstSave.bytes,
+        operations: [invalidOperation],
+        actorId: "actor-device-01",
+      }),
+      (error) => error.code === "PDF_MERGE_MISSING_TOMBSTONE",
+      `${label} delete evidence must not explain the missing live annotation`,
+    );
+  }
+});
+
+test("an older delete cannot explain an absent annotation after a newer saved upsert", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "before newer edit" }] });
+  const baseIdentity = (await inspect({ bytes: base.bytes })).identities[0];
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(firstSave, baseIdentity.uuid);
+
+  const edit = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+  edit.context.lookup(refFromPdfJs(identity.ref), PDFDict).set(PDFName.of("Contents"), text("newer saved edit"));
+  const newerSave = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: await edit.save({ useObjectStreams: false }),
+    checkpointBytes: firstSave.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 500,
+      operationId: "newer-square-edit",
+    })],
+    actorId: "actor-device-01",
+  });
+
+  const draft = await PDFDocument.load(newerSave.bytes, { updateMetadata: false });
+  const annots = draft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  const savedRef = refFromPdfJs(identity.ref);
+  for (let index = annots.size() - 1; index >= 0; index -= 1) {
+    const item = annots.get(index);
+    if (item instanceof PDFRef && item.toString() === savedRef.toString()) annots.remove(index);
+  }
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: newerSave.bytes,
+      draftBytes: await draft.save({ useObjectStreams: false }),
+      checkpointBytes: newerSave.bytes,
+      operations: [operation({
+        uuid: identity.uuid,
+        ref: identity.ref,
+        kind: identity.kind,
+        timestamp: 400,
+        operationId: "stale-square-delete",
+        action: "delete",
+        pageIndex: identity.pageIndex,
+      })],
+      actorId: "actor-device-01",
+    }),
+    (error) => error.code === "PDF_MERGE_MISSING_TOMBSTONE",
+    "a delete older than the saved live state cannot account for missing bytes",
+  );
+});
+
+test("a confirmed checkpoint tombstone can carry forward through a stale live draft ledger", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "saved square" }] });
+  const baseIdentity = (await inspect({ bytes: base.bytes })).identities[0];
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(firstSave, baseIdentity.uuid);
+
+  const removeAnnotation = async () => {
+    const draft = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+    const annots = draft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+    const ref = refFromPdfJs(identity.ref);
+    for (let index = annots.size() - 1; index >= 0; index -= 1) {
+      const item = annots.get(index);
+      if (item instanceof PDFRef && item.toString() === ref.toString()) annots.remove(index);
+    }
+    return draft.save({ useObjectStreams: false });
+  };
+  const staleDraftBytes = await removeAnnotation();
+  const confirmedDelete = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: staleDraftBytes,
+    checkpointBytes: firstSave.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 200,
+      operationId: "confirmed-square-delete",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    actorId: "actor-device-01",
+  });
+
+  const carried = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: staleDraftBytes,
+    checkpointBytes: confirmedDelete.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 100,
+      operationId: "older-idempotent-square-delete",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    actorId: "actor-device-01",
+  });
+  const tombstone = findIdentity(carried, identity.uuid);
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.timestamp, 200, "the older retry must preserve the confirmed tombstone clock");
+});
+
+test("an older checkpoint tombstone cannot eclipse a newer live base for the missing-draft exception", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "initial square" }] });
+  const baseIdentity = (await inspect({ bytes: base.bytes })).identities[0];
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(firstSave, baseIdentity.uuid);
+
+  const newerEdit = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+  newerEdit.context.lookup(refFromPdfJs(identity.ref), PDFDict).set(PDFName.of("Contents"), text("newer live base"));
+  const newerLiveBase = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: await newerEdit.save({ useObjectStreams: false }),
+    checkpointBytes: firstSave.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 500,
+      operationId: "newer-live-square-upsert",
+    })],
+    actorId: "actor-device-01",
+  });
+
+  const oldDeleteDraft = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+  const oldDeleteAnnots = oldDeleteDraft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  const savedRef = refFromPdfJs(identity.ref);
+  for (let index = oldDeleteAnnots.size() - 1; index >= 0; index -= 1) {
+    const item = oldDeleteAnnots.get(index);
+    if (item instanceof PDFRef && item.toString() === savedRef.toString()) oldDeleteAnnots.remove(index);
+  }
+  const olderCheckpointTombstone = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: await oldDeleteDraft.save({ useObjectStreams: false }),
+    checkpointBytes: firstSave.bytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 200,
+      operationId: "older-confirmed-square-delete",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    actorId: "actor-device-01",
+  });
+  assert.equal(findIdentity(olderCheckpointTombstone, identity.uuid).deleted, true);
+
+  const missingDraft = await PDFDocument.load(newerLiveBase.bytes, { updateMetadata: false });
+  const liveAnnots = missingDraft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  for (let index = liveAnnots.size() - 1; index >= 0; index -= 1) {
+    const item = liveAnnots.get(index);
+    if (item instanceof PDFRef && item.toString() === savedRef.toString()) liveAnnots.remove(index);
+  }
+
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: newerLiveBase.bytes,
+      draftBytes: await missingDraft.save({ useObjectStreams: false }),
+      checkpointBytes: olderCheckpointTombstone.bytes,
+      operations: [operation({
+        uuid: identity.uuid,
+        ref: identity.ref,
+        kind: identity.kind,
+        timestamp: 400,
+        operationId: "stale-square-delete-after-checkpoint-tombstone",
+        action: "delete",
+        pageIndex: identity.pageIndex,
+      })],
+      actorId: "actor-device-01",
+    }),
+    (error) => error.code === "PDF_MERGE_MISSING_TOMBSTONE",
+    "a stale checkpoint tombstone cannot hide the newer live base clock",
+  );
+});
+
+test("a delete bound to a checkpoint's reallocated ref remains verifiable", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "saved square" }] });
+  const baseIdentity = (await inspect({ bytes: base.bytes })).identities[0];
+  const firstSave = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-device-01",
+  });
+  const identity = findIdentity(firstSave, baseIdentity.uuid);
+
+  const checkpoint = await PDFDocument.load(firstSave.bytes, { updateMetadata: false });
+  const oldRef = refFromPdfJs(identity.ref);
+  const original = checkpoint.context.lookup(oldRef, PDFDict);
+  const copy = PDFDict.withContext(checkpoint.context);
+  for (const [key, value] of original.entries()) copy.set(key, value);
+  const newRef = checkpoint.context.register(copy);
+  const checkpointAnnots = checkpoint.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  for (let index = 0; index < checkpointAnnots.size(); index += 1) {
+    const item = checkpointAnnots.get(index);
+    if (item instanceof PDFRef && item.toString() === oldRef.toString()) checkpointAnnots.set(index, newRef);
+  }
+  const checkpointBytes = await checkpoint.save({ useObjectStreams: false });
+  const checkpointIdentity = findIdentity(await inspect({ bytes: checkpointBytes }), identity.uuid);
+  assert.notEqual(checkpointIdentity.ref, identity.ref);
+
+  const deletedDraft = await PDFDocument.load(checkpointBytes, { updateMetadata: false });
+  const deletedAnnots = deletedDraft.getPages()[identity.pageIndex].node.lookup(PDFName.of("Annots"), PDFArray);
+  for (let index = deletedAnnots.size() - 1; index >= 0; index -= 1) {
+    const item = deletedAnnots.get(index);
+    if (item instanceof PDFRef && item.toString() === newRef.toString()) deletedAnnots.remove(index);
+  }
+  const prepared = await prepareLocal({
+    baseBytes: firstSave.bytes,
+    draftBytes: await deletedDraft.save({ useObjectStreams: false }),
+    checkpointBytes,
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: checkpointIdentity.ref,
+      kind: identity.kind,
+      timestamp: 200,
+      operationId: "delete-reallocated-square",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+    actorId: "actor-device-01",
+  });
+  const tombstone = findIdentity(prepared, identity.uuid);
+  assert.equal(tombstone.deleted, true);
+  assert.equal(tombstone.timestamp, 200);
+});
+
 test("lossless checkpoint rewrite normalizes indirect stream lengths without weakening page-content lineage", async () => {
   const baseBytes = new Uint8Array(await readFile(new URL("./fixtures/tracemonkey.pdf", import.meta.url)));
   const firstDraft = await PDFDocument.load(baseBytes, { updateMetadata: false });
@@ -789,6 +1158,56 @@ test("newer edit wins over an older delete and reports the losing concurrent bra
   assert.equal(winner.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "newer edit");
   assert.equal(findIdentity(await inspect({ bytes: merged.bytes }), identity.uuid).deleted, false);
   assert.deepEqual(merged.conflicts, [{ uuid: identity.uuid, winner: "remote" }]);
+});
+
+test("a newer same-content undo upsert defeats an older concurrent delete", async () => {
+  const base = await makeBase({ annotations: [{ subtype: "Square", contents: "unchanged saved editor" }] });
+  const identity = (await inspect({ bytes: base.bytes })).identities.find((item) => item.kind === "square");
+
+  // Undo after saving a deletion can restore the editor without changing its
+  // PDF bytes. The operation clock still advances and must win over an older
+  // tombstone when the two saved branches are merged.
+  const restored = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: base.bytes,
+    actorId: "actor-undo",
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 300,
+      actorId: "actor-undo",
+      operationId: "undo-same-content",
+      pageIndex: identity.pageIndex,
+    })],
+  });
+  const deletedDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { remove: true });
+  const deleted = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: deletedDraft.bytes,
+    actorId: "actor-delete",
+    operations: [operation({
+      uuid: identity.uuid,
+      ref: identity.ref,
+      kind: identity.kind,
+      timestamp: 200,
+      actorId: "actor-delete",
+      operationId: "older-delete",
+      action: "delete",
+      pageIndex: identity.pageIndex,
+    })],
+  });
+
+  for (const [localBytes, remoteBytes, expectedWinner] of [
+    [restored.bytes, deleted.bytes, "local"],
+    [deleted.bytes, restored.bytes, "remote"],
+  ]) {
+    const merged = await merge({ baseBytes: base.bytes, localBytes, remoteBytes });
+    const result = findIdentity(await inspect({ bytes: merged.bytes }), identity.uuid);
+    assert.equal(result.deleted, false);
+    assert.equal(result.timestamp, 300);
+    assert.deepEqual(merged.conflicts, [{ uuid: identity.uuid, winner: expectedWinner }]);
+  }
 });
 
 test("semantic remote equality does not discard remote non-annotation metadata", async () => {
@@ -1139,6 +1558,251 @@ test("legacy inspect is deterministic and page-content changes fail closed", asy
   );
 });
 
+test("page count changes pause preparation before page fingerprinting", async () => {
+  const base = await makeBase({ pageCount: 1 });
+  const changed = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  changed.addPage([420, 540]);
+  await assert.rejects(
+    prepareLocal({
+      baseBytes: base.bytes,
+      draftBytes: await changed.save({ useObjectStreams: false }),
+      actorId: "actor",
+      __collectTimings: true,
+    }),
+    (error) => error.code === "PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED" && /page count changed/.test(error.message),
+  );
+});
+
+test("same-count page reordering fails after ordered identity fallback", async () => {
+  const source = await PDFDocument.create();
+  source.addPage([420, 540]).drawText("First page identity", { x: 20, y: 500, size: 12 });
+  source.addPage([420, 540]).drawText("Second page identity", { x: 20, y: 500, size: 12 });
+  const baseBytes = await source.save({ useObjectStreams: false });
+  const reordered = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const kids = reordered.catalog.Pages().Kids();
+  const first = kids.get(0);
+  kids.set(0, kids.get(1));
+  kids.set(1, first);
+  const reorderedBytes = await reordered.save({ useObjectStreams: false });
+  const baseDoc = await PDFDocument.load(baseBytes, { updateMetadata: false });
+  const reorderedDoc = await PDFDocument.load(reorderedBytes, { updateMetadata: false });
+  assert.equal(baseDoc.getPages().length, reorderedDoc.getPages().length);
+  assert.notDeepEqual(getFastPageIdentities(baseDoc), getFastPageIdentities(reorderedDoc));
+  await assert.rejects(
+    prepareLocal({ baseBytes, draftBytes: reorderedBytes, actorId: "actor" }),
+    (error) => error.code === "PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED",
+  );
+});
+
+test("PDF rewrite with new object refs triggers full fallback and remains safe", async () => {
+  const source = await makeBase({ pageCount: 3 });
+  const taggedBaseline = await prepareLocal({
+    baseBytes: source.bytes,
+    draftBytes: source.bytes,
+    actorId: "actor-device-01",
+  });
+  const original = await PDFDocument.load(taggedBaseline.bytes, { updateMetadata: false });
+  const rewritten = await PDFDocument.create();
+  for (const page of await rewritten.copyPages(original, [0, 1, 2])) rewritten.addPage(page);
+  const rewrittenBytes = await rewritten.save({ useObjectStreams: false });
+  const baselineDoc = await PDFDocument.load(taggedBaseline.bytes, { updateMetadata: false });
+  const rewrittenDoc = await PDFDocument.load(rewrittenBytes, { updateMetadata: false });
+  assert.notDeepEqual(getFastPageIdentities(baselineDoc), getFastPageIdentities(rewrittenDoc),
+    "Save As style page copying should replace object references");
+
+  const prepared = await prepareLocal({
+    baseBytes: taggedBaseline.bytes,
+    draftBytes: rewrittenBytes,
+    checkpointBytes: taggedBaseline.bytes,
+    actorId: "actor-device-01",
+    baselineState: taggedBaseline.baselineState,
+    documentRevisionMatch: true,
+    dirtyState: { dirtyPageIndices: [], dirtyAnnotationIds: [] },
+    __collectTimings: true,
+  });
+  assert.equal(prepared.__pdfReaderTiming.fallbackTriggered, true);
+  assert.equal(prepared.__pdfReaderTiming.fallbackReason, "ORDERED_PAGE_IDENTITY_MISMATCH");
+  assert.equal(prepared.__pdfReaderTiming.draftFingerprintPages, 3);
+  assert.equal(prepared.ledger.pageFingerprints.length, 3);
+});
+
+test("verified ordered page identities reuse persisted fingerprints for annotation-only saves", async () => {
+  const base = await makeBase({ pageCount: 186, annotations: [{ subtype: "FreeText", contents: "before", pageIndex: 16 }] });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const identity = baseInfo.identities.find((item) => item.kind === "freetext");
+  const firstDraft = await editBranch(base.bytes, refFromPdfJs(identity.ref), { contents: "first edit" });
+  const first = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: firstDraft.bytes,
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 100, operationId: "first-edit", pageIndex: 16 })],
+    dirtyState: { dirtyPageIndices: [16], dirtyAnnotationIds: [identity.uuid] },
+    actorId: "actor-device-01",
+    __collectTimings: true,
+  });
+  assert.ok(Array.isArray(first.ledger.pageIdentities));
+  assert.equal(first.ledger.pageIdentities.length, 186);
+
+  const savedIdentity = findIdentity(first, identity.uuid);
+  const secondDraft = await editBranch(first.bytes, refFromPdfJs(savedIdentity.ref), { contents: "second edit" });
+  const second = await prepareLocal({
+    baseBytes: first.bytes,
+    draftBytes: secondDraft.bytes,
+    operations: [operation({ uuid: identity.uuid, ref: savedIdentity.ref, timestamp: 200, operationId: "second-edit", pageIndex: 16 })],
+    dirtyState: { dirtyPageIndices: [16], dirtyAnnotationIds: [identity.uuid] },
+    actorId: "actor-device-01",
+    __collectTimings: true,
+  });
+  assert.equal(second.__pdfReaderTiming.pageFingerprintBaseCacheHit, true);
+  assert.equal(second.__pdfReaderTiming.pageIdentityBaseDraftMatch, true);
+  assert.equal(second.__pdfReaderTiming.pageFingerprintDraftCacheHit, true);
+  assert.equal(first.__pdfReaderTiming.baselineFingerprintPages, 186,
+    "an untagged legacy PDF migrates its baseline once on the first real save");
+  assert.equal(second.__pdfReaderTiming.baselineFingerprintPages, 0,
+    "the confirmed ledger/cache removes baseline content scans from subsequent saves");
+  assert.equal(second.__pdfReaderTiming.draftFingerprintPages, 1,
+    "a trusted annotation-only save fingerprints only its dirty page");
+  assert.equal(second.__pdfReaderTiming.draftDirtyPagesVerified, 1);
+  assert.equal(second.__pdfReaderTiming.fingerprint.mode, "PARTIAL");
+});
+
+test("an immutable Viewer source can save a second new annotation against its confirmed checkpoint", async () => {
+  const base = await makeBase({ pageCount: 3 });
+  const actorId = "actor-device-01";
+  const firstUuid = "b6e4a6f7-a71e-4c71-b772-6bde6be6a281";
+  const secondUuid = "f08dfc8b-c7a1-4c1a-a5e9-d5e64788515a";
+  const firstDraft = await editBranch(base.bytes, null, {}, [
+    { subtype: "Square", contents: "first", rect: [20, 30, 80, 70] },
+  ]);
+  const first = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: firstDraft.bytes,
+    actorId,
+    newAnnotations: [{ runtimeId: "pdfjs_internal_editor_0", uuid: firstUuid, pageIndex: 0, kind: "Square", order: 0 }],
+    operations: [operation({ uuid: firstUuid, kind: "Square", timestamp: 100, operationId: "create-first" })],
+    dirtyState: { dirtyPageIndices: [0], dirtyAnnotationIds: [firstUuid], newAnnotationIds: [firstUuid] },
+    __collectTimings: true,
+  });
+
+  // The PDF.js document is still loaded from the original unannotated bytes.
+  // Its second save serializes both id:null editors, while the Vault checkpoint
+  // already contains the first annotation and its durable UUID ledger entry.
+  const secondDraft = await editBranch(base.bytes, null, {}, [
+    { subtype: "Square", contents: "first", rect: [20, 30, 80, 70] },
+    { subtype: "Square", contents: "second", rect: [100, 130, 170, 200] },
+  ]);
+  const second = await prepareLocal({
+    baseBytes: base.bytes,
+    checkpointBytes: first.bytes,
+    draftBytes: secondDraft.bytes,
+    actorId,
+    baselineState: first.sourceBaselineState,
+    documentRevisionMatch: true,
+    newAnnotations: [
+      { runtimeId: "pdfjs_internal_editor_0", uuid: firstUuid, pageIndex: 0, kind: "Square", order: 0 },
+      { runtimeId: "pdfjs_internal_editor_1", uuid: secondUuid, pageIndex: 0, kind: "Square", order: 1 },
+    ],
+    operations: [
+      operation({ uuid: firstUuid, kind: "Square", timestamp: 200, operationId: "retain-first" }),
+      operation({ uuid: secondUuid, kind: "Square", timestamp: 200, operationId: "create-second" }),
+    ],
+    dirtyState: { dirtyPageIndices: [0], dirtyAnnotationIds: [secondUuid], newAnnotationIds: [secondUuid] },
+    __collectTimings: true,
+  });
+
+  assert.equal(second.__pdfReaderTiming.baselineFingerprintPages, 0);
+  assert.equal(second.__pdfReaderTiming.draftFingerprintPages, 1);
+  assert.equal(second.__pdfReaderTiming.fallbackTriggered, false);
+  assert.deepEqual(new Set(second.ledger.entries.map((entry) => entry.uuid)), new Set([firstUuid, secondUuid]));
+  assert.equal(second.ledger.entries.length, 2);
+});
+
+test("fast open records legacy annotations without computing page-content fingerprints", async () => {
+  const base = await makeBase({ pageCount: 5, annotations: [{ subtype: "Underline", contents: "legacy" }] });
+  const opened = await inspect({ bytes: base.bytes, fastOpen: true });
+  assert.equal(opened.documentId, null);
+  assert.equal(opened.ledger, null);
+  assert.equal(opened.baselineState.pageFingerprints, null);
+  assert.match(opened.identities[0].uuid, /^session-[a-f0-9]{32}$/);
+  const doc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  const identity = opened.identities[0];
+  const ref = refFromPdfJs(identity.ref);
+  doc.context.lookup(ref, PDFDict).set(PDFName.of("Contents"), text("first edit"));
+  const draftBytes = await doc.save({ useObjectStreams: false });
+  const prepared = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes,
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, kind: identity.kind, timestamp: 10, operationId: "legacy-session-edit" })],
+    dirtyState: { dirtyPageIndices: [0], dirtyAnnotationIds: [identity.uuid] },
+    actorId: "actor-device-01",
+    __collectTimings: true,
+  });
+  assert.equal(prepared.__pdfReaderTiming.legacySessionIdsRemapped, 1,
+    "the first save maps a session UUID by exact reference, page and type");
+  assert.ok(prepared.identities.some((entry) => entry.uuid.startsWith("legacy-")));
+  assert.equal(prepared.__pdfReaderTiming.baselineFingerprintPages, 5);
+  assert.equal(prepared.__pdfReaderTiming.fingerprint.mode, "FULL");
+});
+
+test("large embedded merge ledgers decode without overflowing the iOS argument stack", async () => {
+  const base = await makeBase();
+  const initial = await inspect({ bytes: base.bytes });
+  const doc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  const ledger = { ...initial.ledger, diagnosticPadding: "x".repeat(180_000) };
+  doc.catalog.set(PDFName.of("ObReaderMerge"), PDFHexString.fromText(JSON.stringify(ledger)));
+  const bytes = await doc.save({ useObjectStreams: false });
+
+  const reopened = await inspect({ bytes });
+  assert.equal(reopened.documentId, initial.documentId);
+  assert.equal(reopened.stateDigest, initial.stateDigest);
+  assert.equal(reopened.identities.length, initial.identities.length);
+
+  const pdfDocEncoded = PDFHexString.of("4142".repeat(100_000));
+  assert.equal(decodePdfString(pdfDocEncoded), "AB".repeat(100_000));
+
+  // A UTF-16 BOM byte pair occurring at a chunk boundary is ordinary data in
+  // PDFDocEncoding and must not be reinterpreted as a second string BOM.
+  const boundaryBytes = new Uint8Array(8195).fill(0x41);
+  boundaryBytes[8192] = 0xfe;
+  boundaryBytes[8193] = 0xff;
+  boundaryBytes[8194] = 0x42;
+  const boundaryHex = Array.from(boundaryBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  assert.equal(
+    decodePdfString(PDFHexString.of(boundaryHex)),
+    `${"A".repeat(8192)}\u00fe\u00ffB`,
+  );
+});
+
+test("source revision mismatch forces the full fingerprint fallback and records transaction metrics", async () => {
+  const base = await makeBase({ pageCount: 3 });
+  const doc = await PDFDocument.load(base.bytes, { updateMetadata: false });
+  addAnnotation(doc, 1, { subtype: "FreeText", contents: "fast-path candidate" });
+  const draftBytes = await doc.save({ useObjectStreams: false });
+  const baseInfo = await inspect({ bytes: base.bytes });
+  const first = await prepareLocal({
+    baseBytes: base.bytes, draftBytes, actorId: "actor-device-01",
+    newAnnotations: [{ runtimeId: "new-editor", uuid: "new-annotation", pageIndex: 1, kind: "freetext", order: 0 }],
+    operations: [operation({ uuid: "new-annotation", ref: null, timestamp: 20, operationId: "new-annotation-create", pageIndex: 1 })],
+    __collectTimings: true,
+  });
+  const second = await prepareLocal({
+    baseBytes: first.bytes, draftBytes: first.bytes, checkpointBytes: first.bytes,
+    actorId: "actor-device-01", baselineState: first.baselineState,
+    documentRevisionMatch: false, forceFullFingerprints: true,
+    saveTransactionId: "save-tx-external-revision", dirtyState: { dirtyPageIndices: [1], dirtyAnnotationIds: ["new-annotation"] },
+    __collectTimings: true,
+  });
+  assert.equal(second.__pdfReaderTiming.saveTransactionId, "save-tx-external-revision");
+  assert.equal(second.__pdfReaderTiming.documentRevisionMatch, false);
+  assert.equal(second.__pdfReaderTiming.fallbackTriggered, true);
+  assert.equal(second.__pdfReaderTiming.fallbackReason, "SOURCE_REVISION_MISMATCH");
+  assert.equal(second.__pdfReaderTiming.baselineFingerprintPages, 3);
+  assert.equal(second.__pdfReaderTiming.dirtyPageCount, 1);
+  const token = getDocumentRevisionToken(await PDFDocument.load(base.bytes), base.bytes);
+  assert.equal(token.byteLength, base.bytes.length);
+  assert.equal(token.pageCount, 3);
+  assert.ok(baseInfo.documentId);
+});
+
 test("creation stamps are mandatory and equal-clock ties use actor/op identity", async () => {
   const base = await makeBase();
   const draft = await editBranch(base.bytes, null, {}, [{ subtype: "Ink", contents: "new ink" }]);
@@ -1169,4 +1833,45 @@ test("creation stamps are mandatory and equal-clock ties use actor/op identity",
   const merged = await merge({ baseBytes: original.bytes, localBytes: local.bytes, remoteBytes: remote.bytes });
   const winner = await getAnnotation(merged.bytes, identity.uuid);
   assert.equal(winner.dict.lookup(PDFName.of("Contents"), PDFHexString).decodeText(), "actor z");
+});
+
+test("three-way annotation reconciliation reuses verified ordered page fingerprints", async () => {
+  const base = await makeBase({ pageCount: 12, annotations: [{ subtype: "FreeText", contents: "before" }] });
+  const baseline = await inspect({ bytes: base.bytes });
+  const identity = baseline.identities.find((item) => item.kind === "freetext");
+  const changed = await editBranch(base.bytes, refFromPdfJs(identity.ref), { contents: "after" });
+  const local = await prepareLocal({
+    baseBytes: base.bytes,
+    draftBytes: changed.bytes,
+    operations: [operation({ uuid: identity.uuid, ref: identity.ref, timestamp: 50, operationId: "fast-merge-edit" })],
+    actorId: "fast-merge-actor",
+  });
+
+  const cachedMerge = await merge({
+    baseBytes: base.bytes,
+    localBytes: local.bytes,
+    remoteBytes: base.bytes,
+    actorId: "fast-merge-actor",
+    baselineState: baseline.baselineState,
+    __collectTimings: true,
+    saveTransactionId: "fast-merge-transaction",
+  });
+  assert.equal(cachedMerge.__pdfReaderTiming.saveTransactionId, "fast-merge-transaction");
+  assert.equal(cachedMerge.__pdfReaderTiming.baselineCacheHit, true);
+  assert.equal(cachedMerge.__pdfReaderTiming.baselineFingerprintPages, 0);
+  assert.equal(cachedMerge.__pdfReaderTiming.draftFingerprintPages, 0);
+  assert.equal(cachedMerge.__pdfReaderTiming.remoteFingerprintPages, 0);
+  assert.equal(cachedMerge.__pdfReaderTiming.fingerprint.mode, "NONE");
+  assert.equal(findIdentity(cachedMerge, identity.uuid).uuid, identity.uuid);
+
+  const uncachedMerge = await merge({
+    baseBytes: base.bytes,
+    localBytes: local.bytes,
+    remoteBytes: base.bytes,
+    actorId: "fast-merge-actor",
+    __collectTimings: true,
+  });
+  assert.equal(uncachedMerge.__pdfReaderTiming.baselineCacheHit, false);
+  assert.ok(uncachedMerge.__pdfReaderTiming.baselineFingerprintPages > 0);
+  assert.equal(uncachedMerge.__pdfReaderTiming.fingerprint.mode, "FULL");
 });

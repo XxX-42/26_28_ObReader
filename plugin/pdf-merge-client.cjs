@@ -1,6 +1,7 @@
 "use strict";
 
 const { sha256 } = require("@noble/hashes/sha256");
+const timingNow = () => globalThis.performance?.now?.() ?? Date.now();
 
 function bytesOf(value) {
   if (Object.prototype.toString.call(value) === "[object ArrayBuffer]" ||
@@ -66,6 +67,11 @@ class PdfMergeWorkerError extends Error {
     super(String(error.message || "PDF merge worker failed."));
     this.name = error.name || "PdfMergeWorkerError";
     this.code = error.code || "PDF_MERGE_WORKER_ERROR";
+    this.workerName = error.name || "PdfMergeWorkerError";
+    this.workerCode = error.code || "PDF_MERGE_WORKER_ERROR";
+    if (typeof error.method === "string") this.workerMethod = error.method.slice(0, 128);
+    if (typeof error.phase === "string") this.workerPhase = error.phase.slice(0, 128);
+    if (typeof error.stack === "string") this.workerStack = error.stack.slice(0, 16384);
     if (error.details !== undefined) this.details = error.details;
   }
 }
@@ -75,6 +81,7 @@ function createPdfMergeClient({
   WorkerClass = globalThis.Worker,
   URLApi = globalThis.URL,
   BlobClass = globalThis.Blob,
+  onTaskTiming = null,
 } = {}) {
   if (typeof loadWorkerSource !== "function") {
     throw new TypeError("loadWorkerSource must be a function.");
@@ -178,6 +185,32 @@ function createPdfMergeClient({
     const task = pending.get(message.id);
     if (!task) return;
     pending.delete(message.id);
+    if (typeof onTaskTiming === "function") {
+      const workerTiming = message.timing || {};
+      const roundTripMs = task.timing?.postedAt === null || task.timing?.postedAt === undefined
+        ? null
+        : +(timingNow() - task.timing.postedAt).toFixed(3);
+      const workerQueueMs = Number.isFinite(workerTiming.queueMs) ? workerTiming.queueMs : null;
+      const workerExecuteMs = Number.isFinite(workerTiming.executeMs) ? workerTiming.executeMs : null;
+      const residual = roundTripMs === null ? null : Math.max(0,
+        roundTripMs - (workerQueueMs || 0) - (workerExecuteMs || 0));
+      try {
+        onTaskTiming({
+          method: task.method,
+          saveTransactionId: task.saveTransactionId || null,
+          clientQueueMs: task.timing?.clientQueueMs ?? null,
+          workerReadyMs: task.timing?.workerReadyMs ?? null,
+          payloadPrepareMs: task.timing?.payloadPrepareMs ?? null,
+          postMessageCallMs: task.timing?.postMessageCallMs ?? null,
+          workerRoundTripMs: roundTripMs,
+          workerQueueMs,
+          workerExecuteMs,
+          workerTransportResidualMs: residual === null ? null : +residual.toFixed(3),
+          coreStages: workerTiming.coreStages || null,
+          ok: message.ok === true,
+        });
+      } catch { /* Diagnostics must not affect the Worker response. */ }
+    }
     if (message.ok) task.resolve(message.result);
     else task.reject(new PdfMergeWorkerError(message.error));
   }
@@ -203,17 +236,32 @@ function createPdfMergeClient({
   }
 
   async function runTask(task) {
+    const taskStartedAt = timingNow();
+    task.timing ||= {};
+    task.timing.clientQueueMs = +(taskStartedAt - task.enqueuedAt).toFixed(3);
+    const workerReadyStartedAt = timingNow();
     const instance = await ensureWorker();
+    task.timing.workerReadyMs = +(timingNow() - workerReadyStartedAt).toFixed(3);
     if (disposed) throw new PdfMergeWorkerError({ code: "PDF_MERGE_CLIENT_DISPOSED", message: "The PDF merge client has been disposed." });
     const transfers = [];
+    const payloadPrepareStartedAt = timingNow();
     const payload = clonePayloadForTransfer(task.payload, ownedSnapshots, transfers);
+    task.timing.payloadPrepareMs = +(timingNow() - payloadPrepareStartedAt).toFixed(3);
     await new Promise((resolve, reject) => {
       pending.set(task.id, {
         resolve: (result) => { task.resolve(result); resolve(); },
         reject: (error) => { task.reject(error); reject(error); },
+        timing: task.timing,
+        method: task.method,
+        saveTransactionId: typeof task.payload?.saveTransactionId === "string"
+          ? task.payload.saveTransactionId
+          : null,
       });
+      task.timing.postedAt = timingNow();
+      const postStartedAt = task.timing.postedAt;
       try {
         instance.postMessage({ id: task.id, method: task.method, payload }, transfers);
+        task.timing.postMessageCallMs = +(timingNow() - postStartedAt).toFixed(3);
       } catch (error) {
         pending.delete(task.id);
         reject(error);
@@ -240,7 +288,7 @@ function createPdfMergeClient({
     if (disposed) return Promise.reject(new PdfMergeWorkerError({ code: "PDF_MERGE_CLIENT_DISPOSED", message: "The PDF merge client has been disposed." }));
     const id = nextId++;
     return new Promise((resolve, reject) => {
-      queue.push({ id, method, payload, resolve, reject });
+      queue.push({ id, method, payload, resolve, reject, enqueuedAt: timingNow() });
       void drainQueue();
     });
   }

@@ -74,7 +74,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
           const documentId = ${JSON.stringify(documentId)};
           const documentPath = ${JSON.stringify(documentPath)};
           const iframe = document.querySelector('iframe');
-          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], heavyLeases:[], pendingHeavyLeases:[], errors:[], holdFirstAck:true, holdNextAck:false, holdNextHeavyLease:false, nextAckDelay:10, failNext:false, failDelay:10 };
+          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], heavyLeases:[], pendingHeavyLeases:[], errors:[], holdFirstAck:true, holdNextAck:false, holdNextRecoveryAck:false, nextRecoveryAckDelay:10, holdNextHeavyLease:false, nextAckDelay:10, failNext:false, failDelay:10 };
           window.addEventListener('message', event => {
             if (event.source !== iframe.contentWindow) return;
             const message = event.data;
@@ -184,20 +184,33 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 }, '*');
               }, delay);
             } else if (message.type === 'recover') {
-              state.recoveries.push({
+              const recovery = {
                 documentId: message.documentId,
                 requestId: message.requestId,
                 revision: message.revision,
                 reason: message.reason,
                 byteLength: message.data?.byteLength || 0,
                 data: message.data?.slice(0),
-              });
-              setTimeout(() => iframe.contentWindow.postMessage({
-                channel, type:'recovered', token,
-                documentId:message.documentId,
-                requestId:message.requestId,
-                revision:message.revision,
-              }, '*'), 10);
+              };
+              state.recoveries.push(recovery);
+              let delay = 10;
+              if (state.holdNextRecoveryAck) {
+                state.holdNextRecoveryAck = false;
+                delay = state.nextRecoveryAckDelay;
+              }
+              setTimeout(() => {
+                recovery.durableAt = performance.timeOrigin + performance.now();
+                iframe.contentWindow.postMessage({
+                  channel, type:'recovered', token,
+                  documentId:message.documentId,
+                  openRequest:message.openRequest,
+                  requestId:message.requestId,
+                  revision:message.revision,
+                  ...(message.reason === 'close-writeback'
+                    ? { closeWritebackQueued:true }
+                    : {}),
+                }, '*');
+              }, delay);
             } else if (message.type === 'error') {
               state.errors.push(message.message || message.code || 'viewer error');
             } else if (message.type === 'flushed') {
@@ -218,6 +231,10 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 dirty:message.dirty,
                 recovered:message.recovered,
                 prepared:message.prepared,
+                closeWritebackQueued:message.closeWritebackQueued,
+                ...(message.recovered
+                  ? { receivedAt:performance.timeOrigin + performance.now() }
+                  : {}),
               });
             }
           });
@@ -802,12 +819,16 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(await page.evaluate(() => window.__host.saves.length), 8);
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
-    // A controlled close blocks new pointer edits while it waits for an
-    // already accepted host write, then stays inert until the host cancels or
-    // removes the view.
+    // A controlled close blocks new pointer edits and can finish once its
+    // latest recovery is durable, without waiting for the older save ACK.
+    const recoveriesBeforeHeldClose = await page.evaluate(
+      () => window.__host.recoveries.length,
+    );
     await page.evaluate(() => {
       window.__host.holdNextAck = true;
       window.__host.nextAckDelay = 2_200;
+      window.__host.holdNextRecoveryAck = true;
+      window.__host.nextRecoveryAckDelay = 1_000;
     });
     await viewer.evaluate(() => {
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
@@ -857,24 +878,45 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(
       await page.evaluate(() => window.__host.closePrepareds.length),
       1,
-      "The host must not receive a prepared acknowledgement before its pending write settles",
+      "The host must not receive a prepared acknowledgement before the recovery is durable",
     );
+    const pendingCloseRecovery = await page.evaluate(
+      (index) => window.__host.recoveries[index],
+      recoveriesBeforeHeldClose,
+    );
+    assert.equal(pendingCloseRecovery.reason, "close-writeback");
+    assert.equal(pendingCloseRecovery.durableAt, undefined);
     await page.waitForFunction(() => window.__host.closePrepareds.length === 2, {
       timeout: 10_000,
     });
     const heldClose = await page.evaluate(
       () => window.__host.closePrepareds[1],
     );
+    const durableCloseRecovery = await page.evaluate(
+      (index) => window.__host.recoveries[index],
+      recoveriesBeforeHeldClose,
+    );
     assert.equal(heldClose.id, "prepare-close-held-save");
     assert.equal(heldClose.documentId, documentId);
     assert.equal(heldClose.openRequest, 1);
+    assert.equal(heldClose.ok, false);
+    assert.equal(heldClose.dirty, true);
+    assert.equal(heldClose.recovered, true);
+    assert.equal(heldClose.closeWritebackQueued, true);
+    assert.ok(durableCloseRecovery.durableAt <= heldClose.receivedAt);
+    assert.equal(
+      heldClose.revision,
+      durableCloseRecovery.revision,
+    );
     assert.equal(
       heldClose.revision,
       await page.evaluate(() => window.__host.saves[8].revision),
     );
-    assert.equal(heldClose.ok, true);
-    assert.equal(heldClose.dirty, false);
-    assert.equal(heldClose.recovered, false);
+    assert.equal(
+      await page.evaluate(() => window.__host.saves[8].acknowledgedAt),
+      undefined,
+      "A durable close recovery must not wait for the older ordinary-save ACK",
+    );
     assert.equal(heldClose.prepared, true);
     assert.equal(
       await viewer.evaluate(() =>
@@ -967,9 +1009,19 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     });
     const imeClose = await page.evaluate(() => window.__host.closePrepareds[2]);
     assert.equal(imeClose.prepared, true);
-    assert.equal(imeClose.ok, true);
-    assert.equal(imeClose.dirty, false);
+    assert.equal(imeClose.ok, false);
+    assert.equal(imeClose.dirty, true);
+    assert.equal(imeClose.recovered, true);
+    assert.equal(imeClose.closeWritebackQueued, true);
     assert.equal(imeClose.openRequest, 1);
+    const imeRecovery = await page.evaluate(() =>
+      window.__host.recoveries.filter(
+        (recovery) => recovery.reason === "close-writeback",
+      ).at(-1),
+    );
+    assert.ok(imeRecovery.byteLength > 0);
+    assert.ok(imeRecovery.durableAt <= imeClose.receivedAt);
+    assert.equal(imeRecovery.revision, imeClose.revision);
     assert.equal(
       await viewer.evaluate(() =>
         document.activeElement.matches?.(".freeTextEditor .internal") || false,
@@ -1065,7 +1117,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       { id: "flush-disabled", ok: false, dirty: true, recovered: true },
     );
     assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
-    const disabledRecovery = await page.evaluate(() => window.__host.recoveries[0]);
+    const disabledRecovery = await page.evaluate(() =>
+      window.__host.recoveries.filter(
+        (recovery) => recovery.reason === "auto-save-disabled",
+      ).at(-1),
+    );
     assert.equal(disabledRecovery.reason, "auto-save-disabled");
     assert.ok(disabledRecovery.byteLength > 0);
     await page.evaluate(() => {
@@ -1094,7 +1150,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(disabledClose.prepared, true);
     assert.equal(
       disabledClose.revision,
-      await page.evaluate(() => window.__host.recoveries[1].revision),
+      disabledRecovery.revision,
     );
     assert.equal(
       await viewer.evaluate(() =>
@@ -1193,7 +1249,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       { id: "flush-conflict", ok: false, dirty: true, recovered: true },
     );
     assert.equal(await page.evaluate(() => window.__host.saves.length), 13);
-    const conflictRecovery = await page.evaluate(() => window.__host.recoveries[2]);
+    const conflictRecovery = await page.evaluate(() =>
+      window.__host.recoveries.filter(
+        (recovery) => recovery.reason === "save-conflict",
+      ).at(-1),
+    );
     assert.equal(conflictRecovery.reason, "save-conflict");
     assert.ok(conflictRecovery.byteLength > 0);
     assert.ok(
@@ -1227,7 +1287,11 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         recovered: true,
       },
     );
-    const switchRecovery = await page.evaluate(() => window.__host.recoveries[3]);
+    const switchRecovery = await page.evaluate(() =>
+      window.__host.recoveries.filter(
+        (recovery) => recovery.reason === "auto-save-disabled",
+      ).at(-1),
+    );
     assert.equal(switchRecovery.documentId, documentId);
     assert.equal(switchRecovery.reason, "auto-save-disabled");
 

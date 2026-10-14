@@ -9,11 +9,12 @@ import { nativeConfig, assertNativeVaultIdentity } from './native-config.mjs';
 const { vault, configDir, cdpUrl } = nativeConfig;
 assert.equal(vault, '/Users/jiajia/Documents/ObReader-Apple-Test');
 assert.equal(cdpUrl, 'http://127.0.0.1:9230');
-const version = process.env.BENCH_VERSION || '0.5.9';
+const version = process.env.BENCH_VERSION || '0.5.17';
 const label = process.env.BENCH_LABEL || 'candidate';
-const editCount = Number(process.env.BENCH_EDITS || 4);
-assert.ok(Number.isInteger(editCount) && editCount >= 1 && editCount <= 4);
-const run = `general-0.5.9-benchmark-${label}-${Date.now()}`;
+const editCount = Number(process.env.BENCH_EDITS || 10);
+assert.ok(Number.isInteger(editCount) && editCount >= 1 && editCount <= 10);
+const targetMobile = process.env.BENCH_MOBILE !== '0';
+const run = `general-0.5.17-${targetMobile ? 'mobile' : 'desktop'}-benchmark-${label}-${Date.now()}`;
 const folder = `PDF迁移测试/${run}`, file = `${folder}/large.pdf`;
 const report = { run, version, vault, status: 'running', physicalIpadValidated: false,
   writeMode: process.env.BENCH_FORCE_FULL === '1' ? 'controlled same-version fallback: append capability disabled in test only' : 'normal capability-selected production path',
@@ -21,7 +22,7 @@ const report = { run, version, vault, status: 'running', physicalIpadValidated: 
   checks: [], heapSamples: [] };
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 await fs.mkdir('tests/artifacts', { recursive: true });
-const fixture = 'tests/artifacts/general-0.5.9-large-synthetic.pdf';
+const fixture = 'tests/artifacts/general-0.5.17-large-synthetic.pdf';
 let bytes;
 try { bytes = await fs.readFile(fixture); } catch (error) {
   if (error.code !== 'ENOENT') throw error;
@@ -40,7 +41,7 @@ await fs.writeFile(`tests/artifacts/${run}.driver.mjs`, await fs.readFile(import
 const browser = await puppeteer.connect({ browserURL: cdpUrl, defaultViewport: null });
 const page = (await browser.pages()).find(p => p.url() === 'app://obsidian.md/index.html');
 assert.ok(page); const session = await page.createCDPSession();
-let original, failure, sampling = false, phase = 0;
+let original, failure, sampling = false, phase = 0, samplingPromise = null;
 async function identity() {
   const value = await page.evaluate(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir,
     version: app.plugins.plugins['pdf-web-reader']?.manifest.version, mobile: !!app.isMobile,
@@ -105,10 +106,43 @@ const sample = async () => {
     await pause(100);
   }
 };
+async function collectSaveTimings() {
+  const currentLog = await root(async () => {
+    await app.plugins.plugins['pdf-web-reader'].sessionLog.flush();
+    const logPath = app.plugins.plugins['pdf-web-reader'].sessionLog.path;
+    const directory = logPath.slice(0, logPath.lastIndexOf('/'));
+    const basename = logPath.slice(logPath.lastIndexOf('/') + 1);
+    const session = basename.replace(/-\d{3}\.log$/, '');
+    const listing = await app.vault.adapter.list(directory);
+    const logPaths = (listing.files || []).filter(file => {
+      const name = file.slice(file.lastIndexOf('/') + 1);
+      return name.startsWith(`${session}-`) && /-\d{3}\.log$/.test(name);
+    }).sort((left, right) => {
+      const part = file => Number(/-(\d{3})\.log$/.exec(file)?.[1] || 0);
+      return part(left) - part(right);
+    });
+    const text = (await Promise.all(logPaths.map(file => app.vault.adapter.read(file)))).join('');
+    return { logPath, logPaths, text };
+  });
+  const messages = report.saveInputs || await root(() => window.__incrementalBench?.messages || []);
+  const transactionIds = new Set(messages
+    .filter(message => message.type === 'save' && typeof message.saveTransactionId === 'string')
+    .map(message => message.saveTransactionId));
+  report.saveTimings = currentLog.text.split('\n').filter(Boolean).map(line => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(row => row?.kind === 'performance' && row.fn === 'PdfSyncHost.save' && transactionIds.has(row.saveTransactionId));
+  const durations = report.saveTimings.map(row => row.saveTotalMs).filter(Number.isFinite).sort((a, b) => a - b);
+  const percentile = p => durations.length ? durations[Math.min(durations.length - 1, Math.ceil(durations.length * p) - 1)] : null;
+  report.saveTimingSummary = { n: durations.length,
+    meanMs: durations.length ? durations.reduce((sum, value) => sum + value, 0) / durations.length : null,
+    medianMs: percentile(0.5), p90Ms: percentile(0.9), maxMs: durations.at(-1) ?? null };
+  report.logPath = currentLog.logPath;
+  report.logPaths = currentLog.logPaths;
+}
 try {
   await session.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   original = await identity(); assert.equal(original.mobile, false); assert.equal(original.views, 0);
-  await mode(true);
+  await mode(targetMobile);
   for (const name of ['main.js', 'manifest.json', 'styles.css']) report[name] =
     hash(await fs.readFile(path.join(vault, configDir, 'plugins/pdf-web-reader', name)));
   // Streaming through Obsidian's adapter avoids transferring a large array over CDP.
@@ -119,7 +153,8 @@ try {
     t.messages = [];
     t.onMessage = e => {
       if (!e.data || e.data.documentPath !== file || !['save', 'recover', 'sync-checkpoint'].includes(e.data.type)) return;
-      t.messages.push({ type: e.data.type, revision: e.data.revision, actorId: e.data.actorId,
+      t.messages.push({ type: e.data.type, revision: e.data.revision, saveTransactionId: e.data.saveTransactionId,
+        actorId: e.data.actorId, dirtyState: e.data.dirtyState,
         newAnnotations: e.data.newAnnotations, operations: e.data.operations, bytes: e.data.data?.byteLength });
     };
     window.addEventListener('message', t.onMessage, true);
@@ -188,7 +223,7 @@ try {
         target: e.target?.className, prevented: e.defaultPrevented });
     });
   });
-  sampling = true; const samplingPromise = sample();
+  sampling = true; samplingPromise = sample();
   for (let i = 0; i < editCount; i++) {
     phase = i + 1;
     // Clear the selected annotation's floating edit toolbar before the next
@@ -203,7 +238,12 @@ try {
     const revisionBefore = await doc(({ v }) => v.currentRevision);
     const q = await doc(({ v, d, arg }) => {
       const r = d.querySelector('.page[data-page-number="1"]').getBoundingClientRect(), view = d.getElementById('viewerContainer').getBoundingClientRect(), f = v.iframe.getBoundingClientRect();
-      const x = Math.max(r.left, view.left) + 35 + arg * 25, y = Math.max(r.top, view.top) + 100 + arg * 65;
+      const left = Math.max(r.left, view.left), right = Math.min(r.right, view.right);
+      const top = Math.max(r.top, view.top), bottom = Math.min(r.bottom, view.bottom);
+      const width = right - left, height = bottom - top;
+      if (width < 100 || height < 100) throw Error(`Visible page intersection is too small: ${width}x${height}`);
+      const x = left + width * (0.2 + (arg % 6) * 0.09);
+      const y = top + height * (0.25 + (arg % 5) * 0.07);
       if (!d.elementFromPoint(x, y)?.closest('.page[data-page-number="1"]')) throw Error('Drawing point not on page');
       return { x: f.x + x, y: f.y + y };
     }, i);
@@ -216,7 +256,13 @@ try {
       if (v.failureNoticeShown) throw Error('Production save reported failure; inspect preserved recovery metadata');
       return v.confirmedRevision >= arg && !v.saving;
     }, capturedRevision));
-    report.checks.push({ edit: i + 1, revision: capturedRevision, confirmedMs: performance.now() - started,
+    const saveInput = await root(({ file, revision }) => window.__incrementalBench.messages.findLast(
+      message => message.type === 'save' && message.revision === revision,
+    ) || null, { file, revision: capturedRevision });
+    report.checks.push({ edit: i + 1, revision: capturedRevision,
+      saveTransactionId: saveInput?.saveTransactionId || null,
+      dirtyPageCount: saveInput?.dirtyState?.dirtyPageIndices?.length ?? null,
+      confirmedMs: performance.now() - started,
       diskBytes: (await fs.stat(path.join(vault, file))).size });
     await wait('post-save Viewer settled', () => doc(({ v, a }) => !v.syncNeedsRefresh && v.ready &&
       a.pdfDocument?.numPages === 120 && a.pdfViewer.getPageView(0)?.renderingState === 3));
@@ -246,6 +292,7 @@ try {
 }
 finally {
   sampling = false;
+  if (samplingPromise) await samplingPromise.catch(() => {});
   try {
     await closeOwn(); await root(() => {
       const t = window.__incrementalBench;
@@ -253,10 +300,23 @@ finally {
     });
     await root(async () => { await Promise.all(window.__incrementalBench?.captureWrites || []); });
     report.saveInputs = await root(() => window.__incrementalBench?.messages);
+    await collectSaveTimings();
     await root(() => { delete window.__incrementalBench; });
     if (original && (await identity()).mobile !== original.mobile) await mode(original.mobile);
     await closeOwn(); report.cleanup = await identity(); assert.equal(report.cleanup.mobile, false); assert.equal(report.cleanup.views, 0);
+    if (report.status === 'passed') {
+      await root(async ({ file }) => {
+        const generated = app.vault.getAbstractFileByPath(file);
+        if (generated) await app.vault.adapter.remove(file);
+      }, { file });
+      await fs.rmdir(path.join(vault, folder));
+      report.testPdfCleanup = { removed: true, path: file };
+    } else {
+      report.testPdfCleanup = { removed: false, preservedFailureEvidence: true, path: file };
+    }
   } catch (error) { failure ||= error; report.status = 'failed'; report.cleanupError = error.message; }
+  report.heapPeakBytes = Math.max(0, ...report.heapSamples.map(x => x.used || 0));
+  report.measuredJsAndBackingPeakBytes = Math.max(0, ...report.heapSamples.map(x => x.measuredJsAndBackingBytes || 0));
   await session.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {});
   browser.disconnect(); await fs.writeFile(`tests/artifacts/${run}.json`, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
   console.log(run, report.status, report.checks.map(x => Math.round(x.confirmedMs)));

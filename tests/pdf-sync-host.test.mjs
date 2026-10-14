@@ -7,9 +7,12 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const { createPdfSyncHost } = require("../plugin/pdf-sync-host.cjs");
 const { createHeavyWorkCoordinator } = require("../plugin/heavy-work.cjs");
+const { writeDeltaRecovery, readDeltaRecovery } = require("../plugin/pdf-recovery.cjs");
 const bytes = (value) => new Uint8Array(value instanceof ArrayBuffer ? value : value).slice();
 const eq = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
 const hash = (a) => createHash("sha256").update(a).digest("hex");
+const journalManifestPath = (filePath) =>
+  `.obsidian/plugins/pdf-web-reader/.sync-checkpoints/${hash(new TextEncoder().encode(filePath))}.json`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check) {
   const deadline = Date.now() + 2500;
@@ -19,31 +22,52 @@ async function until(check) {
 function harness({ local = [1], dirty = false, operations = [], mergeResult = [3], failWrite = false,
   appendPatch = null, appendFailure = null, acquireHeavyLease = null, prepareIdentities = [],
   mergeIdentities = [], prepareLedger = {}, mergeLedger = {}, mergePatch = null, prepareFailure = null,
-  checkpointReadGate = null, autoApply = true } = {}) {
+  checkpointReadGate = null, autoApply = true, replaceFileOnRead = null,
+  removeFileOnRead = null, modifyGate = null, appendGate = null,
+  mutateDiskOnRead = null, mutateDiskValue = null, acquireCloseWritebackLease = null } = {}) {
   let disk = bytes([1]);
   let nextId = 0;
+  let activeFile = null;
+  let diskReadCount = 0;
   const stored = new Map();
+  const documentBaselines = new Map();
   const records = [];
   const posted = [];
-  const calls = { merge: [], writes: 0, appends: 0, prepare: 0, inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, baselines: [] };
+  const calls = { merge: [], writes: 0, appends: 0, prepare: 0, prepareInputs: [], inspect: 0, inspectInputs: [], checkpointReads: 0, leases: [], leaseReleases: 0, closeLeases: [], closeLeaseReleases: 0, events: [], baselines: [], performance: [] };
   const file = { path: "only-test-vault.pdf", basename: "only-test-vault", extension: "pdf" };
+  activeFile = file;
   const adapter = {
     async exists(path) { if (path.endsWith(".json")) calls.checkpointReads += 1; if (checkpointReadGate) await checkpointReadGate(); return stored.has(path); }, async mkdir(path) { stored.set(path, true); },
-    async read(path) { return stored.get(path); }, async write(path, value) { stored.set(path, value); },
+    async read(path) { return stored.get(path); }, async write(path, value) {
+      stored.set(path, value);
+      const record = records.find((item) => item.metadataPath === path);
+      if (record && typeof value === "string") record.metadata = JSON.parse(value);
+    },
     async readBinary(path) { if (!stored.has(path)) throw new Error("missing"); return bytes(stored.get(path)).buffer; },
     async writeBinary(path, value) { stored.set(path, bytes(value)); },
+    async remove(path) { stored.delete(path); },
     async list(path) { return { files: [...stored.keys()].filter((entry) => entry.startsWith(`${path}/`)), folders: [] }; },
   };
   const client = {
     async prepareLocal(input) {
       calls.prepare += 1;
+      calls.prepareInputs.push(input);
       if (prepareFailure) throw prepareFailure;
-      return { bytes: bytes(appendPatch?.bytes || input.draftBytes), patch: appendPatch?.patch || null, identities: prepareIdentities, ledger: prepareLedger };
+      const prepared = typeof appendPatch === "function"
+        ? appendPatch(input, calls.prepare)
+        : appendPatch;
+      return { bytes: bytes(prepared?.bytes || input.draftBytes), patch: prepared?.patch || null, identities: prepareIdentities, ledger: prepareLedger };
     },
     async merge(input) {
       calls.merge.push(input);
+      const configured = typeof mergeResult === "function"
+        ? await mergeResult(input, calls.merge.length)
+        : mergeResult;
+      if (configured && typeof configured === "object" && !Array.isArray(configured) && !ArrayBuffer.isView(configured)) {
+        return { conflicts: [], identities: mergeIdentities, ledger: mergeLedger, ...configured };
+      }
       const result = { conflicts: [], identities: mergeIdentities, ledger: mergeLedger };
-      if (!mergePatch?.omitBytes) result.bytes = bytes(mergePatch?.bytes || mergeResult);
+      if (!mergePatch?.omitBytes) result.bytes = bytes(mergePatch?.bytes || configured);
       if (mergePatch?.patch) result.patch = mergePatch.patch;
       return result;
     },
@@ -51,47 +75,115 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
   };
   const plugin = {
     manifest: { id: "pdf-web-reader" }, views: new Set(), saveQueue: Promise.resolve(),
+    sessionLog: { record(type, value) { if (type === "performance") calls.performance.push(value); } },
+    recoveryDirectory: ".obsidian/plugins/pdf-web-reader/.recovery",
+    closeWritebackJobs: new Map(),
     app: { vault: { configDir: ".obsidian", adapter,
-      getAbstractFileByPath(path) { return path === file.path ? file : null; },
-      async readBinary() { return disk.slice().buffer; },
-      async modifyBinary(target, value) { assert.equal(target, file); calls.writes += 1; if (failWrite) throw new Error("injected disk failure"); disk = bytes(value); },
+      getAbstractFileByPath(path) { return path === file.path ? activeFile : null; },
+      async readBinary() {
+        diskReadCount += 1;
+        if (diskReadCount === replaceFileOnRead) activeFile = { ...file };
+        if (diskReadCount === removeFileOnRead) activeFile = null;
+        if (diskReadCount === mutateDiskOnRead && mutateDiskValue) disk = bytes(mutateDiskValue);
+        return disk.slice().buffer;
+      },
+      async modifyBinary(target, value) { assert.equal(target, activeFile); calls.writes += 1; if (modifyGate) await modifyGate(); if (failWrite) throw new Error("injected disk failure"); disk = bytes(value); },
       async appendBinary(target, value) {
-        assert.equal(target, file);
+        assert.equal(target, activeFile);
         calls.appends += 1;
+        if (appendGate) await appendGate();
         const suffix = bytes(value);
-        if (appendFailure === "partial") {
+        const failure = typeof appendFailure === "function"
+          ? appendFailure(calls.appends)
+          : appendFailure;
+        if (failure === "partial") {
           disk = Uint8Array.from([...disk, ...suffix.slice(0, 1)]);
           throw new Error("injected interrupted append");
         }
-        if (appendFailure === "before") throw new Error("injected append failure");
+        if (failure === "before") throw new Error("injected append failure");
         disk = Uint8Array.from([...disk, ...suffix]);
       },
     } },
-    enqueueSave(operation) { const promise = this.saveQueue.then(operation, operation); this.saveQueue = promise.catch(() => {}); return promise; },
+    enqueueSave(operation) { calls.events.push("enqueue-save"); const promise = this.saveQueue.then(operation, operation); this.saveQueue = promise.catch(() => {}); return promise; },
     async acquireHeavyLease(view, target, reason, leaseId) {
       calls.leases.push({ view, target, reason, leaseId });
       if (acquireHeavyLease) return acquireHeavyLease(view, target, reason, leaseId);
       return { id: leaseId || `test-lease-${calls.leases.length}`, release() { calls.leaseReleases += 1; } };
     },
-    setDocumentBaseline(_path, snapshot) { calls.baselines.push(snapshot); },
-    async writeRecoveryCandidate(input) { const record = { ...input, metadata: { status: input.status }, retained: true }; records.push(record); return record; },
-    async markRecoveryCandidate(record, value) { Object.assign(record.metadata, value); },
-    async removeRecoveryCandidate(record) { record.retained = false; }, restoreLatestRecovery() {},
+    async acquireCloseWritebackLease(owner, target, intent, targetPath) {
+      calls.events.push("close-heavy-lease");
+      calls.closeLeases.push({ owner, target, intent, targetPath });
+      if (acquireCloseWritebackLease) return acquireCloseWritebackLease(owner, target, intent, targetPath);
+      return { id: `close-lease-${calls.closeLeases.length}`, release() { calls.closeLeaseReleases += 1; } };
+    },
+    setDocumentBaseline(path, snapshot) {
+      calls.baselines.push(snapshot);
+      documentBaselines.set(path, bytes(snapshot));
+    },
+    releaseDocumentBaseline(path, leavingView) {
+      const stillOpen = [...this.views].some((view) =>
+        view !== leavingView && !view.teardownStarted && view.openAcknowledged !== false &&
+        (view.requestedPath || (view.documentFile || view.file)?.path) === path);
+      if (!stillOpen) documentBaselines.delete(path);
+    },
+    async writeRecoveryCandidate(input) {
+      const source = bytes(input.data);
+      const createdAt = new Date().toISOString();
+      const id = `test-recovery-${records.length + 1}`;
+      const record = { ...input, data: source, candidatePath: `${id}.pdf`, metadataPath: `${id}.json`,
+        metadata: { schema: 1, candidateId: id, candidateFile: `${id}.pdf`, documentId: input.documentId,
+          originalPath: input.documentPath, filename: input.filename, requestId: input.requestId,
+          openRequest: input.openRequest, revision: input.revision, origin: input.origin, reason: input.reason,
+          baseFingerprint: hash(bytes(input.originalBytes)), createdAt, updatedAt: createdAt,
+          status: input.status, completed: true, outputHash: hash(source), outputLength: source.byteLength },
+        retained: true };
+      records.push(record);
+      stored.set(record.metadataPath, `${JSON.stringify(record.metadata, null, 2)}\n`);
+      stored.set(record.candidatePath, source.slice());
+      return record;
+    },
+    async markRecoveryCandidate(record, value) {
+      const durable = records.find((item) => item.metadata.candidateId === record?.metadata?.candidateId) || record;
+      Object.assign(durable.metadata, value, { updatedAt: new Date().toISOString() });
+      record.metadata = durable.metadata;
+      stored.set(durable.metadataPath, `${JSON.stringify(durable.metadata, null, 2)}\n`);
+    },
+    async removeRecoveryCandidate(record) {
+      const durable = records.find((item) => item.metadata.candidateId === record?.metadata?.candidateId) || record;
+      durable.retained = false;
+      record.retained = false;
+    }, restoreLatestRecovery() {},
+    async listRecoveryCandidates() {
+      return records.filter((record) => record.retained).map((record) => {
+        const metadata = JSON.parse(stored.get(record.metadataPath) || JSON.stringify(record.metadata));
+        record.metadata = metadata;
+        return { candidatePath: record.candidatePath, metadataPath: record.metadataPath, metadata };
+      });
+    },
+    async readRecoveryBytes(candidate) {
+      const record = records.find((item) => item.metadata.candidateId === candidate?.metadata?.candidateId);
+      if (!record) throw new Error("missing recovery candidate");
+      return record.data.slice().buffer;
+    },
+    updateCloseWritebackStatus(job) {
+      this.closeWritebackJobs.set(job.jobId, { ...job });
+    },
   };
-  const host = createPdfSyncHost(plugin, {
+  const createHost = () => createPdfSyncHost(plugin, {
     createPdfMergeClient: () => client, sha256Bytes: hash, normalizePath: (v) => v,
     isPdfFile: (f) => f?.extension === "pdf", bytesEqual: eq,
     toArrayBuffer: (v) => bytes(v).buffer, makeToken: () => `test-actor-${++nextId}`,
     ensureAdapterDirectory: async (target, path) => target.mkdir(path), Notice: class {},
   });
-  const makeView = (documentId = "stable-document") => Object.assign(Object.create({
+  let host = createHost();
+  const makeView = (documentId = "stable-document", targetFile = file) => Object.assign(Object.create({
     syncState() { return { sdkViewState: true }; },
   }), {
-    documentFile: file, file, ready: true, documentId, openRequest: 1, rendererGeneration: "renderer-a",
+    documentFile: targetFile, file: targetFile, ready: true, documentId, openRequest: 1, rendererGeneration: "renderer-a",
     originalBytes: bytes([1]), loadedBaseBytes: bytes([1]), currentRevision: dirty ? 2 : 0,
     confirmedRevision: 0, syncRequests: new Map(), status: "", rejectPrepare: false,
     syncCheckpointRejections: 0, syncNeedsRefresh: false,
-    captureSaveRequest() { return { file, documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration, originalBytes: this.originalBytes.slice(), filename: file.basename }; },
+    captureSaveRequest() { return { file: targetFile, documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration, originalBytes: this.originalBytes.slice(), filename: targetFile.basename }; },
     isCurrentSaveRequest(captured) { return captured.documentId === this.documentId && captured.openRequest === this.openRequest; },
     setStatus(value) { this.status = value; },
     postToViewer(message, transfer = []) {
@@ -120,8 +212,53 @@ function harness({ local = [1], dirty = false, operations = [], mergeResult = [3
   });
   const view = makeView();
   plugin.views.add(view);
-  return { host, plugin, view, file, stored, records, posted, calls, makeView,
-    setDisk(value) { disk = bytes(value); }, get disk() { return disk; } };
+  return { get host() { return host; }, plugin, adapter, view, file, stored, records, posted, calls, documentBaselines, makeView,
+    setDisk(value) { disk = bytes(value); }, get disk() { return disk; },
+    get activeFile() { return activeFile; },
+    restartHost() { host.dispose(); host = createHost(); return host; } };
+}
+
+async function createCloseRecovery(h, {
+  draft = [1, 2], base = [1], documentId = "close-session-a", openRequest = 1,
+  revision = 1, requestId = `close-request-${revision}`, originalPath = h.file.path,
+  reason = "close-writeback", attachIntent = true, createdAt = new Date().toISOString(),
+  operations = [], newAnnotations = [],
+} = {}) {
+  const baseBytes = bytes(base);
+  const data = bytes(draft);
+  const record = await h.plugin.writeRecoveryCandidate({
+    view: h.view, documentId, filename: "only-test-vault.pdf", data,
+    originalBytes: baseBytes, documentPath: originalPath, openRequest, revision,
+    origin: "recovery", requestId, reason, status: "draft",
+  });
+  record.metadata.createdAt = createdAt;
+  record.metadata.updatedAt = createdAt;
+  if (attachIntent) {
+    const baseHash = hash(baseBytes);
+    const baseFile = `.bases/${baseHash}.pdf`;
+    h.stored.set(`${h.plugin.recoveryDirectory}/${baseFile}`, baseBytes.slice());
+    record.metadata.closeWriteback = {
+      schema: 1,
+      jobId: record.metadata.candidateId,
+      documentId,
+      originalPath,
+      filename: "only-test-vault.pdf",
+      openRequest,
+      revision,
+      requestId,
+      actorId: "actor-close-123",
+      base: { file: baseFile, hash: baseHash, length: baseBytes.byteLength },
+      draft: { hash: record.metadata.outputHash, length: record.metadata.outputLength },
+      operations,
+      newAnnotations,
+      phase: "queued",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }
+  h.stored.set(record.metadataPath, `${JSON.stringify(record.metadata, null, 2)}\n`);
+  return record;
 }
 
 function captureApplyTimeout() {
@@ -175,7 +312,7 @@ test("clean external modification refreshes the same Viewer without migrating or
     assert.equal(h.calls.merge.length, 0);
     assert.equal(h.calls.writes, 0);
     assert.deepEqual(Object.keys(h.calls.inspectInputs.at(-1)), ["bytes"],
-      "inspect does not receive an unused second full-PDF snapshot");
+      "external refresh inspection receives one owned PDF snapshot");
     assert.equal(h.view.documentId, "stable-document");
     assert.equal(h.view.openRequest, 2);
     assert.deepEqual([...h.view.loadedBaseBytes], [2]);
@@ -637,6 +774,59 @@ test("an already confirmed local checkpoint participates when an older peer vers
   } finally { h.host.dispose(); }
 });
 
+test("save transaction carries dirty state and forces fingerprint fallback when source bytes changed", async () => {
+  const h = harness({ local: [4], mergeResult: [8] });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([9]);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer,
+      actorId: "actor-a",
+      operations: [{ uuid: "annotation-a", ref: "5R", pageIndex: 2, kind: "ink", action: "upsert" }],
+      dirtyState: { dirtyAnnotationIds: ["annotation-a"], dirtyPageIndices: [2], newAnnotationIds: [], deletedAnnotationIds: [] },
+      saveTransactionId: "save-transaction-external-change",
+      revision: 1,
+      requestId: "save-external-change",
+    });
+    const prepared = h.calls.prepareInputs[0];
+    assert.equal(prepared.saveTransactionId, "save-transaction-external-change");
+    assert.equal(prepared.documentRevisionMatch, false);
+    assert.equal(prepared.forceFullFingerprints, true);
+    assert.deepEqual(prepared.dirtyState.dirtyPageIndices, [2]);
+    const log = h.calls.performance.find((entry) => entry.fn === "PdfSyncHost.save");
+    assert.equal(log.saveTransactionId, "save-transaction-external-change");
+    assert.equal(log.documentRevisionMatch, false);
+    assert.equal(log.fallbackReason, "SOURCE_REVISION_MISMATCH");
+    assert.ok(Number.isFinite(log.saveTotalMs));
+    assert.equal(log.hostStageTimingSchema, 1);
+    assert.ok(Number.isFinite(log.hostStagesMs.prepareLocalWallMs));
+    assert.ok(Number.isFinite(log.hostStagesMs.saveDiskReadMs));
+    assert.ok(Number.isFinite(log.hostStagesMs.journaledWriteWallMs));
+    assert.ok(Number.isFinite(log.hostStagesMs.sourceWriteMs));
+    assert.ok(Number.isFinite(log.hostStagesMs.sourceReadbackMs));
+    assert.ok(Number.isFinite(log.hostStagesMs.checkpointConfirmMs));
+  } finally { h.host.dispose(); }
+});
+
+test("save telemetry separates source mutation latency from readback and checkpoint phases", async () => {
+  const h = harness({ local: [4], modifyGate: () => sleep(25) });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1, requestId: "save-stage-timing",
+    });
+    const log = h.calls.performance.find((entry) => entry.fn === "PdfSyncHost.save");
+    assert.equal(log.saveTransactionId, "save-stage-timing");
+    assert.ok(log.hostStagesMs.sourceWriteMs >= 20, "the injected adapter delay belongs to the source write stage");
+    assert.ok(log.hostStagesMs.sourceReadbackMs >= 0);
+    assert.ok(log.hostStagesMs.checkpointPersistMs >= 0);
+    assert.ok(log.hostStagesMs.checkpointConfirmMs >= 0);
+    assert.ok(log.hostStagesMs.recoveryCleanupMs >= 0);
+    assert.ok(log.hostStagesMs.journaledWriteWallMs >= log.hostStagesMs.sourceWriteMs);
+    assert.equal(log.hostStageCounts.sourceWriteMs, 1);
+  } finally { h.host.dispose(); }
+});
+
 test("save restores runtime annotation IDs by UUID after merge metadata is returned", async () => {
   const h = harness({
     local: [4], mergeResult: [6],
@@ -706,7 +896,7 @@ test("last-reader release clears cached bytes, preserves checkpoint files, and f
     reopened.ready = false;
     h.plugin.views.add(reopened);
     await h.host.initializeView(reopened, reopened.originalBytes);
-    assert.equal(h.calls.checkpointReads, readsBeforePeer + 1,
+    assert.ok(h.calls.checkpointReads > readsBeforePeer,
       "a later open rereads and verifies the on-disk checkpoint");
     assert.match(reopened.status, /^同步暂停/);
     assert.ok(checkpointFiles.every((key) => h.stored.has(key)));
@@ -903,6 +1093,488 @@ test("a partially interrupted append stays pending and is never retried blindly"
     h.host.schedule(h.file, "no-blind-retry");
     await sleep(190);
     assert.equal(h.calls.appends, 1);
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-partial-append");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.match(reopenedView.status, /同步暂停/,
+      "a partial source append remains ambiguous after restart");
+    assert.equal(h.calls.appends, 1, "startup never retries an ambiguous append");
+    assert.deepEqual([...h.disk], [1, 2]);
+  } finally { h.host.dispose(); }
+});
+
+test("a preflight TFile refresh rebinds the exact path and appends only after byte verification", async () => {
+  const original = bytes([1]);
+  const suffix = bytes([2, 3]);
+  const output = bytes([1, 2, 3]);
+  const h = harness({ replaceFileOnRead: 2, appendPatch: { bytes: output, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
+      revision: 1, requestId: "save-refreshed-file-object",
+    });
+    assert.notEqual(h.activeFile, h.file,
+      "the test replaces the in-memory file object during the preflight read");
+    assert.equal(h.calls.appends, 1);
+    assert.equal(h.calls.writes, 0);
+    assert.deepEqual([...h.disk], [...output]);
+    assert.equal(JSON.parse(h.stored.get(journalManifestPath(h.file.path))).status, "confirmed");
+
+    const checkpointRequests = h.posted.filter((message) => message.type === "sync-checkpoint").length;
+    h.setDisk([9]);
+    h.host.schedule({ ...h.activeFile }, "fresh-tfile-event-after-append");
+    await until(() => h.posted.filter((message) => message.type === "sync-checkpoint").length > checkpointRequests);
+    assert.equal(h.calls.appends, 1,
+      "a fresh same-path TFile event is routed to the view's existing bound identity");
+  } finally { h.host.dispose(); }
+});
+
+test("a pre-append removal rolls back only its pending manifest and keeps its raw recovery copy", async () => {
+  const original = bytes([1]);
+  const suffix = bytes([2]);
+  const output = bytes([1, 2]);
+  const h = harness({ removeFileOnRead: 2, appendPatch: { bytes: output, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
+      revision: 1, requestId: "save-removed-before-append",
+    }), /PDF 已被替换或移除/);
+    assert.equal(h.calls.appends, 0, "no Vault append starts after the path disappears");
+    assert.equal(h.calls.writes, 0);
+    assert.equal(h.stored.has(journalManifestPath(h.file.path)), false,
+      "the exact unstarted pending manifest is removed when there was no prior checkpoint");
+    assert.equal(h.records[0].retained, true);
+    assert.equal(h.records[0].metadata.status, "conflict");
+    assert.match(h.view.status, /保存未完成/);
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-preflight-abort");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.equal(reopenedView.status.startsWith("同步暂停"), false,
+      "a known pre-append abort does not poison later sessions with a pending journal");
+  } finally { h.host.dispose(); }
+});
+
+test("pre-append rollback restores the prior confirmed manifest without removing its backup", async () => {
+  const nextOutput = bytes([1, 2, 3]);
+  const suffix = bytes([3]);
+  const h = harness({ removeFileOnRead: 5, appendPatch: (_input, count) =>
+    count === 1
+      ? { bytes: [1, 2], patch: null }
+      : { bytes: nextOutput, patch: { baseLength: 2,
+        baseFingerprint: hash(bytes([1, 2])), suffix,
+        outputLength: nextOutput.length, outputFingerprint: hash(nextOutput) } },
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [],
+      revision: 1, requestId: "save-prior-confirmed-checkpoint",
+    });
+    const manifestPath = journalManifestPath(h.file.path);
+    const confirmed = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(confirmed.status, "confirmed");
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([5]).buffer, actorId: "actor-a", operations: [],
+      revision: 2, requestId: "save-rollback-prior-checkpoint",
+    }), /PDF 已被替换或移除/);
+    assert.equal(h.calls.appends, 1,
+      "only the first confirmed append runs; the second path disappears before appendBinary");
+    assert.equal(h.stored.has(`${manifestPath}.previous`), true,
+      "rollback preserves the previous manifest file");
+    const restored = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(restored.status, "confirmed");
+    assert.equal(restored.sequence, confirmed.sequence,
+      "rollback restores the exact prior checkpoint instead of deleting or replacing it");
+    assert.equal(h.records.at(-1).retained, true);
+    assert.match(h.view.status, /保存未完成/);
+  } finally { h.host.dispose(); }
+});
+
+test("pre-append rollback preserves a newer manifest installed during prior-checkpoint validation", async () => {
+  const output = bytes([1, 2, 3]);
+  const h = harness({ removeFileOnRead: 5, appendPatch: (_input, count) =>
+    count === 1
+      ? { bytes: [1, 2], patch: null }
+      : { bytes: output, patch: { baseLength: 2,
+        baseFingerprint: hash(bytes([1, 2])), suffix: bytes([3]),
+        outputLength: output.length, outputFingerprint: hash(output) } },
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [],
+      revision: 1, requestId: "save-before-rollback-validation-race",
+    });
+    const manifestPath = journalManifestPath(h.file.path);
+    const confirmed = JSON.parse(h.stored.get(manifestPath));
+    const adapter = h.plugin.app.vault.adapter;
+    const originalRead = adapter.read.bind(adapter);
+    const originalWrite = adapter.write.bind(adapter);
+    let pendingAttemptText = null;
+    let restoringText = null;
+    let restoredReadCount = 0;
+    let raceInjected = false;
+    adapter.write = async (path, value) => {
+      if (path === manifestPath && typeof value === "string") {
+        const candidate = JSON.parse(value);
+        if (candidate.status === "pending" && candidate.sequence > confirmed.sequence) {
+          pendingAttemptText = value;
+        }
+        if (candidate.status === "confirmed" && candidate.sequence === confirmed.sequence && pendingAttemptText) {
+          restoringText = value;
+        }
+      }
+      return originalWrite(path, value);
+    };
+    adapter.read = async (path) => {
+      if (path === manifestPath && restoringText && h.stored.get(path) === restoringText) {
+        restoredReadCount += 1;
+        if (restoredReadCount === 2) {
+          raceInjected = true;
+          const prior = JSON.parse(restoringText);
+          h.stored.set(manifestPath, pendingAttemptText);
+          h.stored.set(prior.base.file, bytes([99]));
+          return restoringText;
+        }
+      }
+      return originalRead(path);
+    };
+
+    let failure;
+    try {
+      await h.host.save(h.view, h.view.captureSaveRequest(), {
+        data: bytes([5]).buffer, actorId: "actor-a", operations: [],
+        revision: 2, requestId: "save-during-rollback-validation",
+      });
+    } catch (error) { failure = error; }
+    assert.ok(failure, "the source path disappears before appendBinary");
+    assert.equal(raceInjected, true,
+      "a newer manifest is installed after the prior manifest is restored but during its validation");
+    assert.equal(h.stored.get(manifestPath), pendingAttemptText,
+      "rollback preserves the newer primary manifest instead of restoring a stale pending record");
+    assert.match(failure.unstartedAppendRollbackError?.message || "", /newer state was preserved/);
+  } finally { h.host.dispose(); }
+});
+
+test("pre-append rollback leaves a newer concurrent manifest untouched", async () => {
+  const nextOutput = bytes([1, 2, 3]);
+  const suffix = bytes([3]);
+  const h = harness({ removeFileOnRead: 5, appendPatch: (_input, count) =>
+    count === 1
+      ? { bytes: [1, 2], patch: null }
+      : { bytes: nextOutput, patch: { baseLength: 2,
+        baseFingerprint: hash(bytes([1, 2])), suffix,
+        outputLength: nextOutput.length, outputFingerprint: hash(nextOutput) } },
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [],
+      revision: 1, requestId: "save-before-concurrent-manifest",
+    });
+    const manifestPath = journalManifestPath(h.file.path);
+    const originalRead = h.plugin.app.vault.adapter.read.bind(h.plugin.app.vault.adapter);
+    let raceInjected = false;
+    h.plugin.app.vault.adapter.read = async (path) => {
+      const currentText = h.stored.get(manifestPath);
+      const currentStatus = typeof currentText === "string" ? JSON.parse(currentText).status : null;
+      if (!raceInjected && currentStatus === "pending" && path === `${manifestPath}.previous`) {
+        raceInjected = true;
+        const newer = JSON.parse(currentText);
+        newer.metadata = { ...newer.metadata,
+          appendAttemptId: "newer-concurrent-attempt", appendPhase: "append-invoked" };
+        h.stored.set(manifestPath, JSON.stringify(newer));
+      }
+      return originalRead(path);
+    };
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([5]).buffer, actorId: "actor-a", operations: [],
+      revision: 2, requestId: "save-concurrent-manifest-race",
+    }), /PDF 已被替换或移除/);
+    assert.equal(raceInjected, true, "a newer manifest lands during rollback preflight");
+    const preserved = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(preserved.status, "pending");
+    assert.equal(preserved.metadata.appendAttemptId, "newer-concurrent-attempt",
+      "rollback does not overwrite a manifest that changed after its initial read");
+    assert.equal(preserved.metadata.appendPhase, "append-invoked");
+    assert.equal(h.stored.has(`${manifestPath}.previous`), true,
+      "the existing previous manifest remains in place");
+  } finally { h.host.dispose(); }
+});
+
+test("startup confirms an exact pending output without writing the source again", async () => {
+  const original = bytes([1]);
+  const suffix = bytes([2, 3]);
+  const output = bytes([1, 2, 3]);
+  const h = harness({ appendFailure: "before", appendPatch: { bytes: output, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix,
+    outputLength: output.length, outputFingerprint: hash(output),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-a", kind: "upsert" }],
+      revision: 1, requestId: "save-before-restart-confirm",
+    }), /injected append failure/);
+    h.setDisk(output);
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-completed-append");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.equal(reopenedView.status.startsWith("同步暂停"), false);
+    assert.equal(JSON.parse(h.stored.get(journalManifestPath(h.file.path))).status, "confirmed");
+    assert.equal(h.calls.appends, 1, "startup only confirms the verified readback");
+    assert.equal(h.calls.writes, 0, "startup does not rewrite a PDF that already matches the checkpoint");
+    assert.equal(h.records[0].retained, true, "the original failed-save recovery evidence remains available");
+  } finally { h.host.dispose(); }
+});
+
+test("a pending branch on the exact base is merged before the next coordinated save", async () => {
+  const original = bytes([1]);
+  const priorBranch = bytes([1, 2]);
+  const suffix = bytes([2]);
+  const h = harness({ appendFailure: (count) => count === 1 ? "before" : null,
+    mergeResult: [1, 2, 3], appendPatch: (_input, count) =>
+    count === 1
+      ? { bytes: priorBranch, patch: { baseLength: 1, baseFingerprint: hash(original), suffix,
+        outputLength: priorBranch.length, outputFingerprint: hash(priorBranch) } }
+      : { bytes: [4], patch: null },
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-prior", kind: "upsert" }],
+      revision: 1, requestId: "save-pending-branch",
+    }), /injected append failure/);
+    assert.deepEqual([...h.disk], [...original]);
+
+    const manifestPath = journalManifestPath(h.file.path);
+    const pending = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(pending.metadata.writePhase, "invoked",
+      "the failed source call leaves a durable conservative marker");
+    pending.metadata.writePhase = "preflight";
+    pending.metadata.appendPhase = "preflight";
+    h.stored.set(manifestPath, JSON.stringify(pending));
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-with-pending-branch");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.equal(reopenedView.status.startsWith("同步暂停"), false,
+      "exact base bytes prove the prior append did not alter the PDF");
+    await restartedHost.save(reopenedView, reopenedView.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [{ uuid: "annotation-new", kind: "upsert" }],
+      revision: 2, requestId: "save-merge-pending-branch",
+    });
+    assert.equal(h.calls.merge.length, 1);
+    assert.deepEqual([...bytes(h.calls.merge[0].localBytes)], [...priorBranch],
+      "the entire verified pending checkpoint is an explicit merge input");
+    assert.deepEqual([...bytes(h.calls.merge[0].remoteBytes)], [4],
+      "the current Viewer branch is merged with the pending local checkpoint");
+    assert.deepEqual([...h.disk], [1, 2, 3]);
+    assert.equal(h.records[0].retained, true,
+      "the failed save's raw PDF recovery record remains retained after the later save");
+  } finally { h.host.dispose(); }
+});
+
+test("an invoked append on its exact parent remains paused after restart", async () => {
+  const original = bytes([1]);
+  const intended = bytes([1, 2]);
+  const h = harness({ appendFailure: "before", appendPatch: { bytes: intended, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix: bytes([2]),
+    outputLength: intended.length, outputFingerprint: hash(intended),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+      requestId: "save-append-was-invoked",
+    }), /injected append failure/);
+    const pending = JSON.parse(h.stored.get(journalManifestPath(h.file.path)));
+    assert.equal(pending.metadata.writePhase, "invoked");
+    assert.equal(pending.metadata.appendPhase, "append-invoked");
+    assert.deepEqual([...h.disk], [...original], "the injected failure left the exact parent bytes");
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-invoked-append");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.match(reopenedView.status, /同步暂停/,
+      "disk equality alone cannot prove an issued append did not partially mutate the file");
+    assert.equal(h.calls.appends, 1, "restart does not retry an invoked append");
+  } finally { h.host.dispose(); }
+});
+
+test("a legacy append with unique verified prefix-delta recovery evidence may merge", async () => {
+  const original = bytes([1]);
+  const branch = bytes([1, 2]);
+  const h = harness({ appendFailure: (count) => count === 1 ? "before" : null, appendPatch: { bytes: branch, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix: bytes([2]),
+    outputLength: branch.length, outputFingerprint: hash(branch),
+  } }, mergeResult: [1, 2, 3] });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+      requestId: "legacy-append-request",
+    }), /injected append failure/);
+    const manifestPath = journalManifestPath(h.file.path);
+    const pending = JSON.parse(h.stored.get(manifestPath));
+    delete pending.metadata.writePhase;
+    delete pending.metadata.writeParentHash;
+    delete pending.metadata.writeParentLength;
+    delete pending.metadata.appendAttemptId;
+    delete pending.metadata.appendPhase;
+    h.stored.set(manifestPath, JSON.stringify(pending));
+    Object.assign(h.records[0].metadata, {
+      status: "conflict",
+      error: "PDF 已被替换或移除",
+      updatedAt: new Date(Date.now() + 1000).toISOString(),
+    });
+    h.stored.set(h.records[0].metadataPath, `${JSON.stringify(h.records[0].metadata, null, 2)}\n`);
+    const recoveryRoot = ".obsidian/plugins/pdf-web-reader/.recovery";
+    const delta = await writeDeltaRecovery({
+      adapter: h.adapter,
+      root: recoveryRoot,
+      data: branch,
+      bases: [original],
+      metadata: { ...h.records[0].metadata },
+      ensureDirectory: async (adapter, path) => adapter.mkdir(path),
+    });
+    assert.ok(delta, "the actual compact recovery writer recognizes this incremental PDF branch");
+    h.records[0].retained = false;
+    h.records.push({ ...delta, retained: true });
+    const recoveryReads = [];
+    h.plugin.readRecoveryBytes = (candidate) => {
+      recoveryReads.push(candidate);
+      return readDeltaRecovery(h.adapter, recoveryRoot, candidate);
+    };
+
+    const validCandidateId = delta.metadata.candidateId;
+    delta.metadata.candidateId = `${validCandidateId}!`;
+    h.stored.set(delta.metadataPath, `${JSON.stringify(delta.metadata, null, 2)}\n`);
+    const malformedHost = h.restartHost();
+    const malformedView = h.makeView("reopened-with-malformed-delta-id");
+    await malformedHost.initializeView(malformedView, malformedView.originalBytes);
+    assert.match(malformedView.status, /同步暂停/,
+      "an invalid candidate ID is never normalized into trusted recovery evidence");
+    assert.equal(recoveryReads.length, 0, "malformed metadata is rejected before reading candidate bytes");
+    delta.metadata.candidateId = validCandidateId;
+    h.stored.set(delta.metadataPath, `${JSON.stringify(delta.metadata, null, 2)}\n`);
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-with-legacy-proof");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.equal(reopenedView.status.startsWith("同步暂停"), false,
+      "the exact legacy guard failure plus verified raw output proves append was not issued");
+    assert.equal(recoveryReads.length, 1, "only the uniquely correlated, well-formed candidate is reconstructed");
+    await restartedHost.save(reopenedView, reopenedView.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 2,
+      requestId: "save-after-legacy-proof",
+    });
+    assert.deepEqual([...bytes(h.calls.merge.at(-1).localBytes)], [...branch],
+      "the pending legacy branch remains an explicit merge input");
+    assert.deepEqual([...h.disk], [1, 2, 3]);
+  } finally { h.host.dispose(); }
+});
+
+test("an uncorrelated legacy pending append remains paused on its parent bytes", async () => {
+  const original = bytes([1]);
+  const intended = bytes([1, 2]);
+  const h = harness({ appendFailure: "before", appendPatch: { bytes: intended, patch: {
+    baseLength: original.length, baseFingerprint: hash(original), suffix: bytes([2]),
+    outputLength: intended.length, outputFingerprint: hash(intended),
+  } } });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+      requestId: "legacy-append-without-proof",
+    }), /injected append failure/);
+    const manifestPath = journalManifestPath(h.file.path);
+    const pending = JSON.parse(h.stored.get(manifestPath));
+    delete pending.metadata.writePhase;
+    delete pending.metadata.writeParentHash;
+    delete pending.metadata.writeParentLength;
+    delete pending.metadata.appendAttemptId;
+    delete pending.metadata.appendPhase;
+    h.stored.set(manifestPath, JSON.stringify(pending));
+    h.records[0].retained = false;
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-with-unproven-legacy-journal");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.match(reopenedView.status, /同步暂停/,
+      "unknown legacy journal phases stay blocked even when disk equals the apparent parent");
+    assert.equal(h.calls.appends, 1);
+  } finally { h.host.dispose(); }
+});
+
+test("an invoked full write remains blocked even when disk still equals its recorded parent", async () => {
+  const h = harness({ local: [4], dirty: true, failWrite: true });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    h.setDisk([5]); h.host.schedule(h.file, "full-write-failure");
+    await until(() => h.view.status.startsWith("同步暂停"));
+    const manifestPath = journalManifestPath(h.file.path);
+    const pending = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(pending.metadata.writePhase, "invoked");
+    assert.equal(pending.metadata.writeParentHash, hash(bytes([5])));
+    assert.equal(pending.metadata.writeParentLength, 1);
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-invoked-full-write");
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.match(reopenedView.status, /同步暂停/,
+      "the invoked marker prevents assuming an unchanged readback proves no write was issued");
+    assert.equal(h.calls.writes, 1, "startup never replays the full write");
+  } finally { h.host.dispose(); }
+});
+
+test("a pending append preflight is checked against the immediate linked parent, not the common base", async () => {
+  const original = bytes([1]);
+  const first = bytes([1, 2]);
+  const second = bytes([1, 2, 3]);
+  const h = harness({ appendFailure: (count) => count === 2 ? "before" : null,
+    appendPatch: (_input, count) => count === 1
+      ? { bytes: first, patch: { baseLength: 1, baseFingerprint: hash(original), suffix: bytes([2]),
+        outputLength: first.length, outputFingerprint: hash(first) } }
+      : { bytes: second, patch: { baseLength: 2, baseFingerprint: hash(first), suffix: bytes([3]),
+        outputLength: second.length, outputFingerprint: hash(second) } },
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    await h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([4]).buffer, actorId: "actor-a", operations: [], revision: 1,
+      requestId: "first-confirmed-append",
+    });
+    assert.deepEqual([...h.disk], [...first]);
+    await assert.rejects(h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([5]).buffer, actorId: "actor-a", operations: [], revision: 2,
+      requestId: "second-pending-append",
+    }), /injected append failure/);
+    const manifestPath = journalManifestPath(h.file.path);
+    const pending = JSON.parse(h.stored.get(manifestPath));
+    assert.equal(pending.base.hash, hash(original), "the common merge base predates the first append");
+    assert.equal(pending.metadata.writeParentHash, hash(first));
+    assert.equal(pending.metadata.writeParentLength, first.length);
+    pending.metadata.writePhase = "preflight";
+    pending.metadata.appendPhase = "preflight";
+    h.stored.set(manifestPath, JSON.stringify(pending));
+
+    const restartedHost = h.restartHost();
+    const reopenedView = h.makeView("reopened-after-second-append-preflight");
+    reopenedView.originalBytes = first.slice();
+    reopenedView.loadedBaseBytes = original.slice();
+    await restartedHost.initializeView(reopenedView, reopenedView.originalBytes);
+    assert.equal(reopenedView.status.startsWith("同步暂停"), false,
+      "a safe preflight append is reconciled against the exact previous confirmed PDF");
   } finally { h.host.dispose(); }
 });
 
@@ -967,4 +1639,295 @@ test("background sync rebases append a verified suffix and materialize only the 
       "the verified readback is the complete buffer sent to PDF.js for its required reload");
     assert.deepEqual(await h.host.listRecoveryCandidates(), [], "confirmed sync state is not exposed as an unsaved recovery branch");
   } finally { h.host.dispose(); }
+});
+
+test("detached close writeback remerges when a remote branch arrives between observation and journal", async () => {
+  const h = harness({
+    mutateDiskOnRead: 2,
+    mutateDiskValue: [1, 9],
+    mergeResult: (input) => ({
+      bytes: Uint8Array.from([
+        ...bytes(input.remoteBytes),
+        ...bytes(input.localBytes).filter((value) => !bytes(input.remoteBytes).includes(value)),
+      ]),
+    }),
+  });
+  try {
+    const candidate = await createCloseRecovery(h, { draft: [1, 2] });
+    const task = h.host.scheduleCloseWriteback(candidate);
+    assert.ok(task);
+    await task;
+    assert.deepEqual([...h.disk], [1, 9, 2],
+      `the final parent reread is merged before journaled append; job=${JSON.stringify(h.plugin.closeWritebackJobs.get(candidate.metadata.candidateId))}`);
+    assert.equal(h.calls.merge.length, 1);
+    assert.deepEqual([...bytes(h.calls.merge[0].remoteBytes)], [1, 9]);
+    assert.equal(h.calls.appends, 1);
+    assert.equal(candidate.retained, false);
+    assert.equal(h.plugin.closeWritebackJobs.get(candidate.metadata.candidateId).status, "completed");
+  } finally { h.host.dispose(); }
+});
+
+test("close writeback binding failure keeps the exact raw recovery bytes and leaves source untouched", async () => {
+  const raw = bytes([1, 2, 3, 4]);
+  const h = harness({ prepareFailure: new Error("unbound annotation UUID") });
+  try {
+    const candidate = await createCloseRecovery(h, { draft: raw });
+    const task = h.host.scheduleCloseWriteback(candidate);
+    assert.ok(task);
+    await task;
+    assert.deepEqual([...h.disk], [1]);
+    assert.deepEqual([...bytes(await h.plugin.readRecoveryBytes(candidate))], [...raw]);
+    assert.equal(candidate.retained, true);
+    assert.equal(candidate.metadata.closeWriteback.phase, "paused");
+    assert.equal(h.calls.writes, 0);
+    assert.equal(h.calls.appends, 0);
+    assert.equal(h.plugin.closeWritebackJobs.get(candidate.metadata.candidateId).status, "paused");
+  } finally { h.host.dispose(); }
+});
+
+test("a newer raw recovery in the same Reader session suppresses older queued close jobs", async () => {
+  const h = harness();
+  try {
+    const older = await createCloseRecovery(h, {
+      draft: [1, 2], documentId: "same-session", openRequest: 4, revision: 40,
+      createdAt: "2026-10-14T01:00:00.000Z",
+    });
+    const newer = await createCloseRecovery(h, {
+      draft: [1, 2, 3], documentId: "same-session", openRequest: 4, revision: 41,
+      reason: "auto-save-disabled", attachIntent: false,
+      createdAt: "2026-10-14T01:00:01.000Z",
+    });
+    const tasks = await h.host.resumeCloseWritebacks();
+    await Promise.all(tasks);
+    assert.equal(h.calls.writes + h.calls.appends, 0);
+    assert.equal(h.disk.length, 1);
+    assert.equal(older.retained, true);
+    assert.equal(older.metadata.closeWriteback.phase, "superseded");
+    assert.equal(newer.retained, true, "the newer recovery-only candidate remains available");
+    assert.equal(h.plugin.closeWritebackJobs.get(newer.metadata.candidateId).status, "paused");
+  } finally { h.host.dispose(); }
+});
+
+test("same-millisecond independent Reader recoveries are serialized and merged instead of dropped", async () => {
+  const h = harness({
+    mergeResult: (input) => Uint8Array.from(new Set([
+      ...bytes(input.remoteBytes), ...bytes(input.localBytes),
+    ])),
+  });
+  try {
+    const createdAt = "2026-10-14T01:00:00.000Z";
+    const first = await createCloseRecovery(h, {
+      draft: [1, 2], documentId: "session-first", revision: 18, createdAt,
+    });
+    const second = await createCloseRecovery(h, {
+      draft: [1, 2, 3], documentId: "session-second", revision: 1, createdAt,
+    });
+    const tasks = await h.host.resumeCloseWritebacks();
+    await Promise.all(tasks);
+    assert.deepEqual([...h.disk], [1, 2, 3],
+      "both independent local branches are merged against the preceding verified output");
+    assert.equal(h.calls.writes + h.calls.appends, 2,
+      "each distinct close branch reaches one verified source mutation");
+    assert.equal(first.retained, false);
+    assert.equal(second.retained, false);
+    assert.ok(h.calls.merge.length >= 1,
+      "the second session sees the first session's source output as its remote branch");
+  } finally { h.host.dispose(); }
+});
+
+test("close writeback waits for an already admitted PDF open before acquiring a writer", async () => {
+  const h = harness();
+  try {
+    const open = await h.host.beginCloseWritebackOpen(h.file.path);
+    const candidate = await createCloseRecovery(h, { draft: [1, 2] });
+    const task = h.host.scheduleCloseWriteback(candidate);
+    assert.ok(task);
+    assert.ok(h.host.closeWritebackGeneration(h.file.path) > open.generation,
+      "the open snapshot can detect a close job admitted after it started");
+    await sleep(30);
+    assert.equal(h.calls.writes + h.calls.appends, 0,
+      "the detached writer waits for PDF.js initialization to release its open admission");
+    open.release();
+    await task;
+    assert.deepEqual([...h.disk], [1, 2]);
+    assert.equal(candidate.retained, false);
+  } finally { h.host.dispose(); }
+});
+
+test("sync reconciliation waits until an admitted same-path PDF open has parsed", async () => {
+  const h = harness();
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    const opening = await h.host.beginCloseWritebackOpen(h.file.path);
+    h.host.schedule(h.file, "activation-during-open");
+    await sleep(250);
+    assert.equal(h.posted.some((message) => message.type === "sync-checkpoint"), false,
+      "the host does not ask PDF.js for a checkpoint before the admitted open ACK");
+    assert.equal(h.view.status.startsWith("同步暂停"), false,
+      "a missing pdfDocument during open cannot poison shared sync state");
+    opening.release();
+    h.view.openAcknowledged = false;
+    h.host.schedule(h.file, "failed-open-ack");
+    await sleep(250);
+    assert.equal(h.posted.some((message) => message.type === "sync-checkpoint"), false,
+      "a failed parse remains ineligible for reconciliation after its admission is released");
+    assert.equal(h.view.status.startsWith("同步暂停"), false,
+      "a failed open cannot poison the shared sync state after admission release");
+    h.view.openAcknowledged = true;
+    h.setDisk([1, 9]);
+    h.host.schedule(h.file, "opened-ack");
+    await until(() => h.posted.some((message) => message.type === "sync-checkpoint"));
+  } finally { h.host.dispose(); }
+});
+
+test("detached close work acquires a Reader-free heavy lease before entering the save queue", async () => {
+  const h = harness();
+  try {
+    const otherView = h.makeView("another-open-reader");
+    otherView.openAcknowledged = true;
+    h.plugin.views.add(otherView);
+    const candidate = await createCloseRecovery(h, { draft: [1, 2] });
+    const task = h.host.scheduleCloseWriteback(candidate);
+    assert.ok(task);
+    await task;
+    assert.deepEqual(h.calls.events.slice(0, 2), ["close-heavy-lease", "enqueue-save"]);
+    assert.equal(h.calls.closeLeases.length, 1);
+    assert.equal(h.calls.closeLeases[0].owner.jobId, candidate.metadata.candidateId);
+    assert.equal(Object.hasOwn(h.calls.closeLeases[0].owner, "view"), false);
+    assert.equal(h.calls.closeLeaseReleases, 1);
+    assert.ok(h.documentBaselines.has(h.file.path),
+      "a still-open Reader keeps the verified source baseline cached");
+  } finally { h.host.dispose(); }
+});
+
+test("a closed detached job releases baseline and sync bytes while the journal remains reloadable", async () => {
+  for (const failWrite of [false, true]) {
+    const h = harness({ failWrite });
+    try {
+      await h.host.initializeView(h.view, h.view.originalBytes);
+      h.plugin.setDocumentBaseline(h.file.path, h.view.originalBytes);
+      h.host.releaseView(h.view, h.file);
+      h.view.teardownStarted = true;
+      h.plugin.views.delete(h.view);
+      h.plugin.releaseDocumentBaseline(h.file.path, h.view);
+      if (failWrite) h.setDisk([9]);
+
+      const candidate = await createCloseRecovery(h, { draft: [1, 2] });
+      const task = h.host.scheduleCloseWriteback(candidate);
+      assert.ok(task);
+      await task;
+      assert.equal(h.documentBaselines.has(h.file.path), false,
+        "a completed or failed closed-view job must not retain a full PDF baseline");
+      assert.equal(failWrite ? candidate.retained : !candidate.retained, true,
+        "successful recovery may be cleaned up, while a failed write retains its raw recovery");
+      if (failWrite) assert.deepEqual([...h.disk], [9], "a failed source write leaves disk untouched");
+
+      const readsBeforeReopen = h.calls.checkpointReads;
+      const reopened = h.makeView("reopened-after-closed-closejob");
+      h.plugin.views.add(reopened);
+      await h.host.initializeView(reopened, h.disk);
+      assert.ok(h.calls.checkpointReads > readsBeforeReopen,
+        "reopening creates fresh in-memory state from the durable journal");
+      if (failWrite) assert.match(reopened.status, /^同步暂停/,
+        "the uncertain write journal remains available after closed-job cleanup");
+    } finally { h.host.dispose(); }
+  }
+});
+
+test("equivalent duplicate close recoveries select one winner and supersede the replay", async () => {
+  const h = harness();
+  try {
+    const createdAt = "2026-10-14T01:00:00.000Z";
+    const first = await createCloseRecovery(h, {
+      draft: [1, 2], documentId: "same-session", openRequest: 7,
+      revision: 3, requestId: "same-close", createdAt,
+      operations: [{ uuid: "square-a", op: "add" }],
+    });
+    const second = await createCloseRecovery(h, {
+      draft: [1, 2], documentId: "same-session", openRequest: 7,
+      revision: 3, requestId: "same-close", createdAt,
+      operations: [{ uuid: "square-a", op: "add" }],
+    });
+    const winner = first.metadata.candidateId < second.metadata.candidateId ? first : second;
+    const replay = winner === first ? second : first;
+    const tasks = await h.host.resumeCloseWritebacks();
+    await Promise.all(tasks);
+
+    assert.equal(h.calls.appends + h.calls.writes, 1,
+      "equivalent duplicate intents produce one source mutation");
+    assert.deepEqual([...h.disk], [1, 2]);
+    assert.equal(winner.retained, false, "the deterministic winner is removed after verified writeback");
+    assert.equal(replay.retained, true, "the duplicate remains available as a superseded recovery");
+    assert.equal(replay.metadata.closeWriteback.phase, "superseded");
+    assert.equal(h.plugin.closeWritebackJobs.get(replay.metadata.candidateId).status, "superseded");
+  } finally { h.host.dispose(); }
+});
+
+test("startup path discovery is a barrier before opening a PDF with a persisted close job", async () => {
+  const h = harness();
+  let releaseList;
+  const listing = new Promise((resolve) => { releaseList = resolve; });
+  const originalList = h.plugin.listRecoveryCandidates.bind(h.plugin);
+  h.plugin.listRecoveryCandidates = async () => {
+    await listing;
+    return originalList();
+  };
+  try {
+    const candidate = await createCloseRecovery(h, { draft: [1, 2] });
+    const discovery = h.host.resumeCloseWritebacks();
+    let opened = false;
+    const opening = h.host.waitForCloseWriteback(h.file.path).then(() => { opened = true; });
+    await sleep(30);
+    assert.equal(opened, false, "open waits until recovery discovery registers the path job");
+    releaseList();
+    await discovery;
+    await opening;
+    assert.deepEqual([...h.disk], [1, 2]);
+    assert.equal(candidate.retained, false);
+  } finally { releaseList?.(); h.host.dispose(); }
+});
+
+test("in-flight source save settles after close without poisoning the latest detached recovery", async () => {
+  let releaseAppend;
+  const appendGate = new Promise((resolve) => { releaseAppend = resolve; });
+  const h = harness({
+    appendGate: () => appendGate,
+    mergeResult: (input) => ({
+      bytes: Uint8Array.from([...new Set([...bytes(input.remoteBytes), ...bytes(input.localBytes)])]),
+    }),
+  });
+  try {
+    await h.host.initializeView(h.view, h.view.originalBytes);
+    const oldSave = h.host.save(h.view, h.view.captureSaveRequest(), {
+      data: bytes([1, 2]).buffer,
+      actorId: "actor-a",
+      operations: [{ uuid: "square-one" }],
+      revision: 1,
+      requestId: "blocked-old-save",
+    });
+    await until(() => h.calls.appends === 1);
+    assert.deepEqual([...h.disk], [1], "the accepted source append is still behind the test gate");
+    assert.equal(await h.host.prepareClose(h.view), true);
+    const latest = await createCloseRecovery(h, {
+      draft: [1, 2, 3], revision: 2, requestId: "latest-close-save",
+      operations: [{ uuid: "square-one" }, { uuid: "square-two" }],
+    });
+    h.host.noteCloseRecoveryCandidate(latest);
+    const detachedJob = h.host.scheduleCloseWriteback(latest);
+    assert.ok(detachedJob);
+    assert.equal(h.plugin.closeWritebackJobs.get(latest.metadata.candidateId).status, "queued");
+    const jobSnapshot = h.plugin.closeWritebackJobs.get(latest.metadata.candidateId);
+    assert.equal(Object.hasOwn(jobSnapshot, "view"), false);
+    assert.equal(Object.hasOwn(jobSnapshot, "iframe"), false);
+    assert.equal(Object.hasOwn(jobSnapshot, "window"), false);
+
+    releaseAppend();
+    await oldSave;
+    await detachedJob;
+    await h.plugin.saveQueue;
+    assert.deepEqual([...h.disk], [1, 2, 3],
+      "the latest two-square recovery writes after the already-invoked older save settles");
+    assert.equal(h.plugin.closeWritebackJobs.get(latest.metadata.candidateId).status, "completed");
+    assert.equal(latest.retained, false);
+  } finally { releaseAppend?.(); h.host.dispose(); }
 });

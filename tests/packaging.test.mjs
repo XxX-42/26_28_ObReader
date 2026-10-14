@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const dist = path.join(root, "dist", "pdf-web-reader");
-const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork";
+const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19";
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
@@ -127,7 +127,7 @@ test("community release output is exactly the three installer assets", async () 
     await readFile(path.join(root, "versions.json"), "utf8"),
   );
   assert.equal(manifest.id, "pdf-web-reader");
-  assert.equal(manifest.version, "0.5.10");
+  assert.equal(manifest.version, "0.5.20");
   assert.equal(manifest.isDesktopOnly, false);
   assert.deepEqual(manifest, rootManifest);
   assert.deepEqual(manifest, sourceManifest);
@@ -170,7 +170,15 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
       }
       assert.ok(notices.includes("pako /lib/zlib Zlib notice"));
       sourceBytes = decoded;
-    } else sourceBytes = expected[index].bytes ? Buffer.from(expected[index].bytes) : await readFile(expected[index].absolute);
+    } else {
+      sourceBytes = expected[index].bytes ? Buffer.from(expected[index].bytes) : await readFile(expected[index].absolute);
+      if (entry.path === "web/obsidian-bridge.js") {
+        const source = sourceBytes.toString("utf8");
+        const names = [...source.matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1]).filter(name => !name.startsWith("runtimeLog"));
+        const assignments = names.map(name => `${name} = runtimeLogTrace(${name}, ${JSON.stringify(`Viewer.${name}`)});`).join("\n  ");
+        sourceBytes = Buffer.from(source.replace("/* BUILD:VIEWER_FUNCTION_TRACE */", assignments));
+      }
+    }
     assert.equal(entry.size, sourceBytes.byteLength, `${entry.path}: size`);
     assert.equal(
       entry.sha256,

@@ -108,7 +108,10 @@
     openSessionSequence: 0,
     queuedOpens: [],
     savePromise: null,
+    saveSerializationPromise: null,
+    lastSerializedSave: null,
     recoveryPromise: null,
+    recoveryCloseIntent: false,
     manualSaveRequestedDuringFlight: false,
     pendingSave: null,
     pendingRecovery: null,
@@ -119,6 +122,15 @@
     annotationUuidByPdfRef: new Map(),
     annotationSnapshot: new Map(),
     annotationOperations: [],
+    dirtyAnnotationRevisions: new Map(),
+    dirtyPageRevisions: new Map(),
+    dirtyNewAnnotationIds: new Set(),
+    dirtyDeletedAnnotationIds: new Set(),
+    // A saved editor restored by Undo can be live in the editor manager while
+    // PDF.js omits it from AnnotationStorage because it is unchanged against
+    // the loaded PDF base. Keep that exact saved identity until Redo removes
+    // the editor or the document is replaced.
+    restoredSavedAnnotations: new Map(),
     syncClockTimestamp: 0,
     syncClockLogical: 0,
     syncOperationSequence: 0,
@@ -132,6 +144,7 @@
     closeInertState: null,
     lastRecoveredDocumentId: null,
     lastRecoveredRevision: null,
+    lastCloseWritebackAck: null,
     saveSequence: 0,
     recoverySequence: 0,
     storageCleanup: null,
@@ -153,7 +166,80 @@
   if (iosInputPolicy) {
     document.documentElement.dataset.pdfReaderIosInputPolicy = "true";
   }
+  // Diagnostic-only channel. Batches contain metadata, never PDF bytes or text.
+  const runtimeLogStarted = performance.now();
+  let runtimeLogRows = [], runtimeLogBytes = 0, runtimeLogLost = 0, runtimeLogSequence = 0, runtimeLogCall = 0, runtimeLogClosed = false, runtimeLogClosing = false;
+  const runtimeLogListeners = [];
+  function runtimeLogRecord(kind, fields = {}) {
+    if (runtimeLogClosed) return;
+    try {
+      const row = JSON.stringify({ time: new Date().toISOString(), elapsedMs: +(performance.now() - runtimeLogStarted).toFixed(3), seq: ++runtimeLogSequence, kind, revision: state.revision, ...fields });
+      if (runtimeLogBytes + row.length > 262144) { runtimeLogLost++; return; }
+      runtimeLogRows.push(row); runtimeLogBytes += row.length;
+    } catch { runtimeLogLost++; }
+  }
+  function runtimeLogTake() {
+    if (runtimeLogLost) { runtimeLogRows.push(JSON.stringify({ kind: "log-loss", dropped: runtimeLogLost })); runtimeLogLost = 0; }
+    const rows = runtimeLogRows; runtimeLogRows = []; runtimeLogBytes = 0;
+    return rows;
+  }
+  window.__PDF_READER_DRAIN_LOG__ = runtimeLogTake;
+  function runtimeLogFlush() {
+    const pending = runtimeLogTake();
+    while (pending.length) {
+      const rows = pending.splice(0, 256);
+      try { window.parent.postMessage({ channel, token, rendererGeneration, type: "runtime-log", rows }, "*"); }
+      catch { runtimeLogLost += rows.length + pending.length; break; }
+    }
+  }
+  function runtimeLogError(error) { return { name: String(error?.name || "Error"), message: String(error?.message ?? error).slice(0, 4096), stack: String(error?.stack || "").slice(0, 8192) }; }
+  function runtimeLogTrace(original, fn) {
+    return function (...args) {
+      const call = ++runtimeLogCall;
+      let start;
+      try { start = performance.now(); runtimeLogRecord("function.begin", { fn, call }); } catch { /* Diagnostic only. */ }
+      const finish = error => { try { runtimeLogRecord(error ? "function.error" : "function.end", { fn, call, durationMs: +(performance.now() - start).toFixed(3), ...(error ? { error: runtimeLogError(error) } : {}) }); } catch { /* Preserve original outcome. */ } };
+      let value;
+      try { value = original.apply(this, args); } catch (error) { finish(error); throw error; }
+      try {
+        if (value && Object.prototype.toString.call(value) === "[object Promise]") {
+          Promise.prototype.then.call(value, () => finish(), error => finish(error));
+          return value;
+        }
+      } catch { /* Preserve original outcome. */ }
+      finish();
+      return value;
+    };
+  }
+  function runtimeLogListen(type, fn) { window.addEventListener(type, fn, true); runtimeLogListeners.push([type, fn]); }
+  const runtimeLogConsoleRestore = [];
+  for (const level of ["warn", "error"]) {
+    const original = console[level];
+    console[level] = function (...args) {
+      try { runtimeLogRecord(`console.${level}`, { fn: `Viewer.console.${level}`, message: typeof args[0] === "string" ? args[0].slice(0, 4096) : undefined, error: args.find(value => value instanceof Error) ? runtimeLogError(args.find(value => value instanceof Error)) : undefined }); } catch { /* Keep console behavior. */ }
+      return original.apply(this, args);
+    };
+    runtimeLogConsoleRestore.push([level, original, console[level]]);
+  }
+  for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointermove", "pointerup", "pointercancel", "wheel", "keydown", "input", "change", "compositionstart", "compositionend", "scroll"]) {
+    runtimeLogListen(type, event => runtimeLogRecord("user", { event: type, trusted: event.isTrusted === true, target: event.target?.id || event.target?.tagName || "window", pointerType: event.pointerType, pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY, deltaX: event.deltaX, deltaY: event.deltaY, key: type === "keydown" ? (/^(Enter|Escape|Tab|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Shift|Control|Alt|Meta|CapsLock|Dead|Process|Unidentified|F[0-9]{1,2})$/.test(event.key || "") ? event.key : "character") : undefined, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, scrollTop: type === "scroll" ? event.target?.scrollTop : undefined }));
+  }
+  runtimeLogListen("error", event => runtimeLogRecord("error", { error: runtimeLogError(event.error || event.message), source: event.filename, line: event.lineno, column: event.colno }));
+  runtimeLogListen("unhandledrejection", event => runtimeLogRecord("unhandledrejection", { error: runtimeLogError(event.reason) }));
+  const runtimeLogTimer = setInterval(runtimeLogFlush, 1000);
+  runtimeLogRecord("viewer.start");
+  /* BUILD:VIEWER_FUNCTION_TRACE */
+
+  function runtimeLogClose() {
+    if (runtimeLogClosing) return;
+    runtimeLogClosing = true;
+    clearInterval(runtimeLogTimer);
+    for (const [level, original, wrapped] of runtimeLogConsoleRestore) if (console[level] === wrapped) console[level] = original;
+    for (const [type, fn] of runtimeLogListeners.splice(0)) window.removeEventListener(type, fn, true);
+    Promise.resolve().then(() => { runtimeLogRecord("viewer.end"); runtimeLogClosed = true; runtimeLogFlush(); });
+  }
   function postToHost(type, fields = {}, transfer = []) {
+    if (type === "close-prepared" || type === "flushed") runtimeLogFlush();
     if (state.disposed) {
       return false;
     }
@@ -231,11 +317,14 @@
 
   function sendError(
     message,
-    { documentId = null, requestId = null, code } = {},
+    { documentId = null, openRequest = null, requestId = null, code } = {},
   ) {
     const fields = { message: String(message || "PDF viewer error") };
     if (typeof documentId === "string") {
       fields.documentId = documentId;
+    }
+    if (Number.isSafeInteger(openRequest) && openRequest >= 0) {
+      fields.openRequest = openRequest;
     }
     if (typeof requestId === "string") {
       fields.requestId = requestId;
@@ -939,6 +1028,73 @@
     };
   }
 
+  function remapSessionIdentities(syncState) {
+    if (!Array.isArray(syncState?.identities)) return;
+    const canonicalByRef = new Map();
+    for (const identity of syncState.identities) {
+      const refKey = pdfAnnotationRefKey(identity?.ref);
+      if (refKey && typeof identity?.uuid === "string") canonicalByRef.set(refKey, identity.uuid);
+    }
+    if (!canonicalByRef.size) return;
+    const remapUuid = (uuid, reference) => canonicalByRef.get(pdfAnnotationRefKey(reference)) || uuid;
+    const oldToCanonical = new Map();
+    for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
+      // Stable UUIDs already identify a specific annotation operation. A PDF
+      // writer may reuse an old object reference after a deletion, so resolving
+      // every UUID through the latest ref table can attach that operation to a
+      // different annotation. Only legacy fast-open session IDs need remapping.
+      if (!String(uuid || "").startsWith("session-")) continue;
+      const reference = state.annotationRefByRuntimeId.get(runtimeId);
+      const canonical = remapUuid(uuid, reference);
+      if (canonical !== uuid) {
+        oldToCanonical.set(uuid, canonical);
+        state.annotationUuidByRuntimeId.set(runtimeId, canonical);
+      }
+    }
+    for (const [referenceKey, uuid] of state.annotationUuidByPdfRef) {
+      const canonical = canonicalByRef.get(referenceKey);
+      if (canonical) state.annotationUuidByPdfRef.set(referenceKey, canonical);
+    }
+    const remappedOperations = new Map();
+    for (const entry of state.annotationOperations) {
+      const operation = { ...entry.operation };
+      if (String(operation.uuid || "").startsWith("session-")) {
+        operation.uuid = remapUuid(operation.uuid, operation.ref);
+      }
+      if (operation.uuid !== entry.operation.uuid) oldToCanonical.set(entry.operation.uuid, operation.uuid);
+      const previous = remappedOperations.get(operation.uuid);
+      if (!previous || entry.revision > previous.revision ||
+          (entry.revision === previous.revision && compareSyncStamps(operation, previous.operation) > 0)) {
+        remappedOperations.set(operation.uuid, { ...entry, operation });
+      }
+    }
+    state.annotationOperations = [...remappedOperations.values()];
+    const remapRevisionMap = (source) => {
+      const next = new Map();
+      for (const [uuid, revision] of source) {
+        const canonical = oldToCanonical.get(uuid) || uuid;
+        next.set(canonical, Math.max(next.get(canonical) ?? -1, revision));
+      }
+      return next;
+    };
+    state.dirtyAnnotationRevisions = remapRevisionMap(state.dirtyAnnotationRevisions);
+    const remapSet = (source) => new Set([...source].map((uuid) => oldToCanonical.get(uuid) || uuid));
+    state.dirtyNewAnnotationIds = remapSet(state.dirtyNewAnnotationIds);
+    state.dirtyDeletedAnnotationIds = remapSet(state.dirtyDeletedAnnotationIds);
+  }
+
+  function compareSyncStamps(left, right) {
+    for (const key of ["timestamp", "logical"]) {
+      const a = Number(left?.[key] || 0), b = Number(right?.[key] || 0);
+      if (a !== b) return a < b ? -1 : 1;
+    }
+    for (const key of ["actorId", "operationId"]) {
+      const a = String(left?.[key] || ""), b = String(right?.[key] || "");
+      if (a !== b) return a < b ? -1 : 1;
+    }
+    return 0;
+  }
+
   function applySyncIdentities(value, { reset = false } = {}) {
     const normalizedSyncState = normalizeSyncState(value);
     const syncState = reset && normalizedSyncState
@@ -958,12 +1114,18 @@
       state.annotationRefByRuntimeId.clear();
       state.annotationUuidByPdfRef.clear();
       state.annotationOperations = [];
+      state.dirtyAnnotationRevisions.clear();
+      state.dirtyPageRevisions.clear();
+      state.dirtyNewAnnotationIds.clear();
+      state.dirtyDeletedAnnotationIds.clear();
       state.annotationSnapshot = new Map();
+      state.restoredSavedAnnotations.clear();
       state.syncOperationSequence = 0;
       state.syncClockTimestamp = 0;
       state.syncClockLogical = 0;
       state.syncState = null;
     }
+    if (!reset) remapSessionIdentities(syncState);
     if (!syncState) {
       if (reset) {
         state.syncActorId = makeSyncUuid();
@@ -1069,6 +1231,167 @@
     };
   }
 
+  function exactSavedIdentityForOperation(operation) {
+    if (
+      !operation ||
+      typeof operation.uuid !== "string" ||
+      !operation.uuid ||
+      !Number.isSafeInteger(operation.pageIndex) ||
+      typeof operation.kind !== "string" ||
+      !operation.kind ||
+      normalizeSyncKind(operation.kind) === "Unknown"
+    ) {
+      return null;
+    }
+    const operationRef = canonicalPdfAnnotationRef(operation.ref);
+    if (!operationRef) {
+      return null;
+    }
+    const identity = state.syncState?.identities?.find((candidate) =>
+      candidate?.uuid === operation.uuid &&
+      canonicalPdfAnnotationRef(candidate.ref) === operationRef &&
+      candidate.pageIndex === operation.pageIndex &&
+      normalizeSyncKind(candidate.kind) === normalizeSyncKind(operation.kind),
+    );
+    if (!identity) {
+      return null;
+    }
+    return {
+      uuid: identity.uuid,
+      ref: operationRef,
+      pageIndex: identity.pageIndex,
+      kind: normalizeSyncKind(identity.kind),
+      runtimeId: typeof identity.runtimeId === "string" ? identity.runtimeId : null,
+    };
+  }
+
+  function findLiveSavedEditor(manager, identity) {
+    if (!manager || !identity) {
+      return null;
+    }
+    // A newly-created PDF.js editor can remain id:null in the open Viewer even
+    // after the host has confirmed its persisted PDF reference. When undo
+    // restores that editor, runtimeId is the exact session binding carried by
+    // the host ACK; accept it only with the same page/type and a live editor.
+    if (identity.runtimeId) {
+      const editor = manager.getEditor?.(identity.runtimeId);
+      if (
+        editor &&
+        editor.deleted !== true &&
+        editor.pageIndex === identity.pageIndex &&
+        normalizeSyncKind(editor.editorType) === identity.kind
+      ) {
+        return editor;
+      }
+    }
+    const editors = manager.getEditors?.(identity.pageIndex);
+    if (!editors || typeof editors[Symbol.iterator] !== "function") {
+      return null;
+    }
+    for (const editor of editors) {
+      const editorUuid = typeof editor?.id === "string"
+        ? state.annotationUuidByRuntimeId.get(editor.id)
+        : null;
+      if (
+        editor &&
+        editor.deleted !== true &&
+        editor.pageIndex === identity.pageIndex &&
+        (editorUuid === identity.uuid ||
+          canonicalPdfAnnotationRef(editor.annotationElementId) === identity.ref) &&
+        normalizeSyncKind(editor.editorType) === identity.kind
+      ) {
+        return editor;
+      }
+    }
+    return null;
+  }
+
+  function captureSavedEditorHistory(manager, direction) {
+    const candidates = [];
+    for (const { operation } of state.annotationOperations) {
+      if (direction === "undo" && operation.action !== "delete") {
+        continue;
+      }
+      if (direction === "redo" && operation.action !== "upsert") {
+        continue;
+      }
+      if (
+        direction === "redo" &&
+        !state.restoredSavedAnnotations.has(operation.uuid)
+      ) {
+        continue;
+      }
+      const identity = exactSavedIdentityForOperation(operation);
+      if (!identity) {
+        continue;
+      }
+      candidates.push({
+        identity,
+        wasLive: Boolean(findLiveSavedEditor(manager, identity)),
+      });
+    }
+    return candidates;
+  }
+
+  function recordSavedEditorHistoryOperation(identity, editor, action) {
+    const stamp = makeSyncStamp();
+    let serialized;
+    if (action === "upsert") {
+      try {
+        const snapshot = editor?.serialize?.(true);
+        if (snapshot && typeof snapshot === "object") {
+          serialized = normalizeSyncValue(snapshot);
+        }
+      } catch {
+        // A full editor snapshot is supplemental. The exact saved identity and
+        // transition are sufficient to record this restored unchanged editor.
+      }
+    }
+    const operation = {
+      uuid: identity.uuid,
+      // Until the live PDF.js editor is rebound to the persisted annotation
+      // object, an undo upsert must stay an exact id:null creation against the
+      // loaded base. A later delete may still use the ACK's saved PDF ref.
+      ref: action === "upsert" && !canonicalPdfAnnotationRef(editor?.annotationElementId)
+        ? null
+        : identity.ref,
+      pageIndex: identity.pageIndex,
+      kind: identity.kind,
+      deleted: action === "delete",
+      action,
+      ...stamp,
+      serialized: action === "delete" ? { deleted: true } : serialized,
+    };
+    const existingIndex = state.annotationOperations.findIndex(
+      (entry) => entry.operation.uuid === identity.uuid,
+    );
+    if (existingIndex >= 0) {
+      state.annotationOperations.splice(existingIndex, 1);
+    }
+    state.annotationOperations.push({ revision: state.revision, operation });
+    const isNew = action === "upsert" && !canonicalPdfAnnotationRef(editor?.annotationElementId);
+    markDirtyAnnotation(identity.uuid, identity.pageIndex, action, state.revision, isNew);
+    if (action === "upsert") {
+      state.restoredSavedAnnotations.set(identity.uuid, identity);
+    } else {
+      state.restoredSavedAnnotations.delete(identity.uuid);
+    }
+  }
+
+  function reconcileSavedEditorHistory(manager, direction, candidates) {
+    for (const { identity, wasLive } of candidates) {
+      const editor = findLiveSavedEditor(manager, identity);
+      const isLive = Boolean(editor);
+      const restored = direction === "undo" && !wasLive && isLive;
+      const removed = direction === "redo" && wasLive && !isLive;
+      if (restored) {
+        recordSavedEditorHistoryOperation(identity, editor, "upsert");
+      } else if (removed) {
+        recordSavedEditorHistoryOperation(identity, null, "delete");
+      }
+    }
+  }
+
   function refreshAnnotationOperations(revision = state.revision) {
     const current = getAnnotationStorageRows();
     const previous = state.annotationSnapshot;
@@ -1089,6 +1412,12 @@
     for (const { before, after, row } of changed.values()) {
       const currentRow = after || row;
       const deleted = !after || after.deleted;
+      for (const pageIndex of new Set([before?.pageIndex, after?.pageIndex].filter(Number.isSafeInteger))) {
+        state.dirtyPageRevisions.set(pageIndex, revision);
+      }
+      const isNew = !deleted && !after?.annotationElementId && !after?.reference && !after?.operationReference;
+      markDirtyAnnotation(currentRow.uuid, currentRow.pageIndex ?? before?.pageIndex ?? null,
+        deleted ? "delete" : "upsert", revision, isNew);
       const operationReference = after
         ? after.deleted
           ? after.reference || after.operationReference
@@ -1117,13 +1446,62 @@
         revision,
         operation,
       });
+      if (deleted) {
+        state.restoredSavedAnnotations.delete(operation.uuid);
+      }
     }
     state.annotationSnapshot = current;
+    const manager = state.app?.pdfViewer?._layerProperties
+      ?.annotationEditorUIManager;
+    if (manager) {
+      for (const [uuid, identity] of state.restoredSavedAnnotations) {
+        if (!findLiveSavedEditor(manager, identity)) {
+          state.restoredSavedAnnotations.delete(uuid);
+        }
+      }
+    }
   }
 
   function captureSyncOperations(revision = state.revision) {
     return state.annotationOperations
       .map(({ operation }) => ({ ...operation }));
+  }
+
+  function markDirtyAnnotation(uuid, pageIndex, action, revision, isNew) {
+    if (typeof uuid !== "string" || !uuid) return;
+    state.dirtyAnnotationRevisions.set(uuid, revision);
+    if (Number.isSafeInteger(pageIndex) && pageIndex >= 0) {
+      state.dirtyPageRevisions.set(pageIndex, revision);
+    }
+    if (isNew) state.dirtyNewAnnotationIds.add(uuid);
+    if (action === "delete") state.dirtyDeletedAnnotationIds.add(uuid);
+    else state.dirtyDeletedAnnotationIds.delete(uuid);
+  }
+
+  function captureDirtySyncState(revision = state.revision) {
+    const eligible = (map) => [...map.entries()].filter(([, changedAt]) => changedAt <= revision);
+    const annotationRows = eligible(state.dirtyAnnotationRevisions);
+    const pageRows = eligible(state.dirtyPageRevisions);
+    const annotationIds = new Set(annotationRows.map(([uuid]) => uuid));
+    return {
+      dirtyAnnotationIds: [...annotationIds],
+      dirtyPageIndices: pageRows.map(([pageIndex]) => pageIndex).sort((a, b) => a - b),
+      newAnnotationIds: [...state.dirtyNewAnnotationIds].filter((uuid) => annotationIds.has(uuid)),
+      deletedAnnotationIds: [...state.dirtyDeletedAnnotationIds].filter((uuid) => annotationIds.has(uuid)),
+    };
+  }
+
+  function clearConfirmedDirtyState(revision) {
+    for (const [uuid, changedAt] of state.dirtyAnnotationRevisions) {
+      if (changedAt <= revision) {
+        state.dirtyAnnotationRevisions.delete(uuid);
+        state.dirtyNewAnnotationIds.delete(uuid);
+        state.dirtyDeletedAnnotationIds.delete(uuid);
+      }
+    }
+    for (const [pageIndex, changedAt] of state.dirtyPageRevisions) {
+      if (changedAt <= revision) state.dirtyPageRevisions.delete(pageIndex);
+    }
   }
 
   function captureNewSyncAnnotations() {
@@ -1558,6 +1936,7 @@
       data,
       operations: captureSyncOperations(revisionAtStart),
       newAnnotations: captureNewSyncAnnotations(),
+          dirtyState: captureDirtySyncState(revisionAtStart),
       actorId: state.syncActorId,
       viewState: captureSyncViewState(app),
     };
@@ -2482,6 +2861,7 @@
     state.dirty = true;
     state.lastRecoveredDocumentId = null;
     state.lastRecoveredRevision = null;
+    state.lastCloseWritebackAck = null;
     const app = state.app;
     if (app) {
       app._annotationStorageModified = true;
@@ -2844,6 +3224,8 @@
     openRequest,
     operations,
     newAnnotations,
+    dirtyState,
+    saveTransactionId,
     actorId,
     heavyLeaseId,
   }) {
@@ -2888,6 +3270,8 @@
             openRequest,
             operations,
             newAnnotations,
+            dirtyState,
+            saveTransactionId,
             actorId,
             ...(heavyLeaseId ? { heavyLeaseId } : {}),
           },
@@ -2915,6 +3299,7 @@
     newAnnotations,
     actorId,
     heavyLeaseId,
+    closeRecovery = false,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -2930,10 +3315,10 @@
         requestId,
         revision,
         openRequest,
-        resolve: () => {
+        resolve: (message) => {
           clearTimeout(timeout);
           state.pendingRecovery = null;
-          resolve();
+          resolve(message);
         },
         reject: (error) => {
           clearTimeout(timeout);
@@ -2957,6 +3342,7 @@
             operations,
             newAnnotations,
             actorId,
+            closeRecovery,
             ...(heavyLeaseId ? { heavyLeaseId } : {}),
           },
           [data],
@@ -2993,13 +3379,37 @@
     let revisionAtStart = null;
     let dirtySnapshot = null;
     let requestId = null;
+    let saveTransactionId = null;
+    let dirtyStateAtStart = null;
     let willSaveDispatched = false;
     let saveStarted = false;
     let autoStartedAt = null;
+    let finishSerialization;
+    const serializationPromise = new Promise((resolve) => {
+      finishSerialization = resolve;
+    });
+    const serializationRequest = { documentId, openRequest, promise: serializationPromise };
+    state.saveSerializationPromise = serializationRequest;
+    const finishSaveSerialization = (snapshot = null) => {
+      if (state.saveSerializationPromise === serializationRequest) {
+        state.saveSerializationPromise = null;
+      }
+      if (finishSerialization) {
+        finishSerialization(snapshot);
+        finishSerialization = null;
+      }
+    };
+    const finishPdfSavePhase = () => {
+      if (!saveStarted) return;
+      app._saveInProgress = false;
+      app._updateOverwriteOriginalState?.();
+      app.setTitle?.();
+      saveStarted = false;
+    };
 
     try {
       lease = await waitForHostHeavyLease({ documentId, openRequest });
-      if (!sessionIsCurrent()) {
+      if (!sessionIsCurrent() || state.closeControl) {
         return false;
       }
       if (
@@ -3019,12 +3429,15 @@
       revisionAtStart = state.revision;
       dirtySnapshot = snapshotChanges(app);
       if (!isDirty(app)) {
+        finishSaveSerialization(null);
         return true;
       }
       const operationsAtStart = captureSyncOperations(revisionAtStart);
       const newAnnotationsAtStart = captureNewSyncAnnotations();
+      dirtyStateAtStart = captureDirtySyncState(revisionAtStart);
       const actorIdAtStart = state.syncActorId;
       requestId = makeSaveRequestId();
+      saveTransactionId = makeSyncUuid();
       app._saveInProgress = true;
       saveStarted = true;
       app._updateOverwriteOriginalState?.();
@@ -3074,10 +3487,27 @@
       if (!bytes) {
         throw new Error("PDF.js did not produce PDF data to save.");
       }
+      const serializedSnapshot = {
+        documentId,
+        openRequest,
+        revision: revisionAtStart,
+        bytes: new Uint8Array(bytes).slice(),
+        operations: operationsAtStart,
+        newAnnotations: newAnnotationsAtStart,
+        dirtyState: dirtyStateAtStart,
+        saveTransactionId,
+        actorId: actorIdAtStart,
+      };
+      state.lastSerializedSave = serializedSnapshot;
       if (willSaveDispatched) {
         await app.pdfScriptingManager?.dispatchDidSave?.();
         willSaveDispatched = false;
       }
+
+      // PDF.js has finished serializing. The Vault write may take much longer;
+      // close can now serialize a newer frozen revision independently.
+      finishPdfSavePhase();
+      finishSaveSerialization(serializedSnapshot);
 
       if (!sessionIsCurrent()) {
         return false;
@@ -3116,6 +3546,8 @@
         openRequest,
         operations: operationsAtStart,
         newAnnotations: newAnnotationsAtStart,
+        dirtyState: dirtyStateAtStart,
+        saveTransactionId,
         actorId: actorIdAtStart,
         heavyLeaseId: lease?.leaseId,
       });
@@ -3169,11 +3601,8 @@
       }
       return false;
     } finally {
-      if (saveStarted) {
-        app._saveInProgress = false;
-        app._updateOverwriteOriginalState?.();
-        app.setTitle?.();
-      }
+      finishPdfSavePhase();
+      finishSaveSerialization(null);
       if (autoStartedAt !== null) {
         state.lastAutoSaveDurationMs = Math.max(0, Date.now() - autoStartedAt);
       }
@@ -3188,6 +3617,7 @@
       !state.disposed &&
       documentId &&
       state.activeDocumentId === documentId &&
+      !state.closeControl &&
       isDirty()
     ) {
       if (
@@ -3239,7 +3669,7 @@
     return lastResult;
   }
 
-  async function runRecoverySequence(reason, deadline) {
+  async function runRecoverySequence(reason, deadline, { closeRecovery = false } = {}) {
     const documentId = state.activeDocumentId;
     const openRequest = state.activeOpenRequest;
     if (!documentId || !state.app?.pdfDocument || state.readOnly) {
@@ -3287,11 +3717,13 @@
         if (deadline <= Date.now()) {
           return false;
         }
-        lease = await waitForHostHeavyLease({
-          documentId,
-          openRequest,
-          timeoutMs: Math.max(0, deadline - Date.now()),
-        });
+        if (!closeRecovery) {
+          lease = await waitForHostHeavyLease({
+            documentId,
+            openRequest,
+            timeoutMs: Math.max(0, deadline - Date.now()),
+          });
+        }
       } catch (error) {
         if (!sessionIsCurrent() || error?.cancelled) {
           return false;
@@ -3318,54 +3750,83 @@
       }
 
       const revisionAtStart = state.revision;
-      const operationsAtStart = captureSyncOperations(revisionAtStart);
-      const newAnnotationsAtStart = captureNewSyncAnnotations();
-      const actorIdAtStart = state.syncActorId;
+      const cached = closeRecovery &&
+        !state.pendingInkCommit &&
+        !state.freeTextInputPending &&
+        state.lastSerializedSave?.documentId === documentId &&
+        state.lastSerializedSave?.openRequest === openRequest &&
+        state.lastSerializedSave?.revision === revisionAtStart
+        ? state.lastSerializedSave
+        : null;
+      const operationsAtStart = cached?.operations || captureSyncOperations(revisionAtStart);
+      const newAnnotationsAtStart = cached?.newAnnotations || captureNewSyncAnnotations();
+      const actorIdAtStart = cached?.actorId || state.syncActorId;
       const dirtySnapshot = snapshotChanges(app);
       let willSaveDispatched = false;
       let saveStarted = false;
-      app._saveInProgress = true;
-      saveStarted = true;
+      let bytes;
       try {
-        if (deadline <= Date.now()) {
-          return false;
-        }
-        await app.pdfScriptingManager?.dispatchWillSave?.();
-        willSaveDispatched = true;
-        if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
-          throw new Error("Page reordering cannot be included in a PDF recovery copy.");
-        }
-        if (
-          !sessionIsCurrent() ||
-          state.revision !== revisionAtStart ||
-          isEditBoundaryBusy() ||
-          state.pendingInkCommit
-        ) {
+        if (cached) {
+          bytes = cached.bytes;
+        } else {
+          app._saveInProgress = true;
+          saveStarted = true;
+          if (deadline <= Date.now()) {
+            return false;
+          }
+          await app.pdfScriptingManager?.dispatchWillSave?.();
+          willSaveDispatched = true;
+          if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
+            throw new Error("Page reordering cannot be included in a PDF recovery copy.");
+          }
+          if (
+            !sessionIsCurrent() ||
+            state.revision !== revisionAtStart ||
+            isEditBoundaryBusy() ||
+            state.pendingInkCommit
+          ) {
+            if (willSaveDispatched) {
+              await app.pdfScriptingManager?.dispatchDidSave?.();
+              willSaveDispatched = false;
+            }
+            if (sessionIsCurrent()) {
+              state.dirty = true;
+              restoreChanges(app, {
+                hadAnnotationChanges: true,
+                hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+              });
+            }
+            continue;
+          }
+          // Recovery has the same loaded-base boundary as an ordinary save.
+          bytes =
+            dirtySnapshot.hadAnnotationChanges || state.dirty ||
+            app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
+              ? await pdfDocument.saveDocument()
+              : await pdfDocument.getData();
+          if (!bytes) {
+            throw new Error("PDF.js did not produce recovery data.");
+          }
           if (willSaveDispatched) {
             await app.pdfScriptingManager?.dispatchDidSave?.();
             willSaveDispatched = false;
           }
-          if (sessionIsCurrent()) {
-            state.dirty = true;
-            restoreChanges(app, {
-              hadAnnotationChanges: true,
-              hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
-            });
+          const serializedSnapshot = {
+            documentId,
+            openRequest,
+            revision: revisionAtStart,
+            bytes: new Uint8Array(bytes).slice(),
+            operations: operationsAtStart,
+            newAnnotations: newAnnotationsAtStart,
+            actorId: actorIdAtStart,
+          };
+          state.lastSerializedSave = serializedSnapshot;
+          if (closeRecovery) {
+            app._saveInProgress = false;
+            app._updateOverwriteOriginalState?.();
+            app.setTitle?.();
+            saveStarted = false;
           }
-          continue;
-        }
-        // Recovery has the same loaded-base boundary as an ordinary save.
-        const bytes =
-          dirtySnapshot.hadAnnotationChanges || state.dirty ||
-          app._annotationStorageModified || pdfDocument.annotationStorage?.size > 0
-            ? await pdfDocument.saveDocument()
-            : await pdfDocument.getData();
-        if (!bytes) {
-          throw new Error("PDF.js did not produce recovery data.");
-        }
-        if (willSaveDispatched) {
-          await app.pdfScriptingManager?.dispatchDidSave?.();
-          willSaveDispatched = false;
         }
         if (
           !sessionIsCurrent()
@@ -3385,7 +3846,7 @@
           return false;
         }
         const requestId = makeRecoveryRequestId();
-        await waitForHostRecovery({
+        const recoveryAck = await waitForHostRecovery({
           data: makeArrayBuffer(bytes),
           documentId,
           documentPath: state.activeDocumentPath,
@@ -3399,6 +3860,7 @@
           newAnnotations: newAnnotationsAtStart,
           actorId: actorIdAtStart,
           heavyLeaseId: lease?.leaseId,
+          closeRecovery,
         });
         if (!sessionIsCurrent()) {
           return false;
@@ -3415,6 +3877,12 @@
         ) {
           state.lastRecoveredDocumentId = documentId;
           state.lastRecoveredRevision = revisionAtStart;
+          state.lastCloseWritebackAck = {
+            documentId,
+            openRequest,
+            revision: revisionAtStart,
+            queued: closeRecovery && recoveryAck?.closeWritebackQueued === true,
+          };
           return true;
         }
       } catch (error) {
@@ -3440,15 +3908,21 @@
     return sessionIsCurrent() && !isDirty();
   }
 
-  async function requestRecovery(reason, deadline) {
+  async function requestRecovery(reason, deadline, { closeRecovery = false } = {}) {
     if (state.disposed) {
       return false;
     }
     if (state.recoveryPromise) {
-      return state.recoveryPromise;
+      const existing = state.recoveryPromise;
+      if (!closeRecovery || state.recoveryCloseIntent === true) return existing;
+      await existing;
+      if (state.disposed) return false;
+      return requestRecovery(reason, deadline, { closeRecovery });
     }
-    state.recoveryPromise = runRecoverySequence(reason, deadline).finally(() => {
+    state.recoveryCloseIntent = closeRecovery;
+    state.recoveryPromise = runRecoverySequence(reason, deadline, { closeRecovery }).finally(() => {
       state.recoveryPromise = null;
+      state.recoveryCloseIntent = false;
     });
     return state.recoveryPromise;
   }
@@ -3458,6 +3932,7 @@
       return false;
     }
     origin = origin === "auto" ? "auto" : "manual";
+    if (state.closeControl) return false;
     if (state.syncCheckpointPromise) {
       const checkpoint = state.syncCheckpointPromise;
       try {
@@ -3631,6 +4106,8 @@
         manager,
         methodName,
         (original, args) => {
+          const direction = methodName;
+          const savedEditorHistory = captureSavedEditorHistory(manager, direction);
           const before = snapshotSavedFreeTextEditors(manager, app);
           const result = original.apply(manager, args);
           const changedEditors = changedSavedFreeTextEditors(
@@ -3643,6 +4120,7 @@
           // these methods for an available command; an empty direct call is a
           // harmless dirty revision that the save path can settle.
           noteMutation();
+          reconcileSavedEditorHistory(manager, direction, savedEditorHistory);
           if (changedEditors.length > 0) {
             queueFreeTextAppearanceRepair(app, manager, changedEditors);
           }
@@ -6350,87 +6828,97 @@
           // interaction has reached its natural boundary.
           commitFocusedFreeText();
         }
-        if (state.savePromise) {
-          // Closing waits for a write already accepted by the host, but never
-          // starts another one from this lifecycle-only request.
-          result = await state.savePromise;
-          if (
-            result === false &&
-            state.activeDocumentId === documentId &&
-            isDirty() &&
-            (!state.autoSaveEnabled || state.autoSavePaused)
-          ) {
-            // The accepted write may have failed while newer edits were still
-            // being made. Keep the close request eligible for a recovery copy
-            // of the current revision; do not retry the original-PDF overwrite.
-            result = true;
+        if (closeControl) {
+          if (isInputBusy()) {
+            result = await waitForInputBoundary(
+              Math.max(0, closeDeadline - Date.now()),
+              closeControl,
+            );
           }
-        }
-        if (
-          closeControl &&
-          (state.closeControl !== closeControl || closeControl.cancelled)
-        ) {
-          result = false;
-        }
-        if (
-          result === true &&
-          state.activeDocumentId === documentId &&
-          (closeControl ? isInputBusy() : isEditBoundaryBusy())
-        ) {
-          result = await waitForInputBoundary(
-            Math.max(0, closeDeadline - Date.now()),
-            closeControl,
-          );
-        }
-        if (
-          result === true &&
-          state.activeDocumentId === documentId &&
-          closeControl
-        ) {
-          if (state.closeControl !== closeControl || closeControl.cancelled) {
-            result = false;
-          } else {
+          if (
+            result === true &&
+            state.activeDocumentId === documentId &&
+            state.closeControl === closeControl &&
+            !closeControl.cancelled
+          ) {
             commitFocusedFreeText();
+            result = !isEditBoundaryBusy() && setCloseInputInert(closeControl);
+          } else {
+            result = false;
+          }
+
+          if (result === true && state.activeDocumentId === documentId) {
+            // A queued Viewer save that has not serialized yet must not race a
+            // fresh close snapshot. Cancel only its lease waiter; an already
+            // serialized save can continue in the host while recovery proceeds.
+            if (!state.pendingSave && state.heavyLeaseWaiters.size > 0) {
+              cancelPendingHeavyLeaseWaiters("Close is capturing a durable recovery revision.");
+            }
+            const serialization = state.saveSerializationPromise;
+            if (serialization?.documentId === documentId) {
+              await serialization.promise;
+            }
             if (
-              !isEditBoundaryBusy() &&
-              setCloseInputInert(closeControl)
+              state.closeControl !== closeControl ||
+              closeControl.cancelled ||
+              state.activeDocumentId !== documentId
             ) {
-              // Once input is quiescent, keep the controlled close isolated
-              // from fresh edits until the host removes or resumes the view.
+              result = false;
+            } else if (!isDirty()) {
+              result = true;
             } else {
+              const reason = state.autoSavePaused
+                ? "save-conflict"
+                : state.autoSaveEnabled
+                  ? "close-writeback"
+                  : "auto-save-disabled";
+              recovered = await requestRecovery(reason, closeDeadline, {
+                closeRecovery: true,
+              });
+              const recoveryAck = state.lastCloseWritebackAck;
+              closeControl.closeWritebackQueued = Boolean(
+                recovered && recoveryAck?.documentId === documentId &&
+                recoveryAck?.openRequest === state.activeOpenRequest &&
+                recoveryAck?.revision === state.revision && recoveryAck.queued,
+              );
               result = false;
             }
           }
-        }
-        if (
-          result === true &&
-          state.activeDocumentId === documentId &&
-          !isDirty()
-        ) {
-          // A clean document needs no write, even when autosave is disabled or
-          // paused after an earlier conflict.
-          result = true;
-        } else if (
-          result === true &&
-          state.activeDocumentId === documentId &&
-          (!state.autoSaveEnabled || state.autoSavePaused)
-        ) {
-          const reason = state.autoSavePaused
-            ? "save-conflict"
-            : "auto-save-disabled";
-          recovered = await requestRecovery(reason, closeDeadline);
-          result = false;
-        } else if (result === true && state.activeDocumentId === documentId) {
-          if (state.pendingInkCommit) {
-            state.committingInkForSave = true;
-            try {
-              state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
-            } finally {
-              state.committingInkForSave = false;
-              state.pendingInkCommit = false;
-            }
+        } else {
+          if (state.savePromise) {
+            result = await state.savePromise;
           }
-          result = await requestSave("manual");
+          if (
+            result === true &&
+            state.activeDocumentId === documentId &&
+            isEditBoundaryBusy()
+          ) {
+            result = await waitForInputBoundary(
+              Math.max(0, closeDeadline - Date.now()),
+            );
+          }
+          if (result === true && state.activeDocumentId === documentId && !isDirty()) {
+            result = true;
+          } else if (
+            result === true &&
+            state.activeDocumentId === documentId &&
+            (!state.autoSaveEnabled || state.autoSavePaused)
+          ) {
+            const reason = state.autoSavePaused ? "save-conflict" : "auto-save-disabled";
+            recovered = await requestRecovery(reason, closeDeadline);
+            result = false;
+          } else if (result === true && state.activeDocumentId === documentId) {
+            if (state.pendingInkCommit) {
+              state.committingInkForSave = true;
+              try {
+                state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+              } finally {
+                state.committingInkForSave = false;
+                state.pendingInkCommit = false;
+              }
+            }
+            result = await requestSave("manual");
+          }
         }
       }
     } catch (error) {
@@ -6475,6 +6963,7 @@
         ok: result === true && !dirty,
         dirty,
         recovered,
+        closeWritebackQueued: closeControl.closeWritebackQueued === true,
         prepared,
       });
       if (!posted && prepared) {
@@ -6602,6 +7091,10 @@
             state.lastRecoveredDocumentId === existing.documentId &&
             state.lastRecoveredRevision === state.revision &&
             !state.pendingInkCommit,
+          closeWritebackQueued: state.lastCloseWritebackAck?.documentId === existing.documentId &&
+            state.lastCloseWritebackAck?.openRequest === openRequest &&
+            state.lastCloseWritebackAck?.revision === state.revision &&
+            state.lastCloseWritebackAck?.queued === true,
           prepared: true,
         });
       }
@@ -6649,6 +7142,7 @@
       .catch((error) => {
         sendError(error?.message || "Could not open the PDF.", {
           documentId: message.documentId,
+          openRequest: message.openRequest,
           code: "open-failed",
         });
       });
@@ -6761,7 +7255,8 @@
     );
     if (state.syncApplyControl && !isSyncApply) {
       sendError("A synchronized PDF update is being applied.", {
-        documentId: state.activeDocumentId,
+        documentId,
+        openRequest: message.openRequest,
         code: "open-blocked-by-sync-apply",
       });
       return false;
@@ -6790,7 +7285,8 @@
       state.closeControl.documentId === state.activeDocumentId
     ) {
       sendError("The previous PDF is still preparing to close.", {
-        documentId: state.activeDocumentId,
+        documentId,
+        openRequest: message.openRequest,
         code: "open-blocked-by-close-preparation",
       });
       return false;
@@ -6841,7 +7337,8 @@
         !recoveredDirtySessionCanSwitch
       ) {
         sendError("The previous PDF still has unsaved changes.", {
-          documentId: state.activeDocumentId,
+          documentId,
+          openRequest: message.openRequest,
           code: "open-blocked-by-unsaved-changes",
         });
         return;
@@ -6857,14 +7354,16 @@
           rearmPendingFreeTextAutoSave(previousSession);
           if (isInputBusy() && !(await waitForInputBoundary())) {
             sendError("The previous PDF still has unsaved changes.", {
-              documentId: state.activeDocumentId,
+              documentId,
+              openRequest: message.openRequest,
               code: "open-blocked-by-unsaved-changes",
             });
             return;
           }
         } else if (isEditBoundaryBusy() && !state.pendingSave) {
           sendError("The previous PDF still has unsaved changes.", {
-            documentId: state.activeDocumentId,
+            documentId,
+            openRequest: message.openRequest,
             code: "open-blocked-by-unsaved-changes",
           });
           return;
@@ -6872,7 +7371,8 @@
         const priorSaveSucceeded = await priorSave;
         if (!(await finishPreviousSave(priorSaveSucceeded))) {
           sendError("The previous PDF still has unsaved changes.", {
-            documentId: state.activeDocumentId,
+            documentId,
+            openRequest: message.openRequest,
             code: "open-blocked-by-unsaved-changes",
           });
           return;
@@ -6880,7 +7380,8 @@
       } else if (isDirty()) {
         if (!state.autoSaveEnabled || state.autoSavePaused || isInputBusy()) {
           sendError("The previous PDF still has unsaved changes.", {
-            documentId: state.activeDocumentId,
+            documentId,
+            openRequest: message.openRequest,
             code: "open-blocked-by-unsaved-changes",
           });
           return;
@@ -6900,7 +7401,8 @@
         const priorSaveSucceeded = await priorSave;
         if (!(await finishPreviousSave(priorSaveSucceeded))) {
           sendError("The previous PDF still has unsaved changes.", {
-            documentId: state.activeDocumentId,
+            documentId,
+            openRequest: message.openRequest,
             code: "open-blocked-by-unsaved-changes",
           });
           return;
@@ -6942,6 +7444,7 @@
       state.confirmedRevision = 0;
       state.lastRecoveredDocumentId = null;
       state.lastRecoveredRevision = null;
+      state.lastCloseWritebackAck = null;
       state.autoSavePaused = false;
       state.lastAutoSaveStartedAt = null;
       state.lastAutoSaveDurationMs = 0;
@@ -6974,6 +7477,8 @@
       }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
+      state.lastSerializedSave = null;
+      state.saveSerializationPromise = null;
       updatePageNumberWidth(pdfDocument.numPages);
       state.activeDocumentPath = documentPath;
       state.activeFilename = filename;
@@ -7064,6 +7569,7 @@
       }
       sendError(error?.message || "Could not open the PDF.", {
         documentId,
+          openRequest: message.openRequest,
         code: "open-failed",
       });
       return false;
@@ -7346,6 +7852,7 @@
         !pending ||
         message.requestId !== pending.requestId ||
         message.documentId !== pending.documentId ||
+        message.openRequest !== pending.openRequest ||
         !hasCompatibleHostAckGeneration(message)
       ) {
         return;
@@ -7356,7 +7863,7 @@
         );
         return;
       }
-      pending.resolve();
+      pending.resolve(message);
       return;
     }
 
@@ -7414,6 +7921,7 @@
         ) {
           applySyncIdentities(message.syncState);
         }
+        clearConfirmedDirtyState(message.revision);
         pending.resolve(message.syncState);
       } else {
         const error = new Error(
@@ -7743,6 +8251,7 @@
   }
 
   function dispose() {
+    runtimeLogClose();
     if (state.disposed) {
       return;
     }
@@ -7750,6 +8259,7 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    state.restoredSavedAnnotations.clear();
     state.toolbarLayoutResizeObserver?.disconnect();
     state.toolbarLayoutResizeObserver = null;
     state.toolbarLayoutMutationObserver?.disconnect();

@@ -194,6 +194,12 @@ function createHarness() {
   const app = {
     vault: {
       configDir: ".obsidian",
+      adapter: {
+        exists: async () => false,
+        mkdir: async () => {},
+        write: async () => {},
+        list: async () => ({ files: [] }),
+      },
       getAbstractFileByPath: (filePath) => files.get(filePath) ?? null,
       readBinary: async (file) => {
         file.reads += 1;

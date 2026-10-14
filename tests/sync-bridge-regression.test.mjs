@@ -197,7 +197,7 @@ test(
               }else if(message.type==='startup-timings'){
                 state.startupTimings.push({documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,timings:message.timings});
               }else if(message.type==='save'){
-                const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId,byteLength:message.data?.byteLength||0};
+                const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,operations:message.operations,newAnnotations:message.newAnnotations,dirtyState:message.dirtyState,actorId:message.actorId,byteLength:message.data?.byteLength||0};
                 state.saves.push(save);
                 if(state.rejectNextSave){
                   state.rejectNextSave=false;
@@ -236,7 +236,7 @@ test(
               }else if(message.type==='flushed'){
                 state.flushes.push({id:message.id,documentId:message.documentId,revision:message.revision,ok:message.ok,dirty:message.dirty,recovered:message.recovered===true});
               }else if(message.type==='sync-checkpoint-ready'){
-                state.checkpoints.push({id:message.id,documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,ok:message.ok,byteLength:message.data?.byteLength||0,operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId,viewState:message.viewState,data:message.data});
+                state.checkpoints.push({id:message.id,documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,ok:message.ok,byteLength:message.data?.byteLength||0,operations:message.operations,newAnnotations:message.newAnnotations,dirtyState:message.dirtyState,actorId:message.actorId,viewState:message.viewState,data:message.data});
               }else if(message.type==='sync-checkpoint-rejected'){
                 state.rejected.push(message);
               }else if(message.type==='sync-apply-prepared'||message.type==='sync-apply-rejected'){
@@ -530,6 +530,13 @@ test(
         assert.deepEqual(await page.evaluate(() => window.__syncHost.errors), []);
         const host = await page.evaluate(() => window.__syncHost);
         assert.ok(host.preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
+        const savedMessage = host.saves[saveCount - 1];
+        const acknowledged = await requestCheckpoint(`checkpoint-save-ack-${saveCount}-${savedMessage.openRequest}`,
+          { openRequest: savedMessage.openRequest });
+        assert.ok(acknowledged.checkpoint.confirmedRevision >= savedMessage.revision,
+          "Continue history operations only after the exact host save ACK reached the Viewer");
+        assert.equal(acknowledged.checkpoint.dirty, false,
+          "A confirmed save should settle before the next undo/redo command");
         return host;
       };
       const drawWithTool = async (mode, pageNumber, offset) => {
@@ -651,6 +658,10 @@ test(
       assert.ok(saved.requestId.includes(rendererGeneration),
         "A save request ID must be scoped to its renderer generation");
       assert.ok(saved.byteLength > 0);
+      assert.deepEqual(saved.dirtyState.dirtyPageIndices, [0],
+        "a newly drawn annotation should mark only its PDF page dirty");
+      assert.ok(saved.dirtyState.dirtyAnnotationIds.includes(uuid));
+      assert.ok(saved.dirtyState.newAnnotationIds.includes(uuid));
       const preparedLocal = firstSaveHost.preparedLocal;
       assert.ok(preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
       assert.ok(preparedLocal.stateDigest);
@@ -818,6 +829,8 @@ test(
       assert.equal(undoOperation?.action, "upsert");
       assert.equal(undoOperation?.ref, null,
         "Undo restoring a current id:null editor must bind it from fresh draft bytes");
+      assert.deepEqual(undoneBeforeSave.checkpoint.dirtyState.dirtyPageIndices, [0]);
+      assert.ok(undoneBeforeSave.checkpoint.dirtyState.dirtyAnnotationIds.includes(uuid));
       assert.ok(undoneBeforeSave.checkpoint.newAnnotations.some(
         (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
       ));
@@ -832,11 +845,13 @@ test(
       );
       assert.equal(redoOperation?.action, "delete");
       assert.equal(redoOperation?.ref, checkpointIdentity.ref);
+      assert.deepEqual(redoneBeforeSave.checkpoint.dirtyState.dirtyPageIndices, [0]);
+      assert.ok(redoneBeforeSave.checkpoint.dirtyState.deletedAnnotationIds.includes(uuid));
       assert.equal(redoneBeforeSave.checkpoint.newAnnotations.some(
         (annotation) => annotation.uuid === uuid,
       ), false);
 
-      const secondSaveHost = await saveAndWaitForPreparation(2);
+      const secondSaveHost = await saveAndWaitForPreparation(3);
       const savedTombstone = secondSaveHost.preparedLocal.ledger.entries.find(
         (entry) => entry.uuid === uuid,
       );
@@ -853,10 +868,13 @@ test(
       );
       assert.equal(revivedOperation?.action, "upsert");
       assert.equal(revivedOperation?.ref, null);
+      assert.deepEqual(revivedCheckpoint.checkpoint.dirtyState.dirtyPageIndices, [0]);
+      assert.ok(revivedCheckpoint.checkpoint.dirtyState.dirtyAnnotationIds.includes(uuid));
+      assert.ok(revivedCheckpoint.checkpoint.dirtyState.newAnnotationIds.includes(uuid));
       assert.ok(revivedCheckpoint.checkpoint.newAnnotations.some(
         (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
       ));
-      const thirdSaveHost = await saveAndWaitForPreparation(3);
+      const thirdSaveHost = await saveAndWaitForPreparation(4);
       assert.ok(thirdSaveHost.preparedLocal.identities.some((identity) =>
         typeof identity.runtimeId === "string" && identity.runtimeId.length > 0,
       ), "The checkpoint host should exercise writer-local runtime IDs during sync apply");
@@ -1165,6 +1183,189 @@ test(
         identity.uuid !== uuid && identity.ref,
       );
       assert.ok(pageTenSquareIdentity);
+      const originalPageTenSquare = baseInspection.identities.find((identity) =>
+        identity.pageIndex === 9 && identity.kind === "square",
+      );
+      assert.equal(pageTenSquareIdentity.uuid, originalPageTenSquare.uuid,
+        "The saved-editor history regression should use the original page 10 Square identity");
+
+      // A saved, unchanged PDF.js editor can be live after Undo while its
+      // serialize() result and AnnotationStorage row are both absent. Exercise
+      // the complete save/Undo/save/Redo/save path for that exact saved ref.
+      await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]')
+        .scrollIntoView({ block: "start" }));
+      await viewer.waitForFunction((annotationRef) => {
+        const app = PDFViewerApplication;
+        return app.pdfViewer.getPageView(9)?.renderingState === 3 &&
+          [...app.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(9)]
+            .some((editor) => editor.annotationElementId === annotationRef && !editor.deleted);
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      await viewer.evaluate((annotationRef) => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        const editor = [...manager.getEditors(9)].find((candidate) =>
+          candidate.annotationElementId === annotationRef && !candidate.deleted,
+        );
+        if (!editor) throw new Error("The saved page 10 Square editor should be live before deletion.");
+        manager.deleteEditor(editor);
+      }, pageTenSquareIdentity.ref);
+      const deleteSavedSquare = await requestCheckpoint(
+        "checkpoint-delete-saved-existing-square",
+        { openRequest: 2 },
+      );
+      const savedSquareDeleteOperation = deleteSavedSquare.checkpoint.operations.find(
+        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
+      );
+      assert.equal(savedSquareDeleteOperation?.action, "delete");
+      assert.equal(savedSquareDeleteOperation?.ref, pageTenSquareIdentity.ref);
+      assert.equal(savedSquareDeleteOperation?.pageIndex, 9);
+      assert.equal(savedSquareDeleteOperation?.kind, "Square");
+      const savedSquareDeleteSaveCount = await page.evaluate(
+        () => window.__syncHost.saves.length + 1,
+      );
+      const savedSquareDeleteHost = await saveAndWaitForPreparation(
+        savedSquareDeleteSaveCount,
+      );
+      assert.equal(
+        savedSquareDeleteHost.preparedLocal.ledger.entries.find((entry) =>
+          entry.uuid === pageTenSquareIdentity.uuid,
+        )?.deleted,
+        true,
+        "The existing saved Square deletion should persist its exact UUID tombstone",
+      );
+
+      await viewer.evaluate(() => {
+        PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager.undo();
+      });
+      await viewer.waitForFunction((annotationRef) => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        return [...manager.getEditors(9)].some((editor) =>
+          editor.annotationElementId === annotationRef && !editor.deleted,
+        );
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      const restoredEditorState = await viewer.evaluate((annotationRef) => {
+        const app = PDFViewerApplication;
+        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+        const editor = [...manager.getEditors(9)].find((candidate) =>
+          candidate.annotationElementId === annotationRef && !candidate.deleted,
+        );
+        const map = app.pdfDocument.annotationStorage.serializable?.map;
+        return {
+          serializeIsNull: editor?.serialize() === null,
+          storageHasRow: map instanceof Map && [...map.values()].some((value) =>
+            value?.annotationElementId === annotationRef || value?.id === annotationRef,
+          ),
+        };
+      }, pageTenSquareIdentity.ref);
+      assert.equal(restoredEditorState.serializeIsNull, true,
+        "Undo should restore the unchanged saved editor without ordinary serialization");
+      assert.equal(restoredEditorState.storageHasRow, false,
+        "Undo should leave the unchanged saved editor out of AnnotationStorage");
+      const restoredSavedSquare = await requestCheckpoint(
+        "checkpoint-undo-saved-existing-square",
+        { openRequest: 2 },
+      );
+      const restoredSavedSquareOperation = restoredSavedSquare.checkpoint.operations.find(
+        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
+      );
+      assert.equal(restoredSavedSquareOperation?.action, "upsert");
+      assert.equal(restoredSavedSquareOperation?.ref, pageTenSquareIdentity.ref);
+      assert.equal(restoredSavedSquareOperation?.pageIndex, 9);
+      assert.equal(restoredSavedSquareOperation?.kind, "Square");
+      assert.ok(
+        restoredSavedSquareOperation.timestamp > savedSquareDeleteOperation.timestamp ||
+          (restoredSavedSquareOperation.timestamp === savedSquareDeleteOperation.timestamp &&
+            restoredSavedSquareOperation.logical > savedSquareDeleteOperation.logical),
+        "The restored exact identity needs a clock newer than its saved delete",
+      );
+      assert.equal(restoredSavedSquare.checkpoint.newAnnotations.some((annotation) =>
+        annotation.uuid === pageTenSquareIdentity.uuid,
+      ), false, "Undo must not reclassify the restored saved editor as a new annotation");
+      const repeatedRestoredCheckpoint = await requestCheckpoint(
+        "checkpoint-undo-saved-existing-square-repeat",
+        { openRequest: 2 },
+      );
+      const repeatedRestoredOperation = repeatedRestoredCheckpoint.checkpoint.operations.find(
+        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
+      );
+      assert.equal(repeatedRestoredOperation?.action, "upsert");
+      assert.equal(repeatedRestoredOperation?.operationId, restoredSavedSquareOperation.operationId,
+        "Repeated snapshots must retain the synthetic restoration instead of inferring a delete from empty storage");
+      const restoredSquareSaveCount = await page.evaluate(
+        () => window.__syncHost.saves.length + 1,
+      );
+      const restoredSquareHost = await saveAndWaitForPreparation(restoredSquareSaveCount);
+      assert.ok(restoredSquareHost.preparedLocal.identities.some((identity) =>
+        identity.uuid === pageTenSquareIdentity.uuid && !identity.deleted &&
+        identity.ref === pageTenSquareIdentity.ref,
+      ), "Saving Undo should revive the same saved UUID and PDF reference");
+
+      await viewer.evaluate(() => {
+        PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager.redo();
+      });
+      await viewer.waitForFunction((annotationRef) => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        return ![...manager.getEditors(9)].some((editor) =>
+          editor.annotationElementId === annotationRef && !editor.deleted,
+        );
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      const redoneSavedSquare = await requestCheckpoint(
+        "checkpoint-redo-saved-existing-square",
+        { openRequest: 2 },
+      );
+      const redoneSavedSquareOperation = redoneSavedSquare.checkpoint.operations.find(
+        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
+      );
+      assert.equal(redoneSavedSquareOperation?.action, "delete");
+      assert.equal(redoneSavedSquareOperation?.ref, pageTenSquareIdentity.ref);
+      assert.equal(redoneSavedSquareOperation?.pageIndex, 9);
+      assert.equal(redoneSavedSquareOperation?.kind, "Square");
+      const redoneSquareSaveCount = await page.evaluate(
+        () => window.__syncHost.saves.length + 1,
+      );
+      const redoneSquareHost = await saveAndWaitForPreparation(redoneSquareSaveCount);
+      assert.equal(
+        redoneSquareHost.preparedLocal.ledger.entries.find((entry) =>
+          entry.uuid === pageTenSquareIdentity.uuid,
+        )?.deleted,
+        true,
+        "Saving Redo should persist the exact original UUID tombstone again",
+      );
+
+      // Restore it once more so the existing post-ACK style-edit coverage below
+      // continues to exercise a live saved Square.
+      await viewer.evaluate(() => {
+        PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager.undo();
+      });
+      await viewer.waitForFunction((annotationRef) => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        return [...manager.getEditors(9)].some((editor) =>
+          editor.annotationElementId === annotationRef && !editor.deleted,
+        );
+      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
+      const finalRestoredSquareCheckpoint = await requestCheckpoint(
+        "checkpoint-undo-saved-existing-square-after-redo",
+        { openRequest: 2 },
+      );
+      assert.equal(finalRestoredSquareCheckpoint.checkpoint.operations.find(
+        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
+      )?.action, "upsert");
+      const finalRestoredSquareSaveCount = await page.evaluate(
+        () => window.__syncHost.saves.length + 1,
+      );
+      const finalRestoredSquareHost = await saveAndWaitForPreparation(
+        finalRestoredSquareSaveCount,
+      );
+      assert.ok(finalRestoredSquareHost.preparedLocal.identities.some((identity) =>
+        identity.uuid === pageTenSquareIdentity.uuid && !identity.deleted,
+      ), "Undo after a saved Redo should restore the same live identity again");
+
       await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]').scrollIntoView({ block: "start" }));
       await viewer.waitForFunction((ref) => {
         const app = PDFViewerApplication;

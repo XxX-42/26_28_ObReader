@@ -16,11 +16,16 @@ const {
   PDFString,
 } = require("pdf-lib");
 const { sha256 } = require("@noble/hashes/sha256");
+const { pdfDocEncodingDecode } = require("pdf-lib/cjs/utils/pdfDocEncoding.js");
 const {
   captureIncrementalSnapshot,
   createIncrementalPatch,
   materializeIncrementalResult,
+  readSourceTrailer,
 } = require("./pdf-incremental.cjs");
+
+const timingNow = () => globalThis.performance?.now?.() ?? Date.now();
+const PDF_STRING_DECODE_CHUNK_SIZE = 8192;
 
 const LEDGER_KEY = PDFName.of("ObReaderMerge");
 const UUID_KEY = PDFName.of("ObReaderId");
@@ -214,7 +219,40 @@ function pdfLibRef(value) {
 
 function decodePdfString(value) {
   if (value instanceof PDFHexString || value instanceof PDFString) {
-    return value.decodeText();
+    // pdf-lib's UTF-16 and PDFDocEncoding decoders pass every code point to
+    // String.fromCodePoint.apply at once. Large embedded ObReaderMerge ledgers
+    // can exceed the JavaScript argument limit on iOS and throw RangeError
+    // while opening the document. Decode bounded chunks instead.
+    const bytes = value.asBytes();
+    const isUtf16Be = bytes[0] === 0xfe && bytes[1] === 0xff;
+    const isUtf16Le = bytes[0] === 0xff && bytes[1] === 0xfe;
+    if (isUtf16Be || isUtf16Le) {
+      const parts = [];
+      let codeUnits = [];
+      let index = 2;
+      for (; index + 1 < bytes.length; index += 2) {
+        codeUnits.push(isUtf16Le
+          ? bytes[index] | (bytes[index + 1] << 8)
+          : (bytes[index] << 8) | bytes[index + 1]);
+        if (codeUnits.length === PDF_STRING_DECODE_CHUNK_SIZE) {
+          parts.push(String.fromCharCode(...codeUnits));
+          codeUnits = [];
+        }
+      }
+      if (index < bytes.length) codeUnits.push(0xfffd);
+      if (codeUnits.length) parts.push(String.fromCharCode(...codeUnits));
+      return parts.join("");
+    }
+
+    const parts = [];
+    for (let offset = 0; offset < bytes.length; offset += PDF_STRING_DECODE_CHUNK_SIZE) {
+      const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + PDF_STRING_DECODE_CHUNK_SIZE));
+      // Reuse pdf-lib's PDFDocEncoding table, but only with a bounded argument
+      // list. Calling PDFHexString.decodeText() here would re-detect a UTF-16
+      // BOM at every chunk boundary and could misdecode ordinary PDFDoc bytes.
+      parts.push(pdfDocEncodingDecode(chunk));
+    }
+    return parts.join("");
   }
   return null;
 }
@@ -388,6 +426,215 @@ function getPageFingerprint(doc, maps = refMaps(doc)) {
   return fingerprints;
 }
 
+function getPageFingerprintAtIndex(doc, pageIndex, maps = refMaps(doc)) {
+  const page = doc.getPages()[pageIndex];
+  if (!page) fail("PDF_MERGE_PAGE_OUT_OF_RANGE", `Page ${pageIndex + 1} is not present in the document.`);
+  const body = canonicalValue(doc, page.node,
+    { skipKeys: OMIT_PAGE_KEYS, pageRefs: maps.pageRefs });
+  const geometry = {
+    mediaBox: page.getMediaBox(),
+    cropBox: page.getCropBox(),
+    rotation: page.getRotation().angle,
+  };
+  return hashText(stableJson({ body, geometry }));
+}
+
+function quickResourceIdentity(doc, value, depth = 0, seen = new Set()) {
+  if (value === undefined || value === null) return null;
+  if (value instanceof PDFRef) return { ref: value.toString() };
+  if (value instanceof PDFName) return { name: nameKey(value) };
+  if (value instanceof PDFNumber) return { number: value.asNumber() };
+  if (value instanceof PDFBool) return { boolean: value.asBoolean() };
+  if (value instanceof PDFArray) {
+    if (depth > 4 || seen.has(value)) return { cycle: true };
+    seen.add(value);
+    const entries = [];
+    for (let index = 0; index < value.size(); index += 1) {
+      entries.push(quickResourceIdentity(doc, value.get(index), depth + 1, seen));
+    }
+    seen.delete(value);
+    return entries;
+  }
+  if (value instanceof PDFDict) {
+    if (depth > 4 || seen.has(value)) return { cycle: true };
+    seen.add(value);
+    const entries = [];
+    for (const [key, child] of value.entries()) {
+      const resolved = child instanceof PDFRef ? child : resolve(doc.context, child);
+      if (resolved instanceof PDFStream) {
+        entries.push([nameKey(key), { ref: child instanceof PDFRef ? child.toString() : "direct-stream" }]);
+      } else {
+        entries.push([nameKey(key), quickResourceIdentity(doc, child, depth + 1, seen)]);
+      }
+    }
+    seen.delete(value);
+    entries.sort(([left], [right]) => left.localeCompare(right));
+    return entries;
+  }
+  if (value instanceof PDFStream) return { stream: "direct" };
+  return { type: value.constructor?.name || typeof value };
+}
+
+function getDocumentRevisionToken(doc, bytes, sourceMtimeMs = null) {
+  const input = asBytes(bytes, "PDF revision source");
+  const pagesRoot = doc.catalog.get(PDFName.of("Pages"));
+  let trailer = null;
+  try { trailer = readSourceTrailer(input); } catch { /* Optional fast signals; byte comparison remains authoritative. */ }
+  const ids = trailer?.id instanceof PDFArray
+    ? [decodePdfString(trailer.id.get(0)), decodePdfString(trailer.id.get(1))]
+    : [];
+  return {
+    byteLength: input.byteLength,
+    pageCount: doc.getPages().length,
+    ...(ids[0] ? { pdfId0: ids[0] } : {}),
+    ...(ids[1] ? { pdfId1: ids[1] } : {}),
+    ...(Number.isSafeInteger(trailer?.xrefOffset) ? { startXref: trailer.xrefOffset } : {}),
+    ...(trailer?.root instanceof PDFRef ? { rootRef: trailer.root.toString() } : {}),
+    ...(pagesRoot instanceof PDFRef ? { pagesRootRef: pagesRoot.toString() } : {}),
+    ...(Number.isFinite(sourceMtimeMs) ? { sourceMtimeMs } : {}),
+  };
+}
+
+// A quick, ordered page identity is enough to reuse a previously verified
+// page-content fingerprint when the page objects and content-stream refs are
+// unchanged. It deliberately excludes /Annots so annotation-only edits keep
+// the identity stable. If a PDF has direct/ambiguous content streams, callers
+// must fall back to the full canonical page fingerprint.
+function getFastPageIdentities(doc) {
+  const pages = doc.getPages();
+  const seenPageRefs = new Set();
+  const identities = [];
+  for (const page of pages) {
+    if (!(page.ref instanceof PDFRef)) return null;
+    const pageRef = page.ref.toString();
+    if (seenPageRefs.has(pageRef)) return null;
+    seenPageRefs.add(pageRef);
+
+    const rawContents = page.node.get(PDFName.of("Contents"));
+    let contentRefs;
+    if (rawContents === undefined || rawContents === null) {
+      contentRefs = [];
+    } else if (rawContents instanceof PDFRef) {
+      contentRefs = [rawContents.toString()];
+    } else if (rawContents instanceof PDFArray) {
+      contentRefs = [];
+      for (let index = 0; index < rawContents.size(); index += 1) {
+        const contentRef = rawContents.get(index);
+        if (!(contentRef instanceof PDFRef)) return null;
+        contentRefs.push(contentRef.toString());
+      }
+    } else {
+      return null;
+    }
+
+    const rawResources = page.node.get(PDFName.of("Resources"));
+    const resourcesIdentity = quickResourceIdentity(doc, rawResources);
+
+    identities.push(hashText(stableJson({
+      pageRef,
+      contentRefs,
+      resources: resourcesIdentity,
+      mediaBox: page.getMediaBox(),
+      cropBox: page.getCropBox(),
+      rotation: page.getRotation().angle,
+    })));
+  }
+  return identities;
+}
+
+function validCachedPageFingerprints(embedded, pageIdentities, pageCount) {
+  if (!embedded || !Array.isArray(pageIdentities) || pageIdentities.length !== pageCount ||
+      !Array.isArray(embedded.pageIdentities) || embedded.pageIdentities.length !== pageCount ||
+      !Array.isArray(embedded.pageFingerprints) || embedded.pageFingerprints.length !== pageCount ||
+      stableJson(embedded.pageIdentities) !== stableJson(pageIdentities) ||
+      !embedded.pageFingerprints.every((fingerprint) => typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint)) ||
+      embedded.documentId !== documentIdFromPageFingerprints(embedded.pageFingerprints)) {
+    return null;
+  }
+  return embedded.pageFingerprints;
+}
+
+function revisionTokensMatch(left, right) {
+  if (!left || !right || left.byteLength !== right.byteLength || left.pageCount !== right.pageCount) return false;
+  for (const key of ["pdfId0", "pdfId1", "startXref", "rootRef", "pagesRootRef", "sourceMtimeMs"]) {
+    if (left[key] !== undefined && right[key] !== undefined && left[key] !== right[key]) return false;
+  }
+  return true;
+}
+
+function resolvePageFingerprints(doc, maps, pageIdentities, embedded = catalogLedger(doc), {
+  forceFull = false, baselineState = null, revisionToken = null,
+  documentRevisionMatch = null,
+} = {}) {
+  const cached = forceFull ? null : validCachedPageFingerprints(embedded, pageIdentities, doc.getPages().length);
+  if (cached) return { fingerprints: cached, cacheHit: true, fingerprintPages: 0, source: "embedded-page-identity", embedded };
+  const hostCache = !forceFull && documentRevisionMatch === true &&
+    revisionTokensMatch(baselineState?.revisionToken, revisionToken) &&
+    Array.isArray(pageIdentities) && Array.isArray(baselineState?.pageIdentities) &&
+    stableJson(pageIdentities) === stableJson(baselineState.pageIdentities) &&
+    Array.isArray(baselineState.pageFingerprints) && baselineState.pageFingerprints.length === doc.getPages().length &&
+    baselineState.pageFingerprints.every((fingerprint) => typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint));
+  if (hostCache) {
+    return { fingerprints: baselineState.pageFingerprints, cacheHit: true, fingerprintPages: 0, source: "host-baseline-state", embedded };
+  }
+  const fingerprints = getPageFingerprint(doc, maps);
+  return { fingerprints, cacheHit: false, fingerprintPages: fingerprints.length, source: "full-canonical", embedded };
+}
+
+function resolveDirtyDraftFingerprints(doc, maps, pageIdentities, embedded, baseResult, dirtyState, {
+  forceFull = false,
+  orderedIdentityMatch = false,
+} = {}) {
+  const pageCount = doc.getPages().length;
+  const dirtyInput = dirtyState?.dirtyPageIndices;
+  const canUseDirtyState = Array.isArray(dirtyInput) &&
+    dirtyInput.every((index) => Number.isSafeInteger(index) && index >= 0 && index < pageCount);
+  const baseFingerprints = baseResult?.fingerprints;
+  const trustedBase = Array.isArray(baseFingerprints) && baseFingerprints.length === pageCount &&
+    baseFingerprints.every((fingerprint) => typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint));
+  if (!forceFull && orderedIdentityMatch && canUseDirtyState && trustedBase) {
+    const dirtyPages = [...new Set(dirtyInput)].sort((left, right) => left - right);
+    const checked = new Map();
+    for (const pageIndex of dirtyPages) checked.set(pageIndex, getPageFingerprintAtIndex(doc, pageIndex, maps));
+    const dirtyPagesMatch = [...checked].every(([pageIndex, fingerprint]) => fingerprint === baseFingerprints[pageIndex]);
+    if (dirtyPagesMatch) {
+      return {
+        fingerprints: baseFingerprints,
+        cacheHit: true,
+        fingerprintPages: checked.size,
+        source: dirtyPages.length ? "dirty-page-verification" : "ordered-page-identity",
+        embedded,
+        checkedDirtyPageCount: checked.size,
+      };
+    }
+
+    // A dirty page whose canonical page tree differs from the loaded baseline
+    // may have a real content/geometry edit. Complete the remaining pages so
+    // the existing lineage guard can make the final safe decision.
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      if (!checked.has(pageIndex)) checked.set(pageIndex, getPageFingerprintAtIndex(doc, pageIndex, maps));
+    }
+    return {
+      fingerprints: Array.from({ length: pageCount }, (_, pageIndex) => checked.get(pageIndex)),
+      cacheHit: false,
+      fingerprintPages: checked.size,
+      source: "dirty-page-mismatch-full-fallback",
+      embedded,
+      checkedDirtyPageCount: dirtyPages.length,
+    };
+  }
+  const result = resolvePageFingerprints(doc, maps, pageIdentities, embedded, { forceFull });
+  return { ...result, checkedDirtyPageCount: 0 };
+}
+
+function validatePageCounts(baseDoc, branchDoc, label) {
+  const baseCount = baseDoc.getPages().length;
+  const branchCount = branchDoc.getPages().length;
+  if (baseCount !== branchCount) {
+    fail("PDF_MERGE_DOCUMENT_STRUCTURE_CHANGED", `${label} page count changed from ${baseCount} to ${branchCount}.`);
+  }
+}
+
 function documentIdFromPageFingerprints(fingerprints) {
   return `doc-${hashText(stableJson({ version: 1, pages: fingerprints }))}`;
 }
@@ -505,11 +752,32 @@ function annotationHash(doc, entry, maps, uuidByRef) {
   return hashText(stableJson({ ordinary, popup, replyTo }));
 }
 
-function inspectDocument(doc, { fingerprint = null } = {}) {
-  const maps = refMaps(doc);
-  const pageFingerprints = fingerprint || getPageFingerprint(doc, maps);
-  const docId = documentIdFromPageFingerprints(pageFingerprints);
-  const embedded = catalogLedger(doc);
+function inspectDocument(doc, {
+  fingerprint = null,
+  pageIdentities: suppliedPageIdentities = undefined,
+  embedded: suppliedEmbedded = undefined,
+  allowMissingLiveUuids = null,
+  maps: suppliedMaps = null,
+  fastOpen = false,
+  timingMetrics = null,
+} = {}) {
+  const maps = suppliedMaps || refMaps(doc);
+  const pageIdentities = suppliedPageIdentities === undefined
+    ? getFastPageIdentities(doc)
+    : suppliedPageIdentities;
+  const embedded = suppliedEmbedded === undefined ? catalogLedger(doc) : suppliedEmbedded;
+  const cachedFingerprints = validCachedPageFingerprints(embedded, pageIdentities, doc.getPages().length);
+  const fastLegacyOpen = fastOpen && !embedded && !fingerprint && !cachedFingerprints;
+  let pageFingerprints = fingerprint || cachedFingerprints || null;
+  if (!pageFingerprints && !fastLegacyOpen) {
+    const fingerprintStartedAt = timingNow();
+    pageFingerprints = getPageFingerprint(doc, maps);
+    if (timingMetrics) {
+      timingMetrics.pages = (timingMetrics.pages || 0) + pageFingerprints.length;
+      timingMetrics.ms = (timingMetrics.ms || 0) + (timingNow() - fingerprintStartedAt);
+    }
+  }
+  const docId = pageFingerprints ? documentIdFromPageFingerprints(pageFingerprints) : null;
   if (embedded && embedded.documentId !== docId) {
     fail("PDF_MERGE_DOCUMENT_LINEAGE_MISMATCH", "The embedded ledger belongs to a different page-content lineage.");
   }
@@ -525,7 +793,10 @@ function inspectDocument(doc, { fingerprint = null } = {}) {
     // Popup dictionaries are folded into their owning annotation's hash and
     // copied through its /Popup relationship, never as independent merge rows.
     if (entry.subtype === "Popup") continue;
-    const uuid = readUuid(entry.dict) || savedByRef.get(entry.refString)?.uuid || defaultLegacyUuid(docId, pageFingerprints[entry.pageIndex], entry.refString, entry.subtype);
+    const uuid = readUuid(entry.dict) || savedByRef.get(entry.refString)?.uuid ||
+      (fastLegacyOpen
+        ? `session-${hashText(`${entry.pageIndex}\n${entry.refString}\n${entry.subtype}`).slice(0, 32)}`
+        : defaultLegacyUuid(docId, pageFingerprints[entry.pageIndex], entry.refString, entry.subtype));
     if (uuidSet.has(uuid)) {
       fail("PDF_MERGE_DUPLICATE_ANNOTATION_ID", `More than one annotation carries merge identity ${uuid}.`);
     }
@@ -557,6 +828,9 @@ function inspectDocument(doc, { fingerprint = null } = {}) {
     if (saved.deleted && !uuidSet.has(saved.uuid)) {
       stateEntries.push({ ...normalizeIdentity(saved), hash: null, live: false, entry: null });
     } else if (!saved.deleted && !uuidSet.has(saved.uuid)) {
+      // prepareLocal may defer a missing live UUID only when a verified delete
+      // operation explains it. All ordinary inspection paths stay fail-closed.
+      if (allowMissingLiveUuids?.has(saved.uuid)) continue;
       fail("PDF_MERGE_MISSING_TOMBSTONE", `Live annotation ${saved.uuid} is absent without a deletion tombstone.`);
     }
   }
@@ -567,14 +841,15 @@ function inspectDocument(doc, { fingerprint = null } = {}) {
     .filter((entry) => !entry.live || entry.entry?.supported)
     .map(({ entry: _entry, live: _live, ...entry }) => ({ ...entry }))
     .sort((left, right) => left.uuid.localeCompare(right.uuid));
-  const ledger = {
+  const ledger = pageFingerprints ? {
     version: 1,
     documentId: docId,
     pageFingerprints,
+    ...(Array.isArray(pageIdentities) ? { pageIdentities } : {}),
     entries: persistedEntries,
-  };
-  const stateDigest = digestEntries(ledger.entries);
-  return { doc, maps, pageFingerprints, documentId: docId, embedded, uuidByRef, liveEntries, stateEntries, identities, ledger, stateDigest };
+  } : null;
+  const stateDigest = digestEntries(ledger?.entries || persistedEntries);
+  return { doc, maps, pageFingerprints, pageIdentities, documentId: docId, embedded, uuidByRef, liveEntries, stateEntries, identities, ledger, stateDigest, fastLegacyOpen };
 }
 
 function makeLegacyIdentity(entry, documentId, pageFingerprint) {
@@ -762,6 +1037,36 @@ function collectEffectiveOperations(operations, actorId, newAssignments, priorEn
   return effective;
 }
 
+function remapLegacySessionOperations(operations, baseInfo) {
+  // A prepared legacy baseline has canonical IDs, even when its first open
+  // used session IDs. Ref-bound remapping is valid only for a unique exact
+  // PDF object reference with matching page and subtype; never use geometry.
+  const baseByUuid = new Set(baseInfo.liveEntries.map((entry) => entry.uuid));
+  let remappedCount = 0;
+  const mapped = (Array.isArray(operations) ? operations : []).map((operation) => {
+    if (!operation || baseByUuid.has(operation.uuid) || !String(operation.uuid || "").startsWith("session-") || !operation.ref) return operation;
+    const ref = pdfLibRef(operation.ref);
+    if (!ref) return operation;
+    const candidates = baseInfo.liveEntries.filter((entry) =>
+      entry.refString === ref &&
+      (operation.pageIndex === null || operation.pageIndex === undefined || operation.pageIndex === entry.pageIndex) &&
+      (!operation.kind || operationKindMatches(operation.kind, entry.kind, entry)));
+    if (candidates.length !== 1) return operation;
+    remappedCount += 1;
+    return { ...operation, uuid: candidates[0].uuid, ref: pdfJsRef(candidates[0].refString) };
+  });
+  return { operations: mapped, remappedCount };
+}
+
+function baselineStateFor(doc, bytes, pageIdentities, pageFingerprints, sourceMtimeMs = null) {
+  if (!bytes || !Array.isArray(pageFingerprints)) return null;
+  return {
+    revisionToken: getDocumentRevisionToken(doc, bytes, sourceMtimeMs),
+    pageIdentities: Array.isArray(pageIdentities) ? pageIdentities : null,
+    pageFingerprints: [...pageFingerprints],
+  };
+}
+
 function writeLedger(doc, ledger) {
   doc.catalog.set(LEDGER_KEY, PDFHexString.fromText(stableJson(ledger)));
 }
@@ -770,19 +1075,152 @@ function infoToIdentity(stateEntry, runtimeId = null) {
   return normalizeIdentity(stateEntry, runtimeId);
 }
 
-async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId, patchOnly = false }) {
+async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations, newAnnotations, actorId, patchOnly = false, __collectTimings = false, saveTransactionId = null, dirtyState = null, documentRevisionMatch = null, sourceMtimeMs = null, forceFullFingerprints = false, baselineState = null }) {
+  const startedAt = timingNow();
+  const timings = {};
+  const timed = async (key, operation) => {
+    const started = timingNow();
+    try { return await operation(); }
+    finally { timings[key] = +(timingNow() - started).toFixed(3); }
+  };
+  const finish = (result) => {
+    if (__collectTimings) {
+      result.__pdfReaderTiming = {
+        ...timings,
+        saveTransactionId,
+        coreTotalMs: +(timingNow() - startedAt).toFixed(3),
+      };
+    }
+    return result;
+  };
   if (typeof actorId !== "string" || !actorId) fail("PDF_MERGE_INVALID_ACTOR", "actorId is required.");
   const checkpointMatchesBase = Boolean(checkpointBytes) && bytesEqual(baseBytes, checkpointBytes);
+  const parseWallStarted = timingNow();
   const [baseDoc, draftDoc, checkpointDoc] = await Promise.all([
-    loadPdf(baseBytes, "Loaded base PDF"),
-    loadPdf(draftBytes, "PDF.js draft PDF"),
-    checkpointBytes && !checkpointMatchesBase ? loadPdf(checkpointBytes, "Saved local checkpoint PDF") : Promise.resolve(null),
+    timed("pdfParseBaseMs", () => loadPdf(baseBytes, "Loaded base PDF")),
+    timed("pdfParseDraftMs", () => loadPdf(draftBytes, "PDF.js draft PDF")),
+    checkpointBytes && !checkpointMatchesBase
+      ? timed("pdfParseCheckpointMs", () => loadPdf(checkpointBytes, "Saved local checkpoint PDF"))
+      : Promise.resolve(null),
   ]);
+  timings.pdfParseWallMs = +(timingNow() - parseWallStarted).toFixed(3);
+  // Page count is the cheapest structural guard. Do this before ref indexing
+  // or content hashing so add/remove operations pause merge immediately.
+  validatePageCounts(baseDoc, draftDoc, "PDF.js draft");
+  if (checkpointDoc) validatePageCounts(baseDoc, checkpointDoc, "Saved local checkpoint");
   const draftSnapshot = tryCaptureIncrementalSnapshot(draftBytes, draftDoc);
-  const baseInfo = inspectDocument(baseDoc);
-  const draftInfo = inspectDocument(draftDoc);
-  const checkpointInfo = checkpointBytes ? (checkpointMatchesBase ? baseInfo : inspectDocument(checkpointDoc)) : null;
-  validatePageLineage(baseInfo, draftInfo, "PDF.js draft");
+  const pageIdentities = {
+    base: await timed("pageIdentityBaseMs", () => getFastPageIdentities(baseDoc)),
+    draft: await timed("pageIdentityDraftMs", () => getFastPageIdentities(draftDoc)),
+    checkpoint: checkpointDoc
+      ? await timed("pageIdentityCheckpointMs", () => getFastPageIdentities(checkpointDoc))
+      : null,
+  };
+  const revisionTokenStarted = timingNow();
+  const baseRevisionToken = getDocumentRevisionToken(baseDoc, baseBytes, sourceMtimeMs);
+  const draftRevisionToken = getDocumentRevisionToken(draftDoc, draftBytes);
+  timings.revisionTokenMs = +(timingNow() - revisionTokenStarted).toFixed(3);
+  timings.documentRevisionToken = baseRevisionToken;
+  timings.draftRevisionToken = draftRevisionToken;
+  timings.pageIdentityBaseDraftMatch = Array.isArray(pageIdentities.base) &&
+    stableJson(pageIdentities.base) === stableJson(pageIdentities.draft);
+  timings.pageIdentityBaseCheckpointMatch = !checkpointDoc || (
+    Array.isArray(pageIdentities.base) && Array.isArray(pageIdentities.checkpoint) &&
+    stableJson(pageIdentities.base) === stableJson(pageIdentities.checkpoint)
+  );
+  const annotationIndexWallStarted = timingNow();
+  const baseIndex = await timed("annotationIndexBaseMs", () => refMaps(baseDoc));
+  const draftIndex = await timed("annotationIndexDraftMs", () => refMaps(draftDoc));
+  const checkpointIndex = checkpointDoc
+    ? await timed("annotationIndexCheckpointMs", () => refMaps(checkpointDoc))
+    : null;
+  timings.annotationIndexWallMs = +(timingNow() - annotationIndexWallStarted).toFixed(3);
+  const fingerprintWallStarted = timingNow();
+  const baseFingerprintResult = await timed("pageFingerprintBaseMs", () =>
+    resolvePageFingerprints(baseDoc, baseIndex, pageIdentities.base, catalogLedger(baseDoc), {
+      forceFull: forceFullFingerprints,
+      baselineState,
+      revisionToken: baseRevisionToken,
+      documentRevisionMatch,
+    }));
+  const draftEmbedded = catalogLedger(draftDoc);
+  const draftCanReuseBase = timings.pageIdentityBaseDraftMatch && !forceFullFingerprints;
+  const draftFingerprintResult = draftCanReuseBase
+    ? await timed("pageFingerprintDraftMs", () => resolveDirtyDraftFingerprints(
+      draftDoc, draftIndex, pageIdentities.draft, draftEmbedded, baseFingerprintResult, dirtyState,
+      { forceFull: forceFullFingerprints, orderedIdentityMatch: timings.pageIdentityBaseDraftMatch },
+    ))
+    : await timed("pageFingerprintDraftMs", () => resolvePageFingerprints(draftDoc, draftIndex, pageIdentities.draft, draftEmbedded, {
+      forceFull: forceFullFingerprints || !timings.pageIdentityBaseDraftMatch,
+    }));
+  const checkpointEmbedded = checkpointDoc ? catalogLedger(checkpointDoc) : null;
+  const checkpointCanReuseBase = Boolean(checkpointDoc) && timings.pageIdentityBaseCheckpointMatch;
+  const checkpointFingerprintResult = checkpointDoc
+    ? (checkpointMatchesBase || checkpointCanReuseBase
+      ? { fingerprints: baseFingerprintResult.fingerprints, cacheHit: true, embedded: checkpointEmbedded, source: checkpointMatchesBase ? "same-bytes" : "ordered-page-identity" }
+      : await timed("pageFingerprintCheckpointMs", () => resolvePageFingerprints(checkpointDoc, checkpointIndex, pageIdentities.checkpoint, checkpointEmbedded, {
+        forceFull: forceFullFingerprints || !timings.pageIdentityBaseCheckpointMatch,
+      })))
+    : null;
+  if (checkpointDoc && (checkpointMatchesBase || checkpointCanReuseBase)) timings.pageFingerprintCheckpointMs = 0;
+  const basePageFingerprints = baseFingerprintResult.fingerprints;
+  const draftPageFingerprints = draftFingerprintResult.fingerprints;
+  const checkpointPageFingerprints = checkpointFingerprintResult?.fingerprints || null;
+  // Keep the immutable PDF.js-loaded source baseline separate from the
+  // prepared output baseline. A live Viewer can keep serializing against its
+  // original source after the host has written a newer checkpoint to disk.
+  const sourceBaselineState = baselineStateFor(
+    baseDoc, baseBytes, pageIdentities.base, basePageFingerprints, sourceMtimeMs,
+  );
+  timings.pageFingerprintBaseCacheHit = baseFingerprintResult.cacheHit;
+  timings.pageFingerprintDraftCacheHit = draftFingerprintResult.cacheHit;
+  timings.pageFingerprintBaseSource = baseFingerprintResult.source;
+  timings.pageFingerprintDraftSource = draftFingerprintResult.source;
+  if (checkpointFingerprintResult) timings.pageFingerprintCheckpointSource = checkpointFingerprintResult.source;
+  if (checkpointFingerprintResult) timings.pageFingerprintCheckpointCacheHit = checkpointFingerprintResult.cacheHit;
+  timings.pageFingerprintWallMs = +(timingNow() - fingerprintWallStarted).toFixed(3);
+  timings.baselineFingerprintPages = baseFingerprintResult.fingerprintPages || 0;
+  timings.draftFingerprintPages = draftFingerprintResult.fingerprintPages || 0;
+  timings.draftDirtyPagesVerified = draftFingerprintResult.checkedDirtyPageCount || 0;
+  timings.baselineFingerprintMs = timings.pageFingerprintBaseMs || 0;
+  timings.draftFingerprintMs = timings.pageFingerprintDraftMs || 0;
+  timings.baselineCacheHit = baseFingerprintResult.cacheHit;
+  timings.documentRevisionMatch = documentRevisionMatch;
+  timings.dirtyPageCount = Array.isArray(dirtyState?.dirtyPageIndices) ? new Set(dirtyState.dirtyPageIndices).size : 0;
+  timings.dirtyAnnotationCount = Array.isArray(dirtyState?.dirtyAnnotationIds) ? new Set(dirtyState.dirtyAnnotationIds).size : 0;
+  timings.fallbackTriggered = forceFullFingerprints || (baseFingerprintResult.fingerprintPages || 0) > 0 ||
+    !timings.pageIdentityBaseDraftMatch || !timings.pageIdentityBaseCheckpointMatch ||
+    (draftFingerprintResult.fingerprintPages || 0) > 0 && draftFingerprintResult.source !== "dirty-page-verification" ||
+    draftFingerprintResult.source === "dirty-page-mismatch-full-fallback";
+  timings.fallbackReason = timings.fallbackTriggered
+    ? (forceFullFingerprints ? "SOURCE_REVISION_MISMATCH"
+      : baseFingerprintResult.fingerprintPages ? "LEGACY_BASELINE_OR_UNTRUSTED_CACHE"
+        : !timings.pageIdentityBaseDraftMatch || !timings.pageIdentityBaseCheckpointMatch ? "ORDERED_PAGE_IDENTITY_MISMATCH"
+          : draftFingerprintResult.source === "dirty-page-mismatch-full-fallback" ? "DIRTY_PAGE_CONTENT_MISMATCH"
+            : (draftFingerprintResult.fingerprintPages || 0) > 0 ? "DIRTY_STATE_UNAVAILABLE_OR_UNTRUSTED"
+              : "REVISION_OR_CACHE_UNTRUSTED")
+    : null;
+  timings.checkpointFingerprintPages = checkpointFingerprintResult?.fingerprintPages || 0;
+  timings.checkpointFingerprintMs = timings.pageFingerprintCheckpointMs || 0;
+  const totalFingerprintPages = timings.baselineFingerprintPages + timings.draftFingerprintPages + timings.checkpointFingerprintPages;
+  timings.fingerprint = {
+    mode: totalFingerprintPages === 0 ? "NONE"
+      : totalFingerprintPages >= baseDoc.getPages().length ? "FULL" : "PARTIAL",
+    reason: timings.fallbackReason || (baseFingerprintResult.source === "host-baseline-state" && documentRevisionMatch === true
+      ? "REVISION_MATCH_CACHE_HIT" : draftFingerprintResult.source === "dirty-page-verification"
+        ? "DIRTY_PAGE_ONLY" : baseFingerprintResult.cacheHit
+          ? "EMBEDDED_LEDGER_PAGE_IDENTITY_MATCH" : "ORDERED_PAGE_IDENTITY_REUSE"),
+  };
+  const baseInfo = await timed("annotationInspectBaseMs", () => inspectDocument(baseDoc, {
+    maps: baseIndex, fingerprint: basePageFingerprints, pageIdentities: pageIdentities.base,
+    embedded: baseFingerprintResult.embedded,
+  }));
+  const checkpointInfo = checkpointBytes
+    ? (checkpointMatchesBase ? baseInfo : await timed("annotationInspectCheckpointMs", () => inspectDocument(checkpointDoc, {
+      maps: checkpointIndex, fingerprint: checkpointPageFingerprints,
+      pageIdentities: pageIdentities.checkpoint, embedded: checkpointFingerprintResult.embedded,
+    })))
+    : null;
   if (checkpointInfo) {
     validatePageLineage(baseInfo, checkpointInfo, "Saved local checkpoint");
     if (checkpointInfo.documentId !== baseInfo.documentId) {
@@ -790,8 +1228,104 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     }
   }
 
+  // Resolve deletion evidence before inspecting the serialized Viewer draft:
+  // PDF.js can carry the last saved live ledger forward even after removing
+  // that annotation from /Annots. Only a delete operation bound to a known
+  // identity and its exact saved reference may defer the draft-only guard;
+  // base/checkpoint inspection and all public inspect calls remain strict.
+  const reconciliationStarted = timingNow();
   const historyEntries = new Map(baseInfo.ledger.entries.map((entry) => [entry.uuid, entry]));
   for (const entry of checkpointInfo?.ledger.entries || []) historyEntries.set(entry.uuid, entry);
+  const knownSavedEntries = new Map();
+  const knownSavedRefs = new Map();
+  const addKnownSavedEntry = (identity, pdfEntry = null) => {
+    const entries = knownSavedEntries.get(identity.uuid) || [];
+    entries.push({ ...identity, pdfEntry });
+    knownSavedEntries.set(identity.uuid, entries);
+    const ref = pdfLibRef(identity.ref);
+    if (ref) {
+      const refs = knownSavedRefs.get(identity.uuid) || new Set();
+      refs.add(ref);
+      knownSavedRefs.set(identity.uuid, refs);
+    }
+  };
+  const addKnownDocumentEntries = (info) => {
+    if (!info) return;
+    const savedByUuid = new Map(info.ledger.entries.map((entry) => [entry.uuid, entry]));
+    for (const entry of info.liveEntries) {
+      const saved = savedByUuid.get(entry.uuid) || makeLegacyIdentity(
+        entry,
+        info.documentId,
+        info.pageFingerprints[entry.pageIndex],
+      );
+      // A live dictionary with this private UUID proves its current reference,
+      // even if an older ledger copy retained a ref from a previous rewrite.
+      addKnownSavedEntry({
+        ...saved,
+        uuid: entry.uuid,
+        ref: entry.refString,
+        pageIndex: entry.pageIndex,
+        kind: entry.kind,
+        deleted: false,
+      }, entry);
+    }
+    for (const entry of info.ledger.entries) {
+      if (entry.deleted) addKnownSavedEntry(entry);
+    }
+  };
+  addKnownDocumentEntries(baseInfo);
+  if (checkpointInfo !== baseInfo) addKnownDocumentEntries(checkpointInfo);
+  const legacyRemap = remapLegacySessionOperations(operations, baseInfo);
+  const normalizedOperations = legacyRemap.operations;
+  timings.legacySessionIdsRemapped = legacyRemap.remappedCount;
+  const candidateOperations = validateOperationList(normalizedOperations, actorId);
+  const allowMissingLiveUuids = new Set();
+  for (const [uuid, operation] of candidateOperations) {
+    if (operation.action !== "delete") continue;
+    // This narrow exception cannot rely on the ordinary compatibility rules
+    // that treat page and kind as optional; missing bytes need a complete,
+    // explicit identity proof before draft inspection may continue.
+    if (!Number.isInteger(operation.pageIndex) || typeof operation.kind !== "string" || !operation.kind) continue;
+    const savedEntries = knownSavedEntries.get(uuid) || [];
+    const exactMatches = savedEntries.filter((expected) => {
+      if (pdfLibRef(expected.ref) !== operation.ref) return false;
+      if (operation.pageIndex !== expected.pageIndex) return false;
+      if (!operationKindMatches(operation.kind, expected.kind, expected.pdfEntry)) return false;
+      return true;
+    });
+    if (!exactMatches.length) continue;
+    let latestKnownEntries = [];
+    for (const entry of savedEntries) {
+      if (!latestKnownEntries.length || compareStamp(entry, latestKnownEntries[0]) > 0) {
+        latestKnownEntries = [entry];
+      } else if (compareStamp(entry, latestKnownEntries[0]) === 0) {
+        latestKnownEntries.push(entry);
+      }
+    }
+    // A confirmed latest tombstone makes an older delete an idempotent retry.
+    // If any latest history is still live, require a strictly newer operation
+    // so an older delete cannot turn missing bytes into an authoritative delete.
+    if (latestKnownEntries.some((entry) => !entry.deleted) &&
+        compareStamp(operation, latestKnownEntries[0]) <= 0) continue;
+    allowMissingLiveUuids.add(uuid);
+  }
+
+  const draftInfo = await timed("annotationInspectDraftMs", () => inspectDocument(draftDoc, {
+    maps: draftIndex,
+    fingerprint: draftPageFingerprints,
+    pageIdentities: pageIdentities.draft,
+    embedded: draftFingerprintResult.embedded,
+    allowMissingLiveUuids,
+  }));
+  timings.annotationScanTotalMs = +([
+    timings.annotationIndexBaseMs || 0,
+    timings.annotationIndexDraftMs || 0,
+    timings.annotationIndexCheckpointMs || 0,
+    timings.annotationInspectBaseMs || 0,
+    timings.annotationInspectDraftMs || 0,
+    timings.annotationInspectCheckpointMs || 0,
+  ].reduce((sum, value) => sum + value, 0)).toFixed(3);
+  validatePageLineage(baseInfo, draftInfo, "PDF.js draft");
 
   const newAssignments = buildNewAnnotationAssignments(baseInfo, draftInfo, newAnnotations, checkpointInfo);
   for (const [uuid, assignment] of newAssignments) {
@@ -801,7 +1335,7 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
   for (const entry of draftInfo.liveEntries) {
     entry.annotationHash = annotationHash(draftDoc, entry, draftInfo.maps, draftInfo.uuidByRef);
   }
-  const effectiveOperations = collectEffectiveOperations(operations, actorId, newAssignments, historyEntries);
+  const effectiveOperations = collectEffectiveOperations(normalizedOperations, actorId, newAssignments, historyEntries);
   const allUuidAssignments = new Map(newAssignments);
   for (const operation of effectiveOperations.values()) {
     if (!allUuidAssignments.has(operation.uuid)) allUuidAssignments.set(operation.uuid, { uuid: operation.uuid });
@@ -833,13 +1367,13 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
   const processed = new Set();
   let removedCheckpointStaleAnnotation = false;
 
-  const validateOperationIdentity = (op, expected, current, label, allowUnboundUpsert = false) => {
+  const validateOperationIdentity = (op, expected, current, label, allowUnboundUpsert = false, additionalKnownRefs = null) => {
     if (!op) return;
     const expectedRef = pdfLibRef(expected.ref) || expected.refString || null;
     if (!op.ref && expectedRef && !allowUnboundUpsert) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `${label} for saved annotation ${expected.uuid} must include its exact reference.`);
     }
-    if (op.ref && expectedRef && op.ref !== expectedRef && (!current || op.ref !== current.refString)) {
+    if (op.ref && expectedRef && op.ref !== expectedRef && (!current || op.ref !== current.refString) && !additionalKnownRefs?.has(op.ref)) {
       fail("PDF_MERGE_OPERATION_IDENTITY_MISMATCH", `${label} reference for ${expected.uuid} does not match its saved identity.`);
     }
     if (op.pageIndex !== null && op.pageIndex !== expected.pageIndex) {
@@ -879,7 +1413,14 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     const current = draftByResolvedUuid.get(baseEntry.uuid);
     const op = effectiveOperations.get(baseEntry.uuid);
     const previous = historyEntries.get(baseEntry.uuid) || makeLegacyIdentity(baseEntry, baseInfo.documentId, baseInfo.pageFingerprints[baseEntry.pageIndex]);
-    validateOperationIdentity(op, baseEntry, current, "Operation");
+    validateOperationIdentity(
+      op,
+      baseEntry,
+      current,
+      "Operation",
+      false,
+      op?.action === "delete" ? knownSavedRefs.get(baseEntry.uuid) : null,
+    );
 
     if (previous.deleted && op?.action !== "upsert") {
       if (op?.action === "delete" && current && compareStamp(op, previous) > 0) {
@@ -1022,22 +1563,29 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     version: 1,
     documentId: baseInfo.documentId,
     pageFingerprints: baseInfo.pageFingerprints,
+    ...(Array.isArray(draftInfo.pageIdentities) ? { pageIdentities: draftInfo.pageIdentities } : {}),
     entries: entries.sort((left, right) => left.uuid.localeCompare(right.uuid)),
   };
   const currentIdentities = entries.map((entry) => infoToIdentity(entry, runtimeByUuid.get(entry.uuid) ?? entry.ref));
   const currentDigest = digestEntries(entries);
   const previousLedger = draftInfo.embedded;
   if (!removedCheckpointStaleAnnotation && previousLedger && stableJson(previousLedger.entries) === stableJson(ledger.entries)) {
-    return {
+    timings.annotationReconciliationMs = +(timingNow() - reconciliationStarted).toFixed(3);
+    const nextBaselineState = baselineStateFor(draftDoc, draftBytes, pageIdentities.draft, ledger.pageFingerprints, sourceMtimeMs);
+    return finish({
       bytes: new Uint8Array(asBytes(draftBytes, "PDF.js draft PDF")),
       patch: null,
       stateDigest: currentDigest,
       ledger,
+      sourceBaselineState,
+      baselineState: nextBaselineState,
       identities: currentIdentities,
       annotations: currentIdentities,
-    };
+    });
   }
+  timings.annotationReconciliationMs = +(timingNow() - reconciliationStarted).toFixed(3);
   writeLedger(draftDoc, ledger);
+  const incrementalOutputStarted = timingNow();
   const saved = await savePdfWithIncremental({
     sourceBytes: draftBytes,
     doc: draftDoc,
@@ -1045,13 +1593,17 @@ async function prepareLocal({ baseBytes, draftBytes, checkpointBytes, operations
     patchOnly,
     label: "Prepared local PDF",
   });
+  timings.incrementalOutputMs = +(timingNow() - incrementalOutputStarted).toFixed(3);
   if (!saved.patch && draftSnapshot.error) {
     saved.incrementalFallback = {
       code: draftSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
       message: draftSnapshot.error.message,
     };
   }
-  return { ...saved, stateDigest: currentDigest, ledger, identities: currentIdentities, annotations: currentIdentities };
+  const nextBaselineState = saved.bytes
+    ? baselineStateFor(draftDoc, saved.bytes, pageIdentities.draft, ledger.pageFingerprints, sourceMtimeMs)
+    : null;
+  return finish({ ...saved, stateDigest: currentDigest, ledger, sourceBaselineState, baselineState: nextBaselineState, identities: currentIdentities, annotations: currentIdentities });
 }
 
 function digestEntries(entries) {
@@ -1113,8 +1665,12 @@ function chooseState(base, local, remote, uuid) {
   if (!remote) {
     fail("PDF_MERGE_MISSING_BRANCH_IDENTITY", `Remote state for ${uuid} is missing without a tombstone.`);
   }
-  const localUnchanged = statesEquivalentIgnoringClock(local, base);
-  const remoteUnchanged = statesEquivalentIgnoringClock(remote, base);
+  // An upsert can deliberately reassert the same annotation bytes with a
+  // newer clock (for example, Undo restoring an unchanged saved editor after
+  // a tombstone was checkpointed). Treat it as a changed branch so LWW can
+  // compare its operation stamp with a concurrent delete.
+  const localUnchanged = statesEquivalentIgnoringClock(local, base) && compareStamp(local, base) === 0;
+  const remoteUnchanged = statesEquivalentIgnoringClock(remote, base) && compareStamp(remote, base) === 0;
   if (localUnchanged && !remoteUnchanged) return remote;
   if (remoteUnchanged && !localUnchanged) return local;
   if (sameValueState(local, remote)) return compareStamp(local, remote) >= 0 ? local : remote;
@@ -1353,7 +1909,7 @@ function branchMatchesBase(baseInfo, branchInfo) {
   return true;
 }
 
-function ledgerFromWinnerStates(baseInfo, winners) {
+function ledgerFromWinnerStates(baseInfo, winners, pageIdentities = baseInfo.pageIdentities) {
   const entries = [...winners.values()].filter((state) => {
     if (!state.live) return true;
     return Boolean(supportedSubtype(state.kind));
@@ -1374,26 +1930,127 @@ function ledgerFromWinnerStates(baseInfo, winners) {
     version: 1,
     documentId: baseInfo.documentId,
     pageFingerprints: baseInfo.pageFingerprints,
+    ...(Array.isArray(pageIdentities) ? { pageIdentities } : {}),
     entries: entries.sort((left, right) => left.uuid.localeCompare(right.uuid)),
   };
 }
 
-async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = false }) {
+async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = false, __collectTimings = false, saveTransactionId = null,
+  baselineState = null, forceFullFingerprints = false }) {
+  const startedAt = timingNow();
+  const timings = {};
+  const timed = async (key, operation) => {
+    const started = timingNow();
+    try { return await operation(); }
+    finally { timings[key] = +(timingNow() - started).toFixed(3); }
+  };
+  const baseFingerprintMetrics = {};
+  const localFingerprintMetrics = {};
+  const remoteFingerprintMetrics = {};
+  const outputFingerprintMetrics = {};
+  let structuralFingerprintCacheHit = false;
+  let structuralFallbackReason = null;
+  const finish = (result) => {
+    if (__collectTimings) {
+      const fingerprintPages = baseFingerprintMetrics.pages || 0;
+      const draftFingerprintPages = localFingerprintMetrics.pages || 0;
+      const remoteFingerprintPages = remoteFingerprintMetrics.pages || 0;
+      const outputFingerprintPages = outputFingerprintMetrics.pages || 0;
+      const totalPages = fingerprintPages + draftFingerprintPages + remoteFingerprintPages + outputFingerprintPages;
+      result.__pdfReaderTiming = {
+        ...timings,
+        saveTransactionId,
+        baselineFingerprintPages: fingerprintPages,
+        baselineFingerprintMs: +(baseFingerprintMetrics.ms || 0).toFixed(3),
+        draftFingerprintPages,
+        draftFingerprintMs: +(localFingerprintMetrics.ms || 0).toFixed(3),
+        remoteFingerprintPages,
+        remoteFingerprintMs: +(remoteFingerprintMetrics.ms || 0).toFixed(3),
+        outputFingerprintPages,
+        baselineCacheHit: structuralFingerprintCacheHit,
+        fallbackTriggered: totalPages > 0,
+        fallbackReason: totalPages > 0 ? structuralFallbackReason || "THREE_WAY_CONFLICT_RECONCILIATION" : null,
+        fingerprint: {
+          mode: totalPages === 0 ? "NONE" : totalPages >= baseDoc?.getPages?.().length ? "FULL" : "PARTIAL",
+          reason: totalPages > 0 ? structuralFallbackReason || "THREE_WAY_CONFLICT_RECONCILIATION"
+            : structuralFingerprintCacheHit ? "ORDERED_PAGE_IDENTITY_CACHE_HIT" : "EMBEDDED_LEDGER_PAGE_IDENTITY_MATCH",
+        },
+        coreTotalMs: +(timingNow() - startedAt).toFixed(3),
+      };
+    }
+    return result;
+  };
+  const parseStartedAt = timingNow();
   const [baseDoc, localDoc, remoteDoc] = await Promise.all([
-    loadPdf(baseBytes, "Loaded base PDF"),
-    loadPdf(localBytes, "Prepared local PDF"),
-    loadPdf(remoteBytes, "Remote checkpoint PDF"),
+    timed("pdfParseBaseMs", () => loadPdf(baseBytes, "Loaded base PDF")),
+    timed("pdfParseDraftMs", () => loadPdf(localBytes, "Prepared local PDF")),
+    timed("pdfParseRemoteMs", () => loadPdf(remoteBytes, "Remote checkpoint PDF")),
   ]);
-  const remoteSnapshot = tryCaptureIncrementalSnapshot(remoteBytes, remoteDoc);
-  const baseInfo = inspectDocument(baseDoc);
-  const localInfo = inspectDocument(localDoc);
-  const remoteInfo = inspectDocument(remoteDoc);
+  timings.pdfParseWallMs = +(timingNow() - parseStartedAt).toFixed(3);
+  validatePageCounts(baseDoc, localDoc, "Local checkpoint");
+  validatePageCounts(baseDoc, remoteDoc, "Remote checkpoint");
+  const remoteSnapshot = await timed("incrementalSnapshotMs", async () => tryCaptureIncrementalSnapshot(remoteBytes, remoteDoc));
+  const reconciliationStartedAt = timingNow();
+  const annotationInspectStartedAt = timingNow();
+  const basePageIdentities = getFastPageIdentities(baseDoc);
+  let reusablePageFingerprints = null;
+  if (!forceFullFingerprints && baselineState && Array.isArray(basePageIdentities) &&
+      Array.isArray(baselineState.pageIdentities) && stableJson(basePageIdentities) === stableJson(baselineState.pageIdentities) &&
+      Array.isArray(baselineState.pageFingerprints) && baselineState.pageFingerprints.length === baseDoc.getPages().length &&
+      baselineState.pageFingerprints.every((fingerprint) => typeof fingerprint === "string" && /^[a-f0-9]{64}$/.test(fingerprint))) {
+    try {
+      const expectedRevision = getDocumentRevisionToken(baseDoc, baseBytes, baselineState.revisionToken?.sourceMtimeMs ?? null);
+      if (revisionTokensMatch(baselineState.revisionToken, expectedRevision)) {
+        const embedded = catalogLedger(baseDoc);
+        const expectedDocumentId = documentIdFromPageFingerprints(baselineState.pageFingerprints);
+        if (!embedded || (embedded.documentId === expectedDocumentId &&
+            stableJson(embedded.pageFingerprints) === stableJson(baselineState.pageFingerprints))) {
+          reusablePageFingerprints = baselineState.pageFingerprints;
+          structuralFingerprintCacheHit = true;
+        } else {
+          structuralFallbackReason = "BASELINE_EMBEDDED_LEDGER_MISMATCH";
+        }
+      } else {
+        structuralFallbackReason = "BASELINE_REVISION_TOKEN_MISMATCH";
+      }
+    } catch {
+      structuralFallbackReason = "BASELINE_IDENTITY_UNAVAILABLE";
+    }
+  } else if (forceFullFingerprints) {
+    structuralFallbackReason = "EXTERNAL_REVISION_OR_UNTRUSTED_CACHE";
+  } else {
+    structuralFallbackReason = "BASELINE_CACHE_UNAVAILABLE";
+  }
+  const inspectBranch = (doc, metrics, branchName) => {
+    const pageIdentities = branchName === "base" ? basePageIdentities : getFastPageIdentities(doc);
+    const embedded = catalogLedger(doc);
+    const branchIdentityMatches = reusablePageFingerprints && Array.isArray(pageIdentities) &&
+      stableJson(pageIdentities) === stableJson(basePageIdentities);
+    const embeddedMatches = !embedded || (reusablePageFingerprints &&
+      embedded.documentId === documentIdFromPageFingerprints(reusablePageFingerprints) &&
+      stableJson(embedded.pageFingerprints) === stableJson(reusablePageFingerprints));
+    const canReuse = branchIdentityMatches && embeddedMatches;
+    if (branchName !== "base" && !canReuse && reusablePageFingerprints && !structuralFallbackReason) {
+      structuralFallbackReason = `${branchName.toUpperCase()}_PAGE_IDENTITY_MISMATCH`;
+    }
+    return inspectDocument(doc, {
+      ...(canReuse ? { fingerprint: reusablePageFingerprints } : {}),
+      pageIdentities,
+      embedded,
+      timingMetrics: metrics,
+    });
+  };
+  const baseInfo = await timed("annotationInspectBaseMs", async () => inspectBranch(baseDoc, baseFingerprintMetrics, "base"));
+  const localInfo = await timed("annotationInspectDraftMs", async () => inspectBranch(localDoc, localFingerprintMetrics, "draft"));
+  const remoteInfo = await timed("annotationInspectRemoteMs", async () => inspectBranch(remoteDoc, remoteFingerprintMetrics, "remote"));
+  timings.annotationScanTotalMs = +(timingNow() - annotationInspectStartedAt).toFixed(3);
   validatePageLineage(baseInfo, localInfo, "Local checkpoint");
   validatePageLineage(baseInfo, remoteInfo, "Remote checkpoint");
   if (localInfo.documentId !== remoteInfo.documentId) fail("PDF_MERGE_DOCUMENT_IDENTITY_MISMATCH", "Local and remote bytes do not share the loaded document lineage.");
 
   if (branchMatchesBase(baseInfo, localInfo)) {
-    return {
+    timings.annotationReconciliationMs = +(timingNow() - reconciliationStartedAt).toFixed(3);
+    return finish({
       bytes: new Uint8Array(asBytes(remoteBytes, "Remote checkpoint PDF")),
       patch: null,
       changed: false,
@@ -1401,7 +2058,7 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = 
       ledger: remoteInfo.ledger,
       identities: remoteInfo.identities,
       conflicts: [],
-    };
+    });
   }
 
   const baseMap = entryMaps(baseInfo);
@@ -1541,10 +2198,11 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = 
     };
     winners.set(uuid, identity);
   }
-  const ledger = ledgerFromWinnerStates(baseInfo, winners);
+  const ledger = ledgerFromWinnerStates(baseInfo, winners, remoteInfo.pageIdentities);
   const stateDigest = digestEntries(ledger.entries);
   if (stateDigest === remoteInfo.stateDigest) {
-    return {
+    timings.annotationReconciliationMs = +(timingNow() - reconciliationStartedAt).toFixed(3);
+    return finish({
       bytes: new Uint8Array(asBytes(remoteBytes, "Remote checkpoint PDF")),
       patch: null,
       changed: false,
@@ -1552,25 +2210,26 @@ async function merge({ baseBytes, localBytes, remoteBytes, actorId, patchOnly = 
       ledger: remoteInfo.ledger,
       identities: remoteInfo.identities,
       conflicts,
-    };
+    });
   }
+  timings.annotationReconciliationMs = +(timingNow() - reconciliationStartedAt).toFixed(3);
   writeLedger(remoteDoc, ledger);
-  const saved = await savePdfWithIncremental({
+  const saved = await timed("incrementalOutputMs", () => savePdfWithIncremental({
     sourceBytes: remoteBytes,
     doc: remoteDoc,
     snapshot: remoteSnapshot.snapshot,
     patchOnly,
     label: "Merged PDF",
-  });
+  }));
   if (!saved.patch && remoteSnapshot.error) {
     saved.incrementalFallback = {
       code: remoteSnapshot.error.code || "PDF_INCREMENTAL_UNSAFE_SOURCE",
       message: remoteSnapshot.error.message,
     };
   }
-  const resultInfo = inspectDocument(remoteDoc);
+  const resultInfo = await timed("annotationInspectOutputMs", async () => inspectDocument(remoteDoc, { timingMetrics: outputFingerprintMetrics }));
   const identities = resultInfo.identities;
-  return { ...saved, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts };
+  return finish({ ...saved, changed: true, stateDigest: resultInfo.stateDigest, ledger: resultInfo.ledger, identities, conflicts });
 }
 
 function bytesEqual(left, right) {
@@ -1581,13 +2240,20 @@ function bytesEqual(left, right) {
   return true;
 }
 
-async function inspect({ bytes }) {
+async function inspect({ bytes, fastOpen = false, sourceMtimeMs = null }) {
   const doc = await loadPdf(bytes, "PDF to inspect");
-  const info = inspectDocument(doc);
+  const info = inspectDocument(doc, { fastOpen });
+  const revisionToken = getDocumentRevisionToken(doc, bytes, sourceMtimeMs);
+  const baselineState = info.pageFingerprints
+    ? { revisionToken, pageIdentities: info.pageIdentities, pageFingerprints: [...info.pageFingerprints] }
+    : { revisionToken, pageIdentities: info.pageIdentities || null, pageFingerprints: null };
   return {
     documentId: info.documentId,
     stateDigest: info.stateDigest,
     ledger: info.ledger,
+    baselineState,
+    revisionToken,
+    fastLegacyOpen: info.fastLegacyOpen,
     identities: info.identities,
     annotations: info.identities,
     tagged: hasStructTree(info),
@@ -1601,9 +2267,13 @@ module.exports = {
   inspect,
   _internals: {
     canonicalValue,
+    decodePdfString,
     digestEntries,
     documentIdFromPageFingerprints,
+    getFastPageIdentities,
     getPageFingerprint,
+    getPageFingerprintAtIndex,
+    getDocumentRevisionToken,
     hashText,
     refMaps,
     stableJson,

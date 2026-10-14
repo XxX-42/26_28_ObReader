@@ -236,6 +236,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
 
   const adapter = {
     async read(assetPath) {
+      if (stored.has(assetPath)) return new TextDecoder().decode(stored.get(assetPath).bytes);
       const relative = assetPath.slice(`${cacheRoot}/`.length);
       const value = strings.get(relative);
       if (typeof value !== "string") throw new Error("missing test string asset");
@@ -250,8 +251,8 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     getResourcePath(assetPath) { return `app://local/${assetPath}`; },
     async exists(assetPath) { return folders.has(assetPath) || stored.has(assetPath); },
     async mkdir(assetPath) { folders.add(assetPath); },
-    async list() { return { files: [], folders: [] }; },
-    async write() {},
+    async list(directory) { return { files: [...stored.keys()].filter(path => path.startsWith(`${directory}/`)), folders: [] }; },
+    async write(path, text) { stored.set(path, new TFile(path, new TextEncoder().encode(text))); },
     async writeBinary() {},
     async remove() {},
   };
@@ -304,7 +305,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
           contentHash: payload.contentHash,
         }) };
       }
-      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs"].includes(name)) return sourceRequire(name);
+      if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);
     },
@@ -762,6 +763,38 @@ test("desktop and mobile emulation keep separate entries over a shared browser-o
   assert.equal(json.readers[0].worker.source, "resource");
   assert.equal(JSON.stringify(json).includes("Confidential desktop.pdf"), false);
   harness.plugin.onunload();
+});
+
+test("mobile JSON retains historical save errors with no Readers and disables the separate log command", async () => {
+  const harness = makeHarness();
+  await harness.plugin.onload();
+  const history = ".obsidian/plugins/pdf-web-reader/.logs/2026-10-13T00-00-00-000Z-ipad-000.log";
+  await harness.app.vault.adapter.write(history, JSON.stringify({ kind: "function.error", fn: "Viewer.requestSave", durationMs: 321, error: { message: "Could not bind new Ink editor" } }) + "\n");
+  assert.equal(harness.commands.has("flush-local-runtime-log"), false);
+  const firstExport = harness.plugin.exportMobileDiagnostics();
+  assert.equal(harness.plugin.exportMobileDiagnostics(), firstExport, "repeated taps reuse one history export");
+  const outputPath = await firstExport;
+  const json = JSON.parse(new TextDecoder().decode(harness.stored.get(outputPath).bytes));
+  assert.equal(json.activeReaderCount, 0);
+  assert.ok(json.runtimeLog.records.some(row => row.fn === "Viewer.requestSave" && row.durationMs === 321));
+  assert.ok(json.runtimeLog.records.some(row => row.kind === "session.start"));
+  assert.equal(json.runtimeLog.complete, false, "the old session has no observed shutdown marker");
+  assert.equal(json.runtimeLog.interruptedSessions.length, 1);
+  assert.ok(harness.stored.has(history));
+  await harness.plugin.onunload();
+});
+
+test("JSON export drains Viewer records created while collecting diagnostics", async () => {
+  const harness = makeHarness();
+  await harness.plugin.onload();
+  const view = harness.makeView();
+  let queued = [];
+  view.iframe = { contentWindow: { __PDF_READER_DRAIN_LOG__: () => { const result = queued; queued = []; return result; } } };
+  view.requestInputDiagnostics = async () => { queued.push(JSON.stringify({ kind: "function.end", fn: "Viewer.sendDiagnostics", durationMs: 4 })); return null; };
+  const outputPath = await harness.plugin.exportMobileDiagnostics();
+  const json = JSON.parse(new TextDecoder().decode(harness.stored.get(outputPath).bytes));
+  assert.ok(json.runtimeLog.records.some(row => row.kind === "viewer" && JSON.parse(row.row).fn === "Viewer.sendDiagnostics"));
+  await harness.plugin.onunload();
 });
 
 test("mobile settings export path-free diagnostics with bounded pointer samples", async () => {

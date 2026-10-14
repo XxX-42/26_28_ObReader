@@ -23953,6 +23953,13 @@ class DrawingEditor extends AnnotationEditor {
       width: parentWidth,
       height: parentHeight
     } = target.getBoundingClientRect();
+    // Starting another stroke can leave a window listener from a prior layer
+    // alive when that layer's drawing session was replaced. Retire it before
+    // installing the new session so the stale listener cannot touch a cleared
+    // #currentDraw or accumulate one handler per stroke.
+    DrawingEditor.#currentDrawingAC?.abort();
+    DrawingEditor.#currentDrawingAC = null;
+    CurrentPointers.clearPointerIds();
     const ac = DrawingEditor.#currentDrawingAC = new AbortController();
     const signal = parent.combinedSignal(ac);
     CurrentPointers.setPointer(pointerType, pointerId);
@@ -23972,6 +23979,18 @@ class DrawingEditor extends AnnotationEditor {
     });
     window.addEventListener("pointerdown", e => {
       if (!CurrentPointers.isSamePointerType(e.pointerType)) {
+        return;
+      }
+      if (DrawingEditor.#currentDrawingAC !== ac) {
+        ac.abort();
+        return;
+      }
+      if (!DrawingEditor.#currentDraw) {
+        ac.abort();
+        if (DrawingEditor.#currentDrawingAC === ac) {
+          DrawingEditor.#currentDrawingAC = null;
+          CurrentPointers.clearPointerIds();
+        }
         return;
       }
       CurrentPointers.initializeAndAddPointerId(e.pointerId);
@@ -24052,7 +24071,8 @@ class DrawingEditor extends AnnotationEditor {
   }
   static _endDraw(event) {
     const parent = this._currentParent;
-    if (!parent) {
+    if (!parent || !DrawingEditor.#currentDraw) {
+      this._cleanup(true);
       return;
     }
     parent.toggleDrawing(true);
@@ -24080,7 +24100,8 @@ class DrawingEditor extends AnnotationEditor {
   }
   static endDrawing(isAborted) {
     const parent = this._currentParent;
-    if (!parent) {
+    if (!parent || !DrawingEditor.#currentDraw) {
+      this._cleanup(true);
       return null;
     }
     parent.toggleDrawing(true);

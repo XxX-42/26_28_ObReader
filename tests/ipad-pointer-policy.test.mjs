@@ -1377,6 +1377,23 @@ test(
       assert.ok(wheelEvents.some((event) => event.type === "wheel" && event.trusted),
         "The wheel cancellation case must deliver a trusted wheel event");
 
+      // Earlier toolbar contacts deliberately use the Ink button to stop
+      // inertia. Re-establish a known active tool before testing whether a
+      // touch-owned selection guard survives a tool-to-tool switch.
+      await viewer.evaluate(() => {
+        if (PDFViewerApplication.pdfViewer.annotationEditorMode !== 9) {
+          PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+            source: window,
+            mode: 9,
+            isFromKeyboard: true,
+            createNewEditor: false,
+          });
+        }
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 9,
+        { timeout: 3_000 },
+      );
       const toolChangePoint = await localPointInHost(
         viewer,
         page,
@@ -1385,6 +1402,17 @@ test(
       );
       await beginFastTouchDrag(cdp, viewer, toolChangePoint, 180, 30, report);
       const toolChangeFlickAtRelease = await inputSnapshot();
+      const toolChangeTouchPrecondition = await viewer.evaluate(() => ({
+        mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+        selectionSuppressionGuard: document.documentElement.classList.contains(
+          "pdfReaderFingerTextSelectionSuppressed",
+        ),
+      }));
+      report.toolChangeTouchPrecondition = toolChangeTouchPrecondition;
+      assert.equal(toolChangeTouchPrecondition.mode, 9,
+        "The final touch must start with the known Highlight tool active");
+      assert.equal(toolChangeTouchPrecondition.selectionSuppressionGuard, true,
+        "The final touch must own selection suppression before the tool switch");
       await waitMs(70);
       const beforeToolChange = await inputSnapshot();
       assert.ok(beforeToolChange.scrollTop > toolChangeFlickAtRelease.scrollTop + 5,

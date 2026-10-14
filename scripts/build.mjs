@@ -20,7 +20,7 @@ const pluginSource = path.join(root, "plugin");
 const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
-const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork";
+const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19";
 const bundledRuntimeFileCount = 406;
 
 function sha256(data) {
@@ -274,7 +274,14 @@ for (let index = 1; index < runtimeInputs.length; index += 1) {
 const schema = 1;
 const files = [];
 for (const input of runtimeInputs) {
-  const data = input.bytes || await readFile(input.absolute);
+  let data = input.bytes || await readFile(input.absolute);
+  if (input.path === "web/obsidian-bridge.js") {
+    const source = data.toString("utf8");
+    const names = [...source.matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1])
+      .filter(name => !name.startsWith("runtimeLog"));
+    assert.equal(source.split("/* BUILD:VIEWER_FUNCTION_TRACE */").length, 2);
+    data = Buffer.from(source.replace("/* BUILD:VIEWER_FUNCTION_TRACE */", names.map(name => `${name} = runtimeLogTrace(${name}, ${JSON.stringify(`Viewer.${name}`)});`).join("\n  ")));
+  }
   const compressed = gzipSync(data, { level: 9, mtime: 0 });
   // Normalize the RFC 1952 timestamp and OS fields across Node/platform builds.
   compressed.writeUInt32LE(0, 4);
@@ -309,6 +316,7 @@ const syncHostMarker =
 const heavyWorkMarker =
   /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
 const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*writeDeltaRecovery\s*,\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery\.cjs\1\);/s;
+const sessionLogMarker = /\/\* BUILD:SESSION_LOG_REQUIRE \*\/\s*const\s*\{\s*createSessionLog\s*,\s*traceFunction\s*,\s*traceMethods\s*\}\s*=\s*require\((['"])\.\/session-log\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
 assert.equal(
   [...sourceMain.matchAll(new RegExp(requireMarker.source, "gs"))].length,
@@ -385,12 +393,17 @@ assert.equal([...sourceMain.matchAll(new RegExp(heavyWorkMarker.source, "gs"))].
 const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyWork", "createHeavyWorkCoordinator");
 assert.equal([...sourceMain.matchAll(new RegExp(recoveryMarker.source, "gs"))].length, 1, "Expected one recovery build marker");
 const inlinedRecovery = await inlineModule("pdf-recovery.cjs", "__PDFReaderRecovery", "writeDeltaRecovery, readDeltaRecovery");
+assert.equal([...sourceMain.matchAll(new RegExp(sessionLogMarker.source, "gs"))].length, 1);
+const inlinedSessionLog = await inlineModule("session-log.cjs", "__PDFReaderSessionLog", "createSessionLog, traceFunction, traceMethods");
+const hostTrace = [...sourceMain.matchAll(/^(?:async )?function (\w+)\(/gm)].map(match => `${match[1]} = traceFunction(${match[1]}, ${JSON.stringify(`Host.${match[1]}`)}, () => activeSessionLog);`).join("\n");
 const bundledMain = sourceMain
   .replace(requireMarker, inlinedHelper)
   .replace(mergeClientMarker, inlinedMergeClient)
   .replace(syncHostMarker, inlinedSyncHost)
   .replace(heavyWorkMarker, inlinedHeavyWork)
   .replace(recoveryMarker, inlinedRecovery)
+  .replace(sessionLogMarker, inlinedSessionLog)
+  .replace("/* BUILD:HOST_FUNCTION_TRACE */", hostTrace)
   .replace(
     payloadMarker,
     `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,

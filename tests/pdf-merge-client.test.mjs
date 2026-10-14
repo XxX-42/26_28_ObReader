@@ -195,6 +195,66 @@ test("dispose rejects RPCs already posted to a live worker", async () => {
   assert.deepEqual(revoked, ["blob:merge-1"]);
 });
 
+test("prepare timing stays correlated to its save transaction across Worker RPC", async () => {
+  const timings = [];
+  class TimedWorker extends FakeWorker {
+    postMessage(message) {
+      this.messages.push(message);
+      queueMicrotask(() => {
+        for (const listener of this.listeners.get("message") || []) {
+          listener({ data: {
+            id: message.id,
+            ok: true,
+            result: { method: message.method },
+            timing: { saveTransactionId: message.payload?.saveTransactionId, queueMs: 1, executeMs: 3, coreStages: { coreTotalMs: 2 } },
+          } });
+        }
+      });
+    }
+  }
+  const { client } = fixture({
+    WorkerClass: TimedWorker,
+    onTaskTiming: (timing) => timings.push(timing),
+  });
+  await client.prepareLocal({ saveTransactionId: "save-tx-17" });
+  assert.equal(timings.length, 1);
+  assert.equal(timings[0].saveTransactionId, "save-tx-17");
+  assert.equal(timings[0].coreStages.coreTotalMs, 2);
+  client.dispose();
+});
+
+test("worker failures retain the originating method and Worker stack for diagnostics", async () => {
+  class ErrorWorker extends FakeWorker {
+    postMessage(message) {
+      this.messages.push(message);
+      queueMicrotask(() => this.emit("message", { data: {
+        id: message.id,
+        ok: false,
+        error: {
+          name: "RangeError",
+          code: "PDF_MERGE_CONFLICT",
+          message: "Maximum call stack size exceeded",
+          method: message.method,
+          phase: "core.execute",
+          stack: "RangeError: Maximum call stack size exceeded\\n    at reconcile (/worker/pdf-merge-core.js:20:4)",
+        },
+      } }));
+    }
+  }
+  const { client } = fixture({ WorkerClass: ErrorWorker });
+  await assert.rejects(client.prepareLocal({}), error => {
+    assert.equal(error.name, "RangeError");
+    assert.equal(error.code, "PDF_MERGE_CONFLICT");
+    assert.equal(error.workerName, "RangeError");
+    assert.equal(error.workerCode, "PDF_MERGE_CONFLICT");
+    assert.equal(error.workerMethod, "prepareLocal");
+    assert.equal(error.workerPhase, "core.execute");
+    assert.match(error.workerStack, /reconcile/);
+    return true;
+  });
+  client.dispose();
+});
+
 test("owned byte snapshots transfer once while client admission keeps later payloads off the Worker", async () => {
   const { client } = fixture({ WorkerClass: TransferWorker });
   const original = new Uint8Array([9, 8, 7]);

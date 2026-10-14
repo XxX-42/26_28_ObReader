@@ -62,3 +62,14 @@ changes caused by right or middle clicks cannot automatically create underline
 or highlight annotations, including delayed context-menu word selection after
 pointer release. Primary-pointer and keyboard text selection remain enabled.
 The PDF Worker and serialized annotation format are unchanged.
+
+## Local Ink session safety correction: plugin 0.5.19
+
+The generic viewer's `DrawingEditor` now retires a stale per-stroke pointer
+controller before registering a replacement, ignores callbacks from stale
+controllers, and guards the shared current-draw state during cancellation and
+completion. This prevents a stale `pointerdown` listener from dereferencing a
+cleared draw object and leaving subsequent Ink strokes delayed or uncommitted.
+The change is limited to `build/pdf.mjs`; the PDF worker and serialized
+annotation format are unchanged. The updated artifact is pinned in
+`SHA256SUMS.json`.

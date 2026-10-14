@@ -1,0 +1,142 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
+import { readFile } from 'node:fs/promises';
+const { createSessionLog, traceFunction, traceMethods } = createRequire(import.meta.url)('../plugin/session-log.cjs');
+function fixture(options = {}) {
+  const files = new Map(), dirs = new Set();
+  const adapter = { exists: async p => files.has(p) || dirs.has(p), mkdir: async p => dirs.add(p), write: async(p,s) => files.set(p,s), append: async(p,s) => files.set(p,(files.get(p)||'')+s) };
+  adapter.read=async p=>{if(!files.has(p))throw Error('missing');return files.get(p);};
+  adapter.list=async p=>({files:[...files.keys()].filter(n=>n.startsWith(p+'/')),folders:[]});
+  adapter.rename=async(a,b)=>{files.set(b,files.get(a));files.delete(a);};
+  const log = createSessionLog({ adapter, directory: '.obsidian/plugins/test/.logs', version: 'test', interval: 100000, ...options });
+  return { files, adapter, log, rows: () => [...files.values()].flatMap(s => s.trim().split('\n').map(JSON.parse)) };
+}
+test('tracing preserves this, argument/return identity and original thrown error', async()=>{
+  const f=fixture(), value={}, error=Error('actual failure'), object={ value, ok(arg){assert.equal(arg,value);return this.value;}, bad(){throw error;} };
+  traceMethods(object,'Core',()=>f.log);
+  assert.equal(object.ok(value),value);assert.throws(()=>object.bad(),e=>e===error);
+  await f.log.close();const rows=f.rows();assert.equal(rows[0].kind,'session.start');
+  assert.ok(rows.some(r=>r.fn==='Core.bad'&&r.error?.message==='actual failure'&&r.durationMs>=0));
+  assert.equal(rows.at(-1).kind,'session.end');assert.ok(!JSON.stringify(rows).includes('argument'));
+});
+test('visible JSON includes prior-session errors and current function records after Readers have closed',async()=>{
+  const f=fixture();const old='.obsidian/plugins/test/.logs/2026-10-13T00-00-00-000Z-previous-000.log';
+  f.files.set(old,JSON.stringify({kind:'function.error',fn:'Viewer.requestSave',error:{message:'Could not bind Ink'}})+'\n');
+  f.log.record('function.end',{fn:'Core.save',durationMs:12});
+  const result=await f.log.exportDiagnostic({schema:1,activeReaderCount:0,readers:[]},'Diagnostics/run.json',f.adapter.write);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));
+  assert.equal(result.complete,false);assert.equal(json.runtimeLog.interruptedSessions.length,1);assert.equal(json.activeReaderCount,0);assert.ok(json.runtimeLog.records.some(r=>r.error?.message==='Could not bind Ink'));
+  assert.ok(json.runtimeLog.records.some(r=>r.fn==='Core.save'&&r.durationMs===12));assert.ok(f.files.has(old));
+  assert.ok(!f.files.has('Diagnostics/run.json.partial'));await f.log.close();
+});
+test('JSON error analysis highlights stack overflows with bounded save context and Worker stack',async()=>{
+  const f=fixture();
+  f.log.record('function.begin',{fn:'PdfMergeClient.prepareLocal',call:7});
+  f.log.record('function.error',{fn:'PdfMergeClient.prepareLocal',call:7,error:{name:'RangeError',code:'PDF_MERGE_CONFLICT',message:'Maximum call stack size exceeded',workerName:'RangeError',workerCode:'PDF_MERGE_CONFLICT',workerMethod:'prepareLocal',workerPhase:'core.execute',workerStack:'at reconcile (/worker/pdf-merge-core.js:20:4)'}});
+  f.log.record('performance',{fn:'PdfSyncHost.save',saveTransactionId:'save-transaction-7',status:'failed',errorCode:'conflict',saveTotalMs:812});
+  f.log.record('user',{event:'pointermove',x:123,y:456,text:'must not enter focused error context'});
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/stack-overflow.json',f.adapter.write);
+  const json=JSON.parse(f.files.get('Diagnostics/stack-overflow.json'));
+  const focus=json.runtimeLog.errorAnalysis;
+  assert.equal(focus.stackOverflow.eventCount,1);
+  assert.equal(focus.stackOverflow.events[0].fn,'PdfMergeClient.prepareLocal');
+  assert.equal(focus.stackOverflow.events[0].error.workerMethod,'prepareLocal');
+  assert.match(focus.stackOverflow.events[0].error.workerStack,/reconcile/);
+  assert.ok(focus.stackOverflow.events[0].context.some(row=>row.saveTransactionId==='save-transaction-7'));
+  assert.ok(!JSON.stringify(focus).includes('pointermove'));
+  assert.ok(!JSON.stringify(focus).includes('must not enter'));
+  await f.log.close();
+});
+test('JSON snapshot seals its source part and cannot chase export-time events',async()=>{
+  const f=fixture();f.log.record('user',{event:'before-export'});
+  const append=f.adapter.append;f.adapter.append=async(p,s)=>{if(p.endsWith('.partial')){f.log.record('user',{event:'during-export'});await f.log.flush();}return append(p,s);};
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write,200);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));
+  assert.ok(json.runtimeLog.records.some(r=>r.event==='before-export'));assert.ok(!json.runtimeLog.records.some(r=>r.event==='during-export'));
+  assert.ok([...f.files.entries()].some(([p,s])=>p.endsWith('.log')&&s.includes('during-export')));f.adapter.append=append;await f.log.close();
+});
+test('records arriving during both flushes are retained for the next cutoff',async()=>{
+  const f=fixture(), write=f.adapter.write, append=f.adapter.append;
+  const inject=async(p,s,original)=>{await original(p,s);if(p.endsWith('.log'))f.log.record('user',{event:'after-cutoff'});};
+  f.adapter.write=(p,s)=>inject(p,s,write);f.adapter.append=(p,s)=>inject(p,s,append);
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/first.json',write);
+  const first=JSON.parse(f.files.get('Diagnostics/first.json'));
+  assert.equal(first.runtimeLog.complete,true);assert.ok(!first.runtimeLog.records.some(r=>r.event==='after-cutoff'));
+  f.adapter.write=write;f.adapter.append=append;
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/second.json',write);
+  assert.ok(JSON.parse(f.files.get('Diagnostics/second.json')).runtimeLog.records.some(r=>r.event==='after-cutoff'));
+  await f.log.close();
+});
+test('historical parts use numeric order and a final shutdown marks the session ended',async()=>{
+  const f=fixture(), prefix='.obsidian/plugins/test/.logs/2026-10-13T00-00-00-000Z-old-';
+  f.files.set(prefix+'999.log',JSON.stringify({kind:'user',event:'first'})+'\n');
+  f.files.set(prefix+'1000.log',JSON.stringify({kind:'session.end'})+'\n');
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));
+  assert.equal(json.runtimeLog.complete,true);assert.equal(json.runtimeLog.records[0].event,'first');assert.equal(json.runtimeLog.records[1].kind,'session.end');
+  await f.log.close();
+});
+test('no-append Adapter exports bounded JSON volumes linked from the main snapshot',async()=>{
+  const f=fixture();delete f.adapter.append;for(let i=0;i<20;i++)f.log.record('user',{event:'click',index:i});
+  await f.log.exportDiagnostic({schema:1,activeReaderCount:0},'Diagnostics/run.json',f.adapter.write,250);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));assert.ok(json.runtimeLog.parts.length>1);
+  const all=[...json.runtimeLog.records];for(const p of json.runtimeLog.parts)all.push(...JSON.parse(f.files.get(p)).runtimeLog.records);
+  assert.equal(all.filter(r=>r.kind==='user').length,20);assert.equal(all.length,json.runtimeLog.recordCount);await f.log.close();
+});
+test('malformed records and missing files produce valid JSON with explicit incomplete evidence',async()=>{
+  const f=fixture();const bad='.obsidian/plugins/test/.logs/2026-10-13T00-00-00-000Z-old-000.log';f.files.set(bad,'{"kind":"user"}\n{"incomplete":');
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));assert.equal(json.runtimeLog.complete,false);assert.equal(json.runtimeLog.readErrorCount,1);
+  assert.ok(json.runtimeLog.records.some(r=>r.kind==='log-parse-error'));assert.equal(f.files.get(bad),'\{"kind":"user"}\n{"incomplete":');await f.log.close();
+});
+test('cross-window promises keep identity, time completion, and ignore overridden then',async()=>{
+  const f=fixture(), promise=runInNewContext('Promise.resolve(7)');
+  promise.then=()=>{throw Error('do not call instance then');};
+  const wrapped=traceFunction(()=>promise,'Core.async',()=>f.log);
+  assert.equal(wrapped(),promise);await Promise.prototype.then.call(promise,x=>assert.equal(x,7));
+  await f.log.close();assert.ok(f.rows().some(r=>r.fn==='Core.async'&&r.kind==='function.end'));
+});
+test('diagnostic attachment failure cannot replace the original result',()=>{
+  const hostile={get [Symbol.toStringTag](){throw Error('tag');}};
+  assert.equal(traceFunction(()=>hostile,'Core.proxy',()=>({begin(){throw Error('logger');}}))(),hostile);
+});
+test('local log parts append without rereading the existing file, and rotate without deleting',async()=>{
+  const f=fixture({partLimit:200});await f.log.flush();f.log.record('user',{event:'click'});await f.log.flush();await f.log.close();
+  assert.ok(f.files.size>=2);assert.ok([...f.files.keys()].every(p=>p.endsWith('.log')));
+  assert.ok(f.rows().some(r=>r.event==='click'));
+});
+test('adapters without append use new parts rather than rewriting a complete log',async()=>{
+  const f=fixture();delete f.adapter.append;await f.log.flush();f.log.record('user',{event:'scroll'});await f.log.flush();await f.log.close();assert.equal(f.files.size,3);
+});
+test('one stalled writer does not enqueue unbounded flushes; overflow is explicit',async()=>{
+  const f=fixture({maxBuffered:600});let release;f.adapter.write=async(p,s)=>{await new Promise(r=>release=r);f.files.set(p,s);};
+  const writing=f.log.flush();await new Promise(r=>setImmediate(r));
+  for(let i=0;i<100;i++){f.log.record('user',{event:'pointermove'});assert.equal(f.log.flush(),writing);}
+  release();await writing;f.adapter.write=async(p,s)=>f.files.set(p,s);await f.log.close();assert.ok(f.rows().some(r=>r.kind==='log-loss'&&r.dropped>0));
+});
+test('write failure is reported and a later successful part records log loss',async()=>{
+  const f=fixture();const original=f.adapter.write;f.adapter.write=async()=>{throw Error('disk full');};
+  assert.equal(await f.log.flush(),false);assert.equal(f.log.lastWriteError.message,'disk full');f.adapter.write=original;
+  assert.equal(await f.log.flush(),true);await f.log.close();assert.ok(f.rows().some(r=>r.kind==='log-loss'));
+});
+test('Viewer tracing keeps cross-window promises and synchronous drain removes the final batch',async()=>{
+  const source=await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
+  const listeners=new Map(), messages=[];
+  const window={parent:{postMessage:m=>messages.push(m)},addEventListener:(n,f)=>listeners.set(n,f),removeEventListener:n=>listeners.delete(n)};
+  const context={window,document:{currentScript:{dataset:{token:'test',rendererGeneration:'test'}},baseURI:'https://fixture.test/web/bridge.js'},URL,performance:{now:()=>10},setInterval:()=>1,clearInterval:()=>{},console:{error(){},warn(){}}};
+  runInNewContext(source.slice(0,source.indexOf('  function postToHost('))+'globalThis.testLog={runtimeLogTrace,runtimeLogClose,runtimeLogTake};})();',context);
+  const promise=Promise.resolve(1), wrapped=context.testLog.runtimeLogTrace(()=>promise,'Viewer.async');
+  assert.equal(wrapped(),promise);await promise;await Promise.resolve();
+  listeners.get('pointerdown')({type:'pointerdown',target:{id:'editorInkButton'},pointerType:'pen',isTrusted:false});
+  listeners.get('keydown')({type:'keydown',target:{tagName:'TEXTAREA'},key:'😀',isTrusted:false});
+  const rows=context.testLog.runtimeLogTake().map(JSON.parse);
+  assert.ok(rows.some(r=>r.fn==='Viewer.async'&&r.kind==='function.end'));
+  assert.ok(rows.some(r=>r.kind==='user'&&r.pointerType==='pen'&&r.trusted===false));
+  assert.ok(rows.some(r=>r.event==='keydown'&&r.key==='character'));
+  assert.ok(!JSON.stringify(rows).includes('😀'));
+  assert.equal(context.testLog.runtimeLogTake().length,0);
+  context.testLog.runtimeLogClose();context.testLog.runtimeLogClose();await Promise.resolve();
+  assert.equal(listeners.size,0);assert.equal(messages.length,1);
+});
