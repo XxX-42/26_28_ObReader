@@ -15,6 +15,46 @@ const selectionPolicySection = source.slice(
   source.indexOf("  function annotationToolIsActive"),
   source.indexOf("  function isPdfTextLayerTarget"),
 );
+const pointerAccessSection = source.slice(
+  source.indexOf("  function activePointerCount()"),
+  source.indexOf("  function isInputBusy()"),
+);
+
+function createInputRouter() {
+  const active = new Map();
+  const manual = new Map();
+  const penPolicy = new Map();
+  const captureTargets = new Map();
+  return {
+    get activePointerCount() { return active.size; },
+    get manualPointerCount() { return manual.size; },
+    get penPolicyPointerCount() { return penPolicy.size; },
+    activePointerValues: () => [...active.values()],
+    activePointerEntries: () => [...active.entries()],
+    manualPointerValues: () => [...manual.values()],
+    penPolicyPointerIds: () => [...penPolicy.keys()],
+    activePointer: (id) => active.get(id),
+    manualPointer: (id) => manual.get(id),
+    hasActivePointer: (id) => active.has(id),
+    hasManualPointer: (id) => manual.has(id),
+    hasPenPolicyPointer: (id) => penPolicy.has(id),
+    setActivePointer: (id, pointer) => active.set(id, pointer),
+    setManualPointer: (id, pointer) => manual.set(id, pointer),
+    setPenPolicyPointer: (id, pointer) => penPolicy.set(id, pointer),
+    deleteActivePointer: (id) => active.delete(id),
+    deleteManualPointer: (id) => manual.delete(id),
+    deletePenPolicyPointer: (id) => penPolicy.delete(id),
+    clearActivePointers: () => active.clear(),
+    clearManualPointers: () => manual.clear(),
+    clearPenPolicyPointers: () => penPolicy.clear(),
+    capturePointer: (id, target) => {
+      captureTargets.set(id, target);
+      return true;
+    },
+    hasPointerCapture: (id) => captureTargets.has(id),
+    releasePointerCapture: (id) => captureTargets.delete(id),
+  };
+}
 
 function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
   let currentTime = time;
@@ -39,7 +79,7 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     app: { pdfDocument },
     activeDocumentId: "doc",
     activeOpenRequest: 1,
-    manualPointers: new Map(),
+    inputRouter: createInputRouter(),
     manualMomentum: null,
     editorMode: 0,
     fingerTextSelectionSuppressionOwned: false,
@@ -79,7 +119,7 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     releasePointerCapture() {},
   };
   vm.runInNewContext(
-    selectionPolicySection + section +
+    pointerAccessSection + selectionPolicySection + section +
       "\nglobalThis.api = { touchReleaseVelocity, rememberManualScroll, manualPointerEventTime, startManualMomentum, finishManualPointer, startManualPointer, applyManualPan, onManualDocumentVisibilityChange };",
     context,
   );
@@ -306,7 +346,7 @@ test("stationary pointerup records its endpoint without refreshing last motion",
   ]);
   pointer.lastMotionAt = 40;
   pointer.startScrollTop = 40;
-  h.state.manualPointers.set(pointer.pointerId, pointer);
+  h.state.inputRouter.setManualPointer(pointer.pointerId, pointer);
   h.api.finishManualPointer(1, { clientX: 50, clientY: 100, timeStamp: 80 });
   assert.equal(pointer.lastMotionAt, 40);
   assert.equal(pointer.scrollSamples.at(-1).time, 80);
@@ -321,7 +361,7 @@ test("stationary pointerup records its endpoint without refreshing last motion",
   ]);
   oldPointer.lastMotionAt = 40;
   oldPointer.startScrollTop = 40;
-  paused.state.manualPointers.set(oldPointer.pointerId, oldPointer);
+  paused.state.inputRouter.setManualPointer(oldPointer.pointerId, oldPointer);
   paused.api.finishManualPointer(
     1,
     { clientX: 50, clientY: 100, timeStamp: 121 },
@@ -336,13 +376,13 @@ test("pointerup applies its final position while pointercancel ignores it", () =
     { time: 0, y: 0 },
     { time: 100, y: 100 },
   ]);
-  released.state.manualPointers.set(releasePointer.pointerId, releasePointer);
+  released.state.inputRouter.setManualPointer(releasePointer.pointerId, releasePointer);
   released.api.finishManualPointer(
     releasePointer.pointerId,
     { clientX: 50, clientY: 60, timeStamp: 116 },
   );
   assert.equal(released.container.scrollTop, 140);
-  assert.equal(released.state.manualPointers.size, 0);
+  assert.equal(released.state.inputRouter.manualPointerCount, 0);
   assert.ok(released.state.manualMomentum);
 
   const cancelled = harness({ time: 116, scrollTop: 100 });
@@ -350,14 +390,14 @@ test("pointerup applies its final position while pointercancel ignores it", () =
     { time: 0, y: 0 },
     { time: 100, y: 100 },
   ]);
-  cancelled.state.manualPointers.set(cancelPointer.pointerId, cancelPointer);
+  cancelled.state.inputRouter.setManualPointer(cancelPointer.pointerId, cancelPointer);
   cancelled.api.finishManualPointer(
     cancelPointer.pointerId,
     { clientX: 50, clientY: 60, timeStamp: 116 },
     { cancel: true },
   );
   assert.equal(cancelled.container.scrollTop, 100);
-  assert.equal(cancelled.state.manualPointers.size, 0);
+  assert.equal(cancelled.state.inputRouter.manualPointerCount, 0);
   assert.equal(cancelled.state.manualMomentum, null);
 });
 
@@ -427,7 +467,7 @@ test("a second direct pointer blocks both touch pans regardless of lift order", 
         "No release order may create one-finger inertia after multi-touch");
       assert.equal(h.container.scrollTop, 120);
     }
-    assert.equal(h.state.manualPointers.size, 0);
+    assert.equal(h.state.inputRouter.manualPointerCount, 0);
   }
 });
 
@@ -503,7 +543,7 @@ test("a long frame integrates only through the exact stop time", () => {
 
 test("hiding cancels inertia and prevents an active finger from restarting it", () => {
   const { h, pointer, startTime } = launchHarness(0, 0.8);
-  h.state.manualPointers.set(pointer.pointerId, pointer);
+  h.state.inputRouter.setManualPointer(pointer.pointerId, pointer);
   h.setTime(startTime + 16);
   h.document.visibilityState = "hidden";
   h.api.onManualDocumentVisibilityChange();

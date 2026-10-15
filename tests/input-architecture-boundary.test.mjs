@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import vm from "node:vm";
 import test from "node:test";
 import { root } from "./bundled-plugin-test-utils.mjs";
 
@@ -26,6 +27,64 @@ test("InputRouter owns event subscriptions without reaching into PDF or persiste
   ]) {
     assert.ok(!router.includes(forbidden), `InputRouter must not contain ${forbidden}`);
   }
+  for (const ownershipApi of [
+    "_activePointers = new Map()",
+    "_manualPointers = new Map()",
+    "_penPolicyPointers = new Map()",
+    "_captureTargets = new Map()",
+    "capturePointer(pointerId, target)",
+    "releasePointerCapture(pointerId)",
+  ]) {
+    assert.ok(router.includes(ownershipApi), `InputRouter must own ${ownershipApi}`);
+  }
+});
+
+test("InputRouter owns pointer sessions and releases capture during teardown", async () => {
+  const listeners = new Map();
+  const targetWindow = {
+    addEventListener(type, callback) { listeners.set(type, callback); },
+  };
+  const targetDocument = {
+    addEventListener(type, callback) { listeners.set(type, callback); },
+  };
+  const runtimeWindow = {
+    PdfReaderInputRuntime: {
+      createInteractionIntent: (event) => Object.freeze({ type: event.type }),
+    },
+  };
+  const context = { window: runtimeWindow, AbortController };
+  vm.runInNewContext(await source("input-router.js"), context);
+  const router = new runtimeWindow.PdfReaderInputRuntime.InputRouter({
+    targetWindow,
+    targetDocument,
+    policy: { route: (intent, forward) => forward(intent) },
+    onLegacyEvent: (intent, event) => dispatched.push([intent, event]),
+  });
+  const dispatched = [];
+  router.start();
+  const pointer = { pointerId: 7, type: "pointerdown" };
+  listeners.get("pointerdown")(pointer);
+  assert.equal(dispatched[0][0].type, "pointerdown");
+  assert.equal(dispatched[0][1], pointer);
+
+  router.setActivePointer(7, pointer);
+  router.setManualPointer(7, pointer);
+  router.setPenPolicyPointer(7, pointer);
+  let captured = true;
+  let released = 0;
+  const captureTarget = {
+    setPointerCapture() { captured = true; },
+    hasPointerCapture() { return captured; },
+    releasePointerCapture() { captured = false; released += 1; },
+  };
+  assert.equal(router.capturePointer(7, captureTarget), true);
+  assert.equal(router.hasPointerCapture(7), true);
+  router.stop();
+  assert.equal(router.activePointerCount, 0);
+  assert.equal(router.manualPointerCount, 0);
+  assert.equal(router.penPolicyPointerCount, 0);
+  assert.equal(router.hasPointerCapture(7), false);
+  assert.equal(released, 1);
 });
 
 test("InteractionIntent contains value data and no DOM target or native event", async () => {
@@ -58,4 +117,6 @@ test("bridge delegates top-level listener installation to InputRouter", async ()
   assert.ok(install, "installPointerTrackingListeners must remain as bridge wiring");
   assert.match(install, /new window\.PdfReaderInputRuntime\.InputRouter/);
   assert.doesNotMatch(install, /addEventListener\(/);
+  assert.doesNotMatch(bridge, /state\.(?:activePointers|manualPointers|penPolicyPointers)/);
+  assert.doesNotMatch(bridge, /pointer\.captureTarget|manualPointer\.captureTarget/);
 });

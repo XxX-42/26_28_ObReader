@@ -39,7 +39,7 @@ test("ordinary mouse text selection is tracked without pointer capture", () => {
   assert.ok(downStart >= 0 && downEnd > downStart);
   const down = bridgeSource.slice(downStart, downEnd);
   assert.match(down, /shouldCaptureTrackedPointer\(\s*pointer,\s*event,/);
-  assert.match(down, /state\.activePointers\.set\(event\.pointerId,\s*pointer\)/);
+  assert.match(down, /setActivePointer\(event\.pointerId,\s*pointer\)/);
   const shouldCapture = vm.runInNewContext(`(${guard})`);
   assert.equal(shouldCapture(
     { pointerType: "mouse", kind: "text-selection", nativeOperation: null },

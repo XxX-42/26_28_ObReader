@@ -65,13 +65,10 @@
     pendingInkCommit: false,
     committingInkForSave: false,
     dirty: false,
-    activePointers: new Map(),
-    manualPointers: new Map(),
     nativeTouchPointers: new Map(),
     fingerTextSelectionSuppressionOwned: false,
     manualMomentum: null,
     pendingPenHighlight: null,
-    penPolicyPointers: new Map(),
     lastTouchClickPage: null,
     lastPenPanClickPage: null,
     pointerDiagnostics: {
@@ -767,7 +764,91 @@
   }
 
   function hasActivePointerInteraction() {
-    return state.activePointers.size > 0;
+    return activePointerCount() > 0;
+  }
+
+  function activePointerCount() {
+    return state.inputRouter?.activePointerCount || 0;
+  }
+
+  function activePointerValues() {
+    return state.inputRouter?.activePointerValues() || [];
+  }
+
+  function activePointerEntries() {
+    return state.inputRouter?.activePointerEntries() || [];
+  }
+
+  function activePointer(pointerId) {
+    return state.inputRouter?.activePointer(pointerId) || null;
+  }
+
+  function hasActivePointer(pointerId) {
+    return state.inputRouter?.hasActivePointer(pointerId) === true;
+  }
+
+  function setActivePointer(pointerId, pointer) {
+    state.inputRouter?.setActivePointer(pointerId, pointer);
+  }
+
+  function deleteActivePointer(pointerId) {
+    return state.inputRouter?.deleteActivePointer(pointerId) || false;
+  }
+
+  function clearActivePointers() {
+    state.inputRouter?.clearActivePointers();
+  }
+
+  function manualPointerCount() {
+    return state.inputRouter?.manualPointerCount || 0;
+  }
+
+  function manualPointerValues() {
+    return state.inputRouter?.manualPointerValues() || [];
+  }
+
+  function getManualPointer(pointerId) {
+    return state.inputRouter?.manualPointer(pointerId) || null;
+  }
+
+  function hasManualPointer(pointerId) {
+    return state.inputRouter?.hasManualPointer(pointerId) === true;
+  }
+
+  function setManualPointer(pointerId, pointer) {
+    state.inputRouter?.setManualPointer(pointerId, pointer);
+  }
+
+  function deleteManualPointer(pointerId) {
+    return state.inputRouter?.deleteManualPointer(pointerId) || false;
+  }
+
+  function clearManualPointers() {
+    state.inputRouter?.clearManualPointers();
+  }
+
+  function penPolicyPointerCount() {
+    return state.inputRouter?.penPolicyPointerCount || 0;
+  }
+
+  function penPolicyPointerIds() {
+    return state.inputRouter?.penPolicyPointerIds() || [];
+  }
+
+  function hasPenPolicyPointer(pointerId) {
+    return state.inputRouter?.hasPenPolicyPointer(pointerId) === true;
+  }
+
+  function setPenPolicyPointer(pointerId, pointer) {
+    state.inputRouter?.setPenPolicyPointer(pointerId, pointer);
+  }
+
+  function deletePenPolicyPointer(pointerId) {
+    return state.inputRouter?.deletePenPolicyPointer(pointerId) || false;
+  }
+
+  function clearPenPolicyPointers() {
+    state.inputRouter?.clearPenPolicyPointers();
   }
 
   function isInputBusy() {
@@ -6135,7 +6216,7 @@
           ? pointer.buttons
           : null,
       activePointers:
-        Number.isInteger(activePointers) ? activePointers : state.activePointers.size,
+        Number.isInteger(activePointers) ? activePointers : activePointerCount(),
       editorMode: Number.isInteger(state.editorMode) ? state.editorMode : null,
       trusted: event ? event.isTrusted === true : null,
     };
@@ -6150,7 +6231,7 @@
       rendererGeneration,
       pointerEventsSeen: state.pointerDiagnostics.total,
       pointerEventsDropped: state.pointerDiagnostics.dropped,
-      activePointers: state.activePointers.size,
+      activePointers: activePointerCount(),
       pointers: state.pointerDiagnostics.samples.map((sample) => ({ ...sample })),
     };
   }
@@ -6202,7 +6283,7 @@
 
   function clearFingerTextSelectionSuppression() {
     state.fingerTextSelectionSuppressionOwned = false;
-    for (const pointer of state.manualPointers.values()) {
+    for (const pointer of manualPointerValues()) {
       pointer.suppressesFingerTextSelection = false;
     }
     document.documentElement.classList.remove(
@@ -6238,8 +6319,8 @@
   }
 
   function hasActivePenEditorGesture() {
-    return state.penPolicyPointers.size > 0 ||
-      [...state.activePointers.values()].some((pointer) =>
+    return penPolicyPointerCount() > 0 ||
+      activePointerValues().some((pointer) =>
         pointer.pointerType === "pen" &&
         (pointer.kind === "editor" || pointer.kind === "text-selection" ||
           !!pointer.nativeOperation),
@@ -6306,7 +6387,7 @@
 
   function suspendTouchPansForPen() {
     clearFingerTextSelectionSuppression();
-    for (const pointer of state.manualPointers.values()) {
+    for (const pointer of manualPointerValues()) {
       if (pointer.pointerType === "touch") {
         pointer.blockedByPen = true;
         pointer.moved = false;
@@ -6363,7 +6444,7 @@
     if (document.visibilityState === "hidden") {
       cancelManualMomentum();
       clearFingerTextSelectionSuppression();
-      for (const pointer of state.manualPointers.values()) {
+      for (const pointer of manualPointerValues()) {
         if (pointer.pointerType === "touch") {
           pointer.blockedByVisibility = true;
           pointer.moved = false;
@@ -6535,7 +6616,7 @@
   function startManualMomentum(pointer, now = performance.now()) {
     if (
       !iosInputPolicy ||
-      state.manualPointers.size > 0 ||
+      manualPointerCount() > 0 ||
       document.visibilityState === "hidden" ||
       !manualPointerSessionCurrent(pointer)
     ) {
@@ -6651,13 +6732,13 @@
 
   function startManualPointer(event, pointerType) {
     const container = document.getElementById("viewerContainer");
-    if (!container || state.manualPointers.has(event.pointerId)) {
+    if (!container || hasManualPointer(event.pointerId)) {
       return null;
     }
-    const anotherDirectPointer = state.manualPointers.size > 0;
+    const anotherDirectPointer = manualPointerCount() > 0;
     const startTime = manualPointerEventTime(null, event);
     if (anotherDirectPointer) {
-      for (const activePointer of state.manualPointers.values()) {
+      for (const activePointer of manualPointerValues()) {
         activePointer.blockedByOtherPointer = true;
         activePointer.cancelledByOtherPointer = true;
         activePointer.moved = false;
@@ -6695,25 +6776,19 @@
         !anotherDirectPointer &&
         !hasActivePenEditorGesture() &&
         annotationToolIsActive(),
-      captureTarget: pointerType === "touch" ? container : null,
       documentId: state.activeDocumentId,
       openRequest: state.activeOpenRequest,
       pdfDocument: state.app?.pdfDocument,
       rendererGeneration,
     };
-    state.manualPointers.set(event.pointerId, pointer);
+    setManualPointer(event.pointerId, pointer);
     if (pointerType === "touch") {
       if (pointer.suppressesFingerTextSelection) {
         state.fingerTextSelectionSuppressionOwned = true;
       }
       refreshFingerTextSelectionSuppression();
       state.lastTouchClickPage = pointer.pageTarget;
-      try {
-        container.setPointerCapture(event.pointerId);
-      } catch {
-        // The capture may be unavailable for a synthetic or already-cancelled
-        // contact; window listeners still finish the tracked sequence.
-      }
+      state.inputRouter?.capturePointer(event.pointerId, container);
       stopDirectManipulationEvent(event);
     } else if (pointerType === "pen") {
       // Prevent the browser's compatibility mouse sequence from selecting
@@ -6767,7 +6842,7 @@
   }
 
   function finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
-    const pointer = state.manualPointers.get(pointerId);
+    const pointer = getManualPointer(pointerId);
     if (!pointer) {
       return null;
     }
@@ -6780,7 +6855,7 @@
     ) {
       applyManualPan(pointer, event, releaseTime);
     }
-    state.manualPointers.delete(pointerId);
+    deleteManualPointer(pointerId);
     if (pointer.pointerType === "touch") {
       if (cancel || !manualPointerSessionCurrent(pointer)) {
         if (!pointer.cancelledByOtherPointer ||
@@ -6808,13 +6883,13 @@
     cancelManualMomentum();
     clearFingerTextSelectionSuppression();
     invalidatePendingPenHighlight();
-    const pointers = [...state.manualPointers.values()];
-    state.manualPointers.clear();
+    const pointers = manualPointerValues();
+    clearManualPointers();
     state.nativeTouchPointers.clear();
     for (const pointer of pointers) {
       releasePointerCapture(pointer);
     }
-    state.penPolicyPointers.clear();
+    clearPenPolicyPointers();
     refreshPenGestureTouchAction();
     if (clearClickTargets) {
       state.lastTouchClickPage = null;
@@ -7044,7 +7119,7 @@
   }
 
   function onBridgePenTextCompatibilityMouse(event) {
-    if ([...state.activePointers.values()].some((pointer) =>
+    if (activePointerValues().some((pointer) =>
       pointer.pointerType === "pen" &&
       pointer.kind === "text-selection" &&
       pointer.mode === 9 &&
@@ -7068,13 +7143,13 @@
   }
 
   function hasOtherActivePenPointer(pointer) {
-    return [...state.activePointers.values()].some((candidate) =>
+    return activePointerValues().some((candidate) =>
       candidate !== pointer &&
       candidate.pointerType === "pen" &&
       !candidate.ending
-    ) || [...state.penPolicyPointers.keys()].some((pointerId) =>
+    ) || penPolicyPointerIds().some((pointerId) =>
       pointerId !== pointer.pointerId
-    ) || [...state.manualPointers.values()].some((candidate) =>
+    ) || manualPointerValues().some((candidate) =>
       candidate !== pointer && candidate.pointerType === "pen"
     );
   }
@@ -7186,7 +7261,7 @@
       pointer.internalCancelScheduled = true;
       setDeferredTimeout(() => {
         if (
-          state.activePointers.get(pointer.pointerId) !== pointer ||
+          activePointer(pointer.pointerId) !== pointer ||
           !isPointerSessionCurrent(pointer) ||
           pointer.internalCancelDispatched
         ) {
@@ -7208,7 +7283,7 @@
           "pointerup",
           pointer,
           cleanupEvent,
-          state.activePointers.size,
+          activePointerCount(),
         );
         window.dispatchEvent(cleanupEvent);
       }, 0);
@@ -7216,17 +7291,11 @@
   }
 
   function releasePointerCapture(pointer) {
-    try {
-      if (pointer.captureTarget?.hasPointerCapture?.(pointer.pointerId)) {
-        pointer.captureTarget.releasePointerCapture(pointer.pointerId);
-      }
-    } catch {
-      // The browser can release capture as part of pointercancel or frame blur.
-    }
+    state.inputRouter?.releasePointerCapture(pointer.pointerId);
   }
 
   function finishTrackedPointer(pointerId, reason, event = null, { cancel = false } = {}) {
-    const pointer = state.activePointers.get(pointerId);
+    const pointer = activePointer(pointerId);
     if (!pointer || pointer.ending) {
       return;
     }
@@ -7238,7 +7307,7 @@
       // especially when a Pencil crosses the whitespace between text lines.
       updateOwnedPenTextSelection(pointer, event);
     }
-    state.penPolicyPointers.delete(pointerId);
+    deletePenPolicyPointer(pointerId);
     pointer.ending = true;
     pointer.buttons = Number.isInteger(event?.buttons)
       ? event.buttons
@@ -7250,7 +7319,7 @@
     // Pointer listeners in PDF.js finish the editor, temporary eraser, and
     // tool wheel during this dispatch. Defer bridge cleanup until they run.
     setDeferredTimeout(() => {
-      if (state.activePointers.get(pointerId) !== pointer) {
+      if (activePointer(pointerId) !== pointer) {
         return;
       }
       if (!cancel && reason === "pointerup") {
@@ -7261,13 +7330,13 @@
         // bridge's own bookkeeping and browser capture.
       }
       releasePointerCapture(pointer);
-      state.activePointers.delete(pointerId);
+      deleteActivePointer(pointerId);
       refreshPenGestureTouchAction();
       recordPointerDiagnostic(
         reason === "pointerup" ? "pointerup" : "pointercancel",
         pointer,
         event,
-        state.activePointers.size,
+        activePointerCount(),
       );
       if (pointer.button === 0 && pointer.mode === 15) {
         // Ink keeps its drawing session open for additional strokes. The idle
@@ -7299,6 +7368,19 @@
     dismissToolbarParameterPopups(event);
     if (iosInputPolicy && event.pointerType !== "touch") {
       clearFingerTextSelectionSuppression();
+    } else if (
+      iosInputPolicy && event.pointerType === "touch" &&
+      manualPointerCount() > 0 &&
+      !hasManualPointer(event.pointerId)
+    ) {
+      // A second finger anywhere in the document cancels manual panning, but
+      // keeps the touch-owned text-selection guard until Pencil/mouse handoff.
+      for (const pointer of manualPointerValues()) {
+        pointer.blockedByOtherPointer = true;
+        pointer.cancelledByOtherPointer = true;
+        pointer.moved = false;
+        pointer.lastMotionAt = null;
+      }
     }
     if (state.closeControl) {
       event.preventDefault();
@@ -7338,7 +7420,7 @@
           ? "move"
           : null;
       if (state.editorMode !== 0 || eraserActive || nativeOperation) {
-        state.penPolicyPointers.set(event.pointerId, {
+        setPenPolicyPointer(event.pointerId, {
           pointerId: event.pointerId,
           documentId: state.activeDocumentId,
           openRequest: state.activeOpenRequest,
@@ -7354,7 +7436,7 @@
       }
     }
     const kind = pointerInteractionKind(event, event.target);
-    if (!kind || state.activePointers.has(event.pointerId)) {
+    if (!kind || hasActivePointer(event.pointerId)) {
       return;
     }
     const captureTarget =
@@ -7382,7 +7464,6 @@
       lastY: event.clientY,
       moved: false,
       moveSampled: false,
-      captureTarget,
       documentId: state.activeDocumentId,
       openRequest: state.activeOpenRequest,
       pdfDocument: state.app?.pdfDocument,
@@ -7434,7 +7515,7 @@
         }
       }
     }
-    state.activePointers.set(event.pointerId, pointer);
+      setActivePointer(event.pointerId, pointer);
     refreshPenGestureTouchAction();
     recordPointerDiagnostic("pointerdown", pointer, event);
     if (shouldCaptureTrackedPointer(
@@ -7442,12 +7523,7 @@
       event,
       document.body.classList.contains("editorEraserMode"),
     )) {
-      try {
-        captureTarget?.setPointerCapture?.(event.pointerId);
-      } catch {
-        // Keep PDF.js's native handling when a target cannot capture this
-        // pointer; pointerout/blur still close the bridge boundary below.
-      }
+      state.inputRouter?.capturePointer(event.pointerId, captureTarget);
     }
     clearAutoSaveTimer();
   }
@@ -7533,7 +7609,7 @@
       event.stopImmediatePropagation();
       return;
     }
-    const manualPointer = state.manualPointers.get(event.pointerId);
+    const manualPointer = getManualPointer(event.pointerId);
     if (manualPointer) {
       if (manualPointer.pointerType === "touch") {
         stopDirectManipulationEvent(event);
@@ -7546,7 +7622,7 @@
       }
       return;
     }
-    const pointer = state.activePointers.get(event.pointerId);
+    const pointer = activePointer(event.pointerId);
     if (!pointer || pointer.ending) {
       return;
     }
@@ -7577,7 +7653,7 @@
       }
       return;
     }
-    const manualPointer = state.manualPointers.get(event.pointerId);
+    const manualPointer = getManualPointer(event.pointerId);
     if (manualPointer) {
       const pointer = finishManualPointer(event.pointerId, event, {
         cancel: event.type === "pointercancel",
@@ -7587,7 +7663,7 @@
       }
       return;
     }
-    state.penPolicyPointers.delete(event.pointerId);
+    deletePenPolicyPointer(event.pointerId);
     refreshPenGestureTouchAction();
     finishTrackedPointer(event.pointerId, event.type || "pointerup", event, {
       cancel: event.type === "pointercancel",
@@ -7605,11 +7681,11 @@
       }
       return;
     }
-    const manualPointer = state.manualPointers.get(event.pointerId);
+    const manualPointer = getManualPointer(event.pointerId);
     if (manualPointer) {
       if (
         event.relatedTarget !== null ||
-        manualPointer.captureTarget?.hasPointerCapture?.(event.pointerId)
+        state.inputRouter?.hasPointerCapture(event.pointerId)
       ) {
         return;
       }
@@ -7620,18 +7696,18 @@
       return;
     }
     if (
-      state.penPolicyPointers.has(event.pointerId) &&
+      hasPenPolicyPointer(event.pointerId) &&
       event.relatedTarget === null
     ) {
-      state.penPolicyPointers.delete(event.pointerId);
+      deletePenPolicyPointer(event.pointerId);
       refreshPenGestureTouchAction();
     }
-    const pointer = state.activePointers.get(event.pointerId);
+    const pointer = activePointer(event.pointerId);
     if (
       !pointer ||
       pointer.ending ||
       event.relatedTarget !== null ||
-      pointer.captureTarget?.hasPointerCapture?.(event.pointerId)
+      state.inputRouter?.hasPointerCapture(event.pointerId)
     ) {
       return;
     }
@@ -7647,7 +7723,7 @@
       event.stopImmediatePropagation();
       return;
     }
-    const manualPointer = state.manualPointers.get(event.pointerId);
+    const manualPointer = getManualPointer(event.pointerId);
     if (manualPointer) {
       const pointer = finishManualPointer(event.pointerId, event, { cancel: true });
       if (pointer?.pointerType === "touch") {
@@ -7655,9 +7731,9 @@
       }
       return;
     }
-    state.penPolicyPointers.delete(event.pointerId);
+    deletePenPolicyPointer(event.pointerId);
     refreshPenGestureTouchAction();
-    const pointer = state.activePointers.get(event.pointerId);
+    const pointer = activePointer(event.pointerId);
     if (!pointer || pointer.ending) {
       return;
     }
@@ -7671,7 +7747,7 @@
       return;
     }
     clearManualPointerSessions();
-    for (const [pointerId, pointer] of state.activePointers) {
+    for (const [pointerId, pointer] of activePointerEntries()) {
       if (!pointer.ending) {
         finishTrackedPointer(pointerId, "blur", null, { cancel: true });
       }
@@ -7680,7 +7756,7 @@
 
   function onBridgePointerKeyDown(event) {
     if (event.key === "Escape") {
-      for (const [pointerId, pointer] of state.activePointers) {
+      for (const [pointerId, pointer] of activePointerEntries()) {
         if (pointer.button === 2) {
           finishTrackedPointer(pointerId, "escape", null, { cancel: true });
         }
@@ -7773,7 +7849,7 @@
     if (state.closeControl) {
       if (
         event.key === "Escape" &&
-        [...state.activePointers.values()].some((pointer) => pointer.button === 2)
+        activePointerValues().some((pointer) => pointer.button === 2)
       ) {
         // Let PDF.js cancel its temporary right-button eraser; the early
         // boundary listener defers release until that handler has run.
@@ -7863,7 +7939,7 @@
     state.manualSaveQueued = false;
     state.manualCommitQueued = false;
     clearManualPointerSessions();
-    state.activePointers.clear();
+    clearActivePointers();
     state.freeTextFocused = false;
     state.freeTextCommittedForSave = false;
     state.freeTextInputPending = false;
