@@ -6675,7 +6675,104 @@ var __PDFReaderAnnotationHost = (() => {
         if (!app?.vault?.adapter || !hashRuntime || typeof hashRuntime.fingerprint !== "function") {
           throw new TypeError("PDF annotation host requires a Vault adapter and hash runtime.");
         }
-        const adapter = app.vault.adapter;
+        const backingAdapter = app.vault.adapter;
+        const selfSidecarWrites = /* @__PURE__ */ new Map();
+        const MAX_TRACKED_SELF_SIDECAR_WRITES = 4096;
+        const isSidecarPath = (path) => {
+          const normalized = normalizePath(path);
+          return normalized === ANNOTATION_ROOT || normalized.startsWith(`${ANNOTATION_ROOT}/`);
+        };
+        const fingerprintSidecarValue = (value) => {
+          let bytes;
+          if (typeof value === "string") bytes = utf8(value);
+          else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) bytes = bytesView(value);
+          else return null;
+          return { byteLength: bytes.byteLength, digest: hashRuntime.fingerprint(bytes) };
+        };
+        const rememberSelfSidecarFingerprint = (path, fingerprint) => {
+          if (!isSidecarPath(path) || !fingerprint) return null;
+          const normalized = normalizePath(path);
+          const record = { ...fingerprint, generation: makeToken() };
+          selfSidecarWrites.delete(normalized);
+          selfSidecarWrites.set(normalized, record);
+          while (selfSidecarWrites.size > MAX_TRACKED_SELF_SIDECAR_WRITES) {
+            selfSidecarWrites.delete(selfSidecarWrites.keys().next().value);
+          }
+          return { path: normalized, record };
+        };
+        const rememberSelfSidecarWrite = (path, value) => rememberSelfSidecarFingerprint(path, fingerprintSidecarValue(value));
+        const forgetSelfSidecarWrite = (tracked) => {
+          if (tracked && selfSidecarWrites.get(tracked.path) === tracked.record) {
+            selfSidecarWrites.delete(tracked.path);
+          }
+        };
+        const adapter = new Proxy(backingAdapter, {
+          get(target, property) {
+            if (property === "write") {
+              return async (path, value2) => {
+                const tracked = rememberSelfSidecarWrite(path, value2);
+                try {
+                  return await target.write.call(target, path, value2);
+                } catch (error) {
+                  forgetSelfSidecarWrite(tracked);
+                  throw error;
+                }
+              };
+            }
+            if (property === "append") {
+              if (typeof target.append !== "function") return void 0;
+              return async (path, value2) => {
+                let previous = "";
+                try {
+                  previous = await target.read.call(target, path);
+                } catch {
+                }
+                const tracked = rememberSelfSidecarWrite(path, `${previous}${value2}`);
+                try {
+                  return await target.append.call(target, path, value2);
+                } catch (error) {
+                  forgetSelfSidecarWrite(tracked);
+                  throw error;
+                }
+              };
+            }
+            if (property === "rename") {
+              return async (fromPath, toPath) => {
+                let expected = selfSidecarWrites.get(normalizePath(fromPath)) || null;
+                if (!expected && isSidecarPath(fromPath) && isSidecarPath(toPath)) {
+                  try {
+                    expected = fingerprintSidecarValue(await target.read.call(target, fromPath));
+                  } catch {
+                  }
+                }
+                const tracked = expected ? rememberSelfSidecarFingerprint(toPath, expected) : null;
+                try {
+                  const result = await target.rename.call(target, fromPath, toPath);
+                  selfSidecarWrites.delete(normalizePath(fromPath));
+                  return result;
+                } catch (error) {
+                  forgetSelfSidecarWrite(tracked);
+                  throw error;
+                }
+              };
+            }
+            if (property === "remove") {
+              if (typeof target.remove !== "function") return void 0;
+              return async (path) => {
+                const result = await target.remove.call(target, path);
+                const normalized = normalizePath(path);
+                for (const trackedPath of selfSidecarWrites.keys()) {
+                  if (trackedPath === normalized || trackedPath.startsWith(`${normalized}/`)) {
+                    selfSidecarWrites.delete(trackedPath);
+                  }
+                }
+                return result;
+              };
+            }
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+        });
         const store = createPdfAnnotationStore({
           adapter,
           root: ANNOTATION_ROOT,
@@ -6709,6 +6806,7 @@ var __PDFReaderAnnotationHost = (() => {
           let currentDocument = registered;
           let legacyIdentityScanUncertain = registered.sourceMismatch === true;
           let inspectedLegacyTombstones = [];
+          let appendedLegacyTombstones = false;
           if (!registered.sourceMismatch && !registered.legacyIdentityScanComplete) {
             const legacyMarkerFound = containsAscii(bytes, "/ObReaderMerge") || containsAscii(bytes, "/ObReaderId");
             let identities = [];
@@ -6790,11 +6888,12 @@ ${entry.actorId || "legacy"}`
             }));
             if (legacyTombstones.length) {
               const digest = hashRuntime.fingerprint(utf8(legacyTombstones.map((entry) => `${entry.uuid}:${entry.clock.timestamp}:${entry.clock.logical}:${entry.clock.opId}`).sort().join("\n"))).split(":").at(-1);
-              await store.appendOperations({
+              const result = await store.appendOperations({
                 document: currentDocument,
                 batchId: `legacy-tombstones-${digest}`,
                 operations: legacyTombstones
               });
+              appendedLegacyTombstones = result.operationCount > 0 && result.duplicate !== true;
             }
           }
           const snapshot = registered.sourceMismatch ? emptySnapshot(currentDocument, source) : await store.readDocument(currentDocument);
@@ -6807,6 +6906,7 @@ ${entry.actorId || "legacy"}`
           view.annotationHydrationAllowed = hydrationAllowed;
           view.annotationSnapshot = snapshot;
           updateSyncStatus(view, snapshot);
+          if (appendedLegacyTombstones) broadcastSnapshot(currentDocument, snapshot, view);
           if (legacyIdentityScanUncertain) {
             view.setStatus?.(registered.sourceMismatch ? "PDF \u6765\u6E90\u5DF2\u53D8\u5316\uFF1B\u5916\u7F6E\u6279\u6CE8\u5DF2\u6682\u505C\uFF0CReader \u4EE5\u53EA\u8BFB\u6A21\u5F0F\u6253\u5F00\u3002" : "\u68C0\u6D4B\u5230\u65E7\u7248 PDF \u6279\u6CE8\uFF0C\u4F46\u65E0\u6CD5\u9A8C\u8BC1\u5176\u8EAB\u4EFD\uFF1B\u5DF2\u8FDB\u5165\u53EA\u8BFB\u6A21\u5F0F\uFF0C\u539F PDF \u672A\u4FEE\u6539\u3002", true);
           }
@@ -7059,20 +7159,23 @@ ${entry.actorId || "legacy"}`
         async function broadcastDocument(document, excludedView = null) {
           try {
             const snapshot = await store.readDocument(document);
-            for (const view of documentViews.get(document.documentId) || []) {
-              if (view === excludedView || view.teardownStarted || view.documentId !== document.documentId) continue;
-              updateSyncStatus(view, snapshot);
-              post(view, {
-                type: "external-annotations-update",
-                documentId: document.documentId,
-                openRequest: view.openRequest,
-                externalAnnotations: snapshot,
-                sourceMatch: "MATCH",
-                readOnly: view.annotationLegacyIdentityUncertain === true || view.annotationSyncPending === true
-              });
-            }
+            broadcastSnapshot(document, snapshot, excludedView);
           } catch (error) {
             log("annotation-broadcast-failed", { documentId: document.documentId, code: error.code || "unknown" });
+          }
+        }
+        function broadcastSnapshot(document, snapshot, excludedView = null) {
+          for (const view of documentViews.get(document.documentId) || []) {
+            if (view === excludedView || view.teardownStarted || view.documentId !== document.documentId) continue;
+            updateSyncStatus(view, snapshot);
+            post(view, {
+              type: "external-annotations-update",
+              documentId: document.documentId,
+              openRequest: view.openRequest,
+              externalAnnotations: snapshot,
+              sourceMatch: "MATCH",
+              readOnly: view.annotationLegacyIdentityUncertain === true || view.annotationSyncPending === true
+            });
           }
         }
         async function handleSidecarChange(file) {
@@ -7097,6 +7200,18 @@ ${entry.actorId || "legacy"}`
           }
           if (!affectedDocuments.length) return true;
           await nextTask(40);
+          const expectedSelfWrite = selfSidecarWrites.get(changedPath);
+          if (expectedSelfWrite) {
+            try {
+              const current = await backingAdapter.read(changedPath);
+              const currentFingerprint = fingerprintSidecarValue(current);
+              if (currentFingerprint && currentFingerprint.byteLength === expectedSelfWrite.byteLength && currentFingerprint.digest === expectedSelfWrite.digest) {
+                return true;
+              }
+            } catch {
+            }
+            if (selfSidecarWrites.get(changedPath) === expectedSelfWrite) selfSidecarWrites.delete(changedPath);
+          }
           for (const { documentId, document } of affectedDocuments) {
             await broadcastDocument(document);
             log("annotation-sidecar-changed", { documentId, path: changedPath });
@@ -7249,6 +7364,7 @@ ${entry.actorId || "legacy"}`
         function dispose() {
           disposed = true;
           queues.clear();
+          selfSidecarWrites.clear();
           for (const set of documentViews.values()) set.clear();
           documentViews.clear();
           sourceStates.clear();
