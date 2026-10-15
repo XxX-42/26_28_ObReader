@@ -29,6 +29,7 @@ function createPdfAnnotationHost({
     hash: hashRuntime.fingerprint,
     identityHash: identityHash || hashRuntime.fingerprint,
     deviceId,
+    onTiming: (details) => log("annotation-performance", details),
   });
   const queues = new Map();
   const documentViews = new Map();
@@ -161,7 +162,12 @@ function createPdfAnnotationHost({
         });
       }
     }
-    const snapshot = await store.readDocument(currentDocument);
+    // Source mismatch is a hard read-only boundary. readDocument() may replay,
+    // materialize checkpoints, update ACKs and run GC; do not let an untrusted
+    // source revision alter recovery state that belongs to the prior PDF.
+    const snapshot = registered.sourceMismatch
+      ? emptySnapshot(currentDocument, source)
+      : await store.readDocument(currentDocument);
     const hasStoredPageIdentity = Number.isSafeInteger(registered.source.pageCount) &&
       Array.isArray(registered.source.orderedPageIdentities) &&
       registered.source.orderedPageIdentities.length === registered.source.pageCount;

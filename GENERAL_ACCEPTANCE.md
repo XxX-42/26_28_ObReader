@@ -1,3 +1,50 @@
+# 0.8.0 Storage + Candidate integration — BLOCKED at cross-instance safety (2026-10-15)
+
+Integration branch: `integration/0.8.0-sidecar-merge-20261015`, based on Storage 0.8.0 commit `8e930695829b734c23e5d3a4f295d71de98437f4`. This entry records the controlled semantic merge attempt; it does not replace the frozen 0.8.0 results or earlier failure history below.
+
+### Verified before the stop
+
+- Build passed: release directory contains the three required files; 406 embedded runtime assets and 402 frozen vendor files validate. The exact #22137 backport is recorded in `vendor/pdfjs-generic-legacy/PROVENANCE.md`; frozen `viewer.mjs` SHA-256 is `6b370bd3426196ae5bfa855ee24979cf9939720b9edc0771137a4e32f1fa74ac`.
+- Gate A targeted Store/Host/Bridge/session-log tests passed **71/71**; sidecar `plugin-host.test.mjs` passed **60/60** after replacing stale PDF-binary-writeback assertions with the Candidate sidecar protocol oracle. Native selection probe, pointer-capture, PDF.js backport, hydration-race, FreeText geometry/hydration, and multiline Highlight tests passed **10/10** in their browser/unit harnesses.
+- Selection differential U0/U1/U2 passed, including the collapsed-caret case and two live PDFViewer instances sharing a document/module. `ISSUE_22129_RELEVANCE = NOT_REPRODUCED`. Evidence: `tests/artifacts/selection-differential-1792038488722-37728.json`.
+- Source-binding matrix passed **7/7**. Controlled-close/transition tests passed **11/11**; the complete sidecar host lifecycle suite passed **60/60**.
+- Obsidian Native 0.8.0 created and saved real single-line, adjacent, and multiline Underlines with non-collapsed pre-consumer selections; the first run reached the final three-Underline reopen and recorded a visible composite screenshot. Subsequent runs were interrupted by Obsidian CLI `ENOBUFS`/`ETIMEDOUT` while exporting the trace/reopening, so the required complete native trace and safety counters were not captured. Each run's fixture PDF SHA-256 and XXH64 were unchanged. A comparison against the initial test-vault inventory found **0 changes among 261 pre-existing sidecar files**. This is partial evidence, not Native acceptance.
+
+### Blocking cross-instance result
+
+The two-store tests use distinct Store instances and adapter facades over one shared durable backing map. In `tests/artifacts/store-cross-instance-race-stale-replay-overwrite-2026-10-15T044413369Z-31268.json`, Store B wrote checkpoint revision 1 with `annotation-B-new` and acknowledged that checkpoint; the active B device state recorded `acknowledged: true`. Resuming Store A's stale revision-0 replay then replaced the primary checkpoint with the prior empty revision-0 hash. B's immutable batch remained present, so permanent loss was not demonstrated in this interleaving; however, the forbidden stale-primary regression was directly reproduced. Per the integration gate, this is a P0 failure and work stopped without attempting a protocol rewrite.
+
+The combined cross-instance/checkpoint/GC/crash run reported **21 tests: 7 passed, 14 failed**. Several other red assertions expect Candidate's older backup/GC behavior (for example, a latest-copy backup rather than 0.8's previous-distinct-checkpoint rule or collection without satisfying 0.8's 30-day/ACK gate); they require a separate 0.8-aware oracle review. Crash recovery at those boundaries is therefore not accepted. Full `npm test`, `npm run test:offline`, and P1 scheduling/coalescing were **NOT RUN after this P0 stop**. P1 was not started.
+
+### Candidate package and final gates
+
+The 0.8.0 build was installed only in the designated test vault `D:\\Documents\\Obsidian\\测试插件`, after backing up its previous plugin directory to `.deploy-backups/2026-10-15T04-32-05-861Z/pdf-web-reader`; the runtime was verified as 0.8.0. No remote repository-1 plugin or PDF was touched. Built release SHA-256:
+
+| File | SHA-256 |
+|---|---|
+| `main.js` | `4866b85d24309fad4c05b2b45a174fd887a3d23f866041df4ebae1172923102e` |
+| `manifest.json` | `0d66c1af2050da9a0212a8ca072d2a888864577f97179b794da2feb37321f625` |
+| `styles.css` | `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650` |
+
+```text
+FORMAT3_STORAGE_PRESERVED = TRUE
+LIVE_EDITOR_CAPTURE_PRESERVED = TRUE
+EXACT_DURABLE_ACK_PRESERVED = TRUE
+CONTROLLED_CLOSE_ACCEPTED = TRUE
+P0_UNDERLINE = FALSE
+P0_FREETEXT = FALSE
+P0_SOURCE_BINDING = TRUE
+P0_CROSS_DEVICE_SAFETY = FALSE
+P1_MATERIALIZATION_COALESCING = NOT_RUN
+ROOT_INDEX_GLOBAL_BARRIER = KNOWN_LIMITATION
+SIDECAR_ARCHITECTURE_ACCEPTED = FALSE
+READY_FOR_DEPLOYMENT = FALSE
+```
+
+No Git push, Release, or deployment to `远程仓库1` was performed. No user PDF or any of the 261 sidecar files present before Native testing changed. The test-vault plugin remains at 0.8.0 for investigation; Readers were left closed.
+
+---
+
 # 0.1general 通用候选（插件 0.8.0）
 
 ## 当前：外置批注历史、检查点与安全回收（2026-10-15）

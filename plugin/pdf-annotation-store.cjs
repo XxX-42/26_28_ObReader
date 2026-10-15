@@ -38,6 +38,8 @@ function createPdfAnnotationStore({
   hash,
   identityHash = hash,
   deviceId,
+  onTiming = () => {},
+  timingNow = defaultTimingNow,
 }) {
   if (!adapter || typeof adapter.read !== "function" || typeof adapter.write !== "function" ||
       typeof adapter.exists !== "function" || typeof adapter.mkdir !== "function" ||
@@ -55,6 +57,8 @@ function createPdfAnnotationStore({
   const operationsRoot = `${baseRoot}/ops`;
   const identityEventsRoot = `${baseRoot}/identity-events`;
   const deviceSegment = pathSegment(deviceId);
+  const materializationQueues = new Map();
+  const garbageCollectionQueues = new Map();
 
   function pathsFor(document) {
     const normalized = normalizeDocument(document);
@@ -73,6 +77,25 @@ function createPdfAnnotationStore({
 
   function batchReference(batchDeviceId, batchId) {
     return `${pathSegment(batchDeviceId)}/${pathSegment(batchId)}`;
+  }
+
+  function safeTimingNow() {
+    try {
+      const value = timingNow();
+      return Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function emitTiming(details) {
+    if (typeof onTiming !== "function") return;
+    try {
+      const result = onTiming(details);
+      if (result && typeof result.then === "function") void Promise.resolve(result).catch(() => {});
+    } catch {
+      // Diagnostics must never change checkpoint or garbage-collection safety.
+    }
   }
 
   async function registerDocument({ sourcePath, source = {}, documentId } = {}) {
@@ -253,62 +276,116 @@ function createPdfAnnotationStore({
 
   async function readDocument(document) {
     const normalizedDocument = await resolveDocument(document);
-    let state;
-    try {
-      state = await replay(normalizedDocument);
-    } catch (error) {
-      if (error.code !== "PDF_ANNOTATION_SYNC_PENDING") throw error;
-      const checkpoint = await readCheckpoint(normalizedDocument);
-      if (!checkpoint) throw error;
-      const annotations = {};
-      for (const row of checkpoint.annotations) annotations[row.uuid] = normalizeOperation(row);
-      for (const row of checkpoint.tombstones) annotations[row.uuid] = normalizeOperation({ ...row, deleted: true });
-      const safeState = {
-        annotations,
-        revision: checkpoint.revision,
-        updatedAt: checkpoint.updatedAt,
-        payloadEncoding: checkpoint.payloadEncoding,
-        formatVersion: checkpoint.formatVersion || LEGACY_OPERATION_FORMAT,
-        coveredBatches: cloneBatchManifest(checkpoint.coveredBatches),
-        batchHeads: [...(checkpoint.batchHeads || [])],
-        operationDigests: { ...checkpoint.operationDigests },
-        knownDevices: [...checkpoint.knownDevices],
-      };
-      const safeSnapshot = makeSnapshot(normalizedDocument, safeState, checkpoint, false, true);
-      return safeSnapshot;
-    }
-    let checkpoint = await writeCheckpoint(normalizedDocument, state);
-    let currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
-    let deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
-    const allDevicesConfirmed = () => deviceStates.every((entry) => entry.retired || entry.acknowledged);
-    if (allDevicesConfirmed() && checkpoint.payloadEncoding !== COMPACT_PAYLOAD_ENCODING) {
-      compactStatePayloads(state);
-      state.payloadEncoding = COMPACT_PAYLOAD_ENCODING;
-      checkpoint = await writeCheckpoint(normalizedDocument, state);
-      currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
-      deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
-    }
-    const compactInkEncoding = deviceStates.every((entry) => entry.retired || entry.acknowledged);
-    const snapshot = makeSnapshot(normalizedDocument, state, checkpoint, compactInkEncoding);
-    if (currentDeviceState.retired !== true && compactInkEncoding) {
-      // Keep the legacy materialized snapshot intact until every registered
-      // device has upgraded and confirmed the exact compact checkpoint.
-      await writeSnapshotPointer(normalizedDocument, checkpoint);
-      await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates);
-      await maybeCompactRootIndex();
-    }
-    return snapshot;
+    return enqueueDocumentMaterialization(normalizedDocument, (queueWaitMs) =>
+      materializeDocument(normalizedDocument, queueWaitMs));
   }
 
-  // Call off the save/close hot path. The operation files remain authoritative;
-  // interruption here merely leaves a stale cache that readDocument repairs.
+  // Serialize replay/checkpoint/ACK/GC only within this store instance and
+  // document. This is not a cross-device lock; Format 3 remains the durable
+  // protocol shared by independent instances.
+  function enqueueDocumentMaterialization(document, work) {
+    const queuedAtMonotonicMs = safeTimingNow();
+    const previous = materializationQueues.get(document.docKey) || Promise.resolve();
+    const task = previous.catch(() => {}).then(async () => {
+      const startedAtMonotonicMs = safeTimingNow();
+      const queueWaitMs = queuedAtMonotonicMs === null || startedAtMonotonicMs === null
+        ? null : Math.max(0, startedAtMonotonicMs - queuedAtMonotonicMs);
+      return work(queueWaitMs);
+    });
+    const tracked = task.finally(() => {
+      if (materializationQueues.get(document.docKey) === tracked) {
+        materializationQueues.delete(document.docKey);
+      }
+    });
+    materializationQueues.set(document.docKey, tracked);
+    return tracked;
+  }
+
+  async function materializeDocument(normalizedDocument, queueWaitMs) {
+    const startedAtMonotonicMs = safeTimingNow();
+    const startedAtEpochMs = safeEpochNow();
+    let state;
+    let snapshot;
+    let status = "error";
+    let errorCode;
+    try {
+      try {
+        state = await replay(normalizedDocument);
+      } catch (error) {
+        if (error.code !== "PDF_ANNOTATION_SYNC_PENDING") throw error;
+        const checkpoint = await readCheckpoint(normalizedDocument);
+        if (!checkpoint) throw error;
+        const annotations = {};
+        for (const row of checkpoint.annotations) annotations[row.uuid] = normalizeOperation(row);
+        for (const row of checkpoint.tombstones) annotations[row.uuid] = normalizeOperation({ ...row, deleted: true });
+        const safeState = {
+          annotations,
+          revision: checkpoint.revision,
+          updatedAt: checkpoint.updatedAt,
+          payloadEncoding: checkpoint.payloadEncoding,
+          formatVersion: checkpoint.formatVersion || LEGACY_OPERATION_FORMAT,
+          coveredBatches: cloneBatchManifest(checkpoint.coveredBatches),
+          batchHeads: [...(checkpoint.batchHeads || [])],
+          operationDigests: { ...checkpoint.operationDigests },
+          knownDevices: [...checkpoint.knownDevices],
+        };
+        snapshot = makeSnapshot(normalizedDocument, safeState, checkpoint, false, true);
+        status = "sync-pending-read-only";
+        return snapshot;
+      }
+      let checkpoint = await writeCheckpoint(normalizedDocument, state);
+      let currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
+      let deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
+      const allDevicesConfirmed = () => deviceStates.every((entry) => entry.retired || entry.acknowledged);
+      if (allDevicesConfirmed() && checkpoint.payloadEncoding !== COMPACT_PAYLOAD_ENCODING) {
+        compactStatePayloads(state);
+        state.payloadEncoding = COMPACT_PAYLOAD_ENCODING;
+        checkpoint = await writeCheckpoint(normalizedDocument, state);
+        currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
+        deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
+      }
+      const compactInkEncoding = deviceStates.every((entry) => entry.retired || entry.acknowledged);
+      snapshot = makeSnapshot(normalizedDocument, state, checkpoint, compactInkEncoding);
+      if (currentDeviceState.retired !== true && compactInkEncoding) {
+        // Keep the legacy materialized snapshot intact until every registered
+        // device has upgraded and confirmed the exact compact checkpoint.
+        await writeSnapshotPointer(normalizedDocument, checkpoint);
+        await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates, {
+          materializationQueueWaitMs: queueWaitMs,
+        });
+        await maybeCompactRootIndex();
+      }
+      status = "success";
+      return snapshot;
+    } catch (error) {
+      errorCode = typeof error?.code === "string" ? error.code : "unknown";
+      throw error;
+    } finally {
+      const endedAtMonotonicMs = safeTimingNow();
+      emitTiming({
+        phase: "materialization",
+        documentId: normalizedDocument.documentId,
+        docKey: normalizedDocument.docKey,
+        revision: snapshot?.revision ?? state?.revision ?? null,
+        startedAtEpochMs,
+        startedAtMonotonicMs,
+        queueWaitMs,
+        durationMs: startedAtMonotonicMs === null || endedAtMonotonicMs === null
+          ? null : Math.max(0, endedAtMonotonicMs - startedAtMonotonicMs),
+        status,
+        ...(errorCode ? { errorCode } : {}),
+      });
+    }
+  }
+
+  /*
+   * Call off the save/close hot path. The operation files remain authoritative;
+   * interruption here merely leaves a stale cache that readDocument repairs.
+   */
   async function materializeSnapshot(document) {
     return readDocument(document);
   }
 
-  // Called after PDF.js parses the source. A changed full hash, page count,
-  // or ordered page identity is reported without replacing the prior trusted
-  // identity; callers must resolve the mismatch before hydrating annotations.
   async function updateSourceIdentity({ document, sourceHash, pageCount, orderedPageIdentities, size, tailHash64k } = {}) {
     const normalizedDocument = await resolveDocument(document);
     const currentSource = normalizeSource({ sourceHash, pageCount, orderedPageIdentities, size, tailHash64k });
@@ -1438,41 +1515,131 @@ function createPdfAnnotationStore({
     };
   }
 
-  async function garbageCollectCoveredBatches(document, checkpoint, deviceStates) {
-    if (typeof adapter.remove !== "function" ||
-        !deviceStates.every((entry) => entry.retired || entry.acknowledged)) return 0;
+  async function garbageCollectCoveredBatches(document, checkpoint, deviceStates, {
+    materializationQueueWaitMs = null,
+  } = {}) {
+    const normalized = normalizeDocument(document);
+    const queuedAtMonotonicMs = safeTimingNow();
+    const previous = garbageCollectionQueues.get(normalized.docKey) || Promise.resolve();
+    const task = previous.catch(() => {}).then(() => {
+      const startedAtMonotonicMs = safeTimingNow();
+      const queueWaitMs = queuedAtMonotonicMs === null || startedAtMonotonicMs === null
+        ? null : Math.max(0, startedAtMonotonicMs - queuedAtMonotonicMs);
+      return performGarbageCollection(normalized, checkpoint, deviceStates, {
+        startedAtMonotonicMs,
+        queueWaitMs,
+        materializationQueueWaitMs,
+      });
+    });
+    const tracked = task.finally(() => {
+      if (garbageCollectionQueues.get(normalized.docKey) === tracked) {
+        garbageCollectionQueues.delete(normalized.docKey);
+      }
+    });
+    garbageCollectionQueues.set(normalized.docKey, tracked);
+    return tracked;
+  }
+
+  async function performGarbageCollection(document, checkpoint, deviceStates, {
+    startedAtMonotonicMs,
+    queueWaitMs,
+    materializationQueueWaitMs,
+  }) {
     const paths = pathsFor(document);
-    const currentRow = await readValidCheckpointAt(paths.checkpoint, document);
-    const previousRow = await readValidCheckpointAt(paths.checkpointBackup, document);
-    if (!currentRow || currentRow.checkpoint.integrity !== checkpoint.integrity || !previousRow ||
-        previousRow.checkpoint.integrity === currentRow.checkpoint.integrity) return 0;
-    const activeAcks = deviceStates.filter((entry) => !entry.retired).map((entry) => entry.acknowledgedAt);
-    if (!activeAcks.length || activeAcks.some((value) => !Number.isSafeInteger(value) || value < 0)) return 0;
-    const latestAcknowledgement = Math.max(...activeAcks);
-    const now = finiteNumber(await clock(), "clock()");
-    if (latestAcknowledgement > now || now - latestAcknowledgement < GC_RETENTION_MS) return 0;
+    const startedAtEpochMs = safeEpochNow();
+    let eligible = false;
+    let blocked = false;
+    let status = "error";
+    let candidateBatchCount = 0;
+    let candidateBatchBytes = 0;
     let removed = 0;
-    for (const batchPath of await listOperationBatches(document)) {
-      let batch;
-      try { batch = JSON.parse(await adapter.read(batchPath)); }
-      catch {
-        throw codedError("PDF_ANNOTATION_SYNC_PENDING",
-          `Operation batch is incomplete during safe collection: ${batchPath}`);
+    let removedBatchBytes = 0;
+    let errorCode;
+    try {
+      if (typeof adapter.remove !== "function" ||
+          !deviceStates.every((entry) => entry.retired || entry.acknowledged)) {
+        blocked = true;
+        status = "blocked";
+        return 0;
       }
-      validateBatch(batch, document);
-      const currentExpected = currentRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
-      const previousExpected = previousRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
-      const actualDigest = await digestText(canonicalJson(batch));
-      // Retain the delta after the previous checkpoint so that the verified
-      // previous state can still replay forward if the primary is damaged.
-      if (!currentExpected || currentExpected !== actualDigest || previousExpected !== actualDigest) continue;
-      await adapter.remove(batchPath);
-      if (await adapter.exists(batchPath)) {
-        throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
+      const currentRow = await readValidCheckpointAt(paths.checkpoint, document);
+      const previousRow = await readValidCheckpointAt(paths.checkpointBackup, document);
+      if (!currentRow || currentRow.checkpoint.integrity !== checkpoint.integrity || !previousRow ||
+          previousRow.checkpoint.integrity === currentRow.checkpoint.integrity) {
+        blocked = true;
+        status = "blocked";
+        return 0;
       }
-      removed += 1;
+      const activeAcks = deviceStates.filter((entry) => !entry.retired).map((entry) => entry.acknowledgedAt);
+      if (!activeAcks.length || activeAcks.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+        blocked = true;
+        status = "blocked";
+        return 0;
+      }
+      const latestAcknowledgement = Math.max(...activeAcks);
+      const now = finiteNumber(await clock(), "clock()");
+      if (latestAcknowledgement > now || now - latestAcknowledgement < GC_RETENTION_MS) {
+        blocked = true;
+        status = "blocked";
+        return 0;
+      }
+      eligible = true;
+      for (const batchPath of await listOperationBatches(document)) {
+        let batch;
+        let batchText;
+        try {
+          batchText = await adapter.read(batchPath);
+          batch = JSON.parse(batchText);
+        } catch {
+          throw codedError("PDF_ANNOTATION_SYNC_PENDING",
+            `Operation batch is incomplete during safe collection: ${batchPath}`);
+        }
+        validateBatch(batch, document);
+        const currentExpected = currentRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+        const previousExpected = previousRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+        const actualDigest = await digestText(canonicalJson(batch));
+        // Retain the delta after the previous checkpoint so that the verified
+        // previous state can still replay forward if the primary is damaged.
+        if (!currentExpected || currentExpected !== actualDigest || previousExpected !== actualDigest) continue;
+        candidateBatchCount += 1;
+        candidateBatchBytes += storedTextByteLength(batchText);
+        await adapter.remove(batchPath);
+        if (await adapter.exists(batchPath)) {
+          throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
+        }
+        removed += 1;
+        removedBatchBytes += storedTextByteLength(batchText);
+      }
+      status = "success";
+      return removed;
+    } catch (error) {
+      status = "error";
+      errorCode = typeof error?.code === "string" ? error.code : "unknown";
+      throw error;
+    } finally {
+      const endedAtMonotonicMs = safeTimingNow();
+      emitTiming({
+        phase: "gc",
+        documentId: document.documentId,
+        docKey: document.docKey,
+        revision: checkpoint.revision,
+        checkpointHash: checkpoint.integrity,
+        startedAtEpochMs,
+        startedAtMonotonicMs,
+        queueWaitMs,
+        materializationQueueWaitMs,
+        durationMs: startedAtMonotonicMs === null || endedAtMonotonicMs === null
+          ? null : Math.max(0, endedAtMonotonicMs - startedAtMonotonicMs),
+        eligible,
+        blocked,
+        status,
+        candidateBatchCount,
+        candidateBatchBytes,
+        removedBatchCount: removed,
+        removedBatchBytes,
+        ...(errorCode ? { errorCode } : {}),
+      });
     }
-    return removed;
   }
 
   async function retireDevice({ document, targetDeviceId, confirmedCheckpointHash } = {}) {
@@ -1873,6 +2040,27 @@ function utf8(value) {
   const bytes = new Uint8Array(escaped.length);
   for (let index = 0; index < escaped.length; index += 1) bytes[index] = escaped.charCodeAt(index);
   return bytes;
+}
+
+function defaultTimingNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function safeEpochNow() {
+  try {
+    const value = Date.now();
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storedTextByteLength(value) {
+  try {
+    return utf8(typeof value === "string" ? value : String(value)).byteLength;
+  } catch {
+    return 0;
+  }
 }
 
 function finiteNumber(value, name) {

@@ -90,6 +90,62 @@ function tombstone(uuid, kind, deviceId, timestamp, logical = 0) {
   };
 }
 
+test("materialization serializes per document, leaves other documents independent, and reports queue timing", async () => {
+  const shared = makeAdapter();
+  const timing = [];
+  let monotonic = 0;
+  const storeA = createPdfAnnotationStore({
+    adapter: shared.adapter,
+    root: "00_Archive/20_PDFData",
+    deviceId: "timing-A",
+    uuid: (() => { let id = 0; return () => `timing-${++id}`; })(),
+    hash,
+    identityHash: hash,
+    clock: () => 1_000,
+    timingNow: () => ++monotonic,
+    onTiming: (event) => timing.push(event),
+  });
+  const firstDocument = await storeA.registerDocument({ sourcePath: "first.pdf" });
+  const otherDocument = await storeA.registerDocument({ sourcePath: "other.pdf" });
+  const checkpointPath = storeA.pathsFor(firstDocument).checkpoint;
+  const originalWrite = shared.adapter.write;
+  let releaseCheckpoint;
+  let checkpointWriteEntered;
+  const checkpointGate = new Promise((resolve) => { releaseCheckpoint = resolve; });
+  const enteredGate = new Promise((resolve) => { checkpointWriteEntered = resolve; });
+  let checkpointWriteAttempts = 0;
+  shared.adapter.write = async (path, value) => {
+    if (path === checkpointPath) {
+      checkpointWriteAttempts += 1;
+      if (checkpointWriteAttempts === 1) {
+        checkpointWriteEntered();
+        await checkpointGate;
+      }
+    }
+    return originalWrite(path, value);
+  };
+
+  const first = storeA.readDocument(firstDocument);
+  await enteredGate;
+  const sameDocument = storeA.readDocument(firstDocument);
+  const other = await storeA.readDocument(otherDocument);
+  assert.equal(other.documentId, otherDocument.documentId,
+    "a queued document must not block materialization for another docKey");
+  assert.equal(checkpointWriteAttempts, 1,
+    "a second materialization for the same docKey must wait for the active transaction");
+
+  releaseCheckpoint();
+  const [firstResult, sameDocumentResult] = await Promise.all([first, sameDocument]);
+  assert.equal(firstResult.documentId, firstDocument.documentId);
+  assert.equal(sameDocumentResult.documentId, firstDocument.documentId);
+  const materializationEvents = timing.filter((event) => event.phase === "materialization");
+  assert.equal(materializationEvents.length, 3);
+  assert.ok(materializationEvents.every((event) => Number.isFinite(event.queueWaitMs)));
+  assert.ok(materializationEvents.every((event) => Number.isFinite(event.durationMs)));
+  assert.ok(timing.some((event) => event.phase === "gc" && Number.isFinite(event.queueWaitMs)),
+    "the existing GC policy must report its independent queue timing");
+});
+
 test("concurrent first opens derive the same path identity, while copied paths get a new identity", async () => {
   const vaultA = makeAdapter();
   const vaultB = makeAdapter();

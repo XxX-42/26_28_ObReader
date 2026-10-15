@@ -63,6 +63,18 @@ or highlight annotations, including delayed context-menu word selection after
 pointer release. Primary-pointer and keyboard text selection remain enabled.
 The PDF Worker and serialized annotation format are unchanged.
 
+## Upstream collapsed-selection correction
+
+The generic viewer bundle carries the seven-line collapsed-range guard from
+PDF.js commit `1a30040c83ca0785f455175b99b9051c84181883`, associated with
+upstream issue #22134 and PR #22137. The source change is in upstream
+`web/text_layer_builder.js`; this vendored repository maps it into
+`vendor/pdfjs-generic-legacy/web/viewer.mjs`'s `TextLayerBuilder` implementation.
+The guard ignores a collapsed range when no pointer is down, preventing a
+delayed click `selectionchange` from restoring the selecting state while
+preserving non-collapsed Firefox caret-drag ranges. No other upstream changes
+from that commit are included.
+
 ## Local Ink session safety correction: plugin 0.5.19
 
 The generic viewer's `DrawingEditor` now retires a stale per-stroke pointer

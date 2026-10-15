@@ -1741,10 +1741,9 @@ class PdfReaderView extends EditableFileView {
       openRequest,
       promise: null,
     };
-    // Defer the body by one microtask so closePreparation is assigned below
-    // before the current-session guard checks it. An immediately invoked async
-    // function runs synchronously up to its first await; checking the guard
-    // inside such an IIFE would otherwise reject every close as stale.
+    // Publish the session before its first identity check. Defer execution so
+    // synchronous and reentrant callers share this exact close preparation.
+    this.closePreparation = pending;
     pending.promise = Promise.resolve().then(async () => {
       const stillCurrent =
         !request.settled &&
@@ -1815,7 +1814,6 @@ class PdfReaderView extends EditableFileView {
     }).finally(() => {
       if (this.closePreparation === pending) this.closePreparation = null;
     });
-    this.closePreparation = pending;
     return pending.promise;
   }
 
