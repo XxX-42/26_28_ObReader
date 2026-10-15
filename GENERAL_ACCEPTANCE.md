@@ -1,6 +1,190 @@
-# 0.1general 通用候选（插件 0.6.0）
+# 0.1general 通用候选（插件 0.7.1 candidate）
 
-## 当前：只读 PDF 与外置批注操作日志（2026-10-15）
+## Selection 收敛阶段 A（2026-10-15；后续阶段尚未验收）
+
+### 本轮最终门控：A 专项通过，B 安全阻断，C 未执行
+
+最终完整运行：`tests/artifacts/stage-evidence-20261015T032743936Z-41580/`。`npm test` **448 项，422 通过、19 失败、2 取消、5 跳过，exit 1**；`npm run test:offline` **exit 0**。原始 stdout/stderr、退出码、计数、Git diff/untracked 清单与三文件哈希均存档；未通过重跑挑绿、扩大超时、skip 或放宽断言修饰数字。取消和基础设施错误不是通过。失败逐项归类见 `tests/SIDECAR_FAILURE_TRIAGE.md`。
+
+两项取消是 mobile resource-import startup（120,000 ms test timeout）与 FreeText self-echo hydration（60,000 ms test timeout）。后一项本次取消不替代前次 raw-save 零面积的实际失败证据，也不能被算为执行通过。
+
+独立 Store 定向最终 10 项为 8 通过、2 安全失败；其中一个通过项仅记录原 adapter harness 的 NOTRUN 清单，不算崩溃覆盖。新增的真实进程崩溃文件定向 7/7 通过；最终完整套件中 pending-before-rename 未到 IPC 边界即超时，因此该项本次完整运行 **NOT VERIFIED / FAIL**，不能用定向绿覆盖。另 selection differential / 多行 Highlight 在完整运行中功能阶段完成，但 browser.close 清理失败，测试本身仍为 FAIL。
+
+| 双 Store / 恢复矩阵 | 实际结果与边界 |
+| --- | --- |
+| stale replay 晚到 checkpoint | **FAIL**：旧 replay 把新 checkpoint 回退；batch 尚在时可重放，不代表禁止回退已满足 |
+| GC 候选与新 batch 交错 | PASS：实际删除一个已覆盖旧 batch，新 batch 保留，不是 ACK 阻断的空 GC |
+| 不同 UUID 同时追加 | PASS_RECOVERY：双端 rename barrier 真实并发；留存 batch 重放恢复，仍记录了缓存回退 |
+| 同 UUID 同时修改 | PASS：双端发布屏障，按当前 annotation-level deterministic LWW 选胜；pointer/hash/revision 对齐 |
+| delete/edit 两方向 | PASS：双方真实并发发布，分别验证较晚 edit / delete 获胜 |
+| 未退役旧时间批次 / 退役在途与后续批次 | PASS：compact updatedAt=200 后新 UUID timestamp=50 仍重放；退役在途发布不复活，后续 append 拒绝 |
+| primary/backup 竞争 | PASS_RECOVERY_WITH_RETAINED_LOG：新 Store C 从仍在的 batch 修复；不是证明优先选择较新 backup，更不抵消两副本同时被旧写覆盖的红测 |
+| 进程中断边界与全新 Store C | 定向 7/7；最终全套 6/7，pending-before-rename 边界等待超时未验证；不是硬件断电测试 |
+| 公开退役 + 真实 GC + 旧在途任务 | **FAIL / P0 DATA LOSS**：已确认新批次实际 GC 后，旧任务回退 primary+backup，后续读取丢失 UUID |
+
+真实并发证据为 `store-cross-instance-race-*-2026-10-15T032605*Z-29020.json`：独立 store / adapter、双端到达 rename、实际 remove、checkpoint/hash/coveredBatch 与 pointer。真实进程中断定向证据为 `store-process-crash-*-2026-10-15T03244*Z-2464.json`，记录精确 IPC hook、测试子进程 PID/SIGKILL、磁盘状态和 kill 后新建的 Store C；只清理本次 mkdtemp 目录，且发生在恢复、断言、证据存档之后。目录未 fsync，不能外推为掉电持久性保证。此前 NOTRUN 清单、早期路径字段错误和所有红日志保留。
+
+产品没有为 B 改协议或添加更大 mutex，也没有关闭 GC 来伪装通过。未证明现有 mutable checkpoint + read/write/readback 能提供跨实例 conditional commit；按“只做最小修复，否则阻断”决定保留红测、停止 C。请求 provenance、coalescing、前后十次 benchmark 均 **NOT RUN**，不存在本轮性能改善数据；历史 26/29 次 maintenance 与 8–11 秒均值排队仅保留为背景。
+
+```text
+UNDERLINE_NATIVE_ACCEPTED = TRUE
+CROSS_INSTANCE_RACE_ACCEPTED = FALSE
+MATERIALIZATION_COALESCING_ACCEPTED = FALSE
+P0_UNDERLINE = TRUE
+P0_CROSS_DEVICE_SAFETY = FALSE
+P1_MATERIALIZATION_COALESCING = FALSE
+READY_FOR_NEXT_STAGE = FALSE
+SIDECAR_ARCHITECTURE_ACCEPTED = FALSE
+```
+
+本轮只部署测试库的 selection 候选三文件；没有 Git push、没有部署远程仓库1、没有修改用户 PDF 或既有批注内容。测试库普通 Native 保存源 PDF 双哈希不变/零写入证据见下方，独立测试 fixture 及其路由除外。raw-save 活动 FreeText 与 synthetic IME controlled-close 旧产品失败仍未解决，不以真实正常提交 FreeText Native 专项绿覆盖。
+
+本轮增改文件（不将原有未提交改动全部归为本轮）：产品 `viewer-adapter/obsidian-bridge.js`、`vendor/pdfjs-generic-legacy/web/viewer.mjs`、同目录 `PROVENANCE.md` / `SHA256SUMS.json`，生成产物 `dist/pdf-web-reader/main.js`；测试/探针 `tests/selection-pointer-capture.test.mjs`、`selection-differential.test.mjs`、`selection-plain-probe.mjs`、`highlight-multiline-regression.test.mjs`、`native-selection-probe.mjs` / `.test.mjs`、`0.7-sidecar-native-acceptance.mjs`、`store-cross-instance-race.test.mjs`、`store-process-crash-boundary.test.mjs` / `store-process-crash-worker.mjs`；证据助手 `scripts/capture-stage-evidence.mjs` / `inspect-test-runtime.mjs`；文档本文件、`README.md`、`MACOS_HANDOFF.md`、`tests/SIDECAR_FAILURE_TRIAGE.md`。manifest/styles 本轮字节未变。原有 plugin/main/host/store、其他测试及用户未跟踪文件保留，不替其宣称本轮新修复。
+
+本节追加本轮证据，不覆盖下方历史失败。HEAD 仍为 `704f6f18ae305a924e4d56cf0f90c13a1f0a8c8b`，分支 `test/external-annotation-layer-0.6.0`，未提交、未 push。冻结原样基线见 `tests/artifacts/stage-evidence-20261015T021349017Z-36656/`：完整 `npm test` 为 427 项、409 通过、13 失败、5 跳过，退出 1；offline 通过。修后完整结果另记，不继承该数字。
+
+- **根因证据：OUR_BRIDGE + PDFJS_22134；另有 TEST_HARNESS 缺陷。** 可信鼠标选中文字时，bridge 对 textLayer 的强制 pointer capture 使原生拖选偏离目标 span。严格 U0/U1/U2 对照在 `selection-differential-1792032408453-3144.json` 中分别消费 36/1328/1328 字符；修后 `selection-differential-1792032646300-19996.json` 三者均为 36。bridge 现在只对原生鼠标文字拖选不 capture，仍跟踪活动指针，保留编辑器移动/缩放等原有捕获行为。早期 page-fit 极小文字与将“消费后 Selection 被清空”当失败的测试问题单独保留，不能当作产品根因。
+- **精确官方 backport。** 仅在冻结 `vendor/pdfjs-generic-legacy/web/viewer.mjs` 的 TextLayerBuilder 增加官方七行 collapsed Range / pointer-release 判断，源为 PDF.js #22137 / `1a30040c83ca0785f455175b99b9051c84181883`，原路径 `web/text_layer_builder.js`。未升级 PDF.js。`PROVENANCE.md` 和 402 文件 SHA256 清单已更新；viewer SHA256 为 `6b370bd3426196ae5bfa855ee24979cf9939720b9edc0771137a4e32f1fa74ac`。纯冻结 Viewer 的 collapsed caret 残留 selecting / endOfContent 覆盖已复现并修复；并非声称完成官方 AcroForm 场景全覆盖。
+- **实际候选 Native 下划线通过。** `0.7-sidecar-native-acceptance-20261015025210952.json` 无诊断行为覆盖：100% 可见真实文字单行、重开后相邻文字、跨行拖选消费 36/36/100 字符，三个不同 UUID 保存并重开仍可见，无重复 editor。合成截图相对隐藏批注参考的变化为 336 / 1708 像素。真实独立 iframe Reader A/B 同时打开、A clean 关闭后 B 拖选通过；B 完全关闭再打开 generation 后也通过。`ISSUE_22129_RELEVANCE = NOT_REPRODUCED`（当前独立 iframe Reader 路径）；未移植猜测生命周期补丁。
+- **FreeText 回归通过。** `0.7-sidecar-native-acceptance-20261015025401617.json` 中真实指针/文本提交、保存、关闭、重开后同 UUID、同文字与有效几何保留，合成 ROI 342 像素变化。显式导出创建独立 PDF，重新解析为标准 FreeText；唯一一次 saveDocument 调用带 exportAllowed，日常调用零。
+- **底本不变。** 上述两份独立 fixture 初末 SHA256 均为 `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`、XXH64 均为 `xxh64-v1:ffbe0d4d212547e5`，大小 1,016,315 字节；源 PDF 写入尝试为零，受保护既有 sidecar 未改。
+- **只部署测试库。** `selection-stageA-test-deployment.json` 记录 clean Reader 检查、备份和定向重载。main SHA256 `3d48a16fcdc89c915b72f0a335a572fbf5096c56ad0f795630e79ef7e8be32c9`，manifest `bb7259fc121115a78c03c83e0bf731ab4a8e1f724eb3935d4072d57a89eca954`，styles `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650`。未部署远程仓库1、未修改用户 PDF 或既有 sidecar。
+
+**新增多行 Highlight 检查。** `highlight-multiline-regression-1792033240812-4568.json`：真实浏览器 mode 9 鼠标分别拖选 1/2/4 行，每次新增恰好一个 Highlight，消费 56/129/102 字符和 1/2/4 个视觉行；四行含 18 个序列化文字片段 quad，不是 18 行。保存 3 条 Highlight operation 后重开，3 个批注水合且 overlay 可见。仅恢复旧捕获谓词的诊断转换会错误选择 9/18/37 个视觉行；它不是完整旧构建，不能冒充严格版本 A/B。此项是实际浏览器 + bridge/sidecar harness，不是 Obsidian Native UI 全生命周期或像素截图验收。
+
+**阶段 A 完整回归。** 首次修后完整运行 `stage-evidence-20261015T030125558Z-39912/` 为 431/411/15/5（总数/通过/失败/跳过），exit 1、offline exit 0。新增差分测试的 HTTP ephemeral port 6667 被 Chromium 拒绝（ERR_UNSAFE_PORT，尚未执行功能断言）；仅将该测试监听限制到安全高端口，保留红日志，定向一次验证通过 `selection-differential-1792033555432-42752.json`。修正后的完整运行 `stage-evidence-20261015T030626192Z-40668/` 为 **431/413/13/5，0 取消，exit 1；offline exit 0**。完整 stdout/stderr、开始结束时间、原样 Git diff 与测试库/dist 哈希都存档；未增加 timeout、skip 或放宽断言。`UNDERLINE_NATIVE_ACCEPTED = TRUE` 是本专项门控，不是全套或完整架构通过。
+
+**阶段 B 首个安全阻断（尚在补齐矩阵）。** 两个独立 store、两个独立 adapter facade 仅共享持久化 backing map，不共享 mutex。新 `store-cross-instance-race.test.mjs` 首次实际运行 2 项均为安全红。`store-cross-instance-race-stale-replay-overwrite-2026-10-15T031526423Z-19596.json` 证明旧 replay 覆盖较新 checkpoint。`store-cross-instance-race-retired-stale-replay-after-gc-2026-10-15T031526460Z-19596.json` 进一步证明：B 发布新 UUID、写出 rev1 primary/backup 并 ACK；B 用公开 retireDevice 在当前 hash 确认退役 A；B 正常 GC 实际 remove 新 batch（success / removedBatchCount=1）；恢复 A 的旧任务后两份 checkpoint 均退回 rev0，B 再 readDocument 返回空批注。没有人工伪造设备 ACK、没有通过移除用户文件制造红测。
+
+`CROSS_INSTANCE_RACE_ACCEPTED = FALSE`。当前 read/write/readback 不具备跨实例 CAS，不能用扩大本地 mutex 或关闭 GC 伪装修复；按已确认的“仅最小修复，否则阻断”边界，不改为新 checkpoint 协议。**阶段 C 已停止，NOT RUN；MATERIALIZATION_COALESCING_ACCEPTED = FALSE。** 其余 B 矩阵与最后完整回归待追加，不得以 A 专项通过宣称完整 sidecar 架构通过；`SIDECAR_ARCHITECTURE_ACCEPTED = FALSE`。
+
+**上述 13 个失败的逐项分类：** 与冻结基线有 11 个同名旧失败继续，包含 raw-save 活动 FreeText 零面积与 IME close 问题；两项 mobile release 导入/Blob 测试这次通过。另有 `process-query diagnostics...` 的 queryCount 期望 2 实得 1，以及新 Highlight 测试的 browser.close 清理失败。Highlight 本次完整运行的候选 1/2/4 行与保存重开 validation 均完成，但最后 cleanup 失败，因此该测试本身仍记 FAIL；selection differential 在此完整运行通过。没有为此放宽清理条件或重复挑绿。全套仍 exit 1，不能宣称全部通过。
+
+## 当前：0.7.1 收敛候选（2026-10-15，仍未完整验收）
+
+**`SIDECAR_ARCHITECTURE_ACCEPTED = FALSE`。** 本节是当前结果；下方首轮候选和 0.7.0 冻结记录完整保留，不以新结果覆盖历史失败。
+
+1. **Git / runtime。** 工作分支 `test/external-annotation-layer-0.6.0`，HEAD `704f6f18ae305a924e4d56cf0f90c13a1f0a8c8b`，未 commit/push。根、plugin、dist manifest 均为 0.7.1；存储兼容/ACK cohort 仍为 0.7.0。测试库 vault ID `06f5d50d319c56d4`，已确认 runtime 0.7.1 enabled；旧运行态/同名 Vault 问题 **RESOLVED**。最终测试库安装 main SHA-256 `52bb2373f69d02a6b860f56c6a27cbd2e169b547165e6aa3f50597d987616e39`，manifest `bb7259fc121115a78c03c83e0bf731ab4a8e1f724eb3935d4072d57a89eca954`，styles `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650`。部署证据 `tests/artifacts/test-deployment-priority-final.json`，三文件备份 `.deploy-backups/test-sidecar-20261015014644418`；部署前全部 Reader clean。只替换测试库三文件，未向远程仓库1部署；用户另有任务/同步在更新远程插件，不能把本任务首尾远程哈希声称相同。
+
+2. **改动。** 产品涉及 `plugin/main.js` controlled-close 会话发布顺序、`plugin/pdf-annotation-host.cjs` source mismatch 禁止 materialization 和计时透传、`plugin/pdf-annotation-store.cjs` 独立 GC/排队计时与本地整段 materialization 队列、`viewer-adapter/obsidian-bridge.js` FreeText 内容/有效几何/重复平移修复、目标 UUID 水合并发保护、capture/encode 独立计时。manifest/versions/三文件产物已更新为 0.7.1。新增 Native driver、Selection 探针、性能汇总、并发/几何/安全矩阵测试和只针对测试库的部署脚本；更新既有 host oracle 与 Windows 测试基础设施。未改冻结 vendor，也未删旧模块或用户数据。
+
+3. **完整测试。** 最终 priority 构建 `npm test`：**427 项、409 通过、13 失败、0 取消、5 跳过，退出码 1，146,667.4934 ms**。完整 stdout/stderr：`tests/artifacts/sidecar-priority-final-full-suite.*.log`（stderr 空）。分类为 9 `TEST_INFRA_FAILURE`、1 `TEST_PRECONDITION_FAILURE`、2 unresolved `PRODUCT_FAILURE`、1 `STALE_OLD_ORACLE`，未删测/加 skip/放宽断言。前次 materialization/geometry 构建为 426/407/14/5（147,221.9884 ms），其原始 `sidecar-materialization-geometry-full-suite.*.log` 和更早 420/401/14/5、390/328/57/5 均保留。新增并发/日志压力回归通过；几何回归定向完整通过，但两次完整套件均在几何断言后 browser.close 超时，仍算失败，不能用定向绿覆盖。最终 `npm run test:offline` 通过并自然退出；构建核验 406 embedded assets、402 frozen vendor files、发布目录恰好三文件。逐项变化与证据见 `tests/SIDECAR_FAILURE_TRIAGE.md`。
+
+4. **Native sidecar acceptance。** 最终三文件的新 fixture 专项 `tests/artifacts/0.7-sidecar-native-acceptance-20261015014700509.json` 完成真实 pointer/input FreeText 创建、明确提交、sidecar 保存、完全关闭 Reader、重开、同 UUID 水合、独立导出并重新解析，**通过**，安装三文件前后 hash 一致。更早相同几何修复的 `...20261015013021521.json` 亦保留。五工具全链路最近一次（priority 日志前的几何修复版）`...20261015013107704.json` 仍在 Underline 创建处失败：mode 10、可信事件命中文本层，但 Selection 仍 collapsed；只跳过 textLayer capture 的诊断 A/B 也失败，故未据此改产品。其余五工具联合重开、Square 二次移动、delete/undo/redo、四类剩余批注联合导出仍 **NOT VERIFIED Native**。离线五工具通过不能替代此失败。
+
+5. **FreeText 视觉。** 真实非空文本 `SIDECAR NATIVE 0.7\nVISIBLE FREETEXT`；最终 UUID `db08688e-e362-43a5-b204-cac894ac802c`。创建、重开均为 61.84375×22.6875 CSS px，display block / visibility visible / opacity 1；各自与临时隐藏该 editor 的合成参考截图相比，ROI 均有 **342** 个变化像素，不是 page canvas ROI。创建/重开 PDF rect 最大差值 **5.684341886080802e-14**，旧 +10 PDF pt 漂移不再出现。最终截图 `tests/artifacts/sidecar-native-20261015014700509-freetext-after-reopen-visible.png`；前次相同几何修复截图及导出 Poppler 渲染已人工查看，文本可见（source fixture 有 Symbol/ArialUnicode 字体警告）。最终独立导出重新解析仍含标准 `/Subtype /FreeText` 及预期完整 `/Contents`。真实 PDF.js browser 几何回归覆盖 annotation rotation 90°、view rotation 四种×scale 0.75/1.5；旧 raw-save 测试未被显式 commit 的新 fixture 替换。
+
+6. **原 PDF 不变。** 最终 FreeText 专项源 SHA-256 前后均 `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`，XXH64 均 `xxh64-v1:ffbe0d4d212547e5`，1,016,315 B；source-write attempts=0。唯一 `saveDocument` 调用带 exportAllowed=true，创建新的 `immutable-source (PDF Reader Export).pdf`（1,017,516 B，SHA-256 `f48099884dbbc5760500766f75009cc9a94289881deff2bc054f8b48b8acde5f`），不覆盖底本。Native driver 校验全部既存非索引 sidecar 文件哈希不变；根索引只允许追加新 fixture 路由，原记录与 schema 不变。写测试只使用测试库新副本，没有改远程用户 PDF/批注。
+
+7. **Root index。** A compact+ACK、B 冷文档无 checkpoint 的 global barrier 已复现：A 仍因 B 不能令根索引切为 schema 2。未强制混合 schema、未 sweep 用户数据；双索引兼容方案/后台迁移的跨端并发与身份安全尚无证明，所以本轮保留回归与设计结论。metadata 缺失仍 fail closed，不 mint 新身份掩盖问题。
+
+8. **性能。** capture 是 `refreshAnnotationOperations` 的函数执行耗时（包括 no-op），不是输入结束到 capture 的延迟；encode 是整个操作批次的编码/校验，不是 PDF 二进制序列化。GC `durationMs`、GC `queueWaitMs`、外层 `materializationQueueWaitMs` 分开记录，不能互相冒充，也不能把 GC 和它内部 backup 写耗时相加。修复前真实小/大 PDF 各十次保存已取得：GC 分别出现 1/5 次并发 remove ENOENT；原始报告 `tests/artifacts/sidecar-native-phase-timing.md` 原样保留。最终同一候选重新测量见本节后续表格。replay、hydration 的独立阶段耗时尚 **NOT OBSERVABLE**。大 PDF 是新生成并固定哈希的 120 页/16,850,372 B、含 16 MiB 不可压缩附件，沿用历史配方但不是历史 Mac fixture 的逐字节同一文件，不能称严格历史 A/B。验收驱动自身还会读全 PDF 算双哈希、扫描 sidecar 做证明；这些探针 I/O 不属于产品 ordinary-save 的 readBinary 热路径，也会干扰异步 GC 的绝对耗时。
+
+9. **Compaction / 多设备。** Node store 定向 24/24 覆盖两设备 UUID/LWW、乱序/重复、tombstone、ACK、retire/迟到批次、校验备份恢复、损坏不 GC、Float32/NaN 等价。新增真实本地竞态：同一 batch 被两个 GC 删除的 ENOENT；更严重的旧 replay rev1 晚写覆盖 primary+backup rev2，且新 batch 已 GC，导致新 annotation 无恢复来源。后者红测 `checkpoint-stale-baseline.*.log` 原样保留，修后 `checkpoint-stale-postfix.*.log` 为 11/11。修复将每 docKey 的 replay→双 checkpoint→ACK→GC→root compaction 在同一 store 实例内串行，不吞 I/O 错误，前序 reject 不 poison 后续、不同文档独立。**不保证跨实例/进程 DataAdapter 的 CAS/锁；未以本地模拟冒充两台真实同步客户端。**
+
+10. **剩余风险。** 完整套件 13 项失败仍在，详见 triage；Native 五工具生命周期缺口、真实多设备/Apple/Pencil、跨进程并发、cold-root cutover 均未验收。source mismatch 七种真实 PDF 字节变换的 host/store 回归已过（不是 Native UI）；真正 linearize 未验证。`PDF_REBASE_DESIGN.md` 只定义 revision/page lineage/fingerprint/confidence/quarantine，未实现自动 rebase。没有切换为 field-level CRDT。
+
+11. **需要 0.7.1：是。** 产品修复不再冒充冻结 0.7.0；当前为独立 0.7.1 候选，仅测试库部署，不自动 Git push，不再覆盖主库三文件。三文件本轮有实质字节变化，不是仅文档 bump。
+
+12. **最终 Gate：FALSE。** FreeText 专项、普通保存底本不变与局部安全回归通过，不抵消完整套件和 Native 五工具尚未通过。不得称 sidecar 架构已完整收敛。
+
+### 最终 Native 独立计时（同一 main 52bb2373 构建）
+
+小/大各 **10 次真实 Square 拖拽与配对保存 ACK**，逐次检查 checkpoint 中 UUID/数量递增至 10。原始报告为 `tests/artifacts/0.7-sidecar-native-acceptance-20261015014754190.json`、`...20261015014929720.json`；完整指标和失败样本见 `tests/artifacts/sidecar-native-final-timings.md` / `.json`。这些是 Square 样本，不推广为大量 Ink 或所有设备的性能保证。
+
+全部耗时单位 ms，P90 为 nearest-rank。capture 每组 20 次含 10 次 no-op；GC 小/大 26/29 次中各 10 次有批次删除，其余零删除，不可当作 26/29 次用户编辑。排队与执行独立，不互相相加冒充一种阶段。
+
+| PDF | 测量 | n | Mean | Median | P90 | Max |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 小 / 14 页 | capture 函数执行 | 20 | 1.98 | 1.90 | 3.50 | 4.30 |
+| 小 | operation encode | 10 | 0.34 | 0.30 | 0.40 | 0.80 |
+| 小 | GC 执行（含空清理） | 26 | 320.75 | 229.55 | 656.70 | 868.40 |
+| 小 | GC queue wait | 26 | 0.00 | 0.00 | 0.00 | 0.00 |
+| 小 | materialization queue wait | 26 | 11,127.93 | 12,000.90 | 16,256.20 | 18,645.50 |
+| 小 | operation `.pending` write | 10 | 15.00 | 12.55 | 22.60 | 29.50 |
+| 小 | 请求 → 对应保存 ACK | 10 | 531.51 | 456.65 | 703.20 | 1,036.10 |
+| 大 / 120 页 | capture 函数执行 | 20 | 1.86 | 1.65 | 2.90 | 4.70 |
+| 大 | operation encode | 10 | 0.44 | 0.40 | 0.50 | 1.10 |
+| 大 | GC 执行（含空清理） | 29 | 277.56 | 218.20 | 438.80 | 865.40 |
+| 大 | GC queue wait | 29 | 0.01 | 0.00 | 0.10 | 0.10 |
+| 大 | materialization queue wait | 29 | 8,694.92 | 9,679.80 | 13,824.80 | 14,954.20 |
+| 大 | operation `.pending` write | 10 | 12.64 | 11.30 | 14.00 | 24.30 |
+| 大 | 请求 → 对应保存 ACK | 10 | 442.84 | 414.60 | 436.50 | 911.50 |
+
+**结论：** ordinary durable save 已脱离完整 PDF 重写/逐次全文件读取热路径，但后台 materialization 排队仍为 **8–11 秒均值、最高 18.65 秒**，性能闭环未完成。审查发现一次保存会显式 schedule materialization + broadcast，而 ops 下 create/modify/rename（含 `.pending`）也可触发 broadcast/readDocument；这是重复维护的候选来源，尚非完整因果隔离证明。下一阶段应验证已发布批次筛选与维护请求合并，不得放宽 ACK/备份/GC 条件或把排队隐藏进 GC duration；本轮没有继续改变调度协议。
+
+两组原 PDF 普通保存写入/序列化均为 **0**，每个 ACK 窗口源 `readBinary` 字节为 **0**。大源 16,850,372 B 的 SHA-256 前后同为 `16b88b91e747e835da338a286f37c9865fb69e5a1e8294842cc1fda7c6bd5b9f`，XXH64 同为 `xxh64-v1:aeaa0b989db86a9d`；小源双哈希见第 6 项。产品完整 trace 各观测到两次源读取：小 **2,032,630 B**、大 **33,700,744 B**，不是全程零读取。验收驱动另各做 12 次双哈希源读取，小 **12,195,780 B**、大 **202,204,464 B**；驱动及 sidecar-tree 扫描会干扰后台 GC 的绝对时间，不能冒充完整应用 I/O。
+
+sidecar adapter 写入总量小/大 **306,235 / 317,589 B**，末次 checkpoint **7,677 / 7,688 B**；primary 写各 13 次、backup 写 **39 / 42 次**，仍有维护写放大。各清理 10 个已确认批次，GC error=0。最后保存阶段小文档 pointer=rev9、checkpoint=rev10，原始记录保留；**额外只读** `tests/artifacts/native-post-run-storage-readback.json` 在 01:53:41 UTC 确认两文档 checkpoint/pointer 均 rev10、各 10 活动批注、各 0 batch，不能把稍后收敛冒充 ACK 时维护已完成。
+
+观测 renderer JS heap used 最大值小/大 **192.48 / 192.28 MB**，backingStorage 最大 **44.04 / 78.54 MB**，不是整个 Obsidian、所有 Worker 或 GPU 内存峰值。最终所需的每组 20 capture / 10 encode 计时均齐全，trace 仍报告小/大 **5,674 / 9,752** 条日志丢失，不能称整个跟踪无损。较早 `...20261015013537382.json` 的十次保存 durable，但 encode 只收到 7 条，严格计时 Gate 失败；该样本保留并排除成功汇总，没有补造记录。最终只在原 262,144 字符缓冲内为性能记录预留 32K 字符，没有增加总内存上限或改 flush 协议。replay、hydration 独立耗时仍 NOT OBSERVABLE；未设 `<50 ms` 门槛，不做历史 Mac 严格 A/B。
+
+## 执行历史：首轮 0.7.1 candidate（2026-10-15）
+
+`SIDECAR_ARCHITECTURE_ACCEPTED = FALSE`。以下是在冻结 0.7.0 后取得的新证据；后面的冻结记录保留，不覆盖历史失败。
+
+- Git 分支仍为 `test/external-annotation-layer-0.6.0`，HEAD 仍为 `704f6f18ae305a924e4d56cf0f90c13a1f0a8c8b`，改动未提交/未 push。
+- 外层测试库已用 vault ID `06f5d50d319c56d4` 验证运行态 0.7.0，同名 Vault 选择阻碍 **RESOLVED**；不能再把重启/同名解析当作当前缺陷。
+- 新增 `controlled close registers its session before sending prepare-close` 回归在 0.7.0 失败：ready Reader 不发 `prepare-close`。根因是异步 IIFE 在 `closePreparation` 赋值前同步执行身份检查。最小修复先发布会话、以 microtask 执行；该回归修后通过，并增加同步重入检查。这是 **PRODUCT_FAILURE**，不是旧 oracle。
+- 产品 patch 版本推进到 0.7.1，存储 `CURRENT_PLUGIN_VERSION` 保持 0.7.0 ACK/兼容 cohort。已构建三文件，45 项核心/存储/打包定向测试通过，离线五工具 sidecar save/reopen smoke 通过。**不是完整 npm test 结果。**
+- 仅测试库三文件已备份到 `.deploy-backups/test-sidecar-20261015002310291` 后替换并加载 0.7.1；替换前两个实际 Reader revision/confirmed 分别 2/2、7/7，pending=0、dirty=false。保留插件缓存、旧恢复、批注与 PDF。远程库 main/manifest/styles SHA-256 前后完全一致，未向其部署。
+- Native 驱动新增 `tests/0.7-sidecar-native-acceptance.mjs`，只对新 fixture 副本写 sidecar；保护既存数据、拒绝源 PDF 写入和日常 `saveDocument`。长 CLI 请求曾触发主进程 JSON 分块解析错误，失败证据保留；改为短 CLI 读取本地审计脚本后恢复，不全局重启、不切换远程库。
+- **FreeText P0：** 冻结 0.7.0 通过真实 pointer/input/外部点击创建非空 FreeText，实际可见约 62×23 CSS px，ROI 643 像素有差异；但存储 rect 为零面积。0.7.1 close 修复后完整关闭再重开，文本不可见，确认为产品问题，不是零面积 synthetic fixture。原始证据：`tests/artifacts/0.7-sidecar-native-acceptance-20261015001950706.json`、`...20261015002325809.json` 及对应截图。修复进行中，禁止把创建截图当作重开通过。
+- **自身更新去重：** Native Square 前两次保存后，第三次绘制时 DOM 出现 5 个 editor，前两份各被重复水合；持久化 UUID 尚未重复。证据：`tests/artifacts/0.7-sidecar-native-acceptance-20261015002806497.json`。这也阻止完整五工具与性能验收，正在定位。
+- 上述 Native fixture 原 PDF SHA-256 前后均为 `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`，XXH64 均为 `xxh64-v1:ffbe0d4d212547e5`；检测到的源写入尝试=0、日常 PDF 序列化=0。此证据不等于未执行的完整生命周期通过。
+- **source binding：** 新增七种真实 PDF 字节变换的 host/store 回归（metadata、复制页面重建对象号、object-stream 优化、仅尾注释改变 hash、插页、删页、重排）。场景显式预置已持久化但未 materialize 的同步 batch，无后台任务竞争。0.7 原实现七项均改写 checkpoint，未满足 mismatch 时保留旧证据要求；修复 `initializeView` 在 mismatch 时不 materialize 后七项通过。日志：`source-binding-matrix-unmaterialized-baseline.*.log` 和 `source-binding-matrix-fixed.*.log`。这是 production host + 内存 adapter、真实 PDF 变换，不是 Native UI。真正 linearize 的工具不可用，**NOT VERIFIED**。
+- Windows infra 定向测试 40 通过/0 失败/5 既有平台跳过。修复进程身份异步查询、大小写 PATH 合并、模拟平台路径；没有放宽 identity fail-closed。
+- Root index 冷文档 barrier 已复现，未改协议；完整 npm test 更新、完整 Native 五工具/导出、FreeText 修复复验、120 页/16.85 MB 十轮性能、实际多设备/Apple 实机仍不得标记已通过。
+
+### 后续真实结果（仍未完整验收）
+
+- 完整 `npm test` 新实跑：**406 项、388 通过、13 失败、0 取消、5 跳过，退出码 1，90.4 秒**。原始 stdout/stderr：`tests/artifacts/sidecar-0.7.1-full-suite.*.log`。此结果包含本轮新增测试；后续若继续改产品，不能把这次数字当作最终新构建全绿。
+- `plugin-host.test.mjs` **60/60**；真实 PDF source-binding 变换矩阵 **7/7**。独立日志分别为 `plugin-host-sidecar-final.*.log`、`source-binding-matrix-final.*.log`。
+- Native FreeText 修复后已完成真实输入、保存、完全关闭、重开，UUID 保留、文本非空、61.84×22.69 CSS px，创建和重开合成 ROI 分别 **342 / 352** 像素有差异：`tests/artifacts/0.7-sidecar-native-acceptance-20261015004111575.json`。PDF.js DOM 使用 NBSP 展示空格，测试规范化空格而非删除文本断言。**仍发现重开 y 坐标漂移 10 PDF pt，不能当作完整外观等价通过。**
+- FreeText 缺失文本的第二根因已证明：PDF.js raw editor hydration 缺 `isCopy` 时不执行内容填充。候选已启用 copy 内容路径并用 `isClone` 阻止 paste 位移；尚需解决初建 baseline translation 导致的坐标漂移。
+- Native 后续五工具尝试在配对截图间因同 UUID editor 被异步替换而失败，证据 `...20261015004149405.json`。连续矩形探针 `...20261015004305207.json` 又证明第二条本地 Square 可被外部快照重置进已确认 baseline：DOM 有两条，checkpoint 仅一条且 dirty=false。**这是 P0 产品缺陷，不能用“前两次保存成功”替代完整十轮性能。** 当前优先修复；大小 PDF 性能表尚未完成。
+- 本任务的部署脚本对远程库只有读取哈希操作；每次部署内 remoteBefore/remoteAfter 相同。两次部署之间远程文件有外部变化，用户已确认另有任务或同步更新。不得把本轮首尾远程哈希声称完全相同，也不得回滚他方修改。
+- 所有旧 checkpoint/batch/recovery/device state 均保留；Native 只新增 fixture 对应数据。没有 Git push。具体当前失败分类与旧模块可达性见 `tests/SIDECAR_FAILURE_TRIAGE.md`、`tests/SIDECAR_ORACLE_AUDIT.md`（均不把模拟浏览器通过当作 Native 通过）。
+
+## 冻结记录：0.7.0 sidecar 验收基线（2026-10-15）
+
+**当时结论：`SIDECAR_ARCHITECTURE_ACCEPTED = FALSE`。** 此节保留首次冻结时的记录，之后产品修复/部署/发现见顶部；不可把这里的旧 blocker 与旧失败分类当作当前状态。
+
+### Git、插件运行态与安全边界
+
+- 当前仓库为 `test/external-annotation-layer-0.6.0`，基线 HEAD `704f6f18ae305a924e4d56cf0f90c13a1f0a8c8b`；最初工作树仅有既存未跟踪文件 `2026_7.1_Mozilla_fork-ob_code_only.md`、`aggregate.py`。本轮源码产品包三文件未改。
+- “远程仓库1”经授权 `Obsidian.com vault="远程仓库1" plugin:reload id=pdf-web-reader` 后，CLI 报告插件 enabled、runtime version **0.7.0**；该 Vault 有 **0 个 Reader**。未打开 PDF、未写入 PDF/sidecar。
+- 外层测试库 `D:\Documents\Obsidian\测试插件` 磁盘 manifest 为 0.7.0，`community-plugins.json` 也列有插件 ID；但 CLI 的同名 vault 解析到嵌套路径 `D:\Documents\Obsidian\测试插件\测试插件`，该路径没有插件目录。由于同名 Vault 无法用当前 CLI 选择器区分，外层测试库 runtime version、Reader 数量及 dirty 状态 **NOT VERIFIED**。因此本轮未在任何 Obsidian PDF 上做批注写入。
+- 所有已执行存储测试使用内存 adapter；没有更改远程仓库1、外层测试库或其他 Vault 的 PDF、`00_Archive/20_PDFData`、checkpoint、batch、recovery、device state。
+
+### 完整测试基线与定向结果
+
+- 修改测试前冻结的完整 `npm test`：**390 项，328 通过、57 失败、0 取消、5 跳过，退出码 1**。完整 stdout：`%LOCALAPPDATA%\Temp\pdf-web-reader-0.7.0-baseline-capture\npm-test-20261015-074115.stdout.log`；stderr 为空。该统计是修改前基线，不包含本轮新增的特征测试。
+- 当前失败分类（不删测、不 skip、不放宽断言）：**41 `STALE_OLD_ORACLE`**——40 个既存 `plugin-host.test.mjs` 失败访问旧 `pdfSync`、`setDocumentBaseline`、`writeRecoveryCandidate`、原位 merge/recovery API；另 1 项 sync-bridge 测试仍等待旧的 prepared-checkpoint-in-place 流程。原测试文件及失败证据保留，尚未迁移 oracle。**15 `TEST_INFRA_FAILURE`**——browser/Viewer harness readiness 与受控浏览器清理超时；Windows 子进程身份查询出现 `spawnSync powershell.exe ETIMEDOUT`，导致 PID birth timestamp/profile identity 缺失，浏览器交互超时未能证明产品动作结果。**1 `TEST_PRECONDITION_FAILURE`**——macOS native config 测试在 Windows 上期望 Unix 路径。上述分类为本轮失败 triage，不表示对应功能已通过。
+- `npm run test:offline` 已通过：离线 Viewer 打开 fixture、五工具入口可用并触发操作、sidecar 保存/重开 smoke 通过；它不是 Obsidian Native acceptance。
+- 当前 sidecar 定向集 **40/40 通过**：`pdf-annotation-store`、`pdf-annotation-host`、`external-annotation-bridge`、`annotation-sidecar`。覆盖普通 save 不调用 PDF 序列化、source mismatch fail-closed、操作重放、tombstone、checkpoint/backup、设备 ACK/retirement/GC、Float32 兼容、身份迁移。此为 Node/in-memory adapter 测试。
+
+### 已复现的 root-index barrier
+
+新增测试 `a cold root-index document blocks route-only cutover after another document is compact and acknowledged` 记录精确 A/B 场景：A 的 357 页引用在文档元数据中、compact checkpoint 格式为 `float32le-base64-v1`、当前设备对 checkpoint hash ACK；B 只有 per-document metadata，仍无 checkpoint。读取并 materialize A 后，全局 `_index.json` 仍是 schema 1，继续携带 A/B 完整文档记录。原因是 `maybeCompactRootIndex → areDocumentRoutesReady` 对所有文档执行 `every`；任意冷文档阻挡全局 cutover。
+
+本轮**没有改变存储协议**。另加双索引虽可能保留旧 `_index.json`，但在旧客户端并发更新、设备登记可见性、跨设备同步顺序与 route/index 丢写未证明前不能安全发布；后台全量 sweep 同样需要中断恢复与写冲突协议。本限制作为已复现的产品/扩展性问题保留，待专门设计与并发验证。
+
+### 保存链、旧模块可达性与限制
+
+- 静态调用审计：产品源码中唯一 `PDFDocumentProxy.saveDocument()` 位于 `viewer-adapter/obsidian-bridge.js::handleExportCopy`；宿主使用唯一新输出路径并调用 `vault.createBinary`，不会覆盖源 PDF。PDF.js 常规 save/toolbar/Ctrl+S 方法在 Viewer 初始化时被桥接到 sidecar 请求；`pdf-annotation-host`/store 的日常 save 与 ACK 写 operation/checkpoint/metadata，不写 PDF 源。
+- `pdf-recovery-read.cjs` 被 bundle 到 `main.js`，用于读取并恢复历史旧格式 recovery，属于 active read-compatibility；保留。`pdf-merge-client.cjs` 加载已校验 `pdf-merge-worker.js`，并由 `inspectLegacy` 调用 `inspect` 来导入旧 PDF 精确 object-ref/UUID 身份；worker/core 及其依赖（含 incremental 源）因此仍属于 active legacy migration 路径，不删除。
+- `pdf-sync-host.cjs`、`pdf-recovery.cjs`、`pdf-journal.cjs` 未从产品 `main.js` 静态/动态加载，构建脚本也断言其同步主机/二进制 recovery writer 不进入三文件 main bundle；它们仍由旧测试直接导入。结论仅为 **DEAD_LEGACY in shipped runtime, retained in source/tests**，本轮没有删除这些文件。
+- 四个 sidecar 定向测试文件没有真实 Obsidian Vault adapter、真实页面生命周期和 PDF 文件副本，所以原 PDF SHA-256/XXH64、写入次数、普通保存的实机零写入，以及关闭/重开后 UUID/截图 **NOT VERIFIED**。显式导出独立 PDF 的重新解析也 **NOT VERIFIED**。
+- 120 页/16.85 MB 与小 PDF 的各阶段 10 次保存性能数据未取得；`0.5.17` 的旧整 PDF 保存结果不是 0.7 A/B。source mismatch 目前有 full hash/ordered page identity fail-closed 单测，但 metadata-only、对象号重排、linearize/optimize、插页/删页/重排的实际变换矩阵未完成。禁止自动 rebase；设计见 [PDF_REBASE_DESIGN.md](PDF_REBASE_DESIGN.md)。
+
+本轮没有生成 0.7.1 候选。若要解决已复现的 root-index global barrier，必须先证明旧客户端兼容、并发不丢文档与 rename/copy/missing-metadata 安全；不能在 0.7.0 原版上直接混合索引格式。完整验收仍为 **FALSE**，不能称 sidecar 架构已收敛。
+
+---
+
+## 历史记录：0.6.0 只读 PDF 与外置批注操作日志
+
+### 当时验证：只读 PDF 与外置批注操作日志（2026-10-15）
 
 0.6.0 将日常自动保存、手动保存、关闭恢复和跨端合并从 PDF 二进制写回切换为 `00_Archive/20_PDFData` 下的不可变设备操作批次。JSON 快照由操作日志重放生成，只作缓存；批注采用 UUID、逻辑时钟、设备／操作 ID 的确定性 LWW，删除墓碑持续保留。正常保存不调用 PDF.js `saveDocument()`，也不调用 PDF 源文件写入 API。PDF.js 二进制序列化只保留在用户显式执行“导出为独立 PDF”时，结果作为新文件创建。
 

@@ -12,6 +12,7 @@ import {
   attachCleanupErrors,
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 
 const browserPath = resolveBrowserPath();
@@ -26,6 +27,7 @@ const viewerHtmlPath = path.join(
 );
 const channel = "pdf-web-reader";
 const token = "autosave-browser-regression";
+const sidecarHarnessScript = browserSidecarHarnessScript({ channel, token });
 const documentId = "test-session-1";
 const documentPath = "tests/fixtures/tracemonkey.pdf";
 const freeTextSelector =
@@ -47,6 +49,13 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
   timeout: 90_000,
 }, async () => {
   const bridgeSource = await readFile(bridgePath, "utf8");
+  const instrumentedBridgeSource = bridgeSource.replace(
+    "  if (iosInputPolicy) {",
+    "  window.__autosaveBridgeState = state;\n  if (iosInputPolicy) {",
+  );
+  assert.notEqual(instrumentedBridgeSource, bridgeSource,
+    "The browser harness should expose bridge state for failure diagnostics only");
+  const originalFixtureBytes = await readFile(fixture);
   const viewerHtml = await readFile(viewerHtmlPath, "utf8");
   const viewerWithBridge = viewerHtml.replace(
     /<head\b[^>]*>/i,
@@ -59,6 +68,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
   let server;
   let primaryError;
   let cleanupReport;
+  let imeCloseFreeTextOperation = null;
 
   server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -68,18 +78,28 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         <meta charset="utf-8">
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
         <iframe title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
+        ${sidecarHarnessScript}
         <script>
           const channel = ${JSON.stringify(channel)};
           const token = ${JSON.stringify(token)};
           const documentId = ${JSON.stringify(documentId)};
           const documentPath = ${JSON.stringify(documentPath)};
           const iframe = document.querySelector('iframe');
-          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], heavyLeases:[], pendingHeavyLeases:[], errors:[], holdFirstAck:true, holdNextAck:false, holdNextRecoveryAck:false, nextRecoveryAckDelay:10, holdNextHeavyLease:false, nextAckDelay:10, failNext:false, failDelay:10 };
+          const state = window.__host = { ready:false, opened:false, openCount:0, openedSessions:[], lastOpenedDocumentId:null, lastOpenedAt:null, expectedRendererGeneration:'initial-renderer', readyGenerations:[], ignoredReadyGenerations:[], initialOpenSent:false, pendingOpen:null, pointerUps:[], saves:[], recoveries:[], flushes:[], closePrepareds:[], heavyLeases:[], pendingHeavyLeases:[], pendingSaveAcks:[], errors:[], runtimeLogs:[], holdFirstAck:true, holdNextAck:false, holdSaveAckUntilRelease:false, holdNextRecoveryAck:false, failNextRecoveryAck:false, nextRecoveryAckDelay:10, holdNextHeavyLease:false, nextAckDelay:10, failNext:false, failDelay:10 };
+          state.releaseNextHeldSaveAck = () => {
+            const pending = state.pendingSaveAcks.shift();
+            if (!pending) return false;
+            pending.save.acknowledgedAt = performance.timeOrigin + performance.now();
+            iframe.contentWindow.postMessage(pending.ack, '*');
+            return true;
+          };
           window.addEventListener('message', event => {
             if (event.source !== iframe.contentWindow) return;
             const message = event.data;
             if (!message || message.channel !== channel || message.token !== token) return;
-            if (message.type === 'autosave-test-pointerup') {
+            if (message.type === 'runtime-log') {
+              state.runtimeLogs.push(...(Array.isArray(message.rows) ? message.rows : []));
+            } else if (message.type === 'autosave-test-pointerup') {
               state.pointerUps.push({
                 sequence: message.sequence,
                 rendererGeneration: message.rendererGeneration,
@@ -166,6 +186,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 state.failNext = false;
                 setTimeout(() => iframe.contentWindow.postMessage({
                   channel, type:'error', token, documentId:message.documentId,
+                  openRequest:message.openRequest,
+                  rendererGeneration:message.rendererGeneration,
                   requestId:message.requestId, revision:message.revision,
                   code:'conflict', message:'Simulated external PDF conflict',
                 }, '*'), state.failDelay);
@@ -176,10 +198,27 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 state.holdNextAck = false;
                 delay = state.nextAckDelay;
               }
+              if (state.holdSaveAckUntilRelease) {
+                state.holdSaveAckUntilRelease = false;
+                state.pendingSaveAcks.push({
+                  save,
+                  ack: {
+                    channel, type:'saved', token,
+                    documentId:message.documentId,
+                    openRequest:message.openRequest,
+                    rendererGeneration:message.rendererGeneration,
+                    requestId:message.requestId,
+                    revision:message.revision,
+                  },
+                });
+                return;
+              }
               setTimeout(() => {
                 save.acknowledgedAt = performance.timeOrigin + performance.now();
                 iframe.contentWindow.postMessage({
                   channel, type:'saved', token, documentId:message.documentId,
+                  openRequest:message.openRequest,
+                  rendererGeneration:message.rendererGeneration,
                   requestId:message.requestId, revision:message.revision,
                 }, '*');
               }, delay);
@@ -188,7 +227,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 documentId: message.documentId,
                 requestId: message.requestId,
                 revision: message.revision,
-                reason: message.reason,
+                sourceIdentity: message.source,
+                operations: message.operations,
                 byteLength: message.data?.byteLength || 0,
                 data: message.data?.slice(0),
               };
@@ -200,10 +240,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
               }
               setTimeout(() => {
                 recovery.durableAt = performance.timeOrigin + performance.now();
+                const acknowledgementOk = !state.failNextRecoveryAck;
+                state.failNextRecoveryAck = false;
+                recovery.acknowledgementOk = acknowledgementOk;
                 iframe.contentWindow.postMessage({
                   channel, type:'recovered', token,
+                  ok:acknowledgementOk,
+                  ...(!acknowledgementOk
+                    ? { message:'Simulated sidecar recovery durability failure.' }
+                    : {}),
                   documentId:message.documentId,
                   openRequest:message.openRequest,
+                  rendererGeneration:message.rendererGeneration,
                   requestId:message.requestId,
                   revision:message.revision,
                   ...(message.reason === 'close-writeback'
@@ -232,9 +280,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
                 recovered:message.recovered,
                 prepared:message.prepared,
                 closeWritebackQueued:message.closeWritebackQueued,
-                ...(message.recovered
-                  ? { receivedAt:performance.timeOrigin + performance.now() }
-                  : {}),
+                annotationBatchDurable:message.annotationBatchDurable,
+                receivedAt:performance.timeOrigin + performance.now(),
               });
             }
           });
@@ -259,7 +306,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     }
     if (url.pathname === "/vendor/pdfjs-generic-legacy/web/obsidian-bridge.js") {
       response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      response.end(bridgeSource);
+      response.end(instrumentedBridgeSource);
       return;
     }
     if (url.pathname === "/tests/fixtures/tracemonkey.pdf") {
@@ -448,8 +495,15 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     });
 
     const firstSaveState = await page.evaluate(() => window.__host.saves[0]);
-    assert.equal(firstSaveState.origin, "auto");
-    assert.ok(firstSaveState.byteLength > 0, "The host should receive PDF bytes");
+    assert.equal(firstSaveState.byteLength, 0,
+      "An ordinary auto-save must persist sidecar operations without rewriting the PDF source");
+    assert.ok(firstSaveState.operations?.length,
+      "The host should receive the complete annotation operation batch");
+    const firstDurableSidecarWrite = await page.evaluate((requestId) =>
+      window.__browserSidecarHost.durableWrites.find((write) => write.requestId === requestId),
+    firstSaveState.requestId);
+    assert.equal(firstDurableSidecarWrite?.sourceBytes, 0);
+    assert.equal(firstDurableSidecarWrite?.operationCount, firstSaveState.operations.length);
     const idleDelayMs =
       firstSaveState.receivedAt - firstPointerUp.pointerUpAt;
     assert.ok(
@@ -540,35 +594,24 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     );
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
-    // Redo a changed revision, then verify Cmd+S bypasses the auto-save delay.
-    const updateAndRemove = await viewer.evaluate(() => {
-      const storage = PDFViewerApplication.pdfDocument.annotationStorage;
+    // Redo a real editor operation, then verify Cmd+S bypasses the auto-save
+    // delay. The host persists sidecar operations, not synthetic PDF.js
+    // annotationStorage rows with invented PDF annotation references.
+    const redoneEditor = await viewer.evaluate(() => {
       const manager =
         PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
       manager.redo();
       document.body.focus();
-      const editor = Array.from(manager.getEditors(0))[0];
-      if (!editor) {
-        return { editorCount: 0, updated: false, removed: false };
-      }
-      const annotationId = `autosave-test-${Date.now()}`;
-      editor.annotationElementId = annotationId;
-      storage.setValue(editor.id, editor);
-      editor.comment = "";
-      const updated = storage.updateEditor(annotationId, {
-        popup: { contents: "Autosave comment update", deleted: false },
-      });
-      const existed = storage.has(editor.id);
-      storage.remove(editor.id);
+      const editors = [...manager.getEditors(0)];
       return {
-        editorCount: 1,
-        updated,
-        removed: existed && !storage.has(editor.id),
+        editorCount: editors.length,
+        editorType: editors.at(-1)?.editorType || null,
+        hasChanges: PDFViewerApplication._hasChanges(),
       };
     });
-    assert.equal(updateAndRemove.editorCount, 1, JSON.stringify(updateAndRemove));
-    assert.equal(updateAndRemove.updated, true);
-    assert.equal(updateAndRemove.removed, true);
+    assert.ok(redoneEditor.editorCount > 0, JSON.stringify(redoneEditor));
+    assert.equal(redoneEditor.hasChanges, true,
+      "Redo should create a real dirty editor revision for the manual save");
     await viewer.evaluate(() => {
       document.body.focus();
     });
@@ -582,7 +625,9 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       timeout: 5_000,
     });
     const thirdSave = await page.evaluate(() => window.__host.saves[2]);
-    assert.equal(thirdSave.origin, "manual");
+    assert.equal(thirdSave.byteLength, 0,
+      "Cmd+S should persist only annotation operations");
+    assert.ok(thirdSave.operations?.length);
     assert.ok(thirdSave.receivedAt - hotkeyAt < 1000);
     await viewer
       .waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 5_000 })
@@ -599,6 +644,92 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         );
         throw error;
       });
+
+    // The Vault's operation-file watcher can echo the just-written snapshot
+    // back to the same Reader after its save ACK. Adopt those exact UUID/stamp
+    // rows instead of deserializing duplicate overlays; this mirrors the
+    // delayed sidecar-modify broadcast in the real host.
+    const selfEchoBefore = await viewer.evaluate(() => {
+      const bridge = window.__autosaveBridgeState;
+      const manager = PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager;
+      const editors = [...manager.getEditors(0)].filter((editor) =>
+        editor?.deleted !== true && editor.constructor?._editorType === 5,
+      );
+      return {
+        squares: editors.map((editor) => ({
+          id: String(editor.id),
+          uuid: bridge.annotationUuidByRuntimeId.get(String(editor.id)) || null,
+        })),
+        operations: bridge.annotationOperations.map(({ operation }) => ({
+          uuid: operation.uuid,
+          timestamp: operation.timestamp,
+          logical: operation.logical,
+          deviceId: operation.deviceId,
+          operationId: operation.operationId,
+        })),
+      };
+    });
+    const selfEchoRows = await page.evaluate((currentDocumentId) =>
+      window.__browserSidecarHost.operationsFor(currentDocumentId)
+        .filter((operation) => operation.kind === "Square" && operation.deleted !== true),
+    documentId);
+    assert.ok(selfEchoRows.length >= 2,
+      "The persisted sidecar must contain the two saved Square operations before echo replay");
+    for (const row of selfEchoRows) {
+      const local = selfEchoBefore.operations.find((operation) => operation.uuid === row.uuid);
+      assert.ok(local, `Persisted Square UUID ${row.uuid} must still have its local operation`);
+      assert.deepEqual(row.clock, {
+        timestamp: local.timestamp,
+        logical: local.logical,
+        deviceId: local.deviceId,
+        opId: local.operationId,
+      }, "Self-echo adoption requires the exact acknowledged operation stamp");
+      assert.equal(selfEchoBefore.squares.filter((editor) => editor.uuid === row.uuid).length, 1,
+        `Saved Square UUID ${row.uuid} must map to exactly one live PDF.js editor before echo`);
+    }
+    assert.equal(await page.evaluate(({ currentDocumentId, openRequest }) =>
+      window.__browserSidecarHost.broadcastSnapshot(currentDocumentId, openRequest),
+    { currentDocumentId: documentId, openRequest: 1 }), true,
+    "The sidecar host should replay the durable snapshot to the same Reader");
+    await viewer.waitForFunction((uuids) => {
+      const bridge = window.__autosaveBridgeState;
+      return uuids.every((uuid) => bridge.externalAnnotationHydration.has(uuid));
+    }, { timeout: 5_000 }, selfEchoRows.map((row) => row.uuid));
+    assert.equal(await page.evaluate(({ currentDocumentId, openRequest }) =>
+      window.__browserSidecarHost.broadcastSnapshot(currentDocumentId, openRequest),
+    { currentDocumentId: documentId, openRequest: 1 }), true,
+    "A repeated operation-file modify notification should replay the same durable snapshot");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const selfEchoAfter = await viewer.evaluate((expectedUuids) => {
+      const bridge = window.__autosaveBridgeState;
+      const manager = PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager;
+      const editors = [...manager.getEditors(0)].filter((editor) =>
+        editor?.deleted !== true && editor.constructor?._editorType === 5,
+      );
+      return {
+        squares: editors.map((editor) => ({
+          id: String(editor.id),
+          uuid: bridge.annotationUuidByRuntimeId.get(String(editor.id)) || null,
+        })),
+        bindings: expectedUuids.map((uuid) => ({
+          uuid,
+          runtimeId: bridge.externalAnnotationHydration.get(uuid)?.runtimeId || null,
+        })),
+      };
+    }, selfEchoRows.map((row) => row.uuid));
+    assert.deepEqual(selfEchoAfter.squares.map((editor) => editor.id).sort(),
+      selfEchoBefore.squares.map((editor) => editor.id).sort(),
+      "Replaying the exact durable sidecar snapshot must not create duplicate Square editors");
+    for (const row of selfEchoRows) {
+      const live = selfEchoAfter.squares.filter((editor) => editor.uuid === row.uuid);
+      assert.equal(live.length, 1,
+        `The same UUID ${row.uuid} must still resolve to one live editor after repeated hydration`);
+      assert.equal(selfEchoAfter.bindings.find((binding) => binding.uuid === row.uuid)?.runtimeId,
+        live[0].id,
+        `The hydrated sidecar binding for ${row.uuid} must adopt the original runtime editor`);
+    }
 
     // A pen stroke that finishes while a manual write waits for its Vault ACK
     // must be committed on the next revision boundary, then settle without an
@@ -659,7 +790,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         saveCountBeforeHeldInk,
       );
       const heldInkFirstSave = await page.evaluate(() => window.__host.saves.at(-1));
-      assert.equal(heldInkFirstSave.origin, "manual");
+      assert.equal(heldInkFirstSave.byteLength, 0);
       assert.equal(heldInkFirstSave.acknowledgedAt, undefined,
         "The first manual write should still be waiting for its host ACK");
 
@@ -684,11 +815,12 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       );
       const heldInkSaves = await page.evaluate((count) =>
         window.__host.saves.slice(count), saveCountBeforeHeldInk);
-      assert.equal(heldInkSaves[1].origin, "manual");
+      assert.equal(heldInkSaves[1].byteLength, 0);
       assert.ok(heldInkSaves[1].revision > heldInkSaves[0].revision,
         "The post-ACK write should cover the pen stroke's later revision");
-      assert.ok(heldInkSaves[1].newAnnotations?.some((entry) => entry.kind === "Ink"),
-        "The post-ACK serialization should include the committed Ink editor");
+      assert.ok(heldInkSaves[1].operations?.some((entry) =>
+        entry.kind === "Ink" && entry.deleted !== true),
+        "The post-ACK sidecar batch should include the committed Ink editor");
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), {
         timeout: 10_000,
       });
@@ -765,13 +897,38 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       timeout: 5_000,
     });
     const fourthSave = await page.evaluate(() => window.__host.saves[5]);
-    assert.equal(fourthSave.origin, "manual");
+    assert.equal(fourthSave.byteLength, 0);
+    assert.ok(fourthSave.operations?.length);
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
     // A lifecycle flush waits through an active IME composition instead of
     // closing over an incomplete edit.
     await viewer.evaluate(() => {
-      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
+      const bridge = window.__autosaveBridgeState;
+      const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+      const summarize = () => ({
+        revision: bridge.revision,
+        dirty: bridge.dirty,
+        hasChanges: PDFViewerApplication._hasChanges(),
+        annotationStorageSize: PDFViewerApplication.pdfDocument.annotationStorage.size,
+        dirtyIds: [...bridge.dirtyAnnotationRevisions.keys()],
+        dirtyOperations: bridge.annotationOperations
+          .filter(({ operation }) => bridge.dirtyAnnotationRevisions.has(operation.uuid))
+          .map(({ revision, operation }) => ({
+            revision, uuid: operation.uuid, kind: operation.kind,
+            action: operation.action, deleted: operation.deleted,
+            hasEditorPayload: Boolean(operation.payload?.editor || operation.serialized?.annotationType),
+          })),
+        editors: [...manager.getEditors(0)].map((editor) => ({
+          id: editor.id,
+          type: editor.editorType,
+          deleted: editor.deleted === true,
+          annotationElementId: editor.annotationElementId || null,
+        })),
+      });
+      const beforeUndo = summarize();
+      manager.undo();
+      window.__autosaveUndoProbe = { beforeUndo, afterUndo: summarize() };
       window.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     });
     await page.evaluate(() => {
@@ -819,16 +976,14 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(await page.evaluate(() => window.__host.saves.length), 8);
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
-    // A controlled close blocks new pointer edits and can finish once its
-    // latest recovery is durable, without waiting for the older save ACK.
+    // A controlled close blocks new pointer edits and waits for the pending
+    // sidecar operation write to become durable. The old PDF-recovery
+    // expectation for racing a full-document write is stale in 0.7.
     const recoveriesBeforeHeldClose = await page.evaluate(
       () => window.__host.recoveries.length,
     );
     await page.evaluate(() => {
-      window.__host.holdNextAck = true;
-      window.__host.nextAckDelay = 2_200;
-      window.__host.holdNextRecoveryAck = true;
-      window.__host.nextRecoveryAckDelay = 1_000;
+      window.__host.holdSaveAckUntilRelease = true;
     });
     await viewer.evaluate(() => {
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
@@ -878,45 +1033,35 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(
       await page.evaluate(() => window.__host.closePrepareds.length),
       1,
-      "The host must not receive a prepared acknowledgement before the recovery is durable",
+      "The host must not receive a prepared acknowledgement before the sidecar save is durable",
     );
-    const pendingCloseRecovery = await page.evaluate(
-      (index) => window.__host.recoveries[index],
+    assert.equal(await page.evaluate(() => window.__host.pendingSaveAcks.length), 1,
+      "The controlled close should remain pending while the sidecar save ACK is held");
+    assert.equal(await page.evaluate(() => window.__host.saves[8].acknowledgedAt), undefined);
+    assert.equal(await page.evaluate((index) => window.__host.recoveries.length, recoveriesBeforeHeldClose),
       recoveriesBeforeHeldClose,
-    );
-    assert.equal(pendingCloseRecovery.reason, "close-writeback");
-    assert.equal(pendingCloseRecovery.durableAt, undefined);
+      "An ordinary held sidecar save is not a PDF recovery write");
+    assert.equal(await page.evaluate(() => window.__host.releaseNextHeldSaveAck()), true);
     await page.waitForFunction(() => window.__host.closePrepareds.length === 2, {
       timeout: 10_000,
     });
     const heldClose = await page.evaluate(
       () => window.__host.closePrepareds[1],
     );
-    const durableCloseRecovery = await page.evaluate(
-      (index) => window.__host.recoveries[index],
-      recoveriesBeforeHeldClose,
-    );
     assert.equal(heldClose.id, "prepare-close-held-save");
     assert.equal(heldClose.documentId, documentId);
     assert.equal(heldClose.openRequest, 1);
-    assert.equal(heldClose.ok, false);
-    assert.equal(heldClose.dirty, true);
-    assert.equal(heldClose.recovered, true);
-    assert.equal(heldClose.closeWritebackQueued, true);
-    assert.ok(durableCloseRecovery.durableAt <= heldClose.receivedAt);
-    assert.equal(
-      heldClose.revision,
-      durableCloseRecovery.revision,
-    );
+    assert.equal(heldClose.ok, true);
+    assert.equal(heldClose.dirty, false);
+    assert.equal(heldClose.recovered, false);
+    assert.equal(heldClose.closeWritebackQueued, false);
     assert.equal(
       heldClose.revision,
       await page.evaluate(() => window.__host.saves[8].revision),
     );
-    assert.equal(
-      await page.evaluate(() => window.__host.saves[8].acknowledgedAt),
-      undefined,
-      "A durable close recovery must not wait for the older ordinary-save ACK",
-    );
+    assert.ok(await page.evaluate(() => window.__host.saves[8].acknowledgedAt),
+      "The close may complete after the sidecar save is confirmed durable");
+    assert.equal(await page.evaluate(() => window.__host.recoveries.length), recoveriesBeforeHeldClose);
     assert.equal(heldClose.prepared, true);
     assert.equal(
       await viewer.evaluate(() =>
@@ -1009,17 +1154,30 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     });
     const imeClose = await page.evaluate(() => window.__host.closePrepareds[2]);
     assert.equal(imeClose.prepared, true);
-    assert.equal(imeClose.ok, false);
-    assert.equal(imeClose.dirty, true);
+    assert.equal(imeClose.ok, true);
+    assert.equal(imeClose.dirty, false);
     assert.equal(imeClose.recovered, true);
-    assert.equal(imeClose.closeWritebackQueued, true);
+    assert.equal(imeClose.closeWritebackQueued, false);
+    assert.equal(imeClose.annotationBatchDurable, true);
     assert.equal(imeClose.openRequest, 1);
     const imeRecovery = await page.evaluate(() =>
       window.__host.recoveries.filter(
-        (recovery) => recovery.reason === "close-writeback",
+        (recovery) => recovery.operations?.some(
+          (operation) => operation.kind === "FreeText" &&
+            operation.payload?.editor?.value === "Close composition text",
+        ),
       ).at(-1),
     );
-    assert.ok(imeRecovery.byteLength > 0);
+    assert.equal(imeRecovery.byteLength, 0);
+    assert.ok(imeRecovery.operations?.length,
+      "IME close recovery must persist annotation operations, without a PDF candidate");
+    imeCloseFreeTextOperation = imeRecovery.operations.find(
+      (operation) => operation.kind === "FreeText" && operation.deleted !== true,
+    ) || null;
+    assert.ok(imeCloseFreeTextOperation,
+      "The IME text must be represented by a durable FreeText operation");
+    assert.equal(imeCloseFreeTextOperation.payload?.editor?.value, "Close composition text");
+    assert.equal(imeRecovery.acknowledgementOk, true);
     assert.ok(imeRecovery.durableAt <= imeClose.receivedAt);
     assert.equal(imeRecovery.revision, imeClose.revision);
     assert.equal(
@@ -1044,30 +1202,41 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     );
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
-    // Disable autosave while PDF.js is serializing. The bridge must retain
-    // dirty state and avoid sending an auto-origin request the host has not
-    // accepted yet.
+    // Disable autosave while an operation batch is waiting for the sidecar
+    // durability ACK. A newer undo/redo state must stay dirty without sending
+    // another automatic write after the setting is turned off.
+    const savesBeforeDisable = await page.evaluate(() => {
+      window.__host.holdNextAck = true;
+      window.__host.nextAckDelay = 1_600;
+      return window.__host.saves.length;
+    });
     await viewer.evaluate(() => {
-      const pdfDocument = PDFViewerApplication.pdfDocument;
+      const app = PDFViewerApplication;
+      const pdfDocument = app.pdfDocument;
       const original = pdfDocument.saveDocument;
-      const hold = window.__heldAutoSerialization = {
-        started: false,
-        release: null,
-        original,
-      };
+      window.__sourceSerializationProbe = { calls: 0, original };
       pdfDocument.saveDocument = function (...args) {
-        hold.started = true;
-        return new Promise((resolve, reject) => {
-          hold.release = () => {
-            Promise.resolve(original.apply(pdfDocument, args)).then(resolve, reject);
-          };
-        });
+        window.__sourceSerializationProbe.calls += 1;
+        return original.apply(pdfDocument, args);
       };
-      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo();
+      app.pdfViewer._layerProperties.annotationEditorUIManager.undo();
     });
-    await viewer.waitForFunction(() => window.__heldAutoSerialization.started, {
-      timeout: 5_000,
-    });
+    await page.waitForFunction((count) =>
+      window.__host.saves.length === count + 1,
+    { timeout: 10_000 }, savesBeforeDisable);
+    const heldSidecarWrite = await page.evaluate(() => window.__host.saves.at(-1));
+    assert.equal(heldSidecarWrite.byteLength, 0);
+    assert.ok(heldSidecarWrite.operations?.length);
+    await viewer.evaluate(() =>
+      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.redo(),
+    );
+    const dirtyAfterQueuedEdit = await viewer.evaluate(() => ({
+      dirty: PDFViewerApplication._hasChanges(),
+      editorCount: [...PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager.getEditors(0)].length,
+    }));
+    assert.equal(dirtyAfterQueuedEdit.dirty, true);
+    assert.ok(dirtyAfterQueuedEdit.editorCount > 0);
     await page.evaluate(() => {
       document.querySelector("iframe").contentWindow.postMessage({
         channel,
@@ -1077,29 +1246,31 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         enabled: false,
       }, "*");
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await viewer.evaluate(() => {
       const pdfDocument = PDFViewerApplication.pdfDocument;
-      const hold = window.__heldAutoSerialization;
-      hold.release();
-      pdfDocument.saveDocument = hold.original;
+      const probe = window.__sourceSerializationProbe;
+      window.__sourceSerializationProbeCalls = probe.calls;
+      pdfDocument.saveDocument = probe.original;
     });
-    // Restore the original method so subsequent manual/recovery writes are
-    // normal.
-    await viewer.waitForFunction(() => !PDFViewerApplication._saveInProgress, {
-      timeout: 10_000,
-    });
-    assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
+    await page.waitForFunction((count) =>
+      window.__host.saves[count]?.acknowledgedAt !== undefined,
+    { timeout: 10_000 }, savesBeforeDisable);
+    assert.equal(await viewer.evaluate(() => window.__sourceSerializationProbeCalls), 0,
+      "An ordinary sidecar save must not call PDF.js's full-PDF serializer");
+    assert.equal(await page.evaluate(() => window.__host.saves.length), savesBeforeDisable + 1);
     assert.equal(
       await viewer.evaluate(() => PDFViewerApplication._hasChanges()),
       true,
-      "A canceled auto-origin serialization must leave the PDF dirty",
+      "The newer revision must remain dirty after the earlier sidecar batch is acknowledged",
     );
     const savesAfterDisable = await page.evaluate(() => window.__host.saves);
     assert.equal(
       savesAfterDisable.length,
-      11,
+      savesBeforeDisable + 1,
       `Disabling auto-save must stop idle writes; got ${JSON.stringify(savesAfterDisable)}`,
+    );
+    const recoveriesBeforeDisabledFlush = await page.evaluate(() =>
+      window.__host.recoveries.length,
     );
     await page.evaluate(() => {
       const iframe = document.querySelector("iframe");
@@ -1114,16 +1285,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     await page.waitForFunction(() => window.__host.flushes.length === 3);
     assert.deepEqual(
       await page.evaluate(() => window.__host.flushes[2]),
-      { id: "flush-disabled", ok: false, dirty: true, recovered: true },
+      { id: "flush-disabled", ok: false, dirty: false, recovered: true },
     );
-    assert.equal(await page.evaluate(() => window.__host.saves.length), 11);
-    const disabledRecovery = await page.evaluate(() =>
-      window.__host.recoveries.filter(
-        (recovery) => recovery.reason === "auto-save-disabled",
-      ).at(-1),
+    assert.equal(await page.evaluate(() => window.__host.saves.length), savesBeforeDisable + 1);
+    const disabledRecovery = await page.evaluate(
+      (index) => window.__host.recoveries[index],
+      recoveriesBeforeDisabledFlush,
     );
-    assert.equal(disabledRecovery.reason, "auto-save-disabled");
-    assert.ok(disabledRecovery.byteLength > 0);
+    assert.equal(disabledRecovery.acknowledgementOk, true);
+    assert.equal(disabledRecovery.sourceIdentity?.sourceHash,
+      `sha256:${TRACEMONKEY_SOURCE_SHA256}`);
+    assert.equal(disabledRecovery.byteLength, 0);
+    assert.ok(disabledRecovery.operations?.length);
     await page.evaluate(() => {
       document.querySelector("iframe").contentWindow.postMessage({
         channel,
@@ -1144,9 +1317,9 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(disabledClose.id, "prepare-close-disabled-recovery");
     assert.equal(disabledClose.documentId, documentId);
     assert.equal(disabledClose.openRequest, 1);
-    assert.equal(disabledClose.ok, false);
-    assert.equal(disabledClose.dirty, true);
-    assert.equal(disabledClose.recovered, true);
+    assert.equal(disabledClose.ok, true);
+    assert.equal(disabledClose.dirty, false);
+    assert.equal(disabledClose.recovered, false);
     assert.equal(disabledClose.prepared, true);
     assert.equal(
       disabledClose.revision,
@@ -1157,7 +1330,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         PDFViewerApplication.appConfig.appContainer.hasAttribute("inert"),
       ),
       true,
-      "A durable recovery candidate must also keep the close-prepared viewer inert",
+      "A clean sidecar-confirmed viewer must be inert before close proceeds",
     );
     await page.evaluate(() => {
       document.querySelector("iframe").contentWindow.postMessage({
@@ -1174,17 +1347,19 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     );
     assert.equal(
       await viewer.evaluate(() => PDFViewerApplication._hasChanges()),
-      true,
-      "Canceling close after recovery must retain the dirty editing session",
+      false,
+      "Canceling a prepared clean close must not manufacture a dirty revision",
     );
 
     // An explicit manual save still works while the setting is disabled.
+    await viewer.evaluate(() =>
+      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.undo(),
+    );
+    await viewer.waitForFunction(() => PDFViewerApplication._hasChanges());
     await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
     await page.waitForFunction(() => window.__host.saves.length === 12);
-    assert.equal(
-      await page.evaluate(() => window.__host.saves[11].origin),
-      "manual",
-    );
+    assert.equal(await page.evaluate(() => window.__host.saves[11].byteLength), 0);
+    assert.ok(await page.evaluate(() => window.__host.saves[11].operations?.length));
     await viewer
       .waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 5_000 })
       .catch(async (error) => {
@@ -1255,7 +1430,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       ).at(-1),
     );
     assert.equal(conflictRecovery.reason, "save-conflict");
-    assert.ok(conflictRecovery.byteLength > 0);
+    assert.equal(conflictRecovery.byteLength, 0);
+    assert.ok(conflictRecovery.operations?.length);
     assert.ok(
       conflictRecovery.revision >
         (await page.evaluate(() => window.__host.saves[12].revision)),
@@ -1420,7 +1596,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(disabledRecoveryClose.openRequest, 3);
     assert.equal(disabledRecoveryClose.revision, popoutDisabledRecovery.revision);
     assert.equal(popoutDisabledRecovery.reason, "auto-save-disabled");
-    assert.ok(popoutDisabledRecovery.byteLength > 0);
+    assert.equal(popoutDisabledRecovery.byteLength, 0);
+    assert.ok(popoutDisabledRecovery.operations?.length);
 
     // A popout reload creates a fresh bridge realm. Reopening serialized
     // recovery bytes must restore the old dirty revision instead of treating
@@ -1436,12 +1613,18 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       const expectedOpenCount =
         (await page.evaluate(() => window.__host.openCount)) + 1;
       await page.evaluate(
-        ({ openRequest, revision, confirmedRevision, autoSave, restorePaused, recoveryIndex }) => {
+        async ({ openRequest, revision, confirmedRevision, autoSave, restorePaused, recoveryIndex }) => {
           const state = window.__host;
           const recovery = state.recoveries[recoveryIndex];
-          if (!recovery?.data?.byteLength) {
-            throw new Error("The test recovery candidate has no PDF bytes.");
+          if (!recovery?.operations?.length) {
+            throw new Error("The test recovery candidate has no durable sidecar operations.");
           }
+          window.__browserSidecarHost.copyDocument(
+            recovery.documentId,
+            "test-session-3",
+          );
+          const sourceData = await fetch("/tests/fixtures/tracemonkey.pdf")
+            .then((response) => response.arrayBuffer());
           state.pendingOpen = {
             documentId: "test-session-3",
             documentPath: "tests/fixtures/third-session.pdf",
@@ -1452,7 +1635,7 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
             restoreDirty: true,
             restorePaused,
             autoSave,
-            data: recovery.data.slice(0),
+            data: sourceData,
           };
           state.expectedRendererGeneration = `popup-renderer-${openRequest}`;
           document.querySelector("iframe").src =
@@ -1552,13 +1735,14 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     const restoredManualSave = await page.evaluate(
       () => window.__host.saves[14],
     );
-    assert.equal(restoredManualSave.origin, "manual");
+    assert.equal(restoredManualSave.byteLength, 0);
     assert.equal(
       restoredManualSave.revision,
       popoutDisabledRecovery.revision,
       "Cmd+S on the restored draft must save its current revision even with no subsequent edit",
     );
-    assert.ok(restoredManualSave.byteLength > 0);
+    assert.equal(restoredManualSave.byteLength, 0);
+    assert.ok(restoredManualSave.operations?.length);
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
     // A conflict-paused autosave session can also reload its latest recovery
@@ -1580,10 +1764,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     await page.waitForFunction(() => window.__host.saves.length === 16, {
       timeout: 10_000,
     });
-    assert.equal(
-      await page.evaluate(() => window.__host.saves[15].origin),
-      "auto",
-    );
+    assert.equal(await page.evaluate(() => window.__host.saves[15].byteLength), 0);
+    assert.ok(await page.evaluate(() => window.__host.saves[15].operations?.length));
     await new Promise((resolve) => setTimeout(resolve, 1_200));
     assert.equal(
       await page.evaluate(() => window.__host.saves.length),
@@ -1624,7 +1806,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     assert.equal(pausedClose.recovered, true);
     assert.equal(pausedClose.revision, pausedRecovery.revision);
     assert.equal(pausedRecovery.reason, "save-conflict");
-    assert.ok(pausedRecovery.byteLength > 0);
+    assert.equal(pausedRecovery.byteLength, 0);
+    assert.ok(pausedRecovery.operations?.length);
 
     await reopenFreshRealmWithDraft({
       openRequest: 5,
@@ -1650,7 +1833,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
     const pausedManualSave = await page.evaluate(
       () => window.__host.saves[16],
     );
-    assert.equal(pausedManualSave.origin, "manual");
+    assert.equal(pausedManualSave.byteLength, 0);
+    assert.ok(pausedManualSave.operations?.length);
     assert.equal(pausedManualSave.revision, pausedRecovery.revision);
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
 
@@ -1769,8 +1953,10 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       (index) => window.__host.saves[index],
       beforeFreeTextSaves,
     );
-    assert.equal(firstFreeTextSave.origin, "auto");
-    assert.ok(firstFreeTextSave.byteLength > 0);
+    assert.equal(firstFreeTextSave.byteLength, 0);
+    assert.ok(firstFreeTextSave.operations?.some((operation) =>
+      operation.kind === "FreeText" && operation.deleted !== true),
+      "The focused FreeText save should persist a live sidecar operation");
     await viewer.evaluate(
       () =>
         new Promise((resolve) =>
@@ -1913,7 +2099,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       lastOpenedAt: window.__host.lastOpenedAt,
     }));
     assert.equal(switchedFreeTextSave.documentId, "test-session-3");
-    assert.equal(switchedFreeTextSave.origin, "auto");
+    assert.equal(switchedFreeTextSave.byteLength, 0);
+    assert.ok(switchedFreeTextSave.operations?.length);
     assert.ok(switchedFreeTextSave.revision > freeTextSaves[1].revision);
     assert.ok(switchedFreeTextSave.acknowledgedAt > 0);
     assert.ok(
@@ -2219,11 +2406,12 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       beforeEraserHold.saveCount,
     );
     assert.equal(completedEraserSave.documentId, "test-session-5");
-    assert.equal(completedEraserSave.origin, "auto");
-    assert.ok(completedEraserSave.byteLength > 0);
+    assert.equal(completedEraserSave.byteLength, 0);
+    assert.ok(completedEraserSave.operations?.length);
     assert.equal(
       await viewer.evaluate(() => window.__eraserSaveDocumentCalls),
-      beforeEraserHold.serializeCount + 1,
+      beforeEraserHold.serializeCount,
+      "A completed eraser sidecar write must not serialize the source PDF",
     );
     await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges());
     await viewer.evaluate(() =>
@@ -2258,29 +2446,16 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       { timeout: 5_000 },
       beforeEraserHold.saveCount,
     );
-    const undoSavedAnnotations = await viewer.evaluate(async (saveIndex) => {
-      const bytes = new Uint8Array(parent.__host.saves[saveIndex].data);
-      const reopened = await pdfjsLib.getDocument({ data: bytes }).promise;
-      const annotations = await reopened
-        .getPage(1)
-        .then((page) => page.getAnnotations({ intent: "display" }));
-      const freeText = annotations
-        .filter((annotation) => annotation.subtype === "FreeText")
-        .map((annotation) =>
-          Object.fromEntries(
-            Object.entries(annotation).filter(([, value]) =>
-              value === null || Array.isArray(value) ||
-                ["string", "number", "boolean"].includes(typeof value),
-            ),
-          ),
-        );
-      await reopened.destroy();
-      return freeText;
+    const undoSavedFreeText = await page.evaluate((saveIndex) => {
+      const save = window.__host.saves[saveIndex];
+      return save.operations?.find((operation) =>
+        operation.kind === "FreeText" && operation.deleted !== true,
+      ) || null;
     }, beforeEraserHold.saveCount + 1);
-    assert.equal(undoSavedAnnotations.length, 1);
-    assert.equal(undoSavedAnnotations[0].subtype, "FreeText");
-    assert.equal(undoSavedAnnotations[0].hasAppearance, true);
-    assert.deepEqual(undoSavedAnnotations[0].textContent, ["Eraser idle guard"]);
+    assert.ok(undoSavedFreeText,
+      "Undo should durably restore the FreeText sidecar operation");
+    assert.equal(undoSavedFreeText.payload?.editor?.pageIndex, 0);
+    assert.equal(undoSavedFreeText.payload?.editor?.value, "Eraser idle guard");
 
     // Recreate a visible target after undo. PDF.js can leave the restored
     // editor in the model with a zero-sized DOM node until its next layout;
@@ -2520,7 +2695,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       openedAt: window.__host.lastOpenedAt,
     }), beforeEscapeSwitch.saveCount);
     assert.equal(escapeSwitch.save.documentId, "test-session-5");
-    assert.equal(escapeSwitch.save.origin, "auto");
+      assert.equal(escapeSwitch.save.byteLength, 0);
+      assert.ok(escapeSwitch.save.operations?.length);
     assert.ok(
       escapeSwitch.save.acknowledgedAt <= escapeSwitch.openedAt,
       "Escape cancellation must save and acknowledge the old PDF before switching",
@@ -2707,7 +2883,8 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         { saveIndex: beforeBlurCancel.saveCount },
       );
       assert.equal(blurSwitch.oldDocumentSaves.length, 1);
-      assert.equal(blurSwitch.oldDocumentSaves[0].origin, "auto");
+      assert.equal(blurSwitch.oldDocumentSaves[0].byteLength, 0);
+      assert.ok(blurSwitch.oldDocumentSaves[0].operations?.length);
       assert.ok(
         blurSwitch.oldDocumentSaves[0].acknowledgedAt <= blurSwitch.openedAt,
         `${blurTrigger} must clear the canceled right pointer and save before switching`,
@@ -2852,10 +3029,12 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         leaseWindowSaveCount,
       );
       const afterHeldLeaseSave = await page.evaluate(() => window.__host.saves.at(-1));
-      assert.equal(afterHeldLeaseSave.origin, "manual");
+      assert.equal(afterHeldLeaseSave.byteLength, 0);
       assert.ok(
-        afterHeldLeaseSave.newAnnotations?.filter((entry) => entry.kind === "Ink").length >= 2,
-        "The retried snapshot must include both the pre-lease and in-lease Ink editors",
+        afterHeldLeaseSave.operations?.filter((entry) =>
+          entry.kind === "Ink" && entry.deleted !== true,
+        ).length >= 2,
+        "The retried sidecar batch must include both the pre-lease and in-lease Ink editors",
       );
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), {
         timeout: 10_000,
@@ -2875,6 +3054,27 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
       0,
       "The host should not receive bridge errors",
     );
+    assert.ok(imeCloseFreeTextOperation,
+      "A real FreeText operation must survive close composition and sidecar recovery");
+    const freeTextRect = imeCloseFreeTextOperation.payload?.editor?.rect;
+    const rectValues = Array.isArray(freeTextRect)
+      ? freeTextRect
+      : typeof freeTextRect === "string"
+        ? freeTextRect.trim().split(/[\s,]+/).map(Number)
+        : [];
+    assert.equal(rectValues.length, 4,
+      "The durable FreeText operation must include its four source-space bounds");
+    assert.ok(rectValues.every(Number.isFinite),
+      "FreeText source-space bounds must be finite numbers");
+    assert.ok(rectValues[2] > rectValues[0] && rectValues[3] > rectValues[1],
+      `FreeText source-space bounds must have positive area; got ${JSON.stringify(rectValues)}`);
+    const originalPdfAfterAutosave = await readFile(fixture);
+    assert.deepEqual(originalPdfAfterAutosave, originalFixtureBytes,
+      "Auto-save and recovery must leave the original PDF bytes untouched");
+    assert.equal(
+      createHash("sha256").update(originalPdfAfterAutosave).digest("hex"),
+      createHash("sha256").update(originalFixtureBytes).digest("hex"),
+    );
     console.info("Auto-save product assertions completed; entering browser cleanup.");
   } catch (error) {
     primaryError = error;
@@ -2886,7 +3086,73 @@ test("Obsidian auto-save debounces complete edits and serializes revisions", {
         openedSessions: window.__host?.openedSessions,
         lastOpenedAt: window.__host?.lastOpenedAt,
         saves: window.__host?.saves.map(({ data, ...metadata }) => metadata),
+        recoveries: window.__host?.recoveries.map(({ data, ...metadata }) => metadata),
+        flushes: window.__host?.flushes,
+        closePrepareds: window.__host?.closePrepareds,
+        pendingSaveAcks: window.__host?.pendingSaveAcks.map(({ save, ...pending }) => ({
+          ...pending,
+          saveRevision: save?.revision,
+        })),
         errors: window.__host?.errors,
+        runtimeLogs: window.__host?.runtimeLogs,
+        undoProbe: document.querySelector("iframe")?.contentWindow?.__autosaveUndoProbe || null,
+        bridgeState: (() => {
+          const bridge = document.querySelector("iframe")?.contentWindow?.__autosaveBridgeState;
+          if (!bridge) return null;
+          const manager = bridge.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+          return {
+            revision: bridge.revision,
+            confirmedRevision: bridge.confirmedRevision,
+            dirty: bridge.dirty,
+            autoSaveEnabled: bridge.autoSaveEnabled,
+            autoSavePaused: bridge.autoSavePaused,
+            freeTextFocused: bridge.freeTextFocused,
+            freeTextInputPending: bridge.freeTextInputPending,
+            freeTextCommitReady: bridge.freeTextCommitReady,
+            freeTextCommittedForSave: bridge.freeTextCommittedForSave,
+            isComposing: bridge.isComposing,
+            compositionEndPending: bridge.compositionEndPending,
+            inputBoundaryWaiters: bridge.inputBoundaryWaiters?.length,
+            closeControl: bridge.closeControl && {
+              id: bridge.closeControl.id,
+              phase: bridge.closeControl.phase,
+              cancelled: bridge.closeControl.cancelled,
+            },
+            sourceConfirmed: bridge.externalSourceConfirmed,
+            sourceMismatch: bridge.externalSourceMismatch,
+            externalSource: bridge.externalSource && {
+              sourceHash: bridge.externalSource.sourceHash,
+              pageCount: bridge.externalSource.pageCount,
+              identityCount: bridge.externalSource.orderedPageIdentities?.length,
+            },
+            dirtyAnnotationRevisions: [...bridge.dirtyAnnotationRevisions.entries()],
+            dirtyPageRevisions: [...bridge.dirtyPageRevisions.entries()],
+            dirtyNewAnnotationIds: [...bridge.dirtyNewAnnotationIds],
+            dirtyDeletedAnnotationIds: [...bridge.dirtyDeletedAnnotationIds],
+            annotationSnapshot: [...bridge.annotationSnapshot.entries()].map(([id, row]) => ({
+              id, uuid: row.uuid, pageIndex: row.pageIndex, kind: row.kind, deleted: row.deleted,
+            })),
+            annotationOperations: bridge.annotationOperations.map(({ revision, operation }) => ({
+              revision,
+              uuid: operation.uuid,
+              pageIndex: operation.pageIndex,
+              kind: operation.kind,
+              action: operation.action,
+              deleted: operation.deleted,
+              ref: operation.ref || null,
+              hasEditorPayload: Boolean(operation.payload?.editor || operation.serialized?.annotationType),
+            })),
+            restoredSavedAnnotations: [...bridge.restoredSavedAnnotations.keys()],
+            editorHistory: bridge.editorHistory,
+            editors: manager ? [...manager.getEditors(0)].map((editor) => ({
+              id: editor.id,
+              type: editor.editorType,
+              deleted: editor.deleted === true,
+              annotationElementId: editor.annotationElementId || null,
+              hasBeenModified: editor.hasBeenModified === true,
+            })) : [],
+          };
+        })(),
       })) : null;
       const artifact = path.join(root, "tests", "artifacts", `autosave-failure-${Date.now()}.json`);
       await mkdir(path.dirname(artifact), { recursive: true });

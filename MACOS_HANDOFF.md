@@ -1,6 +1,22 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-## 当前 0.5.10 连续笔迹保存（2026-10-13）
+## 当前共享代码状态：0.7.1 测试候选（2026-10-15，未验收完成）
+
+**当前 P0 阻断：** 独立 A/B store 与独立 adapter facade 已复现旧 replay 覆盖新 checkpoint；B 正常公开退役 A 并实际 GC 新批次后，A 在途旧任务可把 primary/backup 一并回退，导致 B 已确认批注丢失。不是共享本地锁能证明修复的问题。本轮按边界保留真实红测，不引入新协议、不进入 materialization coalescing、不部署主库。Apple 接续不得把同 store 队列当跨设备安全证明。完整矩阵及最终测试记录见 GENERAL_ACCEPTANCE。
+
+本轮 selection 阶段更新：测试库现安装 main SHA256 `3d48a16fcdc89c915b72f0a335a572fbf5096c56ad0f795630e79ef7e8be32c9`。Native Underline 的单行/跨行、关闭重开、相邻再次创建和双 Reader 生命周期已通过；FreeText 再回归通过。bridge 不再 capture 原生鼠标文字拖选，冻结 Viewer 最小 backport PDF.js #22137 / `1a30040c83ca0785f455175b99b9051c84181883`（provenance 与 SHA 清单已更新）。下方原失败记录保留为历史，不是最新 Underline 结论。跨实例安全、调度合并尚待本轮独立门控，完整架构仍未验收；最新证据见 GENERAL_ACCEPTANCE 顶部。
+
+当前产品源码/manifest 为 0.7.1 候选，冻结基线 HEAD 仍为 `704f6f18ae305a924e4d56cf0f90c13a1f0a8c8b`，未 commit/push。日常批注写入外置 operation batches 与 verified checkpoint，原 PDF 保持不可变；Ink Float32 使用无损紧凑编码。已修复 controlled-close 会话发布顺序、异步水合吞本地修改、FreeText 零面积/缺失文本/重复基线平移，以及同 store 并发 GC 重删和旧 materialization 覆盖新 checkpoint 的实际复现。存储 ACK cohort 仍为 0.7.0，不随产品 patch 号更改。GC 与整段 materialization 按 docKey 在一个 store 实例内排队，不保证跨实例/进程原子锁。当前验收状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)：`SIDECAR_ARCHITECTURE_ACCEPTED = FALSE`。
+
+Windows CLI 可通过 `vault=06f5d50d319c56d4` 唯一选择外层测试库 `D:\Documents\Obsidian\测试插件`；同名 Vault 与旧运行态阻碍已解决，不再盲目重启。全部 Reader clean 后备份并仅替换测试库三个文件，runtime=0.7.1 enabled；最终 main SHA-256 `52bb2373f69d02a6b860f56c6a27cbd2e169b547165e6aa3f50597d987616e39`，部署记录 `tests/artifacts/test-deployment-priority-final.json`。本任务未向远程仓库1部署，也未修改其 PDF/sidecar；用户明确另有任务/同步更新远程三文件，不能声称本轮首尾远程哈希相同。最新完整套件 **427 / 409 pass / 13 fail / 5 skip**，退出码1，分类 9 infrastructure / 1 precondition / 2 unresolved product / 1 stale oracle；旧数字只作历史。
+
+最终 Windows Native FreeText 专项 `tests/artifacts/0.7-sidecar-native-acceptance-20261015014700509.json` 通过：真实非空输入、sidecar、完全关闭/重开、同 UUID、61.84×22.69 CSS px、可见/隐藏参考 ROI 各 342 像素差异、rect 误差约 5.7e-14 PDF pt，独立导出回读为标准 FreeText；源双哈希不变、源写入=0。完整五工具最近尝试（几何修复版、priority 日志前）`...20261015013107704.json` 仍因可信拖动未形成 Underline Selection 失败，不能把专项成功当整体通过。浏览器几何覆盖四种 view rotation×两档 scale，定向通过；完整套件该项仍因 browser.close cleanup 超时失败，未以定向绿覆盖。原 raw-save/IME 失败测试保持。
+
+大小各十次实际 Square 保存计时报告 `tests/artifacts/sidecar-native-final-timings.md` / `.json` 已取得，按 capture/encode/GC execution/GC queue/materialization queue 独立统计，原PDF0写、普通saveDocument0调用。120页16.85MB样本 ACK 均值442.84ms、capture1.86ms、encode0.44ms、GC277.56ms；**后台 materialization 排队均值8.69秒，最大14.95秒**（小PDF最大18.65秒），所以性能闭环未完成。GC本地竞态错误最终0，不代表维护无需优化；优先证明重复维护请求合并/已发布批次筛选不会漏同步，而不是删除墓碑或放宽GC。完整trace/驱动hash探针IO、采样范围、历史fixture非逐字节A/B、未观测replay/hydration都在GENERAL_ACCEPTANCE，禁止只引用sub-ms encode宣称总保存sub-ms。
+
+苹果平台下一步先确认其唯一测试 Vault 的实际候选 hash/runtime，使用独占副本继续五工具全生命周期、二次编辑、delete/undo/redo、五类独立导出及真实输入路由。Windows 已取得 source mismatch 七种真实 PDF 变换的 host/store 回归（非 Native），真正 linearize 尚未验证；大小 PDF 各十次 Native 保存独立计时及完整套件最新数字见 GENERAL_ACCEPTANCE 顶部，旧 390/328/57/5 只作冻结历史。真实 iPad/Pencil、macOS 实机与两个真实同步客户端未验证；Windows 结果不能替代 Apple 实机。禁止主库写入、自动 page rebase 或把 0.5.x 保存数据当严格 A/B。
+
+## 历史：0.5.10 连续笔迹保存（2026-10-13）
 
 同一组三文件服务 Windows、macOS、iPadOS。修复 ACK 后保留 Storage 却读取原始 Worker 字节导致 Ink 绑定失败；各序列化入口包含当前编辑。保存期间完成的 Ink 在每轮安全边界和重任务许可后复核提交，避免同一修订重复保存并阻塞关闭。恢复仅确认校验后的原始或准备完成草稿，未提交笔迹不满足关闭条件。原始失败及实机限制见 GENERAL_ACCEPTANCE.md。保留 0.5.9 回滚包、旧恢复、缓存与设置，不升级依赖，不修改冻结 Viewer。
 

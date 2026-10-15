@@ -14,6 +14,7 @@ import {
   attachCleanupErrors,
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 
@@ -140,6 +141,12 @@ test(
     const runId = `${Date.now()}-${process.pid}`;
     const bridgeSource = await readFile(bridgePath, "utf8");
     const loadedBaseBytes = await makeWriterOrderFixture();
+    const sidecarHarnessScript = browserSidecarHarnessScript({
+      channel,
+      token,
+      sourceHash: `sha256:${createHash("sha256").update(loadedBaseBytes).digest("hex")}`,
+      sourcePath: "tests/fixtures/tracemonkey.pdf",
+    });
     const baseInspection = await inspect({ bytes: loadedBaseBytes });
     assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "square").length, 1);
     assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "ink").length, 1);
@@ -169,6 +176,7 @@ test(
           <meta charset="utf-8">
           <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
           <iframe title="PDF Reader" src="/viewer/web/viewer.html"></iframe>
+          ${sidecarHarnessScript}
           <script>
             const channel=${JSON.stringify(channel)};
             const token=${JSON.stringify(token)};
@@ -426,7 +434,16 @@ test(
           ["annotationLayer", "annotationEditorLayer"].includes(
             reported.firstPageAnnotationLayerKind,
           ) &&
-          Number.isFinite(reported.toolsUsableMs),
+          window.parent.__browserSidecarHost?.identityRequests?.some((request) =>
+            request.documentId === opened?.documentId &&
+            request.openRequest === opened?.openRequest &&
+            request.identityStatus === "KNOWN" &&
+            request.sourceHash === null &&
+            request.pageCount === 12 &&
+            request.orderedPageIdentities?.every((identity) =>
+              typeof identity === "string" && identity.startsWith("ref:"),
+            ),
+          ),
         );
       }, { timeout: 30_000 });
 

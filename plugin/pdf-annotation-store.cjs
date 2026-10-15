@@ -20,6 +20,9 @@
 const STORE_SCHEMA = 1;
 const INDEX_SCHEMA = 2;
 const CHECKPOINT_SCHEMA = 2;
+// Stable storage compatibility/ACK cohort, not the product release version.
+// 0.7.1 is patch-only and retains the 0.7.0 storage protocol; change this
+// cohort only with an intentional storage-protocol migration, not a patch bump.
 const CURRENT_PLUGIN_VERSION = "0.7.0";
 const COMPACT_PAYLOAD_ENCODING = "float32le-base64-v1";
 const VALID_TYPES = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
@@ -34,6 +37,8 @@ function createPdfAnnotationStore({
   hash,
   identityHash = hash,
   deviceId,
+  onTiming = () => {},
+  timingNow = defaultTimingNow,
 }) {
   if (!adapter || typeof adapter.read !== "function" || typeof adapter.write !== "function" ||
       typeof adapter.exists !== "function" || typeof adapter.mkdir !== "function" ||
@@ -51,6 +56,8 @@ function createPdfAnnotationStore({
   const operationsRoot = `${baseRoot}/ops`;
   const identityEventsRoot = `${baseRoot}/identity-events`;
   const deviceSegment = pathSegment(deviceId);
+  const materializationQueues = new Map();
+  const garbageCollectionQueues = new Map();
 
   function pathsFor(document) {
     const normalized = normalizeDocument(document);
@@ -233,6 +240,11 @@ function createPdfAnnotationStore({
 
   async function readDocument(document) {
     const normalizedDocument = await resolveDocument(document);
+    return enqueueDocumentMaterialization(normalizedDocument, (materializationQueueWaitMs) =>
+      materializeDocument(normalizedDocument, materializationQueueWaitMs));
+  }
+
+  async function materializeDocument(normalizedDocument, materializationQueueWaitMs) {
     const state = await replay(normalizedDocument);
     let checkpoint = await writeCheckpoint(normalizedDocument, state);
     let currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
@@ -248,14 +260,49 @@ function createPdfAnnotationStore({
     const compactInkEncoding = deviceStates.every((entry) => entry.retired ||
       (entry.pluginVersion === CURRENT_PLUGIN_VERSION && entry.checkpointHash === checkpoint.integrity));
     const snapshot = makeSnapshot(normalizedDocument, state, checkpoint, compactInkEncoding);
-    if (currentDeviceState.retired !== true && compactInkEncoding) {
-      // Keep the legacy materialized snapshot intact until every registered
-      // device has upgraded and confirmed the exact compact checkpoint.
-      await writeSnapshotPointer(normalizedDocument, checkpoint);
-      await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates);
-      await maybeCompactRootIndex();
+    if (currentDeviceState.retired !== true) {
+      if (compactInkEncoding) {
+        // Keep the legacy materialized snapshot intact until every registered
+        // device has upgraded and confirmed the exact compact checkpoint.
+        await writeSnapshotPointer(normalizedDocument, checkpoint);
+        await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates, {
+          materializationQueueWaitMs,
+        });
+        await maybeCompactRootIndex();
+      } else {
+        // The compact-format compatibility barrier is stricter than the
+        // acknowledgement predicate used by GC. Record the blocked phase
+        // without entering GC's storage checks when any device is behind.
+        await garbageCollectCoveredBatches(normalizedDocument, checkpoint, deviceStates, {
+          compatibilityEligible: false,
+          materializationQueueWaitMs,
+        });
+      }
     }
     return snapshot;
+  }
+
+  // Checkpoint materialization is a per-document transaction: replay, both
+  // checkpoint copies, acknowledgement, GC, and root-index compaction must
+  // not overlap for the same document inside this store instance. In
+  // particular, a replayed stale state must not overwrite a newer checkpoint
+  // after that newer checkpoint's covered batch has been collected.
+  function enqueueDocumentMaterialization(document, work) {
+    const queuedAtMonotonicMs = safeTimingNow();
+    const previous = materializationQueues.get(document.docKey) || Promise.resolve();
+    const task = previous.catch(() => {}).then(async () => {
+      const startedAtMonotonicMs = safeTimingNow();
+      const materializationQueueWaitMs = queuedAtMonotonicMs === null || startedAtMonotonicMs === null
+        ? null : Math.max(0, startedAtMonotonicMs - queuedAtMonotonicMs);
+      return work(materializationQueueWaitMs);
+    });
+    const tracked = task.finally(() => {
+      if (materializationQueues.get(document.docKey) === tracked) {
+        materializationQueues.delete(document.docKey);
+      }
+    });
+    materializationQueues.set(document.docKey, tracked);
+    return tracked;
   }
 
   // Call off the save/close hot path. The operation files remain authoritative;
@@ -1250,29 +1297,136 @@ function createPdfAnnotationStore({
     };
   }
 
-  async function garbageCollectCoveredBatches(document, checkpoint, deviceStates) {
-    if (typeof adapter.remove !== "function" ||
-        !deviceStates.every((entry) => entry.retired || entry.acknowledged)) return 0;
-    const paths = pathsFor(document);
-    const currentCheckpointText = await readTextIfExists(paths.checkpoint);
-    if (!currentCheckpointText || JSON.parse(currentCheckpointText).integrity !== checkpoint.integrity) return 0;
-    const backupText = canonicalJson(checkpoint);
-    await adapter.write(paths.checkpointBackup, backupText);
-    if (await adapter.read(paths.checkpointBackup) !== backupText) {
-      throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED", "Checkpoint backup could not be verified; batch cleanup was skipped.");
-    }
-    let removed = 0;
-    for (const batchPath of await listOperationBatches(document)) {
-      const batch = JSON.parse(await adapter.read(batchPath));
-      const expected = checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
-      if (!expected || expected !== await digestText(canonicalJson(batch))) continue;
-      await adapter.remove(batchPath);
-      if (await adapter.exists(batchPath)) {
-        throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
+  async function garbageCollectCoveredBatches(document, checkpoint, deviceStates, {
+    compatibilityEligible = true,
+    materializationQueueWaitMs = null,
+  } = {}) {
+    const normalized = normalizeDocument(document);
+    const queuedAtMonotonicMs = safeTimingNow();
+    const previous = garbageCollectionQueues.get(normalized.docKey) || Promise.resolve();
+    const task = previous.catch(() => {}).then(() => {
+      const startedAtMonotonicMs = safeTimingNow();
+      const queueWaitMs = queuedAtMonotonicMs === null || startedAtMonotonicMs === null
+        ? null : Math.max(0, startedAtMonotonicMs - queuedAtMonotonicMs);
+      return performGarbageCollection(normalized, checkpoint, deviceStates, {
+        compatibilityEligible,
+        startedAtMonotonicMs,
+        queueWaitMs,
+        materializationQueueWaitMs,
+      });
+    });
+    const tracked = task.finally(() => {
+      if (garbageCollectionQueues.get(normalized.docKey) === tracked) {
+        garbageCollectionQueues.delete(normalized.docKey);
       }
-      removed += 1;
+    });
+    garbageCollectionQueues.set(normalized.docKey, tracked);
+    return tracked;
+  }
+
+  async function performGarbageCollection(document, checkpoint, deviceStates, {
+    compatibilityEligible,
+    startedAtMonotonicMs,
+    queueWaitMs,
+    materializationQueueWaitMs,
+  }) {
+    const paths = pathsFor(document);
+    const startedAtEpochMs = safeEpochNow();
+    let eligible = false;
+    let blocked = false;
+    let status = "error";
+    let candidateBatchCount = 0;
+    let candidateBatchBytes = 0;
+    let removed = 0;
+    let removedBatchBytes = 0;
+    let errorCode;
+    try {
+      eligible = compatibilityEligible === true && typeof adapter.remove === "function" &&
+        deviceStates.every((entry) => entry.retired || entry.acknowledged);
+      if (!eligible) {
+        blocked = true;
+        status = "blocked";
+        return 0;
+      }
+
+      const currentCheckpointText = await readTextIfExists(paths.checkpoint);
+      if (!currentCheckpointText || JSON.parse(currentCheckpointText).integrity !== checkpoint.integrity) {
+        blocked = true;
+        status = "blocked";
+        return 0;
+      }
+      const backupText = canonicalJson(checkpoint);
+      await adapter.write(paths.checkpointBackup, backupText);
+      if (await adapter.read(paths.checkpointBackup) !== backupText) {
+        throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED", "Checkpoint backup could not be verified; batch cleanup was skipped.");
+      }
+      for (const batchPath of await listOperationBatches(document)) {
+        const batchText = await adapter.read(batchPath);
+        const batch = JSON.parse(batchText);
+        const expected = checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+        if (!expected || expected !== await digestText(canonicalJson(batch))) continue;
+        const batchBytes = storedTextByteLength(batchText);
+        candidateBatchCount += 1;
+        candidateBatchBytes += batchBytes;
+        await adapter.remove(batchPath);
+        if (await adapter.exists(batchPath)) {
+          throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
+        }
+        removed += 1;
+        removedBatchBytes += batchBytes;
+      }
+      status = "success";
+      return removed;
+    } catch (error) {
+      status = "error";
+      errorCode = typeof error?.code === "string" ? error.code : "unknown";
+      throw error;
+    } finally {
+      const endedAtMonotonicMs = safeTimingNow();
+      const durationMs = startedAtMonotonicMs === null || endedAtMonotonicMs === null
+        ? null : Math.max(0, endedAtMonotonicMs - startedAtMonotonicMs);
+      emitTiming({
+        phase: "gc",
+        documentId: document.documentId,
+        docKey: document.docKey,
+        revision: checkpoint.revision,
+        checkpointHash: checkpoint.integrity,
+        startedAtEpochMs,
+        startedAtMonotonicMs,
+        queueWaitMs,
+        materializationQueueWaitMs,
+        durationMs,
+        eligible,
+        blocked,
+        status,
+        candidateBatchCount,
+        candidateBatchBytes,
+        removedBatchCount: removed,
+        removedBatchBytes,
+        ...(errorCode ? { errorCode } : {}),
+      });
     }
-    return removed;
+  }
+
+  function safeTimingNow() {
+    try {
+      const value = timingNow();
+      return Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function emitTiming(details) {
+    if (typeof onTiming !== "function") return;
+    try {
+      const result = onTiming(details);
+      if (result && typeof result.then === "function") {
+        void Promise.resolve(result).catch(() => {});
+      }
+    } catch {
+      // Diagnostics must never affect checkpoint or garbage-collection safety.
+    }
   }
 
   async function retireDevice({ document, targetDeviceId, confirmedCheckpointHash } = {}) {
@@ -1656,6 +1810,27 @@ function utf8(value) {
   const bytes = new Uint8Array(escaped.length);
   for (let index = 0; index < escaped.length; index += 1) bytes[index] = escaped.charCodeAt(index);
   return bytes;
+}
+
+function defaultTimingNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function safeEpochNow() {
+  try {
+    const value = Date.now();
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storedTextByteLength(value) {
+  try {
+    return utf8(typeof value === "string" ? value : String(value)).byteLength;
+  } catch {
+    return 0;
+  }
 }
 
 function finiteNumber(value, name) {

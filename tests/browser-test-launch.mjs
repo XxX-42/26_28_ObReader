@@ -19,6 +19,24 @@ function safeTestName(value) {
   return slug || "browser-test";
 }
 
+export function mergeBrowserTestEnvironment(baseEnvironment, overrides = {}, platform = process.platform) {
+  if (platform !== "win32") return { ...baseEnvironment, ...overrides };
+
+  const environment = {};
+  const existingKeys = new Map();
+  for (const source of [baseEnvironment, overrides]) {
+    for (const [key, value] of Object.entries(source || {})) {
+      const normalized = key.toLowerCase();
+      const previousKey = existingKeys.get(normalized);
+      if (previousKey) delete environment[previousKey];
+      const outputKey = normalized === "path" ? "PATH" : key;
+      environment[outputKey] = value;
+      existingKeys.set(normalized, outputKey);
+    }
+  }
+  return environment;
+}
+
 function errorSummary(error) {
   return {
     name: String(error?.name || "Error").slice(0, 100),
@@ -217,11 +235,8 @@ export async function launchTestBrowser(
     throw error;
   }
 
-  const childEnvironment = {
-    ...process.env,
-    ...(launchOptions.env || {}),
-    BREAKPAD_DUMP_LOCATION: metadata.crashpadDirectory,
-  };
+  const childEnvironment = mergeBrowserTestEnvironment(process.env, launchOptions.env || {});
+  childEnvironment.BREAKPAD_DUMP_LOCATION = metadata.crashpadDirectory;
   let browser;
   try {
     browser = await puppeteer.launch({ ...launchOptions, env: childEnvironment });

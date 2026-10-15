@@ -18,6 +18,7 @@ import {
   observeBrowserTestChildStderr,
   processIdentityMatches,
   readPosixProcessTable,
+  readWindowsProcess,
   sampleOwnedBrowserProcess,
 } from "./browser-test-cleanup.mjs";
 
@@ -40,10 +41,10 @@ async function launchControlledBrowserProcess({ ignoreTerm, profileDirectory }) 
   return child;
 }
 
-async function launchNaturallyClosingProcess(profileDirectory) {
+async function launchNaturallyClosingProcess(profileDirectory, { closeAfterMs = 50 } = {}) {
   const child = spawn(
     process.execPath,
-    ["-e", "setTimeout(() => process.exit(0), 50); setInterval(() => {}, 1000);", "--", `--user-data-dir=${profileDirectory}`],
+    ["-e", `setTimeout(() => process.exit(0), ${closeAfterMs}); setInterval(() => {}, 1000);`, "--", `--user-data-dir=${profileDirectory}`],
     {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -398,9 +399,9 @@ test("a timed out owned-page preparation does not renew the close deadline or sk
   const browser = {
     process: () => null,
     isConnected: () => connected,
-    async close() {
+    close() {
       events.push("browser.close");
-      connected = false;
+      return new Promise(() => {});
     },
     disconnect() { connected = false; },
   };
@@ -475,12 +476,18 @@ test("browser cleanup accepts only a zero-exit owned browser process as natural"
     await rm(root, { recursive: true, force: true });
   });
 
-  child = await launchNaturallyClosingProcess(profileDirectory);
+  // Keep the owned process alive while cleanup captures and validates its
+  // identity. Browser.close then requests its natural zero exit over IPC.
+  child = await launchBrowserCloseControlledProcess(profileDirectory);
   const report = await cleanupBrowserTestResources({
     browser: {
       process: () => child,
       isConnected: () => typeof child.exitCode !== "number" && child.signalCode === null,
-      close: () => once(child, "exit"),
+      close: () => {
+        const exited = once(child, "exit");
+        child.send("browser-close");
+        return exited;
+      },
       disconnect() {},
     },
     browserTimeoutMs: 1_000,
@@ -761,12 +768,25 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-inherited-stderr-test-"));
   const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-inherited-stderr");
   await mkdir(profileDirectory);
-  const descendantScript = "setTimeout(() => process.exit(0), 2000); setInterval(() => {}, 1000); process.send('ready');";
+  const descendantScript = [
+    "process.on('message', message => { if (message === 'release') process.send('released', () => process.exit(0)); });",
+    "process.on('disconnect', () => process.exit(0));",
+    "process.send('ready');",
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
   const source = [
     "const { spawn } = require('node:child_process');",
-    `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: ['ignore', 'ignore', 2, 'ipc'] });`,
-    "descendant.once('message', () => process.stdout.write('ready:' + descendant.pid + '\\n'));",
-    "process.on('message', (message) => { if (message === 'exit-now') process.exit(0); });",
+    "let descendant = null;",
+    "process.on('message', message => {",
+    `if (message === 'start-descendant' && !descendant) { descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { detached: true, stdio: ['ignore', 'ignore', 2, 'ipc'] });`,
+    "descendant.on('message', descendantMessage => {",
+    "if (descendantMessage === 'ready') process.send({ type: 'ready', pid: descendant.pid });",
+    "else if (descendantMessage === 'released') process.exit(0);",
+    "});",
+    "} else if (message === 'observe-close' && descendant) process.send({ type: 'close-observed', pid: descendant.pid });",
+    "else if (message === 'release-descendant' && descendant) descendant.send('release');",
+    "});",
+    "setInterval(() => {}, 1000);",
   ].join(" ");
   const child = spawn(
     process.execPath,
@@ -782,8 +802,11 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   });
 
   await once(child, "spawn");
-  const [ready] = await once(child.stdout, "data");
-  const grandchildPid = Number(String(ready).match(/ready:(\d+)/)?.[1]);
+  const descendantReady = once(child, "message");
+  child.send("start-descendant");
+  const [ready] = await descendantReady;
+  assert.equal(ready?.type, "ready");
+  const grandchildPid = Number(ready.pid);
   assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0);
   const browser = new EventEmitter();
   browser.connected = true;
@@ -792,9 +815,11 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   let closeResolvedAt = null;
   let childExitedAt = null;
   let disconnectedAt = null;
+  let closeObservedAt = null;
   let childAliveAtDisconnect = false;
   let pipesOpenAtDisconnect = false;
   let descendantAliveAtClose = false;
+  let descendantLivenessAtClose = null;
   browser.close = () => {
     const childClosed = once(child, "close");
     childAliveAtDisconnect = child.exitCode === null && child.signalCode === null;
@@ -802,15 +827,25 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
     disconnectedAt = Date.now();
     browser.connected = false;
     browser.emit("disconnected");
-    child.send("exit-now");
-    return childClosed.then(() => {
-      closeResolvedAt = Date.now();
+    const closeObservation = once(child, "message");
+    child.send("observe-close");
+    return closeObservation.then(([message]) => {
+      if (message?.type !== "close-observed" || message.pid !== grandchildPid) {
+        throw new Error(`Unexpected close observation handshake: ${JSON.stringify(message)}`);
+      }
+      closeObservedAt = Date.now();
       try {
         process.kill(grandchildPid, 0);
         descendantAliveAtClose = true;
+        descendantLivenessAtClose = { alive: true };
       } catch (error) {
         descendantAliveAtClose = error?.code === "EPERM";
+        descendantLivenessAtClose = { alive: descendantAliveAtClose, errorCode: error?.code || null };
       }
+      child.send("release-descendant");
+      return childClosed;
+    }).then(() => {
+      closeResolvedAt = Date.now();
     });
   };
   browser.disconnect = () => {
@@ -835,6 +870,10 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   assert.equal(report.browser.process.exitCode, 0);
   assert.equal(report.browser.process.signalCode, null);
   assert.equal(report.browser.process.profileIdentityValidatedAtStart, true);
+  assert.equal(report.browser.process.identity.validated, true);
+  assert.equal(report.browser.process.identity.pid, child.pid);
+  assert.equal(report.browser.process.identity.executableValidated, true);
+  assert.equal(report.browser.process.identity.profileValidated, true);
   assert.equal(report.browser.process.processGroupValidatedAtStart, false, "the pipe holder must not be treated as an owned browser-group member");
   assert.equal(report.browser.releasedExitedProcessPipes, true);
   assert.ok(closeResolvedAt !== null);
@@ -843,9 +882,12 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   assert.ok(disconnectedAt < childExitedAt, "the simulated CDP disconnect should arrive while the browser child is alive");
   assert.equal(childAliveAtDisconnect, true);
   assert.equal(pipesOpenAtDisconnect, true, "owned streams must stay open until the child exits");
-  assert.ok(closeResolvedAt - startedAt < closeDeadlineMs);
+  assert.ok(closeObservedAt !== null);
+  assert.ok(closeObservedAt < childExitedAt, "the descendant liveness gate must be observed before releasing it and exiting the owned child");
+  assert.ok(closeResolvedAt < report.browser.timings.closeDeadlineAt,
+    "the child pipes must be released before the close deadline measured after identity capture");
   assert.ok(closeResolvedAt >= childExitedAt, "close must not finish before child exit");
-  assert.equal(descendantAliveAtClose, true, "the simulated Crashpad descendant must still hold stderr when close finishes");
+  assert.equal(descendantAliveAtClose, true, `the simulated Crashpad descendant must still hold stderr at close observation, before the explicit release gate: ${JSON.stringify({ descendantLivenessAtClose, elapsedMs: closeResolvedAt - startedAt })}`);
   assert.deepEqual(report.browser.termination, []);
   assert.deepEqual(report.errors, []);
   assert.equal(await waitForPidExit(grandchildPid, 2_500), true, "the unowned fixture descendant must exit on its own within the bound");
@@ -863,6 +905,38 @@ test("process identity matching requires the exact nonempty birth timestamp", ()
   assert.equal(processIdentityMatches({ ...baseline, startedAt: "Mon Oct 12 09:30:01 2026" }, baseline), false);
 });
 
+test("Windows process lookup is targeted, asynchronous, and bounded", async () => {
+  let invocation;
+  const processRow = {
+    pid: 52_468,
+    parentPid: 52_000,
+    executablePath: String.raw`C:\Program Files\Browser\chrome.exe`,
+    commandLine: String.raw`"C:\Program Files\Browser\chrome.exe" --user-data-dir=C:\temp\puppeteer_dev_chrome_profile-owned`,
+    startedAt: "20261015123456.000000+480",
+  };
+  const result = await readWindowsProcess(52_468, async (command, args, options) => {
+    invocation = { command, args, options };
+    return { stdout: JSON.stringify(processRow), stderr: "" };
+  });
+
+  assert.equal(invocation.command, "powershell.exe");
+  assert.deepEqual(invocation.args.slice(0, 3), ["-NoLogo", "-NoProfile", "-NonInteractive"]);
+  assert.match(invocation.args.at(-1), /ProcessId = \$processId/);
+  assert.match(invocation.args.at(-1), /\$processId = 52468/);
+  assert.ok(Number.isFinite(invocation.options.timeout) && invocation.options.timeout > 0 &&
+    invocation.options.timeout <= 5_000);
+  assert.equal(invocation.options.windowsHide, true);
+  assert.deepEqual(result, {
+    pid: 52_468,
+    parentPid: 52_000,
+    groupId: null,
+    state: "R",
+    startedAt: "20261015123456.000000+480",
+    executablePath: String.raw`C:\Program Files\Browser\chrome.exe`,
+    commandLine: String.raw`"C:\Program Files\Browser\chrome.exe" --user-data-dir=C:\temp\puppeteer_dev_chrome_profile-owned`,
+  });
+});
+
 test("owned-process sampling refuses an identity with a missing birth timestamp", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-sample-identity-test-"));
   const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-sample");
@@ -874,7 +948,17 @@ test("owned-process sampling refuses an identity with a missing birth timestamp"
   });
 
   child = await launchControlledBrowserProcess({ ignoreTerm: false, profileDirectory });
-  const ownership = await captureOwnedBrowserIdentity(child);
+  const processQuery = async (command) => {
+    assert.equal(command, "ps");
+    return {
+      stdout: `${child.pid} ${process.pid} ${child.pid} S Mon Oct 12 09:30:00 2026 ${child.spawnfile} --user-data-dir=${profileDirectory}`,
+      stderr: "",
+    };
+  };
+  const ownership = await captureOwnedBrowserIdentity(child, {
+    processQuery,
+    platform: "darwin",
+  });
   assert.equal(ownership.available, true);
   const staleIdentity = {
     ...ownership,
@@ -883,7 +967,8 @@ test("owned-process sampling refuses an identity with a missing birth timestamp"
   const result = await sampleOwnedBrowserProcess(
     child,
     staleIdentity,
-    path.join(root, "must-not-sample.txt"),
+    "/tmp/must-not-sample.txt",
+    { processQuery, platform: "darwin" },
   );
 
   assert.equal(result.state, "skipped");

@@ -6,16 +6,18 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
 
-function createHarness() {
+function createHarness({
+  storedFiles = new Map(),
+  directories = new Set([".obsidian"]),
+  inspectLegacy = null,
+} = {}) {
   const notices = [];
   const files = new Map();
-  const storedFiles = new Map();
-  const directories = new Set([".obsidian"]);
   const leaves = [];
   const vaultEvents = new Map();
   const workspaceEvents = new Map();
@@ -124,6 +126,7 @@ function createHarness() {
       this.extension = path.extname(filePath).slice(1);
       this.basename = path.basename(filePath, path.extname(filePath));
       this.bytes = Uint8Array.from(bytes);
+      this.stat = { size: this.bytes.byteLength, mtime: 1 };
       this.reads = 0;
       this.writes = 0;
     }
@@ -473,6 +476,12 @@ function createHarness() {
   };
 
   const plugin = new moduleObject.exports(app, { id: "pdf-web-reader" });
+  if (inspectLegacy) {
+    plugin.legacyMergeClient = {
+      inspect: inspectLegacy,
+      dispose() {},
+    };
+  }
   return {
     app,
     files,
@@ -571,6 +580,135 @@ async function createControlledReader(harness, file) {
   };
 }
 
+async function confirmViewerPageIdentity(harness, reader, {
+  pageCount = 1,
+  orderedPageIdentities = ["4 0 R"],
+} = {}) {
+  const { view } = reader;
+  const message = {
+    type: "annotation-source-identity",
+    documentId: view.documentId,
+    openRequest: view.openRequest,
+    pageCount,
+    orderedPageIdentities,
+  };
+  await harness.plugin.annotationHost.handleMessage(view, message);
+  return message;
+}
+
+async function createSidecarReader(harness, file, identity = {}) {
+  const reader = await createControlledReader(harness, file);
+  const { view, frame } = reader;
+  view.ready = false;
+  view.onMessage({
+    source: frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: view.token,
+      type: "ready",
+      rendererGeneration: view.rendererGeneration,
+    },
+  });
+  const open = reader.sent.find((message) => message.type === "open");
+  assert.ok(open, "the ready Viewer receives its PDF and provisional sidecar snapshot");
+  view.onMessage({
+    source: frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: view.token,
+      type: "opened",
+      documentId: view.documentId,
+      openRequest: view.openRequest,
+      revision: 0,
+      confirmedRevision: 0,
+      dirty: false,
+      restorePaused: false,
+    },
+  });
+  await confirmViewerPageIdentity(harness, reader, identity);
+  return reader;
+}
+
+async function waitForSentMessage(reader, predicate, attempts = 100) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const message = reader.sent.find(predicate);
+    if (message) return message;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail("Timed out waiting for the expected Viewer bridge message");
+}
+
+async function saveSidecarOperations(reader, {
+  requestId = "sidecar-save",
+  revision = 1,
+  batchId,
+  operations = [{
+    uuid: `annotation-${requestId}`,
+    kind: "Highlight",
+    pageIndex: 0,
+    deleted: false,
+    payload: { editor: { type: "highlight", color: [1, 1, 0] } },
+  }],
+  origin = "manual",
+} = {}) {
+  const { view } = reader;
+  await view.saveFile(null, view.documentId, requestId, revision, origin, {
+    openRequest: view.openRequest,
+    batchId,
+    operations,
+  });
+  return reader.sent.at(-1);
+}
+
+async function seedRecoveryCandidate(harness, {
+  candidateId,
+  originalPath = "Books/recovered.pdf",
+  filename = path.basename(originalPath),
+  bytes,
+  status = "draft",
+  requestId = candidateId,
+  reason = "legacy-recovery",
+  rawmeta = false,
+  primary = true,
+  metadataOverrides = {},
+} = {}) {
+  const data = Uint8Array.from(bytes || []);
+  const directory = `${harness.app.vault.configDir}/plugins/${harness.plugin.manifest.id}/.recovery`;
+  const metadataPath = `${directory}/${candidateId}.json`;
+  const candidatePath = `${directory}/${candidateId}.pdf`;
+  const metadata = {
+    schema: 1,
+    documentId: `legacy-${candidateId}`,
+    candidateId,
+    originalPath,
+    filename,
+    openRequest: 1,
+    revision: 1,
+    origin: "recovery",
+    requestId,
+    reason,
+    candidateFile: `${candidateId}.pdf`,
+    createdAt: "2026-10-14T01:00:00.000Z",
+    status,
+    completed: true,
+    outputHash: createHash("sha256").update(data).digest("hex"),
+    outputLength: data.byteLength,
+    ...metadataOverrides,
+  };
+  await harness.app.vault.adapter.mkdir(directory);
+  await harness.app.vault.adapter.writeBinary(candidatePath,
+    data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+  if (primary) await harness.app.vault.adapter.write(metadataPath, JSON.stringify(metadata));
+  if (rawmeta) await harness.app.vault.adapter.write(`${directory}/${candidateId}.rawmeta`, JSON.stringify(metadata));
+  return {
+    metadata,
+    directory,
+    metadataPath,
+    candidatePath,
+    rawmetaPath: `${directory}/${candidateId}.rawmeta`,
+  };
+}
+
 function attachReadersToPopout(harness, readers, ownerWindow = harness.makeWindow()) {
   const ownerDocument = readers[0].view.contentEl.ownerDocument;
   ownerDocument.defaultView = ownerWindow;
@@ -662,23 +800,34 @@ test("mobile host save slots reject stale queued Readers and accept only the mat
   harness.plugin.heavyWork.dispose();
 });
 
-test("an explicit close destroys a failed apply renderer before force-releasing its pending work", async () => {
+test("an explicit close tears down a renderer that cannot confirm flush without changing the PDF", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const file = new harness.TFile("Books/failed-apply.pdf", [1, 2, 3]);
+  const file = new harness.TFile("Books/failed-flush-close.pdf", [1, 2, 3]);
   const reader = await createControlledReader(harness, file);
-  let forced = false;
-  harness.plugin.pdfSync.closeView = async (_view, _reason, options) => {
-    if (!options?.force) throw Object.assign(new Error("injected PDF.js close failure"), { code: "SYNC_APPLY_CANCEL_FAILED" });
-    assert.equal(reader.frame.removed, true, "The renderer must stop before releasing its save slot");
-    forced = true;
-  };
-  await reader.view.onClose();
-  assert.equal(forced, true);
+  const closing = reader.view.onClose();
+  await settleMicrotasks();
+  const flush = reader.sent.find((message) => message.type === "flush");
+  assert.ok(flush, "close asks the Viewer to confirm its latest annotation state");
+  reader.view.onMessage({
+    source: reader.frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: reader.view.token,
+      type: "flushed",
+      documentId: reader.view.documentId,
+      id: flush.id,
+      ok: false,
+      dirty: true,
+      recovered: false,
+    },
+  });
+  await closing;
   assert.equal(harness.plugin.views.has(reader.view), false);
-  assert.equal(reader.sent.some(m => m.type === "flush"), false, "Do not serialize a destroyed Reader");
+  assert.equal(reader.frame.removed, true, "explicit SDK teardown still removes the unresponsive renderer");
   assert.deepEqual([...file.bytes], [1, 2, 3]);
-  assert.ok(harness.notices.some(message => message.includes("本地恢复副本保留")));
+  assert.equal(file.writes, 0);
+  assert.ok(harness.notices.some(message => message.includes("尚有未确认的批注操作")));
 });
 
 test("merge metadata preserves the Obsidian EditableFileView syncState method", async () => {
@@ -710,6 +859,158 @@ test("different PDF paths receive distinct leaves and reopening reuses its file 
   assert.equal(harness.leaves[1].view.requestedPath, second.path);
 });
 
+test("ACTIVE_DAILY_SIDECAR keeps the PDF immutable and restores durable operations in a new session", async () => {
+  const storedFiles = new Map();
+  const directories = new Set([".obsidian"]);
+  const original = Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55, 10, 1, 2, 3]);
+  const firstHarness = createHarness({ storedFiles, directories });
+  await firstHarness.plugin.onload();
+  const firstFile = new firstHarness.TFile("Books/daily-sidecar.pdf", original);
+  const firstReader = await createSidecarReader(firstHarness, firstFile, {
+    pageCount: 1,
+    orderedPageIdentities: ["12 0 R"],
+  });
+  const documentId = firstReader.view.documentId;
+  const saved = await saveSidecarOperations(firstReader, {
+    requestId: "daily-highlight-1",
+    batchId: "daily-sidecar-batch-1",
+    revision: 1,
+    operations: [{
+      uuid: "daily-highlight-1",
+      kind: "Highlight",
+      pageIndex: 0,
+      deleted: false,
+      payload: { editor: { type: "highlight", color: [1, 0.9, 0] } },
+    }],
+  });
+
+  assert.equal(saved.type, "saved");
+  assert.equal(saved.external, true);
+  assert.equal(saved.operationCount, 1);
+  assert.deepEqual(firstFile.bytes, original);
+  assert.equal(firstFile.writes, 0, "ordinary annotation save never writes the source PDF");
+  assert.equal(firstReader.sent.some((message) => message.type === "export-copy"), false,
+    "ordinary annotation persistence never asks the Viewer to serialize an export PDF");
+  const operationPath = [...storedFiles.keys()].find((path) =>
+    path.includes("/ops/") && path.endsWith(".json"));
+  assert.ok(operationPath, "the immutable sidecar operation batch is durable before ACK");
+  assert.equal(JSON.parse(String(storedFiles.get(operationPath))).batchId, "daily-sidecar-batch-1");
+  firstHarness.plugin.onunload();
+
+  const secondHarness = createHarness({ storedFiles, directories });
+  await secondHarness.plugin.onload();
+  const reopenedFile = new secondHarness.TFile("Books/daily-sidecar.pdf", original);
+  const reopened = await createSidecarReader(secondHarness, reopenedFile, {
+    pageCount: 1,
+    orderedPageIdentities: ["12 0 R"],
+  });
+  assert.equal(reopened.view.documentId, documentId, "the source path reopens the same annotation identity");
+  const restored = Object.values(reopened.view.annotationSyncState.annotations || {})
+    .find((operation) => operation.uuid === "daily-highlight-1");
+  assert.equal(restored?.payload?.editor?.type, "highlight");
+  assert.deepEqual(reopenedFile.bytes, original);
+  assert.equal(reopenedFile.writes, 0);
+  secondHarness.plugin.onunload();
+});
+
+test("ACTIVE_EXPLICIT_EXPORT creates a separate PDF only after an explicit Viewer export response", async () => {
+  const sourcePdf = await PDFDocument.create();
+  sourcePdf.addPage([300, 400]);
+  const sourceBytes = new Uint8Array(await sourcePdf.save());
+  const exportPdf = await PDFDocument.create();
+  exportPdf.addPage([300, 400]);
+  exportPdf.setTitle("PDF Reader export with external annotations");
+  const exportBytes = new Uint8Array(await exportPdf.save());
+
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/export-source.pdf", sourceBytes);
+  const reader = await createSidecarReader(harness, file);
+  harness.app.workspace.activeLeaf = reader.leaf;
+  const command = harness.plugin.commands.get("export-pdf-with-external-annotations");
+  assert.ok(command, "the explicit export command remains registered");
+
+  command.callback();
+  const request = reader.sent.find((message) => message.type === "export-copy");
+  assert.ok(request, "the host asks the active Viewer for an export only after user invocation");
+  assert.deepEqual(file.bytes, sourceBytes);
+  assert.equal(file.writes, 0);
+  reader.view.onMessage({
+    source: reader.frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: reader.view.token,
+      type: "export-ready",
+      requestId: request.requestId,
+      documentId: request.documentId,
+      openRequest: request.openRequest,
+      data: exportBytes.buffer.slice(exportBytes.byteOffset, exportBytes.byteOffset + exportBytes.byteLength),
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const outputPath = "Books/export-source (PDF Reader Export).pdf";
+  const output = harness.files.get(outputPath);
+  assert.ok(output, "the explicit export produces a new visible PDF file");
+  assert.deepEqual(output.bytes, exportBytes);
+  assert.deepEqual(file.bytes, sourceBytes, "export does not mutate the source PDF");
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
+});
+
+test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without editing the PDF", async () => {
+  const storedFiles = new Map();
+  const directories = new Set([".obsidian"]);
+  const original = new TextEncoder().encode("%PDF-1.7\n/ObReaderMerge\nlegacy annotation fixture\n%%EOF");
+  let inspections = 0;
+  const inspectLegacy = async ({ bytes, fastOpen }) => {
+    inspections += 1;
+    assert.equal(fastOpen, true);
+    assert.deepEqual(new Uint8Array(bytes), original,
+      "the inspector receives the exact source bytes before identity migration");
+    return { identities: [
+      { uuid: "migrated-live-ink", ref: "42 0 R", pageIndex: 0, kind: "ink", deleted: false },
+      { uuid: "migrated-deleted-mark", ref: "43 0 R", pageIndex: 0, kind: "highlight", deleted: true,
+        timestamp: 100, logical: 1, actorId: "old-device", operationId: "old-delete-op" },
+    ] };
+  };
+  const harness = createHarness({ storedFiles, directories, inspectLegacy });
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/legacy-sidecar.pdf", original);
+  const reader = await createSidecarReader(harness, file, {
+    pageCount: 1,
+    orderedPageIdentities: ["9 0 R"],
+  });
+
+  assert.equal(inspections, 1);
+  assert.equal(reader.view.annotationLegacyIdentityUncertain, false);
+  assert.equal(reader.view.annotationHydrationAllowed, true);
+  assert.equal(reader.view.annotationDocument.legacyIdentityScanComplete, true);
+  assert.deepEqual(reader.view.annotationDocument.legacyIdentities.map(({ uuid, ref }) => ({ uuid, ref })), [
+    { uuid: "migrated-live-ink", ref: "42 0 R" },
+  ]);
+  const stored = await harness.plugin.annotationHost.store.readDocument(reader.view.annotationDocument);
+  const deleted = stored.tombstones.find((operation) => operation.uuid === "migrated-deleted-mark");
+  assert.ok(deleted, "legacy deleted identity becomes a durable sidecar tombstone");
+  assert.equal(deleted.embeddedRef, "43 0 R");
+  assert.deepEqual(file.bytes, original, "legacy migration leaves embedded PDF bytes unchanged");
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
+
+  const reopenedHarness = createHarness({ storedFiles, directories, inspectLegacy });
+  await reopenedHarness.plugin.onload();
+  const reopenedFile = new reopenedHarness.TFile("Books/legacy-sidecar.pdf", original);
+  const reopened = await createSidecarReader(reopenedHarness, reopenedFile, {
+    pageCount: 1,
+    orderedPageIdentities: ["9 0 R"],
+  });
+  assert.equal(reopened.view.annotationDocument.legacyIdentityScanComplete, true,
+    "the completed inspection is durable and is not repeated at the next open");
+  assert.equal(inspections, 1);
+  assert.deepEqual(reopenedFile.bytes, original);
+  reopenedHarness.plugin.onunload();
+});
+
 test("host ignores stale source, token, and document messages", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -738,190 +1039,202 @@ test("host ignores stale source, token, and document messages", async () => {
   assert.equal(view.ready, false);
 });
 
-test("host refuses mismatched/conflicting saves and acknowledges a valid write", async () => {
+test("host refuses wrong-session or externally changed annotation saves and durably ACKs a valid sidecar batch", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/current.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const view = harness.createView();
-  const replies = [];
-  const frame = {
-    postMessage: (message) => replies.push(message),
+  const reader = await createSidecarReader(harness, file);
+  const { view } = reader;
+  const operation = {
+    uuid: "current-highlight",
+    kind: "Highlight",
+    pageIndex: 0,
+    deleted: false,
+    payload: { editor: { color: [1, 0, 0] } },
   };
-  view.iframe = { contentWindow: frame };
-  view.file = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  harness.plugin.setDocumentBaseline(file.path, view.originalBytes);
-  view.statusEl = {
-    setText() {},
-    toggleClass() {},
-  };
-  const incoming = vm.runInNewContext("new Uint8Array([4, 5, 6]).buffer");
 
-  await view.saveFile(incoming, "other-session", "request-mismatch", 1, "manual");
+  await view.saveFile(null, "other-session", "request-mismatch", 1, "manual", {
+    openRequest: view.openRequest,
+    operations: [operation],
+  });
   assert.equal(file.writes, 0);
-  assert.equal(replies.at(-1).code, "document-mismatch");
-  assert.equal(replies.at(-1).requestId, "request-mismatch");
-  assert.deepEqual([...view.originalBytes], [1, 2, 3]);
+  assert.equal(reader.sent.at(-1).code, "document-mismatch");
+  assert.equal(reader.sent.at(-1).requestId, "request-mismatch");
+  assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
+  assert.equal((await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument)).length, 0);
 
-  file.bytes = Uint8Array.from([8, 8, 8]);
-  await view.saveFile(incoming, view.documentId, "request-conflict", 2, "auto");
+  file.stat.mtime += 1;
+  await view.saveFile(null, view.documentId, "request-conflict", 2, "auto", {
+    openRequest: view.openRequest,
+    operations: [operation],
+  });
   assert.equal(file.writes, 0);
-  assert.equal(replies.at(-1).code, "conflict");
-  assert.equal(replies.at(-1).requestId, "request-conflict");
-  assert.deepEqual([...view.originalBytes], [1, 2, 3]);
-  assert.equal((await harness.plugin.listRecoveryCandidates()).length, 1);
+  assert.equal(reader.sent.at(-1).code, "PDF_ANNOTATION_SOURCE_CHANGED");
+  assert.equal(reader.sent.at(-1).requestId, "request-conflict");
+  assert.equal((await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument)).length, 0);
 
-  file.bytes = Uint8Array.from([1, 2, 3]);
-  await view.saveFile(incoming, view.documentId, "request-success", 3, "manual");
-  assert.equal(file.writes, 1);
-  assert.deepEqual([...file.bytes], [4, 5, 6]);
-  assert.deepEqual([...view.originalBytes], [4, 5, 6]);
-  assert.equal(replies.at(-1).type, "saved");
-  assert.equal(replies.at(-1).documentId, view.documentId);
-  assert.equal(replies.at(-1).requestId, "request-success");
-  assert.equal(replies.at(-1).revision, 3);
-  assert.equal((await harness.plugin.listRecoveryCandidates()).length, 1,
-    "A later successful save must not erase an earlier conflict candidate");
+  file.stat.mtime -= 1;
+  const saved = await saveSidecarOperations(reader, {
+    requestId: "request-success",
+    revision: 3,
+    operations: [operation],
+  });
+  assert.equal(saved.type, "saved");
+  assert.equal(saved.external, true);
+  assert.equal(saved.documentId, view.documentId);
+  assert.equal(saved.requestId, "request-success");
+  assert.equal(saved.revision, 3);
+  assert.equal(saved.operationCount, 1);
+  assert.equal(file.writes, 0);
+  assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
 });
 
-test("two views of one PDF serialize writes and preserve the stale view as a recovery candidate", async () => {
+test("two views of one PDF serialize durable sidecar batches without overwriting the PDF", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/shared.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const makeOpenView = () => {
-    const view = harness.createView();
-    const replies = [];
-    view.file = file;
-    view.requestedPath = file.path;
-    view.originalBytes = Uint8Array.from([1, 2, 3]);
-    view.iframe = { contentWindow: { postMessage: (message) => replies.push(message) } };
-    view.statusEl = { setText() {}, toggleClass() {} };
-    return { view, replies };
-  };
-  const first = makeOpenView();
-  const second = makeOpenView();
-  harness.plugin.setDocumentBaseline(file.path, [1, 2, 3]);
+  const first = await createSidecarReader(harness, file);
+  const second = await createSidecarReader(harness, file);
+  assert.equal(first.view.documentId, second.view.documentId);
 
-  await Promise.all([
-    first.view.saveFile(Uint8Array.from([4, 4, 4]).buffer, first.view.documentId, "first", 1, "auto"),
-    second.view.saveFile(Uint8Array.from([5, 5, 5]).buffer, second.view.documentId, "second", 1, "auto"),
+  const [firstAck, secondAck] = await Promise.all([
+    saveSidecarOperations(first, {
+      requestId: "first-view-operation",
+      batchId: "first-view-batch",
+      operations: [{ uuid: "first-view-highlight", kind: "Highlight", pageIndex: 0,
+        deleted: false, payload: { editor: { color: [1, 0, 0] } } }],
+    }),
+    saveSidecarOperations(second, {
+      requestId: "second-view-operation",
+      batchId: "second-view-batch",
+      operations: [{ uuid: "second-view-highlight", kind: "Highlight", pageIndex: 0,
+        deleted: false, payload: { editor: { color: [0, 1, 0] } } }],
+    }),
   ]);
 
-  assert.equal(file.writes, 1);
-  assert.deepEqual([...file.bytes], [4, 4, 4]);
-  assert.equal(first.replies.at(-1).type, "saved");
-  assert.equal(second.replies.at(-1).code, "conflict");
-  assert.equal(harness.notices.length, 1, "Successful auto-save stays quiet; only the conflict notifies");
-  const candidates = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidates.length, 1);
-  assert.deepEqual(
-    [...new Uint8Array(await harness.app.vault.adapter.readBinary(candidates[0].candidatePath))],
-    [5, 5, 5],
-  );
+  assert.equal(firstAck.type, "saved");
+  assert.equal(secondAck.type, "saved");
+  assert.equal(file.writes, 0);
+  assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
+  const batches = await harness.plugin.annotationHost.store.listOperationBatches(first.view.annotationDocument);
+  assert.equal(batches.length, 2);
+  const snapshot = await harness.plugin.annotationHost.store.readDocument(first.view.annotationDocument);
+  assert.deepEqual(snapshot.annotations.map((operation) => operation.uuid).sort(), [
+    "first-view-highlight",
+    "second-view-highlight",
+  ], "the checkpoint replay contains both independently serialized view batches");
 });
 
-test("a queued save cannot write old PDF bytes into a newly selected PDF", async () => {
+test("a queued annotation save stays with its source PDF when the Reader switches documents", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const first = new harness.TFile("Books/first-queued.pdf", [1, 2, 3]);
   const second = new harness.TFile("Books/second-queued.pdf", [7, 7, 7]);
   harness.files.set(first.path, first);
   harness.files.set(second.path, second);
-  const view = harness.createView();
-  view.file = first;
-  view.requestedPath = first.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.iframe = { contentWindow: { postMessage() {} } };
-  harness.plugin.setDocumentBaseline(first.path, view.originalBytes);
-
+  const reader = await createSidecarReader(harness, first);
+  const { view } = reader;
+  const originalDocument = view.annotationDocument;
   let releaseQueue;
+  let startedQueue;
+  const queuedWriteStarted = new Promise((resolve) => { startedQueue = resolve; });
   const gate = new Promise((resolve) => { releaseQueue = resolve; });
-  const blocker = harness.plugin.enqueueSave(() => gate);
-  const queuedSave = view.saveFile(
-    Uint8Array.from([4, 4, 4]).buffer,
-    view.documentId,
-    "queued-old-document",
-    9,
-    "auto",
-  );
+  const adapter = harness.app.vault.adapter;
+  const originalWrite = adapter.write.bind(adapter);
+  let firstOperationWrite = true;
+  adapter.write = async (filePath, value) => {
+    if (firstOperationWrite && filePath.includes("/ops/") &&
+        filePath.includes("queued-old-document-batch") && filePath.endsWith(".pending")) {
+      firstOperationWrite = false;
+      startedQueue();
+      await gate;
+    }
+    return originalWrite(filePath, value);
+  };
+  const queuedSave = saveSidecarOperations(reader, {
+    requestId: "queued-old-document",
+    batchId: "queued-old-document-batch",
+    revision: 9,
+    operations: [{ uuid: "queued-old-annotation", kind: "Ink", pageIndex: 0,
+      deleted: false, payload: { editor: { paths: [[0, 0, 1, 1]] } } }],
+  });
   const oldDocumentId = view.documentId;
-
-  // Exercise the host's queued-write identity guard while a new open request
-  // supersedes the old renderer, without faking an impossible clean close ack
-  // while the old save is still queued.
+  await queuedWriteStarted;
   await view.openFile(second);
   assert.notEqual(view.documentId, oldDocumentId);
   releaseQueue();
-  await blocker;
   await queuedSave;
 
   assert.equal(first.writes, 0);
   assert.equal(second.writes, 0);
   assert.deepEqual([...second.bytes], [7, 7, 7]);
   assert.equal(view.saving, false);
-  const [candidate] = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidate.metadata.originalPath, first.path);
-  assert.equal(candidate.metadata.filename, first.basename);
-  assert.equal(candidate.metadata.documentId, oldDocumentId);
-  assert.deepEqual(
-    [...new Uint8Array(await harness.app.vault.adapter.readBinary(candidate.candidatePath))],
-    [4, 4, 4],
-  );
+  assert.equal(reader.sent.at(-1).code, "PDF_ANNOTATION_SESSION_CHANGED");
+  const oldBatches = await harness.plugin.annotationHost.store.listOperationBatches(originalDocument);
+  assert.equal(oldBatches.length, 1, "the in-flight batch remains under the original annotation identity");
+  const oldSnapshot = await harness.plugin.annotationHost.store.readDocument(originalDocument);
+  assert.ok(oldSnapshot.annotations.some((operation) => operation.uuid === "queued-old-annotation"));
+  const currentSnapshot = await harness.plugin.annotationHost.store.readDocument(view.annotationDocument);
+  assert.deepEqual(currentSnapshot.annotations, [], "the old edit is never hydrated into the newly selected PDF");
+  assert.deepEqual(first.bytes, Uint8Array.from([1, 2, 3]));
 });
 
-test("a rename during the asynchronous disk check rejects the write and keeps recovery", async () => {
+test("a rename during sidecar persistence keeps the operation with its original document identity", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/rename-race.pdf", [1, 2, 3]);
   harness.files.set(file.path, file);
-  const view = harness.createView();
-  view.file = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.iframe = { contentWindow: { postMessage() {} } };
-  harness.plugin.setDocumentBaseline(file.path, view.originalBytes);
-  const originalRead = harness.app.vault.readBinary;
-  let releaseRead;
-  let startedRead;
-  const readStarted = new Promise((resolve) => { startedRead = resolve; });
-  const readGate = new Promise((resolve) => { releaseRead = resolve; });
-  harness.app.vault.readBinary = async (target) => {
-    const bytes = await originalRead(target);
-    if (target === file && target.reads === 1) {
-      startedRead();
-      await readGate;
+  const reader = await createSidecarReader(harness, file);
+  const { view } = reader;
+  const originalDocument = view.annotationDocument;
+  const adapter = harness.app.vault.adapter;
+  const originalWrite = adapter.write.bind(adapter);
+  let releaseWrite;
+  let startedWrite;
+  const writeStarted = new Promise((resolve) => { startedWrite = resolve; });
+  const writeGate = new Promise((resolve) => { releaseWrite = resolve; });
+  let gated = false;
+  adapter.write = async (targetPath, value) => {
+    if (!gated && targetPath.includes("/ops/") && targetPath.endsWith(".pending")) {
+      gated = true;
+      startedWrite();
+      await writeGate;
     }
-    return bytes;
+    return originalWrite(targetPath, value);
   };
 
-  const saving = view.saveFile(
-    Uint8Array.from([6, 6, 6]).buffer,
-    view.documentId,
-    "rename-race",
-    10,
-    "auto",
-  );
-  await readStarted;
+  const saving = saveSidecarOperations(reader, {
+    requestId: "rename-race",
+    batchId: "rename-race-batch",
+    revision: 10,
+    origin: "auto",
+    operations: [{ uuid: "rename-race-highlight", kind: "Highlight", pageIndex: 0,
+      deleted: false, payload: { editor: { color: [1, 0, 0] } } }],
+  });
+  await writeStarted;
   harness.files.delete(file.path);
   const oldPath = file.path;
   file.path = "Archive/rename-race.pdf";
   harness.files.set(file.path, file);
-  harness.emitVault("rename", file, oldPath);
-  releaseRead();
+  releaseWrite();
   await saving;
 
   assert.equal(file.writes, 0);
   assert.deepEqual([...file.bytes], [1, 2, 3]);
+  assert.equal(reader.sent.at(-1).type, "error");
+  assert.equal(reader.sent.at(-1).code, "PDF_ANNOTATION_SESSION_CHANGED",
+    "the host refuses to acknowledge a batch after the source path changes mid-write");
+
+  await harness.plugin.annotationHost.renamed(file, oldPath);
+  view.onDocumentRenamed(file, oldPath);
   assert.equal(view.requestedPath, file.path);
-  const [candidate] = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidate.metadata.originalPath, oldPath);
-  assert.deepEqual(
-    [...new Uint8Array(await harness.app.vault.adapter.readBinary(candidate.candidatePath))],
-    [6, 6, 6],
-  );
+  const renamedDocument = await harness.plugin.annotationHost.store.documentForPath(file.path);
+  assert.equal(renamedDocument.documentId, originalDocument.documentId);
+  assert.equal(await harness.plugin.annotationHost.store.documentForPath(oldPath), null);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const snapshot = await harness.plugin.annotationHost.store.readDocument(renamedDocument);
+  assert.ok(snapshot.annotations.some((operation) => operation.uuid === "rename-race-highlight"),
+    "the durable operation remains in the renamed document checkpoint even after batch compaction");
 });
 
 test("open uses a stable session ID and sends current path, filename, and default auto-save", async () => {
@@ -948,7 +1261,7 @@ test("open uses a stable session ID and sends current path, filename, and defaul
   assert.equal(frame.sent[0].autoSave, true);
 });
 
-test("opening admission stays held through PDF parse until the matching opened ACK", async () => {
+test("sidecar saves require the matching opened ACK and exact Viewer page-identity handshake", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/open-admission.pdf", [1, 2, 3]);
@@ -959,14 +1272,20 @@ test("opening admission stays held through PDF parse until the matching opened A
 
   await view.openFile(file);
   assert.equal(view.openAcknowledged, false,
-    "a requested open is not eligible for sync until PDF.js confirms parsing");
-  const admission = view.pendingOpenAdmission;
-  assert.ok(admission, "the host retains the path admission after read/initialize");
+    "a requested open is not eligible for annotation persistence until PDF.js confirms parsing");
   view.ready = true;
   view.sendPendingDocument();
   assert.equal(frame.sent.at(-1).type, "open");
-  assert.equal(view.pendingOpenAdmission, admission,
-    "posting open is not treated as proof that PDF.js finished parsing");
+  const save = async (requestId) => view.saveFile(null, view.documentId, requestId, 1, "manual", {
+    openRequest: view.openRequest,
+    batchId: `${requestId}-batch`,
+    operations: [{ uuid: requestId, kind: "Highlight", pageIndex: 0, deleted: false,
+      payload: { editor: { color: [1, 1, 0] } } }],
+  });
+
+  await save("before-open-ack");
+  assert.equal(frame.sent.at(-1).code, "PDF_ANNOTATION_PAGE_IDENTITY_UNCONFIRMED",
+    "the host refuses to persist annotations before the Viewer proves page identity");
 
   const opened = {
     source: frame,
@@ -979,20 +1298,29 @@ test("opening admission stays held through PDF parse until the matching opened A
     },
   };
   view.onMessage(opened);
-  assert.equal(view.pendingOpenAdmission, admission, "a stale open ACK cannot release the lease");
-  assert.equal(view.openAcknowledged, false, "a stale ACK cannot enable reconciliation");
+  assert.equal(view.openAcknowledged, false, "a stale open ACK cannot enable annotation reconciliation");
   opened.data.openRequest = view.openRequest;
   opened.data.revision = 0;
   opened.data.confirmedRevision = 0;
+  opened.data.dirty = false;
+  opened.data.restorePaused = false;
   view.onMessage(opened);
-  assert.equal(view.pendingOpenAdmission, null,
-    "only the matching parsed open releases the path admission");
   assert.equal(view.openAcknowledged, true,
-    "only the matching parsed open enables reconciliation");
-  harness.plugin.pdfSync.dispose();
+    "only the matching parsed open enables the next identity-verification phase");
+  await save("before-identity-handshake");
+  assert.equal(frame.sent.at(-1).code, "PDF_ANNOTATION_PAGE_IDENTITY_UNCONFIRMED");
+
+  await confirmViewerPageIdentity(harness, { view }, {
+    pageCount: 1,
+    orderedPageIdentities: ["4 0 R"],
+  });
+  await save("after-identity-handshake");
+  assert.equal(frame.sent.at(-1).type, "saved");
+  assert.equal(frame.sent.at(-1).external, true);
+  assert.equal((await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument)).length, 1);
 });
 
-test("a not-ready Reader closes only when clean or backed by an exact durable draft", async () => {
+test("a not-ready Reader closes only when clean or its sidecar operation revision is durable", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const cleanFile = new harness.TFile("Books/preopen-clean.pdf", [1, 2, 3]);
@@ -1003,7 +1331,7 @@ test("a not-ready Reader closes only when clean or backed by an exact durable dr
   assert.equal(cleanReader.view.preparedClose.recovered, false);
 
   const dirtyFile = new harness.TFile("Books/preopen-dirty.pdf", [4, 5, 6]);
-  const dirtyReader = await createControlledReader(harness, dirtyFile);
+  const dirtyReader = await createSidecarReader(harness, dirtyFile);
   dirtyReader.view.ready = false;
   dirtyReader.view.currentRevision = 3;
   dirtyReader.view.confirmedRevision = 1;
@@ -1011,32 +1339,52 @@ test("a not-ready Reader closes only when clean or backed by an exact durable dr
   assert.equal(dirtyReader.view.preparedClose, null);
 
   await dirtyReader.view.recoverFile(
-    Uint8Array.from([7, 8, 9]).buffer,
+    null,
     dirtyReader.view.documentId,
     "preopen-draft",
     3,
     "auto-save-disabled",
+    {
+      openRequest: dirtyReader.view.openRequest,
+      batchId: "preopen-draft-batch",
+      operations: [{ uuid: "preopen-durable-annotation", kind: "Highlight", pageIndex: 0,
+        deleted: false, payload: { editor: { color: [0, 1, 0] } } }],
+    },
   );
+  const recoveryAck = dirtyReader.sent.at(-1);
+  assert.equal(recoveryAck.type, "recovered");
+  assert.equal(recoveryAck.external, true);
   assert.equal(await dirtyReader.view.prepareControlledClose("detach"), true);
   assert.equal(dirtyReader.view.preparedClose.revision, 3);
-  assert.equal(dirtyReader.view.preparedClose.recovered, true);
+  assert.equal(dirtyReader.view.preparedClose.recovered, false,
+    "a durable sidecar revision is clean external state, not an embedded-PDF recovery draft");
+  assert.equal(recoveryAck.batchId, "preopen-draft-batch",
+    "the close becomes eligible only after the recovery protocol reports durable operation storage");
 });
 
-test("popout migration reopens the confirmed PDF in a fresh renderer generation", async () => {
+test("popout migration reopens the unchanged PDF and rehydrates confirmed sidecar operations", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/popout-clean.pdf", [1, 2, 3]);
-  const reader = await createControlledReader(harness, file);
+  const reader = await createSidecarReader(harness, file);
   const { leaf, view, sent, replyClose } = reader;
   const documentId = view.documentId;
   const oldRendererGeneration = view.rendererGeneration;
   const oldOpenRequest = view.openRequest;
-  view.currentRevision = 5;
-  view.confirmedRevision = 5;
+  const saved = await saveSidecarOperations(reader, {
+    requestId: "popout-confirmed-operation",
+    batchId: "popout-confirmed-operation-batch",
+    revision: 1,
+    operations: [{ uuid: "popout-confirmed-highlight", kind: "Highlight", pageIndex: 0,
+      deleted: false, payload: { editor: { color: [0, 0, 1] } } }],
+  });
+  assert.equal(saved.type, "saved");
+  const confirmedRevision = view.confirmedRevision;
+  const openCountBeforeMove = sent.filter((message) => message.type === "open").length;
 
   const moving = harness.app.workspace.moveLeafToPopout(leaf);
   await Promise.resolve();
-  replyClose({ revision: 5 });
+  replyClose({ revision: confirmedRevision });
   const popoutRoot = await moving;
 
   assert.equal(popoutRoot, leaf.popoutRoot);
@@ -1057,8 +1405,8 @@ test("popout migration reopens the confirmed PDF in a fresh renderer generation"
       rendererGeneration: oldRendererGeneration,
     },
   });
-  assert.equal(sent.filter((message) => message.type === "open").length, 0,
-    "a queued ready from the previous renderer must not consume the checkpoint");
+  assert.equal(sent.filter((message) => message.type === "open").length, openCountBeforeMove,
+    "a queued ready from the previous renderer must not open a stale PDF session");
 
   view.onMessage({
     source: reader.frame,
@@ -1069,15 +1417,16 @@ test("popout migration reopens the confirmed PDF in a fresh renderer generation"
       rendererGeneration: view.rendererGeneration,
     },
   });
-  const open = sent.filter((message) => message.type === "open").at(-1);
+  const open = await waitForSentMessage(reader, (message) =>
+    message.type === "open" && message.openRequest === view.openRequest);
   assert.ok(open);
   assert.deepEqual([...new Uint8Array(open.data)], [1, 2, 3]);
   assert.equal(open.documentId, documentId);
   assert.equal(open.openRequest, view.openRequest);
-  assert.equal(open.revision, 5);
-  assert.equal(open.confirmedRevision, 5);
-  assert.equal(open.restoreDirty, false);
-  assert.equal(open.restorePaused, false);
+  assert.equal(open.revision, confirmedRevision);
+  assert.equal(open.confirmedRevision, confirmedRevision);
+  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid),
+    ["popout-confirmed-highlight"], "confirmed operations are replayed into the new renderer");
   assert.ok(popoutRoot.win.messageSenderCalls > 0, "open must be posted from the popout realm");
   view.onMessage({
     source: reader.frame,
@@ -1088,7 +1437,7 @@ test("popout migration reopens the confirmed PDF in a fresh renderer generation"
       rendererGeneration: view.rendererGeneration,
     },
   });
-  assert.equal(sent.filter((message) => message.type === "open").length, 1,
+  assert.equal(sent.filter((message) => message.type === "open").length, openCountBeforeMove + 1,
     "a duplicate ready must not resend a second open into an already active document");
 
   view.onMessage({
@@ -1099,21 +1448,21 @@ test("popout migration reopens the confirmed PDF in a fresh renderer generation"
       type: "opened",
       documentId,
       openRequest: view.openRequest,
-      revision: 5,
-      confirmedRevision: 5,
+      revision: confirmedRevision,
+      confirmedRevision,
       dirty: false,
       restorePaused: false,
     },
   });
-  assert.equal(view.pendingOpenState, null);
-  assert.equal(view.currentRevision, 5);
-  assert.equal(view.confirmedRevision, 5);
+  assert.equal(view.openAcknowledged, true);
+  assert.equal(view.currentRevision, confirmedRevision);
+  assert.equal(view.confirmedRevision, confirmedRevision);
 });
 
 test("async iframe adoption rebinds the owner before the fresh renderer sends ready", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const reader = await createControlledReader(
+  const reader = await createSidecarReader(
     harness,
     new harness.TFile("Books/popout-async-adoption.pdf", [1, 2, 3]),
   );
@@ -1152,7 +1501,7 @@ test("async iframe adoption rebinds the owner before the fresh renderer sends re
 
   const moving = harness.app.workspace.moveLeafToPopout(leaf);
   await settleMicrotasks();
-  replyClose({ revision: 0 });
+  replyClose({ revision: view.confirmedRevision });
   assert.equal(await moving, popoutRoot);
   assert.equal(view.ownerWindow, oldOwnerWindow,
     "The synchronous SDK return still precedes iframe adoption in this scenario");
@@ -1181,39 +1530,48 @@ test("async iframe adoption rebinds the owner before the fresh renderer sends re
     },
   });
 
-  const open = sent.filter((message) => message.type === "open").at(-1);
+  const open = await waitForSentMessage(reader, (message) =>
+    message.type === "open" && message.openRequest === view.openRequest);
   assert.ok(open, "The new parent's one-shot ready message must deliver the checkpoint");
   assert.equal(open.documentId, view.documentId);
   assert.equal(open.openRequest, view.openRequest);
-  assert.equal(open.restoreDirty, false);
+  assert.deepEqual([...new Uint8Array(open.data)], [1, 2, 3]);
   assert.ok(newOwnerWindow.messageSenderCalls > 0,
     "The checkpoint message must use the adopted owner's realm");
 });
 
-test("popout migration restores the exact paused recovery draft without replacing the disk baseline", async () => {
+test("popout migration restores confirmed recovery operations without replacing the source PDF", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/popout-paused.pdf", [1, 2, 3]);
-  const reader = await createControlledReader(harness, file);
+  const reader = await createSidecarReader(harness, file);
   const { leaf, view, sent, replyClose } = reader;
   const documentId = view.documentId;
-  view.currentRevision = 3;
-  view.confirmedRevision = 3;
-  const draft = Uint8Array.from([9, 8, 7]);
-
+  await saveSidecarOperations(reader, {
+    requestId: "recovery-for-popout-base",
+    batchId: "recovery-for-popout-base-batch",
+    revision: 3,
+    operations: [{ uuid: "popout-before-recovery", kind: "Highlight", pageIndex: 0,
+      deleted: false, payload: { editor: { color: [1, 0, 0] } } }],
+  });
   await view.recoverFile(
-    draft.buffer,
+    null,
     documentId,
     "recovery-for-popout",
     7,
     "save-conflict",
+    {
+      openRequest: view.openRequest,
+      batchId: "recovery-for-popout-batch",
+      operations: [{ uuid: "popout-recovered-operation", kind: "Ink", pageIndex: 0,
+        deleted: false, payload: { editor: { paths: [[2, 2, 10, 10]], color: [1, 0, 0] } } }],
+    },
   );
-  assert.equal(view.originalBytes[0], 1);
-  assert.deepEqual([...view.latestRecoveryDraft.bytes], [9, 8, 7]);
+  const recoveredRevision = view.confirmedRevision;
 
   const moving = harness.app.workspace.moveLeafToPopout(leaf);
   await Promise.resolve();
-  replyClose({ revision: 7, dirty: true, recovered: true });
+  replyClose({ revision: recoveredRevision });
   await moving;
   view.onMessage({
     source: reader.frame,
@@ -1225,14 +1583,17 @@ test("popout migration restores the exact paused recovery draft without replacin
     },
   });
 
-  const open = sent.filter((message) => message.type === "open").at(-1);
-  assert.deepEqual([...new Uint8Array(open.data)], [9, 8, 7]);
+  const open = await waitForSentMessage(reader, (message) =>
+    message.type === "open" && message.openRequest === view.openRequest);
+  assert.deepEqual([...new Uint8Array(open.data)], [1, 2, 3],
+    "migration reloads the immutable source PDF, not a transient recovery byte buffer");
   assert.equal(open.documentId, documentId);
-  assert.equal(open.revision, 7);
-  assert.equal(open.confirmedRevision, 3);
-  assert.equal(open.restoreDirty, true);
-  assert.equal(open.restorePaused, true);
-  assert.deepEqual([...view.originalBytes], [1, 2, 3]);
+  assert.equal(open.revision, recoveredRevision);
+  assert.equal(open.confirmedRevision, recoveredRevision);
+  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid).sort(), [
+    "popout-before-recovery",
+    "popout-recovered-operation",
+  ]);
   assert.equal(file.writes, 0, "migration must not turn a recovery draft into an original-PDF write");
 
   view.onMessage({
@@ -1243,15 +1604,15 @@ test("popout migration restores the exact paused recovery draft without replacin
       type: "opened",
       documentId,
       openRequest: view.openRequest,
-      revision: 7,
-      confirmedRevision: 3,
-      dirty: true,
-      restorePaused: true,
+      revision: recoveredRevision,
+      confirmedRevision: recoveredRevision,
+      dirty: false,
+      restorePaused: false,
     },
   });
-  assert.equal(view.pendingOpenState, null);
-  assert.equal(view.currentRevision, 7);
-  assert.equal(view.confirmedRevision, 3);
+  assert.equal(view.openAcknowledged, true);
+  assert.equal(view.currentRevision, recoveredRevision);
+  assert.equal(view.confirmedRevision, recoveredRevision);
 });
 
 test("a rejected SDK popout move cancels the prepared checkpoint and keeps the live renderer", async () => {
@@ -1304,21 +1665,27 @@ test("the SDK popout wrapper leaves non-Reader leaves synchronous and restores t
   );
 });
 
-test("an unexpected renderer reload uses the exact recovery checkpoint or warns before reopening the confirmed PDF", async () => {
+test("an unexpected renderer reload reopens the confirmed PDF and sidecar log, never renderer bytes", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/unexpected-reload.pdf", [1, 2, 3]);
-  const reader = await createControlledReader(harness, file);
+  const reader = await createSidecarReader(harness, file);
   const { view, sent, frame } = reader;
-  view.currentRevision = 4;
-  view.confirmedRevision = 4;
+  await saveSidecarOperations(reader, {
+    requestId: "reload-confirmed-operation",
+    batchId: "reload-confirmed-operation-batch",
+    revision: 4,
+    operations: [{ uuid: "reload-confirmed-highlight", kind: "Highlight", pageIndex: 0,
+      deleted: false, payload: { editor: { color: [1, 1, 0] } } }],
+  });
+  const oldOpenCount = sent.filter((message) => message.type === "open").length;
+  const nextOpenRequest = view.openRequest + 1;
   const previousRendererGeneration = view.rendererGeneration;
 
   view.iframe.dispatchEvent("load");
   assert.equal(view.ready, false);
   assert.equal(view.rendererStateUnknown, true);
-  assert.equal(view.pendingOpenState.restoreDirty, false);
-  assert.ok(harness.notices.some((message) => message.includes("未提交的更改可能需要从恢复副本取回")));
+  assert.ok(harness.notices.some((message) => message.includes("未确认的最后操作可能未保存")));
 
   view.onMessage({
     source: frame,
@@ -1329,7 +1696,8 @@ test("an unexpected renderer reload uses the exact recovery checkpoint or warns 
       rendererGeneration: previousRendererGeneration,
     },
   });
-  assert.equal(sent.filter((message) => message.type === "open").length, 0);
+  assert.equal(sent.filter((message) => message.type === "open").length, oldOpenCount,
+    "a ready signal from the replaced renderer generation cannot reopen stale bytes");
 
   view.onMessage({
     source: frame,
@@ -1340,11 +1708,16 @@ test("an unexpected renderer reload uses the exact recovery checkpoint or warns 
       rendererGeneration: view.rendererGeneration,
     },
   });
-  const open = sent.filter((message) => message.type === "open").at(-1);
+  const open = await waitForSentMessage(reader, (message) =>
+    message.type === "open" && message.openRequest === nextOpenRequest);
   assert.deepEqual([...new Uint8Array(open.data)], [1, 2, 3]);
-  assert.equal(open.revision, 4);
-  assert.equal(open.confirmedRevision, 4);
+  assert.equal(open.revision, view.confirmedRevision);
+  assert.equal(open.confirmedRevision, view.confirmedRevision);
   assert.equal(open.restoreDirty, false);
+  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid),
+    ["reload-confirmed-highlight"], "the replacement renderer rehydrates the durable sidecar operation");
+  assert.equal(file.writes, 0);
+  assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
 });
 
 test("renaming a PDF updates the path while retaining the view session ID", async () => {
@@ -1352,12 +1725,9 @@ test("renaming a PDF updates the path while retaining the view session ID", asyn
   await harness.plugin.onload();
   const file = new harness.TFile("Books/before.pdf", [1, 2, 3]);
   harness.files.set(file.path, file);
-  const view = harness.createView();
-  const sent = [];
-  view.iframe = { contentWindow: { postMessage: (message) => sent.push(message) } };
-  view.file = file;
-  view.requestedPath = file.path;
-  harness.plugin.setDocumentBaseline(file.path, [1, 2, 3]);
+  const reader = await createSidecarReader(harness, file);
+  const { view, sent } = reader;
+  const annotationDocumentId = view.annotationDocument.documentId;
   const documentId = view.documentId;
 
   harness.files.delete(file.path);
@@ -1365,13 +1735,17 @@ test("renaming a PDF updates the path while retaining the view session ID", asyn
   file.basename = "after";
   harness.files.set(file.path, file);
   harness.emitVault("rename", file, "Books/before.pdf");
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(view.documentId, documentId);
   assert.equal(view.requestedPath, file.path);
-  assert.deepEqual(harness.plugin.documentBaselines.get(file.path), Uint8Array.from([1, 2, 3]));
-  assert.equal(sent.at(-1).type, "rename");
-  assert.equal(sent.at(-1).documentPath, file.path);
-  assert.equal(sent.at(-1).filename, file.basename);
+  assert.equal(view.annotationDocument.documentId, annotationDocumentId);
+  assert.equal((await harness.plugin.annotationHost.store.documentForPath(file.path)).documentId,
+    annotationDocumentId, "the sidecar path index follows the rename without creating a new PDF identity");
+  assert.equal(await harness.plugin.annotationHost.store.documentForPath("Books/before.pdf"), null);
+  assert.equal(sent.at(-1).type, "annotation-path-updated");
+  assert.equal(sent.at(-1).documentId, annotationDocumentId);
+  assert.equal(sent.at(-1).sourcePath, file.path);
 });
 
 test("auto-save preference persists and is sent to open views", async () => {
@@ -1407,210 +1781,145 @@ test("status bar preference defaults off and updates every live Reader immediate
   assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false });
 });
 
-test("sync failure retains a recoverable status action for the conditional status bar", async () => {
+test("sidecar write failure reports that the unacknowledged operation remains in the live Reader", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const view = harness.createView();
+  const file = new harness.TFile("Books/sidecar-failure.pdf", [1, 2, 3]);
+  const reader = await createSidecarReader(harness, file);
+  const { view } = reader;
   let statusCall = null;
   view.setStatus = (message, options) => { statusCall = { message, options }; };
-
-  harness.plugin.pdfSync.showFailure(view, "checkpoint verification failed");
-
-  assert.match(statusCall.message, /同步暂停/);
-  assert.deepEqual(statusCall.options, { recoveryAction: true });
-  assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /恢复最近的 PDF 自动保存副本/);
-});
-
-test("recovery protocol persists a draft without writing the original PDF", async () => {
-  const harness = createHarness();
-  await harness.plugin.onload();
-  const file = new harness.TFile("Books/recovery-draft.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const view = harness.createView();
-  const replies = [];
-  const frame = {
-    postMessage(message) {
-      replies.push(message);
-    },
-  };
-  view.iframe = { contentWindow: frame };
-  view.file = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  harness.plugin.setDocumentBaseline(file.path, view.originalBytes);
-
-  await view.recoverFile(
-    Uint8Array.from([4, 5, 6]).buffer,
-    view.documentId,
-    "recover-disabled-autosave",
-    17,
-    "auto-save-disabled",
-  );
-
-  assert.equal(file.writes, 0);
-  assert.deepEqual([...file.bytes], [1, 2, 3]);
-  assert.deepEqual(replies.at(-1), {
-    channel: "pdf-web-reader",
-    type: "recovered",
-    token: view.token,
-    documentId: view.documentId,
-    openRequest: view.openRequest,
-    requestId: "recover-disabled-autosave",
-    revision: 17,
-    rendererGeneration: view.rendererGeneration,
-  });
-  const [candidate] = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidate.metadata.status, "draft");
-  assert.equal(candidate.metadata.origin, "recovery");
-  assert.equal(candidate.metadata.reason, "auto-save-disabled");
-  assert.equal(candidate.metadata.requestId, "recover-disabled-autosave");
-  assert.equal(candidate.metadata.revision, 17);
-  assert.equal(candidate.metadata.originalPath, file.path);
-
-  const restoredPath = await harness.plugin.restoreLatestRecovery();
-  assert.match(restoredPath, /^PDF Recovery\/recovery-draft \(Recovered /);
-  assert.deepEqual([...harness.files.get(restoredPath).bytes], [4, 5, 6]);
-});
-
-test("startup discovers close recovery only after initializing its recovery directory", async () => {
-  const harness = createHarness();
-  const recoveryDirectory = ".obsidian/plugins/pdf-web-reader/.recovery";
-  const candidateId = "startup-recovery-order";
-  const raw = Uint8Array.from([6, 5, 4]);
-  const outputHash = createHash("sha256").update(raw).digest("hex");
-  await harness.app.vault.adapter.mkdir(recoveryDirectory);
-  harness.storedFiles.set(`${recoveryDirectory}/${candidateId}.pdf`, raw);
-  harness.storedFiles.set(`${recoveryDirectory}/${candidateId}.json`, JSON.stringify({
-    schema: 1,
-    documentId: "startup-document",
-    candidateId,
-    originalPath: "Books/startup-order.pdf",
-    filename: "startup-order.pdf",
-    openRequest: 1,
-    revision: 1,
-    origin: "recovery",
-    requestId: "startup-recovery-order",
-    reason: "auto-save-disabled",
-    candidateFile: `${candidateId}.pdf`,
-    createdAt: "2026-10-14T01:00:00.000Z",
-    status: "draft",
-    completed: true,
-    outputHash,
-    outputLength: raw.byteLength,
-  }));
-
-  await harness.plugin.onload();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(harness.plugin.recoveryDirectory, recoveryDirectory);
-  assert.equal(harness.plugin.closeWritebackJobs.get(candidateId)?.status, "paused",
-    "startup scan sees the recovery-only candidate and records its persistent status");
-});
-
-test("a torn close-intent metadata write leaves the raw recovery PDF discoverable", async () => {
-  const harness = createHarness();
-  await harness.plugin.onload();
-  const file = new harness.TFile("Books/torn-close-intent.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const view = harness.createView();
-  const replies = [];
-  view.file = file;
-  view.documentFile = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.loadedBaseBytes = view.originalBytes;
-  view.currentRevision = 1;
-  view.iframe = { contentWindow: { postMessage: (message) => replies.push(message) } };
-  harness.plugin.setDocumentBaseline(file.path, view.originalBytes);
-
   const adapter = harness.app.vault.adapter;
   const originalWrite = adapter.write.bind(adapter);
-  let torn = false;
   adapter.write = async (targetPath, value) => {
-    if (targetPath.endsWith(".json") && String(value).includes('"closeWriteback"')) {
-      torn = true;
-      harness.storedFiles.set(targetPath, "{\"truncated\":");
-      throw new Error("injected torn metadata write");
+    if (targetPath.includes("/ops/") && targetPath.endsWith(".pending")) {
+      throw new Error("injected sidecar checkpoint verification failure");
     }
     return originalWrite(targetPath, value);
   };
 
-  const raw = Uint8Array.from([9, 8, 7, 6]);
-  await view.recoverFile(raw.buffer, view.documentId, "close-writeback-torn", 1,
-    "close-writeback", {
-      closeRecovery: true,
+  const error = await saveSidecarOperations(reader, {
+    requestId: "sidecar-write-failure",
+    batchId: "sidecar-write-failure-batch",
+  });
+
+  assert.equal(error.type, "error");
+  assert.equal(error.code, "save-failed");
+  assert.match(statusCall.message, /injected sidecar checkpoint verification failure/);
+  assert.equal(statusCall.options, true, "the host marks the live Reader status as an error");
+  assert.equal(harness.notices.length, 1);
+  assert.match(harness.notices[0], /操作仍保留在当前阅读器中/);
+  assert.equal(file.writes, 0);
+  assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
+  assert.equal((await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument)).length, 0,
+    "a failed immutable batch write is not acknowledged or left as a partial operation record");
+});
+
+test("recovery protocol durably stores structured Ink operations without writing the original PDF", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/recovery-operations.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  const reader = await createSidecarReader(harness, file);
+  const { view, sent } = reader;
+  const inkOperation = {
+    uuid: "recovered-ink-operation",
+    kind: "Ink",
+    pageIndex: 0,
+    deleted: false,
+    payload: { editor: { paths: [[0, 0, 12, 12, 24, 6]], color: [0.08, 0.28, 0.78], width: 5 } },
+  };
+  await view.recoverFile(null, view.documentId, "recover-disabled-autosave", 17,
+    "auto-save-disabled", {
       openRequest: view.openRequest,
-      actorId: "close-actor-123",
-      operations: [],
-      newAnnotations: [],
+      batchId: "recovery-ink-sidecar-batch",
+      actorId: "recovery-reader",
+      operations: [inkOperation],
     });
 
-  assert.equal(torn, true, "the failure is injected after the raw PDF and immutable descriptor are verified");
-  assert.equal(replies.at(-1).type, "recovered",
-    "the already verified raw recovery remains sufficient for a close ACK");
-  assert.equal(replies.at(-1).closeWritebackQueued, undefined,
-    "a failed intent attachment must not claim background writeback");
   assert.equal(file.writes, 0);
+  assert.deepEqual([...file.bytes], [1, 2, 3]);
+  assert.equal(sent.at(-1).type, "recovered");
+  assert.equal(sent.at(-1).documentId, view.documentId);
+  assert.equal(sent.at(-1).openRequest, view.openRequest);
+  assert.equal(sent.at(-1).requestId, "recover-disabled-autosave");
+  assert.equal(sent.at(-1).revision, 17);
+  assert.equal(sent.at(-1).external, true);
+  const batchPaths = await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument);
+  assert.equal(batchPaths.length, 1, "recovery ACK follows a durable immutable operation batch");
+  const batch = JSON.parse(await harness.app.vault.adapter.read(batchPaths[0]));
+  assert.equal(batch.batchId, "recovery-ink-sidecar-batch");
+  assert.equal(batch.operations[0].uuid, inkOperation.uuid);
+  assert.deepEqual(batch.operations[0].payload, inkOperation.payload);
+  assert.deepEqual(await harness.plugin.listRecoveryCandidates(), [],
+    "new annotation operations use the sidecar store rather than the legacy PDF recovery queue");
+});
+
+test("startup initializes the legacy recovery directory before listing verified candidates", async () => {
+  const harness = createHarness();
+  const recoveryDirectory = ".obsidian/plugins/pdf-web-reader/.recovery";
+  const raw = Uint8Array.from([6, 5, 4]);
+  await seedRecoveryCandidate(harness, {
+    candidateId: "startup-recovery-order",
+    originalPath: "Books/startup-order.pdf",
+    bytes: raw,
+  });
+
+  await harness.plugin.onload();
+
+  assert.equal(harness.plugin.recoveryDirectory, recoveryDirectory);
   const candidates = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidates.length, 1, "the immutable raw metadata descriptor recovers the torn candidate index");
-  assert.equal(candidates[0].metadata.closeWriteback, undefined,
-    "the fallback exposes the original recovery candidate without a damaged intent");
+  assert.equal(candidates.length, 1, "the configured recovery directory exposes its verified legacy candidate");
+  assert.equal(candidates[0].metadata.candidateId, "startup-recovery-order");
   assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(candidates[0]))], [...raw]);
 });
 
-test("saved tombstones suppress rawmeta replay and missing primary JSON still restores raw bytes", async () => {
+test("malformed primary recovery metadata falls back to its verified immutable raw descriptor", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const file = new harness.TFile("Books/rawmeta-fallback.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const view = harness.createView();
-  view.file = file;
-  view.documentFile = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.loadedBaseBytes = view.originalBytes;
+  const raw = Uint8Array.from([9, 8, 7, 6]);
+  const seeded = await seedRecoveryCandidate(harness, {
+    candidateId: "torn-primary-recovery",
+    originalPath: "Books/torn-close-intent.pdf",
+    bytes: raw,
+    reason: "close-writeback",
+    rawmeta: true,
+  });
+  const adapter = harness.app.vault.adapter;
+  await adapter.write(seeded.metadataPath, "{\"truncated\":");
+  const candidates = await harness.plugin.listRecoveryCandidates();
+  assert.equal(candidates.length, 1, "a torn mutable descriptor does not hide the independently verified candidate");
+  assert.equal(candidates[0].metadata.candidateId, seeded.metadata.candidateId);
+  assert.equal(candidates[0].metadata.requestId, seeded.metadata.requestId);
+  assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(candidates[0]))], [...raw]);
+  assert.equal(await adapter.read(seeded.metadataPath), '{"truncated":',
+    "listing falls back to rawmeta without silently overwriting the damaged primary descriptor");
+});
 
-  const makeCandidate = async (requestId, data) => {
-    const record = await harness.plugin.writeRecoveryCandidate({
-      view,
-      documentId: view.documentId,
-      filename: file.basename,
-      data: Uint8Array.from(data),
-      originalBytes: view.originalBytes,
-      documentPath: file.path,
-      openRequest: view.openRequest,
-      revision: 1,
-      origin: "recovery",
-      requestId,
-      reason: "close-writeback",
-      status: "draft",
-    });
-    await harness.plugin.attachCloseWritebackIntent(record, {
-      baseBytes: view.originalBytes,
-      documentId: view.documentId,
-      originalPath: file.path,
-      filename: file.basename,
-      openRequest: view.openRequest,
-      revision: 1,
-      requestId,
-      actorId: "rawmeta-test-actor",
-      operations: [],
-      newAnnotations: [],
-    });
-    return record;
-  };
-
-  const completed = await makeCandidate("saved-close-candidate", [1, 2, 9]);
-  const completedRawMeta = `${harness.plugin.recoveryDirectory}/${completed.metadata.candidateId}.rawmeta`;
-  await harness.plugin.markRecoveryCandidate(completed, { status: "saved" });
-  assert.equal(harness.storedFiles.has(completedRawMeta), true,
-    "the test leaves a crash-window rawmeta sidecar behind the valid tombstone");
-
-  const primaryMissing = await makeCandidate("missing-primary-candidate", [1, 2, 8]);
-  await harness.app.vault.adapter.remove(primaryMissing.metadataPath);
-
-  const incompletePrimary = await makeCandidate("incomplete-primary-candidate", [1, 2, 7]);
+test("saved tombstones suppress rawmeta replay and missing or incomplete metadata falls back safely", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const completed = await seedRecoveryCandidate(harness, {
+    candidateId: "saved-close-candidate",
+    originalPath: "Books/rawmeta-fallback.pdf",
+    bytes: [1, 2, 9],
+    status: "saved",
+    rawmeta: true,
+  });
+  const primaryMissing = await seedRecoveryCandidate(harness, {
+    candidateId: "missing-primary-candidate",
+    originalPath: "Books/rawmeta-fallback.pdf",
+    bytes: [1, 2, 8],
+    rawmeta: true,
+    primary: false,
+  });
+  const incompletePrimary = await seedRecoveryCandidate(harness, {
+    candidateId: "incomplete-primary-candidate",
+    originalPath: "Books/rawmeta-fallback.pdf",
+    bytes: [1, 2, 7],
+    reason: "close-writeback",
+    rawmeta: true,
+  });
   const incompleteMetadata = { ...incompletePrimary.metadata };
   delete incompleteMetadata.outputHash;
   delete incompleteMetadata.outputLength;
@@ -1630,219 +1939,130 @@ test("saved tombstones suppress rawmeta replay and missing primary JSON still re
   assert.deepEqual([...new Uint8Array(await harness.plugin.readRecoveryBytes(restoredIncomplete))], [1, 2, 7]);
 });
 
-test("recovery cleanup keeps a saved tombstone while candidate or rawmeta deletion fails", async () => {
+test("failed recovery verification preserves the candidate and creates no partial visible copy", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const file = new harness.TFile("Books/partial-close-cleanup.pdf", [1, 2, 3]);
-  harness.files.set(file.path, file);
-  const view = harness.createView();
-  view.file = file;
-  view.documentFile = file;
-  view.requestedPath = file.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  view.loadedBaseBytes = view.originalBytes;
-  const record = await harness.plugin.writeRecoveryCandidate({
-    view,
-    documentId: view.documentId,
-    filename: file.basename,
-    data: Uint8Array.from([1, 2, 4]),
-    originalBytes: view.originalBytes,
-    documentPath: file.path,
-    openRequest: view.openRequest,
-    revision: 1,
-    origin: "recovery",
-    requestId: "partial-cleanup-close",
-    reason: "close-writeback",
-    status: "draft",
+  const record = await seedRecoveryCandidate(harness, {
+    candidateId: "verification-failure-recovery",
+    originalPath: "Books/partial-close-cleanup.pdf",
+    bytes: [1, 2, 4],
   });
-  await harness.plugin.attachCloseWritebackIntent(record, {
-    baseBytes: view.originalBytes,
-    documentId: view.documentId,
-    originalPath: file.path,
-    filename: file.basename,
-    openRequest: view.openRequest,
-    revision: 1,
-    requestId: "partial-cleanup-close",
-    actorId: "cleanup-test-actor",
-    operations: [],
-    newAnnotations: [],
-  });
-
-  const rawMetadataPath = `${harness.plugin.recoveryDirectory}/${record.metadata.candidateId}.rawmeta`;
   const adapter = harness.app.vault.adapter;
-  const originalRemove = adapter.remove.bind(adapter);
-  adapter.remove = async (targetPath) => {
-    if (targetPath === record.candidatePath || targetPath === rawMetadataPath) {
-      throw new Error("injected partial recovery cleanup");
-    }
-    return originalRemove(targetPath);
-  };
-  await harness.plugin.removeRecoveryCandidate(record);
-
-  const primary = JSON.parse(await adapter.read(record.metadataPath));
-  assert.equal(primary.status, "saved", "the saved tombstone remains if a sidecar or payload survives");
+  await adapter.writeBinary(record.candidatePath, Uint8Array.from([9, 9, 9]).buffer);
+  await assert.rejects(harness.plugin.restoreLatestRecovery(), /恢复副本校验未通过/);
+  assert.equal(harness.files.has("PDF Recovery"), false, "no visible output is created from unverified bytes");
   assert.equal(await adapter.exists(record.candidatePath), true);
-  assert.equal(await adapter.exists(rawMetadataPath), true);
-  assert.equal((await harness.plugin.listRecoveryCandidates()).some(({ metadata }) =>
-    metadata.candidateId === record.metadata.candidateId), false,
-  "partial cleanup cannot resurrect a completed raw branch");
+  assert.equal(await adapter.exists(record.metadataPath), true,
+    "verification failure preserves the original candidate and descriptor for inspection or retry");
+  assert.equal((await harness.plugin.listRecoveryCandidates()).length, 1);
 });
 
-test("mapping failure still persists the exact serialized Ink draft before acknowledging recovery", async () => {
+test("recovered Ink operation is durable before ACK while the source PDF remains byte-identical", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const original = new Uint8Array(await readFile(path.join(root, "tests/fixtures/tracemonkey.pdf")));
   const source = await PDFDocument.load(original);
-  const edited = await PDFDocument.load(original);
-  const page = edited.getPage(9);
-  const annotations = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray) || PDFArray.withContext(edited.context);
-  page.node.set(PDFName.of("Annots"), annotations);
-  const ink = PDFDict.withContext(edited.context);
-  ink.set(PDFName.of("Type"), PDFName.of("Annot"));
-  ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
-  ink.set(PDFName.of("NM"), PDFHexString.fromText("native-ink-11"));
-  ink.set(PDFName.of("P"), page.ref);
-  const rect = PDFArray.withContext(edited.context);
-  for (const value of [64, 80, 146, 117]) rect.push(PDFNumber.of(value));
-  ink.set(PDFName.of("Rect"), rect);
-  const pathPoints = PDFArray.withContext(edited.context);
-  for (const value of [64, 80, 108, 117, 146, 99]) pathPoints.push(PDFNumber.of(value));
-  const inkList = PDFArray.withContext(edited.context);
-  inkList.push(pathPoints);
-  ink.set(PDFName.of("InkList"), inkList);
-  const color = PDFArray.withContext(edited.context);
-  for (const value of [0.08, 0.28, 0.78]) color.push(PDFNumber.of(value));
-  ink.set(PDFName.of("C"), color);
-  const border = PDFDict.withContext(edited.context);
-  border.set(PDFName.of("W"), PDFNumber.of(5));
-  ink.set(PDFName.of("BS"), border);
-  annotations.push(edited.context.register(ink));
-  const savedDraft = new Uint8Array(await edited.save({ useObjectStreams: false }));
   assert.equal(source.getPageCount(), 14);
-  const serializedPdf = await PDFDocument.load(savedDraft);
-  const serializedPage = serializedPdf.getPage(9);
-  const inkRef = serializedPage.node.lookupMaybe(PDFName.of("Annots"), PDFArray).asArray().find((reference) => {
-    return serializedPdf.context.lookup(reference)?.get(PDFName.of("Subtype"))?.toString() === "/Ink";
-  });
-  assert.ok(inkRef, "the saved Viewer draft contains a real page-10 Ink annotation");
-  assert.deepEqual(serializedPdf.context.lookup(inkRef).lookup(PDFName.of("InkList"), PDFArray)
-    .asArray()[0].asArray().map((point) => point.asNumber()), [64, 80, 108, 117, 146, 99]);
   const file = new harness.TFile("Books/ink-editor-11-page-10.pdf", original);
   harness.files.set(file.path, file);
-  const view = harness.createView();
-  const replies = [];
-  let candidateWasCompleteAtAck = false;
-  const frame = {
-    parent: view.contentEl.ownerDocument.defaultView,
-    postMessage(message) {
-      replies.push(message);
-      if (message.type !== "recovered") return;
-      const entry = [...harness.storedFiles.entries()].find(([candidatePath, value]) => {
-        if (!candidatePath.endsWith(".json")) return false;
-        try {
-          const metadata = JSON.parse(String(value));
-          return metadata.requestId === "close-recovery-ink-11" && metadata.revision === 11;
-        } catch { return false; }
-      });
-      candidateWasCompleteAtAck = !!entry && JSON.parse(String(entry[1])).completed === true;
-    },
+  const identity = {
+    pageCount: 14,
+    orderedPageIdentities: Array.from({ length: 14 }, (_, index) => `${index + 1} 0 R`),
   };
-  view.file = file;
-  view.documentFile = file;
-  view.requestedPath = file.path;
-  view.originalBytes = original;
-  view.loadedBaseBytes = original;
-  view.currentRevision = 10;
-  view.confirmedRevision = 10;
-  view.ready = false;
-  view.iframe = { ownerDocument: view.contentEl.ownerDocument, contentWindow: frame };
-  harness.plugin.setDocumentBaseline(file.path, original);
-  let preparedInput;
-  harness.plugin.pdfSync.prepareRecovery = async (_view, input) => {
-    preparedInput = input;
-    throw new Error("annotation object binding failed for InkEditor11 on page 10");
+  const reader = await createSidecarReader(harness, file, identity);
+  const { view, sent, replyClose } = reader;
+  const operation = {
+    uuid: "native-ink-11",
+    pageIndex: 9,
+    kind: "Ink",
+    deleted: false,
+    payload: { editor: { inkList: [[64, 80, 108, 117, 146, 99]], color: [0.08, 0.28, 0.78], width: 5 } },
   };
-  const operations = [{
-    uuid: "native-ink-11", ref: "42R", pageIndex: 9, kind: "Ink", deleted: false, action: "upsert",
-    timestamp: 1791892800000, logical: 1, actorId: "native-ipad-device",
-    operationId: "native-ipad-device:1791892800000:0:1",
-    serialized: { subtype: "Ink", pageIndex: 9, inkList: [[64, 80, 108, 117, 146, 99]] },
-  }];
-  const newAnnotations = [{ runtimeId: "11", uuid: "native-ink-11", pageIndex: 9, kind: "Ink", order: 0 }];
+  await view.recoverFile(null, view.documentId, "close-recovery-ink-11", 11,
+    "save-conflict", {
+      openRequest: view.openRequest,
+      batchId: "close-recovery-ink-11-batch",
+      actorId: "native-ipad-device",
+      operations: [operation],
+    });
 
-  await view.recoverFile(savedDraft.buffer, view.documentId, "close-recovery-ink-11", 11,
-    "save-conflict", { actorId: "native-ipad-device", operations, newAnnotations });
-
-  assert.equal(preparedInput.operations[0].uuid, "native-ink-11",
-    "the recovery attempt exercises the failing annotation mapping inputs");
-  assert.ok(candidateWasCompleteAtAck,
-    "the recovery acknowledgement is sent only after the exact PDF candidate and completion record verify");
-  assert.equal(replies.at(-1).type, "recovered");
-  assert.equal(replies.at(-1).revision, 11);
+  assert.equal(sent.at(-1).type, "recovered");
+  assert.equal(sent.at(-1).revision, 11);
+  assert.equal(sent.at(-1).external, true,
+    "the recovery response identifies the external operation store as its durable destination");
   assert.equal(file.writes, 0, "raw recovery never overwrites the source PDF");
   assert.deepEqual([...file.bytes], [...original]);
-
-  const candidates = await harness.plugin.listRecoveryCandidates();
-  const candidate = candidates.find(({ metadata }) => metadata.requestId === "close-recovery-ink-11");
-  assert.ok(candidate);
-  assert.equal(candidate.metadata.status, "draft");
-  assert.equal(candidate.metadata.reason, "save-conflict");
-  const recoveredBytes = new Uint8Array(await harness.plugin.readRecoveryBytes(candidate));
-  assert.deepEqual([...recoveredBytes], [...savedDraft], "the retained candidate is the raw Viewer serialization, not a mapping result");
-  assert.equal((await PDFDocument.load(recoveredBytes)).getPageCount(), 14);
-  assert.equal(await view.prepareControlledClose("detach"), true,
-    "the exact durable revision permits closing while autosave mapping is paused");
-  assert.equal(view.preparedClose.recovered, true);
+  const batches = await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument);
+  assert.equal(batches.length, 1, "the Ink operation batch is stored before its recovered acknowledgement");
+  const batch = JSON.parse(await harness.app.vault.adapter.read(batches[0]));
+  assert.equal(batch.operations[0].uuid, "native-ink-11");
+  assert.equal(batch.operations[0].kind, "Ink");
+  assert.equal(batch.operations[0].pageIndex, 9);
+  assert.deepEqual(batch.operations[0].payload, operation.payload);
+  const closing = view.prepareControlledClose("detach");
+  await settleMicrotasks();
+  assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
+  replyClose({ revision: 11 });
+  assert.equal(await closing, true,
+    "the durable revision permits close after the Viewer confirms external persistence");
+  assert.equal(view.preparedClose.revision, 11);
+  assert.equal(view.preparedClose.recovered, false);
   assert.equal(view.preparedClose.revision, 11);
 });
 
-test("queued recovery keeps the source PDF identity when the view switches", async () => {
+test("queued recovery keeps its sidecar batch with the source PDF when the view switches", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const first = new harness.TFile("Books/recovery-before-switch.pdf", [1, 2, 3]);
   const second = new harness.TFile("Books/recovery-after-switch.pdf", [7, 7, 7]);
   harness.files.set(first.path, first);
   harness.files.set(second.path, second);
-  const view = harness.createView();
-  const replies = [];
-  const frame = { postMessage: (message) => replies.push(message) };
-  view.iframe = { contentWindow: frame };
-  view.file = first;
-  view.requestedPath = first.path;
-  view.originalBytes = Uint8Array.from([1, 2, 3]);
-  harness.plugin.setDocumentBaseline(first.path, view.originalBytes);
-
+  const reader = await createSidecarReader(harness, first);
+  const { view } = reader;
+  const originalDocument = view.annotationDocument;
+  const adapter = harness.app.vault.adapter;
   let releaseQueue;
+  let startedQueue;
+  const queueStarted = new Promise((resolve) => { startedQueue = resolve; });
   const gate = new Promise((resolve) => { releaseQueue = resolve; });
-  const blocker = harness.plugin.enqueueSave(() => gate);
-  const recovery = view.recoverFile(
-    Uint8Array.from([4, 4, 4]).buffer,
-    view.documentId,
-    "queued-recovery",
-    22,
-    "save-conflict",
-  );
+  const originalWrite = adapter.write.bind(adapter);
+  let gated = false;
+  adapter.write = async (targetPath, value) => {
+    if (!gated && targetPath.includes("/ops/") && targetPath.endsWith(".pending")) {
+      gated = true;
+      startedQueue();
+      await gate;
+    }
+    return originalWrite(targetPath, value);
+  };
+  const recovery = view.recoverFile(null, view.documentId, "queued-recovery", 22,
+    "save-conflict", {
+      openRequest: view.openRequest,
+      batchId: "queued-recovery-sidecar-batch",
+      operations: [{ uuid: "queued-recovery-annotation", kind: "Highlight", pageIndex: 0,
+        deleted: false, payload: { editor: { color: [0, 1, 0] } } }],
+    });
+  await queueStarted;
   const oldDocumentId = view.documentId;
 
   await view.openFile(second);
   assert.notEqual(view.documentId, oldDocumentId);
   releaseQueue();
-  await Promise.all([blocker, recovery]);
+  await recovery;
 
   assert.equal(first.writes, 0);
   assert.equal(second.writes, 0);
   assert.deepEqual([...first.bytes], [1, 2, 3]);
   assert.deepEqual([...second.bytes], [7, 7, 7]);
-  assert.equal(replies.at(-1).type, "recovered");
-  assert.equal(replies.at(-1).documentId, oldDocumentId);
-  const [candidate] = await harness.plugin.listRecoveryCandidates();
-  assert.equal(candidate.metadata.documentId, oldDocumentId);
-  assert.equal(candidate.metadata.originalPath, first.path);
-  assert.equal(candidate.metadata.status, "draft");
-  assert.deepEqual(
-    [...new Uint8Array(await harness.app.vault.adapter.readBinary(candidate.candidatePath))],
-    [4, 4, 4],
-  );
+  assert.equal(reader.sent.at(-1).type, "error");
+  assert.equal(reader.sent.at(-1).code, "PDF_ANNOTATION_SESSION_CHANGED");
+  assert.equal(originalDocument.documentId, oldDocumentId);
+  const oldBatches = await harness.plugin.annotationHost.store.listOperationBatches(originalDocument);
+  assert.equal(oldBatches.length, 1, "the queued immutable batch remains under the source document identity");
+  const oldBatch = JSON.parse(await adapter.read(oldBatches[0]));
+  assert.equal(oldBatch.operations[0].uuid, "queued-recovery-annotation");
+  const currentSnapshot = await harness.plugin.annotationHost.store.readDocument(view.annotationDocument);
+  assert.deepEqual(currentSnapshot.annotations, [], "the old recovery operation is not misapplied to the newly selected PDF");
 });
 
 test("close reports a persisted recovery draft distinctly from an unflushed loss", async () => {
@@ -1883,7 +2103,8 @@ test("close reports a persisted recovery draft distinctly from an unflushed loss
   assert.equal(sent[0].type, "flush");
   assert.equal(view.iframe, null);
   assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /原 PDF 未写回；关闭前已保留恢复副本/);
+  assert.match(harness.notices[0], /未确认的批注操作写入外置记录/);
+  assert.match(harness.notices[0], /保持标签打开后重试保存/);
 });
 
 test("forced onClose keeps its failed flush warning without preparing twice on file unload", async () => {
@@ -1929,7 +2150,7 @@ test("forced onClose keeps its failed flush warning without preparing twice on f
   assert.equal(view.file, null, "The simulated SDK unload still clears its file reference");
   assert.equal(view.iframe, null);
   assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /尚有未确认的更改/);
+  assert.match(harness.notices[0], /未确认的批注操作写入外置记录/);
 });
 
 test("close waits for the bridge flush response before removing the frame", async () => {
@@ -1970,6 +2191,52 @@ test("close waits for the bridge flush response before removing the frame", asyn
   assert.equal(harness.notices.length, 0);
 });
 
+test("controlled close registers its session before sending prepare-close", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const { view, sent, frame } = await createControlledReader(
+    harness,
+    new harness.TFile("Books/prepare-close-registration.pdf"),
+  );
+
+  let duplicatePreparing = null;
+  let reentered = false;
+  frame.postMessage = (message) => {
+    sent.push(message);
+    if (message.type === "prepare-close" && !reentered) {
+      reentered = true;
+      duplicatePreparing = view.prepareControlledClose("detach");
+    }
+  };
+  const preparing = view.prepareControlledClose("detach");
+  await settleMicrotasks();
+  const request = sent.find((message) => message.type === "prepare-close");
+  assert.ok(request, "A ready Reader must receive a controlled close request");
+  assert.ok(duplicatePreparing, "a synchronous reentrant caller joins the registered session");
+  assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1,
+    "reentrant close does not post a duplicate Viewer request");
+  view.onMessage({
+    source: frame,
+    data: {
+      channel: "pdf-web-reader",
+      token: view.token,
+      type: "close-prepared",
+      id: request.id,
+      documentId: request.documentId,
+      openRequest: request.openRequest,
+      revision: 0,
+      ok: true,
+      dirty: false,
+      recovered: false,
+      prepared: true,
+    },
+  });
+  assert.equal(await preparing, true);
+  assert.equal(await duplicatePreparing, true);
+  assert.equal(view.preparedClose.documentId, view.documentId);
+  assert.equal(view.closePreparation, null);
+});
+
 test("controlled detach waits for a prepared ack and skips duplicate onClose flush", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -1996,98 +2263,79 @@ test("controlled detach waits for a prepared ack and skips duplicate onClose flu
   assert.equal(view.iframe, null);
 });
 
-test("controlled close quiesces sync before prepare-close and resumes sync after a failed flush", async () => {
+test("controlled close shares one pending prepare request and cancels a failed Viewer acknowledgement", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { leaf, view, sent, replyClose } = await createControlledReader(
     harness,
     new harness.TFile("Books/close-quiesce-order.pdf"),
   );
-  const calls = [];
-  view.plugin.pdfSync.prepareClose = async () => {
-    calls.push("quiesce");
-    assert.equal(sent.some((message) => message.type === "prepare-close"), false,
-      "sync must quiesce before the Viewer starts its close flush");
-    return true;
-  };
-  view.plugin.pdfSync.resumeClose = () => {
-    calls.push("resume");
-    return true;
-  };
 
-  const detaching = leaf.detach();
-  await Promise.resolve();
-  assert.deepEqual(calls, ["quiesce"]);
+  const first = view.prepareControlledClose("detach");
+  const duplicate = view.prepareControlledClose("detach");
+  await settleMicrotasks();
   assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
+  assert.equal(leaf.detached, undefined);
   replyClose({ ok: false, dirty: true, prepared: false });
-  assert.equal(await detaching, false);
-  assert.deepEqual(calls, ["quiesce", "resume"],
-    "a failed safe-save gate must release the temporary sync pause");
+  assert.deepEqual(await Promise.all([first, duplicate]), [false, false],
+    "concurrent close callers share the same failed session result");
   assert.equal(leaf.detached, undefined);
   assert.equal(view.preparedClose, null);
+  assert.ok(sent.some((message) => message.type === "cancel-close"));
 });
 
-test("controlled close starts its full Viewer ack budget after sync quiescence", async () => {
+test("controlled close arms a complete Viewer acknowledgement budget at the send boundary", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const { view, sent, replyClose } = await createControlledReader(
+  const { view, sent } = await createControlledReader(
     harness,
     new harness.TFile("Books/close-quiesce-ack-budget.pdf"),
   );
   const originalNow = Date.now;
   let now = originalNow();
-  let requestDuringQuiescence = null;
-  let ownerWindow = null;
+  let request = null;
+  const ownerWindow = view.getOwnerWindow();
   Date.now = () => now;
-  view.plugin.pdfSync.prepareClose = async () => {
-    ownerWindow = view.ownerWindow;
-    requestDuringQuiescence = [...view.flushRequests.values()].at(-1);
-    assert.ok(requestDuringQuiescence);
-    assert.equal(requestDuringQuiescence.timer, null,
-      "sync quiescence must not consume the Viewer close acknowledgement timer");
-    now += 120001;
-    assert.equal(ownerWindow.fireTimeout(requestDuringQuiescence.timer), false,
-      "there must be no armed Viewer timeout while a checkpoint/cancel is settling");
-    return true;
-  };
 
   try {
     const preparing = view.prepareControlledClose("detach");
     await settleMicrotasks();
-    assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
-    assert.equal(requestDuringQuiescence.deadline, now + 120000,
-      "the full 120 second budget begins at the send boundary");
-    const timer = ownerWindow.timers.get(requestDuringQuiescence.timer);
+    const message = sent.find((item) => item.type === "prepare-close");
+    assert.ok(message, "the ready Viewer receives the controlled-close request");
+    request = view.flushRequests.get(message.id);
+    assert.ok(request);
+    assert.equal(request.deadline, now + 120000,
+      "the Viewer receives the full 120 second acknowledgement budget");
+    const timer = ownerWindow.timers.get(request.timer);
     assert.equal(timer?.delay, 120000);
-    replyClose({ revision: 0 });
-    assert.equal(await preparing, true);
+    now += 120001;
+    assert.equal(ownerWindow.fireTimeout(request.timer), true,
+      "the deadline expires the close request when the Viewer never responds");
+    assert.equal(await preparing, false);
+    assert.equal(view.flushRequests.size, 0);
+    assert.ok(sent.some((item) => item.type === "cancel-close"));
   } finally {
+    if (request?.timer !== null && request?.timer !== undefined) {
+      ownerWindow.clearTimeout(request.timer);
+      request.finish?.({ ok: false, dirty: true });
+    }
     Date.now = originalNow;
   }
 });
 
-test("controlled close does not message a stale or no-longer-ready Viewer after quiescence", async () => {
+test("controlled close does not message a Viewer that becomes stale before its send boundary", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { view, sent } = await createControlledReader(
     harness,
     new harness.TFile("Books/close-quiesce-stale-session.pdf"),
   );
-  let resumed = 0;
-  view.plugin.pdfSync.prepareClose = async () => {
-    view.ready = false;
-    return true;
-  };
-  view.plugin.pdfSync.resumeClose = () => {
-    resumed += 1;
-    return true;
-  };
-
-  assert.equal(await view.prepareControlledClose("detach"), false);
+  const preparing = view.prepareControlledClose("detach");
+  view.ready = false;
+  assert.equal(await preparing, false);
   assert.equal(sent.some((message) => message.type === "prepare-close"), false,
-    "the captured renderer is revalidated after close-intent quiescence");
+    "the captured renderer is revalidated immediately before posting close");
   assert.equal(view.flushRequests.size, 0);
-  assert.equal(resumed, 1);
 });
 
 test("failed controlled detach keeps the Reader leaf open and sends cancel-close", async () => {
@@ -2142,7 +2390,7 @@ test("controlled detach rejects a close ack for a different open request", async
   assert.ok(sent.some((message) => message.type === "cancel-close"));
 });
 
-test("controlled detach accepts a durable recovery draft", async () => {
+test("controlled detach accepts a Viewer-confirmed durable recovery batch", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { leaf, sent, replyClose } = await createControlledReader(
@@ -2163,7 +2411,8 @@ test("controlled detach accepts a durable recovery draft", async () => {
 
   assert.equal(leaf.detached, true);
   assert.equal(sent.some((message) => message.type === "cancel-close"), false);
-  assert.ok(harness.notices.some((notice) => notice.includes("已保留恢复副本")));
+  assert.ok(harness.notices.some((notice) => notice.includes("未确认的批注操作写入外置记录")),
+    "a recovered close is accepted but keeps the external-record warning visible to the user");
 });
 
 test("popout beforeunload waits for every Reader and resumes after a failed close", async () => {
@@ -2673,93 +2922,67 @@ test("close clears other outstanding flush timers", async () => {
 test("recovery command creates a separate visible PDF copy", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const view = harness.createView();
-  view.file = new harness.TFile("Books/recover.pdf");
-  const record = await harness.plugin.writeRecoveryCandidate({
-    view,
-    data: Uint8Array.from([9, 8, 7]).buffer,
-    originalBytes: Uint8Array.from([1, 2, 3]),
-    documentPath: view.file.path,
-    revision: 12,
-    origin: "auto",
+  const source = await PDFDocument.create();
+  source.addPage([300, 400]);
+  const sourceBytes = new Uint8Array(await source.save());
+  const recovery = await PDFDocument.create();
+  recovery.addPage([300, 400]);
+  recovery.setTitle("Verified legacy recovery candidate");
+  const recoveryBytes = new Uint8Array(await recovery.save());
+  const sourceFile = new harness.TFile("Books/recover.pdf", sourceBytes);
+  harness.files.set(sourceFile.path, sourceFile);
+  const candidate = await seedRecoveryCandidate(harness, {
+    candidateId: "visible-legacy-recovery",
+    originalPath: sourceFile.path,
+    bytes: recoveryBytes,
+    status: "conflict",
   });
-  await harness.plugin.markRecoveryCandidate(record, { status: "conflict" });
 
   const restoredPath = await harness.plugin.restoreLatestRecovery();
 
   assert.match(restoredPath, /^PDF Recovery\/recover \(Recovered /);
-  assert.deepEqual([...harness.files.get(restoredPath).bytes], [9, 8, 7]);
+  assert.deepEqual(harness.files.get(restoredPath).bytes, recoveryBytes);
+  assert.deepEqual(sourceFile.bytes, sourceBytes);
+  assert.equal(sourceFile.writes, 0, "restoring a candidate creates a separate output rather than editing the source");
   assert.equal((await harness.plugin.listRecoveryCandidates()).length, 1,
     "Restore must leave the original recovery candidate intact");
+  assert.equal((await harness.plugin.listRecoveryCandidates())[0].metadata.candidateId,
+    candidate.metadata.candidateId);
 });
 
-test("recovery completion follows verified bytes and failed candidates leave no orphan", async () => {
+test("recovery restore verifies bytes, falls back to an intact candidate, and retains corruption", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const view = harness.createView();
-  view.file = new harness.TFile("Books/recovery-order.pdf");
   const adapter = harness.app.vault.adapter;
-  const write = adapter.write.bind(adapter);
-  const writeBinary = adapter.writeBinary.bind(adapter);
-  const order = [];
-  const isRecovery = path => path.startsWith(`${harness.plugin.recoveryDirectory}/`);
-  adapter.write = async (...args) => {
-    if (isRecovery(args[0])) order.push("metadata");
-    return write(...args);
-  };
-  adapter.writeBinary = async (...args) => {
-    order.push("binary");
-    return writeBinary(...args);
-  };
-
-  const record = await harness.plugin.writeRecoveryCandidate({
-    view,
-    data: Uint8Array.from([9, 8, 7]).buffer,
-    originalBytes: Uint8Array.from([1, 2, 3]),
-    documentPath: view.file.path,
-    revision: 1,
-    origin: "auto",
+  const intact = new Uint8Array(await (async () => {
+    const document = await PDFDocument.create();
+    document.addPage([300, 400]);
+    document.setTitle("Older intact recovery");
+    return document.save();
+  })());
+  const corrupted = await seedRecoveryCandidate(harness, {
+    candidateId: "newer-corrupt-recovery",
+    originalPath: "Books/recovery-order.pdf",
+    bytes: [4, 5, 6],
+    metadataOverrides: { createdAt: "2026-10-15T01:00:00.000Z" },
   });
-  assert.deepEqual(order, ["metadata", "binary", "metadata"]);
-  await harness.plugin.removeRecoveryCandidate(record);
-  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0);
+  const older = await seedRecoveryCandidate(harness, {
+    candidateId: "older-intact-recovery",
+    originalPath: "Books/recovery-order.pdf",
+    bytes: intact,
+    metadataOverrides: { createdAt: "2026-10-14T01:00:00.000Z" },
+  });
+  await adapter.writeBinary(corrupted.candidatePath, Uint8Array.from([9, 9, 9]).buffer);
 
-  order.length = 0;
-  adapter.write = async (...args) => {
-    if (!isRecovery(args[0])) return write(...args);
-    order.push("metadata");
-    throw new Error("metadata write failed");
-  };
-  await assert.rejects(
-    harness.plugin.writeRecoveryCandidate({
-      view,
-      data: Uint8Array.from([4, 5, 6]).buffer,
-      originalBytes: Uint8Array.from([1, 2, 3]),
-      documentPath: view.file.path,
-      revision: 2,
-      origin: "auto",
-    }),
-    /metadata write failed/,
-  );
-  assert.deepEqual(order, ["metadata"]);
-  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0, "No unindexed recovery bytes are written");
+  const restoredPath = await harness.plugin.restoreLatestRecovery();
 
-  adapter.write = write;
-  adapter.writeBinary = async (...args) => {
-    order.push("binary-failed");
-    throw new Error("binary write failed");
-  };
-  await assert.rejects(
-    harness.plugin.writeRecoveryCandidate({
-      view,
-      data: Uint8Array.from([4, 5, 6]).buffer,
-      originalBytes: Uint8Array.from([1, 2, 3]),
-      documentPath: view.file.path,
-      revision: 3,
-      origin: "auto",
-    }),
-    /binary write failed/,
-  );
-  assert.equal([...harness.storedFiles.keys()].filter(isRecovery).length, 0, "A failed binary write removes its pending metadata");
-  assert.equal((await harness.plugin.listRecoveryCandidates()).length, 0);
+  assert.match(restoredPath, /^PDF Recovery\/recovery-order \(Recovered /);
+  assert.deepEqual(harness.files.get(restoredPath).bytes, intact,
+    "restore skips the newest candidate whose bytes fail the recorded digest");
+  assert.equal(await adapter.exists(corrupted.candidatePath), true,
+    "a corrupt candidate remains available for inspection rather than being deleted");
+  assert.equal(await adapter.exists(corrupted.metadataPath), true);
+  assert.equal(await adapter.exists(older.candidatePath), true,
+    "successful restoration also preserves the source recovery candidate");
+  assert.equal((await harness.plugin.listRecoveryCandidates()).length, 2);
 });

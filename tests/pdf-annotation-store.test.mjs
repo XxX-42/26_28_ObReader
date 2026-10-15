@@ -320,6 +320,36 @@ test("checkpoint backup restores compacted state and late covered batches cannot
     "an exact covered batch that reappears after sync is ignored and compacted again");
 });
 
+test("an unverified checkpoint backup prevents covered-batch garbage collection", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "backup-failure-device" });
+  const document = await annotations.registerDocument({ sourcePath: "backup-failure.pdf" });
+  await annotations.appendOperations({ document, batchId: "keep-until-backup", operations: [
+    live("backup-safe", "Ink", "backup-failure-device", 10),
+  ] });
+  const batchPath = `${annotations.pathsFor(document).deviceOperations}/keep-until-backup.json`;
+  const originalWrite = adapter.write.bind(adapter);
+  let backupWrites = 0;
+  adapter.write = async (path, value) => {
+    if (path === annotations.pathsFor(document).checkpointBackup && ++backupWrites === 3) {
+      await originalWrite(path, "truncated checkpoint backup");
+      return;
+    }
+    await originalWrite(path, value);
+  };
+
+  await assert.rejects(annotations.readDocument(document), {
+    code: "PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED",
+  });
+  assert.equal(files.has(batchPath), true,
+    "a backup that fails exact readback must leave every covered operation batch intact");
+
+  const recovered = await annotations.readDocument(document);
+  assert.equal(recovered.annotations[0].uuid, "backup-safe");
+  assert.equal(files.has(batchPath), false,
+    "a later verified primary/backup pair allows the already-checkpointed batch to be collected");
+});
+
 test("legacy Float32 wrappers are losslessly compacted only after the checkpoint upgrade barrier", async () => {
   const { adapter, files } = makeAdapter();
   const annotations = store({ adapter, deviceId: "upgrade-device" });
@@ -335,6 +365,16 @@ test("legacy Float32 wrappers are losslessly compacted only after the checkpoint
   await annotations.appendOperations({ document, batchId: "old-ink", operations: [live(
     "ink", "Ink", "upgrade-device", 20, { editor: oldEditor },
   )] });
+  const legacyBatchPath = `${annotations.pathsFor(document).deviceOperations}/old-ink.json`;
+  const serializedLegacyBatch = files.get(legacyBatchPath);
+  const withPersistedNegativeZero = serializedLegacyBatch.replaceAll(
+    '"values":[0.125,1.5,{"$type":"NonFiniteNumber","value":"NaN"},0]',
+    '"values":[0.125,1.5,{"$type":"NonFiniteNumber","value":"NaN"},-0]',
+  );
+  assert.notEqual(withPersistedNegativeZero, serializedLegacyBatch,
+    "the fixture includes a legacy JSON number spelling that preserves negative zero");
+  files.set(legacyBatchPath, withPersistedNegativeZero);
+
   const upgraded = await annotations.readDocument(document);
   assert.equal(upgraded.compactInkEncoding, true);
   assert.equal(upgraded.annotations[0].payload.editor.paths.lines.$type, "Float32ArrayLE");
@@ -343,6 +383,16 @@ test("legacy Float32 wrappers are losslessly compacted only after the checkpoint
   assert.equal(checkpoint.payloadEncoding, "float32le-base64-v1");
   assert.equal(JSON.stringify(checkpoint).includes('"$type":"Float32Array"'), false);
   assert.equal(checkpoint.annotations[0].payload.editor.paths.lines.length, 4);
+  const compactLines = checkpoint.annotations[0].payload.editor.paths.lines;
+  const compactBytes = Buffer.from(compactLines.base64, "base64");
+  assert.equal(compactBytes.byteLength, compactLines.length * Float32Array.BYTES_PER_ELEMENT);
+  assert.deepEqual([...compactBytes.subarray(0, 8)], [0, 0, 0, 62, 0, 0, 192, 63],
+    "finite values use their exact Float32 little-endian representation");
+  const compactView = new DataView(compactBytes.buffer, compactBytes.byteOffset, compactBytes.byteLength);
+  assert.equal(Number.isNaN(compactView.getFloat32(8, true)), true,
+    "the NaN slot remains a Float32 NaN after compact encode/decode");
+  assert.equal(Object.is(compactView.getFloat32(12, true), -0), true,
+    "negative zero survives when it is present in the legacy persisted JSON");
 });
 
 test("every registered device must acknowledge the same checkpoint before GC; retirement rejects late writes", async () => {
@@ -394,6 +444,19 @@ test("every registered device must acknowledge the same checkpoint before GC; re
   const afterRetirement = await a.readDocument(documentA);
   assert.equal(afterRetirement.annotations.some((row) => row.uuid === "revive"), false,
     "a late batch from a retired device cannot alter the checkpoint projection");
+
+  const syncedAfterRetirement = {
+    ...oldBatch,
+    batchId: "late-after-retirement",
+    operations: [live("revive-after-gc", "Ink", "device-B", 51)],
+  };
+  const syncedAfterRetirementPath = `${a.pathsFor(documentA).operations}/device-B/late-after-retirement.json`;
+  shared.files.set(syncedAfterRetirementPath, JSON.stringify(syncedAfterRetirement));
+  const afterLateSync = await a.readDocument(documentA);
+  assert.equal(afterLateSync.annotations.some((row) => row.uuid === "revive-after-gc"), false,
+    "a newly synced batch from a retired device stays outside the projection after prior GC");
+  assert.equal(shared.files.has(syncedAfterRetirementPath), false,
+    "the ignored late batch is recorded in a new checkpoint and can then be collected");
 });
 
 test("rename preserves identity and updates source mapping; a later path copy gets a new identity", async () => {
@@ -649,6 +712,59 @@ test("idle registered devices block compact-format and root-index cutover until 
   const routeIndex = JSON.parse(shared.files.get("00_Archive/20_PDFData/_index.json"));
   assert.equal(routeIndex.schemaVersion, 2);
   assert.deepEqual(routeIndex.documents, { "Books/Idle.pdf": documentA.docKey });
+});
+
+test("a cold root-index document blocks route-only cutover after another document is compact and acknowledged", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "root-barrier-device" });
+  const documentA = await annotations.registerDocument({
+    sourcePath: "Books/A-Large.pdf",
+    source: {
+      sourceHash: hash("large source PDF"),
+      size: 16_850_000,
+      pageCount: 357,
+      orderedPageIdentities: Array.from({ length: 357 }, (_, index) => `ref:${index + 1}R`),
+    },
+  });
+  const documentB = await annotations.registerDocument({
+    sourcePath: "Books/B-Cold.pdf",
+    source: {
+      sourceHash: hash("cold source PDF"),
+      pageCount: 3,
+      orderedPageIdentities: ["cold-page-1", "cold-page-2", "cold-page-3"],
+    },
+  });
+
+  const before = JSON.parse(files.get("00_Archive/20_PDFData/_index.json"));
+  assert.equal(before.schemaVersion, 1);
+  assert.equal(Object.keys(before.documents).length, 2);
+
+  const snapshotA = await annotations.readDocument(documentA);
+  const checkpointA = JSON.parse(files.get(annotations.pathsFor(documentA).checkpoint));
+  const metadataA = JSON.parse(files.get(annotations.pathsFor(documentA).metadata));
+  const metadataB = JSON.parse(files.get(annotations.pathsFor(documentB).metadata));
+  const devicesA = await annotations.inspectDevices(documentA);
+  const after = JSON.parse(files.get("00_Archive/20_PDFData/_index.json"));
+
+  assert.equal(snapshotA.compactInkEncoding, true);
+  assert.equal(checkpointA.payloadEncoding, "float32le-base64-v1");
+  assert.match(checkpointA.metadataHash, /^sha256-v1:[a-f0-9]{64}$/);
+  assert.equal(metadataA.source.orderedPageIdentities.length, 357);
+  assert.equal(metadataB.source.orderedPageIdentities.length, 3);
+  assert.equal(files.has(annotations.pathsFor(documentB).checkpoint), false,
+    "document B remains cold: it has no checkpoint");
+  assert.deepEqual(devicesA.devices.map(({ deviceId, pluginVersion, checkpointHash, acknowledged }) => ({
+    deviceId, pluginVersion, checkpointHash, acknowledged,
+  })), [{
+    deviceId: "root-barrier-device",
+    pluginVersion: "0.7.0",
+    checkpointHash: checkpointA.integrity,
+    acknowledged: true,
+  }]);
+  assert.equal(after.schemaVersion, 1,
+    "materializing A is globally blocked because route readiness also requires a compact checkpoint for cold B");
+  assert.equal(after.documents["Books/A-Large.pdf"].source.orderedPageIdentities.length, 357);
+  assert.equal(after.documents["Books/B-Cold.pdf"].source.orderedPageIdentities.length, 3);
 });
 
 test("a missing per-document metadata file behind a route index fails closed", async () => {

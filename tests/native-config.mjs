@@ -11,7 +11,8 @@ export const MACOS_TEST_VAULT =
   "/Users/jiajia/Documents/ObReader-Apple-Test";
 
 function resolveForPlatform(value, platform) {
-  return platform === "win32" ? path.win32.resolve(value) : path.resolve(value);
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  return pathApi.resolve(value);
 }
 
 function validateConfigDir(configDir, platform) {
@@ -21,7 +22,7 @@ function validateConfigDir(configDir, platform) {
     !path.isAbsolute(configDir) && !path.win32.isAbsolute(configDir),
     "OBSIDIAN_CONFIG_DIR must be relative to the vault",
   );
-  const pathApi = platform === "win32" ? path.win32 : path;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   const normalized = pathApi.normalize(configDir);
   assert.ok(
     normalized !== "." &&

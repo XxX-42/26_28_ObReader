@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { lstat, open } from "node:fs/promises";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
@@ -368,23 +368,29 @@ export const readPosixProcessTable = async (
   return String(stdout || "").split(/\r?\n/).map(splitProcessLine).filter(Boolean);
 };
 
-const readWindowsProcess = (pid) => {
+const WINDOWS_PROCESS_QUERY_TIMEOUT_MS = 5_000;
+
+export const readWindowsProcess = async (pid, processQuery = execFileAsync) => {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
   const script = [
     `$processId = ${pid}`,
     "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $processId\" -ErrorAction SilentlyContinue",
     "if (-not $process) { $process = Get-WmiObject Win32_Process -Filter \"ProcessId = $processId\" -ErrorAction SilentlyContinue }",
     "if ($process) { @{ pid = $process.ProcessId; parentPid = $process.ParentProcessId; executablePath = $process.ExecutablePath; commandLine = $process.CommandLine; startedAt = $process.CreationDate } | ConvertTo-Json -Compress }",
   ].join("; ");
-  const output = execFileSync("powershell.exe", [
+  const { stdout = "" } = await processQuery("powershell.exe", [
+    "-NoLogo",
     "-NoProfile",
     "-NonInteractive",
     "-Command",
     script,
   ], {
     encoding: "utf8",
-    timeout: 2_000,
-    stdio: ["ignore", "pipe", "ignore"],
-  }).trim();
+    timeout: WINDOWS_PROCESS_QUERY_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+  });
+  const output = String(stdout).trim();
   if (!output) return null;
   const row = JSON.parse(output);
   return {
@@ -398,12 +404,12 @@ const readWindowsProcess = (pid) => {
   };
 };
 
-const readProcessTable = async (pid, groupId, processQuery = execFileAsync) => {
-  if (process.platform === "win32") {
-    const row = readWindowsProcess(pid);
+const readProcessTable = async (pid, groupId, processQuery = execFileAsync, platform = process.platform) => {
+  if (platform === "win32") {
+    const row = await readWindowsProcess(pid, processQuery);
     return row ? [row] : [];
   }
-  return readPosixProcessTable(pid, groupId, processQuery);
+  return readPosixProcessTable(pid, groupId, processQuery, platform);
 };
 
 const tempProfileFromChild = (child) => {
@@ -461,7 +467,7 @@ export const processIdentityMatches = (row, baseline) =>
 
 const liveRows = (rows) => rows.filter((row) => !String(row.state || "").includes("Z"));
 
-const captureOwnership = async (child, processQuery = execFileAsync) => {
+const captureOwnership = async (child, processQuery = execFileAsync, platform = process.platform) => {
   if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
     return { available: false, reason: "No owned browser PID is available" };
   }
@@ -473,7 +479,7 @@ const captureOwnership = async (child, processQuery = execFileAsync) => {
     };
   }
   try {
-    const rows = await readProcessTable(child.pid, child.pid, processQuery);
+    const rows = await readProcessTable(child.pid, child.pid, processQuery, platform);
     const leader = rows.find((row) => row.pid === child.pid) || null;
     const validLeader = Boolean(
       leader &&
@@ -481,7 +487,7 @@ const captureOwnership = async (child, processQuery = execFileAsync) => {
         matchesExpectedExecutable(leader, child),
     );
     const groupRows =
-      process.platform === "win32"
+      platform === "win32"
         ? []
         : liveRows(rows).filter((row) => row.groupId === child.pid);
     const groupObserved = groupRows.some((row) => row.pid === child.pid || row.groupId === child.pid);
@@ -522,12 +528,12 @@ const captureOwnership = async (child, processQuery = execFileAsync) => {
   }
 };
 
-const inspectOwnedTargets = async (child, ownership, processQuery = execFileAsync) => {
+const inspectOwnedTargets = async (child, ownership, processQuery = execFileAsync, platform = process.platform) => {
   if (!ownership?.available || !child || child.pid !== ownership.pid) {
     return { direct: false, group: false, reason: ownership?.reason || "Process identity is unavailable" };
   }
   try {
-    const rows = await readProcessTable(child.pid, ownership.groupId, processQuery);
+    const rows = await readProcessTable(child.pid, ownership.groupId, processQuery, platform);
     const leader = rows.find((row) => row.pid === child.pid) || null;
     const baselineLeader = ownership.baselineLeader;
     const direct = Boolean(
@@ -537,7 +543,7 @@ const inspectOwnedTargets = async (child, ownership, processQuery = execFileAsyn
         matchesExpectedExecutable(leader, child),
     );
     let group = false;
-    if (ownership.groupId && process.platform !== "win32") {
+    if (ownership.groupId && platform !== "win32") {
       const members = liveRows(rows).filter((row) => row.groupId === ownership.groupId);
       const baselineByPid = new Map(
         (ownership.baselineRows || []).map((row) => [row.pid, row]),
@@ -561,8 +567,11 @@ const inspectOwnedTargets = async (child, ownership, processQuery = execFileAsyn
 };
 
 /** Capture the launch-time identity used by later test-owned diagnostics. */
-export function captureOwnedBrowserIdentity(child, { processQuery = execFileAsync } = {}) {
-  return captureOwnership(child, processQuery);
+export function captureOwnedBrowserIdentity(
+  child,
+  { processQuery = execFileAsync, platform = process.platform } = {},
+) {
+  return captureOwnership(child, processQuery, platform);
 }
 
 /**
@@ -580,18 +589,20 @@ export async function sampleOwnedBrowserProcess(
     mayDie = false,
     sampleRunner = execFileAsync,
     processQuery = execFileAsync,
+    platform = process.platform,
   } = {},
 ) {
-  if (process.platform !== "darwin") {
+  if (platform !== "darwin") {
     return { state: "skipped", reason: "Process sampling is available only on macOS" };
   }
-  if (!outputPath || !path.isAbsolute(outputPath)) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (!outputPath || !pathApi.isAbsolute(outputPath)) {
     return { state: "skipped", reason: "An absolute diagnostic sample path is required" };
   }
   if (processHasExited(child)) {
     return { state: "skipped", reason: "The owned browser process had already exited" };
   }
-  const targets = await inspectOwnedTargets(child, ownership, processQuery);
+  const targets = await inspectOwnedTargets(child, ownership, processQuery, platform);
   if (!targets.direct) {
     return {
       state: "skipped",

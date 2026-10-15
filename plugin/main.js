@@ -1741,7 +1741,10 @@ class PdfReaderView extends EditableFileView {
       openRequest,
       promise: null,
     };
-    pending.promise = (async () => {
+    // Publish the session before its first identity check. Defer execution so
+    // even a synchronous/reentrant bridge observes the shared close promise.
+    this.closePreparation = pending;
+    pending.promise = Promise.resolve().then(async () => {
       const stillCurrent =
         !request.settled &&
         !this.plugin.isUnloading &&
@@ -1808,10 +1811,9 @@ class PdfReaderView extends EditableFileView {
         unloaded: false,
       };
       return true;
-    })().finally(() => {
+    }).finally(() => {
       if (this.closePreparation === pending) this.closePreparation = null;
     });
-    this.closePreparation = pending;
     return pending.promise;
   }
 

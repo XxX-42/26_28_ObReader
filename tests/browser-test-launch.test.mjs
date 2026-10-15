@@ -7,6 +7,7 @@ import {
   finalizeTestBrowserLaunch,
   getTestBrowserLaunchMetadata,
   launchTestBrowser,
+  mergeBrowserTestEnvironment,
 } from "./browser-test-launch.mjs";
 
 async function makeArtifactsDirectory(prefix) {
@@ -24,6 +25,16 @@ async function readLaunchRecords(recordPath) {
   const contents = await readFile(recordPath, "utf8");
   return contents.trim().split("\n").map((line) => JSON.parse(line));
 }
+
+test("Windows browser environments merge variable names case-insensitively", () => {
+  assert.deepEqual(mergeBrowserTestEnvironment({ Path: "system-path", KEEP: "base" }, {
+    path: "launch-path",
+    keep: "override",
+  }, "win32"), {
+    PATH: "launch-path",
+    keep: "override",
+  });
+});
 
 test("test browser launches get unique Crashpad directories and preserve launch environment/options", async () => {
   const { root, artifactsDir } = await makeArtifactsDirectory("test-browser-launch-unique-");

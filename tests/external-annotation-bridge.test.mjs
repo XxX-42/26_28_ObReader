@@ -242,7 +242,9 @@ test("hydration waits for host source confirmation and touches only exact embedd
   assert.match(functionSource("externalSourceIdentityMatchesViewer"), /identityStatus !== "KNOWN"/);
   assert.match(functionSource("externalSourceIdentityMatchesViewer"), /orderedPageIdentities/);
   assert.match(functionSource("hydrateExternalAnnotation"), /layer\.deserialize\(payload\)/);
-  assert.match(functionSource("hydrateExternalAnnotation"), /layer\.add\(editor\)/);
+  assert.match(functionSource("hydrateExternalAnnotation"), /addHydratedEditor\(layer, editor/);
+  assert.match(functionSource("addHydratedEditor"), /layer\.add\(editor\)/);
+  assert.match(functionSource("addHydratedEditor"), /finally/);
   assert.match(functionSource("hydrateExternalAnnotation"), /annotationEditorLayer\?\.show\?\.\(\)/);
   assert.match(functionSource("suppressEmbeddedAnnotation"), /querySelectorAll\("\[data-annotation-id\]"\)/);
   assert.match(functionSource("findEmbeddedEditor"), /editor\?\.annotationElementId/);

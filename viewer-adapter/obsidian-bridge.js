@@ -179,11 +179,48 @@
   const runtimeLogStarted = performance.now();
   let runtimeLogRows = [], runtimeLogBytes = 0, runtimeLogLost = 0, runtimeLogSequence = 0, runtimeLogCall = 0, runtimeLogClosed = false, runtimeLogClosing = false;
   const runtimeLogListeners = [];
+  function startSidecarPerformance() {
+    try {
+      const startedAt = performance.now();
+      return {
+        startedAt,
+        startedAtEpochMs: performance.timeOrigin + startedAt,
+      };
+    } catch {
+      return { startedAt: null, startedAtEpochMs: null };
+    }
+  }
+  function recordSidecarPerformance(phase, timing, revision, operationCount, rowCount, status) {
+    try {
+      const finishedAt = performance.now();
+      const durationMs = Number.isFinite(timing.startedAt)
+        ? +Math.max(0, finishedAt - timing.startedAt).toFixed(3)
+        : null;
+      runtimeLogRecord("sidecar-performance", {
+        phase,
+        documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest,
+        rendererGeneration,
+        revision,
+        startedAtEpochMs: timing.startedAtEpochMs,
+        durationMs,
+        operationCount,
+        rowCount,
+        status,
+      });
+    } catch {
+      // Performance telemetry must never change capture/encode behavior.
+    }
+  }
   function runtimeLogRecord(kind, fields = {}) {
     if (runtimeLogClosed) return;
     try {
       const row = JSON.stringify({ time: new Date().toISOString(), elapsedMs: +(performance.now() - runtimeLogStarted).toFixed(3), seq: ++runtimeLogSequence, kind, revision: state.revision, ...fields });
-      if (runtimeLogBytes + row.length > 262144) { runtimeLogLost++; return; }
+      // Preserve a small bounded reserve for capture/encode timing rows when
+      // ordinary trace traffic is noisy. The shared buffer, row order, and
+      // sequence remain unchanged; dropped rows are still reported by log-loss.
+      const rowLimit = kind === "sidecar-performance" ? 262144 : 262144 - 32768;
+      if (runtimeLogBytes + row.length > rowLimit) { runtimeLogLost++; return; }
       runtimeLogRows.push(row); runtimeLogBytes += row.length;
     } catch { runtimeLogLost++; }
   }
@@ -1191,6 +1228,16 @@
     return null;
   }
 
+  function hasNonDegeneratePdfRect(rect) {
+    return Boolean(
+      (Array.isArray(rect) || ArrayBuffer.isView(rect)) &&
+      rect.length === 4 &&
+      [...rect].every(Number.isFinite) &&
+      Math.abs(rect[2] - rect[0]) > 0 &&
+      Math.abs(rect[3] - rect[1]) > 0
+    );
+  }
+
   function getAnnotationStorageRows(app = state.app) {
     const storageMap = app?.pdfDocument?.annotationStorage?.serializable?.map;
     if (!(storageMap instanceof Map)) {
@@ -1202,9 +1249,28 @@
         continue;
       }
       const runtimeId = String(rawRuntimeId);
-      const value = normalizeSyncValue(rawValue);
+      let value = normalizeSyncValue(rawValue);
       const editor = app.pdfViewer?._layerProperties
         ?.annotationEditorUIManager?.getEditor?.(runtimeId);
+      if (
+        normalizeSyncKind(editor?.editorType) === "FreeText" &&
+        !hasNonDegeneratePdfRect(value?.rect)
+      ) {
+        // PDF.js can insert a FreeText storage row before its editor has
+        // completed its first layout pass. That row then retains a zero-area
+        // rect even though the live editor has measurable dimensions. Use the
+        // live copy serialization only for the missing geometry; keep the
+        // annotationStorage value as the source for every other field.
+        try {
+          const liveValue = editor.serialize?.(true);
+          if (hasNonDegeneratePdfRect(liveValue?.rect)) {
+            value = { ...value, rect: Array.from(liveValue.rect) };
+          }
+        } catch {
+          // A later operation capture will fail closed if geometry is still
+          // unavailable instead of persisting an invisible FreeText editor.
+        }
+      }
       const annotationElementId = getPdfAnnotationRef(value);
       const reference = annotationElementId ||
         state.annotationRefByRuntimeId.get(runtimeId) || null;
@@ -1261,6 +1327,16 @@
       });
     }
     return rows;
+  }
+
+  function annotationRowsChanged(left, right) {
+    const runtimeIds = new Set([...left.keys(), ...right.keys()]);
+    for (const runtimeId of runtimeIds) {
+      if (left.get(runtimeId)?.signature !== right.get(runtimeId)?.signature) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function seedSyncClock(syncState) {
@@ -1570,6 +1646,9 @@
     if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) {
       throw new Error(`Annotation ${operation.uuid} has unsupported type ${kind}.`);
     }
+    if (!deleted && kind === "FreeText" && !hasNonDegeneratePdfRect(serialized.rect)) {
+      throw new Error(`FreeText annotation ${operation.uuid} has no measurable editor rectangle.`);
+    }
     return {
       uuid: operation.uuid,
       kind,
@@ -1582,13 +1661,28 @@
   }
 
   function captureSyncOperations(revision = state.revision) {
-    const dirtyIds = new Set(captureDirtySyncState(revision).dirtyAnnotationIds);
-    return state.annotationOperations
-      .filter(({ revision: changedAt, operation }) =>
-        changedAt <= revision && dirtyIds.has(operation.uuid),
-      )
-      .map(({ operation }) => externalOperation(operation))
-      .filter(Boolean);
+    const timing = startSidecarPerformance();
+    let operationCount = 0;
+    let rowCount = 0;
+    let status = "ok";
+    try {
+      const dirtyIds = new Set(captureDirtySyncState(revision).dirtyAnnotationIds);
+      const rows = state.annotationOperations
+        .filter(({ revision: changedAt, operation }) =>
+          changedAt <= revision && dirtyIds.has(operation.uuid),
+        );
+      rowCount = rows.length;
+      const operations = rows
+        .map(({ operation }) => externalOperation(operation))
+        .filter(Boolean);
+      operationCount = operations.length;
+      return operations;
+    } catch (error) {
+      status = "error";
+      throw error;
+    } finally {
+      recordSidecarPerformance("encode", timing, revision, operationCount, rowCount, status);
+    }
   }
 
   function recoverySourceIdentity() {
@@ -1829,8 +1923,115 @@
       a.deviceId === b.deviceId && a.opId === b.opId;
   }
 
+  function findUuidMappedEditors(manager, pageIndex, uuid) {
+    const editors = manager?.getEditors?.(pageIndex);
+    if (!editors || typeof editors[Symbol.iterator] !== "function") return [];
+    return [...editors].filter((editor) =>
+      editor?.deleted !== true &&
+      state.annotationUuidByRuntimeId.get(String(editor.id)) === uuid,
+    );
+  }
+
+  function externalAnnotationMatchesLocalOperation(row) {
+    const entry = state.annotationOperations.find(({ operation }) =>
+      operation?.uuid === row?.uuid,
+    );
+    const operation = entry?.operation;
+    if (!operation || operation.deleted === true || operation.action === "delete") {
+      return false;
+    }
+    return operation.timestamp === row.clock.timestamp &&
+      operation.logical === row.clock.logical &&
+      operation.deviceId === row.clock.deviceId &&
+      operation.operationId === row.clock.opId;
+  }
+
+  function addHydratedEditor(layer, editor, { freeTextFontSize = null } = {}) {
+    if (
+      typeof freeTextFontSize !== "number" ||
+      !Number.isFinite(freeTextFontSize) ||
+      freeTextFontSize <= 0
+    ) {
+      return layer.add(editor);
+    }
+    const methodName = "getInitialTranslation";
+    const ownDescriptor = Object.getOwnPropertyDescriptor(editor, methodName);
+    const originalMethod = editor?.[methodName];
+    if (
+      typeof originalMethod !== "function" ||
+      ownDescriptor?.configurable === false ||
+      (!ownDescriptor && !Object.isExtensible(editor))
+    ) {
+      return layer.add(editor);
+    }
+
+    try {
+      Object.defineProperty(editor, methodName, {
+        configurable: true,
+        enumerable: ownDescriptor?.enumerable ?? false,
+        writable: true,
+        value: function (...args) {
+          const translation = originalMethod.apply(this, args);
+          const scale = this?.parentScale;
+          if (
+            (!Array.isArray(translation) && !ArrayBuffer.isView(translation)) ||
+            translation.length < 2 ||
+            !Number.isFinite(translation[0]) ||
+            !Number.isFinite(translation[1]) ||
+            !Number.isFinite(scale) ||
+            scale <= 0
+          ) {
+            return translation;
+          }
+          const correction = freeTextFontSize * scale;
+          if (!Number.isFinite(correction)) return translation;
+          const correctedX = translation[0];
+          const correctedY = translation[1] + correction;
+          const editorRotation = this?.rotation;
+          const parentRotation = this?.parentRotation;
+          if (!Number.isFinite(editorRotation) || !Number.isFinite(parentRotation)) {
+            return [correctedX, correctedY];
+          }
+          const relativeRotation = ((editorRotation - parentRotation) % 360 + 360) % 360;
+          switch (relativeRotation) {
+            case 90:
+              return [correctedY, -correctedX];
+            case 180:
+              return [-correctedX, -correctedY];
+            case 270:
+              return [-correctedY, correctedX];
+            default:
+              return [correctedX, correctedY];
+          }
+        },
+      });
+    } catch {
+      // If PDF.js made the editor non-extensible, preserve its normal render.
+      return layer.add(editor);
+    }
+
+    try {
+      // Hydrated FreeText rects already include the font-size translation from
+      // their original render. Cancel only that screen-space component for
+      // this synchronous render; PDF.js still applies padding and page rotation.
+      return layer.add(editor);
+    } finally {
+      if (ownDescriptor) {
+        Object.defineProperty(editor, methodName, ownDescriptor);
+      } else {
+        Reflect.deleteProperty(editor, methodName);
+      }
+    }
+  }
+
   async function hydrateExternalAnnotation(row, { replace = false } = {}) {
     const app = state.app;
+    const pdfDocument = app?.pdfDocument;
+    const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
+    const startingRevision = state.revision;
+    const startingDirty = state.dirty;
+    const startingChanges = snapshotChanges(app);
     const manager = getAnnotationEditorManager(app);
     const layer = getAnnotationEditorLayer(app, row.pageIndex);
     if (!manager || !layer) return false;
@@ -1844,11 +2045,40 @@
       !replace && currentBinding &&
       externalAnnotationMatchesClock(currentBinding.row, row)
     ) return true;
+    const mappedEditors = findUuidMappedEditors(manager, row.pageIndex, row.uuid);
     const existing = currentBinding?.runtimeId
       ? manager.getEditor?.(currentBinding.runtimeId)
       : row.embeddedRef
-        ? findEmbeddedEditor(manager, row.pageIndex, row.embeddedRef)
-        : null;
+        ? findEmbeddedEditor(manager, row.pageIndex, row.embeddedRef) || mappedEditors[0] || null
+        : mappedEditors[0] || null;
+    let replacedRuntimeId = null;
+    if (
+      existing &&
+      externalAnnotationMatchesLocalOperation(row)
+    ) {
+      // A save ACK can immediately echo the operation made by this very
+      // editor. Its PDF.js runtime ID is local and is not a persisted ref, so
+      // the external hydration binding may not exist yet. Adopt the exact
+      // UUID-mapped editor only when the full operation stamp matches; do not
+      // compare transformed rectangle floats or replace a newer operation.
+      const runtimeId = String(existing.id);
+      state.annotationUuidByRuntimeId.set(runtimeId, row.uuid);
+      if (row.embeddedRef) {
+        state.annotationRefByRuntimeId.set(runtimeId, row.embeddedRef);
+        state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(row.embeddedRef), row.uuid);
+      }
+      state.externalAnnotationHydration.set(row.uuid, {
+        runtimeId,
+        pageIndex: row.pageIndex,
+        embeddedRef: row.embeddedRef,
+        row,
+        adoptedEmbedded: Boolean(
+          row.embeddedRef &&
+          canonicalPdfAnnotationRef(existing.annotationElementId) === row.embeddedRef,
+        ),
+      });
+      return true;
+    }
     if (
       existing && !replace &&
       sameAnnotationPayload(
@@ -1866,11 +2096,16 @@
         pageIndex: row.pageIndex,
         embeddedRef: row.embeddedRef,
         row,
-        adoptedEmbedded: true,
+        adoptedEmbedded: Boolean(
+          (currentBinding?.runtimeId === String(existing.id) && currentBinding.adoptedEmbedded) ||
+          (row.embeddedRef &&
+            canonicalPdfAnnotationRef(existing.annotationElementId) === row.embeddedRef),
+        ),
       });
       return true;
     }
     if (currentBinding?.runtimeId) {
+      replacedRuntimeId = String(currentBinding.runtimeId);
       state.hydratingExternalAnnotations = true;
       try {
         manager.getEditor?.(currentBinding.runtimeId)?.remove?.();
@@ -1878,8 +2113,11 @@
         state.hydratingExternalAnnotations = false;
       }
       state.externalAnnotationHydration.delete(row.uuid);
-    } else if (existing && row.embeddedRef) {
-      // Replace only the exact legacy editor whose source ref is being hidden.
+    } else if (existing && (row.embeddedRef || mappedEditors.includes(existing))) {
+      // Replace only the exact legacy editor whose source ref is being hidden,
+      // or the local editor already mapped to this UUID when a newer external
+      // operation supersedes it.
+      replacedRuntimeId = String(existing.id);
       state.hydratingExternalAnnotations = true;
       try {
         existing.remove?.();
@@ -1892,13 +2130,66 @@
     delete payload.id;
     delete payload.deleted;
     payload.pageIndex = row.pageIndex;
+    const isFreeText = normalizeSyncKind(row.kind) === "FreeText";
+    if (isFreeText) {
+      // PDF.js only fills FreeTextEditor.editorDiv from serialized `value`
+      // when rendering a copy or a source-PDF annotation. Sidecar hydration
+      // deliberately strips the source annotation ID, so mark this payload as
+      // a copy to restore its content without inventing a PDF object ref.
+      payload.isCopy = true;
+    }
+
+    // Snapshot only the state immediately before the async deserialize. This
+    // lets hydration distinguish its own editor replacement from annotation
+    // rows or dirty state created while PDF.js yielded to the event loop.
+    const revisionBeforeDeserialize = state.revision;
+    const dirtyBeforeDeserialize = state.dirty;
+    const changesBeforeDeserialize = snapshotChanges(app);
+    const rowsBeforeDeserialize = getAnnotationStorageRows(app);
+    const withoutTargetUuid = (rows) => new Map(
+      [...rows].filter(([, candidate]) => candidate.uuid !== row.uuid),
+    );
+    const baselineBeforeDeserialize = withoutTargetUuid(state.annotationSnapshot);
+    const rowsBeforeDeserializeWithoutTarget = withoutTargetUuid(rowsBeforeDeserialize);
+    const hadUntrackedRowsBeforeDeserialize = annotationRowsChanged(
+      baselineBeforeDeserialize,
+      rowsBeforeDeserializeWithoutTarget,
+    );
     const editor = await layer.deserialize(payload);
+    if (
+      state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
+      state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest
+    ) {
+      // The async deserialize belongs to a document session that is no longer
+      // active. Never attach its editor or write its baseline into the new one.
+      return false;
+    }
     if (!editor) {
       throw new Error(`PDF.js refused to hydrate ${row.kind} annotation ${row.uuid}.`);
     }
+    const changesAfterDeserialize = snapshotChanges(app);
+    const rowsAfterDeserialize = getAnnotationStorageRows(app);
+    const hadConcurrentMutation =
+      state.revision !== revisionBeforeDeserialize ||
+      state.dirty !== dirtyBeforeDeserialize ||
+      changesAfterDeserialize.hadAnnotationChanges !== changesBeforeDeserialize.hadAnnotationChanges ||
+      changesAfterDeserialize.hadStructuralChanges !== changesBeforeDeserialize.hadStructuralChanges ||
+      annotationRowsChanged(
+        rowsBeforeDeserializeWithoutTarget,
+        withoutTargetUuid(rowsAfterDeserialize),
+      ) ||
+      isEditBoundaryBusy() || state.pendingInkCommit;
+    if (isFreeText) {
+      // The copy render path calls _moveAfterPaste. `isClone` makes that
+      // method consume the marker without shifting the persisted rectangle.
+      editor.isClone = true;
+    }
+    let hadUntrackedRowsAfterHydration = false;
     state.hydratingExternalAnnotations = true;
     try {
-      layer.add(editor);
+      addHydratedEditor(layer, editor, {
+        freeTextFontSize: isFreeText ? payload.fontSize : null,
+      });
       // PDF.js leaves an empty editor layer hidden after its first render.
       // Hydrating an external annotation later adds an editor without going
       // through PDF.js's toolbar path, so explicitly reveal the builder once
@@ -1917,13 +2208,38 @@
         row,
         adoptedEmbedded: false,
       });
+      const rowsAfterHydration = getAnnotationStorageRows(app);
+      const nextSnapshot = new Map(state.annotationSnapshot);
+      for (const [oldRuntimeId, oldRow] of nextSnapshot) {
+        if (oldRuntimeId === replacedRuntimeId || oldRow.uuid === row.uuid) {
+          nextSnapshot.delete(oldRuntimeId);
+        }
+      }
+      const hydratedRow = rowsAfterHydration.get(runtimeId);
+      if (hydratedRow) nextSnapshot.set(runtimeId, hydratedRow);
+      state.annotationSnapshot = nextSnapshot;
+      hadUntrackedRowsAfterHydration = annotationRowsChanged(
+        withoutTargetUuid(nextSnapshot),
+        withoutTargetUuid(rowsAfterHydration),
+      );
+
+      const canClearHydrationOnlyDirtyState =
+        !startingDirty &&
+        !startingChanges.hadAnnotationChanges &&
+        !startingChanges.hadStructuralChanges &&
+        !hadUntrackedRowsBeforeDeserialize &&
+        !hadConcurrentMutation &&
+        state.revision === startingRevision &&
+        !state.dirty &&
+        !hadUntrackedRowsAfterHydration;
+      if (canClearHydrationOnlyDirtyState) {
+        app.pdfDocument?.annotationStorage?.resetModified?.();
+        restoreChanges(app, startingChanges);
+      }
     } finally {
       state.hydratingExternalAnnotations = false;
-      app.pdfDocument?.annotationStorage?.resetModified?.();
-      state.annotationSnapshot = getAnnotationStorageRows(app);
-      state.dirty = false;
-      restoreChanges(app, { hadAnnotationChanges: false, hadStructuralChanges: false });
     }
+    if (hadUntrackedRowsAfterHydration) noteMutation();
     return true;
   }
 
@@ -1950,6 +2266,13 @@
           }
         }
         state.externalAnnotationHydration.delete(row.uuid);
+        const nextSnapshot = new Map(state.annotationSnapshot);
+        for (const [runtimeId, snapshotRow] of nextSnapshot) {
+          if (runtimeId === binding?.runtimeId || snapshotRow.uuid === row.uuid) {
+            nextSnapshot.delete(runtimeId);
+          }
+        }
+        state.annotationSnapshot = nextSnapshot;
         continue;
       }
       try {
@@ -2012,7 +2335,10 @@
     // Seed editor UUIDs from exact PDF object references before the next
     // AnnotationStorage diff. This preserves pre-0.6 UUIDs when an embedded
     // annotation is first edited and lazily migrated into the sidecar log.
-    state.annotationSnapshot = getAnnotationStorageRows();
+    const currentRows = getAnnotationStorageRows();
+    if (reset) {
+      state.annotationSnapshot = currentRows;
+    }
     state.externalSourceConfirmed = true;
     for (const row of merged.values()) seedSyncClock({ identities: [row.clock] });
     return {
@@ -2045,16 +2371,24 @@
     if (!state.pendingExternalAnnotationsUpdate || state.disposed) return;
     if (isEditBoundaryBusy() || state.pendingInkCommit || state.hydratingExternalAnnotations) return;
     const pending = state.pendingExternalAnnotationsUpdate;
-    state.pendingExternalAnnotationsUpdate = null;
     setDeferredTimeout(() => {
+      if (state.pendingExternalAnnotationsUpdate !== pending) return;
       if (
         state.disposed || state.activeDocumentId !== pending.documentId ||
         state.activeOpenRequest !== pending.openRequest
       ) return;
+      // The edit boundary may become busy after this task is queued. Keep the
+      // latest update pending rather than applying a snapshot across a stroke,
+      // text commit, or an in-flight annotation hydration.
+      if (isEditBoundaryBusy() || state.pendingInkCommit || state.hydratingExternalAnnotations) {
+        return;
+      }
       void (async () => {
         try {
           const identityConfirmed = pending.identityConfirmed === true || state.externalSourceConfirmed;
           if (!identityConfirmed) return;
+          if (state.pendingExternalAnnotationsUpdate !== pending) return;
+          state.pendingExternalAnnotationsUpdate = null;
           const result = applyExternalAnnotationsSnapshot(pending.externalAnnotations);
           for (const pageIndex of new Set(result.pages)) {
           const hydrated = await hydrateExternalAnnotationsForPage(pageIndex);
@@ -2066,7 +2400,9 @@
           state.readOnly = pending.readOnly === true || !identityConfirmed;
           setReadOnlyState(state.readOnly);
           if (result.deferredUuids.length) {
-            state.pendingExternalAnnotationsUpdate = pending;
+            if (!state.pendingExternalAnnotationsUpdate) {
+              state.pendingExternalAnnotationsUpdate = pending;
+            }
           }
         } catch (error) {
           sendError(error.message || "Could not apply synchronized PDF annotations.", {
@@ -2244,72 +2580,85 @@
   }
 
   function refreshAnnotationOperations(revision = state.revision) {
-    const current = getAnnotationStorageRows();
-    const previous = state.annotationSnapshot;
-    const changed = new Map();
-    const runtimeIds = new Set([...previous.keys(), ...current.keys()]);
-    for (const runtimeId of runtimeIds) {
-      const before = previous.get(runtimeId) || null;
-      const after = current.get(runtimeId) || null;
-      if (before?.signature === after?.signature) {
-        continue;
+    const timing = startSidecarPerformance();
+    let operationCount = 0;
+    let rowCount = 0;
+    let status = "ok";
+    try {
+      const current = getAnnotationStorageRows();
+      rowCount = current.size;
+      const previous = state.annotationSnapshot;
+      const changed = new Map();
+      const runtimeIds = new Set([...previous.keys(), ...current.keys()]);
+      for (const runtimeId of runtimeIds) {
+        const before = previous.get(runtimeId) || null;
+        const after = current.get(runtimeId) || null;
+        if (before?.signature === after?.signature) {
+          continue;
+        }
+        const row = after || before;
+        if (!row) {
+          continue;
+        }
+        changed.set(row.uuid, { before, after, row });
       }
-      const row = after || before;
-      if (!row) {
-        continue;
-      }
-      changed.set(row.uuid, { before, after, row });
-    }
-    for (const { before, after, row } of changed.values()) {
-      const currentRow = after || row;
-      const deleted = !after || after.deleted;
-      for (const pageIndex of new Set([before?.pageIndex, after?.pageIndex].filter(Number.isSafeInteger))) {
-        state.dirtyPageRevisions.set(pageIndex, revision);
-      }
-      const isNew = !deleted && !after?.annotationElementId && !after?.reference && !after?.operationReference;
-      markDirtyAnnotation(currentRow.uuid, currentRow.pageIndex ?? before?.pageIndex ?? null,
-        deleted ? "delete" : "upsert", revision, isNew);
-      const operationReference = after
-        ? after.deleted
-          ? after.reference || after.operationReference
-          : after.operationReference
-        : before?.reference || before?.operationReference;
-      const stamp = makeSyncStamp();
-      const operation = {
-        uuid: currentRow.uuid,
-        ref: operationReference || null,
-        pageIndex: currentRow.pageIndex ?? before?.pageIndex ?? null,
-        kind: currentRow.kind || before?.kind || "Unknown",
-        deleted,
-        action: deleted ? "delete" : "upsert",
-        ...stamp,
-        ...(deleted
-          ? { serialized: { deleted: true }, payload: null }
-          : { serialized: currentRow.value, payload: { editor: currentRow.value } }),
-      };
-      const existingIndex = state.annotationOperations.findIndex(
-        (entry) => entry.operation.uuid === operation.uuid,
-      );
-      if (existingIndex >= 0) {
-        state.annotationOperations.splice(existingIndex, 1);
-      }
-      state.annotationOperations.push({
-        revision,
-        operation,
-      });
-      if (deleted) {
-        state.restoredSavedAnnotations.delete(operation.uuid);
-      }
-    }
-    state.annotationSnapshot = current;
-    const manager = state.app?.pdfViewer?._layerProperties
-      ?.annotationEditorUIManager;
-    if (manager) {
-      for (const [uuid, identity] of state.restoredSavedAnnotations) {
-        if (!findLiveSavedEditor(manager, identity)) {
-          state.restoredSavedAnnotations.delete(uuid);
+      operationCount = changed.size;
+      for (const { before, after, row } of changed.values()) {
+        const currentRow = after || row;
+        const deleted = !after || after.deleted;
+        for (const pageIndex of new Set([before?.pageIndex, after?.pageIndex].filter(Number.isSafeInteger))) {
+          state.dirtyPageRevisions.set(pageIndex, revision);
+        }
+        const isNew = !deleted && !after?.annotationElementId && !after?.reference && !after?.operationReference;
+        markDirtyAnnotation(currentRow.uuid, currentRow.pageIndex ?? before?.pageIndex ?? null,
+          deleted ? "delete" : "upsert", revision, isNew);
+        const operationReference = after
+          ? after.deleted
+            ? after.reference || after.operationReference
+            : after.operationReference
+          : before?.reference || before?.operationReference;
+        const stamp = makeSyncStamp();
+        const operation = {
+          uuid: currentRow.uuid,
+          ref: operationReference || null,
+          pageIndex: currentRow.pageIndex ?? before?.pageIndex ?? null,
+          kind: currentRow.kind || before?.kind || "Unknown",
+          deleted,
+          action: deleted ? "delete" : "upsert",
+          ...stamp,
+          ...(deleted
+            ? { serialized: { deleted: true }, payload: null }
+            : { serialized: currentRow.value, payload: { editor: currentRow.value } }),
+        };
+        const existingIndex = state.annotationOperations.findIndex(
+          (entry) => entry.operation.uuid === operation.uuid,
+        );
+        if (existingIndex >= 0) {
+          state.annotationOperations.splice(existingIndex, 1);
+        }
+        state.annotationOperations.push({
+          revision,
+          operation,
+        });
+        if (deleted) {
+          state.restoredSavedAnnotations.delete(operation.uuid);
         }
       }
+      state.annotationSnapshot = current;
+      const manager = state.app?.pdfViewer?._layerProperties
+        ?.annotationEditorUIManager;
+      if (manager) {
+        for (const [uuid, identity] of state.restoredSavedAnnotations) {
+          if (!findLiveSavedEditor(manager, identity)) {
+            state.restoredSavedAnnotations.delete(uuid);
+          }
+        }
+      }
+    } catch (error) {
+      status = "error";
+      throw error;
+    } finally {
+      recordSidecarPerformance("capture", timing, revision, operationCount, rowCount, status);
     }
   }
 
@@ -4487,6 +4836,7 @@
         const result = original.apply(manager, args);
         if (args[0]) {
           noteMutation();
+          scheduleFreeTextGeometryRefresh(app);
         }
         return result;
       },
@@ -4557,6 +4907,35 @@
     state.editorManagerCleanup = () => {
       for (const cleanup of cleanups.reverse()) cleanup();
     };
+  }
+
+  function scheduleFreeTextGeometryRefresh(app) {
+    const hasUnmeasuredFreeText = [...state.annotationSnapshot.values()].some(
+      (row) => row.kind === "FreeText" && !hasNonDegeneratePdfRect(row.value?.rect),
+    );
+    if (!hasUnmeasuredFreeText) return;
+    const documentId = state.activeDocumentId;
+    const openRequest = state.activeOpenRequest;
+    const before = state.annotationSnapshot;
+    setDeferredTimeout(() => {
+      if (
+        state.app !== app ||
+        state.activeDocumentId !== documentId ||
+        state.activeOpenRequest !== openRequest
+      ) return;
+      const current = getAnnotationStorageRows(app);
+      const geometrySettled = [...current.values()].some((row) =>
+        row.kind === "FreeText" &&
+        !hasNonDegeneratePdfRect(before.get(row.runtimeId)?.value?.rect) &&
+        hasNonDegeneratePdfRect(row.value?.rect),
+      );
+      if (geometrySettled) {
+        // FreeTextEditor.commit() adds its command before its final layout
+        // measurement. Re-snapshot on the next task so the durable sidecar
+        // receives the post-commit rectangle, not PDF.js's early zero rect.
+        noteMutation();
+      }
+    }, 0);
   }
 
   function observeAccessibilityManagers(app) {
@@ -6276,6 +6655,17 @@
     return null;
   }
 
+  function shouldCaptureTrackedPointer(pointer, event, eraserActive) {
+    const plainMouseTextSelection =
+      pointer.pointerType === "mouse" &&
+      pointer.kind === "text-selection" &&
+      !pointer.nativeOperation;
+    return !plainMouseTextSelection &&
+      (event.pointerType === "mouse" || pointer.nativeOperation) &&
+      event.button !== 2 &&
+      !(event.button === 0 && eraserActive);
+  }
+
   function isPointerSessionCurrent(pointer) {
     return !!(
       pointer &&
@@ -6825,12 +7215,11 @@
     }
     state.activePointers.set(event.pointerId, pointer);
     recordPointerDiagnostic("pointerdown", pointer, event);
-    if (
-      (event.pointerType === "mouse" || pointer.nativeOperation) &&
-      event.button !== 2 &&
-      !(event.button === 0 &&
-        document.body.classList.contains("editorEraserMode"))
-    ) {
+    if (shouldCaptureTrackedPointer(
+      pointer,
+      event,
+      document.body.classList.contains("editorEraserMode"),
+    )) {
       try {
         captureTarget?.setPointerCapture?.(event.pointerId);
       } catch {

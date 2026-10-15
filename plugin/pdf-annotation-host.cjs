@@ -29,6 +29,7 @@ function createPdfAnnotationHost({
     hash: hashRuntime.fingerprint,
     identityHash: identityHash || hashRuntime.fingerprint,
     deviceId,
+    onTiming: (details) => log("annotation-performance", details),
   });
   const queues = new Map();
   const documentViews = new Map();
@@ -161,7 +162,12 @@ function createPdfAnnotationHost({
         });
       }
     }
-    const snapshot = await store.readDocument(currentDocument);
+    // readDocument also materializes checkpoints and rotates their backup.
+    // An untrusted source revision must not trigger ANY such maintenance of
+    // the confirmed old revision: leave its recovery/replay evidence intact.
+    const snapshot = registered.sourceMismatch
+      ? emptySnapshot(currentDocument, source)
+      : await store.readDocument(currentDocument);
     const hasStoredPageIdentity = Number.isSafeInteger(registered.source.pageCount) &&
       Array.isArray(registered.source.orderedPageIdentities) &&
       registered.source.orderedPageIdentities.length === registered.source.pageCount;

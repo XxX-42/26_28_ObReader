@@ -1,5 +1,17 @@
 # PDF Web Reader for Obsidian
 
+Current selection candidate: native single/multiline Underline save/reopen and
+FreeText regression passed on the isolated Windows test vault. It includes the
+minimal PDF.js #22137 selection backport; see vendor provenance and
+[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md) for exact artifacts and remaining
+cross-instance safety/performance gates. This is not a complete architecture or
+Apple-device acceptance claim.
+
+Current blocker: independent-store tests reproduce stale checkpoint overwrite
+and acknowledged-annotation loss after valid retirement/GC. Cross-device safety
+is **not accepted**. Maintenance-coalescing work is stopped; this candidate has
+only been deployed to the isolated test vault, not the primary vault.
+
 An offline Obsidian plugin containing the modified Mozilla PDF.js Viewer. It
 opens vault PDFs and keeps this plugin's annotations in a synced, external
 operation log. The original PDF stays byte-for-byte unchanged during ordinary
@@ -7,12 +19,12 @@ editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.7.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.7.1, acceptance in progress)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
-[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
-acceptance is claimed for Windows or iPad; iPad deployment and final device
-acceptance remain for the user.
+[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No complete
+Windows or iPad acceptance is claimed. Partial Windows Native
+evidence is recorded below; physical Apple-device acceptance remains outstanding.
 
 The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON
@@ -57,6 +69,36 @@ rewrites PDF bytes.
 The pinned `xxhash-wasm` 1.1.0 runtime is bundled for offline content-consistency
 checks and is not a tamper-detection primitive. See [HASH_BENCHMARK.md](HASH_BENCHMARK.md)
 for earlier hash timing samples; those samples are not 0.6.0 save benchmarks.
+
+The 0.7.0 architecture is **not yet fully accepted**. A cold document without a
+compact checkpoint currently keeps the root `_index.json` in the legacy,
+payload-bearing schema even after another document has a compact checkpoint
+and current-device acknowledgement; route-only cutover waits for every indexed
+document and device. The 0.7.1 candidate now measures annotation capture,
+operation encoding, and GC independently, separating execution from GC and
+materialization queue waits. It serializes each document's materialization
+inside one store instance, preventing a reproduced stale-checkpoint overwrite
+after GC; this is not a cross-process lock or a new conflict protocol.
+
+Windows Native FreeText creation, durable sidecar save, complete Reader close,
+reopen, composite-pixel visibility, stable geometry/UUID, and separate PDF
+export have passed on an isolated fixture. A real PDF.js browser regression
+covers four view rotations and two scales. The full five-tool Native sequence
+still fails to form the Underline text selection, and the complete regression
+suite is not green. Ten-edit small/120-page synthetic save measurements and
+their observability limits are recorded, not a historical-version A/B or a
+universal latency guarantee. See [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+for the frozen full-suite result, failure triage, and remaining verification
+gates. Source changes remain fail-closed; automatic page rebase is not
+implemented, as outlined in [PDF_REBASE_DESIGN.md](PDF_REBASE_DESIGN.md).
+
+In the final Windows 120-page fixture run, mean capture/encoding/GC execution
+were 1.86/0.44/277.56 ms and durable-save ACK mean was 442.84 ms. These phases
+have different sample counts and are not additive. Background materialization
+queue wait still averaged 8.69 seconds, so no complete performance acceptance
+is claimed. Ordinary-save source PDF writes/serialization/readBinary before
+ACK were zero; opening and acceptance-driver hash probes still read the source.
+
 The prior [0.5.20 three-file package](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)
 decodes large embedded merge ledgers in bounded chunks and hardens PDF.js Ink
 drawing-session cleanup against stale pointer listeners and missing in-flight
