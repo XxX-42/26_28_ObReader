@@ -1,5 +1,27 @@
 # 0.8.0 Storage + Candidate integration — BLOCKED at cross-instance safety (2026-10-15)
 
+## 2026-10-15 continuation — Native harness hardening and sidecar self-echo fix
+
+This continuation is based on WIP snapshot `745b55142fe85d897187531904190e68e9f1f229`. It has not been committed, built, deployed, or pushed.
+
+- Native test-only CLI buffer was raised from 16 MiB to 128 MiB; artifact-file trace transport is implemented under a unique `.native-test-output/<runId>.json` path with byte-count and SHA-256 verification. Tests cover 20 MiB stdout/stderr, non-zero exit, and timeout. The harness now refuses to start writes unless the exact test vault/plugin/version is active, the Obsidian document is visible, and no Reader is already open.
+- A reproducible host feedback loop was found: an own sidecar Vault event caused `handleSidecarChange → broadcastDocument → store.readDocument`, which rematerialized and rewrote checkpoint/device ACK state. The red test observed materialization count increasing from 1 to 3 for two own events. The host now tracks bounded path + byte-length + content-digest expectations for its own writes and suppresses only events whose current bytes still match; different external bytes and unmatched external batch paths still replay. The corrected pending-sync test now notifies the actual delayed-batch path. The final selected host/store/Native-tooling/sidecar-isolation/source-binding/controlled-close set passed **66/66**; `node --check` passed for changed host/test sources. No full `npm test` or offline run was performed after this source change.
+- The earlier 261-file sidecar inventory check was only a point-in-time observation. The existing device state `00_Archive/20_PDFData/checkpoints/300be6539829.devices/b3e50bfd-53e1-4418-a457-bd4f6aaf7208.json` subsequently changed repeatedly; its hash has been observed from `a17e7653385f7c33d4702bb3be02e5d08b35c199da4c79edf903274e56ef7f6f` through `6181697884700FF9F006292796B48BAB52824179FC4B9587A868837B6C276C46` (latest observation 2026-10-15T06:17:32Z). It was not restored or rewritten by this continuation. Attribution remains unknown. After a CLI plugin reload, the current test-vault runtime reported 0 Reader views and its new session log showed only immediate sidecar-event handling, with no materialization; the file nevertheless continued changing. This indicates an active writer outside the current no-Reader host, but does not identify whether it is Sync or another process/task.
+- Native Underline/FreeText acceptance and Store/Crash oracle calibration are **BLOCKED / NOT RUN** in this continuation. Obsidian was hidden during preflight and an unrelated writer continues changing a pre-existing device-state file. No additional Native write test was started. The earlier failed test fixture and diagnostic artifacts are retained. No attempt was made to restore sidecar data because only hashes, not a verified pre-test byte backup, were available.
+
+```text
+NATIVE_TRACE_FILE_CHANNEL = IMPLEMENTED; NATIVE_RUNTIME_VERIFICATION = NOT_RUN
+SIDECAR_SELF_ECHO_REGRESSION = FIXED_IN_SOURCE; TARGETED_TESTS_PASS
+UNDERLINE_NATIVE_FULL_ACCEPTANCE = NOT_RUN
+FREETEXT_NATIVE_0_8 = NOT_RUN
+STORE_08_ORACLE_AUDIT = NOT_RUN
+P0_LOCAL_CROSS_INSTANCE = NOT_RUN
+P1_MATERIALIZATION_COALESCING = NOT_RUN
+READY_FOR_DEPLOYMENT = FALSE
+```
+
+The existing 0.8.0 installation was not replaced with this unbuilt source change. No push or deployment to `远程仓库1` occurred.
+
 Integration branch: `integration/0.8.0-sidecar-merge-20261015`, based on Storage 0.8.0 commit `8e930695829b734c23e5d3a4f295d71de98437f4`. This entry records the controlled semantic merge attempt; it does not replace the frozen 0.8.0 results or earlier failure history below.
 
 ### Verified before the stop

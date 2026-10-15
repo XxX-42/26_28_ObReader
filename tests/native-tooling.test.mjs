@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
 process.env.OBSIDIAN_VAULT_PATH =
@@ -17,13 +18,36 @@ const {
 const {
   assertNativeVaultIdentity,
   assertSafeDeploymentPreflight,
+  assertNativeTestPreflight,
+  invokeNativeCli,
   loadNativeConfig,
+  NATIVE_CLI_MAX_BUFFER,
 } = await import("./native-config.mjs");
+
+const nativeCliTestConfig = {
+  platform: process.platform,
+  vault: "test-only-vault",
+  vaultSelector: "test-only-vault",
+  cli: process.execPath,
+  cdpUrl: "",
+};
+
+function invokeNodeThroughNativeCli(script, timeout = 5_000) {
+  return invokeNativeCli(
+    ["test-only-command"],
+    timeout,
+    nativeCliTestConfig,
+    (_cli, _args, options) => {
+      assert.equal(options.maxBuffer, 128 * 1024 * 1024);
+      return spawnSync(process.execPath, ["-e", script], options);
+    },
+  );
+}
 
 test("native config retains the Windows test target", () => {
   const config = loadNativeConfig({}, "win32");
   assert.equal(config.vault, String.raw`D:\Documents\Obsidian\测试插件`);
-  assert.equal(config.vaultSelector, "d9f81db5f3fef6ee");
+  assert.equal(config.vaultSelector, "测试插件");
   assert.equal(config.cli, String.raw`D:\Applications\Obsidian\Obsidian.com`);
   assert.equal(config.configDir, ".obsidian");
 });
@@ -48,6 +72,35 @@ test("non-Windows native tests require an explicit test vault, CLI and selector"
   }, "linux");
   assert.equal(cdpOnly.cli, "");
   assert.equal(cdpOnly.cdpUrl, "http://127.0.0.1:9226");
+});
+
+test("active-vault mode requires an exact test path and never sends a vault selector", () => {
+  const config = loadNativeConfig({
+    OBSIDIAN_ACTIVE_VAULT: "1",
+    OBSIDIAN_VAULT_PATH: String.raw`D:\Documents\Obsidian\测试插件`,
+    PDF_READER_OBSIDIAN_CLI: String.raw`D:\Applications\Obsidian\Obsidian.com`,
+    OBSIDIAN_CONFIG_DIR: ".obsidian",
+  }, "win32");
+  assert.equal(config.useActiveVault, true);
+  assert.equal(config.vaultSelector, "");
+  let capturedArgs;
+  const output = invokeNativeCli(["version"], 1_000, config, (_cli, args) => {
+    capturedArgs = args;
+    return { status: 0, stdout: "1.14.4\n", stderr: "" };
+  });
+  assert.deepEqual(capturedArgs, ["version"]);
+  assert.equal(output, "1.14.4");
+
+  assert.throws(() => loadNativeConfig({
+    OBSIDIAN_ACTIVE_VAULT: "1",
+    OBSIDIAN_VAULT_NAME: "测试插件",
+    OBSIDIAN_VAULT_PATH: String.raw`D:\Documents\Obsidian\测试插件`,
+    PDF_READER_OBSIDIAN_CLI: String.raw`D:\Applications\Obsidian\Obsidian.com`,
+  }, "win32"), /Do not combine OBSIDIAN_ACTIVE_VAULT/);
+  assert.throws(() => loadNativeConfig({
+    OBSIDIAN_ACTIVE_VAULT: "1",
+    PDF_READER_OBSIDIAN_CLI: String.raw`D:\Applications\Obsidian\Obsidian.com`,
+  }, "win32"), /OBSIDIAN_VAULT_PATH/);
 });
 
 test("macOS native config only accepts the explicit isolated test vault", () => {
@@ -113,6 +166,36 @@ test("identity and deployment guards fail closed before disk changes", () => {
       readerViews: [{ path: "unsaved.pdf", pending: true }],
     }, config),
     /Save and close every PDF Web Reader tab/,
+  );
+});
+
+test("Native acceptance requires the exact enabled runtime, visible window, and no existing Readers", () => {
+  const config = loadNativeConfig({
+    OBSIDIAN_VAULT_PATH: "/Users/jiajia/Documents/ObReader-Apple-Test",
+    OBSIDIAN_VAULT_NAME: "ObReader-Apple-Test",
+    PDF_READER_OBSIDIAN_CLI: "/usr/local/bin/obsidian",
+    OBSIDIAN_CONFIG_DIR: ".obsidian",
+  }, "darwin");
+  const preflight = {
+    vault: config.vault,
+    configDir: config.configDir,
+    pluginEnabled: true,
+    pluginVersion: "0.8.0",
+    visibility: "visible",
+    readerViews: [],
+  };
+  assertNativeTestPreflight(preflight, "0.8.0", config);
+  assert.throws(
+    () => assertNativeTestPreflight({ ...preflight, visibility: "hidden" }, "0.8.0", config),
+    /visible Obsidian test Vault window/,
+  );
+  assert.throws(
+    () => assertNativeTestPreflight({ ...preflight, readerViews: [{ pending: false }] }, "0.8.0", config),
+    /Close all existing Reader tabs/,
+  );
+  assert.throws(
+    () => assertNativeTestPreflight({ ...preflight, pluginVersion: "0.6.0" }, "0.8.0", config),
+    /Expected runtime plugin 0.8.0/,
   );
 });
 
@@ -185,4 +268,29 @@ test("native lifecycle case allowlist defaults to all and selects only requested
   assert.throws(() => selectNativeCases("matrix,unknown"), /Unknown PDF_READER_NATIVE_CASES/);
   assert.throws(() => selectNativeCases("matrix,matrix"), /duplicate case names/);
   assert.throws(() => selectNativeCases("matrix,,popout"), /comma-separated list/);
+});
+
+test("native CLI captures 20 MiB stdout and stderr within the bounded test buffer", () => {
+  assert.equal(NATIVE_CLI_MAX_BUFFER, 128 * 1024 * 1024);
+  const bytes = 20 * 1024 * 1024;
+  const output = invokeNodeThroughNativeCli(
+    `process.stdout.write(Buffer.alloc(${bytes}, 0x61));process.stderr.write(Buffer.alloc(${bytes}, 0x62));`,
+  );
+  assert.equal(Buffer.byteLength(output, "utf8"), bytes);
+  assert.equal(output[0], "a");
+  assert.equal(output.at(-1), "a");
+});
+
+test("native CLI preserves a non-zero exit and stderr diagnostics", () => {
+  assert.throws(
+    () => invokeNodeThroughNativeCli("process.stderr.write('intentional-cli-error');process.exitCode=7;"),
+    /Obsidian CLI failed \(7\): intentional-cli-error/,
+  );
+});
+
+test("native CLI timeout remains an error", () => {
+  assert.throws(
+    () => invokeNodeThroughNativeCli("setInterval(()=>{},1000);", 500),
+    error => error?.code === "ETIMEDOUT",
+  );
 });

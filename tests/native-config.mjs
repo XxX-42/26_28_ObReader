@@ -4,14 +4,15 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const WINDOWS_TEST_VAULT = String.raw`D:\Documents\Obsidian\测试插件`;
-const WINDOWS_TEST_VAULT_ID = "d9f81db5f3fef6ee";
+const WINDOWS_TEST_VAULT_NAME = "测试插件";
 const WINDOWS_OBSIDIAN_CLI = String.raw`D:\Applications\Obsidian\Obsidian.com`;
 const MACOS_OBSIDIAN_CLI = "/usr/local/bin/obsidian";
+export const NATIVE_CLI_MAX_BUFFER = 128 * 1024 * 1024;
 export const MACOS_TEST_VAULT =
   "/Users/jiajia/Documents/ObReader-Apple-Test";
 
 function resolveForPlatform(value, platform) {
-  return platform === "win32" ? path.win32.resolve(value) : path.resolve(value);
+  return platform === "win32" ? path.win32.resolve(value) : path.posix.resolve(value);
 }
 
 function validateConfigDir(configDir, platform) {
@@ -35,6 +36,11 @@ function validateConfigDir(configDir, platform) {
 export function loadNativeConfig(env = process.env, platform = process.platform) {
   const isWindows = platform === "win32";
   const isMac = platform === "darwin";
+  const useActiveVault = env.OBSIDIAN_ACTIVE_VAULT === "1";
+  assert.ok(
+    !useActiveVault || env.OBSIDIAN_VAULT_PATH,
+    "OBSIDIAN_ACTIVE_VAULT=1 requires an explicit OBSIDIAN_VAULT_PATH identity guard",
+  );
   const vault = env.OBSIDIAN_VAULT_PATH ||
     (isWindows ? WINDOWS_TEST_VAULT : "");
   assert.ok(
@@ -50,11 +56,20 @@ export function loadNativeConfig(env = process.env, platform = process.platform)
     );
   }
 
-  const vaultSelector = env.OBSIDIAN_VAULT_ID || env.OBSIDIAN_VAULT_NAME ||
-    (isWindows ? WINDOWS_TEST_VAULT_ID : "");
+  // Current Obsidian CLI selects by vault name; IDs are not accepted by
+  // `vault=<name>`. An explicitly requested active-vault mode omits the
+  // selector and relies on an exact runtime path guard before every test call.
+  const vaultSelector = useActiveVault
+    ? ""
+    : env.OBSIDIAN_VAULT_NAME || env.OBSIDIAN_VAULT_ID ||
+      (isWindows ? WINDOWS_TEST_VAULT_NAME : "");
   assert.ok(
-    vaultSelector,
-    "Set OBSIDIAN_VAULT_ID (or OBSIDIAN_VAULT_NAME) to the selector for the isolated test vault",
+    useActiveVault || vaultSelector,
+    "Set OBSIDIAN_VAULT_ID (or OBSIDIAN_VAULT_NAME), or explicitly set OBSIDIAN_ACTIVE_VAULT=1",
+  );
+  assert.ok(
+    !useActiveVault || (!env.OBSIDIAN_VAULT_NAME && !env.OBSIDIAN_VAULT_ID),
+    "Do not combine OBSIDIAN_ACTIVE_VAULT=1 with a named Vault selector",
   );
 
   const cli = env.PDF_READER_OBSIDIAN_CLI ||
@@ -74,6 +89,7 @@ export function loadNativeConfig(env = process.env, platform = process.platform)
     platform,
     vault: resolveForPlatform(vault, platform),
     vaultSelector,
+    useActiveVault,
     cli: cli ? resolveForPlatform(cli, platform) : "",
     cdpUrl,
     configDir,
@@ -110,6 +126,15 @@ export function assertNativeVaultIdentity(identity, config = nativeConfig) {
   return identity;
 }
 
+export function assertNativeTestPreflight(preflight, expectedVersion, config = nativeConfig) {
+  assertNativeVaultIdentity(preflight, config);
+  assert.equal(preflight.pluginEnabled, true, "PDF Web Reader must be enabled for Native acceptance");
+  assert.equal(preflight.pluginVersion, expectedVersion, `Expected runtime plugin ${expectedVersion}`);
+  assert.equal(preflight.visibility, "visible", "Native acceptance requires a visible Obsidian test Vault window");
+  assert.deepEqual(preflight.readerViews, [], "Close all existing Reader tabs before Native acceptance");
+  return preflight;
+}
+
 export function assertSafeDeploymentPreflight(
   preflight,
   config = nativeConfig,
@@ -128,18 +153,23 @@ export function assertSafeDeploymentPreflight(
   return preflight;
 }
 
-export function invokeNativeCli(args, timeout = 20_000, config = nativeConfig) {
+export function invokeNativeCli(
+  args,
+  timeout = 20_000,
+  config = nativeConfig,
+  spawn = spawnSync,
+) {
   if (config.cdpUrl) {
     return invokeThroughDirectCdp(args, timeout, config);
   }
-  const result = spawnSync(
+  const result = spawn(
     config.cli,
-    [`vault=${config.vaultSelector}`, ...args],
+    [...(config.useActiveVault ? [] : [`vault=${config.vaultSelector}`]), ...args],
     {
       encoding: "utf8",
       timeout,
       windowsHide: config.platform === "win32",
-      maxBuffer: 16 * 1024 * 1024,
+      maxBuffer: NATIVE_CLI_MAX_BUFFER,
     },
   );
   if (result.error) throw result.error;
@@ -209,7 +239,7 @@ function directCdpRequest(method, params, timeout, config) {
       encoding: "utf8",
       timeout: timeout + 5_000,
       windowsHide: config.platform === "win32",
-      maxBuffer: 16 * 1024 * 1024,
+      maxBuffer: NATIVE_CLI_MAX_BUFFER,
     },
   );
   if (child.error) throw child.error;

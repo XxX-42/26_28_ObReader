@@ -472,11 +472,103 @@ test("checkpoint arrival retries a pending v3 sync and restores editing in the o
   assert.equal(checkpoint3.formatVersion, 3);
   adapter.files.set(delayedPath, JSON.stringify(delayed));
 
-  await host.handleSidecarChange({ path: checkpointPath });
+  await host.handleSidecarChange({ path: delayedPath });
   assert.equal(view.annotationSyncPending, false);
   assert.equal(view.lastStatus, "批注同步已完成，已恢复编辑。");
   const update = view.messages.filter((message) => message.type === "external-annotations-update").at(-1);
   assert.equal(update?.readOnly, false);
   assert.ok(update?.externalAnnotations.annotations.some((row) => row.uuid === "delayed-v3"));
+  host.dispose();
+});
+
+test("self-originated sidecar notifications do not re-enter checkpoint materialization", async () => {
+  const adapter = makeAdapter();
+  const app = makeApp(adapter);
+  let materializations = 0;
+  const host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    makeToken: (() => { let n = 0; return () => `self-echo-${++n}`; })(),
+    deviceId: "self-echo-device",
+    log(event, details) {
+      if (event === "annotation-performance" && details?.phase === "materialization") materializations += 1;
+    },
+  });
+  const view = makeView(app);
+  const initial = await host.initializeView(view, view.sourceBytes);
+  view.documentId = initial.documentId;
+  const document = view.annotationDocument;
+  const paths = host.store.pathsFor(document);
+  const devicePath = `${paths.deviceStates}/self-echo-device.json`;
+  assert.ok(adapter.files.has(paths.checkpoint));
+  assert.ok(adapter.files.has(devicePath));
+  await host.store.appendOperations({
+    document,
+    batchId: "self-echo-published-batch",
+    sourceHash: document.source.sourceHash,
+    operations: [{
+      uuid: "self-echo-annotation",
+      kind: "Highlight",
+      pageIndex: 0,
+      deleted: false,
+      clock: { timestamp: 1, logical: 0, deviceId: "self-echo-device", opId: "self-echo-op" },
+      payload: { editor: { type: "highlight", color: [1, 1, 0] } },
+    }],
+  });
+  const batchPath = `${paths.operations}/self-echo-device/self-echo-published-batch.json`;
+  assert.ok(adapter.files.has(batchPath));
+
+  const afterOpen = materializations;
+
+  await host.handleSidecarChange({ path: paths.checkpoint });
+  await host.handleSidecarChange({ path: devicePath });
+  await host.handleSidecarChange({ path: batchPath });
+  assert.equal(materializations, afterOpen,
+    "the host already knows its own checkpoint/ACK/published operation bytes and must not turn their Vault events into another materialization");
+
+  adapter.files.set(paths.checkpoint, `${adapter.files.get(paths.checkpoint)} `);
+  await host.handleSidecarChange({ path: paths.checkpoint });
+  assert.equal(materializations, afterOpen + 1,
+    "an external rewrite with different bytes must not be mistaken for a self echo");
+
+  await host.handleSidecarChange({ path: `${paths.operations}/peer/external-batch.json` });
+  assert.equal(materializations, afterOpen + 2,
+    "an unmatched external operation event must still refresh open Readers");
+  host.dispose();
+});
+
+test("legacy tombstones from a concurrent Reader initialization reach already-open Readers", async () => {
+  const adapter = makeAdapter();
+  const app = makeApp(adapter);
+  const bytes = new TextEncoder().encode("%PDF-1.7 /ObReaderMerge");
+  let host;
+  let inspectCalls = 0;
+  let alreadyOpenView;
+  let token = 0;
+  host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    inspectLegacy: async () => {
+      inspectCalls += 1;
+      if (inspectCalls === 1) {
+        alreadyOpenView = makeView(app, "Books/legacy-concurrent.pdf", bytes);
+        const concurrentSnapshot = await host.initializeView(alreadyOpenView, alreadyOpenView.sourceBytes);
+        alreadyOpenView.documentId = concurrentSnapshot.documentId;
+        return { identities: [
+          { uuid: "a0000000-0000-4000-8000-000000000003", ref: null, pageIndex: 0, kind: "underline", deleted: true },
+        ] };
+      }
+      return { identities: [] };
+    },
+    makeToken: () => `legacy-concurrent-${++token}`,
+    deviceId: "legacy-concurrent-device",
+  });
+
+  const openingView = makeView(app, "Books/legacy-concurrent.pdf", bytes);
+  await host.initializeView(openingView, openingView.sourceBytes);
+  const update = alreadyOpenView.messages.find(message => message.type === "external-annotations-update");
+  assert.ok(update, "the existing Reader receives the newly materialized tombstone state");
+  assert.ok(update.externalAnnotations.tombstones?.some(entry => entry.uuid === "a0000000-0000-4000-8000-000000000003"),
+    JSON.stringify({ keys: Object.keys(update.externalAnnotations), annotations: update.externalAnnotations.annotations }));
   host.dispose();
 });

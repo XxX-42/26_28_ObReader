@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { constants, writeFileSync } from "node:fs";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
 import xxhash from "xxhash-wasm";
 import { PDFDocument, PDFName } from "pdf-lib";
-import { nativeConfig, nativeCdp, nativeEvalJson, assertNativeVaultIdentity } from "./native-config.mjs";
+import { nativeConfig, nativeCdp, nativeEvalJson, assertNativeTestPreflight } from "./native-config.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
+import { mapNativeSidecarAdapterArgs } from "./native-sidecar-isolation.mjs";
 
 // This is an opt-in Native Obsidian test, never part of npm test. Only a new
 // fixture is editable. Existing sidecar files are guarded before any mutation.
@@ -19,23 +20,30 @@ const benchmarking = scenario.startsWith("benchmark-");
 const diagnoseTextCapture = process.env.PDF_READER_NATIVE_DIAG_SKIP_TEXT_CAPTURE === "1";
 assert.ok(!diagnoseTextCapture || ["five-tools", "underline"].includes(scenario), "Text-capture override is diagnostic-only");
 const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "");
+const traceRunId = randomBytes(16).toString("hex");
 const folder = `PDF迁移测试/sidecar-native-${expectedVersion}-${stamp}`;
 const file = `${folder}/immutable-source.pdf`;
 const storeRoot = "00_Archive/20_PDFData";
 const artifacts = path.join(root, "tests/artifacts");
 const resultPath = path.join(artifacts, `0.7-sidecar-native-acceptance-${stamp}.json`);
+const traceArtifactVaultPath = `${nativeConfig.configDir}/plugins/pdf-web-reader/.native-test-output/${traceRunId}.json`;
+const traceArtifactLocalPath = absolutePathForVault(traceArtifactVaultPath);
+const isolatedStoreRoot = `${nativeConfig.configDir}/plugins/pdf-web-reader/.native-test-output/${traceRunId}/sidecar`;
 const text = "SIDECAR NATIVE 0.7\nVISIBLE FREETEXT";
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const { h64Raw } = await xxhash();
 const hashes = bytes => ({ sha256: sha(bytes), xxh64: `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`, bytes: bytes.byteLength });
 const absolute = p => path.join(nativeConfig.vault, ...p.split("/"));
+function absolutePathForVault(p) {
+  return path.join(nativeConfig.vault, ...p.split("/"));
+}
 async function installedTriplet() {
   return Object.fromEntries(await Promise.all(['main.js','manifest.json','styles.css'].map(async name=>{
     const bytes=await readFile(absolute(`${nativeConfig.configDir}/plugins/pdf-web-reader/${name}`));
     return [name,{sha256:sha(bytes),bytes:bytes.byteLength}];
   })));
 }
-const report = { version: expectedVersion, scenario, vault: nativeConfig.vault, fixture: file, startedAt: new Date().toISOString(), stages: [], status: "running" };
+const report = { version: expectedVersion, scenario, vault: nativeConfig.vault, fixture: file, isolatedStoreRoot, startedAt: new Date().toISOString(), stages: [], status: "running" };
 report.driverSourceHashReads = [];
 async function sourceHashes(label) {
   const startedAt = performance.now();
@@ -133,7 +141,18 @@ async function state() {
 }
 async function open() {
   await wait("fixture indexed", () => run(p => !!app.vault.getAbstractFileByPath(p), file));
-  await run(async p => { await app.plugins.plugins["pdf-web-reader"].openPdf(app.vault.getAbstractFileByPath(p)); return true; }, file);
+  await run(async p => {
+    const plugin=app.plugins.plugins["pdf-web-reader"];
+    const opening=plugin.openPdf(app.vault.getAbstractFileByPath(p));
+    let view;
+    for(let attempt=0;attempt<40&&!view;attempt++){
+      view=[...plugin.views].find(v=>v.requestedPath===p);
+      if(!view)await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    if(view?.leaf)await app.workspace.revealLeaf(view.leaf);
+    await opening;
+    return true;
+  }, file);
   await wait("Viewer source confirmed and rendered", state, s => s?.ready && s.buttonsReady && s.pageRendered === 3, 60_000);
   await doc(({ v, w, a, d, arg }) => {
     a.pdfViewer.currentScaleValue = arg;
@@ -365,9 +384,8 @@ async function independentReaderLifecycle() {
 
 try {
   report.installedTripletBefore=await installedTriplet();
-  const preflight = run(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir, enabled: app.plugins.enabledPlugins.has("pdf-web-reader"), version: app.plugins.plugins["pdf-web-reader"].manifest.version, views: [...app.plugins.plugins["pdf-web-reader"].views].map(v=>({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision,pending:v.pendingSaves,dirty:!!v.iframe?.contentWindow?.PDFViewerApplication?._hasChanges?.()})), visibility: document.visibilityState }));
-  assertNativeVaultIdentity(preflight); assert.equal(preflight.enabled,true); assert.equal(preflight.version,expectedVersion);
-  assert.ok(preflight.views.every(v=>!v.dirty&&!v.pending&&v.revision===v.confirmed),"Native acceptance requires all existing Readers clean; existing tabs are left untouched"); report.preflight=preflight;
+  const preflight = run(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir, pluginEnabled: app.plugins.enabledPlugins.has("pdf-web-reader"), pluginVersion: app.plugins.plugins["pdf-web-reader"].manifest.version, readerViews: [...app.plugins.plugins["pdf-web-reader"].views].map(v=>({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision,pending:v.pendingSaves,dirty:!!v.iframe?.contentWindow?.PDFViewerApplication?._hasChanges?.()})), visibility: document.visibilityState }));
+  assertNativeTestPreflight(preflight, expectedVersion); report.preflight=preflight;
   nativeCdp("Emulation.setFocusEmulationEnabled", {enabled:true});
   await mkdir(absolute(folder), {recursive:true});
   if(scenario==='benchmark-large'){
@@ -379,18 +397,17 @@ try {
   }else await copyFile(path.join(root,"tests/fixtures/tracemonkey.pdf"),absolute(file),constants.COPYFILE_EXCL);
   report.sourceBefore=await sourceHashes('initial');
   instrumented=true;
-  run(async ({file,prefix,protectedPaths})=>{
+  run(async ({file,prefix,protectedPaths,isolatedRoot})=>{
     if(globalThis.__sidecarNative07)throw Error("Previous Native instrumentation still present");
     const a=app.vault.adapter, p=app.plugins.plugins["pdf-web-reader"], protectedSet=new Set(protectedPaths), originals=[];
-    const trace=globalThis.__sidecarNative07={file,prefix,clockOrigin:performance.timeOrigin,viewerWindows:new Map(),viewerTimings:[],viewerLogLosses:[],storeTimings:[],io:[],acks:[],pointers:[],messages:[],listeners:[],pdfSerializations:[],sourceWriteAttempts:[],blockedExistingWrites:[],exportAllowed:false,originals};
+    const trace=globalThis.__sidecarNative07={file,prefix,isolatedRoot,clockOrigin:performance.timeOrigin,viewerWindows:new Map(),viewerTimings:[],viewerLogLosses:[],storeTimings:[],io:[],acks:[],pointers:[],messages:[],listeners:[],pdfSerializations:[],sourceWriteAttempts:[],blockedExistingWrites:[],exportAllowed:false,originals};
     trace.messageListener=e=>{const v=[...p.views].find(v=>v.requestedPath===file);const expected=trace.viewerWindows.get(e.source)||(e.source===v?.iframe?.contentWindow?v.token:null);if(!expected||e.data?.channel!=='pdf-web-reader'||e.data.token!==expected)return;if(['save','recover'].includes(e.data.type))trace.messages.push({at:performance.now(),type:e.data.type,revision:e.data.revision,requestId:e.data.requestId,operations:e.data.operations?.length??e.data.annotationOperations?.length,encodedBytes:new TextEncoder().encode(JSON.stringify(e.data)).length});if(e.data.type==='runtime-log'&&Array.isArray(e.data.rows))for(const raw of e.data.rows){try{const row=JSON.parse(raw);if(row.kind==='sidecar-performance')trace.viewerTimings.push({...row,receivedAt:performance.now()});else if(row.kind==='log-loss')trace.viewerLogLosses.push({...row,receivedAt:performance.now()});}catch{}}};window.addEventListener('message',trace.messageListener);
     const record=p.sessionLog.record;originals.push({object:p.sessionLog,name:'record',original:record});p.sessionLog.record=function(kind,fields){if(kind==='annotationStore'&&fields?.event==='annotation-performance')trace.storeTimings.push({...fields,receivedAt:performance.now()});return record.call(this,kind,fields);};
-    const canonical=x=>JSON.stringify(x&&typeof x==='object'?Array.isArray(x)?x.map(v=>JSON.parse(canonical(v))):Object.fromEntries(Object.keys(x).sort().map(k=>[k,JSON.parse(canonical(x[k]))])):x);
-    const oldIndex=await a.exists(prefix+'/_index.json')?JSON.parse(await a.read(prefix+'/_index.json')):null;
-    for(const name of ["read","write","readBinary","writeBinary","append","appendBinary","remove","rename"]){if(typeof a[name]!=="function")continue;const original=a[name];originals.push({object:a,name,original});a[name]=async function(...args){const target=String(args[0]||'');const writing=!["read","readBinary"].includes(name);if(writing&&target===file){trace.sourceWriteAttempts.push({name,target});throw Error("Source PDF mutation forbidden");}if(writing&&protectedSet.has(target)){if(name==='write'&&String(args[1])===await a.read(target))return;if(name==='write'&&target===prefix+'/_index.json'){const next=JSON.parse(args[1]);if(next.schemaVersion!==oldIndex.schemaVersion||!Object.entries(oldIndex.documents).every(([k,v])=>canonical(next.documents[k])===canonical(v))){trace.blockedExistingWrites.push(target);throw Error("Existing sidecar route changed");}}else{trace.blockedExistingWrites.push(target);throw Error("Existing annotation data is protected");}}if(name==='rename'&&protectedSet.has(String(args[1])))throw Error('Existing target protected');const t=performance.now();try{const result=await original.apply(this,args);if(target===file||target.startsWith(prefix+'/'))trace.io.push({name,path:target,at:t,ms:performance.now()-t,bytes:typeof args[1]==='string'?new TextEncoder().encode(args[1]).length:args[1]?.byteLength??(typeof result==='string'?new TextEncoder().encode(result).length:result?.byteLength??0)});return result;}catch(e){trace.io.push({name,path:target,at:t,error:String(e)});throw e;}};}
+    const adapterMethods=["read","write","readBinary","writeBinary","append","appendBinary","remove","rename","exists","mkdir","list","process"];
+    for(const name of adapterMethods){if(typeof a[name]!=="function")continue;const original=a[name];originals.push({object:a,name,original});a[name]=async function(...args){const target=String(args[0]||'');const mappedArgs=mapNativeSidecarAdapterArgs(name,args,prefix,isolatedRoot);const mappedTarget=String(mappedArgs[0]||'');const writing=!["read","readBinary","exists","list"].includes(name);if(writing&&(target===file||String(args[1]||'')===file)){trace.sourceWriteAttempts.push({name,target});throw Error("Source PDF mutation forbidden");}if(writing&&!mappedTarget.startsWith(isolatedRoot)&&protectedSet.has(target)){trace.blockedExistingWrites.push(target);throw Error("Existing annotation data is protected");}if(name==='rename'&&protectedSet.has(String(args[1]))&&!String(mappedArgs[1]||'').startsWith(isolatedRoot)){trace.blockedExistingWrites.push(String(args[1]));throw Error('Existing target protected');}const t=performance.now();try{const result=await original.apply(this,mappedArgs);if(target===file||target===prefix||target.startsWith(prefix+'/'))trace.io.push({name,path:target,storagePath:mappedTarget,at:t,ms:performance.now()-t,bytes:typeof args[1]==='string'?new TextEncoder().encode(args[1]).length:args[1]?.byteLength??(typeof result==='string'?new TextEncoder().encode(result).length:result?.byteLength??0)});return result;}catch(e){trace.io.push({name,path:target,storagePath:mappedTarget,at:t,error:String(e)});throw e;}};}
     for(const name of ['modifyBinary','appendBinary','modify','append','createBinary','create','delete','rename']){if(typeof app.vault[name]!=='function')continue;const original=app.vault[name];originals.push({object:app.vault,name,original});app.vault[name]=function(target,...args){if(String(target?.path||target)===file){trace.sourceWriteAttempts.push({name,path:file});throw Error('Source PDF mutation forbidden');}return original.call(this,target,...args);};}
     return true;
-  },{file,prefix:storeRoot,protectedPaths:[...protectedFiles.keys()]});
+  },{file,prefix:storeRoot,isolatedRoot:isolatedStoreRoot,protectedPaths:[...protectedFiles.keys()]});
   await open();
   if(benchmarking){
     report.benchmark=[];
@@ -487,7 +504,7 @@ try {
   if (diagnoseTextCapture && report.status === "passed") report.status = "diagnostic-passed";
   if (instrumented) {
     try {
-      report.trace = run(() => {
+      const artifactMeta = run(async tracePath => {
         const t = globalThis.__sidecarNative07;
         t.probeCleanup?.();
         const summarizeSelectionProbe = probe => ({
@@ -549,8 +566,29 @@ try {
         for (const { target, type, listener } of t.listeners) target.removeEventListener(type, listener, true);
         for (const { object, name, original } of t.originals.reverse()) object[name] = original;
         delete globalThis.__sidecarNative07;
-        return out;
-      });
+        const serialized = JSON.stringify(out);
+        const adapter = app.vault.adapter;
+        const folder = tracePath.slice(0, tracePath.lastIndexOf("/"));
+        if (!(await adapter.exists(folder))) await adapter.mkdir(folder);
+        if (await adapter.exists(tracePath)) throw Error(`Refusing to overwrite Native trace artifact ${tracePath}`);
+        await adapter.write(tracePath, serialized);
+        const bytes = Buffer.byteLength(serialized, "utf8");
+        const sha256 = require("node:crypto").createHash("sha256").update(serialized, "utf8").digest("hex");
+        return { ok: true, artifactPath: tracePath, bytes, sha256 };
+      }, traceArtifactVaultPath);
+      assert.equal(artifactMeta?.ok, true, "Native trace artifact write did not return an OK receipt");
+      assert.equal(artifactMeta.artifactPath, traceArtifactVaultPath, "Native trace escaped its unique plugin test-output path");
+      assert.ok(artifactMeta.artifactPath.startsWith(`${nativeConfig.configDir}/plugins/pdf-web-reader/.native-test-output/`));
+      const traceBytes = await readFile(absolute(artifactMeta.artifactPath));
+      assert.equal(traceBytes.byteLength, artifactMeta.bytes, "Native trace artifact byte count mismatch");
+      assert.equal(sha(traceBytes), artifactMeta.sha256, "Native trace artifact SHA-256 mismatch");
+      report.trace = JSON.parse(traceBytes.toString("utf8"));
+      report.nativeTraceArtifact = {
+        path: artifactMeta.artifactPath,
+        bytes: artifactMeta.bytes,
+        sha256: artifactMeta.sha256,
+        verified: true,
+      };
     } catch (error) {
       report.instrumentationCleanupError = String(error);
     }
@@ -568,6 +606,20 @@ try {
   } catch(e) {report.installedTripletError=String(e);report.status='failed';process.exitCode=1;}
   report.protectedFiles=await Promise.all([...protectedFiles].filter(([p])=>p!==storeRoot+'/_index.json').map(async([p,b])=>({path:p,before:sha(b),after:sha(await readFile(absolute(p))),unchanged:sha(b)===sha(await readFile(absolute(p)))})));
   if(report.protectedFiles.some(x=>!x.unchanged)){report.status='failed';process.exitCode=1;}
+  if (report.nativeTraceArtifact) {
+    if (report.status === "passed") {
+      try {
+        await unlink(traceArtifactLocalPath);
+        report.nativeTraceArtifact.cleaned = true;
+      } catch (error) {
+        report.nativeTraceArtifact.cleanupError = String(error);
+        report.status = "failed";
+        process.exitCode = 1;
+      }
+    } else {
+      report.nativeTraceArtifact.retainedAsFailureEvidence = true;
+    }
+  }
   report.finishedAt=new Date().toISOString();await writeFile(resultPath,JSON.stringify(report,null,2));
   console.log(JSON.stringify({status:report.status,resultPath,error:report.error,sourceBefore:report.sourceBefore,sourceAfter:report.sourceAfter,sourceWriteAttempts:report.trace?.sourceWriteAttempts,pdfSerializations:report.trace?.pdfSerializations}));
 }
