@@ -1196,6 +1196,8 @@
     const rows = new Map();
     let storageRowCount = 0;
     let liveEditorCount = 0;
+    let liveEditorSerializationErrorCount = 0;
+    let liveEditorEnumerationErrorCount = 0;
     const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
     const addRow = (rawRuntimeId, rawValue, editor = null) => {
       if (rawValue === null || typeof rawValue !== "object") {
@@ -1283,6 +1285,7 @@
             try {
               serialized = editor?.serialize?.(false);
             } catch (error) {
+              liveEditorSerializationErrorCount += 1;
               runtimeLogRecord("annotation-operation.live-editor-serialize-error", {
                 pageIndex,
                 editorType: String(editor?.editorType || "unknown").slice(0, 64),
@@ -1295,6 +1298,7 @@
             addRow(editor.id, serialized, editor);
           }
         } catch (error) {
+          liveEditorEnumerationErrorCount += 1;
           runtimeLogRecord("annotation-operation.live-editor-enumeration-error", {
             pageIndex,
             error: runtimeLogError(error),
@@ -1305,6 +1309,8 @@
     Object.defineProperties(rows, {
       storageRowCount: { value: storageRowCount },
       liveEditorCount: { value: liveEditorCount },
+      liveEditorSerializationErrorCount: { value: liveEditorSerializationErrorCount },
+      liveEditorEnumerationErrorCount: { value: liveEditorEnumerationErrorCount },
     });
     return rows;
   }
@@ -2276,6 +2282,7 @@
   }
 
   function reconcileSavedEditorHistory(manager, direction, candidates) {
+    let changed = 0;
     for (const { identity, wasLive } of candidates) {
       const editor = findLiveSavedEditor(manager, identity);
       const isLive = Boolean(editor);
@@ -2283,10 +2290,29 @@
       const removed = direction === "redo" && wasLive && !isLive;
       if (restored) {
         recordSavedEditorHistoryOperation(identity, editor, "upsert");
+        changed += 1;
       } else if (removed) {
         recordSavedEditorHistoryOperation(identity, null, "delete");
+        changed += 1;
       }
     }
+    return changed;
+  }
+
+  function annotationRowsChanged(before, after) {
+    if (!(before instanceof Map) || !(after instanceof Map)) return true;
+    if (before.size !== after.size) return true;
+    for (const [runtimeId, row] of after) {
+      if (before.get(runtimeId)?.signature !== row?.signature) return true;
+    }
+    return false;
+  }
+
+  function hasSavedEditorHistoryTransition(manager, direction, candidates) {
+    return candidates.some(({ identity, wasLive }) => {
+      const isLive = Boolean(findLiveSavedEditor(manager, identity));
+      return direction === "undo" ? !wasLive && isLive : wasLive && !isLive;
+    });
   }
 
   function refreshAnnotationOperations(revision = state.revision, { includeLiveEditors = false } = {}) {
@@ -2360,6 +2386,8 @@
     return {
       storageRowCount: current.storageRowCount || 0,
       liveEditorCount: current.liveEditorCount || 0,
+      liveEditorSerializationErrorCount: current.liveEditorSerializationErrorCount || 0,
+      liveEditorEnumerationErrorCount: current.liveEditorEnumerationErrorCount || 0,
       changedAnnotationCount: changed.size,
     };
   }
@@ -2375,13 +2403,60 @@
       revision,
       storageRowCount: capture.storageRowCount,
       liveEditorCount: capture.liveEditorCount,
+      liveEditorSerializationErrorCount: capture.liveEditorSerializationErrorCount,
+      liveEditorEnumerationErrorCount: capture.liveEditorEnumerationErrorCount,
       changedAnnotationCount: capture.changedAnnotationCount,
       dirtyAnnotationCount: dirtyState.dirtyAnnotationIds.length,
       dirtyPageCount: dirtyState.dirtyPageIndices.length,
       operationCount: operations.length,
       missingDirtyCount: missingDirtyIds.length,
     });
-    return { operations, dirtyState, missingDirtyIds };
+    return { operations, dirtyState, missingDirtyIds, capture };
+  }
+
+  function settleEmptyDirtyRevision(snapshot, revision, app = state.app) {
+    const capture = snapshot?.capture;
+    if (
+      !snapshot || snapshot.operations?.length || snapshot.missingDirtyIds?.length ||
+      snapshot.dirtyState?.dirtyAnnotationIds?.length ||
+      snapshot.dirtyState?.dirtyPageIndices?.length ||
+      capture?.changedAnnotationCount !== 0 ||
+      capture?.liveEditorSerializationErrorCount !== 0 ||
+      capture?.liveEditorEnumerationErrorCount !== 0 ||
+      state.revision !== revision || !app ||
+      state.externalSourceMismatch || !state.externalSourceConfirmed ||
+      state.pendingInkCommit || state.freeTextInputPending ||
+      (state.freeTextFocused && !state.freeTextCommittedForSave) ||
+      isEditBoundaryBusy() || app.pdfThumbnailViewer?.hasStructuralChanges?.()
+    ) {
+      return false;
+    }
+    const confirmation = getAnnotationStorageRows(app, { includeLiveEditors: true });
+    if (
+      confirmation.liveEditorSerializationErrorCount ||
+      confirmation.liveEditorEnumerationErrorCount ||
+      annotationRowsChanged(state.annotationSnapshot, confirmation) ||
+      state.revision !== revision || isEditBoundaryBusy() ||
+      app.pdfThumbnailViewer?.hasStructuralChanges?.()
+    ) {
+      return false;
+    }
+    // PDF.js can leave its global modified flag set after a no-op history
+    // command. Only settle it after two complete, stable annotation snapshots
+    // prove there is no annotation delta or active input to preserve.
+    state.dirty = false;
+    state.autoSavePending = false;
+    state.autoSavePaused = false;
+    state.lastRecoveredDocumentId = null;
+    state.lastRecoveredRevision = null;
+    clearConfirmedDirtyState(revision);
+    app.pdfDocument?.annotationStorage?.resetModified?.();
+    restoreChanges(app, { hadAnnotationChanges: false, hadStructuralChanges: false });
+    runtimeLogRecord("annotation-operation.empty-dirty-settled", {
+      revision,
+      reason: "stable-empty-annotation-diff",
+    });
+    return true;
   }
 
   function assertCompleteOperationSnapshot(snapshot, context) {
@@ -2784,7 +2859,10 @@
       assertCompleteOperationSnapshot(operationSnapshot, "sync checkpoint");
       operations = operationSnapshot.operations;
       dirtyState = operationSnapshot.dirtyState;
-      if (isDirty(app) && !operations.length) {
+      if (
+        isDirty(app) && !operations.length &&
+        !settleEmptyDirtyRevision(operationSnapshot, revisionAtStart, app)
+      ) {
         throw new Error("The current PDF edits have no lossless annotation operation payload.");
       }
       if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
@@ -4100,10 +4178,25 @@
       if (!isDirty(app)) {
         return true;
       }
+      if (
+        !sessionIsCurrent() || state.revision !== revisionAtStart ||
+        isEditBoundaryBusy() || state.pendingInkCommit
+      ) {
+        if (sessionIsCurrent()) {
+          restoreChanges(app, {
+            hadAnnotationChanges: true,
+            hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+          });
+        }
+        return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
+      }
       const operationSnapshot = captureOperationSnapshot(revisionAtStart, "save");
       assertCompleteOperationSnapshot(operationSnapshot, "current PDF");
       const operationsAtStart = operationSnapshot.operations;
       if (!operationsAtStart.length) {
+        if (settleEmptyDirtyRevision(operationSnapshot, revisionAtStart, app)) {
+          return true;
+        }
         throw new Error("The current PDF edits have no lossless annotation operation payload.");
       }
       requestId = makeSaveRequestId();
@@ -4320,6 +4413,9 @@
       assertCompleteOperationSnapshot(operationSnapshot, "recovery");
       const operationsAtStart = operationSnapshot.operations;
       if (!operationsAtStart.length) {
+        if (settleEmptyDirtyRevision(operationSnapshot, revisionAtStart, app)) {
+          return true;
+        }
         throw new Error("The current PDF edits have no lossless recovery operation payload.");
       }
       const dirtySnapshot = snapshotChanges(app);
@@ -4332,9 +4428,6 @@
         }
         if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
           throw new Error("Page reordering cannot be included while the PDF source is immutable.");
-        }
-        if (!operationsAtStart.length) {
-          throw new Error("The current PDF edits have no lossless recovery operation payload.");
         }
         if (
           !sessionIsCurrent() || state.revision !== revisionAtStart ||
@@ -4603,6 +4696,10 @@
         methodName,
         (original, args) => {
           const direction = methodName;
+          const revisionBefore = state.revision;
+          const annotationRowsBefore = getAnnotationStorageRows(app, {
+            includeLiveEditors: true,
+          });
           const savedEditorHistory = captureSavedEditorHistory(manager, direction);
           const before = snapshotSavedFreeTextEditors(manager, app);
           const result = original.apply(manager, args);
@@ -4611,11 +4708,25 @@
             app,
             before,
           );
-          // The command stack is private in this PDF.js build, so its undo
-          // availability isn't exposed to the bridge. The UI only invokes
-          // these methods for an available command; an empty direct call is a
-          // harmless dirty revision that the save path can settle.
-          noteMutation();
+          const annotationRowsAfter = getAnnotationStorageRows(app, {
+            includeLiveEditors: true,
+          });
+          const historyChanged = hasSavedEditorHistoryTransition(
+            manager,
+            direction,
+            savedEditorHistory,
+          );
+          // PDF.js does not expose whether undo/redo consumed a command. Only
+          // mark a new revision when the annotation model or saved-editor
+          // history actually changed; a no-op command must not trap close in a
+          // dirty state with an empty operation batch.
+          if (
+            state.revision === revisionBefore &&
+            (annotationRowsChanged(annotationRowsBefore, annotationRowsAfter) ||
+              changedEditors.length > 0 || historyChanged)
+          ) {
+            noteMutation();
+          }
           reconcileSavedEditorHistory(manager, direction, savedEditorHistory);
           if (changedEditors.length > 0) {
             queueFreeTextAppearanceRepair(app, manager, changedEditors);
@@ -7376,10 +7487,9 @@
                 recoveryAck?.openRequest === state.activeOpenRequest &&
                 recoveryAck?.revision === state.revision && recoveryAck.durable,
               );
-              // The close may proceed as soon as the structured recovery
-              // operation batch has been durably acknowledged. No PDF
-              // serialization or background binary writeback is required.
-              result = closeControl.annotationBatchDurable;
+              // A durable operation batch permits close. A stable empty diff
+              // is also safe: there is no annotation change to recover.
+              result = !isDirty() || closeControl.annotationBatchDurable;
             }
           }
         } else {
@@ -7404,7 +7514,7 @@
           ) {
             const reason = state.autoSavePaused ? "save-conflict" : "auto-save-disabled";
             recovered = await requestRecovery(reason, closeDeadline);
-            result = false;
+            result = !isDirty();
           } else if (result === true && state.activeDocumentId === documentId) {
             if (state.pendingInkCommit) {
               state.committingInkForSave = true;

@@ -1741,7 +1741,11 @@ class PdfReaderView extends EditableFileView {
       openRequest,
       promise: null,
     };
-    pending.promise = (async () => {
+    // Defer the body by one microtask so closePreparation is assigned below
+    // before the current-session guard checks it. An immediately invoked async
+    // function runs synchronously up to its first await; checking the guard
+    // inside such an IIFE would otherwise reject every close as stale.
+    pending.promise = Promise.resolve().then(async () => {
       const stillCurrent =
         !request.settled &&
         !this.plugin.isUnloading &&
@@ -1808,7 +1812,7 @@ class PdfReaderView extends EditableFileView {
         unloaded: false,
       };
       return true;
-    })().finally(() => {
+    }).finally(() => {
       if (this.closePreparation === pending) this.closePreparation = null;
     });
     this.closePreparation = pending;
@@ -3548,7 +3552,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const completeness = exported.complete
       ? ""
       : "；详情与采集缺失计数见 JSON 的 runtimeLog 字段";
-    new Notice(`已导出 PDF 阅读器诊断（${sizeMb}/19.99 MB${compacted}${completeness}）：${outputPath}`);
+    new Notice(`已导出 PDF 阅读器诊断（${sizeMb}/64.00 MB${compacted}${completeness}）：${outputPath}`);
     return outputPath;
   }
 

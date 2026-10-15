@@ -173,6 +173,7 @@ function createPdfAnnotationHost({
     view.annotationSourceMismatch = registered.sourceMismatch === true;
     view.annotationHydrationAllowed = hydrationAllowed;
     view.annotationSnapshot = snapshot;
+    updateSyncStatus(view, snapshot);
     if (legacyIdentityScanUncertain) {
       view.setStatus?.(registered.sourceMismatch
         ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
@@ -266,6 +267,7 @@ function createPdfAnnotationHost({
     view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
     const snapshot = await store.readDocument(result.document);
     view.annotationSnapshot = snapshot;
+    updateSyncStatus(view, snapshot);
     const states = sourceStates.get(doc.documentId);
     if (states) states.document = result.document;
     post(view, {
@@ -275,7 +277,7 @@ function createPdfAnnotationHost({
       externalAnnotations: snapshot,
       sourceMatch: result.sourceMatch,
       identityConfirmed: true,
-      readOnly: view.annotationLegacyIdentityUncertain === true,
+      readOnly: view.annotationLegacyIdentityUncertain === true || view.annotationSyncPending === true,
     });
     log("annotation-source-identity", {
       documentId: doc.documentId,
@@ -426,7 +428,11 @@ function createPdfAnnotationHost({
   async function scheduleSnapshotMaterialization(document) {
     try {
       await nextTask();
-      await store.materializeSnapshot(document);
+      const snapshot = await store.materializeSnapshot(document);
+      if (snapshot.syncPending) {
+        log("annotation-snapshot-sync-pending", { documentId: document.documentId });
+        return;
+      }
       log("annotation-snapshot-materialized", { documentId: document.documentId });
     } catch (error) {
       // The immutable operation batch is already durable and authoritative.
@@ -439,13 +445,14 @@ function createPdfAnnotationHost({
       const snapshot = await store.readDocument(document);
       for (const view of documentViews.get(document.documentId) || []) {
         if (view === excludedView || view.teardownStarted || view.documentId !== document.documentId) continue;
+        updateSyncStatus(view, snapshot);
         post(view, {
           type: "external-annotations-update",
           documentId: document.documentId,
           openRequest: view.openRequest,
           externalAnnotations: snapshot,
           sourceMatch: "MATCH",
-          readOnly: view.annotationLegacyIdentityUncertain === true,
+          readOnly: view.annotationLegacyIdentityUncertain === true || view.annotationSyncPending === true,
         });
       }
     } catch (error) {
@@ -454,16 +461,33 @@ function createPdfAnnotationHost({
   }
 
   async function handleSidecarChange(file) {
-    if (disposed || !file?.path || !normalizePath(file.path).startsWith(`${ANNOTATION_ROOT}/ops/`)) return false;
+    if (disposed || !file?.path) return false;
+    const changedPath = normalizePath(file.path);
+    if (!changedPath.startsWith(`${ANNOTATION_ROOT}/`)) return false;
+    const affectedDocuments = [];
     for (const [documentId, state] of sourceStates) {
       const paths = store.pathsFor(state.document);
-      if (!normalizePath(file.path).startsWith(`${paths.operations}/`)) continue;
-      // Delay briefly so a sync provider can finish a write/rename cycle; all
-      // operation batches remain immutable and replay deduplicates op ids.
-      await nextTask(40);
-      await broadcastDocument(state.document);
-      log("annotation-sidecar-changed", { documentId, path: normalizePath(file.path) });
-      return true;
+      const isGlobalIndex = changedPath === `${ANNOTATION_ROOT}/_index.json`;
+      const matches = isGlobalIndex || [
+        paths.snapshot,
+        paths.metadata,
+        paths.checkpoint,
+        paths.checkpointBackup,
+      ].includes(changedPath) || [
+        paths.operations,
+        paths.deviceStates,
+        paths.identityEvents,
+      ].some((directory) => changedPath.startsWith(`${directory}/`));
+      if (matches) affectedDocuments.push({ documentId, document: state.document });
+    }
+    if (!affectedDocuments.length) return true;
+    // A Sync provider may deliver a directory entry, immutable operation, ACK,
+    // and checkpoint in separate steps. Re-read after the short write window;
+    // a still-missing referenced object stays read-only until its own event.
+    await nextTask(40);
+    for (const { documentId, document } of affectedDocuments) {
+      await broadcastDocument(document);
+      log("annotation-sidecar-changed", { documentId, path: changedPath });
     }
     return true;
   }
@@ -553,6 +577,9 @@ function createPdfAnnotationHost({
     }
     if (!Array.isArray(message.operations)) throw codedError("PDF_ANNOTATION_OPERATIONS_INVALID", "The Reader did not provide a structured annotation operation list.");
     if (!Number.isSafeInteger(message.revision) || message.revision < 0) throw codedError("PDF_ANNOTATION_REVISION_INVALID", "The annotation revision is invalid.");
+    if (view.annotationSyncPending === true) {
+      throw codedError("PDF_ANNOTATION_SYNC_PENDING", "Annotation history is still syncing; editing is paused until its referenced batches arrive.");
+    }
   }
 
   function normalizeOperations(input, actorId, createClock) {
@@ -659,6 +686,17 @@ function validateQuarantinedRecovery(message, document) {
 
 function nextTask(delay = 0) { return new Promise((resolve) => globalThis.setTimeout(resolve, delay)); }
 function now() { return globalThis.performance?.now?.() ?? Date.now(); }
+function updateSyncStatus(view, snapshot) {
+  const wasPending = view.annotationSyncPending === true;
+  view.annotationSyncPending = snapshot.syncPending === true;
+  if (view.annotationSyncPending) {
+    view.setStatus?.("批注同步尚未完整到达；当前显示最后一个已验证检查点并暂时只读，收到同步文件后会自动重试。", true);
+  } else if (snapshot.retiredDeviceWrites?.length) {
+    view.setStatus?.(`发现 ${snapshot.retiredDeviceWrites.length} 个已退役设备的迟到批注批次；已隔离保留，未应用。请升级设备或导出恢复。`, true);
+  } else if (wasPending) {
+    view.setStatus?.("批注同步已完成，已恢复编辑。", false);
+  }
+}
 function utf8(value) { return new TextEncoder().encode(String(value)); }
 function canonicalRef(value) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";

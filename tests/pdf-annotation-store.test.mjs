@@ -5,6 +5,7 @@ import test from "node:test";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function hash(value) {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
@@ -269,7 +270,8 @@ test("LWW tie breaks deterministically by logical counter, deviceId, then opId",
 
 test("verified checkpoint is a replay base and snapshot stores live annotations separately from tombstones", async () => {
   const { adapter, files } = makeAdapter();
-  const annotations = store({ adapter, deviceId: "A", clock: () => 100 });
+  let now = 100;
+  const annotations = store({ adapter, deviceId: "A", clock: () => now });
   const document = await annotations.registerDocument({ sourcePath: "book.pdf", source: { sourceHash: hash("pdf bytes") } });
   await annotations.appendOperations({ document, batchId: "batch", operations: [live("u1", "FreeText", "A", 100)] });
   const path = annotations.pathsFor(document).snapshot;
@@ -286,7 +288,14 @@ test("verified checkpoint is a replay base and snapshot stores live annotations 
   assert.equal(Object.hasOwn(storedSnapshot, "annotations"), false,
     "the basename cache points at the checkpoint without duplicating document payloads");
   const checkpoint = JSON.parse(files.get(annotations.pathsFor(document).checkpoint));
+  const previousCheckpoint = JSON.parse(files.get(annotations.pathsFor(document).checkpointBackup));
   assert.ok(checkpoint.integrity);
+  assert.notEqual(checkpoint.integrity, previousCheckpoint.integrity,
+    "the previous file is the prior distinct checkpoint, not a duplicate of current state");
+  const previousBeforeUnchangedRead = files.get(annotations.pathsFor(document).checkpointBackup);
+  await annotations.readDocument(document);
+  assert.equal(files.get(annotations.pathsFor(document).checkpointBackup), previousBeforeUnchangedRead,
+    "an unchanged checkpoint does not rotate or rewrite its previous version");
   assert.equal(checkpoint.annotations[0].deleted, false);
   assert.deepEqual(checkpoint.tombstones, []);
   assert.equal(checkpoint.annotations.some((row) => row.deleted === true), false);
@@ -295,13 +304,18 @@ test("verified checkpoint is a replay base and snapshot stores live annotations 
   assert.equal(rebuilt.annotations[0].uuid, "u1");
   assert.equal(JSON.parse(files.get(path)).kind, "pdf-annotation-snapshot-pointer");
   assert.equal(JSON.parse(files.get(annotations.pathsFor(document).checkpoint)).annotations[0].uuid, "u1");
+  assert.equal((await annotations.listOperationBatches(document)).length, 1,
+    "covered batches remain available during the recovery retention window");
+  now += 30 * DAY_MS + 1;
+  await annotations.readDocument(document);
   assert.equal((await annotations.listOperationBatches(document)).length, 0,
-    "after checkpoint acknowledgement, covered batches can be physically compacted");
+    "a covered batch is collected only after 30 days and a distinct verified previous checkpoint exists");
 });
 
 test("checkpoint backup restores compacted state and late covered batches cannot resurrect annotations", async () => {
   const { adapter, files } = makeAdapter();
-  const annotations = store({ adapter, deviceId: "solo-device" });
+  let now = 1_000;
+  const annotations = store({ adapter, deviceId: "solo-device", clock: () => now });
   const document = await annotations.registerDocument({ sourcePath: "checkpoint.pdf" });
   await annotations.appendOperations({ document, batchId: "live", operations: [live("ann", "Ink", "solo-device", 10)] });
   await annotations.appendOperations({ document, batchId: "delete", operations: [tombstone("ann", "Ink", "solo-device", 20)] });
@@ -309,6 +323,9 @@ test("checkpoint backup restores compacted state and late covered batches cannot
   const deletedBatch = files.get(operationPath);
   const before = await annotations.readDocument(document);
   assert.deepEqual(before.tombstones.map((row) => row.uuid), ["ann"]);
+  now += 30 * DAY_MS + 1;
+  await annotations.readDocument(document);
+  assert.equal(files.has(operationPath), false, "the covered operation batches are eventually collected");
   files.set(operationPath, deletedBatch);
   const primary = annotations.pathsFor(document).checkpoint;
   files.set(primary, "corrupt checkpoint");
@@ -316,8 +333,11 @@ test("checkpoint backup restores compacted state and late covered batches cannot
   assert.deepEqual(recovered.tombstones.map((row) => row.uuid), ["ann"],
     "the verified backup is a sufficient replay base after the primary is damaged");
   assert.equal(files.get(primary).includes('"kind":"pdf-annotation-checkpoint"'), true);
-  assert.equal((await annotations.listOperationBatches(document)).length, 0,
-    "an exact covered batch that reappears after sync is ignored and compacted again");
+  assert.equal((await annotations.listOperationBatches(document)).length, 1,
+    "a reappeared covered batch is ignored for projection but retained through the fresh recovery window");
+  now += 30 * DAY_MS + 1;
+  await annotations.readDocument(document);
+  assert.equal((await annotations.listOperationBatches(document)).length, 0);
 });
 
 test("legacy Float32 wrappers are losslessly compacted only after the checkpoint upgrade barrier", async () => {
@@ -349,8 +369,9 @@ test("every registered device must acknowledge the same checkpoint before GC; re
   const shared = makeAdapter();
   const adapterA = makeAdapter(shared.shared).adapter;
   const adapterB = makeAdapter(shared.shared).adapter;
-  const a = store({ adapter: adapterA, deviceId: "device-A" });
-  const b = store({ adapter: adapterB, deviceId: "device-B" });
+  let now = 1_000;
+  const a = store({ adapter: adapterA, deviceId: "device-A", clock: () => now });
+  const b = store({ adapter: adapterB, deviceId: "device-B", clock: () => now });
   const documentA = await a.registerDocument({ sourcePath: "shared.pdf" });
   const documentB = await b.registerDocument({ sourcePath: "shared.pdf" });
   await a.appendOperations({ document: documentA, batchId: "a", operations: [live("a1", "Ink", "device-A", 10)] });
@@ -376,10 +397,14 @@ test("every registered device must acknowledge the same checkpoint before GC; re
   assert.equal(final.checkpointHash, second.checkpointHash,
     "the upgraded device must read and confirm the exact compact checkpoint");
   assert.equal(final.compactInkEncoding, true);
-  assert.equal((await a.listOperationBatches(documentA)).length, 0,
-    "covered batches are removed only after every current checkpoint acknowledgement");
+  assert.equal((await a.listOperationBatches(documentA)).length, 2,
+    "acknowledgement alone does not bypass the 30-day retention window");
   assert.equal(JSON.parse(shared.files.get(legacySnapshotPath)).kind, "pdf-annotation-snapshot-pointer",
     "the compact pointer replaces the legacy snapshot only after the final acknowledgement");
+  now += 30 * DAY_MS + 1;
+  await a.readDocument(documentA);
+  assert.equal((await a.listOperationBatches(documentA)).length, 0,
+    "covered batches are collected after every active device has acknowledged and the retention window elapsed");
   const oldBatch = {
     schemaVersion: 1, formatVersion: 2, pluginVersion: "0.7.0",
     kind: "annotation-operation-batch", documentId: documentA.documentId, docKey: documentA.docKey,
@@ -394,6 +419,256 @@ test("every registered device must acknowledge the same checkpoint before GC; re
   const afterRetirement = await a.readDocument(documentA);
   assert.equal(afterRetirement.annotations.some((row) => row.uuid === "revive"), false,
     "a late batch from a retired device cannot alter the checkpoint projection");
+  assert.deepEqual(afterRetirement.retiredDeviceWrites, [{ deviceId: "device-B", batchId: "late-retired" }],
+    "late retired-device writes are surfaced for recovery instead of silently absorbed");
+  assert.equal(shared.files.has(oldPath), true, "retired late writes remain isolated on disk until manually recovered");
+});
+
+test("format 3 waits for every upgraded device, then merges concurrent immutable branches", async () => {
+  const shared = makeAdapter();
+  const adapterA = makeAdapter(shared.shared).adapter;
+  const adapterB = makeAdapter(shared.shared).adapter;
+  let now = 10_000;
+  const a = store({ adapter: adapterA, deviceId: "format-A", clock: () => now });
+  const b = store({ adapter: adapterB, deviceId: "format-B", clock: () => now });
+  const documentA = await a.registerDocument({ sourcePath: "Books/FormatBarrier.pdf" });
+  const documentB = await b.registerDocument({ sourcePath: "Books/FormatBarrier.pdf" });
+  const deviceDirectory = a.pathsFor(documentA).deviceStates;
+  shared.folders.add(deviceDirectory);
+  shared.files.set(`${deviceDirectory}/format-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "format-B", pluginVersion: "0.7.1", storageFormatVersion: 2,
+    checkpointHash: null, retired: false, updatedAt: now,
+  }));
+  await a.appendOperations({ document: documentA, batchId: "legacy-seed",
+    operations: [live("seed", "Ink", "format-A", now)] });
+  await a.readDocument(documentA);
+  const beforeBUpgrade = JSON.parse(shared.files.get(a.pathsFor(documentA).checkpoint));
+  assert.equal(beforeBUpgrade.formatVersion, 2, "an unacknowledged device keeps checkpoint writes compatible");
+  const legacyWrite = await a.appendOperations({ document: documentA, batchId: "legacy-while-barrier",
+    operations: [live("legacy-write", "Ink", "format-A", now + 1)] });
+  assert.equal(JSON.parse(shared.files.get(legacyWrite.batchPath)).formatVersion, 2);
+
+  await b.readDocument(documentB);
+  await a.readDocument(documentA);
+  const upgradedCheckpoint = JSON.parse(shared.files.get(a.pathsFor(documentA).checkpoint));
+  assert.equal(upgradedCheckpoint.formatVersion, 3, "all upgraded devices acknowledging enables the new store format");
+  const [writeA, writeB] = await Promise.all([
+    a.appendOperations({ document: documentA, batchId: "branch-a", operations: [live("branch-a", "Ink", "format-A", now + 2)] }),
+    b.appendOperations({ document: documentB, batchId: "branch-b", operations: [live("branch-b", "Highlight", "format-B", now + 2)] }),
+  ]);
+  const batchA = JSON.parse(shared.files.get(writeA.batchPath));
+  const batchB = JSON.parse(shared.files.get(writeB.batchPath));
+  assert.equal(batchA.formatVersion, 3);
+  assert.equal(batchB.formatVersion, 3);
+  assert.deepEqual(batchA.parents, batchB.parents,
+    "concurrent writes from one acknowledged checkpoint share the same causal frontier");
+  assert.equal(batchA.baseCheckpointHash, upgradedCheckpoint.integrity);
+  const merged = await a.readDocument(documentA);
+  assert.deepEqual(new Set(merged.annotations.map((row) => row.uuid)),
+    new Set(["seed", "legacy-write", "branch-a", "branch-b"]));
+});
+
+test("a v3 batch cannot trigger format cutover before its checkpoint and every device ACK arrive", async () => {
+  const shared = makeAdapter();
+  const a = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "barrier-A", clock: () => 30_000 });
+  const b = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "barrier-B", clock: () => 30_000 });
+  const documentA = await a.registerDocument({ sourcePath: "Books/Barrier.pdf" });
+  const documentB = await b.registerDocument({ sourcePath: "Books/Barrier.pdf" });
+  const deviceDirectory = a.pathsFor(documentA).deviceStates;
+  shared.folders.add(deviceDirectory);
+  shared.files.set(`${deviceDirectory}/barrier-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "barrier-B", pluginVersion: "0.7.1", storageFormatVersion: 2,
+    checkpointHash: null, retired: false, updatedAt: 30_000,
+  }));
+  await a.appendOperations({ document: documentA, batchId: "seed", operations: [live("seed", "Ink", "barrier-A", 30_000)] });
+  await a.readDocument(documentA);
+  const checkpointPath = a.pathsFor(documentA).checkpoint;
+  const legacyCheckpointText = shared.files.get(checkpointPath);
+  const legacyCheckpoint = JSON.parse(legacyCheckpointText);
+  assert.equal(legacyCheckpoint.formatVersion, 2);
+  const partialV3 = {
+    schemaVersion: 1, formatVersion: 3, pluginVersion: "0.8.0",
+    kind: "annotation-operation-batch", documentId: documentA.documentId, docKey: documentA.docKey,
+    deviceId: "barrier-A", batchId: "premature-v3", createdAt: 30_001,
+    baseCheckpointHash: legacyCheckpoint.integrity, parents: legacyCheckpoint.batchHeads,
+    operations: [live("premature", "Ink", "barrier-A", 30_001)],
+  };
+  const deviceOperations = `${a.pathsFor(documentA).operations}/barrier-A`;
+  shared.files.set(`${deviceOperations}/premature-v3.json`, JSON.stringify(partialV3));
+
+  const pending = await a.readDocument(documentA);
+  assert.equal(pending.syncPending, true,
+    "a v3 batch that arrives before its shared v3 checkpoint pauses instead of advancing a legacy checkpoint");
+  assert.deepEqual(pending.annotations.map((row) => row.uuid), ["seed"]);
+  assert.equal(shared.files.get(checkpointPath), legacyCheckpointText);
+});
+
+test("incomplete device ACKs block migration until every active device confirms the same checkpoint", async () => {
+  const shared = makeAdapter();
+  const a = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "ack-A", clock: () => 35_000 });
+  const document = await a.registerDocument({ sourcePath: "Books/AckBarrier.pdf" });
+  const peerDirectory = a.pathsFor(document).deviceStates;
+  shared.folders.add(peerDirectory);
+  shared.files.set(`${peerDirectory}/ack-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "ack-B", pluginVersion: "0.7.1", storageFormatVersion: 2,
+    checkpointHash: null, retired: false, updatedAt: 34_999,
+  }));
+  await a.appendOperations({ document, batchId: "seed", operations: [live("seed", "Ink", "ack-A", 35_000)] });
+  await a.readDocument(document);
+  const checkpointPath = a.pathsFor(document).checkpoint;
+  const checkpoint = JSON.parse(shared.files.get(checkpointPath));
+  assert.equal(checkpoint.formatVersion, 2);
+  shared.files.set(`${peerDirectory}/ack-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "ack-B", pluginVersion: "0.8.1", storageFormatVersion: 3,
+    checkpointHash: checkpoint.integrity, retired: false, updatedAt: 35_001,
+  }));
+  await a.readDocument(document);
+  assert.equal(JSON.parse(shared.files.get(checkpointPath)).formatVersion, 2,
+    "matching hash without a durable acknowledgement timestamp is incomplete");
+
+  shared.files.set(`${peerDirectory}/ack-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "ack-B", pluginVersion: "0.8.1", storageFormatVersion: 3,
+    checkpointHash: checkpoint.integrity, retired: false, acknowledgedAt: 35_001, updatedAt: 35_001,
+  }));
+  await a.readDocument(document);
+  assert.equal(JSON.parse(shared.files.get(checkpointPath)).formatVersion, 2,
+    "a future-dated ACK is not accepted as a valid confirmation");
+
+  shared.files.set(`${peerDirectory}/ack-B.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "ack-B", pluginVersion: "0.8.1", storageFormatVersion: 3,
+    checkpointHash: checkpoint.integrity, retired: false, acknowledgedAt: 35_000, updatedAt: 35_001,
+  }));
+  await a.readDocument(document);
+  assert.equal(JSON.parse(shared.files.get(checkpointPath)).formatVersion, 3,
+    "storage-format capability and an exact valid checkpoint ACK permit migration regardless of patch version");
+});
+
+test("a device ACK cannot substitute for a missing verified checkpoint object", async () => {
+  const shared = makeAdapter();
+  let now = 40_000;
+  const a = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "checkpoint-A", clock: () => now });
+  const b = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "checkpoint-B", clock: () => now });
+  const documentA = await a.registerDocument({ sourcePath: "Books/CheckpointRefs.pdf" });
+  const documentB = await b.registerDocument({ sourcePath: "Books/CheckpointRefs.pdf" });
+  await a.appendOperations({ document: documentA, batchId: "seed", operations: [live("seed", "Ink", "checkpoint-A", now)] });
+  await a.readDocument(documentA);
+  await b.readDocument(documentB);
+  await a.readDocument(documentA);
+  await b.readDocument(documentB);
+  const originalCheckpoint = JSON.parse(shared.files.get(a.pathsFor(documentA).checkpoint));
+  assert.equal(originalCheckpoint.formatVersion, 3);
+
+  for (let index = 1; index <= 2; index += 1) {
+    now += 1;
+    await a.appendOperations({ document: documentA, batchId: `advance-${index}`,
+      operations: [live(`advance-${index}`, "Ink", "checkpoint-A", now)] });
+    await a.readDocument(documentA);
+  }
+  const currentPath = a.pathsFor(documentA).checkpoint;
+  const previousPath = a.pathsFor(documentA).checkpointBackup;
+  const currentText = shared.files.get(currentPath);
+  const current = JSON.parse(currentText);
+  assert.notEqual(current.integrity, originalCheckpoint.integrity);
+  assert.notEqual(JSON.parse(shared.files.get(previousPath)).integrity, originalCheckpoint.integrity,
+    "two subsequent materialized states have moved the acknowledged checkpoint out of the current/previous refs");
+
+  const delayed = {
+    schemaVersion: 1, formatVersion: 3, pluginVersion: "0.8.0",
+    kind: "annotation-operation-batch", documentId: documentA.documentId, docKey: documentA.docKey,
+    deviceId: "checkpoint-B", batchId: "delayed-child", createdAt: now + 1,
+    baseCheckpointHash: originalCheckpoint.integrity,
+    parents: originalCheckpoint.batchHeads,
+    operations: [live("delayed-child", "Highlight", "checkpoint-B", now + 1)],
+  };
+  const delayedPath = `${a.pathsFor(documentA).operations}/checkpoint-B/delayed-child.json`;
+  shared.folders.add(`${a.pathsFor(documentA).operations}/checkpoint-B`);
+  shared.files.set(delayedPath, JSON.stringify(delayed));
+  const pending = await a.readDocument(documentA);
+  assert.equal(pending.syncPending, true,
+    "the stale device ACK hash cannot authorize replay when the checkpoint object is no longer available");
+  assert.deepEqual(pending.annotations.some((row) => row.uuid === "delayed-child"), false);
+  assert.equal(shared.files.get(currentPath), currentText, "the pending reference cannot overwrite the verified current checkpoint");
+});
+
+test("corrupt previous checkpoint blocks batch collection after the retention period", async () => {
+  const { adapter, files } = makeAdapter();
+  let now = 50_000;
+  const annotations = store({ adapter, deviceId: "gc-integrity", clock: () => now });
+  const document = await annotations.registerDocument({ sourcePath: "Books/GcIntegrity.pdf" });
+  await annotations.appendOperations({ document, batchId: "gc-old", operations: [live("gc-old", "Ink", "gc-integrity", now)] });
+  await annotations.readDocument(document);
+  await annotations.readDocument(document);
+  now += 1;
+  await annotations.appendOperations({ document, batchId: "gc-new", operations: [live("gc-new", "Ink", "gc-integrity", now)] });
+  await annotations.readDocument(document);
+  const operationPath = `${annotations.pathsFor(document).deviceOperations}/gc-old.json`;
+  assert.equal(files.has(operationPath), true);
+  files.set(annotations.pathsFor(document).checkpointBackup, "corrupt previous checkpoint");
+  now += 30 * DAY_MS + 1;
+  await annotations.readDocument(document);
+  assert.equal(files.has(operationPath), true,
+    "retention age cannot bypass verification of both current and prior distinct checkpoint states");
+});
+
+test("incomplete sync and missing parent batches pause replay without changing the checkpoint", async () => {
+  const { adapter, files } = makeAdapter();
+  let now = 20_000;
+  const annotations = store({ adapter, deviceId: "sync-device", clock: () => now });
+  const document = await annotations.registerDocument({ sourcePath: "Books/InterruptedSync.pdf" });
+  await annotations.appendOperations({ document, batchId: "seed", operations: [live("seed", "Ink", "sync-device", now)] });
+  await annotations.readDocument(document);
+  await annotations.readDocument(document);
+  const baseCheckpointText = files.get(annotations.pathsFor(document).checkpoint);
+  const parent = await annotations.appendOperations({ document, batchId: "parent",
+    operations: [live("parent-op", "Ink", "sync-device", now + 1)] });
+  const child = await annotations.appendOperations({ document, batchId: "child",
+    operations: [live("child-op", "Ink", "sync-device", now + 2)] });
+  const parentText = files.get(parent.batchPath);
+  const childBatch = JSON.parse(files.get(child.batchPath));
+  assert.ok(childBatch.parents.includes("sync-device/parent"));
+
+  files.delete(parent.batchPath);
+  const missingParent = await annotations.readDocument(document);
+  assert.equal(missingParent.syncPending, true);
+  assert.deepEqual(new Set(missingParent.annotations.map((row) => row.uuid)), new Set(["seed"]),
+    "incomplete sync exposes only the last verified checkpoint");
+  assert.equal(files.get(annotations.pathsFor(document).checkpoint), baseCheckpointText,
+    "a missing causal parent cannot advance the checkpoint or device acknowledgement");
+
+  files.set(parent.batchPath, "{partial");
+  assert.equal((await annotations.readDocument(document)).syncPending, true,
+    "a partially synced JSON file remains pending instead of being treated as a valid batch");
+  assert.equal(files.get(annotations.pathsFor(document).checkpoint), baseCheckpointText);
+
+  files.set(parent.batchPath, parentText);
+  const complete = await annotations.readDocument(document);
+  assert.equal(complete.syncPending, undefined);
+  assert.deepEqual(new Set(complete.annotations.map((row) => row.uuid)), new Set(["seed", "parent-op", "child-op"]));
+});
+
+test("a recognizable old-device batch arriving after cutover is imported without downgrading the checkpoint", async () => {
+  const { adapter, files } = makeAdapter();
+  const annotations = store({ adapter, deviceId: "new-device" });
+  const document = await annotations.registerDocument({ sourcePath: "Books/LateLegacy.pdf" });
+  await annotations.appendOperations({ document, batchId: "seed", operations: [live("seed", "Ink", "new-device", 100)] });
+  await annotations.readDocument(document);
+  await annotations.readDocument(document);
+  const checkpointPath = annotations.pathsFor(document).checkpoint;
+  const before = JSON.parse(files.get(checkpointPath));
+  assert.equal(before.formatVersion, 3);
+
+  const lateLegacy = {
+    schemaVersion: 1, formatVersion: 2, pluginVersion: "0.7.1",
+    kind: "annotation-operation-batch", documentId: document.documentId, docKey: document.docKey,
+    deviceId: "old-device", batchId: "late-old-write", createdAt: 101,
+    operations: [live("old-device-op", "Underline", "old-device", 101)],
+  };
+  const latePath = `${annotations.pathsFor(document).operations}/old-device/late-old-write.json`;
+  files.set(latePath, JSON.stringify(lateLegacy));
+  const migrated = await annotations.readDocument(document);
+  assert.ok(migrated.annotations.some((row) => row.uuid === "old-device-op"));
+  assert.equal(JSON.parse(files.get(checkpointPath)).formatVersion, 3,
+    "legacy import does not downgrade the migrated checkpoint format");
 });
 
 test("rename preserves identity and updates source mapping; a later path copy gets a new identity", async () => {

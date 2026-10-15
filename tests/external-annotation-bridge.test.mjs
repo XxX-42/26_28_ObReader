@@ -337,6 +337,112 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
   assert.equal(scope.logs.at(-1).operationCount, 1);
 });
 
+test("empty undo/redo does not mark the PDF dirty, while an editor change still does", () => {
+  const helpers = [
+    "observeEditorManager",
+    "annotationRowsChanged",
+    "wrapMethod",
+  ].map(functionSource).join("\n");
+  const scope = vm.runInThisContext(`(() => {
+    const state = { revision: 0, editorManagerCleanup: null };
+    const app = { rows: new Map([["editor-1", { signature: "before" }]]) };
+    let changeOnUndo = false;
+    const manager = {
+      undo() { if (changeOnUndo) app.rows.set("editor-1", { signature: "after" }); },
+      redo() {},
+      getEditors() { return []; },
+    };
+    app.pdfViewer = { _layerProperties: { annotationEditorUIManager: manager } };
+    function getAnnotationStorageRows(value) { return new Map(value.rows); }
+    function captureSavedEditorHistory() { return []; }
+    function snapshotSavedFreeTextEditors() { return { activeEditors: new Set(), editorStates: new Map() }; }
+    function changedSavedFreeTextEditors() { return []; }
+    function hasSavedEditorHistoryTransition() { return false; }
+    function noteMutation() { state.revision += 1; }
+    function reconcileSavedEditorHistory() {}
+    function queueFreeTextAppearanceRepair() {}
+    function discardDeferredAccessibilityMove() {}
+    ${helpers}
+    observeEditorManager(app);
+    return { state, app, manager, nextUndoChange() { changeOnUndo = true; } };
+  })()`);
+
+  scope.manager.undo();
+  scope.manager.redo();
+  assert.equal(scope.state.revision, 0, "empty history commands must not create phantom dirty revisions");
+
+  scope.nextUndoChange();
+  scope.manager.undo();
+  assert.equal(scope.state.revision, 1, "a real serialized annotation change must still mark a revision");
+});
+
+test("only a complete stable empty annotation diff can settle a stale dirty flag", () => {
+  const scope = vm.runInThisContext(`(() => {
+      const rows = new Map([["editor-1", { signature: "same" }]]);
+      const state = {
+        revision: 7, dirty: true, autoSavePending: true, autoSavePaused: true,
+        externalSourceMismatch: false, externalSourceConfirmed: true,
+        pendingInkCommit: false, freeTextInputPending: false,
+        freeTextFocused: false, freeTextCommittedForSave: false,
+        annotationSnapshot: rows,
+      };
+      let restored = null;
+      function isEditBoundaryBusy() { return false; }
+      function getAnnotationStorageRows() { return new Map(rows); }
+      function clearConfirmedDirtyState() {}
+      function restoreChanges(_app, snapshot) { restored = snapshot; }
+      function runtimeLogRecord() {}
+      const app = {
+        pdfDocument: { annotationStorage: { resetModified() {} } },
+        pdfThumbnailViewer: { hasStructuralChanges() { return false; } },
+      };
+      state.app = app;
+      ${functionSource("annotationRowsChanged")}
+      ${functionSource("settleEmptyDirtyRevision")}
+      return { state, rows, app, restored: () => restored, annotationRowsChanged, settleEmptyDirtyRevision };
+  })()`);
+  const { annotationRowsChanged, settleEmptyDirtyRevision, rows } = scope;
+  assert.equal(annotationRowsChanged(rows, new Map(rows)), false);
+  assert.equal(annotationRowsChanged(rows, new Map([["editor-1", { signature: "changed" }]])), true);
+
+  const validSnapshot = {
+    operations: [], missingDirtyIds: [],
+    dirtyState: { dirtyAnnotationIds: [], dirtyPageIndices: [] },
+    capture: {
+      changedAnnotationCount: 0,
+      liveEditorSerializationErrorCount: 0,
+      liveEditorEnumerationErrorCount: 0,
+    },
+  };
+  assert.equal(settleEmptyDirtyRevision(validSnapshot, 7, scope.app), true);
+  assert.equal(scope.state.dirty, false);
+  assert.equal(scope.state.autoSavePaused, false);
+  assert.deepEqual(scope.restored(), { hadAnnotationChanges: false, hadStructuralChanges: false });
+
+  scope.state.dirty = true;
+  assert.equal(settleEmptyDirtyRevision({
+    ...validSnapshot,
+    dirtyState: { dirtyAnnotationIds: [], dirtyPageIndices: [3] },
+  }, 7, scope.app), false, "a dirty page must never be silently discarded");
+  assert.equal(scope.state.dirty, true);
+
+  assert.equal(settleEmptyDirtyRevision({
+    ...validSnapshot,
+    capture: { ...validSnapshot.capture, changedAnnotationCount: 1 },
+  }, 7, scope.app), false, "a real annotation diff must remain protected for persistence");
+  assert.equal(scope.state.dirty, true);
+
+  assert.equal(settleEmptyDirtyRevision({
+    ...validSnapshot,
+    capture: { ...validSnapshot.capture, liveEditorSerializationErrorCount: 1 },
+  }, 7, scope.app), false, "an incomplete live-editor snapshot must never be treated as clean");
+  assert.equal(scope.state.dirty, true);
+
+  assert.match(functionSource("saveOneRevision"), /settleEmptyDirtyRevision\(operationSnapshot, revisionAtStart, app\)/);
+  assert.match(functionSource("runRecoverySequence"), /settleEmptyDirtyRevision\(operationSnapshot, revisionAtStart, app\)/);
+  assert.match(functionSource("handleFlush"), /result = !isDirty\(\) \|\| closeControl\.annotationBatchDurable/);
+});
+
 test("operation snapshot completeness and durable ACK validate every dirty operation", () => {
   const { assertCompleteOperationSnapshot, validateOperationAcknowledgement } = evaluateHelpers(
     ["assertCompleteOperationSnapshot", "validateOperationAcknowledgement"],

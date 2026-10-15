@@ -20,7 +20,11 @@
 const STORE_SCHEMA = 1;
 const INDEX_SCHEMA = 2;
 const CHECKPOINT_SCHEMA = 2;
-const CURRENT_PLUGIN_VERSION = "0.7.1";
+const CURRENT_PLUGIN_VERSION = "0.8.0";
+const LEGACY_OPERATION_FORMAT = 2;
+const CURRENT_OPERATION_FORMAT = 3;
+const CHECKPOINT_FORMAT = 3;
+const GC_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const COMPACT_PAYLOAD_ENCODING = "float32le-base64-v1";
 const VALID_TYPES = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
 const HASH_PREFIX = /^(xxh64-v1|sha256-v1):([a-f0-9]+)$/i;
@@ -65,6 +69,10 @@ function createPdfAnnotationStore({
       deviceOperations: `${operationsRoot}/${normalized.docKey}/${deviceSegment}`,
       identityEvents: `${identityEventsRoot}/${normalized.docKey}`,
     };
+  }
+
+  function batchReference(batchDeviceId, batchId) {
+    return `${pathSegment(batchDeviceId)}/${pathSegment(batchId)}`;
   }
 
   async function registerDocument({ sourcePath, source = {}, documentId } = {}) {
@@ -189,9 +197,20 @@ function createPdfAnnotationStore({
 
     const prepared = await prepareOperations(operations);
     const createdAt = finiteNumber(await clock(), "clock()");
+    const checkpoint = await readCheckpoint(normalizedDocument);
+    const operationFormat = await isFormat3Enabled(normalizedDocument, checkpoint)
+      ? CURRENT_OPERATION_FORMAT : LEGACY_OPERATION_FORMAT;
+    let causal = {};
+    if (operationFormat === CURRENT_OPERATION_FORMAT) {
+      const state = await replay(normalizedDocument);
+      causal = {
+        baseCheckpointHash: checkpoint?.integrity || null,
+        parents: [...(state.batchHeads || [])].sort(compareString),
+      };
+    }
     const batch = {
       schemaVersion: STORE_SCHEMA,
-      formatVersion: 2,
+      formatVersion: operationFormat,
       kind: "annotation-operation-batch",
       pluginVersion: CURRENT_PLUGIN_VERSION,
       documentId: normalizedDocument.documentId,
@@ -199,6 +218,7 @@ function createPdfAnnotationStore({
       deviceId,
       batchId: id,
       createdAt,
+      ...causal,
       ...(canonicalSourceHash ? { sourceHash: canonicalSourceHash } : {}),
       ...(isQuarantined ? { quarantined: true } : {}),
       operations: prepared,
@@ -233,7 +253,30 @@ function createPdfAnnotationStore({
 
   async function readDocument(document) {
     const normalizedDocument = await resolveDocument(document);
-    const state = await replay(normalizedDocument);
+    let state;
+    try {
+      state = await replay(normalizedDocument);
+    } catch (error) {
+      if (error.code !== "PDF_ANNOTATION_SYNC_PENDING") throw error;
+      const checkpoint = await readCheckpoint(normalizedDocument);
+      if (!checkpoint) throw error;
+      const annotations = {};
+      for (const row of checkpoint.annotations) annotations[row.uuid] = normalizeOperation(row);
+      for (const row of checkpoint.tombstones) annotations[row.uuid] = normalizeOperation({ ...row, deleted: true });
+      const safeState = {
+        annotations,
+        revision: checkpoint.revision,
+        updatedAt: checkpoint.updatedAt,
+        payloadEncoding: checkpoint.payloadEncoding,
+        formatVersion: checkpoint.formatVersion || LEGACY_OPERATION_FORMAT,
+        coveredBatches: cloneBatchManifest(checkpoint.coveredBatches),
+        batchHeads: [...(checkpoint.batchHeads || [])],
+        operationDigests: { ...checkpoint.operationDigests },
+        knownDevices: [...checkpoint.knownDevices],
+      };
+      const safeSnapshot = makeSnapshot(normalizedDocument, safeState, checkpoint, false, true);
+      return safeSnapshot;
+    }
     let checkpoint = await writeCheckpoint(normalizedDocument, state);
     let currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
     let deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
@@ -245,8 +288,7 @@ function createPdfAnnotationStore({
       currentDeviceState = await acknowledgeDevice(normalizedDocument, checkpoint.integrity);
       deviceStates = await listDeviceStatus(normalizedDocument, checkpoint);
     }
-    const compactInkEncoding = deviceStates.every((entry) => entry.retired ||
-      (entry.pluginVersion === CURRENT_PLUGIN_VERSION && entry.checkpointHash === checkpoint.integrity));
+    const compactInkEncoding = deviceStates.every((entry) => entry.retired || entry.acknowledged);
     const snapshot = makeSnapshot(normalizedDocument, state, checkpoint, compactInkEncoding);
     if (currentDeviceState.retired !== true && compactInkEncoding) {
       // Keep the legacy materialized snapshot intact until every registered
@@ -356,32 +398,54 @@ function createPdfAnnotationStore({
     ]);
     let revision = checkpoint?.revision || 0;
     let updatedAt = checkpoint?.updatedAt || 0;
+    const knownBatchRefs = new Set();
+    const batchHeads = new Set(Array.isArray(checkpoint?.batchHeads) ? checkpoint.batchHeads : []);
+    const pendingBatches = [];
+    const retiredDeviceBatches = [];
     if (checkpoint) {
       for (const row of checkpoint.annotations) latest.set(row.uuid, normalizeOperation(row));
       for (const row of checkpoint.tombstones) latest.set(row.uuid, normalizeOperation({ ...row, deleted: true }));
       for (const [key, digest] of Object.entries(checkpoint.operationDigests)) operationDigests.set(key, digest);
+      for (const [batchDeviceId, batches] of Object.entries(coveredBatches)) {
+        for (const batchId of Object.keys(batches)) knownBatchRefs.add(batchReference(batchDeviceId, batchId));
+      }
+      if (!Array.isArray(checkpoint.batchHeads)) {
+        // Pre-0.8 checkpoints did not record the DAG frontier.
+        for (const ref of knownBatchRefs) batchHeads.add(ref);
+      }
     }
     for (const batchPath of batchFiles) {
       let batch;
       try { batch = JSON.parse(await adapter.read(batchPath)); }
-      catch { throw codedError("PDF_ANNOTATION_BATCH_INVALID", `Malformed operation batch: ${batchPath}`); }
+      catch {
+        throw codedError("PDF_ANNOTATION_SYNC_PENDING",
+          `Operation batch is incomplete or not yet readable during sync: ${batchPath}`);
+      }
       validateBatch(batch, normalizedDocument);
+      if (batch.formatVersion === CURRENT_OPERATION_FORMAT &&
+          (checkpoint?.formatVersion ?? LEGACY_OPERATION_FORMAT) < CHECKPOINT_FORMAT) {
+        // A v3 batch can only be emitted after the shared format cutover. If
+        // Sync delivers that batch before its v3 checkpoint, wait for the
+        // referenced object instead of promoting a partially synced format.
+        throw codedError("PDF_ANNOTATION_SYNC_PENDING",
+          `Waiting for the format 3 checkpoint referenced by ${batchPath}.`);
+      }
       knownDevices.add(batch.deviceId);
       const batchDigest = await digestText(canonicalJson(batch));
+      const ref = batchReference(batch.deviceId, batch.batchId);
       const coveredDigest = coveredBatches[batch.deviceId]?.[batch.batchId];
       if (coveredDigest) {
         if (coveredDigest !== batchDigest) {
           throw codedError("PDF_ANNOTATION_BATCH_COLLISION", "A batch covered by a verified checkpoint changed content.");
         }
+        knownBatchRefs.add(ref);
         continue;
       }
       const deviceState = await readDeviceState(normalizedDocument, batch.deviceId);
-      if (deviceState?.retired === true ||
-          (deviceState?.pluginVersion === CURRENT_PLUGIN_VERSION && batch.formatVersion !== 2)) {
-        // A retired or upgraded device may not reintroduce stale legacy
-        // operations through a downgrade or delayed sync.
-        if (!coveredBatches[batch.deviceId]) coveredBatches[batch.deviceId] = {};
-        coveredBatches[batch.deviceId][batch.batchId] = batchDigest;
+      if (deviceState?.retired === true) {
+        // Keep late writes on disk for manual recovery, but exclude them from
+        // the active graph and from checkpoint coverage/garbage collection.
+        retiredDeviceBatches.push({ deviceId: batch.deviceId, batchId: batch.batchId });
         continue;
       }
       if (batch.sourceHash && normalizedDocument.source.sourceHash &&
@@ -391,7 +455,23 @@ function createPdfAnnotationStore({
         // never project them onto a different source revision.
         continue;
       }
-      for (const operation of batch.operations) {
+      pendingBatches.push({ batch, batchPath, batchDigest, ref });
+    }
+
+    const knownCheckpointHashes = await getKnownCheckpointHashes(normalizedDocument, checkpoint);
+    while (pendingBatches.length) {
+      const ready = pendingBatches.filter(({ batch }) => batch.formatVersion !== CURRENT_OPERATION_FORMAT ||
+        (knownCheckpointHashes.has(batch.baseCheckpointHash) &&
+          batch.parents.every((parent) => knownBatchRefs.has(parent))));
+      if (!ready.length) {
+        const first = pendingBatches[0];
+        throw codedError("PDF_ANNOTATION_SYNC_PENDING",
+          `Waiting for the checkpoint or parent operation batch referenced by ${first.batchPath}.`);
+      }
+      ready.sort((left, right) => compareString(left.batchPath, right.batchPath));
+      for (const item of ready) {
+        const { batch, batchDigest, ref } = item;
+        for (const operation of batch.operations) {
         const normalized = normalizeOperation(operation);
         if (normalized.clock.deviceId !== batch.deviceId) {
           throw codedError("PDF_ANNOTATION_BATCH_INVALID", "Operation actor does not match its immutable batch device.");
@@ -410,9 +490,14 @@ function createPdfAnnotationStore({
           const prior = latest.get(normalized.uuid);
           if (!prior || compareClock(normalized.clock, prior.clock) > 0) latest.set(normalized.uuid, normalized);
         }
+        }
+        for (const parent of batch.parents || []) batchHeads.delete(parent);
+        batchHeads.add(ref);
+        knownBatchRefs.add(ref);
+        if (!coveredBatches[batch.deviceId]) coveredBatches[batch.deviceId] = {};
+        coveredBatches[batch.deviceId][batch.batchId] = batchDigest;
+        pendingBatches.splice(pendingBatches.indexOf(item), 1);
       }
-      if (!coveredBatches[batch.deviceId]) coveredBatches[batch.deviceId] = {};
-      coveredBatches[batch.deviceId][batch.batchId] = batchDigest;
     }
     const annotations = {};
     for (const uuidKey of [...latest.keys()].sort()) {
@@ -424,8 +509,11 @@ function createPdfAnnotationStore({
       revision,
       operationCount: revision,
       updatedAt,
+      formatVersion: checkpoint?.formatVersion || LEGACY_OPERATION_FORMAT,
       payloadEncoding: checkpoint?.payloadEncoding || "json-legacy",
       coveredBatches,
+      batchHeads: [...batchHeads].sort(compareString),
+      retiredDeviceBatches,
       operationDigests: Object.fromEntries([...operationDigests.entries()].sort(([left], [right]) => compareString(left, right))),
       knownDevices: [...knownDevices].sort(compareString),
     };
@@ -1000,6 +1088,43 @@ function createPdfAnnotationStore({
     return null;
   }
 
+  async function isFormat3Enabled(document, checkpoint = null) {
+    if (checkpoint?.formatVersion >= CHECKPOINT_FORMAT) return true;
+    if (!checkpoint) return false;
+    const states = await collectDeviceStatus(document, checkpoint);
+    const activeDevices = states.filter((entry) => !entry.retired);
+    return activeDevices.length > 0 && activeDevices.every((entry) => entry.acknowledged);
+  }
+
+  async function getKnownCheckpointHashes(document, checkpoint) {
+    const hashes = new Set();
+    if (checkpoint?.integrity) hashes.add(checkpoint.integrity);
+    const backupPath = pathsFor(document).checkpointBackup;
+    const backupText = await readTextIfExists(backupPath);
+    if (backupText) {
+      try {
+        const backup = JSON.parse(backupText);
+        await validateCheckpoint(backup, document);
+        hashes.add(backup.integrity);
+      } catch { /* A damaged previous checkpoint cannot authorize a batch. */ }
+    }
+    // A device acknowledgement is a reference, not the checkpoint object. It
+    // cannot stand in for a checkpoint that has not synchronized locally.
+    // Causal batches wait until their base checkpoint is actually present and
+    // verified as primary or previous.
+    return hashes;
+  }
+
+  async function readValidCheckpointAt(path, document) {
+    const text = await readTextIfExists(path);
+    if (text === null) return null;
+    try {
+      const checkpoint = JSON.parse(text);
+      await validateCheckpoint(checkpoint, document);
+      return { text, checkpoint };
+    } catch { return null; }
+  }
+
   async function validateCheckpoint(checkpoint, document) {
     if (!checkpoint || checkpoint.schemaVersion !== CHECKPOINT_SCHEMA ||
         checkpoint.kind !== "pdf-annotation-checkpoint" ||
@@ -1013,6 +1138,14 @@ function createPdfAnnotationStore({
         !checkpoint.operationDigests || typeof checkpoint.operationDigests !== "object" ||
         typeof checkpoint.metadataHash !== "string") {
       throw new TypeError("Checkpoint metadata is incomplete.");
+    }
+    if (checkpoint.formatVersion !== undefined && ![2, CHECKPOINT_FORMAT].includes(checkpoint.formatVersion)) {
+      throw new TypeError("Checkpoint format version is unsupported.");
+    }
+    if (checkpoint.batchHeads !== undefined && (!Array.isArray(checkpoint.batchHeads) ||
+        checkpoint.batchHeads.some((ref) => typeof ref !== "string" || !ref) ||
+        new Set(checkpoint.batchHeads).size !== checkpoint.batchHeads.length)) {
+      throw new TypeError("Checkpoint operation heads are invalid.");
     }
     const annotationIds = new Set();
     for (const row of checkpoint.annotations) {
@@ -1049,6 +1182,18 @@ function createPdfAnnotationStore({
         canonicalHash(digest);
       }
     }
+    if (checkpoint.formatVersion >= CHECKPOINT_FORMAT) {
+      if (!Array.isArray(checkpoint.batchHeads)) {
+        throw new TypeError("Format 3 checkpoints must include the operation DAG frontier.");
+      }
+      const coveredRefs = new Set();
+      for (const [coveredDevice, batches] of Object.entries(checkpoint.coveredBatches)) {
+        for (const batchId of Object.keys(batches)) coveredRefs.add(batchReference(coveredDevice, batchId));
+      }
+      if (checkpoint.batchHeads.some((ref) => !coveredRefs.has(ref))) {
+        throw new TypeError("Checkpoint operation heads must reference covered immutable batches.");
+      }
+    }
     for (const digest of Object.values(checkpoint.operationDigests)) canonicalHash(digest);
     canonicalHash(checkpoint.metadataHash);
     const unsigned = { ...checkpoint };
@@ -1060,20 +1205,40 @@ function createPdfAnnotationStore({
 
   async function writeCheckpoint(document, state) {
     const locations = pathsFor(document);
-    const checkpoint = await makeCheckpoint(document, state);
+    const currentRow = await readValidCheckpointAt(locations.checkpoint, document);
+    const backupRow = await readValidCheckpointAt(locations.checkpointBackup, document);
+    const knownCheckpoint = currentRow?.checkpoint || backupRow?.checkpoint || null;
+    const format3Enabled = await isFormat3Enabled(document, knownCheckpoint);
+    const formatVersion = format3Enabled || state.formatVersion >= CHECKPOINT_FORMAT
+      ? CHECKPOINT_FORMAT : LEGACY_OPERATION_FORMAT;
+    const checkpoint = await makeCheckpoint(document, state, formatVersion);
     await ensureDirectory(locations.checkpoint.slice(0, locations.checkpoint.lastIndexOf("/")));
     await ensureDirectory(locations.checkpointBackup.slice(0, locations.checkpointBackup.lastIndexOf("/")));
     const text = canonicalJson(checkpoint);
-    // Keep a verified recovery copy before replacing the primary checkpoint.
-    // Covered operation batches are never eligible for GC until both copies
-    // can represent their state.
-    for (const location of [locations.checkpointBackup, locations.checkpoint]) {
-      const existing = await readTextIfExists(location);
-      if (existing === text) continue;
-      await adapter.write(location, text);
-      if (await adapter.read(location) !== text) {
-        throw codedError("PDF_ANNOTATION_CHECKPOINT_UNCONFIRMED", "Verified annotation checkpoint write could not be confirmed.");
+    if (currentRow?.checkpoint.integrity === checkpoint.integrity) {
+      if (backupRow?.checkpoint.integrity === currentRow.checkpoint.integrity && typeof adapter.remove === "function") {
+        await adapter.remove(locations.checkpointBackup);
       }
+      return currentRow.checkpoint;
+    }
+
+    // `.previous` is the prior distinct verified checkpoint. Preserve the
+    // current primary before replacing it; never manufacture a second copy of
+    // the new state. If the primary is damaged, keep the verified backup.
+    if (currentRow && currentRow.checkpoint.integrity !== checkpoint.integrity &&
+        backupRow?.checkpoint.integrity !== currentRow.checkpoint.integrity) {
+      await adapter.write(locations.checkpointBackup, currentRow.text);
+      if (await adapter.read(locations.checkpointBackup) !== currentRow.text) {
+        throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED",
+          "The previous distinct checkpoint could not be verified; current checkpoint was left unchanged.");
+      }
+    }
+    await adapter.write(locations.checkpoint, text);
+    if (await adapter.read(locations.checkpoint) !== text) {
+      throw codedError("PDF_ANNOTATION_CHECKPOINT_UNCONFIRMED", "Verified annotation checkpoint write could not be confirmed.");
+    }
+    if (backupRow?.checkpoint.integrity === checkpoint.integrity && typeof adapter.remove === "function") {
+      await adapter.remove(locations.checkpointBackup);
     }
     return checkpoint;
   }
@@ -1110,7 +1275,7 @@ function createPdfAnnotationStore({
     }
   }
 
-  async function makeCheckpoint(document, state) {
+  async function makeCheckpoint(document, state, formatVersion = LEGACY_OPERATION_FORMAT) {
     const all = Object.values(state.annotations).sort((left, right) => compareString(left.uuid, right.uuid));
     const annotations = all.filter((row) => row.deleted !== true).map((row) => ({
       ...row,
@@ -1130,6 +1295,7 @@ function createPdfAnnotationStore({
     const unsigned = {
       schemaVersion: CHECKPOINT_SCHEMA,
       kind: "pdf-annotation-checkpoint",
+      formatVersion,
       documentId: document.documentId,
       docKey: document.docKey,
       pluginVersion: CURRENT_PLUGIN_VERSION,
@@ -1144,6 +1310,7 @@ function createPdfAnnotationStore({
       annotations,
       tombstones,
       coveredBatches: cloneBatchManifest(state.coveredBatches),
+      batchHeads: [...new Set(state.batchHeads || [])].sort(compareString),
       operationDigests: { ...state.operationDigests },
       knownDevices: [...new Set(state.knownDevices)].sort(compareString),
     };
@@ -1156,13 +1323,19 @@ function createPdfAnnotationStore({
     const path = `${location}/${pathSegment(deviceId)}.json`;
     const previous = await readDeviceState(document, deviceId);
     if (previous?.retired === true) return previous;
+    const now = finiteNumber(await clock(), "clock()");
+    const acknowledgedAt = previous?.checkpointHash === checkpointHash &&
+      previous?.storageFormatVersion >= CHECKPOINT_FORMAT && Number.isSafeInteger(previous?.acknowledgedAt)
+      ? previous.acknowledgedAt : now;
     const record = {
       schemaVersion: 1,
       deviceId,
       pluginVersion: CURRENT_PLUGIN_VERSION,
+      storageFormatVersion: CHECKPOINT_FORMAT,
       checkpointHash,
       retired: false,
-      updatedAt: finiteNumber(await clock(), "clock()"),
+      acknowledgedAt,
+      updatedAt: now,
     };
     const text = canonicalJson(record);
     if (await readTextIfExists(path) !== text) {
@@ -1182,7 +1355,16 @@ function createPdfAnnotationStore({
     try { state = JSON.parse(text); }
     catch { throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A device checkpoint acknowledgement is malformed."); }
     if (state?.schemaVersion !== 1 || state.deviceId !== targetDeviceId ||
-        (state.retired !== true && state.retired !== false)) {
+        (state.retired !== true && state.retired !== false) ||
+        (state.pluginVersion !== undefined && typeof state.pluginVersion !== "string") ||
+        (state.checkpointHash !== undefined && state.checkpointHash !== null &&
+          (typeof state.checkpointHash !== "string" || !state.checkpointHash)) ||
+        (state.storageFormatVersion !== undefined &&
+          (!Number.isSafeInteger(state.storageFormatVersion) || state.storageFormatVersion < 1)) ||
+        (state.acknowledgedAt !== undefined &&
+          (!Number.isSafeInteger(state.acknowledgedAt) || state.acknowledgedAt < 0)) ||
+        (state.updatedAt !== undefined && (!Number.isSafeInteger(state.updatedAt) || state.updatedAt < 0)) ||
+        (state.retiredAt !== undefined && (!Number.isSafeInteger(state.retiredAt) || state.retiredAt < 0))) {
       throw codedError("PDF_ANNOTATION_DEVICE_STATE_INVALID", "A device checkpoint acknowledgement is invalid.");
     }
     return state;
@@ -1205,17 +1387,23 @@ function createPdfAnnotationStore({
         if (typeof batch.deviceId === "string" && batch.deviceId) ids.add(batch.deviceId);
       } catch { /* replay reports malformed batches with the actionable path */ }
     }
+    const now = finiteNumber(await clock(), "clock()");
     const result = [];
     for (const id of [...ids].sort(compareString)) {
       const state = await readDeviceState(normalized, id);
+      const acknowledged = Boolean(checkpoint && state?.retired === false &&
+        state?.checkpointHash === checkpoint.integrity &&
+        state?.storageFormatVersion >= CHECKPOINT_FORMAT &&
+        Number.isSafeInteger(state?.acknowledgedAt) && state.acknowledgedAt <= now);
       result.push({
         deviceId: id,
         isCurrent: id === deviceId,
         pluginVersion: state?.pluginVersion || null,
+        storageFormatVersion: Number.isSafeInteger(state?.storageFormatVersion) ? state.storageFormatVersion : 0,
         checkpointHash: state?.checkpointHash || null,
+        acknowledgedAt: acknowledged ? state.acknowledgedAt : null,
         retired: state?.retired === true,
-        acknowledged: Boolean(checkpoint && state?.checkpointHash === checkpoint.integrity &&
-          state?.pluginVersion === CURRENT_PLUGIN_VERSION),
+        acknowledged,
       });
     }
     return result;
@@ -1254,18 +1442,30 @@ function createPdfAnnotationStore({
     if (typeof adapter.remove !== "function" ||
         !deviceStates.every((entry) => entry.retired || entry.acknowledged)) return 0;
     const paths = pathsFor(document);
-    const currentCheckpointText = await readTextIfExists(paths.checkpoint);
-    if (!currentCheckpointText || JSON.parse(currentCheckpointText).integrity !== checkpoint.integrity) return 0;
-    const backupText = canonicalJson(checkpoint);
-    await adapter.write(paths.checkpointBackup, backupText);
-    if (await adapter.read(paths.checkpointBackup) !== backupText) {
-      throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED", "Checkpoint backup could not be verified; batch cleanup was skipped.");
-    }
+    const currentRow = await readValidCheckpointAt(paths.checkpoint, document);
+    const previousRow = await readValidCheckpointAt(paths.checkpointBackup, document);
+    if (!currentRow || currentRow.checkpoint.integrity !== checkpoint.integrity || !previousRow ||
+        previousRow.checkpoint.integrity === currentRow.checkpoint.integrity) return 0;
+    const activeAcks = deviceStates.filter((entry) => !entry.retired).map((entry) => entry.acknowledgedAt);
+    if (!activeAcks.length || activeAcks.some((value) => !Number.isSafeInteger(value) || value < 0)) return 0;
+    const latestAcknowledgement = Math.max(...activeAcks);
+    const now = finiteNumber(await clock(), "clock()");
+    if (latestAcknowledgement > now || now - latestAcknowledgement < GC_RETENTION_MS) return 0;
     let removed = 0;
     for (const batchPath of await listOperationBatches(document)) {
-      const batch = JSON.parse(await adapter.read(batchPath));
-      const expected = checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
-      if (!expected || expected !== await digestText(canonicalJson(batch))) continue;
+      let batch;
+      try { batch = JSON.parse(await adapter.read(batchPath)); }
+      catch {
+        throw codedError("PDF_ANNOTATION_SYNC_PENDING",
+          `Operation batch is incomplete during safe collection: ${batchPath}`);
+      }
+      validateBatch(batch, document);
+      const currentExpected = currentRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+      const previousExpected = previousRow.checkpoint.coveredBatches[batch.deviceId]?.[batch.batchId];
+      const actualDigest = await digestText(canonicalJson(batch));
+      // Retain the delta after the previous checkpoint so that the verified
+      // previous state can still replay forward if the primary is damaged.
+      if (!currentExpected || currentExpected !== actualDigest || previousExpected !== actualDigest) continue;
       await adapter.remove(batchPath);
       if (await adapter.exists(batchPath)) {
         throw codedError("PDF_ANNOTATION_GC_UNCONFIRMED", "An operation batch remained after checkpoint cleanup.");
@@ -1295,6 +1495,7 @@ function createPdfAnnotationStore({
       schemaVersion: 1,
       deviceId: targetDeviceId,
       pluginVersion: CURRENT_PLUGIN_VERSION,
+      storageFormatVersion: CHECKPOINT_FORMAT,
       checkpointHash: checkpoint.integrity,
       retired: true,
       retiredAt: finiteNumber(await clock(), "clock()"),
@@ -1333,7 +1534,7 @@ function createPdfAnnotationStore({
     pathsFor,
   });
 
-  function makeSnapshot(document, state, checkpoint, compactInkEncoding) {
+  function makeSnapshot(document, state, checkpoint, compactInkEncoding, syncPending = false) {
     const rows = Object.values(state.annotations).sort((left, right) => compareString(left.uuid, right.uuid));
     return {
       schemaVersion: 2,
@@ -1348,6 +1549,12 @@ function createPdfAnnotationStore({
       updatedAt: state.updatedAt,
       checkpointHash: checkpoint.integrity,
       compactInkEncoding,
+      ...(state.retiredDeviceBatches?.length
+        ? { retiredDeviceWrites: state.retiredDeviceBatches.map(({ deviceId: retiredId, batchId }) => ({
+          deviceId: retiredId, batchId,
+        })) }
+        : {}),
+      ...(syncPending ? { syncPending: true } : {}),
       annotations: rows.filter((row) => row.deleted !== true),
       tombstones: rows.filter((row) => row.deleted === true).map((row) => ({
         uuid: row.uuid,
@@ -1369,8 +1576,18 @@ function createPdfAnnotationStore({
     if (batch.quarantined !== undefined && typeof batch.quarantined !== "boolean") {
       throw codedError("PDF_ANNOTATION_BATCH_INVALID", "Operation batch quarantine marker is invalid.");
     }
-    if (batch.formatVersion !== undefined && batch.formatVersion !== 2) {
+    if (batch.formatVersion !== undefined && ![LEGACY_OPERATION_FORMAT, CURRENT_OPERATION_FORMAT].includes(batch.formatVersion)) {
       throw codedError("PDF_ANNOTATION_BATCH_INVALID", "The operation batch uses an unsupported format version.");
+    }
+    if (batch.formatVersion === CURRENT_OPERATION_FORMAT) {
+      if (typeof batch.baseCheckpointHash !== "string" || !batch.baseCheckpointHash ||
+          !Array.isArray(batch.parents) ||
+          batch.parents.some((parent) => typeof parent !== "string" || !parent) ||
+          new Set(batch.parents).size !== batch.parents.length ||
+          batch.parents.includes(batchReference(batch.deviceId, batch.batchId))) {
+        throw codedError("PDF_ANNOTATION_BATCH_INVALID", "Causal operation batch metadata is incomplete or cyclic.");
+      }
+      canonicalHash(batch.baseCheckpointHash);
     }
     if (batch.pluginVersion !== undefined && typeof batch.pluginVersion !== "string") {
       throw codedError("PDF_ANNOTATION_BATCH_INVALID", "The operation batch plugin version is invalid.");

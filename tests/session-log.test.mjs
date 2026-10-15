@@ -114,15 +114,16 @@ test('diagnostic collection calls survive runtime-log compaction',async()=>{
   await f.log.close();
 });
 
-test('default diagnostic JSON hard limit is 19,990,000 UTF-8 bytes',async()=>{
+test('default diagnostic JSON limit is 64 MB and accepts exports above the former 19.99 MB cap',async()=>{
   const f=fixture({maxBuffered:32*1024*1024,partLimit:8*1024*1024});
   const detail='z'.repeat(1024);
   for(let i=0;i<22000;i++)f.log.record('performance',{fn:'PdfSyncHost.save',saveTransactionId:`cap-${i}`,detail});
   const result=await f.log.exportDiagnostic({schema:1,version:'0.7.1'},'Diagnostics/default-cap.json',f.adapter.write);
   const text=f.files.get('Diagnostics/default-cap.json'),json=JSON.parse(text);
-  assert.ok(result.bytes<=19_990_000);assert.ok(Buffer.byteLength(text)<=19_990_000);
-  assert.ok(json.runtimeLog.sizeOmittedRecordCount>0);
-  assert.equal(json.runtimeLog.maxBytes,19_990_000);
+  assert.ok(result.bytes>19_990_000);assert.ok(Buffer.byteLength(text)>19_990_000);
+  assert.ok(result.bytes<=64_000_000);assert.ok(Buffer.byteLength(text)<=64_000_000);
+  assert.equal(json.runtimeLog.sizeOmittedRecordCount,0);
+  assert.equal(json.runtimeLog.maxBytes,64_000_000);
   await f.log.close();
 });
 test('malformed records and missing files produce valid JSON with explicit incomplete evidence',async()=>{

@@ -1,7 +1,7 @@
 "use strict";
 
 const now = () => globalThis.performance?.now?.() ?? Date.now();
-const MAX_DIAGNOSTIC_JSON_BYTES = 19_990_000;
+const MAX_DIAGNOSTIC_JSON_BYTES = 64_000_000;
 const utf8Length = value => {
   const text = String(value);
   let bytes = 0;

@@ -416,3 +416,67 @@ test("close recovery on a changed source is quarantined under its confirmed old 
   assert.equal([...adapter.files.keys()].some((path) => path.endsWith(".pdf")), false);
   host.dispose();
 });
+
+test("checkpoint arrival retries a pending v3 sync and restores editing in the open Reader", async () => {
+  const adapter = makeAdapter();
+  const app = makeApp(adapter);
+  const host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    makeToken: (() => { let n = 0; return () => `sidecar-token-${++n}`; })(),
+    deviceId: "sidecar-local",
+  });
+  const view = makeView(app);
+  const preRegistered = await host.store.registerDocument({ sourcePath: view.file.path });
+  const locations = host.store.pathsFor(preRegistered);
+  adapter.files.set(`${locations.deviceStates}/sidecar-peer.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "sidecar-peer", pluginVersion: "0.7.1", storageFormatVersion: 2,
+    checkpointHash: null, retired: false, updatedAt: Date.now(),
+  }));
+
+  const initial = await host.initializeView(view, view.sourceBytes);
+  view.documentId = initial.documentId;
+  await confirmPageIdentity(host, view);
+  const document = view.annotationDocument;
+  const checkpointPath = locations.checkpoint;
+  const checkpoint2 = JSON.parse(adapter.files.get(checkpointPath));
+  assert.equal(checkpoint2.formatVersion, 2);
+
+  const delayed = {
+    schemaVersion: 1, formatVersion: 3, pluginVersion: "0.8.0",
+    kind: "annotation-operation-batch", documentId: document.documentId, docKey: document.docKey,
+    deviceId: "sidecar-peer", batchId: "delayed-v3", createdAt: Date.now(),
+    baseCheckpointHash: checkpoint2.integrity, parents: checkpoint2.batchHeads,
+    operations: [{ uuid: "delayed-v3", kind: "Highlight", pageIndex: 0, deleted: false,
+      payload: { color: [1, 1, 0] },
+      clock: { timestamp: Date.now(), logical: 0, deviceId: "sidecar-peer", opId: "delayed-v3-op" } }],
+  };
+  const delayedPath = `${locations.operations}/sidecar-peer/delayed-v3.json`;
+  await adapter.mkdir(locations.operations);
+  await adapter.mkdir(`${locations.operations}/sidecar-peer`);
+  adapter.files.set(delayedPath, JSON.stringify(delayed));
+  await host.handleSidecarChange({ path: delayedPath });
+  assert.equal(view.annotationSyncPending, true);
+  assert.equal(view.messages.filter((message) => message.type === "external-annotations-update").at(-1)?.readOnly, true);
+  assert.equal(adapter.files.get(checkpointPath), JSON.stringify(checkpoint2));
+
+  // Model the missing format-3 checkpoint arriving after an upgraded peer ACK.
+  adapter.files.delete(delayedPath);
+  const peerAckTime = Date.now();
+  adapter.files.set(`${locations.deviceStates}/sidecar-peer.json`, JSON.stringify({
+    schemaVersion: 1, deviceId: "sidecar-peer", pluginVersion: "0.8.1", storageFormatVersion: 3,
+    checkpointHash: checkpoint2.integrity, retired: false, acknowledgedAt: peerAckTime, updatedAt: peerAckTime,
+  }));
+  await host.store.readDocument(document);
+  const checkpoint3 = JSON.parse(adapter.files.get(checkpointPath));
+  assert.equal(checkpoint3.formatVersion, 3);
+  adapter.files.set(delayedPath, JSON.stringify(delayed));
+
+  await host.handleSidecarChange({ path: checkpointPath });
+  assert.equal(view.annotationSyncPending, false);
+  assert.equal(view.lastStatus, "批注同步已完成，已恢复编辑。");
+  const update = view.messages.filter((message) => message.type === "external-annotations-update").at(-1);
+  assert.equal(update?.readOnly, false);
+  assert.ok(update?.externalAnnotations.annotations.some((row) => row.uuid === "delayed-v3"));
+  host.dispose();
+});
