@@ -12,6 +12,7 @@ import {
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -43,7 +44,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
   skip: !browserPath && "Chrome or Edge is required for this browser regression",
   timeout: 60_000,
 }, async () => {
-  const bridgeSource = await readFile(bridgePath, "utf8");
+  const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const viewerHtml = await readFile(viewerHtmlPath, "utf8");
   const viewerWithBridge = viewerHtml.replace(
     /<head\b[^>]*>/i,

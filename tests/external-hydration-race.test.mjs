@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import test from "node:test";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const bridgePath = new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url);
-const bridge = await readFile(bridgePath, "utf8");
+const bridge = await readBridgeRuntimeSource(bridgePath);
 
 function functionSource(name) {
   const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(bridge);

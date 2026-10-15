@@ -16,6 +16,7 @@ import {
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -68,7 +69,7 @@ test("selection differential U0/U1/U2 and same-document viewer teardown", {
 }, async (t) => {
   await mkdir(artifacts, { recursive: true });
   const viewerHtml = await readFile(viewerHtmlPath, "utf8");
-  const bridgeSource = await readFile(bridgePath, "utf8");
+  const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const noHydrationBridgeSource = bridgeSource.replace(
     "  async function hydrateExternalAnnotationsForPage(pageIndex) {",
     "  async function hydrateExternalAnnotationsForPage(pageIndex) {\n    return true; // Selection test U1: preserve identity/read-only flow, skip editor hydration.",

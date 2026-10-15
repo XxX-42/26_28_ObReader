@@ -19,6 +19,7 @@ import {
   sampleOwnedBrowserProcess,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -227,7 +228,7 @@ test(
     const viewerPath = path.join(root, "vendor", "pdfjs-generic-legacy", "web", "viewer.html");
     const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
     const viewerHtml = await readFile(viewerPath, "utf8");
-    const bridgeSource = await readFile(bridgePath, "utf8");
+    const bridgeSource = await readBridgeRuntimeSource(bridgePath);
     const bridgeCss = await readFile(
       path.join(root, "viewer-adapter", "bridge.css"),
       "utf8",
