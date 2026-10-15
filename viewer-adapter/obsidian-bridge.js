@@ -1191,20 +1191,19 @@
     return null;
   }
 
-  function getAnnotationStorageRows(app = state.app) {
+  function getAnnotationStorageRows(app = state.app, { includeLiveEditors = false } = {}) {
     const storageMap = app?.pdfDocument?.annotationStorage?.serializable?.map;
-    if (!(storageMap instanceof Map)) {
-      return new Map();
-    }
     const rows = new Map();
-    for (const [rawRuntimeId, rawValue] of storageMap) {
+    let storageRowCount = 0;
+    let liveEditorCount = 0;
+    const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const addRow = (rawRuntimeId, rawValue, editor = null) => {
       if (rawValue === null || typeof rawValue !== "object") {
-        continue;
+        return;
       }
       const runtimeId = String(rawRuntimeId);
       const value = normalizeSyncValue(rawValue);
-      const editor = app.pdfViewer?._layerProperties
-        ?.annotationEditorUIManager?.getEditor?.(runtimeId);
+      editor ||= manager?.getEditor?.(runtimeId) || null;
       const annotationElementId = getPdfAnnotationRef(value);
       const reference = annotationElementId ||
         state.annotationRefByRuntimeId.get(runtimeId) || null;
@@ -1259,7 +1258,54 @@
         value,
         signature: JSON.stringify(value),
       });
+    };
+    if (storageMap instanceof Map) {
+      for (const [rawRuntimeId, rawValue] of storageMap) {
+        addRow(rawRuntimeId, rawValue);
+        storageRowCount += 1;
+      }
     }
+    // Some PDF.js editor commands mark the document dirty before the editor's
+    // final serialization has been published to AnnotationStorage. At a save,
+    // recovery, or sync checkpoint boundary, serialize the committed live
+    // editors as a second source of truth and let those values supersede a
+    // stale storage row. Never use this while a Pencil/Ink gesture is active.
+    if (includeLiveEditors && manager?.getEditors && app?.pdfDocument) {
+      const pageCount = Number.isSafeInteger(app.pdfDocument.numPages)
+        ? app.pdfDocument.numPages
+        : 0;
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        let editors;
+        try {
+          editors = manager.getEditors(pageIndex);
+          for (const editor of editors || []) {
+            let serialized;
+            try {
+              serialized = editor?.serialize?.(false);
+            } catch (error) {
+              runtimeLogRecord("annotation-operation.live-editor-serialize-error", {
+                pageIndex,
+                editorType: String(editor?.editorType || "unknown").slice(0, 64),
+                error: runtimeLogError(error),
+              });
+              continue;
+            }
+            if (!serialized || typeof serialized !== "object") continue;
+            liveEditorCount += 1;
+            addRow(editor.id, serialized, editor);
+          }
+        } catch (error) {
+          runtimeLogRecord("annotation-operation.live-editor-enumeration-error", {
+            pageIndex,
+            error: runtimeLogError(error),
+          });
+        }
+      }
+    }
+    Object.defineProperties(rows, {
+      storageRowCount: { value: storageRowCount },
+      liveEditorCount: { value: liveEditorCount },
+    });
     return rows;
   }
 
@@ -2243,8 +2289,8 @@
     }
   }
 
-  function refreshAnnotationOperations(revision = state.revision) {
-    const current = getAnnotationStorageRows();
+  function refreshAnnotationOperations(revision = state.revision, { includeLiveEditors = false } = {}) {
+    const current = getAnnotationStorageRows(state.app, { includeLiveEditors });
     const previous = state.annotationSnapshot;
     const changed = new Map();
     const runtimeIds = new Set([...previous.keys(), ...current.keys()]);
@@ -2311,6 +2357,49 @@
         }
       }
     }
+    return {
+      storageRowCount: current.storageRowCount || 0,
+      liveEditorCount: current.liveEditorCount || 0,
+      changedAnnotationCount: changed.size,
+    };
+  }
+
+  function captureOperationSnapshot(revision = state.revision, reason = "save") {
+    const capture = refreshAnnotationOperations(revision, { includeLiveEditors: true });
+    const dirtyState = captureDirtySyncState(revision);
+    const operations = captureSyncOperations(revision);
+    const operationIds = new Set(operations.map((operation) => operation.uuid));
+    const missingDirtyIds = dirtyState.dirtyAnnotationIds.filter((uuid) => !operationIds.has(uuid));
+    runtimeLogRecord("annotation-operation.capture", {
+      reason,
+      revision,
+      storageRowCount: capture.storageRowCount,
+      liveEditorCount: capture.liveEditorCount,
+      changedAnnotationCount: capture.changedAnnotationCount,
+      dirtyAnnotationCount: dirtyState.dirtyAnnotationIds.length,
+      dirtyPageCount: dirtyState.dirtyPageIndices.length,
+      operationCount: operations.length,
+      missingDirtyCount: missingDirtyIds.length,
+    });
+    return { operations, dirtyState, missingDirtyIds };
+  }
+
+  function assertCompleteOperationSnapshot(snapshot, context) {
+    if (!snapshot || snapshot.missingDirtyIds?.length) {
+      throw new Error(
+        `The ${context} edits do not have a complete lossless annotation operation snapshot (${snapshot?.missingDirtyIds?.length || 0} dirty annotations are missing).`,
+      );
+    }
+    if (snapshot.dirtyState?.dirtyAnnotationIds?.length && !snapshot.operations?.length) {
+      throw new Error(`The ${context} edits have no lossless annotation operation payload.`);
+    }
+  }
+
+  function validateOperationAcknowledgement(message, pending) {
+    return message?.external === true &&
+      Number.isSafeInteger(message.operationCount) &&
+      message.operationCount === pending?.operationCount &&
+      (message.operationCount === 0 || (typeof message.batchId === "string" && message.batchId.length > 0));
   }
 
   function markDirtyAnnotation(uuid, pageIndex, action, revision, isNew) {
@@ -2688,9 +2777,16 @@
       return postSyncCheckpointRejected(message, "revision-changed-at-boundary");
     }
     const dirtySnapshot = snapshotChanges(app);
-    const operations = captureSyncOperations(revisionAtStart);
-    const dirtyState = captureDirtySyncState(revisionAtStart);
+    let operations = [];
+    let dirtyState = captureDirtySyncState(revisionAtStart);
     try {
+      const operationSnapshot = captureOperationSnapshot(revisionAtStart, "sync-checkpoint");
+      assertCompleteOperationSnapshot(operationSnapshot, "sync checkpoint");
+      operations = operationSnapshot.operations;
+      dirtyState = operationSnapshot.dirtyState;
+      if (isDirty(app) && !operations.length) {
+        throw new Error("The current PDF edits have no lossless annotation operation payload.");
+      }
       if (app.pdfThumbnailViewer?.hasStructuralChanges?.()) {
         throw new Error("Page reordering cannot be synchronized while the PDF source is immutable.");
       }
@@ -3864,6 +3960,7 @@
         requestId,
         revision,
         openRequest,
+        operationCount: operations.length,
         resolve: (message) => {
           clearTimeout(timeout);
           state.pendingSave = null;
@@ -3918,6 +4015,7 @@
         requestId,
         revision,
         openRequest,
+        operationCount: operations.length,
         resolve: (message) => {
           clearTimeout(timeout);
           state.pendingRecovery = null;
@@ -4002,7 +4100,9 @@
       if (!isDirty(app)) {
         return true;
       }
-      const operationsAtStart = captureSyncOperations(revisionAtStart);
+      const operationSnapshot = captureOperationSnapshot(revisionAtStart, "save");
+      assertCompleteOperationSnapshot(operationSnapshot, "current PDF");
+      const operationsAtStart = operationSnapshot.operations;
       if (!operationsAtStart.length) {
         throw new Error("The current PDF edits have no lossless annotation operation payload.");
       }
@@ -4216,7 +4316,12 @@
       }
 
       const revisionAtStart = state.revision;
-      const operationsAtStart = captureSyncOperations(revisionAtStart);
+      const operationSnapshot = captureOperationSnapshot(revisionAtStart, "recovery");
+      assertCompleteOperationSnapshot(operationSnapshot, "recovery");
+      const operationsAtStart = operationSnapshot.operations;
+      if (!operationsAtStart.length) {
+        throw new Error("The current PDF edits have no lossless recovery operation payload.");
+      }
       const dirtySnapshot = snapshotChanges(app);
       const source = recoverySourceIdentity();
       let saveStarted = false;
@@ -8449,6 +8554,26 @@
         pending.reject(new Error(message.message || "Obsidian did not durably acknowledge the recovery batch."));
         return;
       }
+      if (!validateOperationAcknowledgement(message, pending)) {
+        runtimeLogRecord("annotation-operation.ack-mismatch", {
+          phase: "recovery",
+          revision: message.revision,
+          expectedOperationCount: pending.operationCount,
+          receivedOperationCount: Number.isSafeInteger(message.operationCount) ? message.operationCount : null,
+          hasBatchId: typeof message.batchId === "string" && message.batchId.length > 0,
+        });
+        const error = new Error("Obsidian acknowledged the recovery revision without confirming the complete operation batch.");
+        error.code = "PDF_ANNOTATION_ACK_MISMATCH";
+        pending.reject(error);
+        return;
+      }
+      runtimeLogRecord("annotation-operation.ack", {
+        phase: "recovery",
+        revision: message.revision,
+        operationCount: message.operationCount,
+        batchId: message.batchId,
+        durable: true,
+      });
       pending.resolve(message);
       return;
     }
@@ -8493,6 +8618,26 @@
           );
           return;
         }
+        if (!validateOperationAcknowledgement(message, pending)) {
+          runtimeLogRecord("annotation-operation.ack-mismatch", {
+            phase: "save",
+            revision: message.revision,
+            expectedOperationCount: pending.operationCount,
+            receivedOperationCount: Number.isSafeInteger(message.operationCount) ? message.operationCount : null,
+            hasBatchId: typeof message.batchId === "string" && message.batchId.length > 0,
+          });
+          const error = new Error("Obsidian acknowledged the revision without confirming the complete annotation operation batch.");
+          error.code = "PDF_ANNOTATION_ACK_MISMATCH";
+          pending.reject(error);
+          return;
+        }
+        runtimeLogRecord("annotation-operation.ack", {
+          phase: "save",
+          revision: message.revision,
+          operationCount: message.operationCount,
+          batchId: message.batchId,
+          durable: true,
+        });
         if (
           message.syncState &&
           state.activeDocumentId === pending.documentId &&

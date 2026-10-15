@@ -1,4 +1,27 @@
-# 0.1general 通用候选（插件 0.6.0）
+# 0.1general 通用候选（插件 0.7.1）
+
+## 当前：诊断体积上限与批注操作确认链路（2026-10-15）
+
+0.7.1 limits a diagnostics export to **19,990,000 UTF-8 bytes**. High-volume
+pointer and low-priority log records are sampled/omitted under that cap; JSON
+reports raw, retained, filtered, and size-omitted record counts. It also captures
+committed live PDF.js editors at save, recovery, and sync-checkpoint boundaries,
+so a stale `AnnotationStorage` snapshot no longer drops the latest committed
+Pencil/Ink edit. A dirty operation is cleared only after the host confirms the
+exact operation count and durable batch ID. The payload completeness guard
+remains active and rejects incomplete snapshots.
+
+### 本轮验证
+
+- 定向快照、ACK、诊断导出、宿主外置保存、移动诊断及打包测试 **53/53 通过**。压力测试把 22,000 条约 1 KB 的计时记录送入默认导出器，最终 JSON 为有效 UTF-8 JSON 且不超过 **19,990,000 字节**；省略数量写入 `runtimeLog`。
+- `npm run test:offline` 通过：真实浏览器打开 PDF、创建五种批注、保存到外置操作记录、关闭并重开后恢复批注；测试结束时浏览器正常退出。首次离线运行的失败记录保留在 `tests/artifacts/mac-offline-reopen-timeout-1792024109668-10441-f1e67ce2-cec4-4698-8911-729fadd4f26e.json`；原因是测试夹具仍发送旧式 `saved` 回执，缺少 `external`、`operationCount` 与 `batchId`。夹具已按生产宿主协议修正，应用仍拒绝不完整 ACK。
+- 更新后的完整 `npm test` 为 **345/395 通过、50 项失败**，原始输出保留在 `tests/artifacts/0.7.1-full-suite-20261015.log`。大量 `plugin-host.test.mjs` 仍调用 0.6.0 前的二进制写回接口；另有浏览器用例超时。`sync-bridge-regression` 失败时工具按钮仍禁用、宿主尚未完成来源身份确认，因此未到达编辑保存断言。此项不能算作已验证。设备端验收仍未完成。
+
+离线 smoke 证明的范围仅为桌面 Chrome 的外置操作保存／重开；它不替代实体 iPad 和 Obsidian 内的实机验证。
+
+---
+
+# 历史记录：0.1general 通用候选（插件 0.6.0）
 
 ## 当前：只读 PDF 与外置批注操作日志（2026-10-15）
 

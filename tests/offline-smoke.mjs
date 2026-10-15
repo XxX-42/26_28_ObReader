@@ -302,6 +302,9 @@ try {
               channel, type: 'saved', token, documentId,
               openRequest: message.openRequest,
               requestId: message.requestId, revision: message.revision,
+              external: true,
+              operationCount: (message.operations || []).length,
+              batchId: 'offline-smoke-' + message.requestId,
             }, '*'), 25);
           } else if (message.type === 'error') {
             state.errors.push({

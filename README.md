@@ -7,12 +7,18 @@ editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
 The current work is the **0.1general unified candidate (plugin
-0.7.0)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
+0.7.1)** for Windows, macOS, and iPadOS. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
 is the current scope and validation guide. The 0.3.0 iPad package and mouse
 matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
 [MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
 acceptance is claimed for Windows or iPad; iPad deployment and final device
 acceptance remain for the user.
+
+Version 0.7.1 captures committed live editor state at save/recovery boundaries,
+requires an exact durable operation-count acknowledgement before clearing dirty
+state, and caps each exported diagnostic JSON at 19,990,000 UTF-8 bytes while
+retaining explicit counts for compacted records. See the acceptance record for
+the verification results and any remaining limitations.
 
 The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON
@@ -32,7 +38,7 @@ cannot verify those references, the PDF opens read-only. Unchanged source PDF
 annotations from other applications remain visible. External applications do
 not see plugin annotations in the original PDF; use **将当前 PDF 与外置批注合并导出为独立 PDF** to create a separate annotated copy.
 
-### 0.7.0 annotation storage
+### 0.7.0 annotation storage (historical)
 
 Ink `lines` and `/InkList` `points` remain separate, semantically required data.
 Float32 arrays are encoded as little-endian binary Base64 with an explicit item
@@ -255,7 +261,7 @@ scripting sandbox, debug/sample assets, and their license texts. No Viewer
 resources are trimmed for this release.
 
 The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.7.0 candidate uses one source and one three-file package for Windows, macOS,
+0.7.1 candidate uses one source and one three-file package for Windows, macOS,
 and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
 APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
 plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.

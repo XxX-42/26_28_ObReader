@@ -50,40 +50,80 @@ test('JSON error analysis highlights stack overflows with bounded save context a
   await f.log.close();
 });
 test('JSON snapshot seals its source part and cannot chase export-time events',async()=>{
-  const f=fixture();f.log.record('user',{event:'before-export'});
-  const append=f.adapter.append;f.adapter.append=async(p,s)=>{if(p.endsWith('.partial')){f.log.record('user',{event:'during-export'});await f.log.flush();}return append(p,s);};
+  const f=fixture();f.log.record('user',{event:'click',marker:'before-export'});
+  const append=f.adapter.append;f.adapter.append=async(p,s)=>{if(p.endsWith('.partial')){f.log.record('user',{event:'click',marker:'during-export'});await f.log.flush();}return append(p,s);};
   await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write,200);
   const json=JSON.parse(f.files.get('Diagnostics/run.json'));
-  assert.ok(json.runtimeLog.records.some(r=>r.event==='before-export'));assert.ok(!json.runtimeLog.records.some(r=>r.event==='during-export'));
+  assert.ok(json.runtimeLog.records.some(r=>r.marker==='before-export'));assert.ok(!json.runtimeLog.records.some(r=>r.marker==='during-export'));
   assert.ok([...f.files.entries()].some(([p,s])=>p.endsWith('.log')&&s.includes('during-export')));f.adapter.append=append;await f.log.close();
 });
 test('records arriving during both flushes are retained for the next cutoff',async()=>{
   const f=fixture(), write=f.adapter.write, append=f.adapter.append;
-  const inject=async(p,s,original)=>{await original(p,s);if(p.endsWith('.log'))f.log.record('user',{event:'after-cutoff'});};
+  const inject=async(p,s,original)=>{await original(p,s);if(p.endsWith('.log'))f.log.record('user',{event:'click',marker:'after-cutoff'});};
   f.adapter.write=(p,s)=>inject(p,s,write);f.adapter.append=(p,s)=>inject(p,s,append);
   await f.log.exportDiagnostic({schema:1},'Diagnostics/first.json',write);
   const first=JSON.parse(f.files.get('Diagnostics/first.json'));
   assert.equal(first.runtimeLog.complete,true);assert.ok(!first.runtimeLog.records.some(r=>r.event==='after-cutoff'));
   f.adapter.write=write;f.adapter.append=append;
   await f.log.exportDiagnostic({schema:1},'Diagnostics/second.json',write);
-  assert.ok(JSON.parse(f.files.get('Diagnostics/second.json')).runtimeLog.records.some(r=>r.event==='after-cutoff'));
+  assert.ok(JSON.parse(f.files.get('Diagnostics/second.json')).runtimeLog.records.some(r=>r.marker==='after-cutoff'));
   await f.log.close();
 });
 test('historical parts use numeric order and a final shutdown marks the session ended',async()=>{
   const f=fixture(), prefix='.obsidian/plugins/test/.logs/2026-10-13T00-00-00-000Z-old-';
-  f.files.set(prefix+'999.log',JSON.stringify({kind:'user',event:'first'})+'\n');
+  f.files.set(prefix+'999.log',JSON.stringify({kind:'user',event:'click',marker:'first'})+'\n');
   f.files.set(prefix+'1000.log',JSON.stringify({kind:'session.end'})+'\n');
   await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write);
   const json=JSON.parse(f.files.get('Diagnostics/run.json'));
-  assert.equal(json.runtimeLog.complete,true);assert.equal(json.runtimeLog.records[0].event,'first');assert.equal(json.runtimeLog.records[1].kind,'session.end');
+  assert.equal(json.runtimeLog.complete,true);assert.equal(json.runtimeLog.records[0].marker,'first');assert.equal(json.runtimeLog.records[1].kind,'session.end');
   await f.log.close();
 });
-test('no-append Adapter exports bounded JSON volumes linked from the main snapshot',async()=>{
-  const f=fixture();delete f.adapter.append;for(let i=0;i<20;i++)f.log.record('user',{event:'click',index:i});
-  await f.log.exportDiagnostic({schema:1,activeReaderCount:0},'Diagnostics/run.json',f.adapter.write,250);
-  const json=JSON.parse(f.files.get('Diagnostics/run.json'));assert.ok(json.runtimeLog.parts.length>1);
-  const all=[...json.runtimeLog.records];for(const p of json.runtimeLog.parts)all.push(...JSON.parse(f.files.get(p)).runtimeLog.records);
-  assert.equal(all.filter(r=>r.kind==='user').length,20);assert.equal(all.length,json.runtimeLog.recordCount);await f.log.close();
+test('no-append Adapter writes one valid JSON file within the configured byte limit',async()=>{
+  const f=fixture({maxBuffered:256*1024});delete f.adapter.append;
+  for(let i=0;i<20;i++)f.log.record('user',{event:'click',index:i});
+  const result=await f.log.exportDiagnostic({schema:1,activeReaderCount:0},'Diagnostics/run.json',f.adapter.write,250,12000);
+  const json=JSON.parse(f.files.get('Diagnostics/run.json'));
+  assert.equal(json.runtimeLog.recordCount,21);assert.equal(json.runtimeLog.records.filter(r=>r.kind==='user').length,20);
+  assert.equal(result.bytes,Buffer.byteLength(f.files.get('Diagnostics/run.json')));
+  assert.ok(result.bytes<=12000);assert.deepEqual([...f.files.keys()].filter(p=>p.includes('run.part-')),[]);await f.log.close();
+});
+
+test('large diagnostic exports compact high-frequency events and stay below 19.99 MB',async()=>{
+  const f=fixture({maxBuffered:8*1024*1024,partLimit:8*1024*1024});
+  for(let i=0;i<300;i++)f.log.record('performance',{fn:'PdfSyncHost.save',saveTransactionId:`tx-${i}`,detail:'x'.repeat(500)});
+  for(let i=0;i<1200;i++)f.log.record('user',{event:'pointermove',seq:i,pointerType:'pen',x:i,y:i});
+  f.log.record('function.error',{fn:'Viewer.saveOneRevision',error:{name:'Error',message:'late operation capture failure'}});
+  const result=await f.log.exportDiagnostic({schema:1,version:'0.7.1',activeReaderCount:1},'Diagnostics/compact.json',f.adapter.write,1024,15000);
+  const text=f.files.get('Diagnostics/compact.json'), json=JSON.parse(text);
+  assert.ok(Buffer.byteLength(text)<=15000);assert.ok(result.bytes<=15000);
+  assert.ok(json.runtimeLog.filteredRecordCount>=1190);
+  assert.ok(json.runtimeLog.sizeOmittedRecordCount>0);
+  assert.ok(json.runtimeLog.errorAnalysis.grouped.some(row=>row.message==='late operation capture failure'));
+  assert.equal(json.runtimeLog.maxBytes,15000);assert.equal(result.complete,false);await f.log.close();
+});
+
+test('diagnostic collection calls survive runtime-log compaction',async()=>{
+  const f=fixture();
+  f.log.record('function.end',{fn:'Viewer.sendDiagnostics',durationMs:4});
+  f.log.record('function.end',{fn:'Viewer.unrelatedLayout',durationMs:8});
+  f.log.record('user',{event:'pointermove',seq:2});
+  await f.log.exportDiagnostic({schema:1},'Diagnostics/diagnostics-call.json',f.adapter.write);
+  const json=JSON.parse(f.files.get('Diagnostics/diagnostics-call.json'));
+  assert.ok(json.runtimeLog.records.some(row=>row.fn==='Viewer.sendDiagnostics'));
+  assert.ok(!json.runtimeLog.records.some(row=>row.fn==='Viewer.unrelatedLayout'));
+  await f.log.close();
+});
+
+test('default diagnostic JSON hard limit is 19,990,000 UTF-8 bytes',async()=>{
+  const f=fixture({maxBuffered:32*1024*1024,partLimit:8*1024*1024});
+  const detail='z'.repeat(1024);
+  for(let i=0;i<22000;i++)f.log.record('performance',{fn:'PdfSyncHost.save',saveTransactionId:`cap-${i}`,detail});
+  const result=await f.log.exportDiagnostic({schema:1,version:'0.7.1'},'Diagnostics/default-cap.json',f.adapter.write);
+  const text=f.files.get('Diagnostics/default-cap.json'),json=JSON.parse(text);
+  assert.ok(result.bytes<=19_990_000);assert.ok(Buffer.byteLength(text)<=19_990_000);
+  assert.ok(json.runtimeLog.sizeOmittedRecordCount>0);
+  assert.equal(json.runtimeLog.maxBytes,19_990_000);
+  await f.log.close();
 });
 test('malformed records and missing files produce valid JSON with explicit incomplete evidence',async()=>{
   const f=fixture();const bad='.obsidian/plugins/test/.logs/2026-10-13T00-00-00-000Z-old-000.log';f.files.set(bad,'{"kind":"user"}\n{"incomplete":');

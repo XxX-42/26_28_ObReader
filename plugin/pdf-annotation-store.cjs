@@ -20,7 +20,7 @@
 const STORE_SCHEMA = 1;
 const INDEX_SCHEMA = 2;
 const CHECKPOINT_SCHEMA = 2;
-const CURRENT_PLUGIN_VERSION = "0.7.0";
+const CURRENT_PLUGIN_VERSION = "0.7.1";
 const COMPACT_PAYLOAD_ENCODING = "float32le-base64-v1";
 const VALID_TYPES = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
 const HASH_PREFIX = /^(xxh64-v1|sha256-v1):([a-f0-9]+)$/i;

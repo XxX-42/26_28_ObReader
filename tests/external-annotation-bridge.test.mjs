@@ -286,6 +286,79 @@ test("legacy UUIDs bind by exact annotation object reference before dirty diffs"
   assert.match(functionSource("openDocument"), /applyLegacyAnnotationIdentities\(provisionalExternal\.legacyIdentities\)/);
 });
 
+test("save-boundary capture snapshots the live committed editor when AnnotationStorage is stale", () => {
+  const helpers = [
+    "getAnnotationStorageRows",
+    "refreshAnnotationOperations",
+    "captureOperationSnapshot",
+    "captureDirtySyncState",
+    "captureSyncOperations",
+    "markDirtyAnnotation",
+    "canonicalPdfAnnotationRef",
+    "pdfAnnotationRefKey",
+    "getPdfAnnotationRef",
+  ].map(functionSource).join("\n");
+  const scope = vm.runInThisContext(`(() => {
+    const stale = { annotationType: 15, pageIndex: 0, points: [0, 1] };
+    let live = { annotationType: 15, pageIndex: 0, points: [0, 1] };
+    const editor = { id: "editor-1", pageIndex: 0, editorType: "Ink", serialize: () => live };
+    const manager = { getEditor: id => id === editor.id ? editor : null, getEditors: page => page === 0 ? [editor] : [] };
+    const state = {
+      app: { pdfDocument: { numPages: 1, annotationStorage: { serializable: { map: new Map([["editor-1", stale]]) } } }, pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } },
+      annotationUuidByRuntimeId: new Map([["editor-1", "annotation-1"]]),
+      annotationRefByRuntimeId: new Map(), annotationUuidByPdfRef: new Map(), syncState: null,
+      annotationSnapshot: new Map([["editor-1", { runtimeId: "editor-1", uuid: "annotation-1", reference: null, operationReference: null, annotationElementId: null, pageIndex: 0, kind: "Ink", deleted: false, value: stale, signature: JSON.stringify(stale) }]]),
+      annotationOperations: [], dirtyAnnotationRevisions: new Map(), dirtyPageRevisions: new Map(),
+      dirtyNewAnnotationIds: new Set(), dirtyDeletedAnnotationIds: new Set(),
+      restoredSavedAnnotations: new Map(), syncActorId: "actor-1", syncDeviceId: "device-1",
+      syncClockTimestamp: 100, syncClockLogical: 0, syncOperationSequence: 0,
+    };
+    const logs = [];
+    function normalizeSyncValue(value) { return JSON.parse(JSON.stringify(value)); }
+    function normalizeSyncKind(value) { return value === 15 ? "Ink" : value; }
+    function externalKindForEditor(value, liveEditor) { return liveEditor?.editorType || normalizeSyncKind(value?.annotationType); }
+    function makeSyncUuid() { return "unexpected-new-uuid"; }
+    function makeSyncStamp() { return { timestamp: 101, logical: 1, actorId: "actor-1", deviceId: "device-1", operationId: "actor-1:101:1:1" }; }
+    function externalOperation(operation) { return operation; }
+    function findLiveSavedEditor() { return null; }
+    function runtimeLogRecord(kind, fields) { logs.push({ kind, ...fields }); }
+    ${helpers}
+    return { state, logs, captureOperationSnapshot, setLive(value) { live = value; } };
+  })()`);
+
+  scope.setLive({ annotationType: 15, pageIndex: 0, points: [0, 1, 2, 3], paths: { points: [[0, 1, 2, 3]] } });
+  const snapshot = scope.captureOperationSnapshot(9, "save");
+  assert.equal(snapshot.operations.length, 1);
+  assert.equal(snapshot.operations[0].uuid, "annotation-1");
+  assert.equal(snapshot.operations[0].serialized.points.length, 4);
+  assert.deepEqual(snapshot.dirtyState.dirtyPageIndices, [0]);
+  assert.deepEqual(snapshot.missingDirtyIds, []);
+  assert.equal(scope.logs.at(-1).liveEditorCount, 1);
+  assert.equal(scope.logs.at(-1).operationCount, 1);
+});
+
+test("operation snapshot completeness and durable ACK validate every dirty operation", () => {
+  const { assertCompleteOperationSnapshot, validateOperationAcknowledgement } = evaluateHelpers(
+    ["assertCompleteOperationSnapshot", "validateOperationAcknowledgement"],
+    "",
+  );
+  assert.throws(() => assertCompleteOperationSnapshot({
+    operations: [{ uuid: "one" }], missingDirtyIds: ["two"], dirtyState: { dirtyAnnotationIds: ["one", "two"] },
+  }, "current PDF"), /complete lossless annotation operation snapshot/);
+  assert.equal(validateOperationAcknowledgement({ external: true, operationCount: 2, batchId: "batch-1" }, { operationCount: 2 }), true);
+  assert.equal(validateOperationAcknowledgement({ external: true, operationCount: 1, batchId: "batch-1" }, { operationCount: 2 }), false);
+  assert.equal(validateOperationAcknowledgement({ operationCount: 2, batchId: "batch-1" }, { operationCount: 2 }), false);
+  const save = functionSource("saveOneRevision");
+  const recovery = functionSource("runRecoverySequence");
+  const checkpoint = functionSource("serializeSyncCheckpoint");
+  assert.match(save, /captureOperationSnapshot\(revisionAtStart, "save"\)/);
+  assert.match(recovery, /captureOperationSnapshot\(revisionAtStart, "recovery"\)/);
+  assert.match(checkpoint, /captureOperationSnapshot\(revisionAtStart, "sync-checkpoint"\)/);
+  const ackHandler = region('if (message.type === "recovered")', 'function installAppHooks');
+  assert.match(ackHandler, /validateOperationAcknowledgement\(message, pending\)/);
+  assert.match(ackHandler, /clearConfirmedDirtyState\(message.revision\)/);
+});
+
 test("durable acknowledgements are scoped to the exact document, open request and revision", () => {
   const handler = region('if (message.type === "recovered")', 'function installAppHooks');
   assert.match(handler, /message\.requestId !== pending\.requestId/);

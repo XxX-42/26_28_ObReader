@@ -3541,7 +3541,14 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     // Diagnostic replies may generate more Viewer records while awaited.
     for (const view of this.views) drainViewerRuntimeLog(view);
     const exported = await this.sessionLog.exportDiagnostic(diagnostic, outputPath, writeText);
-    new Notice(`已导出 PDF 阅读器诊断和运行日志（${exported.recordCount} 条${exported.complete ? "" : "，含缺失标记"}）：${outputPath}`);
+    const sizeMb = (exported.bytes / 1_000_000).toFixed(2);
+    const compacted = exported.omittedRecords
+      ? `，压缩省略 ${exported.omittedRecords} 条（原始 ${exported.rawRecordCount} 条）`
+      : `，${exported.recordCount} 条`;
+    const completeness = exported.complete
+      ? ""
+      : "；详情与采集缺失计数见 JSON 的 runtimeLog 字段";
+    new Notice(`已导出 PDF 阅读器诊断（${sizeMb}/19.99 MB${compacted}${completeness}）：${outputPath}`);
     return outputPath;
   }
 
