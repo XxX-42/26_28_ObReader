@@ -502,7 +502,8 @@
       !canEdit || !state.editorHistory.canRedo;
     controls.deleteButton.disabled =
       !canEdit || !state.editorHistory.hasSelection;
-    controls.saveButton.disabled = !hasDocument;
+    controls.saveButton.disabled =
+      !canEdit || !hasUnsavedAnnotationChanges();
   }
 
   function toolbarContentWidth(element) {
@@ -728,6 +729,7 @@
   function restoreChanges(app, snapshot) {
     if (typeof app._restoreDirtySnapshot === "function") {
       app._restoreDirtySnapshot(snapshot);
+      syncBridgeControls();
       return;
     }
     if (snapshot.hadAnnotationChanges) {
@@ -737,6 +739,17 @@
     }
     app._updateOverwriteOriginalState?.();
     app.setTitle?.();
+    syncBridgeControls();
+  }
+
+  function hasUnsavedAnnotationChanges(app = state.app) {
+    const snapshot = snapshotChanges(app);
+    return !!(
+      state.dirty ||
+      state.pendingInkCommit ||
+      state.freeTextInputPending ||
+      snapshot.hadAnnotationChanges
+    );
   }
 
   function isDirty(app = state.app) {
@@ -3942,6 +3955,7 @@
       app._updateOverwriteOriginalState?.();
       app.setTitle?.();
     }
+    syncBridgeControls();
     if (
       schedule &&
       !state.committingInkForSave &&
@@ -7166,6 +7180,7 @@
         state.pendingInkCommit = true;
         state.autoSavePending = true;
       }
+      syncBridgeControls();
       if (!hasActivePointerInteraction()) {
         if (
           state.closeControl?.phase === "closing" &&
@@ -8498,6 +8513,7 @@
       state.activeOpenRequest = null;
       state.readOnly = false;
       state.dirty = false;
+      syncBridgeControls();
       state.editorHistory.canUndo = false;
       state.editorHistory.canRedo = false;
       state.editorHistory.hasSelection = false;

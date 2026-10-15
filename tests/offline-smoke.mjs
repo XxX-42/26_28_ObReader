@@ -379,6 +379,14 @@ try {
   await viewer.waitForFunction(
     () => !document.getElementById("editorUnderlineButton").disabled,
   );
+  await viewer.waitForFunction(
+    () => document.getElementById("secondaryDownload").disabled,
+  );
+  assert.equal(
+    await viewer.$eval("#secondaryDownload", (button) => button.disabled),
+    true,
+    "Save annotations must be disabled when the opened PDF has no unsaved annotations",
+  );
 
   const hostOnlyOpen = await viewer.evaluate(async () => {
     const app = PDFViewerApplication;
@@ -604,6 +612,9 @@ try {
     [
       ...PDFViewerApplication.pdfDocument.annotationStorage.serializable.map.values(),
     ].some((annotation) => annotation.annotationType === 10),
+  );
+  await viewer.waitForFunction(
+    () => !document.getElementById("secondaryDownload").disabled,
   );
   console.log("Underline created.");
 
@@ -837,12 +848,20 @@ try {
       title: button.title,
       ariaLabel: button.getAttribute("aria-label"),
       localizationId: button.getAttribute("data-l10n-id"),
+      disabled: button.disabled,
     }));
     assert.equal(saveLabel.text, "保存批注");
     assert.equal(saveLabel.title, "保存批注到外置记录");
     assert.equal(saveLabel.ariaLabel, saveLabel.title);
     assert.equal(saveLabel.localizationId, null);
-    await viewer.click("#secondaryDownload");
+    assert.equal(
+      saveLabel.disabled,
+      !dirty,
+      "Save annotations should be enabled only while annotation changes are unsaved",
+    );
+    if (dirty) {
+      await viewer.click("#secondaryDownload");
+    }
     await page.waitForFunction(
       (expected) => window.__hostState.saves === expected,
       { timeout: 15_000 },
@@ -875,6 +894,9 @@ try {
     await viewer.waitForFunction(() => !PDFViewerApplication._saveInProgress, {
       timeout: 60_000,
     });
+    await viewer.waitForFunction(
+      () => document.getElementById("secondaryDownload").disabled,
+    );
     assert.ok(
       await page.evaluate(() => window.__hostState.annotationRows.size > 0),
       "The host should persist annotation operations instead of PDF bytes",
