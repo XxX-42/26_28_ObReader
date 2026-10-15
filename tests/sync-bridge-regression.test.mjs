@@ -16,6 +16,7 @@ import {
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const require = createRequire(import.meta.url);
 const { prepareLocal, inspect } = require("../plugin/pdf-merge-core.cjs");
@@ -138,7 +139,7 @@ test(
     const documentId = "sync-bridge-fixture-document";
     const actorId = "00000000-0000-4000-8000-000000000001";
     const runId = `${Date.now()}-${process.pid}`;
-    const bridgeSource = await readFile(bridgePath, "utf8");
+    const bridgeSource = await readBridgeRuntimeSource(bridgePath);
     const loadedBaseBytes = await makeWriterOrderFixture();
     const baseInspection = await inspect({ bytes: loadedBaseBytes });
     assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "square").length, 1);

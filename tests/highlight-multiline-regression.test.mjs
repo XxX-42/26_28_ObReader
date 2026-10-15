@@ -15,6 +15,7 @@ import {
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -58,7 +59,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
 }, async (t) => {
   await mkdir(artifacts, { recursive: true });
   const viewerHtml = await readFile(viewerHtmlPath, "utf8");
-  const bridgeSource = await readFile(bridgePath, "utf8");
+  const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const instrumentedBridge = bridgeSource.replace(
     "  if (iosInputPolicy) {",
     "  window.__highlightMultilineBridgeState = state;\n  if (iosInputPolicy) {",

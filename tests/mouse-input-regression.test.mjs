@@ -13,6 +13,7 @@ import {
   observeBrowserTestChildStderr,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -52,7 +53,7 @@ test(
   },
   async (t) => {
     const [bridgeSource, bridgeCss, viewerHtml] = await Promise.all([
-      readFile(bridgePath, "utf8"),
+      readBridgeRuntimeSource(bridgePath),
       readFile(bridgeCssPath, "utf8"),
       readFile(viewerHtmlPath, "utf8"),
     ]);

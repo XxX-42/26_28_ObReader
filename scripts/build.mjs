@@ -22,6 +22,12 @@ const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
 const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19";
 const bundledRuntimeFileCount = 406;
+const inputRuntimeFiles = [
+  "input/interaction-intent.js",
+  "input/desktop-input-policy.js",
+  "input/ios-input-policy.js",
+  "input/input-router.js",
+];
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
@@ -113,6 +119,7 @@ for (const file of [
   path.join(vendor, "web"),
   path.join(adapters, "obsidian-bridge.js"),
   path.join(adapters, "bridge.css"),
+  ...inputRuntimeFiles.map((file) => path.join(adapters, file)),
   path.join(pluginSource, "asset-runtime.cjs"),
   path.join(pluginSource, "pdf-merge-core.cjs"),
   path.join(pluginSource, "pdf-merge-worker.mjs"),
@@ -276,10 +283,13 @@ for (let index = 1; index < runtimeInputs.length; index += 1) {
 
 const schema = 1;
 const files = [];
+const inputRuntimeSource = (await Promise.all(
+  inputRuntimeFiles.map((file) => readFile(path.join(adapters, file), "utf8")),
+)).join("\n");
 for (const input of runtimeInputs) {
   let data = input.bytes || await readFile(input.absolute);
   if (input.path === "web/obsidian-bridge.js") {
-    const source = data.toString("utf8");
+    const source = `${inputRuntimeSource}\n${data.toString("utf8")}`;
     const names = [...source.matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1])
       .filter(name => !name.startsWith("runtimeLog"));
     assert.equal(source.split("/* BUILD:VIEWER_FUNCTION_TRACE */").length, 2);

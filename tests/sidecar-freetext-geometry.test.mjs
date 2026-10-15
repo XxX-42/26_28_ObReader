@@ -14,6 +14,7 @@ import {
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -53,7 +54,7 @@ test("real FreeText sidecar hydration preserves geometry at every rotation and s
   skip: !browserPath && "Chrome or Edge is required for this browser regression",
   timeout: 120_000,
 }, async () => {
-  const bridgeSource = await readFile(bridgePath, "utf8");
+  const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const instrumentedBridgeSource = bridgeSource.replace(
     "  if (iosInputPolicy) {",
     "  window.__sidecarFreeTextGeometryBridgeState = state;\n  if (iosInputPolicy) {",

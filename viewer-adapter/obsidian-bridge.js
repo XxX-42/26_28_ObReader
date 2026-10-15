@@ -166,6 +166,7 @@
     statusTimer: null,
     statusElement: null,
     readOnlyButtonStates: null,
+    inputRouter: null,
     pointerAbortController: null,
     eventAbortController: null,
     localOpenAbortController: null,
@@ -7385,9 +7386,7 @@
     if (state.pointerAbortController || state.disposed) {
       return;
     }
-    const controller = new AbortController();
-    state.pointerAbortController = controller;
-    for (const [type, listener] of [
+    const legacyListeners = new Map([
       ["pointerdown", onBridgePointerDown],
       ["pointermove", onBridgePointerMove],
       ["pointerup", onBridgePointerEnd],
@@ -7404,17 +7403,23 @@
       ["contextmenu", onBridgeFingerContextMenu],
       ["blur", onBridgeWindowBlur],
       ["keydown", onBridgePointerKeyDown],
-    ]) {
-      window.addEventListener(type, listener, {
-        capture: true,
-        signal: controller.signal,
-      });
-    }
-    document.addEventListener(
-      "visibilitychange",
-      onManualDocumentVisibilityChange,
-      { signal: controller.signal },
-    );
+    ]);
+    const policy = iosInputPolicy
+      ? new window.PdfReaderInputRuntime.IOSInputPolicy()
+      : new window.PdfReaderInputRuntime.DesktopInputPolicy();
+    const router = new window.PdfReaderInputRuntime.InputRouter({
+      targetWindow: window,
+      targetDocument: document,
+      policy,
+      onLegacyEvent(intent, event) {
+        const listener = intent.type === "visibilitychange"
+          ? onManualDocumentVisibilityChange
+          : legacyListeners.get(intent.type);
+        listener?.(event);
+      },
+    });
+    state.inputRouter = router;
+    state.pointerAbortController = router.start();
   }
 
   function onBridgeWheel() {
@@ -9493,7 +9498,8 @@
     cleanupStorageObserver();
     state.eventAbortController?.abort();
     state.eventAbortController = null;
-    state.pointerAbortController?.abort();
+    state.inputRouter?.stop();
+    state.inputRouter = null;
     state.pointerAbortController = null;
     state.localOpenAbortController?.abort();
     state.localOpenAbortController = null;

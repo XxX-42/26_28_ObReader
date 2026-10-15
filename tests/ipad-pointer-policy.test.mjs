@@ -12,6 +12,7 @@ import {
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
@@ -90,7 +91,6 @@ function getTarget(pathname) {
   if (pathname === "/favicon.ico") return null;
   if (pathname === "/fixtures/tracemonkey.pdf") return fixturePath;
   if (pathname === "/bridge.css") return bridgeCssPath;
-  if (pathname === "/bridge.js") return bridgeJsPath;
   if (
     pathname.startsWith("/viewer/") ||
     pathname.startsWith("/build/") ||
@@ -319,6 +319,7 @@ test(
   async (t) => {
     const vendorSource = await readFile(path.join(vendorWeb, "viewer.html"), "utf8");
     const html = viewerHtml(vendorSource);
+    const bridgeSource = await readBridgeRuntimeSource(bridgeJsPath);
     const missingRequests = [];
     const server = createServer(async (request, response) => {
       const url = new URL(request.url, "http://127.0.0.1");
@@ -334,6 +335,11 @@ test(
       if (url.pathname === "/viewer/viewer.html") {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(html);
+        return;
+      }
+      if (url.pathname === "/bridge.js") {
+        response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+        response.end(bridgeSource);
         return;
       }
       const target = getTarget(url.pathname);

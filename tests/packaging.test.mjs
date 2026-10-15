@@ -7,6 +7,7 @@ import test from "node:test";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { verifyVendorHashes } from "../scripts/hash-vendor.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
@@ -68,7 +69,7 @@ async function expectedAssetFiles() {
     ...(await listFiles(path.join(vendor, "web"), "web")),
     { absolute: path.join(vendor, "LICENSE"), path: "LICENSE" },
     {
-      absolute: path.join(adapters, "obsidian-bridge.js"),
+      bytes: Buffer.from(await readBridgeRuntimeSource()),
       path: "web/obsidian-bridge.js",
     },
     {

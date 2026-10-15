@@ -14,6 +14,7 @@ import {
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -47,7 +48,7 @@ test("FreeText sidecar capture keeps geometry and self-echo hydration adopts the
   timeout: 60_000,
 }, async () => {
   const fixtureBytes = await readFile(fixture);
-  const bridgeSource = await readFile(bridgePath, "utf8");
+  const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const instrumentedBridgeSource = bridgeSource.replace(
     "  if (iosInputPolicy) {",
     "  window.__sidecarFreeTextBridgeState = state;\n  if (iosInputPolicy) {",
