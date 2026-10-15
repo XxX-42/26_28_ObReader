@@ -29,6 +29,69 @@
       this.policy = policy;
       this.onLegacyEvent = onLegacyEvent;
       this.controller = null;
+      this._activePointers = new Map();
+      this._manualPointers = new Map();
+      this._penPolicyPointers = new Map();
+      this._captureTargets = new Map();
+    }
+
+    get activePointerCount() { return this._activePointers.size; }
+    get manualPointerCount() { return this._manualPointers.size; }
+    get penPolicyPointerCount() { return this._penPolicyPointers.size; }
+    activePointerValues() { return [...this._activePointers.values()]; }
+    activePointerEntries() { return [...this._activePointers.entries()]; }
+    manualPointerValues() { return [...this._manualPointers.values()]; }
+    penPolicyPointerIds() { return [...this._penPolicyPointers.keys()]; }
+    activePointer(id) { return this._activePointers.get(id); }
+    manualPointer(id) { return this._manualPointers.get(id); }
+    hasActivePointer(id) { return this._activePointers.has(id); }
+    hasManualPointer(id) { return this._manualPointers.has(id); }
+    hasPenPolicyPointer(id) { return this._penPolicyPointers.has(id); }
+    setActivePointer(id, pointer) { this._activePointers.set(id, pointer); }
+    setManualPointer(id, pointer) { this._manualPointers.set(id, pointer); }
+    setPenPolicyPointer(id, pointer) { this._penPolicyPointers.set(id, pointer); }
+    deleteActivePointer(id) { return this._activePointers.delete(id); }
+    deleteManualPointer(id) { return this._manualPointers.delete(id); }
+    deletePenPolicyPointer(id) { return this._penPolicyPointers.delete(id); }
+    clearActivePointers() {
+      for (const pointerId of this._activePointers.keys()) {
+        this.releasePointerCapture(pointerId);
+      }
+      this._activePointers.clear();
+    }
+    clearManualPointers() { this._manualPointers.clear(); }
+    clearPenPolicyPointers() { this._penPolicyPointers.clear(); }
+
+    capturePointer(pointerId, target) {
+      if (!target?.setPointerCapture) return false;
+      try {
+        target.setPointerCapture(pointerId);
+        this._captureTargets.set(pointerId, target);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    hasPointerCapture(pointerId) {
+      const target = this._captureTargets.get(pointerId);
+      try {
+        return !!target?.hasPointerCapture?.(pointerId);
+      } catch {
+        return false;
+      }
+    }
+
+    releasePointerCapture(pointerId) {
+      const target = this._captureTargets.get(pointerId);
+      this._captureTargets.delete(pointerId);
+      try {
+        if (target?.hasPointerCapture?.(pointerId)) {
+          target.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // The browser may release capture during cancel or frame disposal.
+      }
     }
 
     start() {
@@ -58,6 +121,12 @@
     stop() {
       this.controller?.abort();
       this.controller = null;
+      for (const pointerId of this._captureTargets.keys()) {
+        this.releasePointerCapture(pointerId);
+      }
+      this._activePointers.clear();
+      this._manualPointers.clear();
+      this._penPolicyPointers.clear();
     }
   }
 
