@@ -26,6 +26,7 @@ const inputRuntimeFiles = [
   "input/interaction-intent.js",
   "input/viewport-controller.js",
   "input/text-selection-controller.js",
+  "input/annotation-controller.js",
   "input/desktop-input-policy.js",
   "input/ios-input-policy.js",
   "input/input-router.js",

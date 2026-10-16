@@ -147,6 +147,35 @@ test("TextSelectionController owns DOM selection and caret operations only", asy
   }
 });
 
+test("AnnotationController owns PDF.js editor cancellation and highlight fallback only", async () => {
+  const annotation = await source("annotation-controller.js");
+  assert.match(annotation, /class AnnotationController/);
+  assert.match(annotation, /highlightSelection\("main_toolbar"\)/);
+  assert.match(annotation, /endDrawingSession/);
+  assert.match(annotation, /cancelTemporaryStroke/);
+  assert.match(annotation, /nativeOperation/);
+  for (const forbidden of [
+    "-webkit-touch-callout",
+    "fingerTextSelectionSuppression",
+    "manualMomentum",
+    "scrollTop",
+    "document.getSelection",
+    "annotationStorage",
+    "appendOperations",
+    "scheduleAutoSave",
+    "Vault",
+    "sidecar",
+  ]) {
+    assert.ok(!annotation.includes(forbidden), `AnnotationController must not contain ${forbidden}`);
+  }
+  const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  assert.match(bridge, /state\.annotationController\?\.pointerInteractionKind/);
+  assert.match(bridge, /state\.annotationController\?\.preparePenHighlight/);
+  assert.match(bridge, /state\.annotationController\?\.finishPenHighlight/);
+  assert.match(bridge, /state\.annotationController\?\.cancelPointerSession/);
+  assert.doesNotMatch(bridge, /manager\.highlightSelection\(/);
+});
+
 test("DesktopInputPolicy only forwards established behavior and contains no iPad overrides", async () => {
   const desktop = await source("desktop-input-policy.js");
   assert.match(desktop, /forwardExistingBehavior/);
