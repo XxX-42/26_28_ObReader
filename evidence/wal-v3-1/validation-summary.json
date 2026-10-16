@@ -1,0 +1,125 @@
+{
+  "baseBranch": "origin/integration/0.8.0-sidecar-merge-20261015",
+  "baseSha": "19d20f3e1721f34c4c69b70f427e457ebaa62cca",
+  "featureBranch": "codex/wal-sidecar-v3-1",
+  "primaryWorkingTree": "dirty, preserved and not reused",
+  "isolatedInitialWorkingTree": "clean detached at exact base, then new branch",
+  "baseline": {
+    "commandLog": "baseline-exact.log",
+    "counts": {
+      "tests": 459,
+      "pass": 433,
+      "fail": 26,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "failures": [
+      "GC must leave an operation batch created after its checkpoint snapshot",
+      "GC queues are independent across document keys",
+      "Obsidian auto-save debounces complete edits and serializes revisions",
+      "PDF open waits for its own document readiness and cancels on renderer disposal",
+      "a rejected GC does not poison the next GC for that document",
+      "a stale readDocument must not overwrite a newer checkpoint after its batch was collected",
+      "an unretired device's new batch below the checkpoint timestamp remains replayable",
+      "annotation creation tools take priority over existing markup only while creating",
+      "built main embeds all runtime files with checked deterministic gzip and hashes",
+      "child-process crash boundary: ack-before-write",
+      "child-process crash boundary: ack-written-before-readback",
+      "child-process crash boundary: checkpoint-backup-written",
+      "child-process crash boundary: checkpoint-primary-written",
+      "child-process crash boundary: gc-remove-before-confirmation",
+      "concurrent readDocument GC must not remove the same covered batch twice",
+      "iOS auto-save waits for idle and cooldown, then writes only the latest revision",
+      "iPad policy routes finger scrolling separately from PDF.js editor and mouse input",
+      "independent stale replay cannot overwrite a newer checkpoint",
+      "narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport",
+      "primary/backup competition is repaired by a fresh third store from retained batches",
+      "real FreeText sidecar hydration preserves geometry at every rotation and scale",
+      "retired-device stale replay cannot erase a batch after real GC",
+      "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
+      "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
+      "trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent",
+      "underline selection geometry stays single-stroke across text runs and columns"
+    ]
+  },
+  "frozenFullSuite": {
+    "commandLog": "full-reviewed.log",
+    "counts": {
+      "tests": 528,
+      "pass": 503,
+      "fail": 25,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "failures": [
+      "GC must leave an operation batch created after its checkpoint snapshot",
+      "GC queues are independent across document keys",
+      "Obsidian auto-save debounces complete edits and serializes revisions",
+      "PDF open waits for its own document readiness and cancels on renderer disposal",
+      "a rejected GC does not poison the next GC for that document",
+      "a stale readDocument must not overwrite a newer checkpoint after its batch was collected",
+      "an unretired device's new batch below the checkpoint timestamp remains replayable",
+      "annotation creation tools take priority over existing markup only while creating",
+      "child-process crash boundary: ack-before-write",
+      "child-process crash boundary: ack-written-before-readback",
+      "child-process crash boundary: checkpoint-backup-written",
+      "child-process crash boundary: checkpoint-primary-written",
+      "child-process crash boundary: gc-remove-before-confirmation",
+      "concurrent readDocument GC must not remove the same covered batch twice",
+      "iOS auto-save waits for idle and cooldown, then writes only the latest revision",
+      "iPad policy routes finger scrolling separately from PDF.js editor and mouse input",
+      "independent stale replay cannot overwrite a newer checkpoint",
+      "narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport",
+      "primary/backup competition is repaired by a fresh third store from retained batches",
+      "real FreeText sidecar hydration preserves geometry at every rotation and scale",
+      "retired-device stale replay cannot erase a batch after real GC",
+      "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
+      "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
+      "trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent",
+      "underline selection geometry stays single-stroke across text runs and columns"
+    ]
+  },
+  "newFailures": [],
+  "noLongerFailing": [
+    "built main embeds all runtime files with checked deterministic gzip and hashes"
+  ],
+  "targeted": {
+    "commandLog": "targeted-final-reviewed.log",
+    "counts": {
+      "tests": 190,
+      "pass": 190,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "failures": []
+  },
+  "platformEvidence": "memory DataAdapter and browser simulation only, no physical-device acceptance",
+  "productionVaultAccess": false,
+  "deployed": false,
+  "pushed": false,
+  "legacyCleanup": false,
+  "isolatedBrowser": {
+    "commandLog": "browser-isolated.log",
+    "counts": {
+      "tests": 11,
+      "pass": 0,
+      "fail": 11,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "failures": [
+      "Obsidian auto-save debounces complete edits and serializes revisions",
+      "PDF open waits for its own document readiness and cancels on renderer disposal",
+      "annotation creation tools take priority over existing markup only while creating",
+      "iOS auto-save waits for idle and cooldown, then writes only the latest revision",
+      "iPad policy routes finger scrolling separately from PDF.js editor and mouse input",
+      "narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport",
+      "real FreeText sidecar hydration preserves geometry at every rotation and scale",
+      "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
+      "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
+      "trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent",
+      "underline selection geometry stays single-stroke across text runs and columns"
+    ]
+  }
+}

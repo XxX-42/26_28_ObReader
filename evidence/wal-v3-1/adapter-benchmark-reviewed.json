@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "wal-sidecar-v3.1-storage-adapter",
+  "generatedAt": "2026-10-16T03:40:00.465Z",
+  "evidenceScope": "Node process and in-memory DataAdapter-compatible implementation only; not iPad, native Obsidian, Windows, macOS, or iPadOS device performance evidence.",
+  "scenario": {
+    "editsPerVariant": 10,
+    "operationPerEdit": "one dirty Ink annotation update",
+    "logicalPageIdentityCount": 120,
+    "base64PayloadCharacters": 102400,
+    "rawFloat32leBytes": 76800,
+    "sourceFixture": "tests/fixtures/tracemonkey.pdf",
+    "sourceFixtureBytes": 1016315,
+    "sourceHashBefore": "sha256-v1:3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "sourceHashAfter": "sha256-v1:3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "sourceFixtureUnchanged": true
+  },
+  "parityCheck": {
+    "passed": true,
+    "semanticDigest": "sha256-v1:5591c2061c6dfa78aa3ac4f1f633eef4a55731dc92306c9df0f99120cdb4c8c9",
+    "note": "Windows/macOS/iPadOS are labels over identical Node memory-adapter behavior and the same WAL core."
+  },
+  "processMemoryBefore": {
+    "label": "process-before-benchmarks",
+    "rssBytes": 56360960,
+    "heapUsedBytes": 5225040,
+    "heapTotalBytes": 9322496,
+    "externalBytes": 4232217,
+    "arrayBuffersBytes": 2111537
+  },
+  "processMemoryAfter": {
+    "label": "process-after-benchmarks",
+    "rssBytes": 177717248,
+    "heapUsedBytes": 63619456,
+    "heapTotalBytes": 113164288,
+    "externalBytes": 5965857,
+    "arrayBuffersBytes": 3777377
+  },
+  "variants": [
+    {
+      "platformLabel": "Windows",
+      "evidenceClass": "Node memory adapter only; compatibility label, not native platform evidence",
+      "storageCore": "createWalAnnotationStore (same implementation for all labels)",
+      "adapter": "in-memory DataAdapter-compatible harness",
+      "fixture": "tests/fixtures/tracemonkey.pdf",
+      "fixtureBytes": 1016315,
+      "sourceHash": "sha256-v1:3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+      "pageIdentityMode": "120 deterministic logical page identities for storage cardinality; not a claim about fixture page count",
+      "pageCount": 120,
+      "inkPayload": {
+        "kind": "Ink",
+        "rawFloat32leBytes": 76800,
+        "base64Characters": 102400,
+        "points": 9600,
+        "dirtyOperations": 10
+      },
+      "timings": {
+        "save": {
+          "N": 10,
+          "meanMs": 58.522,
+          "medianMs": 50.752,
+          "p90Ms": 96.031,
+          "maxMs": 167.495
+        },
+        "read": {
+          "N": 10,
+          "meanMs": 16.171,
+          "medianMs": 16.774,
+          "p90Ms": 27.05,
+          "maxMs": 32.166
+        },
+        "compact": {
+          "N": 1,
+          "meanMs": 79.854,
+          "medianMs": 79.854,
+          "p90Ms": 79.854,
+          "maxMs": 79.854
+        }
+      },
+      "adapterWrites": {
+        "calls": 28,
+        "actualUtf8Bytes": 11878633
+      },
+      "storage": {
+        "fileCount": 3,
+        "folderCount": 5,
+        "preCompactionWalBytes": 1034103,
+        "walSizeBytes": 108980,
+        "sidecarSizeBytes": 108850,
+        "tailOperationsAfterCompaction": 0,
+        "anchorOperationsAfterCompaction": 2
+      },
+      "memorySnapshots": [
+        {
+          "label": "before-edits",
+          "rssBytes": 67043328,
+          "heapUsedBytes": 9076864,
+          "heapTotalBytes": 14565376,
+          "externalBytes": 4042649,
+          "arrayBuffersBytes": 1862390
+        },
+        {
+          "label": "after-10-save-read-cycles",
+          "rssBytes": 180273152,
+          "heapUsedBytes": 84452720,
+          "heapTotalBytes": 137478144,
+          "externalBytes": 4607137,
+          "arrayBuffersBytes": 1408930
+        },
+        {
+          "label": "after-compaction",
+          "rssBytes": 189120512,
+          "heapUsedBytes": 88796816,
+          "heapTotalBytes": 145866752,
+          "externalBytes": 4468018,
+          "arrayBuffersBytes": 2279538
+        }
+      ],
+      "semanticDigest": "sha256-v1:5591c2061c6dfa78aa3ac4f1f633eef4a55731dc92306c9df0f99120cdb4c8c9"
+    },
+    {
+      "platformLabel": "macOS",
+      "evidenceClass": "Node memory adapter only; compatibility label, not native platform evidence",
+      "storageCore": "createWalAnnotationStore (same implementation for all labels)",
+      "adapter": "in-memory DataAdapter-compatible harness",
+      "fixture": "tests/fixtures/tracemonkey.pdf",
+      "fixtureBytes": 1016315,
+      "sourceHash": "sha256-v1:3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+      "pageIdentityMode": "120 deterministic logical page identities for storage cardinality; not a claim about fixture page count",
+      "pageCount": 120,
+      "inkPayload": {
+        "kind": "Ink",
+        "rawFloat32leBytes": 76800,
+        "base64Characters": 102400,
+        "points": 9600,
+        "dirtyOperations": 10
+      },
+      "timings": {
+        "save": {
+          "N": 10,
+          "meanMs": 121.124,
+          "medianMs": 61.019,
+          "p90Ms": 267.296,
+          "maxMs": 330.596
+        },
+        "read": {
+          "N": 10,
+          "meanMs": 68.634,
+          "medianMs": 26.09,
+          "p90Ms": 161.776,
+          "maxMs": 338.592
+        },
+        "compact": {
+          "N": 1,
+          "meanMs": 300.321,
+          "medianMs": 300.321,
+          "p90Ms": 300.321,
+          "maxMs": 300.321
+        }
+      },
+      "adapterWrites": {
+        "calls": 28,
+        "actualUtf8Bytes": 11878633
+      },
+      "storage": {
+        "fileCount": 3,
+        "folderCount": 5,
+        "preCompactionWalBytes": 1034103,
+        "walSizeBytes": 108980,
+        "sidecarSizeBytes": 108850,
+        "tailOperationsAfterCompaction": 0,
+        "anchorOperationsAfterCompaction": 2
+      },
+      "memorySnapshots": [
+        {
+          "label": "before-edits",
+          "rssBytes": 189497344,
+          "heapUsedBytes": 98345464,
+          "heapTotalBytes": 146128896,
+          "externalBytes": 5075564,
+          "arrayBuffersBytes": 2887084
+        },
+        {
+          "label": "after-10-save-read-cycles",
+          "rssBytes": 169295872,
+          "heapUsedBytes": 81011544,
+          "heapTotalBytes": 141934592,
+          "externalBytes": 4951795,
+          "arrayBuffersBytes": 1723381
+        },
+        {
+          "label": "after-compaction",
+          "rssBytes": 166363136,
+          "heapUsedBytes": 91255040,
+          "heapTotalBytes": 150061056,
+          "externalBytes": 4238404,
+          "arrayBuffersBytes": 2049924
+        }
+      ],
+      "semanticDigest": "sha256-v1:5591c2061c6dfa78aa3ac4f1f633eef4a55731dc92306c9df0f99120cdb4c8c9"
+    },
+    {
+      "platformLabel": "iPadOS",
+      "evidenceClass": "Node memory adapter only; compatibility label, not native platform evidence",
+      "storageCore": "createWalAnnotationStore (same implementation for all labels)",
+      "adapter": "in-memory DataAdapter-compatible harness",
+      "fixture": "tests/fixtures/tracemonkey.pdf",
+      "fixtureBytes": 1016315,
+      "sourceHash": "sha256-v1:3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+      "pageIdentityMode": "120 deterministic logical page identities for storage cardinality; not a claim about fixture page count",
+      "pageCount": 120,
+      "inkPayload": {
+        "kind": "Ink",
+        "rawFloat32leBytes": 76800,
+        "base64Characters": 102400,
+        "points": 9600,
+        "dirtyOperations": 10
+      },
+      "timings": {
+        "save": {
+          "N": 10,
+          "meanMs": 101.097,
+          "medianMs": 75.598,
+          "p90Ms": 99.231,
+          "maxMs": 408.711
+        },
+        "read": {
+          "N": 10,
+          "meanMs": 54.532,
+          "medianMs": 25.283,
+          "p90Ms": 57.049,
+          "maxMs": 280.959
+        },
+        "compact": {
+          "N": 1,
+          "meanMs": 104.614,
+          "medianMs": 104.614,
+          "p90Ms": 104.614,
+          "maxMs": 104.614
+        }
+      },
+      "adapterWrites": {
+        "calls": 28,
+        "actualUtf8Bytes": 11878633
+      },
+      "storage": {
+        "fileCount": 3,
+        "folderCount": 5,
+        "preCompactionWalBytes": 1034103,
+        "walSizeBytes": 108980,
+        "sidecarSizeBytes": 108850,
+        "tailOperationsAfterCompaction": 0,
+        "anchorOperationsAfterCompaction": 2
+      },
+      "memorySnapshots": [
+        {
+          "label": "before-edits",
+          "rssBytes": 166723584,
+          "heapUsedBytes": 97449192,
+          "heapTotalBytes": 150061056,
+          "externalBytes": 5390015,
+          "arrayBuffersBytes": 3201535
+        },
+        {
+          "label": "after-10-save-read-cycles",
+          "rssBytes": 176930816,
+          "heapUsedBytes": 57533872,
+          "heapTotalBytes": 104775680,
+          "externalBytes": 4322804,
+          "arrayBuffersBytes": 1094390
+        },
+        {
+          "label": "after-compaction",
+          "rssBytes": 174637056,
+          "heapUsedBytes": 63256920,
+          "heapTotalBytes": 113164288,
+          "externalBytes": 3609413,
+          "arrayBuffersBytes": 1420933
+        }
+      ],
+      "semanticDigest": "sha256-v1:5591c2061c6dfa78aa3ac4f1f633eef4a55731dc92306c9df0f99120cdb4c8c9"
+    }
+  ]
+}

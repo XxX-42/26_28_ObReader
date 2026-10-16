@@ -6,22 +6,19 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-The current work is the **0.1general unified candidate (plugin
-0.8.0)** for Windows, macOS, and iPadOS. The [three-file 0.8.0 candidate](dist/pdf-web-reader-0.1general-0.8.0-candidate.zip)
-is for test use only. [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)
-is the current scope and validation guide. The 0.3.0 iPad package and mouse
-matrix in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md), and the macOS 0.2.0 record in
-[MACOS_ACCEPTANCE.md](MACOS_ACCEPTANCE.md), are historical. No physical-device
-acceptance is claimed for Windows or iPad; iPad deployment and final device
-acceptance remain for the user.
+This feature branch implements **WAL-Sidecar v3.1** on integration baseline
+`19d20f3`. It is a local development candidate, not a deployed release. The
+manifest version remains inherited from the 0.8.0 baseline; historical ZIPs below
+are not packages for the new protocol. See [the protocol](ANNOTATION_STORE.md)
+and [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).
 
-Version 0.8.0 keeps immutable per-device operation batches as the history source,
-uses verified checkpoints as rebuildable snapshots, and gates format migration
-and history reclamation on device acknowledgements. Covered batches are retained
-for at least 30 days after every active device confirms the same checkpoint.
-Version 0.7.1's committed-editor capture and diagnostic-size limit remain in the
-shared code. See [the storage protocol](ANNOTATION_STORE.md) and the acceptance
-record for validation and remaining limitations.
+Ordinary annotation saves now use per-device/per-document WAL shards. Reader
+state joins a shared materialized Sidecar with all validated sparse anchors and
+short tails. Registry loss can be repaired; a Sidecar rollback is recovered
+from durable WAL contributions. The one-time importer preserves current Format 3
+annotations while the new writer stops creating old operation forests, ACKs and
+checkpoints. Complete sync and update every in-use device before hard cutover.
+No user data cleanup, deployment or push is part of this branch task.
 
 The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON

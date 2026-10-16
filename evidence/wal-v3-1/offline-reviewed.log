@@ -1,0 +1,15 @@
+
+> test:offline
+> node tests/offline-smoke.mjs
+
+Waiting for the bundled viewer to open the fixture…
+Fixture opened in the embedded viewer.
+Checking shortcuts and editor creation…
+Underline created.
+Square created.
+Highlight created.
+Ink created.
+All five editors created.
+Saving and reopening the five annotations…
+Offline cleanup evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/offline-smoke-1792122171818-40040-bd5eefc3-5450-464c-8eee-df2073d57f4d.cleanup.json
+Offline viewer smoke test passed: open, tools 1–5, bridge validation, external operation save/reopen; normal browser exit.

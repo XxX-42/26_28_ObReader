@@ -1,0 +1,23 @@
+{
+  "storageProtocol": "wal-sidecar-v3.1",
+  "pluginManifestVersion": "0.8.0",
+  "distribution": "local development only, not released/deployed",
+  "files": {
+    "dist/pdf-web-reader/main.js": {
+      "bytes": 7296087,
+      "sha256": "0f72392587142a0af1c768a6786a1dcd1ceadf1d4746ff2ff20a05de7c66531a"
+    },
+    "dist/pdf-web-reader/manifest.json": {
+      "bytes": 269,
+      "sha256": "0d66c1af2050da9a0212a8ca072d2a888864577f97179b794da2feb37321f625"
+    },
+    "dist/pdf-web-reader/styles.css": {
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    },
+    "dist/pdf-web-reader-wal-sidecar-v3.1-dev.zip": {
+      "bytes": 5128307,
+      "sha256": "824c795e067a4d3d11cb001f6020ec5a9df4851aa2febcb04970260862f81c64"
+    }
+  }
+}

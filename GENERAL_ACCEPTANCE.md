@@ -1,3 +1,17 @@
+# WAL-Sidecar v3.1 development validation (2026-10-16)
+
+The current feature branch is `codex/wal-sidecar-v3-1`, based on integration SHA
+`19d20f3e1721f34c4c69b70f427e457ebaa62cca`. New protocol details are in
+`ANNOTATION_STORE.md`; current results and baseline comparisons are in
+`WAL_SIDECAR_IMPLEMENTATION.md` and `evidence/wal-v3-1/`.
+
+This work does not deploy, push, remove old storage or modify a user's source
+PDF. Windows/macOS/iPadOS adapter and simulated tests are separate from native
+acceptance; all real-device migration and performance acceptance remains pending.
+The previous Format 3 records below are historical and are not v3.1 claims.
+
+---
+
 # 0.8.0 Storage + Candidate integration — BLOCKED at cross-instance safety (2026-10-15)
 
 ## 2026-10-15 continuation — Native harness hardening and sidecar self-echo fix
