@@ -1,0 +1,39 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (5.82275ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (2.03525ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (3.100917ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.080667ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (1.056958ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (1.319875ms)
+✔ failed save cannot veto close and is never reported as saved (2.390917ms)
+✔ unresponsive renderer allows close within the short best-effort budget (250.455875ms)
+✔ disconnected and not-ready dirty readers also publish close permission (1.0335ms)
+✔ successful save acknowledgement retains its verified revision (0.5435ms)
+✔ direct SDK teardown uses the same bounded flush, not the old 120-second wait (0.209917ms)
+✔ a throwing transport cannot lock the tab (0.617458ms)
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+{"pages":3,"raw":{"2":1,"5":1,"9":1,"15":1},"skipped":[],"count":3,"counts":{"Ink":1,"Highlight":1,"Square":1},"unique":3,"refsValid":true,"sourceSha256":"172abe1acdce2fda5a18bde377ca91b31c74182b4024da7edf50dbb2a6a91979"}
+{"pages":3,"raw":{"2":1,"5":1,"9":1,"15":1},"skipped":[],"count":3,"counts":{"Ink":1,"Highlight":1,"Square":1},"unique":3,"refsValid":true,"sourceSha256":"172abe1acdce2fda5a18bde377ca91b31c74182b4024da7edf50dbb2a6a91979","originalUnchanged":true}
+✔ native PDF annotation scan recognizes supported source marks and excludes links (1508.179917ms)
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+{"before":[0,0,255],"after":[255,255,255],"reopened":[255,255,255],"deleted":2,"linksPreserved":1,"sourceUnchanged":true}
+✔ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (1745.207167ms)
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (12.788ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (2.627917ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (2.58925ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (2.066958ms)
+✔ InteractionIntent contains value data and no DOM target or native event (2.357583ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.846208ms)
+✔ TextSelectionController owns DOM selection and caret operations only (1.406333ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.216ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (0.472709ms)
+✔ IOSInputPolicy owns finger text-selection suppression (1.37025ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (1.54275ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.789375ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3613.122709

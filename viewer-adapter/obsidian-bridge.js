@@ -2981,6 +2981,15 @@
         const deletedEditor = manager?.getEditor?.(binding?.runtimeId) ||
           (row.embeddedRef ? findEmbeddedEditor(manager, pageIndex, row.embeddedRef) : null);
         if (deletedEditor) {
+          // PDF.js may recreate original editors when a tool is enabled. Bind
+          // this exact source editor before removing it so its retained delete
+          // placeholder cannot acquire a second identity during capture.
+          const runtimeId = String(deletedEditor.id);
+          state.annotationUuidByRuntimeId.set(runtimeId, row.uuid);
+          if (row.embeddedRef) {
+            state.annotationRefByRuntimeId.set(runtimeId, row.embeddedRef);
+            state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(row.embeddedRef), row.uuid);
+          }
           state.hydratingExternalAnnotations = true;
           try {
             deletedEditor.remove?.();
@@ -9135,10 +9144,19 @@
               clearFingerTextSelectionSuppression();
             }
             observeAccessibilityManagers(app);
-            setDeferredTimeout(
-              () => observeAccessibilityManagers(app),
-              0,
-            );
+            const documentId = state.activeDocumentId;
+            const openRequest = state.activeOpenRequest;
+            const pdfDocument = app.pdfDocument;
+            setDeferredTimeout(() => {
+              if (state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
+                  state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest) return;
+              observeAccessibilityManagers(app);
+              // Enabling a PDF.js tool recreates native source editors without
+              // emitting a new page-layer render. Reapply verified tombstones.
+              void hydrateRenderedExternalPages(app).catch(error => {
+                runtimeLogRecord("external-annotation.tool-hydrate-error", { error: runtimeLogError(error) });
+              });
+            }, 0);
             if (mode !== 0) {
               cancelPendingFreeTextAppearanceRepair();
             }

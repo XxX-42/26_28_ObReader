@@ -1,0 +1,11 @@
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+{"source":"Principles read-only copy","modes":[{"mode":15,"liveEditors":0},{"mode":9,"liveEditors":0},{"mode":0,"liveEditors":0},{"mode":15,"liveEditors":0}],"canvasDiff":{"changed":0,"pixels":955208},"tombstones":249,"originalUnchanged":true}
+✔ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (2488.645083ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2747.793625

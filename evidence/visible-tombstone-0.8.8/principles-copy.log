@@ -1,0 +1,29 @@
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+✖ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (3016.081417ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3343.234709
+
+✖ failing tests:
+
+test at tests/embedded-annotation-scan.test.mjs:104:1
+✖ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (3016.081417ms)
+  AssertionError [ERR_ASSERTION]: Principles page 2 canvas equals source rendering with annotations disabled
+  
+  2581 !== 0
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/embedded-annotation-scan.test.mjs:193:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 2581,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

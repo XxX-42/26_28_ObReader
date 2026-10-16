@@ -1,0 +1,19 @@
+{
+  "backup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/visible-tombstone-0.8.8-20261016-154212",
+  "pdfBefore": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "files": {
+    "main.js": {
+      "sha256": "78fbfbabf003caf44dbb792bf85c0e0e897fe69e101f6b09eb90733e5d6aaea5",
+      "bytes": 7319658
+    },
+    "manifest.json": {
+      "sha256": "5616a45a1f99be2cf6f25d6898ff88b77f4b1ac49f182be4867c307ac6f3c328",
+      "bytes": 269
+    },
+    "styles.css": {
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650",
+      "bytes": 637
+    }
+  },
+  "pdfAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"
+}

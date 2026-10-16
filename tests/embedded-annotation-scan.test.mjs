@@ -112,7 +112,20 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
   p.node.addAnnot(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Square", Rect: [30, 30, 100, 100], C: [0, 0, 1], CA: 1, BS: { W: 2 }, AP: { N: appearance } })));
   p.node.addAnnot(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Link", Rect: [30, 250, 100, 280], A: { S: "URI", URI: "https://example.invalid" } })));
   pdf.getPages()[1].node.addAnnot(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Ink", Rect: [30, 30, 100, 100], C: [1, 0, 0], CA: 1, BS: { W: 2 }, InkList: [[30, 30, 100, 100]] })));
-  const bytes = Buffer.from(await pdf.save());
+  const sourcePath = process.env.PDF_READER_TOMBSTONE_SOURCE;
+  let seedRows = [];
+  let documentId = "embedded-bulk-doc";
+  let bytes = Buffer.from(await pdf.save());
+  if (sourcePath) {
+    const dir = "/Users/jiajia/Documents/ObReader-Apple-Test/ObReader-Bulk-Tests";
+    await mkdir(dir, {recursive:true});
+    const copy = path.join(dir, `tombstone-toolcycle-${Date.now()}.pdf`);
+    await copyFile(sourcePath,copy);bytes=await readFile(copy);
+    const sidecar=JSON.parse(await readFile(process.env.PDF_READER_TOMBSTONE_SIDECAR,"utf8"));
+    documentId=sidecar.document.documentId;
+    seedRows=Object.values(sidecar.tombstones).map(row=>({uuid:row.uuid,kind:row.kind,pageIndex:row.pageIndex,embeddedRef:row.embeddedRef,deleted:true,clock:{timestamp:1,logical:row.version.rev,deviceId:row.version.deviceId,opId:row.opId}}));
+    assert.equal(Object.keys(sidecar.annotations).length,0,"this fixture expects an already-deleted document");
+  }
   const beforeHash = crypto.createHash("sha256").update(bytes).digest("hex");
   const bridge = await readBridgeRuntimeSource();
   const vendor = path.join(root, "vendor/pdfjs-generic-legacy");
@@ -120,10 +133,10 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     '<script src="viewer.mjs" type="module"></script>',
     '<link rel="stylesheet" href="/bridge.css"><script src="/bridge.js" data-channel="pdf-web-reader" data-token="embedded-bulk" data-ios-input-policy="true"></script><script src="viewer.mjs" type="module"></script>');
   const host = `<!doctype html><style>body{margin:0}iframe{width:900px;height:740px;border:0}</style><iframe id="reader" src="/pdfjs/web/viewer.html?file="></iframe><script>
-    const frame=document.getElementById('reader'); const rows=new Map();let identity=null;let sequence=0;
+    const frame=document.getElementById('reader'); const rows=new Map(${JSON.stringify(seedRows)}.map(row=>[row.uuid,row]));let identity=null;let sequence=0;
     window.host={rows,errors:[],saves:0,opened:0};
-    const snapshot=()=>({schemaVersion:1,kind:'pdf-annotation-snapshot',documentId:'embedded-bulk-doc',source:identity&&{sourceHash:'xxh64-v1:test',pageCount:identity.pageCount,orderedPageIdentities:identity.orderedPageIdentities},annotations:[...rows.values()],legacyIdentities:[]});
-    const send=(data)=>frame.contentWindow.postMessage({channel:'pdf-web-reader',token:'embedded-bulk',documentId:'embedded-bulk-doc',openRequest:sequence,...data},'*');
+    const snapshot=()=>({schemaVersion:1,kind:'pdf-annotation-snapshot',documentId:${JSON.stringify(documentId)},source:identity&&{sourceHash:'xxh64-v1:test',pageCount:identity.pageCount,orderedPageIdentities:identity.orderedPageIdentities},annotations:[...rows.values()],legacyIdentities:[]});
+    const send=(data)=>frame.contentWindow.postMessage({channel:'pdf-web-reader',token:'embedded-bulk',documentId:${JSON.stringify(documentId)},openRequest:sequence,...data},'*');
     window.reopen=async()=>{sequence++;const data=await fetch('/source.pdf').then(r=>r.arrayBuffer());send({type:'open',data,filename:'native.pdf',autoSave:false,externalAnnotations:identity?snapshot():null});};
     addEventListener('message',event=>{if(event.source!==frame.contentWindow)return;const m=event.data;if(m?.token!=='embedded-bulk')return;
       if(m.type==='ready'&&!sequence)void reopen();
@@ -157,6 +170,35 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     await page.waitForFunction(()=>host.opened===1);
     const viewer=page.frames().find(f=>f.url().includes('/pdfjs/web/viewer.html'));
     await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.getPageView(0)?.renderingState===3&&!document.documentElement.hasAttribute('data-pdf-reader-readonly'));
+    if (sourcePath) {
+      await viewer.evaluate(()=>{PDFViewerApplication.pdfViewer.currentPageNumber=2;});
+      await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.getPageView(1)?.renderingState===3);
+      const modes=[];
+      for (const mode of [15,9,0,15]) {
+        await viewer.evaluate(mode=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{source:window,mode}),mode);
+        await viewer.waitForFunction(mode=>PDFViewerApplication.pdfViewer.annotationEditorMode===mode,{},mode);
+        await new Promise(resolve=>setTimeout(resolve,200));
+        const live=await viewer.evaluate(()=>[...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(1)].filter(e=>!e.deleted).map(e=>({id:e.id,ref:e.annotationElementId})));
+        assert.deepEqual(live,[],`Principles page 2 deleted native editors must remain absent in mode ${mode}`);
+        modes.push({mode,liveEditors:live.length});
+      }
+      const canvasDiff=await viewer.evaluate(async()=>{
+        const pv=PDFViewerApplication.pdfViewer.getPageView(1);
+        const c=document.createElement('canvas');c.width=pv.canvas.width;c.height=pv.canvas.height;
+        await pv.pdfPage.render({canvasContext:c.getContext('2d'),viewport:pv.viewport,annotationMode:0,transform:pv.outputScale.scaled?[pv.outputScale.sx,0,0,pv.outputScale.sy,0,0]:null}).promise;
+        const a=c.getContext('2d').getImageData(0,0,c.width,c.height).data,b=pv.canvas.getContext('2d').getImageData(0,0,c.width,c.height).data;
+        let changed=0;for(let i=0;i<a.length;i+=4)if(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2])>30)changed++;
+        return {changed,pixels:c.width*c.height};
+      });
+      assert.equal(canvasDiff.changed,0,'Principles page 2 canvas equals source rendering with annotations disabled');
+      await viewer.click('#secondaryToolbarToggleButton');await viewer.click('#pdfReaderBridgeDeleteAllAnnotationsButton');
+      await new Promise(resolve=>setTimeout(resolve,200));
+      assert.equal(await viewer.$('.pdfReaderBulkDeleteConfirm'),null,'already deleted document has no targets');
+      assert.deepEqual(await page.evaluate(()=>host.errors),[]);
+      assert.equal(crypto.createHash('sha256').update(await readFile(sourcePath)).digest('hex'),beforeHash);
+      console.log(JSON.stringify({source:'Principles read-only copy',modes,canvasDiff,tombstones:seedRows.length,originalUnchanged:true}));
+      return;
+    }
     const pixel=async()=>{
       const point=await viewer.evaluate(()=>{const pv=PDFViewerApplication.pdfViewer.getPageView(0);const [x,y]=pv.viewport.convertToViewportPoint(65,65);const a=pv.canvas.getBoundingClientRect(),b=pv.div.getBoundingClientRect();return {x:x+a.x-b.x,y:y+a.y-b.y};});
       const png=await (await viewer.$('.page[data-page-number="1"]')).screenshot();const image=UPNG.decode(png.buffer.slice(png.byteOffset,png.byteOffset+png.byteLength));
@@ -177,6 +219,10 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.getPageView(0)?.renderingState===3&&!document.documentElement.hasAttribute('data-pdf-reader-readonly'));
     const reopened=await pixel();assert.ok(reopened.every(c=>c>240),`native AP must not return: ${reopened}`);
     assert.equal(await viewer.$$eval('.annotationLayer .linkAnnotation',nodes=>nodes.filter(n=>getComputedStyle(n).display!=='none').length),1,'native PDF link remains');
+    await viewer.click('#editorInkButton');
+    await new Promise(resolve=>setTimeout(resolve,150));
+    const visibleNative=await viewer.evaluate(()=>[...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].filter(e=>!e.deleted).map(e=>({id:e.id,ref:e.annotationElementId})));
+    assert.deepEqual(visibleNative,[],'tombstoned native marks must stay absent after selecting Ink');
     assert.equal(await page.evaluate(()=>[...host.rows.values()].filter(r=>r.deleted).length),2);
     assert.deepEqual(await page.evaluate(()=>host.errors),[]);
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),beforeHash);
