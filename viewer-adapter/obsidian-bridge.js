@@ -6266,9 +6266,17 @@
     event.stopImmediatePropagation();
   }
 
+  function currentInteractionMode(editorMode = state.editorMode) {
+    return window.PdfReaderInputRuntime.InteractionMode.resolve({
+      editorMode,
+      eraserActive: document.body.classList.contains("editorEraserMode"),
+    });
+  }
+
   function annotationToolIsActive() {
-    return state.editorMode !== 0 ||
-      document.body.classList.contains("editorEraserMode");
+    return window.PdfReaderInputRuntime.InteractionMode.isToolActive(
+      currentInteractionMode(),
+    );
   }
 
   function fingerTextSelectionSuppressionIsOwned() {
@@ -6652,7 +6660,7 @@
 
   function pointerInteractionKind(event, target) {
     return state.annotationController?.pointerInteractionKind(event, target, {
-      editorMode: state.editorMode,
+      interactionMode: currentInteractionMode(),
       isTextLayerTarget: (candidate) => !!(
         state.textSelectionController?.resolveTarget(candidate)?.textLayer
       ),

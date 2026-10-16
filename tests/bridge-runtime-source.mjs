@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const testRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const inputRuntimeFiles = [
   "interaction-intent.js",
+  "interaction-mode.js",
   "viewport-controller.js",
   "text-selection-controller.js",
   "annotation-controller.js",
