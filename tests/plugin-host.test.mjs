@@ -307,19 +307,30 @@ function createHarness({
     constructor(app, plugin) {
       this.app = app;
       this.plugin = plugin;
-      this.containerEl = { empty() {} };
+      this.containerEl = {
+        settings: [],
+        empty() { this.settings.length = 0; },
+      };
     }
   }
 
   class Setting {
     constructor(containerEl) {
       this.containerEl = containerEl;
+      containerEl.settings?.push(this);
     }
-    setName() { return this; }
-    setDesc() { return this; }
+    setName(value) { this.name = value; return this; }
+    setDesc(value) { this.description = value; return this; }
     addToggle(callback) {
-      const toggle = { setValue() { return toggle; }, onChange() { return toggle; } };
+      const toggle = {
+        value: undefined,
+        handler: null,
+        setValue(value) { this.value = value; return this; },
+        onChange(handler) { this.handler = handler; return this; },
+        change(value) { this.value = value; return this.handler?.(value); },
+      };
       callback(toggle);
+      this.toggle = toggle;
       return this;
     }
   }
@@ -1112,6 +1123,116 @@ test("host ignores stale source, token, and document messages", async () => {
   assert.equal(view.ready, false);
 });
 
+test("vocabulary page query requires the current renderer and returns only requested local keys", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const service = harness.plugin.getVocabularyService();
+  await service.upsertTerm("rare word", { type: "phrase", status: 2, translation: "local only" });
+  await service.upsertTerm("unrequested", { type: "word", status: 1 });
+
+  const view = harness.createView();
+  const sent = [];
+  const frame = { postMessage: (message) => sent.push(message) };
+  view.iframe = { contentWindow: frame };
+  view.rendererGeneration = "renderer-current";
+  view.documentId = "vocab-doc-current";
+  view.openRequest = 8;
+  const send = (rendererGeneration, keys) => view.onMessage({ source: frame, data: {
+    channel: "pdf-web-reader", token: view.token, type: "vocab-page-query",
+    rendererGeneration, documentId: view.documentId, openRequest: view.openRequest,
+    requestId: `query-${rendererGeneration}`, queryId: `page-query-${rendererGeneration}`,
+    partIndex: 0, pageNumber: 3, keys,
+  } });
+
+  send("renderer-stale", ["rare", "word", "rare word"]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.length, 0, "stale generation cannot receive vocabulary data");
+
+  send("renderer-current", ["rare", "word", "rare word"]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const reply = sent.find((message) => message.type === "vocab-page-results");
+  assert.equal(reply.requestId, "query-renderer-current");
+  assert.equal(reply.queryId, "page-query-renderer-current");
+  assert.equal(reply.partIndex, 0);
+  assert.equal(reply.pageNumber, 3);
+  assert.equal(reply.documentId, "vocab-doc-current");
+  assert.equal(reply.openRequest, 8);
+  assert.deepEqual(reply.records, [{ key: "rare word", type: "phrase", status: 2 }]);
+  assert.equal(JSON.stringify(reply).includes("local only"), false, "notes and translations stay in the host-side modal");
+  assert.equal(JSON.stringify(reply).includes("unrequested"), false);
+});
+
+test("word popup lookup is identity-bound and vocabulary status replies only after durable host commit", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const pdfBytes = Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55, 10, 9, 8, 7]);
+  const pdfFile = new harness.TFile("Books/vocabulary-immutable.pdf", pdfBytes);
+  const reader = await createSidecarReader(harness, pdfFile);
+  const { view, frame, sent } = reader;
+  view.rendererGeneration = "renderer-vocab";
+  view.documentId = "word-click-doc";
+  view.openRequest = 11;
+  const beforeVocabularyMutation = new Map(harness.storedFiles);
+  sent.length = 0;
+  const send = (type, fields = {}, rendererGeneration = "renderer-vocab") => view.onMessage({ source: frame, data: {
+    channel: "pdf-web-reader", token: view.token, type, rendererGeneration,
+    documentId: view.documentId, openRequest: view.openRequest, ...fields,
+  } });
+
+  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha" }, "renderer-old");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.length, 0, "stale renderer cannot query the local store");
+
+  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const entry = sent.find((message) => message.type === "vocab-entry-result");
+  assert.equal(entry.requestId, "entry-1");
+  assert.equal(entry.record, null);
+  assert.equal(entry.documentId, "word-click-doc");
+
+  send("vocab-set-status", { requestId: "status-1", entryRequestId: "entry-1", pageNumber: 1,
+    key: "alpha", rawSurface: "Alpha", status: 5, entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const ack = sent.find((message) => message.type === "vocab-status-ack");
+  assert.equal(ack.durable, true);
+  assert.equal(ack.requestId, "status-1");
+  assert.equal(ack.record.status, 5);
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("alpha")).status, 5);
+  assert.deepEqual(pdfFile.bytes, pdfBytes, "vocabulary changes never modify source PDF bytes");
+  assert.equal(pdfFile.writes, 0, "vocabulary changes never call the source PDF write path");
+  const changedPaths = [...new Set([...beforeVocabularyMutation.keys(), ...harness.storedFiles.keys()])]
+    .filter((path) => beforeVocabularyMutation.get(path) !== harness.storedFiles.get(path));
+  assert.deepEqual(changedPaths, ["00_Archive/21_VocabularyData/en.vocab.json"],
+    "durable vocabulary status changes only its independent canonical snapshot");
+  const jsonlBefore = [...beforeVocabularyMutation].filter(([path]) => path.endsWith(".jsonl"));
+  const jsonlAfter = [...harness.storedFiles].filter(([path]) => path.endsWith(".jsonl"));
+  assert.deepEqual(jsonlAfter, jsonlBefore, "vocabulary status does not write or alter annotation WAL files");
+  harness.plugin.onunload();
+});
+
+test("successful vocabulary imports refresh live Readers without refreshing on a skipped no-op", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const refreshed = [];
+  harness.plugin.views.add({ refreshVocabularyPages: () => refreshed.push("reader-a") });
+  harness.plugin.views.add({ refreshVocabularyPages: () => refreshed.push("reader-b") });
+
+  const added = await harness.plugin.importVocabulary(
+    [{ surface: "borrowed phrase", type: "phrase", status: 2 }], "json");
+  assert.equal(added.imported, 1);
+  assert.deepEqual(refreshed.sort(), ["reader-a", "reader-b"]);
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("borrowed phrase")).status, 2);
+
+  refreshed.length = 0;
+  const skipped = await harness.plugin.importVocabulary(
+    [{ surface: "borrowed phrase", type: "phrase", status: 1 }], "json");
+  assert.equal(skipped.skippedExisting, 1);
+  assert.deepEqual(refreshed, [], "unchanged imports do not generate redundant page scans");
+});
+
 test("host refuses wrong-session or externally changed annotation saves and durably ACKs a valid sidecar batch", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -1838,7 +1959,7 @@ test("auto-save preference persists and is sent to open views", async () => {
   await harness.plugin.setAutoSaveEnabled(false);
 
   assert.equal(harness.plugin.settings.autoSave, false);
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false, vocabularyEnabled: false });
   assert.equal(sent.at(-1).type, "configure-auto-save");
   assert.equal(sent.at(-1).enabled, false);
 });
@@ -1854,11 +1975,72 @@ test("status bar preference defaults off and updates every live Reader immediate
   assert.equal(harness.plugin.settings.showStatusBar, true);
   assert.ok(readers.every((view) => view.statusBarEnabled === true));
   await pending;
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true, vocabularyEnabled: false });
 
   await harness.plugin.setStatusBarEnabled(false);
   assert.ok(readers.every((view) => view.statusBarEnabled === false));
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false, vocabularyEnabled: false });
+});
+
+test("LingQ-style vocabulary setting renders off, persists across reload, and toggles the authenticated view", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  assert.equal(harness.plugin.settings.vocabularyEnabled, false);
+
+  harness.plugin.settingTab.display();
+  const setting = harness.plugin.settingTab.containerEl.settings.find((entry) =>
+    entry.name === "启用 LingQ 式本地英语词汇学习");
+  assert.ok(setting, "the Obsidian settings tab exposes the local LingQ-style vocabulary control");
+  assert.match(setting.description, /默认关闭/);
+  assert.match(setting.description, /不连接外部 LingQ 服务/);
+  assert.equal(setting.toggle.value, false, "the UI starts unchecked for a fresh vault");
+
+  const view = harness.createView();
+  view.ready = true;
+  view.documentId = "vocab-doc";
+  view.openRequest = 4;
+  view.rendererGeneration = "vocab-renderer";
+  const sent = [];
+  view.iframe = { contentWindow: { postMessage: (message) => sent.push(message) } };
+
+  await setting.toggle.change(true);
+  assert.equal(harness.plugin.settings.vocabularyEnabled, true);
+  assert.equal(harness.plugin.persistedData.vocabularyEnabled, true);
+  assert.deepEqual(sent.at(-1), {
+    rendererGeneration: "vocab-renderer", channel: "pdf-web-reader", token: view.token,
+    type: "vocab-set-enabled", documentId: "vocab-doc", openRequest: 4, enabled: true,
+  });
+
+  const reloaded = createHarness();
+  reloaded.plugin.persistedData = structuredClone(harness.plugin.persistedData);
+  await reloaded.plugin.onload();
+  assert.equal(reloaded.plugin.settings.vocabularyEnabled, true,
+    "an enabled setting is restored by the next plugin load");
+  reloaded.plugin.settingTab.display();
+  const restoredSetting = reloaded.plugin.settingTab.containerEl.settings.find((entry) =>
+    entry.name === "启用 LingQ 式本地英语词汇学习");
+  assert.equal(restoredSetting.toggle.value, true, "the Settings UI reflects the persisted enabled value");
+  await restoredSetting.toggle.change(false);
+  assert.equal(reloaded.plugin.settings.vocabularyEnabled, false);
+  assert.equal(reloaded.plugin.persistedData.vocabularyEnabled, false);
+
+  const disabledReload = createHarness();
+  disabledReload.plugin.persistedData = structuredClone(reloaded.plugin.persistedData);
+  await disabledReload.plugin.onload();
+  assert.equal(disabledReload.plugin.settings.vocabularyEnabled, false,
+    "a disabled setting also remains disabled after reload");
+  assert.equal(disabledReload.plugin.vocabularyService, null,
+    "loading while disabled does not initialize the local vocabulary service");
+
+  await setting.toggle.change(false);
+  assert.equal(harness.plugin.settings.vocabularyEnabled, false);
+  assert.equal(harness.plugin.persistedData.vocabularyEnabled, false);
+  assert.equal(sent.at(-1).type, "vocab-set-enabled");
+  assert.equal(sent.at(-1).enabled, false);
+
+  harness.plugin.onunload();
+  reloaded.plugin.onunload();
+  disabledReload.plugin.onunload();
 });
 
 test("sidecar write failure reports that the unacknowledged operation remains in the live Reader", async () => {

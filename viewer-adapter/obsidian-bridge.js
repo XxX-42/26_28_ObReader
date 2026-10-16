@@ -22,6 +22,7 @@
       ? bridgeScript.dataset.rendererGeneration
       : null;
   const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
+  const vocabularyEnabledAtBoot = bridgeScript.dataset.vocabularyEnabled === "true";
   const AUTO_SAVE_IDLE_DELAY_MS = iosInputPolicy ? 3000 : 1000;
   const IOS_AUTO_SAVE_MIN_INTERVAL_MS = 10000;
   const IOS_AUTO_SAVE_MAX_INTERVAL_MS = 30000;
@@ -50,6 +51,8 @@
     activeFilename: null,
     activeOpenRequest: null,
     requestedOpenRequest: null,
+    requestedDocumentId: null,
+    pendingVocabularySettings: null,
     readOnly: false,
     autoSaveEnabled: true,
     autoSavePaused: false,
@@ -176,6 +179,8 @@
     localOpenAbortController: null,
     startupTimer: null,
     startupFailed: false,
+    vocabularyEnabled: vocabularyEnabledAtBoot,
+    vocabularyController: null,
   };
   if (iosInputPolicy) {
     document.documentElement.dataset.pdfReaderIosInputPolicy = "true";
@@ -280,6 +285,78 @@
     } catch (error) {
       console.error("PDF Reader bridge could not report renderer lifecycle:", error);
       return false;
+    }
+  }
+
+  function ensureVocabularyController() {
+    if (state.vocabularyController || !state.app || !state.vocabularyEnabled) return state.vocabularyController;
+    const Runtime = window.PdfReaderVocabularyRuntimeModule;
+    if (typeof Runtime?.VocabularyController !== "function") return null;
+    state.vocabularyController = new Runtime.VocabularyController({
+      app: state.app,
+      eventBus: state.app.eventBus,
+      documentRef: document,
+      windowRef: window,
+      postToHost,
+      getIdentity: () => ({ documentId: state.activeDocumentId, openRequest: state.activeOpenRequest }),
+      isEnabled: true,
+    });
+    return state.vocabularyController;
+  }
+
+  function setVocabularyEnabled(enabled) {
+    state.vocabularyEnabled = enabled === true;
+    if (!state.vocabularyEnabled) {
+      state.vocabularyController?.dispose?.();
+      state.vocabularyController = null;
+      return;
+    }
+    const controller = ensureVocabularyController();
+    if (controller && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
+      controller.setDocument(state.activeDocumentId, state.activeOpenRequest, true);
+    }
+  }
+
+  function handleVocabularyEnabledMessage(message) {
+    if (message?.rendererGeneration !== rendererGeneration || typeof message.enabled !== "boolean") return false;
+    const matchesActive = message.documentId === state.activeDocumentId &&
+      message.openRequest === state.activeOpenRequest;
+    if (matchesActive) {
+      setVocabularyEnabled(message.enabled);
+      return true;
+    }
+    const matchesPending = message.documentId === state.requestedDocumentId &&
+      message.openRequest === state.requestedOpenRequest;
+    if (!matchesPending || state.pendingVocabularySettings?.documentId !== message.documentId ||
+        state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
+    state.pendingVocabularySettings.enabled = message.enabled;
+    state.vocabularyEnabled = message.enabled;
+    // A newer document is queued; clear old page overlays now and defer
+    // scanning until that exact open request becomes active.
+    state.vocabularyController?.setDocument?.(null, null, false);
+    return true;
+  }
+
+  function prepareVocabularyOpen(message) {
+    state.vocabularyController?.setDocument?.(null, null, false);
+    const pending = state.pendingVocabularySettings;
+    state.vocabularyEnabled = pending?.documentId === message.documentId &&
+      pending?.openRequest === message.openRequest
+      ? pending.enabled === true
+      : message.vocabularyEnabled === true;
+  }
+
+  function bindVocabularyToOpenedDocument(documentId, openRequest) {
+    const isLatestOpen = state.requestedDocumentId === documentId &&
+      state.requestedOpenRequest === openRequest;
+    if (state.vocabularyEnabled && isLatestOpen) {
+      ensureVocabularyController()?.setDocument?.(documentId, openRequest, true);
+    } else {
+      state.vocabularyController?.setDocument?.(null, null, false);
+    }
+    if (state.pendingVocabularySettings?.documentId === documentId &&
+        state.pendingVocabularySettings?.openRequest === openRequest) {
+      state.pendingVocabularySettings = null;
     }
   }
 
@@ -7099,7 +7176,27 @@
   }
 
   function onBridgeIosClick(intent, controls) {
-    state.inputPolicy?.handlePanClick?.(intent, controls);
+    const panClickSuppressed = state.inputPolicy?.handlePanClick?.(intent, controls) === true;
+    const pageIndex = Number.isInteger(intent?.pageIndex) ? intent.pageIndex : null;
+    const touchTap = state.iosDirectManipulationController
+      ?.consumeVocabularyTapCandidate?.(intent) === true;
+    const knownTouchContact = pageIndex !== null &&
+      state.inputPolicy?.lastTouchPanClickTarget === pageIndex;
+    const knownPanClick = pageIndex !== null && (
+      state.inputPolicy?.lastTouchPanClickTarget === pageIndex ||
+      state.inputPolicy?.lastPenPanClickTarget === pageIndex
+    );
+    // iOS prevents the synthesized touch click from entering PDF.js. A plain
+    // tap is still eligible for vocabulary only when the direct-manipulation
+    // controller did not classify it as a completed page pan.
+    if ((intent.pointerType === "touch" || knownTouchContact) && !touchTap) return;
+    if (panClickSuppressed && knownPanClick && !touchTap) return;
+    if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
+    if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
+    const opened = state.vocabularyController?.handleTap?.(intent) === true;
+    if (!opened && ["text-layer", "viewer"].includes(intent?.targetRole)) {
+      state.vocabularyController?.dismissEntryPill?.();
+    }
   }
 
   function onBridgeIosDoubleClick(intent, controls) {
@@ -8238,6 +8335,13 @@
     state.requestedOpenRequest = Number.isInteger(message.openRequest)
       ? message.openRequest
       : null;
+    state.requestedDocumentId = typeof message.documentId === "string" ? message.documentId : null;
+    state.pendingVocabularySettings = {
+      documentId: state.requestedDocumentId,
+      openRequest: state.requestedOpenRequest,
+      enabled: message.vocabularyEnabled === true,
+    };
+    state.vocabularyEnabled = state.pendingVocabularySettings.enabled;
     if (!state.ready) {
       state.queuedOpens.push(message);
       return;
@@ -8362,6 +8466,7 @@
     if (state.disposed) {
       return false;
     }
+    prepareVocabularyOpen(message);
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     const startedAt = performance.now();
@@ -8625,6 +8730,7 @@
       state.activeOpenRequest = Number.isInteger(message.openRequest)
         ? message.openRequest
         : null;
+      bindVocabularyToOpenedDocument(documentId, state.activeOpenRequest);
       // Source identity is asynchronous; never accept edits before the host
       // confirms the source hash and ordered page identity after PDF parse.
       state.readOnly = true;
@@ -8904,6 +9010,63 @@
         state.app._contentDispositionFilename = message.filename;
         state.app.setTitle(message.filename);
       }
+      return;
+    }
+
+    if (message.type === "vocab-set-enabled") {
+      handleVocabularyEnabledMessage(message);
+      return;
+    }
+
+    if (message.type === "vocab-page-results") {
+      if (message.rendererGeneration !== rendererGeneration) return;
+      state.vocabularyController?.handlePageResults?.(message);
+      return;
+    }
+
+    if (message.type === "vocab-entry-result") {
+      if (message.rendererGeneration !== rendererGeneration) return;
+      state.vocabularyController?.handleEntryResult?.(message);
+      return;
+    }
+
+    if (message.type === "vocab-status-ack") {
+      if (message.rendererGeneration !== rendererGeneration || message.durable !== true) return;
+      state.vocabularyController?.handleStatusAck?.(message);
+      return;
+    }
+
+    if (message.type === "vocab-status-error") {
+      if (message.rendererGeneration !== rendererGeneration) return;
+      state.vocabularyController?.handleStatusError?.(message);
+      return;
+    }
+
+    if (message.type === "vocab-selection-request") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      const handled = state.vocabularyController?.handleSelectionRequest?.(message);
+      if (!handled) {
+        postToHost("vocab-selection-rejected", {
+          requestId: message.requestId,
+          code: "vocabulary-disabled",
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+        });
+      }
+      return;
+    }
+
+    if (message.type === "vocab-page-refresh") {
+      if (message.rendererGeneration !== rendererGeneration) return;
+      state.vocabularyController?.refreshPageFromHost?.(message);
+      return;
+    }
+
+    if (message.type === "vocab-selection-ack") {
+      if (message.rendererGeneration !== rendererGeneration || message.durable !== true) return;
+      state.vocabularyController?.refreshPageFromHost?.(message);
       return;
     }
 
@@ -9256,6 +9419,7 @@
         }
         clearTimeout(state.startupTimer);
         state.eventAbortController = new AbortController();
+        if (state.vocabularyEnabled) ensureVocabularyController();
         app.eventBus?._on(
           "pagerendered",
           ({ pageNumber }) => {
@@ -9546,6 +9710,8 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    state.vocabularyController?.dispose?.();
+    state.vocabularyController = null;
     state.restoredSavedAnnotations.clear();
     state.toolbarLayoutResizeObserver?.disconnect();
     state.toolbarLayoutResizeObserver = null;

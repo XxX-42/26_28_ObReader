@@ -172,6 +172,32 @@ test("native-scroll pointercancel keeps the finger guard until a real touchcance
     "an actual touchcancel with no remaining contacts releases the guard");
 });
 
+test("only an unmoved same-page native touch can be consumed as a vocabulary tap", () => {
+  const click = (pageIndex = 0, x = 40, y = 60) => ({
+    type: "click", detail: 1, pageIndex, clientPoint: { x, y },
+  });
+  const tapHarness = createHarness();
+  const down = pointerEvent("pointerdown", 73, tapHarness.target, { clientX: 40, clientY: 60 });
+  tapHarness.controller.routePointerDown(down.intent, down.controls);
+  const up = pointerEvent("pointerup", 73, tapHarness.target, { clientX: 41, clientY: 60 });
+  tapHarness.controller.handlePointerEnd(up.intent, up.controls);
+  assert.equal(tapHarness.controller.consumeVocabularyTapCandidate(click()), true);
+  assert.equal(tapHarness.controller.consumeVocabularyTapCandidate(click()), false,
+    "a native touch candidate is single-use");
+
+  const panHarness = createHarness();
+  const panDown = pointerEvent("pointerdown", 74, panHarness.target, { clientX: 40, clientY: 60 });
+  panHarness.controller.routePointerDown(panDown.intent, panDown.controls);
+  panHarness.controller.handlePointerMove(pointerEvent("pointermove", 74, panHarness.target, {
+    clientX: 60, clientY: 60,
+  }).intent, {});
+  panHarness.controller.handlePointerEnd(pointerEvent("pointerup", 74, panHarness.target, {
+    clientX: 60, clientY: 60,
+  }).intent, {});
+  assert.equal(panHarness.controller.consumeVocabularyTapCandidate(click(0, 60, 60)), false,
+    "a moved native page contact is not reclassified as a tap");
+});
+
 test("visibility loss and session teardown release the read-mode Pencil selection guard", () => {
   const harness = createHarness();
   const { controller, policyCalls, documentRef } = harness;

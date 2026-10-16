@@ -598,9 +598,15 @@ test("browser cleanup accepts only a zero-exit owned browser process as natural"
   assert.equal(report.browser.process.signalCode, null);
   assert.equal(report.browser.process.identity.validated, true);
   assert.equal(report.browser.process.identity.pid, child.pid);
-  assert.equal(report.browser.process.identity.startedAt, null,
-    "Windows cleanup uses the exact Node ChildProcess handle instead of a PowerShell birth-time query");
-  assert.equal(report.browser.process.identity.identityMode, "node-child-process-handle");
+  if (process.platform === "win32") {
+    assert.equal(report.browser.process.identity.startedAt, null,
+      "Windows cleanup uses the exact Node ChildProcess handle instead of a PowerShell birth-time query");
+    assert.equal(report.browser.process.identity.identityMode, "node-child-process-handle");
+  } else {
+    assert.ok(report.browser.process.identity.startedAt,
+      "POSIX cleanup records the process-table birth time used to revalidate the owned child");
+    assert.equal(report.browser.process.identity.identityMode, "process-table");
+  }
   assert.equal(report.browser.process.identity.executableValidated, true);
   assert.equal(report.browser.process.identity.profileValidated, true);
   assert.deepEqual(report.errors, []);
@@ -736,6 +742,7 @@ test("process-query diagnostics and timeouts still fail closed without signaling
 
   child = await launchControlledBrowserProcess({ ignoreTerm: true, profileDirectory });
   let queryCount = 0;
+  const queriesNeededToCaptureIdentity = process.platform === "linux" ? 2 : 1;
   const processQuery = async (command, args, options) => {
     queryCount += 1;
     if (queryCount === 1) {
@@ -751,6 +758,8 @@ test("process-query diagnostics and timeouts still fail closed without signaling
           stderr: "",
         };
       }
+    }
+    if (process.platform !== "win32" && queryCount <= queriesNeededToCaptureIdentity) {
       return execFileAsync(command, args, options);
     }
     throw Object.assign(new Error("targeted process query timed out"), {
@@ -769,7 +778,8 @@ test("process-query diagnostics and timeouts still fail closed without signaling
     killTimeoutMs: 40,
   });
 
-  assert.equal(queryCount, 2);
+  assert.equal(queryCount, queriesNeededToCaptureIdentity + 1,
+    "the baseline identity queries should succeed before the bounded revalidation query times out");
   assert.equal(report.status, "failed");
   assert.equal(report.browser.termination.length, 1);
   assert.equal(report.browser.termination[0].signal, "SIGTERM");
@@ -963,7 +973,22 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   assert.equal(report.browser.process.exitCode, 0);
   assert.equal(report.browser.process.signalCode, null);
   assert.equal(report.browser.process.profileIdentityValidatedAtStart, true);
-  assert.equal(report.browser.process.processGroupValidatedAtStart, false, "the pipe holder must not be treated as an owned browser-group member");
+  if (process.platform === "win32") {
+    assert.equal(report.browser.process.processGroupValidatedAtStart, false,
+      "Windows cleanup uses the exact ChildProcess handle and does not validate POSIX process groups");
+  } else {
+    const { stdout } = await execFileAsync("ps", ["-p", String(grandchildPid), "-o", "pgid="], {
+      encoding: "utf8",
+      timeout: 500,
+      maxBuffer: 1_024,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, LC_ALL: "C" },
+    });
+    assert.notEqual(Number(stdout.trim()), child.pid,
+      "the pipe holder must stay in its own detached process group, outside the owned browser group");
+    assert.equal(report.browser.process.processGroupValidatedAtStart, true,
+      "the browser's own process group can be validated without including the detached pipe holder");
+  }
   assert.equal(report.browser.releasedExitedProcessPipes, true);
   assert.ok(closeResolvedAt !== null);
   assert.ok(childExitedAt !== null);

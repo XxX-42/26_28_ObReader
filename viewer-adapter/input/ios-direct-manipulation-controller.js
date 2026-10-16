@@ -23,6 +23,7 @@
       this.isAnnotationToolActive = isAnnotationToolActive;
       this.invalidatePendingPenHighlight = invalidatePendingPenHighlight;
       this._nativeTouchPointers = new Map();
+      this._completedVocabularyTap = null;
     }
 
     router() { return this.getInputRouter?.() || null; }
@@ -108,6 +109,7 @@
 
     startNativeTouchPointer(intent, controls) {
       if (this._nativeTouchPointers.has(intent.pointerId)) return;
+      this._completedVocabularyTap = null;
       const page = this.pageIdentity(intent);
       this._nativeTouchPointers.set(intent.pointerId, {
         pointerId: intent.pointerId,
@@ -137,6 +139,18 @@
         this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
       }
       return true;
+    }
+
+    consumeVocabularyTapCandidate(intent) {
+      const candidate = this._completedVocabularyTap;
+      this._completedVocabularyTap = null;
+      if (!candidate || intent?.type !== "click" || intent?.detail !== 1 ||
+          !Number.isInteger(intent.pageIndex) || candidate.pageIndex !== intent.pageIndex ||
+          Date.now() - candidate.endedAt > 1000) return false;
+      const x = intent.clientPoint?.x;
+      const y = intent.clientPoint?.y;
+      return Number.isFinite(x) && Number.isFinite(y) &&
+        Math.hypot(x - candidate.x, y - candidate.y) <= 12;
     }
 
     suspendTouchPansForPen() {
@@ -322,6 +336,7 @@
       const pointers = this.manualPointerValues();
       this.clearManualPointers();
       this._nativeTouchPointers.clear();
+      this._completedVocabularyTap = null;
       for (const pointer of pointers) this.releasePointerCapture(pointer.pointerId);
       this.clearPenPolicyPointers();
       if (clearClickTargets) this.getInputPolicy()?.clearPanClickTargets?.();
@@ -352,6 +367,18 @@
     }
 
     handlePointerEnd(intent, controls) {
+      const nativeTouch = this._nativeTouchPointers.get(intent.pointerId);
+      if (nativeTouch) {
+        this._completedVocabularyTap = intent.type === "pointerup" && !nativeTouch.moved &&
+          Number.isInteger(nativeTouch.pageTarget)
+          ? {
+            pageIndex: nativeTouch.pageTarget,
+            x: Number.isFinite(intent.clientPoint?.x) ? intent.clientPoint.x : nativeTouch.startX,
+            y: Number.isFinite(intent.clientPoint?.y) ? intent.clientPoint.y : nativeTouch.startY,
+            endedAt: Date.now(),
+          }
+          : null;
+      }
       if (this.clearNativeTouchPointer(intent.pointerId, {
         // A pointercancel is also how WebKit reports taking a finger gesture
         // for native scrolling. Keep the annotation-mode selection guard;
@@ -373,6 +400,7 @@
     handleTouchCancel(intent) {
       if (intent?.activeTouchCount !== 0) return false;
       this._nativeTouchPointers.clear();
+      this._completedVocabularyTap = null;
       if (!this.hasActivePenEditorGesture()) {
         this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
       }
