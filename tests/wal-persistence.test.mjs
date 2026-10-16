@@ -259,6 +259,30 @@ test("WAL writes enforce owner identity and persist the agreed device-WAL schema
   assert.deepEqual((await walStore.readWal(document)).tail.map(({ opId }) => opId), [own.opId]);
 });
 
+test("a device WAL rejects reusing one owner sequence for different anchored annotations", async () => {
+  const world = makeAdapter();
+  const document = documentIdentity();
+  const { walStore } = stores(world, document, "device-a");
+  const first = operation({ uuid: "first-uuid", deviceId: "device-a", seq: 1, label: "first" });
+  const second = operation({ uuid: "second-uuid", deviceId: "device-a", seq: 1, label: "second" });
+
+  await assert.rejects(walStore.writeWal(document, wal(document, "device-a", {
+    anchor: [first, second], throughSeq: 1, nextSeq: 2,
+  })), { code: "WAL_SEQUENCE_COLLISION" });
+});
+
+test("a sidecar rejects reusing one device sequence for different annotation map entries", async () => {
+  const world = makeAdapter();
+  const document = documentIdentity();
+  const { sidecarStore } = stores(world, document, "device-a");
+  const first = operation({ uuid: "first-uuid", deviceId: "device-a", seq: 1, label: "first" });
+  const second = operation({ uuid: "second-uuid", deviceId: "device-a", seq: 1, label: "second" });
+
+  await assert.rejects(sidecarStore.writeSidecar(document, sidecar(document, [first, second])), {
+    code: "WAL_SEQUENCE_COLLISION",
+  });
+});
+
 test("a valid sidecar for another documentId at the same docKey raises DOC_KEY_COLLISION", async () => {
   const world = makeAdapter();
   const firstIdentity = documentIdentity();

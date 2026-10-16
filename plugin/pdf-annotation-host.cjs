@@ -629,6 +629,7 @@ function createPdfAnnotationHost({
     if (disposed || !file?.path) return false;
     const changedPath = normalizePath(file.path);
     if (!changedPath.startsWith(`${ANNOTATION_ROOT}/`)) return false;
+    store.invalidateRegistry?.();
     const affectedDocuments = [];
     for (const [documentId, state] of sourceStates) {
       const paths = store.pathsFor(state.document);

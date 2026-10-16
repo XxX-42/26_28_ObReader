@@ -2,6 +2,7 @@
 "use strict";
 
 const { validateOperation, joinOperations } = require("./merge-engine.cjs");
+const { canonicalJson } = require("./canonical.cjs");
 const { isSafeString } = require("./version.cjs");
 const { createStorageIo } = require("./io.cjs");
 const { runQueuedWalWrite } = require("./wal-writer-coordinator.cjs");
@@ -43,6 +44,23 @@ function operationsFromState(state) {
     const b = `${right.type}\u0000${right.uuid || ""}\u0000${right.version.rev}\u0000${right.version.deviceId}\u0000${right.version.seq}`;
     return a < b ? -1 : a > b ? 1 : 0;
   });
+}
+
+function validateUniqueDeviceSequences(operations) {
+  const seen = new Map();
+  for (const operation of operations) {
+    const { deviceId, rev, seq } = operation.version;
+    // The deterministic importer deliberately assigns all baseline objects
+    // the same version, so it is the one reserved exception to owner seq IDs.
+    if (deviceId === "legacy-import" && rev === 1 && seq === 0) continue;
+    const key = `${deviceId.length}:${deviceId}:${seq}`;
+    const text = canonicalJson(operation);
+    const previous = seen.get(key);
+    if (previous !== undefined && previous !== text) {
+      throw codedError("WAL_SEQUENCE_COLLISION", "A device sequence may identify only one operation across its sidecar.");
+    }
+    seen.set(key, text);
+  }
 }
 
 function setOwn(map, key, value) {
@@ -134,6 +152,7 @@ function createSidecarStore({ adapter, root = "00_Archive/20_PDFData", hash, ver
     validateDocumentMetadata(value.document, normalized);
     const maxByDevice = new Map();
     const operations = operationsFromSidecar(value);
+    validateUniqueDeviceSequences(operations);
     for (const operation of operations) {
       const normalizedOperation = validateOperation(operation);
       maxByDevice.set(normalizedOperation.version.deviceId,

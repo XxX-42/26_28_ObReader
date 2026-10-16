@@ -28,6 +28,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
   const registry = createRegistryCache({ adapter, root, ensureDirectory });
   const documents = new Map();
   const receipts = new Map();
+  let routingGeneration = 0;
+  let verifiedRoutingGeneration = -1;
   const queued = (key, work) => coordinator.run(coordinationAdapter, deviceId, `host:${key}`, work);
 
   async function ensureDirectory(path) {
@@ -48,6 +50,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
     return { files: result.files.map(absolute), folders: result.folders.map(absolute) };
   }
   async function discover() {
+    const scanGeneration = routingGeneration;
     const keys = new Map();
     const paths = (await list(`${root}/sidecars`)).files.filter((path) => /\.annot\.json(?:\.pending)?$/.test(path));
     for (const directory of (await list(`${root}/wal`)).folders) {
@@ -89,6 +92,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
       if (error.code === "IDENTITY_ROUTE_CONFLICT") throw error;
       onTiming({ phase: "registry-cache", code: error.code || "CACHE_WRITE_FAILED" });
     }
+    if (routingGeneration === scanGeneration) verifiedRoutingGeneration = scanGeneration;
     return result;
   }
 
@@ -134,7 +138,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
 
   async function documentForPath(sourcePath) {
     const path = normalizeInitialPath(sourcePath);
-    const hint = await registry.lookup(path);
+    const hint = verifiedRoutingGeneration === routingGeneration ? await registry.lookup(path) : null;
     if (hint) {
       try {
         const verified = await readEffective(hint);
@@ -238,14 +242,23 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
   async function commit(document, inputs) {
     return queued(document.docKey, async () => {
       const { effective, own } = await loadForWrite(document);
+      const routed = await documentForPath(effective.document.sourcePath);
+      if (!routed || routed.documentId !== document.documentId) throw failure("IDENTITY_ROUTE_CONFLICT", "The PDF routing changed before this edit was written.");
       let state = effective.state;
       const appended = [];
       let acknowledgedOpId = null;
       const durableInputs = effective.valid.flatMap((wal) => [...wal.anchor.operations, ...wal.tail]);
       for (const input of inputs) {
         const receiptKey = input.originOpId ? `${document.docKey}:${input.uuid}:${input.originOpId}` : null;
-        const repeated = receiptKey && (receipts.get(receiptKey) || [...durableInputs, ...appended].find((op) =>
-          op.version.deviceId === deviceId && op.uuid === input.uuid && op.originOpId === input.originOpId));
+        const receipt = receiptKey && receipts.get(receiptKey);
+        if (receipt) {
+          const inputHash = await hash(new TextEncoder().encode(canonicalJson(input)));
+          if (inputHash !== receipt.inputHash) throw failure("WAL_OPERATION_COLLISION", "An acknowledged input ID names different content.");
+          acknowledgedOpId = receipt.opId;
+          continue;
+        }
+        const repeated = receiptKey && [...durableInputs, ...appended].find((op) =>
+          op.version.deviceId === deviceId && op.uuid === input.uuid && op.originOpId === input.originOpId);
         if (repeated) {
           const { seq: _seq, version: _version, opId: _opId, ...original } = repeated;
           if (canonicalJson(original) !== canonicalJson(input)) throw failure("WAL_OPERATION_COLLISION", "An input operation ID names different annotation content.");
@@ -263,7 +276,12 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
       }
       if (appended.length) await wals.writeWal(document, own);
       for (const op of appended) {
-        if (op.originOpId) receipts.set(`${document.docKey}:${op.uuid}:${op.originOpId}`, op);
+        if (op.originOpId) {
+          const { seq: _seq, version: _version, opId, ...input } = op;
+          receipts.set(`${document.docKey}:${op.uuid}:${op.originOpId}`, {
+            opId, inputHash: await hash(new TextEncoder().encode(canonicalJson(input))),
+          });
+        }
       }
       while (receipts.size > 10000) receipts.delete(receipts.keys().next().value);
       return { operationCount: appended.length, batchId: acknowledgedOpId,
@@ -323,6 +341,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
     if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "Cannot hydrate annotations onto a changed source PDF.");
     const loaded = await readEffective(document);
     if (!loaded.document) throw failure("WAL_DOCUMENT_MISSING", "The document recovery state is unavailable.");
+    const routed = await documentForPath(loaded.document.sourcePath);
+    if (!routed || routed.documentId !== document.documentId) throw failure("IDENTITY_ROUTE_CONFLICT", "The PDF path has conflicting document identities.");
     const rows = (map, deleted) => Object.values(map).map((op) => ({ uuid: op.uuid, kind: op.kind,
       pageIndex: op.pageIndex, embeddedRef: op.embeddedRef ?? null, ...(deleted ? {} : { deleted: false }),
       ...(deleted ? {} : { payload: op.payload }), version: op.version,
@@ -366,6 +386,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
   return { registerDocument, documentForPath, appendOperations, readDocument, materializeSnapshot,
     updateSourceIdentity, updateLegacyIdentities, renameDocument, pathsFor, affectsPath,
     readEffective, inspectDevices, sourceProtocol: PROTOCOL,
+    invalidateRegistry: () => { routingGeneration += 1; },
     establishNewCopy: (input) => registerDocument({ ...input, newInstance: true }) };
 }
 function clean(value) { return JSON.parse(JSON.stringify(value)); }

@@ -52,6 +52,21 @@ function operationRows(wal) {
   return [...(wal?.anchor?.operations || []), ...(wal?.tail || [])];
 }
 
+function validateUniqueDeviceSequences(operations) {
+  const seen = new Map();
+  for (const operation of operations) {
+    const { deviceId, rev, seq } = operation.version;
+    if (deviceId === "legacy-import" && rev === 1 && seq === 0) continue;
+    const key = `${deviceId.length}:${deviceId}:${seq}`;
+    const text = canonicalJson(operation);
+    const previous = seen.get(key);
+    if (previous !== undefined && previous !== text) {
+      throw codedError("WAL_SEQUENCE_COLLISION", "A device sequence may identify only one operation across its WAL.");
+    }
+    seen.set(key, text);
+  }
+}
+
 function observationKey(document, owner) {
   return `${document.documentId.length}:${document.documentId}${document.docKey.length}:${document.docKey}${owner.length}:${owner}`;
 }
@@ -226,6 +241,7 @@ function createWalStore({
       previousSeq = normalizedOperation.seq;
       maxOwnedSequence = Math.max(maxOwnedSequence, normalizedOperation.seq);
     }
+    validateUniqueDeviceSequences([...anchorOperations, ...value.tail]);
     if (value.nextSeq <= Math.max(value.anchor.throughSeq, maxOwnedSequence)) {
       throw codedError("WAL_SEQUENCE_INVALID", "nextSeq must exceed every owned anchor and tail sequence.");
     }

@@ -255,6 +255,53 @@ test("two integrity-validated identities sharing one docKey fail closed", async 
   await assert.rejects(store.documentForPath(sourcePath), { code: "DOC_KEY_COLLISION" });
 });
 
+test("distinct verified identities routing to one path fail closed after discovery and cache invalidation", async () => {
+  const sourcePath = "Books/Distinct-identities-same-route.pdf";
+  const source = { sourceHash: hash("same routed PDF bytes") };
+
+  async function writeIdentity(adapter, { documentId, docKey, deviceId }) {
+    const document = { documentId, docKey, sourcePath, initialPath: sourcePath,
+      fullSourceHash: source.sourceHash, source };
+    const walStore = createWalStore({ adapter, root: ROOT, hash, deviceId });
+    await walStore.writeWal(document, {
+      schemaVersion: 1,
+      kind: "pdf-reader-device-wal",
+      documentId,
+      docKey,
+      deviceId,
+      document,
+      nextSeq: 1,
+      anchor: { throughSeq: 0, operations: [{
+        type: "ROUTE_SET",
+        seq: 0,
+        opId: `${deviceId}:route`,
+        version: { rev: 1, deviceId, seq: 0 },
+        payload: { sourcePath, source },
+      }] },
+      tail: [],
+    });
+  }
+
+  // A fresh process must detect both identities in its first verified scan.
+  const fresh = makeAdapter();
+  await writeIdentity(fresh.adapter, { documentId: "route-identity-a", docKey: "123456abcdef", deviceId: "route-device-a" });
+  await writeIdentity(fresh.adapter, { documentId: "route-identity-b", docKey: "fedcba654321", deviceId: "route-device-b" });
+  const freshStore = makeWalStore(fresh.adapter);
+  await assert.rejects(freshStore.documentForPath(sourcePath), { code: "IDENTITY_ROUTE_CONFLICT" });
+
+  // A previously valid registry entry must stop being authoritative after a
+  // root Vault event invalidates this process's verified-routing generation.
+  const cached = makeAdapter();
+  const identityA = { documentId: "cached-route-identity-a", docKey: "a123456789bc", deviceId: "cached-route-device-a" };
+  const identityB = { documentId: "cached-route-identity-b", docKey: "b123456789ac", deviceId: "cached-route-device-b" };
+  await writeIdentity(cached.adapter, identityA);
+  const cachedStore = makeWalStore(cached.adapter);
+  assert.equal((await cachedStore.documentForPath(sourcePath)).documentId, identityA.documentId);
+  await writeIdentity(cached.adapter, identityB);
+  cachedStore.invalidateRegistry();
+  await assert.rejects(cachedStore.documentForPath(sourcePath), { code: "IDENTITY_ROUTE_CONFLICT" });
+});
+
 test("a verified pending sidecar is discoverable after a staged-write crash and WAL loss", async () => {
   const { adapter, shared } = makeAdapter();
   const store = makeWalStore(adapter);
