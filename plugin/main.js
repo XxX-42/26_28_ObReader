@@ -29,12 +29,14 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_HASH_RUNTIME_REQUIRE */ const { createPdfHashRuntime } = require("./pdf-hash-runtime.cjs");
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
 /* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
+/* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey } = require('./vocabulary/service.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
+const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
 const MOBILE_DIAGNOSTICS_DIRECTORY = "PDF Reader Diagnostics";
 const MOBILE_RESOURCE_SCRIPT_PATHS = Object.freeze({
   bridge: "web/obsidian-bridge.js",
@@ -537,6 +539,9 @@ class AnnotationDeviceReviewModal extends Modal {
   }
 }
 
+/* BUILD:VOCABULARY_MODALS_REQUIRE */ const { createVocabularyModals } = require("./vocabulary/modals.cjs");
+const { VocabularyEntryModal, VocabularyTransferModal } = createVocabularyModals({ Modal, Notice });
+
 function toArrayBuffer(value) {
   // The viewer may be hosted in another Electron window/realm, where
   // instanceof ArrayBuffer is false even though the value is an ArrayBuffer.
@@ -868,6 +873,12 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showStatusBar)
           .onChange((enabled) => this.plugin.setStatusBarEnabled(enabled)),
       );
+    new Setting(containerEl)
+      .setName("启用 LingQ 式本地英语词汇学习")
+      .setDesc("开启后可在 PDF 页面查询、保存和标记本地英语词汇；默认关闭，只保存到当前 Vault，不连接外部 LingQ 服务。")
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.vocabularyEnabled)
+        .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled)));
     {
       const diagnosticSetting = new Setting(containerEl)
         .setName(this.plugin.isMobileRuntime ? "导出移动端诊断" : "导出阅读器诊断")
@@ -950,6 +961,8 @@ class PdfReaderView extends EditableFileView {
     this.bridgeTimeoutDeadline = null;
     this.messageListener = (event) => this.onMessage(event);
     this.syncForegroundListener = () => {};
+    this.pendingVocabularySelections = new Map();
+    this.vocabularyEntryModal = null;
   }
 
   getViewType() {
@@ -1029,6 +1042,7 @@ class PdfReaderView extends EditableFileView {
         throw new Error("The PDF remains open because its latest changes were not saved or recovered.");
       }
     }
+    if (wasCurrent) this.cancelVocabularyWork();
     this.releasePendingOpenAdmission(documentId, openRequest);
     await super.onUnloadFile(file);
     if (wasCurrent) {
@@ -1131,6 +1145,7 @@ class PdfReaderView extends EditableFileView {
       const flush = await this.flushDocument(250);
       this.notifyFlushOutcome(flush);
     }
+    this.cancelVocabularyWork();
     this.releasePendingOpenAdmission();
     this.finishFlushRequests({ ok: false, dirty: true });
     for (const request of this.exportRequests.values()) {
@@ -1927,6 +1942,7 @@ class PdfReaderView extends EditableFileView {
       `<script src="${escapeAttribute(bridgeUrl.href)}" ` +
       `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
       `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
+      `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -2084,6 +2100,7 @@ class PdfReaderView extends EditableFileView {
         `<script data-pdf-reader-bridge="1" src="${escapeAttribute(bridgeUrl.href)}" ` +
         `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
         `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
+        `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2135,6 +2152,9 @@ class PdfReaderView extends EditableFileView {
   async openFile(file) {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
+    }
+    if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
+      this.cancelVocabularyWork();
     }
     this.releasePendingOpenAdmission();
     const openingPath = normalizePath(file.path);
@@ -2210,6 +2230,248 @@ class PdfReaderView extends EditableFileView {
         (openRequest !== null && admission.openRequest !== openRequest)) return false;
     this.pendingOpenAdmission = null;
     admission.release?.();
+    return true;
+  }
+
+  cancelVocabularyWork() {
+    for (const pending of this.pendingVocabularySelections.values()) {
+      globalThis.clearTimeout(pending.timer);
+    }
+    this.pendingVocabularySelections.clear();
+    this.vocabularyEntryModal?.close?.();
+    this.vocabularyEntryModal = null;
+  }
+
+  setVocabularyEnabled(enabled) {
+    const isEnabled = enabled === true;
+    if (!isEnabled) this.cancelVocabularyWork();
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "vocab-set-enabled",
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      enabled: isEnabled,
+    });
+  }
+
+  refreshVocabularyPages() {
+    if (!this.plugin.settings.vocabularyEnabled || !this.ready || !this.iframe ||
+        !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "vocab-page-refresh",
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+    });
+  }
+
+  requestVocabularySelection() {
+    if (!this.plugin.settings.vocabularyEnabled) {
+      new Notice("请先启用 LingQ 式本地英语词汇学习。", 6000);
+      return false;
+    }
+    if (!this.ready || !this.openAcknowledged || !this.iframe || !this.documentId) {
+      new Notice("PDF 页面尚未准备好，请稍后再试。", 6000);
+      return false;
+    }
+    const requestId = makeToken();
+    const identity = {
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      rendererGeneration: this.rendererGeneration,
+    };
+    const timer = globalThis.setTimeout(() => this.pendingVocabularySelections.delete(requestId), 15000);
+    this.pendingVocabularySelections.set(requestId, { ...identity, timer });
+    const sent = this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "vocab-selection-request",
+      requestId,
+      documentId: identity.documentId,
+      openRequest: identity.openRequest,
+    });
+    if (!sent) {
+      globalThis.clearTimeout(timer);
+      this.pendingVocabularySelections.delete(requestId);
+      new Notice("无法连接到当前 PDF 阅读器。", 6000);
+    }
+    return sent;
+  }
+
+  isCurrentVocabularyIdentity(identity) {
+    return identity?.documentId === this.documentId &&
+      identity?.openRequest === this.openRequest &&
+      identity?.rendererGeneration === this.rendererGeneration &&
+      this.plugin.settings.vocabularyEnabled === true &&
+      this.teardownStarted !== true;
+  }
+
+  async handleVocabularyBridgeMessage(message) {
+    if (!String(message?.type || "").startsWith("vocab-")) return false;
+    if (message.rendererGeneration !== this.rendererGeneration ||
+        message.documentId !== this.documentId ||
+        message.openRequest !== this.openRequest ||
+        !this.plugin.settings.vocabularyEnabled) return true;
+
+    if (message.type === "vocab-page-query") {
+      const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
+      const validKeys = Array.isArray(message.keys) && message.keys.length <= 2048 &&
+        message.keys.every((key) => typeof key === "string" && key.length <= 1600 &&
+          key.split(" ").length <= 12 && normalizeVocabularyTermKey(key) === key) &&
+        message.keys.reduce((total, key) => total + key.length + 1, 0) <= MAX_VOCABULARY_QUERY_TEXT_CHARS;
+      if (!validRequest || typeof message.queryId !== "string" || message.queryId.length > 128 ||
+          !Number.isInteger(message.partIndex) || message.partIndex < 0 || !validKeys ||
+          !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
+      const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
+      try {
+        const matches = await this.plugin.getVocabularyService().queryTerms([...new Set(message.keys)]);
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-page-results",
+          requestId: message.requestId, queryId: message.queryId, partIndex: message.partIndex, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          records: Object.values(matches).map(({ key, type, status }) => ({ key, type, status })),
+        });
+      } catch (error) {
+        if (this.isCurrentVocabularyIdentity(identity)) {
+          this.postToViewer({
+            channel: CHANNEL, token: this.token, type: "vocab-page-results",
+            requestId: message.requestId, queryId: message.queryId, partIndex: message.partIndex, pageNumber: message.pageNumber,
+            documentId: identity.documentId, openRequest: identity.openRequest,
+            records: [], error: error.code || "vocabulary-query-failed",
+          });
+        }
+      }
+      return true;
+    }
+
+    if (message.type === "vocab-token-tap") {
+      const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
+      const validKey = typeof message.key === "string" && message.key.length <= 128 &&
+        normalizeVocabularyTermKey(message.key) === message.key && !message.key.includes(" ");
+      const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
+        message.rawSurface.length <= 128 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
+      if (!validRequest || !validKey || !validSurface ||
+          !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
+      const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
+      try {
+        const record = await this.plugin.getVocabularyService().getTerm(message.key);
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-entry-result",
+          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          record: record ? { key: record.key, type: record.type, status: record.status,
+            translation: record.translation || "", note: record.note || "" } : null,
+        });
+      } catch (error) {
+        if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-entry-result",
+          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          error: error.code || "vocabulary-read-failed",
+        });
+      }
+      return true;
+    }
+
+    if (message.type === "vocab-set-status") {
+      const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
+      const validKey = typeof message.key === "string" && message.key.length > 0 && message.key.length <= 128 &&
+        normalizeVocabularyTermKey(message.key) === message.key && !message.key.includes(" ");
+      const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
+        message.rawSurface.length <= 128 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
+      if (!validRequest || !validKey || !validSurface || message.entryType !== "word" ||
+          !Number.isInteger(message.status) || message.status < 1 || message.status > 5 ||
+          typeof message.entryRequestId !== "string" || message.entryRequestId.length > 128 ||
+          !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
+      const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
+      try {
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        const service = this.plugin.getVocabularyService();
+        const record = await service.upsertTerm(message.rawSurface, { type: "word", status: message.status });
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-status-ack", durable: true,
+          requestId: message.requestId, entryRequestId: message.entryRequestId,
+          key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          revision: service.getRevision(), record,
+        });
+      } catch (error) {
+        if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-status-error",
+          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          error: error.code || "vocabulary-write-failed",
+        });
+      }
+      return true;
+    }
+
+    if (message.type === "vocab-selection-rejected") {
+      const pending = this.pendingVocabularySelections.get(message.requestId);
+      if (!pending || !this.isCurrentVocabularyIdentity(pending)) return true;
+      globalThis.clearTimeout(pending.timer);
+      this.pendingVocabularySelections.delete(message.requestId);
+      new Notice(message.code === "token-count"
+        ? "请在同一页选择 1 到 12 个英语词汇。"
+        : "选择范围无效；请只选择同一 PDF 页上的英语词汇。", 6000);
+      return true;
+    }
+
+    if (message.type !== "vocab-selection") return true;
+    const pending = this.pendingVocabularySelections.get(message.requestId);
+    if (!pending || !this.isCurrentVocabularyIdentity(pending)) return true;
+    globalThis.clearTimeout(pending.timer);
+    this.pendingVocabularySelections.delete(message.requestId);
+    const tokens = message.tokens;
+    const tokenCountValid = Array.isArray(tokens) && tokens.length >= 1 && tokens.length <= 12;
+    const validTokens = tokenCountValid && tokens.every((token) =>
+      token && typeof token.rawSurface === "string" && token.rawSurface.length <= 128 &&
+      typeof token.surfaceKey === "string" && token.surfaceKey.length <= 128 &&
+      !token.surfaceKey.includes(" ") && normalizeVocabularyTermKey(token.surfaceKey) === token.surfaceKey);
+    const expectedType = message.entryType;
+    if (!validTokens || !["word", "phrase"].includes(expectedType) ||
+        (expectedType === "word" && tokens.length !== 1) ||
+        (expectedType === "phrase" && (tokens.length < 2 || tokens.length > 12)) ||
+        !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) {
+      new Notice("无法保存该选择：只支持同一页上的英语单词或 2 到 12 个词的短语。", 6000);
+      return true;
+    }
+
+    const surfaceKey = tokens.map((token) => token.surfaceKey).join(" ");
+    const displaySurface = tokens.map((token) => token.rawSurface).join(" ");
+    try {
+      const service = this.plugin.getVocabularyService();
+      const existing = await service.getTerm(surfaceKey);
+      if (!this.isCurrentVocabularyIdentity(pending)) return true;
+      if (this.vocabularyEntryModal) this.vocabularyEntryModal.close();
+      const pageNumber = message.pageNumber;
+      const modal = new VocabularyEntryModal(this.app, {
+        surface: displaySurface,
+        type: expectedType,
+        existing,
+        onClose: () => { if (this.vocabularyEntryModal === modal) this.vocabularyEntryModal = null; },
+        onSave: async (fields) => {
+          if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
+          const record = await service.upsertTerm(surfaceKey, { ...fields, type: expectedType });
+          if (!this.isCurrentVocabularyIdentity(pending)) return;
+          this.postToViewer({
+            channel: CHANNEL, token: this.token, type: "vocab-selection-ack",
+            requestId: message.requestId, pageNumber, documentId: pending.documentId,
+            openRequest: pending.openRequest, durable: true, revision: service.getRevision(), record,
+          });
+        },
+      });
+      this.vocabularyEntryModal = modal;
+      modal.open();
+    } catch (error) {
+      new Notice(`读取词汇数据失败：${error.message || error}`, 8000);
+    }
     return true;
   }
 
@@ -2289,6 +2551,13 @@ class PdfReaderView extends EditableFileView {
       Number.isInteger(message.openRequest) &&
       message.openRequest !== this.openRequest
     ) {
+      return;
+    }
+
+    if (String(message.type || "").startsWith("vocab-")) {
+      void this.handleVocabularyBridgeMessage(message).catch((error) => {
+        new Notice(`词汇操作失败：${error.message || error}`, 8000);
+      });
       return;
     }
 
@@ -2444,6 +2713,7 @@ class PdfReaderView extends EditableFileView {
       filename: file.basename,
       openRequest: this.openRequest,
       autoSave: this.plugin.settings.autoSave,
+      vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
       confirmedRevision:
@@ -2765,10 +3035,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings = {
       autoSave: true,
       showStatusBar: false,
+      vocabularyEnabled: false,
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
     this.settings.showStatusBar = this.settings.showStatusBar === true;
+    this.settings.vocabularyEnabled = this.settings.vocabularyEnabled === true;
+    this.vocabularyService = null;
     this.views = new Set();
     this.popoutCloseGates = new Map();
     this.popoutProtectionWarnings = new WeakSet();
@@ -2837,6 +3110,27 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         }
         void view.exportAnnotatedCopy().catch((error) => new Notice(`PDF 导出失败：${error.message || error}`, 8000));
       },
+    });
+    this.addCommand({
+      id: "save-selection-to-vocabulary",
+      name: "将选中文本保存到本地英语词汇",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) {
+          new Notice("请先在 PDF 阅读器中选择一个英语单词或短语。", 6000);
+          return;
+        }
+        if (!this.settings.vocabularyEnabled) {
+          new Notice("请先在 PDF 阅读器设置中启用 LingQ 式本地英语词汇学习。", 6000);
+          return;
+        }
+        view.requestVocabularySelection();
+      },
+    });
+    this.addCommand({
+      id: "manage-local-english-vocabulary",
+      name: "管理本地英语词汇（导入 / 导出）",
+      callback: () => new VocabularyTransferModal(this.app, this).open(),
     });
     this.addCommand({
       id: "export-mobile-pdf-diagnostics",
@@ -2981,6 +3275,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    void this.vocabularyService?.dispose?.().catch(() => undefined);
     if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
     this.prewarmTimer = null;
@@ -3514,6 +3809,38 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       view.setStatusBarEnabled(this.settings.showStatusBar);
     }
     await this.saveData(this.settings);
+  }
+
+  getVocabularyService() {
+    if (!this.vocabularyService) {
+      this.vocabularyService = new VocabularyService({ adapter: this.app.vault.adapter });
+    }
+    return this.vocabularyService;
+  }
+
+  async importVocabulary(text, format, policy = {}) {
+    const service = this.getVocabularyService();
+    const stats = format === "csv"
+      ? await service.importCsv(text, policy)
+      : await service.importJson(text, policy);
+    if (stats.imported > 0 || stats.updated > 0) {
+      for (const view of this.views) view.refreshVocabularyPages?.();
+    }
+    return stats;
+  }
+
+  async setVocabularyEnabled(enabled) {
+    this.settings.vocabularyEnabled = Boolean(enabled);
+    if (!this.settings.vocabularyEnabled) {
+      for (const view of this.views) view.cancelVocabularyWork();
+    }
+    try {
+      await this.saveData(this.settings);
+    } catch (error) {
+      new Notice(`词汇设置无法保存：${error.message || error}`, 8000);
+    } finally {
+      for (const view of this.views) view.setVocabularyEnabled(this.settings.vocabularyEnabled);
+    }
   }
 
   exportMobileDiagnostics() {

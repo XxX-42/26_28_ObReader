@@ -124,6 +124,7 @@ for (const file of [
   path.join(vendor, "web"),
   path.join(adapters, "obsidian-bridge.js"),
   path.join(adapters, "bridge.css"),
+  path.join(adapters, "vocabulary", "runtime-entry.js"),
   ...inputRuntimeFiles.map((file) => path.join(adapters, file)),
   path.join(pluginSource, "asset-runtime.cjs"),
   path.join(pluginSource, "pdf-merge-core.cjs"),
@@ -131,6 +132,8 @@ for (const file of [
   path.join(pluginSource, "pdf-merge-client.cjs"),
   path.join(pluginSource, "pdf-sync-host.cjs"),
   path.join(pluginSource, "pdf-hash-runtime.cjs"),
+  path.join(pluginSource, "vocabulary", "service.cjs"),
+  path.join(pluginSource, "vocabulary", "modals.cjs"),
 ]) {
   try {
     await access(file);
@@ -288,9 +291,20 @@ for (let index = 1; index < runtimeInputs.length; index += 1) {
 
 const schema = 1;
 const files = [];
+const vocabularyRuntimeBundle = await buildBundle({
+  entryPoints: [path.join(adapters, "vocabulary", "runtime-entry.js")],
+  bundle: true,
+  format: "iife",
+  globalName: "PdfReaderVocabularyRuntimeModule",
+  platform: "browser",
+  target: ["es2022"],
+  legalComments: "none",
+  write: false,
+});
+assert.equal(vocabularyRuntimeBundle.outputFiles.length, 1);
 const inputRuntimeSource = (await Promise.all(
   inputRuntimeFiles.map((file) => readFile(path.join(adapters, file), "utf8")),
-)).join("\n");
+)).join("\n") + `\n${vocabularyRuntimeBundle.outputFiles[0].text}`;
 for (const input of runtimeInputs) {
   let data = input.bytes || await readFile(input.absolute);
   if (input.path === "web/obsidian-bridge.js") {
@@ -330,6 +344,10 @@ const payloadMarker =
   "/* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;";
 const annotationHostMarker =
   /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
+const vocabularyServiceMarker =
+  /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
+const vocabularyModalsMarker =
+  /\/\* BUILD:VOCABULARY_MODALS_REQUIRE \*\/\s*const\s*\{\s*createVocabularyModals\s*\}\s*=\s*require\((['"])\.\/vocabulary\/modals\.cjs\1\);/s;
 const heavyWorkMarker =
   /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
 const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery-read\.cjs\1\);/s;
@@ -351,6 +369,16 @@ assert.equal(
   [...sourceMain.matchAll(new RegExp(annotationHostMarker.source, "gs"))].length,
   1,
   "Expected exactly one PDF annotation host build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(vocabularyServiceMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one vocabulary service build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(vocabularyModalsMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one vocabulary modals build marker in plugin/main.js",
 );
 assert.equal(
   [...sourceMain.matchAll(new RegExp(hashRuntimeMarker.source, "gs"))].length,
@@ -403,6 +431,16 @@ const inlinedAnnotationHost = await inlineModule(
   "__PDFReaderAnnotationHost",
   "createPdfAnnotationHost",
 );
+const inlinedVocabularyService = await inlineModule(
+  "vocabulary/service.cjs",
+  "__PDFReaderVocabularyService",
+  "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey",
+);
+const inlinedVocabularyModals = await inlineModule(
+  "vocabulary/modals.cjs",
+  "__PDFReaderVocabularyModals",
+  "createVocabularyModals",
+);
 const inlinedHashRuntime = await inlineModule(
   "pdf-hash-runtime.cjs",
   "__PDFReaderHashRuntime",
@@ -425,6 +463,8 @@ const bundledMain = sourceMain
   .replace(hashRuntimeMarker, () => inlinedHashRuntime)
   .replace(mergeClientMarker, () => inlinedMergeClient)
   .replace(annotationHostMarker, () => inlinedAnnotationHost)
+  .replace(vocabularyServiceMarker, () => inlinedVocabularyService)
+  .replace(vocabularyModalsMarker, () => inlinedVocabularyModals)
   .replace(heavyWorkMarker, () => inlinedHeavyWork)
   .replace(recoveryMarker, () => inlinedRecovery)
   .replace(sessionLogMarker, () => inlinedSessionLog)

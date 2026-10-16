@@ -1,0 +1,246 @@
+import { normalizeTermKey } from "./english-normalizer.js";
+
+const LETTER = /\p{L}/u;
+const MARK = /\p{M}/u;
+const WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;
+const APOSTROPHE = /['\u2018\u2019\u02BC\uFF07]/u;
+const LINE_HYPHEN = /[-\u2010]/u;
+const ASCII_DIGIT = /^[0-9]$/u;
+const MAX_PAGE_TEXT_UNITS = 50000;
+
+function isLetter(character) {
+  return LETTER.test(character);
+}
+
+function isMark(character) {
+  return MARK.test(character);
+}
+
+function isWordChar(character) {
+  return WORD_CHAR.test(character);
+}
+
+function hasTextLayerSkipMarker(element) {
+  if (element?.nodeType !== 1) return false;
+
+  const tagName = String(element.tagName || "").toLowerCase();
+  if (tagName === "script" || tagName === "style") return true;
+  if (element.getAttribute?.("aria-hidden") === "true") return true;
+
+  const className = element.className?.baseVal ?? element.className ?? "";
+  return /(?:^|\s)endOfContent(?:\s|$)/u.test(String(className));
+}
+
+function* textNodesIn(root) {
+  if (!root) return;
+  if (root.nodeType === 3) {
+    yield root;
+    return;
+  }
+
+  for (const child of Array.from(root.childNodes || [])) {
+    if (hasTextLayerSkipMarker(child)) continue;
+    yield* textNodesIn(child);
+  }
+}
+
+function collectUnits(root) {
+  const units = [];
+  let totalCodeUnits = 0;
+  for (const node of textNodesIn(root)) {
+    const source = typeof node.nodeValue === "string"
+      ? node.nodeValue
+      : typeof node.data === "string"
+        ? node.data
+        : "";
+    totalCodeUnits += source.length;
+    if (totalCodeUnits > MAX_PAGE_TEXT_UNITS) {
+      const error = new RangeError("PDF text layer exceeds the vocabulary scan limit.");
+      error.code = "page-text-limit";
+      throw error;
+    }
+    for (let startOffset = 0; startOffset < source.length;) {
+      const codePoint = source.codePointAt(startOffset);
+      const character = String.fromCodePoint(codePoint);
+      const endOffset = startOffset + character.length;
+      units.push({ node, character, startOffset, endOffset });
+      startOffset = endOffset;
+    }
+  }
+  return units;
+}
+
+function readWordEnd(units, start) {
+  let index = start;
+  let hasLetter = false;
+
+  while (index < units.length) {
+    const character = units[index].character;
+    if (isWordChar(character)) {
+      hasLetter ||= isLetter(character);
+      index += 1;
+      continue;
+    }
+
+    // Keep an apostrophe only when it is internal to an alphabetic surface.
+    // The next letter check also prevents trailing quotation marks from
+    // leaking into a vocabulary token.
+    if (
+      APOSTROPHE.test(character) &&
+      hasLetter &&
+      index + 1 < units.length &&
+      isLetter(units[index + 1].character)
+    ) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+
+  return { end: index, hasLetter };
+}
+
+function rangeForUnit(unit, root) {
+  const document = root?.ownerDocument || unit.node?.ownerDocument;
+  if (typeof document?.createRange !== "function") return null;
+
+  let range;
+  try {
+    range = document.createRange();
+    range.setStart(unit.node, unit.startOffset);
+    range.setEnd(unit.node, unit.endOffset);
+    const rect = range.getBoundingClientRect?.();
+    if (!rect) return null;
+    const top = Number(rect.top);
+    const left = Number(rect.left);
+    const width = Number(rect.width);
+    const height = Number(rect.height);
+    if (![top, left, width, height].every(Number.isFinite) || height <= 0) {
+      return null;
+    }
+    return { top, left, width, height };
+  } catch {
+    return null;
+  } finally {
+    range?.detach?.();
+  }
+}
+
+function isConfirmedLineEndHyphen(hyphen, continuation, root) {
+  const hyphenRect = rangeForUnit(hyphen, root);
+  const continuationRect = rangeForUnit(continuation, root);
+  if (!hyphenRect || !continuationRect) return false;
+
+  // A geometric line transition is required. If layout cannot prove it, keep
+  // the two surfaces separate instead of guessing from punctuation alone.
+  const lineHeight = Math.max(hyphenRect.height, continuationRect.height);
+  const verticalDelta = continuationRect.top - hyphenRect.top;
+  const minimumDelta = Math.max(2, Math.min(hyphenRect.height, continuationRect.height) * 0.4);
+  const maximumDelta = Math.max(8, lineHeight * 2.25);
+  const startsAtPreviousLine = continuationRect.left <= hyphenRect.left + Math.max(3, lineHeight * 0.75);
+  return verticalDelta >= minimumDelta && verticalDelta <= maximumDelta && startsAtPreviousLine;
+}
+
+function appendUnit(units, target, index) {
+  const unit = units[index];
+  target.push(unit);
+  return index + 1;
+}
+
+function collectSegments(consumedUnits) {
+  const segments = [];
+  for (const unit of consumedUnits) {
+    const last = segments[segments.length - 1];
+    if (last && last.textNode === unit.node && last.endOffset === unit.startOffset) {
+      last.endOffset = unit.endOffset;
+    } else {
+      segments.push({
+        textNode: unit.node,
+        startOffset: unit.startOffset,
+        endOffset: unit.endOffset,
+      });
+    }
+  }
+  return segments;
+}
+
+function makeToken(index, consumedUnits, logicalSurface) {
+  const surfaceKey = normalizeTermKey(logicalSurface);
+  if (!surfaceKey) return null;
+  return {
+    index,
+    rawSurface: consumedUnits.map((unit) => unit.character).join(""),
+    surfaceKey,
+    segments: collectSegments(consumedUnits),
+  };
+}
+
+/**
+ * Scan a rendered PDF.js text layer without changing it.
+ *
+ * Returned segment offsets are zero-based UTF-16 TextNode offsets with an
+ * exclusive end, so they always refer to the physical DOM text (including
+ * ligatures and any visible line-end hyphen). A line-end hyphen is omitted
+ * only from the logical lookup surface when adjacent character geometry
+ * confirms that the following alphabetic text begins on the next line.
+ */
+export function scanPageTextLayer(textLayer) {
+  const units = collectUnits(textLayer);
+  const tokens = [];
+  let index = 0;
+
+  while (index < units.length) {
+    if (!isLetter(units[index].character) && !ASCII_DIGIT.test(units[index].character)) {
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    const consumedUnits = [];
+    const logicalParts = [];
+    let word = readWordEnd(units, index);
+    if (!word.hasLetter) {
+      index = word.end > index ? word.end : index + 1;
+      continue;
+    }
+
+    while (true) {
+      for (let cursor = index; cursor < word.end; cursor += 1) {
+        appendUnit(units, consumedUnits, cursor);
+      }
+      logicalParts.push(units.slice(index, word.end).map((unit) => unit.character).join(""));
+      index = word.end;
+
+      const hyphen = units[index];
+      const continuation = units[index + 1];
+      const previous = units[index - 1];
+      if (
+        !hyphen ||
+        !continuation ||
+        !previous ||
+        !LINE_HYPHEN.test(hyphen.character) ||
+        !(isLetter(previous.character) || isMark(previous.character)) ||
+        !isLetter(continuation.character) ||
+        !isConfirmedLineEndHyphen(hyphen, continuation, textLayer)
+      ) {
+        break;
+      }
+
+      appendUnit(units, consumedUnits, index);
+      index += 1;
+      word = readWordEnd(units, index);
+      if (!word.hasLetter || word.end === index) break;
+    }
+
+    // The source is DOM-owned; its line-end hyphen remains in rawSurface and
+    // segment offsets, while only the logical key drops that line-break mark.
+    const logicalSurface = logicalParts.join("");
+    const token = makeToken(tokens.length, consumedUnits, logicalSurface);
+    if (token) tokens.push(token);
+
+    // A defensive progress guard for malformed/fake DOM text inputs.
+    if (index <= start) index = start + 1;
+  }
+
+  return tokens;
+}

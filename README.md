@@ -421,6 +421,7 @@ entry does not install desktop popout coordination.
 
 - `plugin/`: Obsidian host, resource cache, sync coordinator and lazy PDF merge Worker/client.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
+- `plugin/vocabulary/` and `viewer-adapter/vocabulary/`: isolated, optional Vault-local LingQ-style word/phrase study feature; disabled by default. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the PDF-core and vocabulary boundaries.
 - `vendor/pdfjs-generic-legacy/`: complete frozen PDF.js Viewer snapshot.
 - `scripts/`: deterministic packaging and safe deployment.
 - `tests/`: packaging, host, offline browser, and native Obsidian checks.
