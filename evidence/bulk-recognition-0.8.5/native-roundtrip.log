@@ -1,0 +1,23 @@
+✖ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (31377.357125ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 31695.7215
+
+✖ failing tests:
+
+test at tests/embedded-annotation-scan.test.mjs:102:1
+✖ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (31377.357125ms)
+  TimeoutError: Waiting failed: 30000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at CdpPage.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Page.js:1537:37)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/embedded-annotation-scan.test.mjs:153:16)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

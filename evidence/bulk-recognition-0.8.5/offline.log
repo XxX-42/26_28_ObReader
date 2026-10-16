@@ -1,0 +1,43 @@
+
+> test:offline
+> node tests/offline-smoke.mjs
+
+Waiting for the bundled viewer to open the fixture…
+Browser page error: copyFiniteNumbers is not defined
+Browser page error: Invalid PDF url data: either string or URL-object is expected in the url property.
+Host state at open timeout: {
+  ready: false,
+  opened: 0,
+  saves: 0,
+  ignoredSource: 0,
+  ignoredToken: 0,
+  rejectedDocument: 0,
+  sourceIdentity: null,
+  openRequest: 0,
+  annotationRows: {},
+  invalidAcksSent: 0,
+  errors: [],
+  inbound: [
+    {
+      sourceIsViewer: true,
+      type: 'runtime-log',
+      channelMatches: true,
+      tokenMatches: true,
+      documentId: null
+    }
+  ]
+}
+Offline cleanup evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/offline-smoke-1792134503442-33583-274751da-6523-4f1d-8b19-20e7a9301e84.cleanup.json
+file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46
+            this.#timeoutError = new TimeoutError(`Waiting failed: ${options.timeout}ms exceeded`);
+                                 ^
+
+TimeoutError: Waiting failed: 45000ms exceeded
+    at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+    at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+    at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+    at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+    at CdpPage.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Page.js:1537:37)
+    at file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/offline-smoke.mjs:349:6
+
+Node.js v26.3.1

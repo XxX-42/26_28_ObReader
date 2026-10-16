@@ -1,0 +1,28 @@
+✖ native PDF annotation scan recognizes supported source marks and excludes links (1830.186958ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2111.1925
+
+✖ failing tests:
+
+test at tests/embedded-annotation-scan.test.mjs:15:1
+✖ native PDF annotation scan recognizes supported source marks and excludes links (1830.186958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  54 !== 60
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/embedded-annotation-scan.test.mjs:80:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 54,
+    expected: 60,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

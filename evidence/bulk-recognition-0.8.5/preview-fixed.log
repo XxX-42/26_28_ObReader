@@ -1,0 +1,28 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (3.2495ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (1.083708ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (1.49275ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (0.676ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (4.320042ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (20.291625ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.224916ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.6565ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.228791ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.946417ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.292417ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.523834ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.434833ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (1.096917ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.189583ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (11.714708ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (4.115958ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (4.641583ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.800625ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.657833ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 167.758708

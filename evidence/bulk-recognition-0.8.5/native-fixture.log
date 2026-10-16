@@ -1,0 +1,10 @@
+{"pages":3,"raw":{"2":1,"5":1,"9":1,"15":1},"count":3,"counts":{"Ink":1,"Highlight":1,"Square":1},"unique":3,"refsValid":true,"sourceSha256":"f8e1ebcb5008e6a999992e542fbd11b43d812f4d60bc2d802aecb45eb9a67654","originalUnchanged":true}
+✔ native PDF annotation scan recognizes supported source marks and excludes links (2258.449417ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2578.378542

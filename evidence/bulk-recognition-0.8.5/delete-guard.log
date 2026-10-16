@@ -1,0 +1,14 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (13.4915ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (6.157333ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (3.164167ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (3.861208ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (1.556083ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (0.592709ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 250.369584

@@ -1,0 +1,48 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (2.802333ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (1.129125ms)
+✖ all-page confirmation is canceled on session change and renewed after target drift (1.556667ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.388541ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (3.264ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (24.203208ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.251583ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.720333ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.73225ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.533667ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (2.0295ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.592ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.178ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.618417ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.190625ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (11.434959ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (6.553667ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (5.73075ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (6.034291ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.624ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 19
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 165.502917
+
+✖ failing tests:
+
+test at tests/bulk-annotation-delete.test.mjs:201:1
+✖ all-page confirmation is canceled on session change and renewed after target drift (1.556667ms)
+  evalmachine.<anonymous>:129
+      try { return await request; }
+                   ^^^^^
+  
+  SyntaxError: await is only valid in async functions and the top level bodies of modules
+      at new Script (node:vm:117:7)
+      at createScript (node:vm:269:10)
+      at Object.runInNewContext (node:vm:310:10)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/bulk-annotation-delete.test.mjs:292:21)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)

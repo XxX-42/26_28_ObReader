@@ -1,0 +1,21 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.885ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (0.777833ms)
+✔ embedded deletion scanning copies supported native annotations from every page (2.658417ms)
+✔ embedded deletion scan accepts one page and rejects malformed geometry without guessing (1.256375ms)
+✔ embedded deletion scanning aborts after each awaited step when the PDF session changes (1.020208ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (0.891666ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (0.731583ms)
+✔ bulk history callbacks stop when their originating session is no longer current (0.705583ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (1.459625ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (0.972292ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (0.692166ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (0.708458ms)
+✔ embedded rendering mask composes with native changes and can be cleared without writes (0.65975ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 134.856

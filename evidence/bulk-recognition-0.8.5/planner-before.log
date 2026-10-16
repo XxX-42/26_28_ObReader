@@ -1,0 +1,35 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (2.521125ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.661625ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (3.08125ms)
+✖ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.450791ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 123.353208
+
+✖ failing tests:
+
+test at tests/bulk-annotation-delete.test.mjs:312:1
+✖ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.450791ms)
+  AssertionError [ERR_ASSERTION]: unchanged persisted editors still participate in grouped deletion
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/bulk-annotation-delete.test.mjs:331:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,40 @@
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (9.380666ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (4.098584ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (5.027667ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.100125ms)
+✖ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (4.623917ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 148.60475
+
+✖ failing tests:
+
+test at tests/external-hydration-race.test.mjs:549:1
+✖ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (4.623917ms)
+  AssertionError [ERR_ASSERTION]: the confirmed deletion removes the visible editor
+  + actual - expected
+  
+  + {
+  +   editorType: 'Square',
+  +   id: 'bulk-runtime',
+  +   pageIndex: 0,
+  +   remove: [Function: remove],
+  +   serialize: [Function: serialize]
+  + }
+  - null
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/external-hydration-race.test.mjs:563:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [Object],
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

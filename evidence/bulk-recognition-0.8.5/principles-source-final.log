@@ -1,0 +1,12 @@
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+{"pages":357,"raw":{"2":129,"5":2,"9":15,"15":43},"skipped":[],"count":60,"counts":{"Ink":30,"InkHighlight":13,"Highlight":15,"Square":2},"unique":60,"refsValid":true,"sourceSha256":"53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"}
+{"pages":357,"raw":{"2":129,"5":2,"9":15,"15":43},"skipped":[],"count":60,"counts":{"Ink":30,"InkHighlight":13,"Highlight":15,"Square":2},"unique":60,"refsValid":true,"sourceSha256":"53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378","originalUnchanged":true}
+✔ native PDF annotation scan recognizes supported source marks and excludes links (1273.109792ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1530.948166

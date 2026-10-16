@@ -1,0 +1,31 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.994292ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (0.866292ms)
+✔ embedded deletion scanning copies supported native annotations from every page (2.611042ms)
+✔ embedded deletion scan accepts one page and rejects malformed geometry without guessing (1.145875ms)
+✔ embedded deletion scanning aborts after each awaited step when the PDF session changes (1.194333ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (1.050708ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (0.756791ms)
+✔ bulk history callbacks stop when their originating session is no longer current (0.72325ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (1.207708ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (3.277959ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (1.036292ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (1.161416ms)
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (3.779625ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.970458ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (3.521667ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.069917ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (0.715916ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (0.516708ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (11.462625ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (5.339458ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (4.880375ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (5.505291ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.503084ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 165.442542

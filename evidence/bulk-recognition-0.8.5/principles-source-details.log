@@ -1,0 +1,29 @@
+{"pages":357,"raw":{"2":129,"5":2,"9":15,"15":43},"skipped":[{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2]},{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2]},{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2,2,6]},{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2]},{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2]},{"type":15,"rotation":0,"colorLength":3,"opacity":1,"width":1,"rectNondegenerate":true,"inkLengths":[2,204]}],"count":54,"counts":{"Ink":24,"InkHighlight":13,"Highlight":15,"Square":2},"unique":54,"refsValid":true,"sourceSha256":"53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"}
+✖ native PDF annotation scan recognizes supported source marks and excludes links (1836.649834ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2133.926917
+
+✖ failing tests:
+
+test at tests/embedded-annotation-scan.test.mjs:15:1
+✖ native PDF annotation scan recognizes supported source marks and excludes links (1836.649834ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  54 !== 60
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/embedded-annotation-scan.test.mjs:92:17)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 54,
+    expected: 60,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

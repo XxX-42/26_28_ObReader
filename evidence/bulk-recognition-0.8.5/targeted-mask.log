@@ -1,0 +1,59 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (3.311833ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (0.88925ms)
+✔ embedded deletion scanning copies supported native annotations from every page (6.032584ms)
+✔ embedded deletion scan accepts one page and rejects malformed geometry without guessing (2.02875ms)
+✔ embedded deletion scanning aborts after each awaited step when the PDF session changes (1.308583ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (1.041875ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (0.853459ms)
+✔ bulk history callbacks stop when their originating session is no longer current (0.737333ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (1.359625ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (3.330542ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (2.163292ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (0.835417ms)
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (2.891ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.948875ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (3.16775ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (0.723083ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (0.83975ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (2.399833ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (15.297083ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (5.257ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (6.9695ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (7.142416ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.759083ms)
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (4.49275ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (2.474333ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (1.998917ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (1.609666ms)
+✔ InteractionIntent contains value data and no DOM target or native event (1.014083ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.68725ms)
+✔ TextSelectionController owns DOM selection and caret operations only (2.372375ms)
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.305959ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (1.309125ms)
+✔ IOSInputPolicy owns finger text-selection suppression (1.199625ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (1.27775ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.830792ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 34
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 246.11025
+
+✖ failing tests:
+
+test at tests/input-architecture-boundary.test.mjs:334:1
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.305959ms)
+  AssertionError [ERR_ASSERTION]: AnnotationController must not contain annotationStorage
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/input-architecture-boundary.test.mjs:355:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

@@ -1,0 +1,34 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.074833ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (0.972584ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (2.37875ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (1.4815ms)
+✔ bulk history callbacks stop when their originating session is no longer current (1.048709ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (1.232125ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (0.802083ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (0.662916ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (0.712708ms)
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (2.778416ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.738792ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (1.81725ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (0.688917ms)
+✔ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (8984.360667ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792131095468-26019.cleanup.json
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (10.749292ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (3.840875ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (5.174333ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.948166ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.376583ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9227.421417
