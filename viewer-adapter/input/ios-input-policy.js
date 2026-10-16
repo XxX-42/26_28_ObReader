@@ -10,6 +10,8 @@
       isViewerSurfaceTarget = () => false,
       isNativeContextTarget = () => false,
       isNativeActivationTarget = () => false,
+      isPenEditableTarget = () => false,
+      hasActivePenEditorGesture = () => false,
       directManipulationPage = (target) => target,
     } = {}) {
       this.documentRef = documentRef;
@@ -19,6 +21,8 @@
       this.isViewerSurfaceTarget = isViewerSurfaceTarget;
       this.isNativeContextTarget = isNativeContextTarget;
       this.isNativeActivationTarget = isNativeActivationTarget;
+      this.isPenEditableTarget = isPenEditableTarget;
+      this.hasActivePenEditorGesture = hasActivePenEditorGesture;
       this.directManipulationPage = directManipulationPage;
       this.fingerTextSelectionSuppressionOwned = false;
       this.lastTouchPanClickTarget = null;
@@ -63,6 +67,65 @@
       }
       event.preventDefault();
       return true;
+    }
+
+    touchEventContainsStylus(event) {
+      for (const touches of [event?.changedTouches, event?.touches]) {
+        const length = Number.isInteger(touches?.length) ? touches.length : 0;
+        for (let index = 0; index < length; index += 1) {
+          // WebKit TouchList implements indexed access/item(), but may not be
+          // iterable. Keep this safe for that IDL shape and small test doubles.
+          const touch = touches.item?.(index) || touches[index];
+          if (touch?.touchType === "stylus" || touch?.touchType === "pen") {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    handleTouchStart(event) {
+      const target = event?.target;
+      if (
+        !this.isElementTarget(target) ||
+        !this.isViewerSurfaceTarget(target) ||
+        this.isNativeContextTarget(target)
+      ) {
+        return false;
+      }
+      const activeEditorStylus = this.touchEventContainsStylus(event) && (
+        this.isAnnotationToolActive() || this.isPenEditableTarget(target)
+      );
+      if (!this.hasActivePenEditorGesture() && !activeEditorStylus) {
+        return false;
+      }
+      // Retain Pencil editing/palm arbitration while letting read-mode Pencil
+      // and ordinary finger gestures reach WebKit's native scroll handling.
+      event.preventDefault();
+      return true;
+    }
+
+    handleTouchMove(event) {
+      const target = event?.target;
+      if (
+        !this.isElementTarget(target) ||
+        !this.isViewerSurfaceTarget(target) ||
+        this.isNativeContextTarget(target) ||
+        !this.hasActivePenEditorGesture()
+      ) {
+        return false;
+      }
+      event.preventDefault();
+      return true;
+    }
+
+    refreshPenGestureTouchAction() {
+      const active = this.hasActivePenEditorGesture();
+      this.documentRef?.documentElement?.classList?.toggle(
+        "pdfReaderPenGestureActive",
+        active,
+      );
+      return active;
     }
 
     rememberPanClickTarget(pointerType, target) {

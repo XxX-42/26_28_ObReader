@@ -206,6 +206,41 @@ test("IOSInputPolicy owns finger text-selection suppression", async () => {
   assert.match(bridge, /state\.inputPolicy\?\.handlePanClick\?\.\(event/);
 });
 
+test("IOSDirectManipulationController owns touch and mode-NONE Pencil panning", async () => {
+  const direct = await source("ios-direct-manipulation-controller.js");
+  assert.match(direct, /class IOSDirectManipulationController/);
+  for (const ownedBehavior of [
+    "preparePointerDown(event)",
+    "routePointerDown(event)",
+    "startManualPointer(event, pointerType)",
+    "finishManualPointer(pointerId",
+    "onDocumentVisibilityChange()",
+    "blockedByOtherPointer",
+    "cancelledByOtherPointer",
+    "blockedByVisibility",
+  ]) {
+    assert.ok(direct.includes(ownedBehavior), `iOS controller must own ${ownedBehavior}`);
+  }
+  for (const forbidden of [
+    "document.getSelection",
+    "setBaseAndExtent",
+    "highlightSelection",
+    "annotationStorage",
+    "appendOperations",
+    "scheduleAutoSave",
+    "Vault",
+    "sidecar",
+  ]) {
+    assert.ok(!direct.includes(forbidden), `iOS controller must not contain ${forbidden}`);
+  }
+  const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  assert.doesNotMatch(bridge, /function startManualPointer\(/);
+  assert.doesNotMatch(bridge, /function finishManualPointer\(/);
+  assert.doesNotMatch(bridge, /function applyManualPan\(/);
+  assert.match(bridge, /state\.iosDirectManipulationController\?\.handlePointerMove\(event\)/);
+  assert.match(bridge, /state\.iosDirectManipulationController\?\.routePointerDown\(event\)/);
+});
+
 test("bridge delegates top-level listener installation to InputRouter", async () => {
   const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
   const install = /function installPointerTrackingListeners\(\)\s*\{([\s\S]*?)\n  \}/.exec(bridge)?.[1];

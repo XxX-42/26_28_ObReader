@@ -11,6 +11,7 @@ import {
   attachCleanupErrors,
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
+import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
@@ -52,7 +53,6 @@ function hostHtml() {
 function targetFor(pathname) {
   if (pathname === "/fixture.pdf") return path.join(root, "tests", "fixtures", "tracemonkey.pdf");
   if (pathname === "/bridge.css") return path.join(root, "viewer-adapter", "bridge.css");
-  if (pathname === "/bridge.js") return path.join(root, "viewer-adapter", "obsidian-bridge.js");
   if (!/^\/(viewer|build|cmaps|standard_fonts|wasm|images|locale)\//.test(pathname)) return null;
   const isBuild = pathname.startsWith("/build/");
   const base = isBuild ? vendorRoot : vendorWeb;
@@ -83,6 +83,11 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
     }
     if (url.pathname === "/viewer/viewer.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(assetHtml);
+      return;
+    }
+    if (url.pathname === "/bridge.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" })
+        .end(await readBridgeRuntimeSource());
       return;
     }
     const target = targetFor(url.pathname);
@@ -302,11 +307,18 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
     assert.deepEqual(telemetry.captures, [], "The bridge never captures finger pointers");
 
     assert.deepEqual(pageErrors, [], "Native ownership regression has no uncaught page errors");
-    const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
-    const readPenBranch = bridge.slice(bridge.indexOf("function onBridgePointerDown"), bridge.indexOf("function shouldCaptureTrackedPointer"));
-    assert.match(readPenBranch, /else if \(!nativeOperation\)[\s\S]*?Read-mode Pencil is a native WebKit contact/,
-      "Read-mode Pencil returns before any editor-layer pointer is tracked");
-    assert.doesNotMatch(readPenBranch, /startManualPointer\(event,\s*"(?:touch|pen)"\)/,
+    const directManipulation = await readFile(path.join(
+      root, "viewer-adapter", "input", "ios-direct-manipulation-controller.js",
+    ), "utf8");
+    const nativeRoute = directManipulation.slice(
+      directManipulation.indexOf("routePointerDown(event)"),
+      directManipulation.indexOf("    startNativeTouchPointer(event) {"),
+    );
+    assert.match(nativeRoute, /startNativeTouchPointer\(event\)/,
+      "Finger contact bookkeeping stays inside the iOS input module");
+    assert.match(nativeRoute, /Read-mode Pencil is owned by WebKit[\s\S]*?return true/,
+      "Read-mode Pencil is delegated to WebKit before the manual-pan helper");
+    assert.doesNotMatch(nativeRoute, /startManualPointer\(event,\s*"(?:touch|pen)"\)/,
       "Neither finger nor read-mode Pencil can enter the manual pan path");
 
     t.diagnostic(JSON.stringify({
