@@ -3,10 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-const source = await readFile(
-  new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url),
-  "utf8",
-);
 const viewportSource = await readFile(
   new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url),
   "utf8",
@@ -15,66 +11,10 @@ const interactionModeSource = await readFile(
   new URL("../viewer-adapter/input/interaction-mode.js", import.meta.url),
   "utf8",
 );
-const selectionPolicySection = source.slice(
-  source.indexOf("  function currentInteractionMode"),
-  source.indexOf("  function isPdfTextLayerTarget"),
+const directManipulationSource = await readFile(
+  new URL("../viewer-adapter/input/ios-direct-manipulation-controller.js", import.meta.url),
+  "utf8",
 );
-const pointerAccessSection = source.slice(
-  source.indexOf("  function activePointerCount()"),
-  source.indexOf("  function isInputBusy()"),
-);
-
-function functionSource(name) {
-  const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);
-  assert.ok(match, `missing function ${name}`);
-  const signatureEnd = source.indexOf(") {", match.index);
-  assert.notEqual(signatureEnd, -1, `missing body for ${name}`);
-  const open = signatureEnd + 2;
-  let depth = 0;
-  let quote = null;
-  let escaped = false;
-  for (let index = open; index < source.length; index += 1) {
-    const char = source[index];
-    if (quote) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "/") {
-      index = source.indexOf("\n", index);
-      if (index < 0) break;
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "*") {
-      const commentEnd = source.indexOf("*/", index + 2);
-      if (commentEnd < 0) break;
-      index = commentEnd + 1;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      continue;
-    }
-    if (char === "{") depth += 1;
-    if (char === "}" && --depth === 0) return source.slice(match.index, index + 1);
-  }
-  throw new Error(`unterminated function ${name}`);
-}
-
-const viewportBridgeFunctions = [
-  "cancelManualMomentum",
-  "onManualDocumentVisibilityChange",
-  "manualPointerEventTime",
-  "rememberManualScroll",
-  "touchReleaseVelocity",
-  "startManualMomentum",
-  "manualPointerSessionCurrent",
-  "applyManualPan",
-  "startManualPointer",
-  "finishManualPointer",
-  "releasePointerCapture",
-].map(functionSource).join("\n");
 
 function createInputRouter() {
   const active = new Map();
@@ -137,9 +77,6 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     activeOpenRequest: 1,
     inputRouter: createInputRouter(),
     editorMode: 0,
-    fingerTextSelectionSuppressionOwned: false,
-    lastPenPanClickPage: null,
-    lastTouchClickPage: null,
     pendingPenHighlight: null,
   };
   const classes = new Set();
@@ -170,42 +107,73 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     },
     cancelAnimationFrame(id) { frames.delete(id); },
     directManipulationPage(target) { return target; },
-    hasActivePenEditorGesture() { return false; },
     stopDirectManipulationEvent(event) {
       event.preventDefault?.();
       event.stopImmediatePropagation?.();
     },
     releasePointerCapture() {},
   };
-  vm.runInNewContext(interactionModeSource + viewportSource, context);
+  vm.runInNewContext(interactionModeSource + viewportSource + directManipulationSource, context);
+  let directController = null;
   state.viewportController = new runtimeWindow.PdfReaderInputRuntime.ViewportController({
     canPan(pointer) {
       return !pointer.blockedByPen &&
         !pointer.blockedByOtherPointer &&
         !pointer.blockedByVisibility &&
-        context.manualPointerSessionCurrent(pointer);
+        directController?.isManualPointerSessionCurrent(pointer) === true;
     },
     canStartMomentum(pointer) {
       return context.iosInputPolicy &&
-        context.manualPointerCount() === 0 &&
-        context.manualPointerSessionCurrent(pointer);
+        state.inputRouter.manualPointerCount === 0 &&
+        directController?.isManualPointerSessionCurrent(pointer) === true;
     },
     getVisibilityState: () => document.visibilityState,
     prefersReducedMotion: () => false,
     requestFrame: (callback) => context.requestAnimationFrame(callback),
     cancelFrame: (id) => context.cancelAnimationFrame(id),
   });
-  vm.runInNewContext(
-    pointerAccessSection + selectionPolicySection + viewportBridgeFunctions +
-      "\nglobalThis.api = { touchReleaseVelocity, rememberManualScroll, manualPointerEventTime, startManualMomentum, finishManualPointer, startManualPointer, applyManualPan, onManualDocumentVisibilityChange };",
-    context,
-  );
+  const inputPolicy = {
+    setFingerTextSelectionSuppressionOwned() {},
+    refreshFingerTextSelectionSuppression() {},
+    clearFingerTextSelectionSuppression() {},
+    rememberPanClickTarget() {},
+    clearPanClickTargets() {},
+  };
+  directController = new runtimeWindow.PdfReaderInputRuntime.IOSDirectManipulationController({
+    getInputRouter: () => state.inputRouter,
+    getViewportController: () => state.viewportController,
+    getInputPolicy: () => inputPolicy,
+    getViewerContainer: () => container,
+    getCurrentSession: () => ({
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+      pdfDocument: state.app.pdfDocument,
+      rendererGeneration: context.rendererGeneration,
+    }),
+    getEditorMode: () => state.editorMode,
+    isEraserActive: () => false,
+    isAnnotationToolActive: () => state.editorMode !== 0,
+    getNativeOperation: () => null,
+    isViewerSurfaceTarget: () => true,
+    isNativeContextTarget: () => false,
+    directManipulationPage: (target) => target,
+    invalidatePendingPenHighlight() {},
+  });
   return {
     state,
     container,
     document,
     frames,
-    api: context.api,
+    api: {
+      touchReleaseVelocity: (pointer, now) => state.viewportController.releaseVelocity(pointer, now),
+      rememberManualScroll: (pointer, time) => state.viewportController.rememberScroll(pointer, time),
+      manualPointerEventTime: (pointer, event, now) => directController.eventTime(pointer, event, now),
+      startManualMomentum: (pointer, now) => state.viewportController.startMomentum(pointer, now),
+      finishManualPointer: (...args) => directController.finishManualPointer(...args),
+      startManualPointer: (...args) => directController.startManualPointer(...args),
+      applyManualPan: (...args) => directController.applyPan(...args),
+      onManualDocumentVisibilityChange: () => directController.onDocumentVisibilityChange(),
+    },
     setTime(value) { currentTime = value; },
     frameAt(value) {
       currentTime = value;
