@@ -1,0 +1,16 @@
+{
+  "annotationRowsIncludingHistoricalCopies": {
+    "Ink": 298,
+    "Highlight": 486,
+    "ink": 253,
+    "highlight": 308,
+    "square": 22,
+    "Square": 14,
+    "InkHighlight": 139,
+    "Underline": 125
+  },
+  "unsupported": [],
+  "malformedFiles": [],
+  "deletedRecords": 0,
+  "reason": "No incompatible annotation kinds found. Screenshot UUID already has a typed Ink deletion in WAL; runtime placeholder was misclassified Unknown. Valid legacy metadata retained."
+}

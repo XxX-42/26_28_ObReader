@@ -1933,10 +1933,16 @@
             : Number.isSafeInteger(identity?.pageIndex)
               ? identity.pageIndex
               : null;
-      const kind = externalKindForEditor(
-        value,
-        editor,
-      ) || normalizeSyncKind(identity?.kind);
+      let kind = externalKindForEditor(value, editor);
+      if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) {
+        // PDF.js deletion placeholders may contain only {deleted: true}.
+        // Recover metadata exclusively through an already established identity.
+        const knownUuid = runtimeUuid || (referenceKey && state.annotationUuidByPdfRef.get(referenceKey));
+        const known = state.externalAnnotationRows?.get(knownUuid) ||
+          state.annotationSnapshot?.get(runtimeId);
+        kind = [identity?.kind, known?.kind]
+          .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
+      }
       let uuid = runtimeUuid || null;
       if (!uuid && referenceKey) {
         uuid = state.annotationUuidByPdfRef.get(referenceKey) || null;
@@ -3349,7 +3355,9 @@
         uuid: currentRow.uuid,
         ref: operationReference || null,
         pageIndex: currentRow.pageIndex ?? before?.pageIndex ?? null,
-        kind: currentRow.kind || before?.kind || "Unknown",
+        kind: EXTERNAL_ANNOTATION_KINDS.has(normalizeSyncKind(currentRow.kind))
+          ? normalizeSyncKind(currentRow.kind)
+          : before?.kind || "Unknown",
         deleted,
         action: deleted ? "delete" : "upsert",
         ...stamp,

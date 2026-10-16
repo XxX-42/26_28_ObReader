@@ -1,0 +1,26 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (2.83ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (1.005625ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (2.878625ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (1.061458ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (0.817125ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (0.487917ms)
+✔ controlled close publishes the shared session before creating its async guard (0.843ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (4.789959ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (22.672ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.208875ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.78075ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.187167ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.677417ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.335334ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.782792ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.330292ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.654583ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.192375ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 159.370292

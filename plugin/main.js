@@ -1120,7 +1120,7 @@ class PdfReaderView extends EditableFileView {
     const closingFile = this.documentFile || this.file;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
     if (!closeWasPrepared) {
-      const flush = await this.flushDocument();
+      const flush = await this.flushDocument(250);
       this.notifyFlushOutcome(flush);
     }
     this.releasePendingOpenAdmission();
@@ -1674,11 +1674,7 @@ class PdfReaderView extends EditableFileView {
     if (this.hasPreparedClose(documentId, openRequest)) return true;
     if (!this.ready) {
       if (this.pendingSaves > 0 || this.currentRevision > this.confirmedRevision) {
-        new Notice(
-          "PDF 标签保持打开：尚未确认最新批注操作已写入外置记录。",
-          8000,
-        );
-        return false;
+        this.notifyUnflushed();
       }
       this.preparedClose = {
         id: null,
@@ -1691,11 +1687,12 @@ class PdfReaderView extends EditableFileView {
       return true;
     }
     if (!this.iframe) {
-      new Notice(
-        "PDF 标签保持打开：阅读器连接已断开，无法确认最新更改已保存或恢复。",
-        8000,
-      );
-      return false;
+      this.notifyUnflushed();
+      this.preparedClose = {
+        id: null, documentId, openRequest, revision: this.currentRevision,
+        recovered: false, unconfirmed: true, iframe: null,
+      };
+      return true;
     }
 
     const inFlight = this.closePreparation;
@@ -1755,12 +1752,11 @@ class PdfReaderView extends EditableFileView {
         this.closePreparation === pending;
       if (!stillCurrent) {
         request.finish({ ok: false, dirty: true });
-        return false;
+        return true;
       }
-      // Quiescing can safely spend time stopping a background sync checkpoint
-      // or apply. Give the Viewer a fresh, complete acknowledgement window
-      // only after that work has settled and the captured session is rechecked.
-      request.deadline = Date.now() + 120000;
+      // Best effort only: a silent or failed renderer must never lock a tab.
+      // The short budget is not a save-success assertion.
+      request.deadline = Date.now() + 250;
       this.scheduleFlushTimeout(request, this.ownerWindow);
       const sent = this.postToViewer(
         {
@@ -1795,11 +1791,14 @@ class PdfReaderView extends EditableFileView {
       this.notifyFlushOutcome(result);
       if (!prepared) {
         this.sendCancelClose(request);
-        new Notice(
-          "PDF 标签保持打开：关闭前未能确认最新更改已保存或恢复。请解决保存问题后再关闭。",
-          8000,
-        );
-        return false;
+        // Closing is a user decision, not a persistence veto. Preserve the
+        // warning but never pretend an unconfirmed revision was saved.
+        if (identityMatches) this.preparedClose = {
+          id: request.id, documentId, openRequest,
+          revision: this.currentRevision, recovered: false,
+          unconfirmed: true, iframe: request.iframe, unloaded: false,
+        };
+        return true;
       }
       this.preparedClose = {
         id: request.id,
@@ -1811,6 +1810,16 @@ class PdfReaderView extends EditableFileView {
         unloaded: false,
       };
       return true;
+    }).catch(() => {
+      request.finish({ ok: false, dirty: true });
+      this.notifyUnflushed();
+      if (this.documentId === documentId && this.openRequest === openRequest) {
+        this.preparedClose = {
+          id: request.id, documentId, openRequest, revision: this.currentRevision,
+          recovered: false, unconfirmed: true, iframe: request.iframe,
+        };
+      }
+      return true;
     }).finally(() => {
       if (this.closePreparation === pending) this.closePreparation = null;
     });
@@ -1821,7 +1830,7 @@ class PdfReaderView extends EditableFileView {
     if (this.failureNoticeShown) return;
     this.failureNoticeShown = true;
     new Notice(
-      "PDF 尚有未确认的批注操作写入外置记录；请保持标签打开后重试保存。",
+      "PDF 已允许关闭，但最新更改尚未确认保存；可能丢失未保存的操作，请检查恢复记录。",
       8000,
     );
   }

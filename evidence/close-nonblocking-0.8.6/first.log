@@ -1,0 +1,20 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (3.827791ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.971ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (1.950333ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (0.745625ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (0.870417ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (0.58275ms)
+✔ controlled close publishes the shared session before creating its async guard (0.963041ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (11.084583ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (6.15625ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (4.996875ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.808541ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.985791ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 166.107583

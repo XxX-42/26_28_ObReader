@@ -318,13 +318,14 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     function normalizeSyncValue(value) { return JSON.parse(JSON.stringify(value)); }
     function normalizeSyncKind(value) { return value === 15 ? "Ink" : value; }
     function externalKindForEditor(value, liveEditor) { return liveEditor?.editorType || normalizeSyncKind(value?.annotationType); }
+    const EXTERNAL_ANNOTATION_KINDS = new Set(["Underline", "Square", "Highlight", "Ink", "InkHighlight", "FreeText"]);
     function makeSyncUuid() { return "unexpected-new-uuid"; }
     function makeSyncStamp() { return { timestamp: 101, logical: 1, actorId: "actor-1", deviceId: "device-1", operationId: "actor-1:101:1:1" }; }
     function externalOperation(operation) { return operation; }
     function findLiveSavedEditor() { return null; }
     function runtimeLogRecord(kind, fields) { logs.push({ kind, ...fields }); }
     ${helpers}
-    return { state, logs, captureOperationSnapshot, setLive(value) { live = value; } };
+    return { state, logs, captureOperationSnapshot, getAnnotationStorageRows, setLive(value) { live = value; } };
   })()`);
 
   scope.setLive({ annotationType: 15, pageIndex: 0, points: [0, 1, 2, 3], paths: { points: [[0, 1, 2, 3]] } });
@@ -336,6 +337,16 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
   assert.deepEqual(snapshot.missingDirtyIds, []);
   assert.equal(scope.logs.at(-1).liveEditorCount, 1);
   assert.equal(scope.logs.at(-1).operationCount, 1);
+  // PDF.js publishes deletion placeholders without a type. Exact UUID-bound
+  // previous metadata supplies the original kind instead of Unknown.
+  scope.state.app.pdfDocument.annotationStorage.serializable.map.set("editor-1", { deleted: true });
+  scope.setLive(null);
+  scope.state.app.pdfViewer._layerProperties.annotationEditorUIManager.getEditor = () => null;
+  const deleted = scope.getAnnotationStorageRows().get("editor-1");
+  assert.equal(deleted.kind, "Ink");
+  assert.equal(deleted.uuid, "annotation-1");
+  assert.equal(deleted.deleted, true);
+
 });
 
 test("empty undo/redo does not mark the PDF dirty, while an editor change still does", () => {
