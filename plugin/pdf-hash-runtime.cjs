@@ -81,7 +81,10 @@ async function createPdfHashRuntime({ forceSha256 = false } = {}) {
     return {
       update(value) { hasher.update(bytesView(value)); },
       digest() {
-        const digest = hasher.digest();
+        // The accumulator is also used by append-only sidecar self-event
+        // tracking. SHA-256's digest() finalizes its state, whereas xxhash's
+        // digest() is reusable; clone SHA-256 before reading its digest.
+        const digest = useXxh ? hasher.digest() : hasher.clone().digest();
         if (useXxh) return `${XXH64_PREFIX}${toHex64(digest)}`;
         const hex = toHex(digest);
         return expectedHash && LEGACY_SHA256.test(expectedHash) ? hex : `${SHA256_PREFIX}${hex}`;

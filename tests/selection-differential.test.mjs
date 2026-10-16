@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { teardownViewerPage } from "./browser-viewer-teardown.mjs";
 import { randomInt } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -405,6 +406,7 @@ test("selection differential U0/U1/U2 and same-document viewer teardown", {
       const u0BridgePresence = await u0.evaluate(() => ({ script: Boolean(document.querySelector('script[src*="obsidian-bridge.js"]')), css: Boolean(document.querySelector('style[data-pdf-reader="bridge"]')) }));
       trace.bridgePresence = { U0: u0BridgePresence };
       await persistEvidence("U0-complete");
+      trace.scenarios.push({ phase: "U0-teardown", resources: await teardownViewerPage(page) });
       await page.close();
       page = null;
 
@@ -417,6 +419,7 @@ test("selection differential U0/U1/U2 and same-document viewer teardown", {
       const u1BridgePresence = await u1.evaluate(() => ({ script: Boolean(document.querySelector('script[src*="obsidian-bridge.js"]')), css: Boolean(document.querySelector('style[data-pdf-reader="bridge"]')) }));
       trace.bridgePresence.U1 = u1BridgePresence;
       await persistEvidence("U1-complete");
+      trace.scenarios.push({ phase: "U1-teardown", resources: await teardownViewerPage(page) });
       await page.close();
       page = null;
 

@@ -3,12 +3,11 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef } from "pdf-lib";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import {
   attachCleanupErrors,
@@ -17,8 +16,6 @@ import {
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 
-const require = createRequire(import.meta.url);
-const { prepareLocal, inspect } = require("../plugin/pdf-merge-core.cjs");
 const browserPath = resolveBrowserPath();
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
@@ -42,121 +39,47 @@ const mimeTypes = new Map([
   [".wasm", "application/wasm"],
 ]);
 
-async function makeWriterOrderFixture() {
-  const doc = await PDFDocument.create();
-  const pages = [];
-  for (let index = 0; index < 12; index += 1) {
-    const page = doc.addPage([612, 792]);
-    page.drawText(`PDF.js annotation writer fixture page ${index + 1}`, {
-      x: 36,
-      y: 744,
-      size: 14,
-    });
-    pages.push(page);
-  }
-
-  // Page 10 deliberately starts with a supported annotation and its popup.
-  // The writer must preserve these refs while adding new annotations after
-  // them; this reproduces the real document shape involved in the iPad report.
-  const page = pages[9];
-  const annots = PDFArray.withContext(doc.context);
-  page.node.set(PDFName.of("Annots"), annots);
-  const square = PDFDict.withContext(doc.context);
-  square.set(PDFName.of("Type"), PDFName.of("Annot"));
-  square.set(PDFName.of("Subtype"), PDFName.of("Square"));
-  const rect = PDFArray.withContext(doc.context);
-  for (const value of [72, 160, 190, 250]) rect.push(PDFNumber.of(value));
-  square.set(PDFName.of("Rect"), rect);
-  square.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-square"));
-  square.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 annotation"));
-  square.set(PDFName.of("P"), page.ref);
-  const squareRef = doc.context.register(square);
-  annots.push(squareRef);
-
-  const popup = PDFDict.withContext(doc.context);
-  popup.set(PDFName.of("Type"), PDFName.of("Annot"));
-  popup.set(PDFName.of("Subtype"), PDFName.of("Popup"));
-  const popupRect = PDFArray.withContext(doc.context);
-  for (const value of [200, 160, 330, 280]) popupRect.push(PDFNumber.of(value));
-  popup.set(PDFName.of("Rect"), popupRect);
-  popup.set(PDFName.of("Parent"), squareRef);
-  popup.set(PDFName.of("P"), page.ref);
-  const popupRef = doc.context.register(popup);
-  square.set(PDFName.of("Popup"), popupRef);
-  annots.push(popupRef);
-
-  const addBaseInk = (nm, contents, { freehandHighlight = false } = {}) => {
-    const ink = PDFDict.withContext(doc.context);
-    ink.set(PDFName.of("Type"), PDFName.of("Annot"));
-    ink.set(PDFName.of("Subtype"), PDFName.of("Ink"));
-    const inkRect = PDFArray.withContext(doc.context);
-    for (const value of [220, 320, 360, 400]) inkRect.push(PDFNumber.of(value));
-    ink.set(PDFName.of("Rect"), inkRect);
-    ink.set(PDFName.of("NM"), PDFHexString.fromText(nm));
-    ink.set(PDFName.of("Contents"), PDFHexString.fromText(contents));
-    ink.set(PDFName.of("P"), page.ref);
-    if (freehandHighlight) ink.set(PDFName.of("IT"), PDFName.of("InkHighlight"));
-    const inkList = PDFArray.withContext(doc.context);
-    const path = PDFArray.withContext(doc.context);
-    for (const value of [220, 325, 255, 350, 295, 375, 350, 395]) path.push(PDFNumber.of(value));
-    inkList.push(path);
-    ink.set(PDFName.of("InkList"), inkList);
-    annots.push(doc.context.register(ink));
-  };
-  addBaseInk("page-ten-existing-ink", "Existing page 10 Ink");
-  addBaseInk("page-ten-existing-freehand-highlight", "Existing page 10 freehand Highlight", {
-    freehandHighlight: true,
-  });
-
-  const underline = PDFDict.withContext(doc.context);
-  underline.set(PDFName.of("Type"), PDFName.of("Annot"));
-  underline.set(PDFName.of("Subtype"), PDFName.of("Underline"));
-  const underlineRect = PDFArray.withContext(doc.context);
-  for (const value of [72, 420, 200, 444]) underlineRect.push(PDFNumber.of(value));
-  underline.set(PDFName.of("Rect"), underlineRect);
-  underline.set(PDFName.of("NM"), PDFHexString.fromText("page-ten-existing-underline"));
-  underline.set(PDFName.of("Contents"), PDFHexString.fromText("Existing page 10 Underline"));
-  underline.set(PDFName.of("P"), page.ref);
-  const quadPoints = PDFArray.withContext(doc.context);
-  for (const value of [72, 444, 200, 444, 72, 420, 200, 420]) quadPoints.push(PDFNumber.of(value));
-  underline.set(PDFName.of("QuadPoints"), quadPoints);
-  annots.push(doc.context.register(underline));
-
-  return doc.save({ useObjectStreams: false });
-}
-
 test(
-  "sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place",
+  "sync bridge persists UUID sidecar operations, hydrates remote state, and fails closed on PDF replacement",
   {
     skip: !browserPath && "Chrome or Edge is required for this browser regression",
     timeout: 120_000,
   },
   async (t) => {
     const channel = "pdf-web-reader";
-    const token = `sync-bridge-${Date.now()}-${process.pid}`;
+    const token = `sync-sidecar-${Date.now()}-${process.pid}`;
     const rendererGeneration = `sync-renderer-${Date.now()}`;
-    const documentId = "sync-bridge-fixture-document";
-    const actorId = "00000000-0000-4000-8000-000000000001";
+    const documentId = "sync-sidecar-fixture-document";
+    const documentPath = "tests/fixtures/tracemonkey.pdf";
     const runId = `${Date.now()}-${process.pid}`;
+    const fixtureBytes = await readFile(fixturePath);
+    const sourceHash = createHash("sha256").update(fixtureBytes).digest("hex");
     const bridgeSource = await readFile(bridgePath, "utf8");
-    const loadedBaseBytes = await makeWriterOrderFixture();
-    const baseInspection = await inspect({ bytes: loadedBaseBytes });
-    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "square").length, 1);
-    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "ink").length, 1);
-    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "highlight").length, 1);
-    assert.equal(baseInspection.identities.filter((identity) => identity.pageIndex === 9 && identity.kind === "underline").length, 1);
+    const instrumentedBridgeSource = bridgeSource.replace(
+      "  if (iosInputPolicy) {",
+      `  window.__syncBridgeState = state;
+  window.__syncPointerProbe = [];
+  for (const type of ["pointerdown", "pointermove", "pointerup", "mousedown", "mouseup", "click"]) {
+    document.addEventListener(type, (event) => window.__syncPointerProbe.push({
+      type, trusted: event.isTrusted, target: event.target?.className || event.target?.id || event.target?.tagName,
+      x: event.clientX, y: event.clientY, buttons: event.buttons, prevented: event.defaultPrevented,
+    }), true);
+  }
+  if (iosInputPolicy) {`,
+    );
+    assert.notEqual(instrumentedBridgeSource, bridgeSource,
+      "The browser harness should expose bridge internals only for this regression");
+
     const viewerHtml = await readFile(viewerHtmlPath, "utf8");
     const viewerWithBridge = viewerHtml.replace(
       /<head\b[^>]*>/i,
-      (head) =>
-        `${head}<script src="/viewer/obsidian-bridge.js" data-channel="${channel}" data-token="${token}" data-renderer-generation="${rendererGeneration}"></script>`,
+      (head) => `${head}<script src="/viewer/obsidian-bridge.js" data-channel="${channel}" data-token="${token}" data-renderer-generation="${rendererGeneration}"></script>`,
     );
     let browser;
     let page;
     let server;
     let primaryError = null;
     let cleanupReport = null;
-    const prepareFailures = [];
 
     server = createServer(async (request, response) => {
       for (const [name, value] of Object.entries(withTestNetworkFirewall())) {
@@ -169,91 +92,65 @@ test(
           <meta charset="utf-8">
           <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
           <iframe title="PDF Reader" src="/viewer/web/viewer.html"></iframe>
+          ${browserSidecarHarnessScript({
+            channel,
+            token,
+            sourceHash: `sha256:${sourceHash}`,
+            sourcePath: documentPath,
+          })}
           <script>
             const channel=${JSON.stringify(channel)};
             const token=${JSON.stringify(token)};
             const rendererGeneration=${JSON.stringify(rendererGeneration)};
             const documentId=${JSON.stringify(documentId)};
-            const actorId=${JSON.stringify(actorId)};
+            const documentPath=${JSON.stringify(documentPath)};
             const iframe=document.querySelector('iframe');
-            const state=window.__syncHost={loadedBaseBytes:null,ready:false,opened:[],startupTimings:[],saves:[],recoveries:[],flushes:[],checkpoints:[],prepared:[],rejected:[],applied:[],cancelled:[],errors:[],preparedLocal:null,prepareCount:0,rejectNextSave:false,rejectNextRecovery:false,syncState:{version:1,actorId,identities:[],ledger:{version:1,entries:[]}}};
-            const bytesToBase64=value=>{const bytes=new Uint8Array(value);let binary='';for(let offset=0;offset<bytes.length;offset+=0x8000)binary+=String.fromCharCode(...bytes.subarray(offset,offset+0x8000));return btoa(binary)};
-            const base64ToArrayBuffer=value=>{const binary=atob(value);const bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);return bytes.buffer};
-            const sendOpen=async()=>{
-            const response=await fetch('/tests/fixtures/tracemonkey.pdf');
-              const data=await response.arrayBuffer();
-              state.loadedBaseBytes=bytesToBase64(data);
-              iframe.contentWindow.postMessage({channel,type:'open',token,rendererGeneration,documentId,documentPath:'tests/fixtures/tracemonkey.pdf',filename:'tracemonkey.pdf',autoSave:false,openRequest:1,syncState:state.syncState,data},'*',[data]);
+            const host=window.__syncSidecarHost={opened:[],saves:[],recoveries:[],checkpoints:[],applyReplies:[],errors:[],sourceSha256:${JSON.stringify(sourceHash)},sourceBytes:null,nextOpenRequest:0,autoAck:false};
+            const sendOpen=openRequest=>{
+              if(!(host.sourceBytes instanceof ArrayBuffer))throw new Error('Fixture PDF bytes are unavailable');
+              const data=host.sourceBytes.slice(0);
+              iframe.contentWindow.postMessage({channel,type:'open',token,rendererGeneration,documentId,documentPath,filename:'tracemonkey.pdf',autoSave:false,openRequest,data},'*',[data]);
+            };
+            host.reopen=()=>{host.nextOpenRequest+=1;sendOpen(host.nextOpenRequest);return host.nextOpenRequest;};
+            host.ackSave=(index,overrides={})=>{
+              const save=host.saves[index];
+              if(!save)throw new Error('No captured sidecar save at index '+index);
+              iframe.contentWindow.postMessage({channel,type:'saved',token,rendererGeneration:save.rendererGeneration,documentId:save.documentId,openRequest:save.openRequest,requestId:save.requestId,revision:save.revision,external:true,operationCount:save.operations.length,batchId:save.operations.length?'sidecar-batch-'+save.requestId:null,...overrides},'*');
             };
             window.addEventListener('message',event=>{
               if(event.source!==iframe.contentWindow)return;
               const message=event.data;
               if(!message||message.channel!==channel||message.token!==token)return;
               if(message.type==='ready'){
-                state.ready=true;
-                void sendOpen().catch(error=>state.errors.push(String(error?.message||error)));
+                fetch('/tests/fixtures/tracemonkey.pdf').then(response=>response.arrayBuffer()).then(data=>{
+                  host.sourceBytes=data;
+                  host.nextOpenRequest=1;
+                  sendOpen(host.nextOpenRequest);
+                }).catch(error=>host.errors.push(String(error?.message||error)));
               }else if(message.type==='opened'){
-                state.opened.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,rendererGeneration:message.rendererGeneration,startupTimings:message.startupTimings,syncState:message.syncState});
-              }else if(message.type==='startup-timings'){
-                state.startupTimings.push({documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,timings:message.timings});
-              }else if(message.type==='save'){
-                const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,operations:message.operations,newAnnotations:message.newAnnotations,dirtyState:message.dirtyState,actorId:message.actorId,byteLength:message.data?.byteLength||0};
-                state.saves.push(save);
-                if(state.rejectNextSave){
-                  state.rejectNextSave=false;
-                  const failed={channel,type:'error',token,documentId:message.documentId,requestId:message.requestId,revision:message.revision,message:'legacy save error'};
-                  iframe.contentWindow.postMessage({...failed,rendererGeneration:'stale-generation',message:'stale-generation save error'},'*');
-                  setTimeout(()=>iframe.contentWindow.postMessage(failed,'*'),50);
-                  return;
+                host.opened.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,rendererGeneration:message.rendererGeneration});
+              }else if(message.type==='save'||message.type==='recover'){
+                const operations=Array.isArray(message.operations)?message.operations:[];
+                const record={type:message.type,documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,operations:structuredClone(operations),dirtyState:message.dirtyState||null,actorId:message.actorId||null,sourceBytes:message.data?.byteLength||0};
+                (message.type==='save'?host.saves:host.recoveries).push(record);
+                if(message.type==='recover'){
+                  host.errors.push('Unexpected recovery request during an ordinary sidecar save test');
+                }else if(host.autoAck){
+                  setTimeout(()=>host.ackSave(host.saves.length-1),0);
                 }
-                void fetch('/prepare-local',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseBytes:state.loadedBaseBytes,checkpointBytes:state.preparedLocal?.bytesBase64||null,draftBytes:bytesToBase64(message.data),operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId})})
-                  .then(async response=>{const body=await response.json();if(!response.ok)throw new Error('prepareLocal returned HTTP '+response.status+' ('+(body.code||'unknown-code')+'): '+(body.error||'unknown merge error'));return body})
-                  .then(prepared=>{
-                    state.preparedLocal=prepared;
-                    state.prepareCount++;
-                    state.syncState={version:1,actorId:message.actorId||actorId,identities:prepared.identities,ledger:prepared.ledger};
-                    const saved={channel,type:'saved',token,rendererGeneration:message.rendererGeneration,documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,syncState:state.syncState};
-                    if(state.saves.length===1){
-                      iframe.contentWindow.postMessage({...saved,rendererGeneration:'stale-generation',syncState:{...state.syncState,actorId:'stale-generation-actor'}},'*');
-                      setTimeout(()=>iframe.contentWindow.postMessage(saved,'*'),50);
-                    }else{
-                      iframe.contentWindow.postMessage(saved,'*');
-                    }
-                  })
-                  .catch(error=>state.errors.push(String(error?.message||error)));
-              }else if(message.type==='recover'){
-                state.recoveries.push({documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,operations:message.operations,newAnnotations:message.newAnnotations,actorId:message.actorId,byteLength:message.data?.byteLength||0});
-                if(state.rejectNextRecovery){
-                  state.rejectNextRecovery=false;
-                  const failed={channel,type:'recovery-error',token,documentId:message.documentId,requestId:message.requestId,revision:message.revision,message:'legacy recovery error'};
-                  iframe.contentWindow.postMessage({...failed,rendererGeneration:'stale-generation',message:'stale-generation recovery error'},'*');
-                  setTimeout(()=>iframe.contentWindow.postMessage(failed,'*'),50);
-                  return;
-                }
-                const recovered={channel,type:'recovered',token,rendererGeneration:message.rendererGeneration,documentId:message.documentId,requestId:message.requestId,revision:message.revision,openRequest:message.openRequest};
-                iframe.contentWindow.postMessage({...recovered,rendererGeneration:'stale-generation',revision:message.revision+1},'*');
-                setTimeout(()=>{delete recovered.rendererGeneration;iframe.contentWindow.postMessage(recovered,'*');},50);
-              }else if(message.type==='flushed'){
-                state.flushes.push({id:message.id,documentId:message.documentId,revision:message.revision,ok:message.ok,dirty:message.dirty,recovered:message.recovered===true});
               }else if(message.type==='sync-checkpoint-ready'){
-                state.checkpoints.push({id:message.id,documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,ok:message.ok,byteLength:message.data?.byteLength||0,operations:message.operations,newAnnotations:message.newAnnotations,dirtyState:message.dirtyState,actorId:message.actorId,viewState:message.viewState,data:message.data});
+                host.checkpoints.push({id:message.id,documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,confirmedRevision:message.confirmedRevision,dirty:message.dirty,ok:message.ok,operations:structuredClone(message.operations||[]),dirtyState:message.dirtyState||null,byteLength:message.data?.byteLength||0});
               }else if(message.type==='sync-checkpoint-rejected'){
-                state.rejected.push(message);
+                host.errors.push('Checkpoint rejected: '+String(message.reason||'unknown'));
               }else if(message.type==='sync-apply-prepared'||message.type==='sync-apply-rejected'){
-                state.prepared.push(message);
-              }else if(message.type==='sync-applied'){
-                if(message.ok)state.loadedBaseBytes=state.preparedLocal.bytesBase64;
-                state.applied.push(message);
-              }else if(message.type==='sync-apply-cancelled'){
-                state.cancelled.push(message);
+                host.applyReplies.push({type:message.type,id:message.id,ok:message.ok,reason:message.reason,documentId:message.documentId,openRequest:message.openRequest});
               }else if(message.type==='error'){
-                state.errors.push(message.message||message.code||'bridge-error');
+                host.errors.push(message.message||message.code||'Viewer error');
               }
             });
           </script>`);
         return;
       }
-
       let target;
       if (url.pathname === "/viewer/web/viewer.html") {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -262,90 +159,14 @@ test(
       }
       if (url.pathname === "/viewer/obsidian-bridge.js") {
         response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-        response.end(bridgeSource);
+        response.end(instrumentedBridgeSource);
         return;
       }
       if (url.pathname === "/tests/fixtures/tracemonkey.pdf") {
-        response.writeHead(200, {
-          "content-type": "application/pdf",
-          "content-length": loadedBaseBytes.length,
-          "x-content-type-options": "nosniff",
-        });
-        response.end(loadedBaseBytes);
-        return;
-      } else if (url.pathname === "/prepare-local" && request.method === "POST") {
-        let input = null;
-        let draftPdfBytes = null;
-        let checkpointPdfBytes = null;
-        try {
-          const chunks = [];
-          for await (const chunk of request) chunks.push(chunk);
-          input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          draftPdfBytes = Buffer.from(input.draftBytes, "base64");
-          checkpointPdfBytes = input.checkpointBytes
-            ? Buffer.from(input.checkpointBytes, "base64")
-            : null;
-          const prepared = await prepareLocal({
-            baseBytes: input.baseBytes ? Buffer.from(input.baseBytes, 'base64') : loadedBaseBytes,
-            draftBytes: draftPdfBytes,
-            checkpointBytes: checkpointPdfBytes || undefined,
-            operations: input.operations,
-            newAnnotations: input.newAnnotations,
-            actorId: input.actorId,
-          });
-          response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-          response.end(JSON.stringify({
-            bytesBase64: Buffer.from(prepared.bytes).toString("base64"),
-            stateDigest: prepared.stateDigest,
-            ledger: prepared.ledger,
-            identities: prepared.identities,
-          }));
-        } catch (error) {
-          const diagnostic = {
-            attempt: prepareFailures.length + 1,
-            code: error?.code || null,
-            error: String(error?.message || error),
-            actorId: input?.actorId || null,
-            operations: input?.operations || null,
-            newAnnotations: input?.newAnnotations || null,
-            draftBytes: draftPdfBytes ? {
-              byteLength: draftPdfBytes.length,
-              sha256: createHash("sha256").update(draftPdfBytes).digest("hex"),
-            } : null,
-            checkpointBytes: checkpointPdfBytes ? {
-              byteLength: checkpointPdfBytes.length,
-              sha256: createHash("sha256").update(checkpointPdfBytes).digest("hex"),
-            } : null,
-          };
-          const diagnosticPrefix = path.join(artifactsPath, `sync-bridge-prepare-failure-${runId}-${diagnostic.attempt}`);
-          try {
-            await mkdir(artifactsPath, { recursive: true });
-            if (draftPdfBytes) {
-              diagnostic.draftBytes.path = `${diagnosticPrefix}-draft.pdf`;
-              await writeFile(diagnostic.draftBytes.path, draftPdfBytes);
-            }
-            if (checkpointPdfBytes) {
-              diagnostic.checkpointBytes.path = `${diagnosticPrefix}-checkpoint.pdf`;
-              await writeFile(diagnostic.checkpointBytes.path, checkpointPdfBytes);
-            }
-          } catch (writeError) {
-            diagnostic.evidenceWriteError = String(writeError?.message || writeError);
-          }
-          prepareFailures.push(diagnostic);
-          response.writeHead(422, { "content-type": "application/json; charset=utf-8" });
-          response.end(JSON.stringify({ error: diagnostic.error, code: diagnostic.code }));
-        }
-        return;
-      } else if (url.pathname.startsWith("/build/")) {
-        const relative = decodeURIComponent(url.pathname.slice(1));
-        target = path.resolve(root, "vendor", "pdfjs-generic-legacy", relative);
-        const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
-        if (!target.startsWith(`${vendorRoot}${path.sep}`)) {
-          response.writeHead(403).end("forbidden");
-          return;
-        }
-      } else if (url.pathname.startsWith("/viewer/")) {
-        const relative = decodeURIComponent(url.pathname.slice("/viewer/".length));
+        target = fixturePath;
+      } else if (url.pathname.startsWith("/build/") || url.pathname.startsWith("/viewer/")) {
+        const prefix = url.pathname.startsWith("/build/") ? "/" : "/viewer/";
+        const relative = decodeURIComponent(url.pathname.slice(prefix.length));
         target = path.resolve(root, "vendor", "pdfjs-generic-legacy", relative);
         const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
         if (!target.startsWith(`${vendorRoot}${path.sep}`)) {
@@ -391,63 +212,39 @@ test(
       });
       const viewer = page.frames().find((frame) => frame.url().includes("/viewer/web/viewer.html"));
       assert.ok(viewer, "The PDF.js viewer iframe should load");
-      await page.waitForFunction(() => window.__syncHost?.opened.length === 1, {
-        timeout: 30_000,
-      });
+      await page.waitForFunction(() => window.__syncSidecarHost?.opened.some(
+        (entry) => entry.openRequest === 1,
+      ), { timeout: 30_000 });
       await viewer.waitForFunction(() => {
         const app = window.PDFViewerApplication;
+        const bridge = window.__syncBridgeState;
         const pageView = app?.pdfViewer?.getPageView(0);
-        const host = window.parent.__syncHost;
-        const opened = host?.opened?.[0];
-        const reported = Object.assign(
-          {},
-          opened?.startupTimings || {},
-          ...((host?.startupTimings || [])
-            .filter((entry) => entry.documentId === opened?.documentId &&
-              entry.openRequest === opened?.openRequest &&
-              entry.rendererGeneration === opened?.rendererGeneration)
-            .map((entry) => entry.timings || {})),
-        );
-        const toolButtons = [
-          "editorUnderlineButton",
-          "editorSquareButton",
-          "editorHighlightButton",
-          "editorInkButton",
-          "editorFreeTextButton",
+        const buttons = [
+          "editorUnderlineButton", "editorSquareButton", "editorHighlightButton",
+          "editorInkButton", "editorFreeTextButton",
         ].map((id) => document.getElementById(id));
-        return Boolean(
-          app?.pdfDocument &&
-          app?.pdfViewer?.pdfDocument === app.pdfDocument &&
-          pageView?.pdfPage &&
+        return Boolean(app?.pdfDocument && pageView?.pdfPage &&
           pageView?.annotationEditorLayer?.div?.isConnected &&
-          app.pdfViewer?._layerProperties?.annotationEditorUIManager &&
-          toolButtons.every((button) => button && !button.disabled) &&
-          Number.isFinite(reported.firstPageAnnotationLayerMs) &&
-          ["annotationLayer", "annotationEditorLayer"].includes(
-            reported.firstPageAnnotationLayerKind,
-          ) &&
-          Number.isFinite(reported.toolsUsableMs),
-        );
+          bridge?.externalSourceConfirmed && buttons.every((button) => button && !button.disabled));
       }, { timeout: 30_000 });
 
       await viewer.evaluate(async () => {
         PDFViewerApplication.pdfViewer.currentScaleValue = "page-fit";
         await new Promise(requestAnimationFrame);
-      });
-      await viewer.evaluate(() => {
         PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
-          mode: 5,
-          isFromKeyboard: true,
-          createNewEditor: false,
+          mode: 5, isFromKeyboard: true, createNewEditor: false,
         });
       });
-      const pageRect = await viewer.$eval(
-        '.page[data-page-number="1"]',
-        (element) => {
-          const rect = element.getBoundingClientRect();
-          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-        },
-      );
+      await viewer.waitForFunction(() =>
+        PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+      { timeout: 15_000 });
+      await viewer.waitForFunction(() =>
+        document.querySelector('.page[data-page-number="1"] .annotationEditorLayer.squareEditing'),
+      { timeout: 15_000 });
+      const pageRect = await viewer.$eval('.page[data-page-number="1"]', (element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      });
       const iframeRect = await page.$eval("iframe", (element) => {
         const rect = element.getBoundingClientRect();
         return { x: rect.x, y: rect.y };
@@ -460,6 +257,24 @@ test(
         x: start.x + Math.min(75, pageRect.width * 0.12),
         y: start.y + Math.min(52, pageRect.height * 0.12),
       };
+      await viewer.evaluate((geometry) => {
+        window.__syncDrawGeometry = geometry;
+      }, { pageRect, iframeRect, start, end });
+      const startHit = await viewer.evaluate(({ x, y, frameX, frameY }) => {
+        const layer = document.querySelector(
+          '.page[data-page-number="1"] .annotationEditorLayer.squareEditing',
+        );
+        const hit = document.elementFromPoint(x - frameX, y - frameY);
+        return {
+          layerReady: Boolean(layer),
+          targetIsLayer: Boolean(layer && (hit === layer || layer.contains(hit))),
+          hit: hit?.className || hit?.id || hit?.tagName || null,
+        };
+      }, { x: start.x, y: start.y, frameX: iframeRect.x, frameY: iframeRect.y });
+      assert.equal(startHit.layerReady, true,
+        "Square mode must be applied to the page layer before pointerdown");
+      assert.equal(startHit.targetIsLayer, true,
+        `The trusted Square gesture must begin on its editing layer, got ${startHit.hit}`);
       const priorSquares = await viewer.evaluate(() => {
         const map = PDFViewerApplication.pdfDocument.annotationStorage.serializable?.map;
         return map instanceof Map
@@ -476,1239 +291,467 @@ test(
           [...map.values()].filter((value) => value?.annotationType === 5).length > before;
       }, { timeout: 15_000 }, priorSquares);
 
-      const requestCheckpoint = async (id, { includeBytes = false, openRequest = 1 } = {}) => {
+      const requestCheckpoint = async (id, openRequest = 1) => {
         await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id: requestId, openRequest: currentOpenRequest }) => {
           document.querySelector("iframe").contentWindow.postMessage({
-            channel: messageChannel,
-            type: "sync-checkpoint",
-            token: sessionToken,
-            rendererGeneration: generation,
-            id: requestId,
-            documentId: currentDocumentId,
+            channel: messageChannel, type: "sync-checkpoint", token: sessionToken,
+            rendererGeneration: generation, id: requestId, documentId: currentDocumentId,
             openRequest: currentOpenRequest,
           }, "*");
         }, { channel, token, rendererGeneration, documentId, id, openRequest });
-        await page.waitForFunction((requestId) =>
-          window.__syncHost?.checkpoints.some((entry) => entry.id === requestId) ||
-          window.__syncHost?.rejected.some((entry) => entry.id === requestId),
-        { timeout: 30_000 }, id);
-        const result = await page.evaluate((requestId, captureBytes) => {
-          const host = window.__syncHost;
-          const checkpoint = host.checkpoints.find((entry) => entry.id === requestId);
-          let checkpointDataBase64 = null;
-          if (captureBytes && checkpoint?.data) {
-            const bytes = new Uint8Array(checkpoint.data);
-            let binary = "";
-            for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-              binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-            }
-            checkpointDataBase64 = btoa(binary);
-          }
-          const checkpointMetadata = checkpoint
-            ? Object.fromEntries(Object.entries(checkpoint).filter(([key]) => key !== "data"))
-            : null;
-          return {
-            checkpoint: checkpointMetadata,
-            checkpointDataBase64,
-            rejected: host.rejected.find((entry) => entry.id === requestId) || null,
-            saves: host.saves.length,
-          };
-        }, id, includeBytes);
-        assert.equal(result.rejected, null, `Checkpoint ${id} should succeed`);
-        assert.ok(result.checkpoint?.byteLength > 0, "A checkpoint should return a PDF ArrayBuffer");
-        return result;
-      };
-      const saveAndWaitForPreparation = async (saveCount) => {
-        await viewer.evaluate(async () => PDFViewerApplication.save());
-        await page.waitForFunction((expected) =>
-          window.__syncHost?.saves.length >= expected,
-        { timeout: 30_000 }, saveCount);
-        await page.waitForFunction((expected) =>
-          window.__syncHost?.prepareCount >= expected ||
-          window.__syncHost?.errors.length,
-        { timeout: 30_000 }, saveCount);
-        assert.deepEqual(await page.evaluate(() => window.__syncHost.errors), []);
-        const host = await page.evaluate(() => window.__syncHost);
-        assert.ok(host.preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
-        const savedMessage = host.saves[saveCount - 1];
-        const acknowledged = await requestCheckpoint(`checkpoint-save-ack-${saveCount}-${savedMessage.openRequest}`,
-          { openRequest: savedMessage.openRequest });
-        assert.ok(acknowledged.checkpoint.confirmedRevision >= savedMessage.revision,
-          "Continue history operations only after the exact host save ACK reached the Viewer");
-        assert.equal(acknowledged.checkpoint.dirty, false,
-          "A confirmed save should settle before the next undo/redo command");
-        return host;
-      };
-      const drawWithTool = async (mode, pageNumber, offset) => {
-        const before = await viewer.evaluate(() =>
-          PDFViewerApplication.pdfDocument.annotationStorage.size,
-        );
-        await viewer.evaluate(({ editorMode, targetPage }) => {
-          const app = PDFViewerApplication;
-          document.querySelector(`.page[data-page-number="${targetPage}"]`)
-            .scrollIntoView({ block: "start" });
-          app.eventBus.dispatch("switchannotationeditormode", {
-            mode: editorMode,
-            isFromKeyboard: true,
-            createNewEditor: false,
-          });
-        }, { editorMode: mode, targetPage: pageNumber });
-        await viewer.waitForFunction((targetPage) => {
-          const pageElement = document.querySelector(`.page[data-page-number="${targetPage}"]`);
-          const pageView = PDFViewerApplication.pdfViewer.getPageView(targetPage - 1);
-          const rect = pageElement?.getBoundingClientRect();
-          return Boolean(
-            pageView?.annotationEditorLayer?.div?.isConnected &&
-            rect?.width > 0 && rect?.height > 0 &&
-            rect.bottom > 0 && rect.top < window.innerHeight &&
-            PDFViewerApplication.pdfViewer.currentPageNumber === targetPage,
-          );
-        }, { timeout: 15_000 }, pageNumber);
-        const pageRect = await viewer.$eval(
-          `.page[data-page-number="${pageNumber}"]`,
-          (element) => {
-            const rect = element.getBoundingClientRect();
-            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-          },
-        );
-        const iframeRect = await page.$eval("iframe", (element) => {
-          const rect = element.getBoundingClientRect();
-          return { x: rect.x, y: rect.y };
-        });
-        const start = {
-          x: iframeRect.x + pageRect.x + pageRect.width * (0.28 + (offset % 3) * 0.12),
-          y: iframeRect.y + pageRect.y + pageRect.height * (0.36 + (offset % 2) * 0.14),
-        };
-        const end = {
-          x: start.x + Math.min(64, pageRect.width * 0.1),
-          y: start.y + Math.min(46, pageRect.height * 0.06),
-        };
-        await page.mouse.move(start.x, start.y, { steps: 2 });
-        await page.mouse.down({ button: "left" });
-        await page.mouse.move(end.x, end.y, { steps: 6 });
-        await page.mouse.up({ button: "left" });
-        if (mode === 15) {
-          await viewer.evaluate(() => {
-            PDFViewerApplication.pdfViewer._layerProperties
-              .annotationEditorUIManager.currentLayer?.commitOrRemove?.();
-          });
-        }
-        try {
-          await viewer.waitForFunction((priorSize) =>
-            PDFViewerApplication.pdfDocument.annotationStorage.size > priorSize,
-          { timeout: 15_000 }, before);
-        } catch (error) {
-          const state = await viewer.evaluate((targetPage) => {
-            const app = PDFViewerApplication;
-            const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-            const pageView = app.pdfViewer.getPageView(targetPage - 1);
-            const rect = document.querySelector(`.page[data-page-number="${targetPage}"]`).getBoundingClientRect();
-            return {
-              annotationStorageSize: app.pdfDocument.annotationStorage.size,
-              annotationEditorMode: app.pdfViewer.annotationEditorMode,
-              managerMode: manager?.mode,
-              pageRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-              currentPageNumber: app.pdfViewer.currentPageNumber,
-              editorIds: manager?.getEditors?.(targetPage - 1)?.map((editor) => editor.id) || [],
-              layerConnected: pageView?.annotationEditorLayer?.div?.isConnected || false,
-            };
-          }, pageNumber);
-          throw new Error(`PDF.js did not store mode ${mode} editor on page ${pageNumber}; before=${before}; state=${JSON.stringify(state)}; cause=${error.message}`);
-        }
+        await page.waitForFunction((requestId) => window.__syncSidecarHost?.checkpoints.some(
+          (entry) => entry.id === requestId,
+        ), { timeout: 15_000 }, id);
+        const checkpoint = await page.evaluate((requestId) =>
+          window.__syncSidecarHost.checkpoints.find((entry) => entry.id === requestId), id);
+        assert.equal(checkpoint.ok, true, `Checkpoint ${id} should be accepted`);
+        assert.equal(checkpoint.byteLength, 0,
+          "A sidecar checkpoint must not serialize or transfer the source PDF");
+        return checkpoint;
       };
 
-      const first = await requestCheckpoint("checkpoint-first");
-      assert.equal(first.saves, 0, "A sync checkpoint must not persist a Vault save");
-      assert.equal(first.checkpoint.ok, true);
-      assert.ok(first.checkpoint.dirty, "Checkpoint should describe the pending local edit");
-      assert.ok(first.checkpoint.operations.length > 0, "An annotation edit should produce an operation");
-      const firstOperation = first.checkpoint.operations.at(-1);
-      assert.equal(firstOperation.action, "upsert");
-      assert.equal(firstOperation.kind, "Square");
-      assert.equal(typeof firstOperation.uuid, "string");
-      assert.ok(Number.isSafeInteger(firstOperation.timestamp) && firstOperation.timestamp >= 0);
-      assert.ok(Number.isSafeInteger(firstOperation.logical));
-      assert.ok(first.checkpoint.newAnnotations.length > 0);
-      const runtimeId = first.checkpoint.newAnnotations[0].runtimeId;
-      const uuid = first.checkpoint.newAnnotations[0].uuid;
-
-      await viewer.evaluate((editorRuntimeId) => {
-        const app = PDFViewerApplication;
-        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = manager?.getEditor(editorRuntimeId);
-        if (!editor) throw new Error("The new Square editor should remain addressable by runtime id.");
-        manager.setSelected(editor);
-        app.eventBus.dispatch("switchannotationeditorparams", {
-          source: window,
-          type: 62,
-          value: 4,
-        });
-      }, runtimeId);
-      const styled = await requestCheckpoint("checkpoint-square-style");
-      const styledOperation = styled.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
+      const first = await requestCheckpoint("sidecar-checkpoint-created");
+      assert.equal(first.dirty, true, "The unsaved annotation checkpoint must remain dirty");
+      assert.ok(first.operations.length > 0, "A real editor gesture must produce a WAL operation");
+      const rawFirst = first.operations.find((operation) =>
+        operation.kind === "Square" && operation.deleted !== true,
       );
-      assert.equal(styledOperation?.action, "upsert");
-      assert.equal(styledOperation?.serialized?.thickness, 4,
-        "A Square style edit should update its UUID operation from AnnotationStorage");
+      assert.ok(rawFirst, "The checkpoint should contain the newly created Square operation");
+      assert.equal(rawFirst.pageIndex, 0);
+      assert.equal(rawFirst.payload.editor.annotationType, 5);
+      assert.equal(rawFirst.payload.editor.pageIndex, 0);
+      assert.equal(rawFirst.deleted, false);
+      assert.equal(rawFirst.embeddedRef, null,
+        "A sidecar annotation does not need a PDF object reference");
+      assert.ok(Array.isArray(rawFirst.payload.editor.rect) &&
+        rawFirst.payload.editor.rect.length === 4 &&
+        rawFirst.payload.editor.rect.every(Number.isFinite) &&
+        rawFirst.payload.editor.rect[2] > rawFirst.payload.editor.rect[0] &&
+        rawFirst.payload.editor.rect[3] > rawFirst.payload.editor.rect[1],
+      "The durable Square payload must preserve its positive-area source-space geometry");
+      assert.ok(rawFirst.clock && Number.isSafeInteger(rawFirst.clock.timestamp) &&
+        Number.isSafeInteger(rawFirst.clock.logical) &&
+        typeof rawFirst.clock.deviceId === "string" && rawFirst.clock.deviceId.length > 0 &&
+        typeof rawFirst.clock.opId === "string" && rawFirst.clock.opId.length > 0,
+      "The sidecar operation must carry its complete deterministic clock");
+      const uuid = rawFirst.uuid;
+      assert.equal(typeof uuid, "string");
+      assert.ok(uuid.length > 0);
 
-      const firstSaveHost = await saveAndWaitForPreparation(1);
-      const saved = firstSaveHost.saves[0];
+      await viewer.evaluate(() => { void PDFViewerApplication.save(); });
+      await page.waitForFunction(() => window.__syncSidecarHost?.saves.length === 1, {
+        timeout: 15_000,
+      });
+      const saved = await page.evaluate(() => window.__syncSidecarHost.saves[0]);
+      assert.equal(saved.documentId, documentId);
+      assert.equal(saved.openRequest, 1);
       assert.equal(saved.rendererGeneration, rendererGeneration);
       assert.ok(saved.requestId.includes(rendererGeneration),
-        "A save request ID must be scoped to its renderer generation");
-      assert.ok(saved.byteLength > 0);
-      assert.deepEqual(saved.dirtyState.dirtyPageIndices, [0],
-        "a newly drawn annotation should mark only its PDF page dirty");
-      assert.ok(saved.dirtyState.dirtyAnnotationIds.includes(uuid));
-      assert.ok(saved.dirtyState.newAnnotationIds.includes(uuid));
-      const preparedLocal = firstSaveHost.preparedLocal;
-      assert.ok(preparedLocal?.bytesBase64, "The real merge core should return prepared PDF bytes");
-      assert.ok(preparedLocal.stateDigest);
-      assert.ok(preparedLocal.identities.some((identity) =>
-        identity.uuid === uuid && identity.runtimeId === runtimeId && /^\d+R(?:\d+)?$/.test(identity.ref),
-      ), "The real merge core should bind the runtime editor to its output PDF ref");
+        "The durable save request must be scoped to this renderer generation");
+      assert.equal(saved.sourceBytes, 0,
+        "Ordinary sidecar saves must never transfer or serialize the PDF source");
       assert.ok(saved.operations.some((operation) => operation.uuid === uuid));
-      assert.equal(saved.operations.find((operation) => operation.uuid === uuid)
-        ?.serialized?.thickness, 4);
-      assert.ok(saved.newAnnotations.some((annotation) =>
-        annotation.runtimeId === runtimeId && annotation.uuid === uuid,
-      ), "A saved id-null editor must remain represented until merged reload");
+      const durableOperation = await page.evaluate((currentDocumentId, annotationUuid) =>
+        window.__browserSidecarHost.operationsFor(currentDocumentId)
+          .find((operation) => operation.uuid === annotationUuid),
+      documentId, uuid);
+      assert.ok(durableOperation, "The host must persist the operation before acknowledging it");
+      assert.equal(durableOperation.kind, "Square");
+      assert.deepEqual(durableOperation.payload, rawFirst.payload);
+      assert.equal(durableOperation.clock.opId, rawFirst.clock.opId);
 
-      const second = await requestCheckpoint("checkpoint-after-save", { includeBytes: true });
-      assert.equal(second.checkpoint.actorId, actorId,
-        "The stale-generation save ACK must not replace the active sync actor");
-      assert.equal(second.checkpoint.dirty, false,
-        "A current-generation saved ACK should leave a clean checkpoint");
-      assert.ok(second.checkpointDataBase64, "The clean checkpoint should return its serialized PDF bytes");
-      const retainedOperation = second.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
-      );
-      assert.ok(retainedOperation, "The UUID operation must survive a successful save acknowledgment");
-      assert.equal(retainedOperation.ref, null, "An id-null editor remains a new annotation against the loaded base");
-      const retainedAssignments = second.checkpoint.newAnnotations.filter((annotation) =>
-        annotation.runtimeId === runtimeId && annotation.uuid === uuid,
-      );
-      assert.equal(retainedAssignments.length, 1,
-        "The saved id-null editor should retain exactly one UUID assignment in the clean checkpoint");
-      const cleanCheckpointBytes = Buffer.from(second.checkpointDataBase64, "base64");
-      const cleanCheckpointInfo = await inspect({ bytes: cleanCheckpointBytes });
-      assert.equal(cleanCheckpointInfo.identities.filter((identity) =>
-        identity.pageIndex === 0 && identity.kind === "square" && !identity.deleted,
-      ).length, 1, "The clean checkpoint PDF should still contain exactly one Square");
-      const refreshedPrepared = await prepareLocal({
-        baseBytes: loadedBaseBytes,
-        draftBytes: cleanCheckpointBytes,
-        checkpointBytes: Buffer.from(firstSaveHost.preparedLocal.bytesBase64, "base64"),
-        operations: second.checkpoint.operations,
-        newAnnotations: second.checkpoint.newAnnotations,
-        actorId: second.checkpoint.actorId,
-      });
-      const refreshedIdentity = refreshedPrepared.identities.find((identity) => identity.uuid === uuid);
-      assert.equal(refreshedIdentity?.runtimeId, runtimeId,
-        "The clean checkpoint should rebind the same live editor UUID to its saved PDF ref");
-
-      // Exercise the frozen PDF.js writer's per-page editor order with mixed
-      // Ink and freehand Highlight editors on page 2 and page 10. Page 10 also
-      // has a pre-existing Square plus Popup, so the new refs follow unrelated
-      // existing refs and the popup entries the writer adds for comments.
-      await drawWithTool(15, 2, 0);
-      await drawWithTool(9, 10, 1);
-      await drawWithTool(9, 2, 2);
-      await drawWithTool(15, 10, 3);
-      await drawWithTool(15, 10, 4);
-      await drawWithTool(15, 2, 5);
-      const mixedSaveHost = await saveAndWaitForPreparation(2);
-      const mixedSave = mixedSaveHost.saves[1];
-      const mixedAssignments = mixedSave.newAnnotations;
-      assert.ok(mixedAssignments.length >= 7,
-        "The repeated save should include the retained Square and the mixed multi-page editor set");
-      const mixedAssignmentsByPage = new Map();
-      for (const assignment of mixedAssignments) {
-        const pageAssignments = mixedAssignmentsByPage.get(assignment.pageIndex) || [];
-        pageAssignments.push(assignment);
-        mixedAssignmentsByPage.set(assignment.pageIndex, pageAssignments);
-      }
-      for (const [pageIndex, assignments] of mixedAssignmentsByPage) {
-        assert.deepEqual(
-          assignments.map((assignment) => assignment.order).sort((left, right) => left - right),
-          Array.from({ length: assignments.length }, (_, index) => index),
-          `Page ${pageIndex + 1} writer assignments should be contiguous and deterministic`,
-        );
-      }
-      const mixedPreparedBytes = Buffer.from(mixedSaveHost.preparedLocal.bytesBase64, "base64");
-      const mixedPreparedInfo = await inspect({ bytes: mixedPreparedBytes });
-      const mixedPreparedDoc = await PDFDocument.load(mixedPreparedBytes, { updateMetadata: false });
-      const runtimeIdentities = new Map(
-        mixedSaveHost.preparedLocal.identities.map((identity) => [identity.uuid, identity]),
-      );
-      const positionsByPage = new Map();
-      for (const assignment of mixedAssignments) {
-        const identity = mixedPreparedInfo.identities.find((entry) => entry.uuid === assignment.uuid);
-        const runtimeIdentity = runtimeIdentities.get(assignment.uuid);
-        assert.equal(runtimeIdentity?.runtimeId, assignment.runtimeId,
-          `Writer order should bind ${assignment.runtimeId} to its own UUID`);
-        assert.equal(identity?.pageIndex, assignment.pageIndex,
-          `Writer order should preserve ${assignment.runtimeId} page`);
-        assert.equal(identity?.kind, assignment.kind.toLowerCase(),
-          `Writer subtype mapping should preserve ${assignment.runtimeId} kind`);
-        assert.equal(runtimeIdentity?.ref, identity?.ref,
-          `The runtime assignment and persisted UUID must resolve to one exact PDF ref for ${assignment.runtimeId}`);
-        const refMatch = /^(\d+)R(\d*)$/.exec(identity.ref);
-        assert.ok(refMatch, `Expected a PDF.js ref for ${assignment.runtimeId}`);
-        const ref = PDFRef.of(Number(refMatch[1]), Number(refMatch[2] || 0));
-        const page = mixedPreparedDoc.getPages()[assignment.pageIndex];
-        const annots = page.node.lookup(PDFName.of("Annots"), PDFArray);
-        const annotationIndex = Array.from({ length: annots.size() }, (_, index) => index)
-          .find((index) => annots.get(index) instanceof PDFRef && annots.get(index).toString() === ref.toString());
-        assert.notEqual(annotationIndex, undefined,
-          `The exact ref for ${assignment.runtimeId} must occur in its page /Annots array`);
-        const positions = positionsByPage.get(assignment.pageIndex) || [];
-        positions.push({ order: assignment.order, index: annotationIndex });
-        positionsByPage.set(assignment.pageIndex, positions);
-
-        const dict = mixedPreparedDoc.context.lookup(ref, PDFDict);
-        const subtype = dict.lookup(PDFName.of("Subtype"), PDFName).decodeText();
-        const intentObject = dict.get(PDFName.of("IT"));
-        const intent = intentObject instanceof PDFName
-          ? intentObject.decodeText()
-          : null;
-        const operation = mixedSave.operations.find((entry) => entry.uuid === assignment.uuid);
-        if (assignment.kind === "Highlight" && !operation?.serialized?.quadPoints) {
-          assert.equal(subtype, "Ink");
-          assert.equal(intent, "InkHighlight",
-            "A freehand HighlightEditor is physically Ink/InkHighlight in PDF.js output");
-        } else if (assignment.kind === "Ink") {
-          assert.equal(subtype, "Ink");
-          assert.notEqual(intent, "InkHighlight");
-        } else {
-          assert.equal(subtype.toLowerCase(), assignment.kind.toLowerCase());
-        }
-      }
-      for (const [pageIndex, positions] of positionsByPage) {
-        const ordered = positions.sort((left, right) => left.order - right.order);
-        assert.deepEqual(ordered.map(({ index }) => index),
-          [...ordered].map(({ index }) => index).sort((left, right) => left - right),
-          `Physical /Annots refs should follow the writer order on page ${pageIndex + 1}`);
-      }
-      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Ink"));
-      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 1 && assignment.kind === "Highlight"));
-      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Ink"));
-      assert.ok(mixedAssignments.some((assignment) => assignment.pageIndex === 9 && assignment.kind === "Highlight"));
-
-      const checkpointIdentity = preparedLocal.identities.find((identity) =>
-        identity.uuid === uuid,
-      );
-      assert.ok(checkpointIdentity?.ref, "The checkpoint should retain the saved UUID-to-ref mapping");
-      await viewer.evaluate((editorRuntimeId) => {
-        const manager = PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager;
-        const editor = manager?.getEditor(editorRuntimeId);
-        if (!editor) throw new Error("The saved Square editor should remain in the session.");
-        manager.deleteEditor(editor);
-      }, runtimeId);
-      const deletedBeforeSave = await requestCheckpoint("checkpoint-delete-before-save");
-      const deleteOperation = deletedBeforeSave.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
-      );
-      assert.equal(deleteOperation?.action, "delete");
-      assert.equal(deleteOperation?.ref, checkpointIdentity.ref,
-        "A saved id:null editor deletion must use its checkpoint ref");
-      assert.equal(deletedBeforeSave.checkpoint.newAnnotations.some(
-        (annotation) => annotation.uuid === uuid,
-      ), false, "A deleted editor must leave the new-annotation assignment list");
-
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.undo();
-      });
-      const undoneBeforeSave = await requestCheckpoint("checkpoint-undo-before-save");
-      const undoOperation = undoneBeforeSave.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
-      );
-      assert.equal(undoOperation?.action, "upsert");
-      assert.equal(undoOperation?.ref, null,
-        "Undo restoring a current id:null editor must bind it from fresh draft bytes");
-      assert.deepEqual(undoneBeforeSave.checkpoint.dirtyState.dirtyPageIndices, [0]);
-      assert.ok(undoneBeforeSave.checkpoint.dirtyState.dirtyAnnotationIds.includes(uuid));
-      assert.ok(undoneBeforeSave.checkpoint.newAnnotations.some(
-        (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
-      ));
-
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.redo();
-      });
-      const redoneBeforeSave = await requestCheckpoint("checkpoint-redo-before-save");
-      const redoOperation = redoneBeforeSave.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
-      );
-      assert.equal(redoOperation?.action, "delete");
-      assert.equal(redoOperation?.ref, checkpointIdentity.ref);
-      assert.deepEqual(redoneBeforeSave.checkpoint.dirtyState.dirtyPageIndices, [0]);
-      assert.ok(redoneBeforeSave.checkpoint.dirtyState.deletedAnnotationIds.includes(uuid));
-      assert.equal(redoneBeforeSave.checkpoint.newAnnotations.some(
-        (annotation) => annotation.uuid === uuid,
-      ), false);
-
-      const secondSaveHost = await saveAndWaitForPreparation(3);
-      const savedTombstone = secondSaveHost.preparedLocal.ledger.entries.find(
-        (entry) => entry.uuid === uuid,
-      );
-      assert.equal(savedTombstone?.deleted, true,
-        "The actual merge core should persist the saved new-editor tombstone");
-
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.undo();
-      });
-      const revivedCheckpoint = await requestCheckpoint("checkpoint-undo-after-save");
-      const revivedOperation = revivedCheckpoint.checkpoint.operations.find(
-        (operation) => operation.uuid === uuid,
-      );
-      assert.equal(revivedOperation?.action, "upsert");
-      assert.equal(revivedOperation?.ref, null);
-      assert.deepEqual(revivedCheckpoint.checkpoint.dirtyState.dirtyPageIndices, [0]);
-      assert.ok(revivedCheckpoint.checkpoint.dirtyState.dirtyAnnotationIds.includes(uuid));
-      assert.ok(revivedCheckpoint.checkpoint.dirtyState.newAnnotationIds.includes(uuid));
-      assert.ok(revivedCheckpoint.checkpoint.newAnnotations.some(
-        (annotation) => annotation.runtimeId === runtimeId && annotation.uuid === uuid,
-      ));
-      const thirdSaveHost = await saveAndWaitForPreparation(4);
-      assert.ok(thirdSaveHost.preparedLocal.identities.some((identity) =>
-        typeof identity.runtimeId === "string" && identity.runtimeId.length > 0,
-      ), "The checkpoint host should exercise writer-local runtime IDs during sync apply");
-      const revivedIdentity = thirdSaveHost.preparedLocal.identities.find(
-        (identity) => identity.uuid === uuid,
-      );
-      assert.ok(revivedIdentity?.ref && !revivedIdentity.deleted,
-        "The actual merge core should revive the UUID after undoing its saved tombstone");
-
-      const staleId = "sync-prepare-stale";
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-prepare",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 1,
-          expectedRevision,
+      await page.evaluate(({ channel: messageChannel, token: sessionToken }) => {
+        const frame = document.querySelector("iframe").contentWindow;
+        const save = window.__syncSidecarHost.saves[0];
+        frame.postMessage({
+          channel: messageChannel, type: "saved", token: sessionToken,
+          documentId: save.documentId, openRequest: save.openRequest,
+          rendererGeneration: "stale-renderer-generation", requestId: save.requestId,
+          revision: save.revision, external: true,
+          operationCount: save.operations.length, batchId: "stale-batch",
         }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: staleId, expectedRevision: revivedCheckpoint.checkpoint.revision + 1 });
-      await page.waitForFunction((id) => window.__syncHost?.prepared.some((entry) => entry.id === id), {
-        timeout: 10_000,
-      }, staleId);
-      const stale = await page.evaluate((id) => window.__syncHost.prepared.find((entry) => entry.id === id), staleId);
-      assert.equal(stale.type, "sync-apply-rejected");
-      assert.equal(stale.ok, false);
-
-      await viewer.evaluate(() => {
-        window.__syncApplySentinel = "same-renderer";
-        window.__syncBeforeDocument = PDFViewerApplication.pdfDocument;
-      });
-      const prepareId = "sync-prepare-valid";
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-prepare",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 1,
-          expectedRevision,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: prepareId, expectedRevision: revivedCheckpoint.checkpoint.revision });
-      await page.waitForFunction((id) => window.__syncHost?.prepared.some((entry) => entry.id === id && entry.type === "sync-apply-prepared"), {
-        timeout: 30_000,
-      }, prepareId);
-      const prepared = await page.evaluate((id) => window.__syncHost.prepared.find((entry) => entry.id === id), prepareId);
-      assert.equal(prepared.ok, true);
-      assert.equal(prepared.prepared, true);
-
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision, checkpointId }) => {
-        const host = window.__syncHost;
-        const checkpoint = host.checkpoints.find((entry) => entry.id === checkpointId);
-        const data = base64ToArrayBuffer(host.preparedLocal.bytesBase64);
-        const syncState = host.syncState;
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          previousOpenRequest: 1,
-          newOpenRequest: 2,
-          expectedRevision,
-          data,
-          syncState,
-          viewState: checkpoint.viewState,
-        }, "*", [data]);
-      }, { channel, token, rendererGeneration, documentId, id: prepareId, expectedRevision: revivedCheckpoint.checkpoint.revision, checkpointId: "checkpoint-undo-after-save" });
-      await page.waitForFunction(() => window.__syncHost?.applied.length === 1, {
-        timeout: 30_000,
-      });
-      const applied = await page.evaluate(() => window.__syncHost.applied[0]);
-      assert.equal(applied.ok, true);
-      assert.equal(applied.previousOpenRequest, 1);
-      assert.equal(applied.newOpenRequest, 2);
-      assert.equal(await viewer.evaluate(() => window.__syncApplySentinel), "same-renderer");
-      assert.notEqual(
-        await viewer.evaluate(() => PDFViewerApplication.pdfDocument === window.__syncBeforeDocument),
-        true,
-        "Apply should reopen PDF.js in the current iframe without replacing its renderer",
-      );
-      assert.equal(await page.evaluate(() => window.__syncHost.opened.length), 1,
-        "An in-place sync apply should not announce a second host open");
-      assert.equal(applied.revision, 0, "An applied snapshot starts a fresh renderer revision");
-      assert.equal(
-        await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentPageNumber),
-        applied.viewState.pageNumber,
-      );
-      const expectedRect = revivedOperation.serialized?.rect;
-      assert.ok(Array.isArray(expectedRect) && expectedRect.length === 4,
-        "The revived Square operation should retain its serialized geometry");
-      await viewer.evaluate(async () => {
-        document.querySelector('.page[data-page-number="1"]')
-          .scrollIntoView({ block: "start" });
-        await new Promise(requestAnimationFrame);
+      }, { channel, token });
+      await viewer.evaluate(() => new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const dirtyAfterStaleAck = await viewer.evaluate(() => window.__syncBridgeState.dirty);
+      assert.equal(dirtyAfterStaleAck, true,
+        "A stale renderer-generation ACK must not clear the local dirty revision");
+      await page.evaluate(() => {
+        window.__syncSidecarHost.autoAck = true;
+        window.__syncSidecarHost.ackSave(0);
       });
       await viewer.waitForFunction(() => {
-        const rect = document
-          .querySelector('.page[data-page-number="1"]')
-          ?.getBoundingClientRect();
-        return Boolean(rect?.bottom > 0 && rect?.top < window.innerHeight);
-      }, { timeout: 10_000 });
-      await viewer.waitForFunction(async ({ annotationRef, rect }) => {
-        const app = PDFViewerApplication;
-        const pdfPage = await app.pdfDocument.getPage(1);
-        const annotations = await pdfPage.getAnnotations({ intent: "display" });
-        const square = annotations.find((annotation) =>
-          annotation.annotationType === 5 && annotation.id === annotationRef,
-        );
-        if (!square || !Array.isArray(square.rect) || square.rect.length !== 4) {
-          return false;
-        }
-        const geometryMatches = square.rect.every((value, index) =>
-          Number.isFinite(value) && Math.abs(value - rect[index]) <= 1,
-        );
-        const pageView = app.pdfViewer.getPageView(0);
-        const element = [...(pageView?.div?.querySelectorAll?.(".squareAnnotation") || [])]
-          .find((candidate) => candidate.dataset.annotationId === annotationRef);
-        const annotationBounds = element?.getBoundingClientRect();
-        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(0)].find((candidate) =>
-          candidate.annotationElementId === annotationRef,
-        );
-        const editorBounds = editor?.div?.getBoundingClientRect();
-        const editorStyle = editor?.div ? getComputedStyle(editor.div) : null;
-        const editorOverlayVisible = Boolean(
-          editor?.div?.isConnected &&
-          editorBounds?.width > 0 &&
-          editorBounds?.height > 0 &&
-          editorStyle?.display !== "none" &&
-          editorStyle?.visibility !== "hidden",
-        );
-        const annotationElementVisible = Boolean(
-          element?.isConnected &&
-          annotationBounds?.width > 0 &&
-          annotationBounds?.height > 0,
-        );
-        return Boolean(
-          geometryMatches &&
-          square.borderStyle?.width === 4 &&
-          editor?.mode === 5 &&
-          editor?.editorType === "square" &&
-          editorOverlayVisible
-        );
-      }, { timeout: 30_000 }, { annotationRef: revivedIdentity.ref, rect: expectedRect });
-      const persistedSquare = await viewer.evaluate(async ({ annotationRef }) => {
-        const app = PDFViewerApplication;
-        const pdfPage = await app.pdfDocument.getPage(1);
-        const annotations = await pdfPage.getAnnotations({ intent: "display" });
-        const annotation = annotations.find((entry) =>
-          entry.annotationType === 5 && entry.id === annotationRef,
-        );
-        const pageView = app.pdfViewer.getPageView(0);
-        const rectSnapshot = (node) => {
-          if (!node) return null;
-          const rect = node.getBoundingClientRect();
-          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-        };
-        const annotationElement = [...(pageView?.div?.querySelectorAll?.(".squareAnnotation") || [])]
-          .find((candidate) => candidate.dataset.annotationId === annotationRef);
-        const annotationElementBounds = annotationElement?.getBoundingClientRect();
-        const annotationElementStyle = annotationElement
-          ? getComputedStyle(annotationElement)
-          : null;
-        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(0)].find((candidate) =>
-          candidate.annotationElementId === annotationRef,
-        );
-        const editorBounds = editor?.div?.getBoundingClientRect();
-        const editorStyle = editor?.div ? getComputedStyle(editor.div) : null;
-        const editorOverlayVisible = Boolean(
-          editor?.div?.isConnected &&
-          editorBounds?.width > 0 &&
-          editorBounds?.height > 0 &&
-          editorStyle?.display !== "none" &&
-          editorStyle?.visibility !== "hidden",
-        );
-        const annotationElementVisible = Boolean(
-          annotationElement?.isConnected &&
-          annotationElementBounds?.width > 0 &&
-          annotationElementBounds?.height > 0,
-        );
-        const annotationLayer = pageView?.annotationLayer?.div;
-        return {
-          id: annotation?.id,
-          annotationType: annotation?.annotationType,
-          rect: annotation?.rect,
-          borderWidth: annotation?.borderStyle?.width,
-          layerConnected: Boolean(annotationLayer?.isConnected),
-          pageViewBounds: rectSnapshot(pageView?.div),
-          viewerContainerBounds: rectSnapshot(document.getElementById("viewerContainer")),
-          annotationLayerBounds: rectSnapshot(annotationLayer),
-          pdfViewport: pageView?.viewport && {
-            width: pageView.viewport.width,
-            height: pageView.viewport.height,
-            scale: pageView.viewport.scale,
-          },
-          editor: editor && {
-            annotationElementId: editor.annotationElementId,
-            editorType: editor.editorType,
-            mode: editor.mode,
-            pageIndex: editor.pageIndex,
-            pdfRect: editor.getPDFRect?.(),
-            connected: Boolean(editor.div?.isConnected),
-            className: editor.div?.className,
-            bounds: rectSnapshot(editor.div),
-            display: editorStyle?.display,
-            visibility: editorStyle?.visibility,
-          },
-          annotationElement: annotationElement && {
-            visible: annotationElementVisible,
-            connected: annotationElement.isConnected,
-            hidden: annotationElement.hidden,
-            className: annotationElement.className,
-            bounds: rectSnapshot(annotationElement),
-            display: annotationElementStyle?.display,
-            visibility: annotationElementStyle?.visibility,
-          },
-          visibleSquareNodes: [...(pageView?.div?.querySelectorAll?.(".squareAnnotation") || [])]
-            .map((candidate) => ({
-              id: candidate.dataset.annotationId,
-              connected: candidate.isConnected,
-              bounds: rectSnapshot(candidate),
-            })),
-          annotationElementVisible,
-          editorOverlayVisible,
-          rendered: editorOverlayVisible || annotationElementVisible,
-        };
-      }, { annotationRef: revivedIdentity.ref });
-      assert.equal(persistedSquare.id, revivedIdentity.ref,
-        "The reopened PDF should contain the Square with its core-assigned ref");
-      assert.equal(persistedSquare.annotationType, 5);
-      assert.equal(persistedSquare.borderWidth, 4,
-        "The reopened PDF annotation should preserve the saved Square thickness");
-      assert.equal(persistedSquare.editor?.annotationElementId, revivedIdentity.ref,
-        "The current Square editor model should bind to the saved PDF annotation ref");
-      assert.equal(persistedSquare.editor?.editorType, "square");
-      assert.ok(persistedSquare.editor?.pdfRect?.every((value, index) =>
-        Number.isFinite(value) && Math.abs(value - expectedRect[index]) <= 3,
-      ), "The editable model should retain the saved Square geometry within PDF.js's 3pt outline import margin");
-      assert.ok(persistedSquare.editorOverlayVisible,
-        `The reopened Square should be represented by a visible, connected editor overlay: ${JSON.stringify(persistedSquare)}`);
-      assert.ok(persistedSquare.rect.every((value, index) =>
-        Number.isFinite(value) && Math.abs(value - expectedRect[index]) <= 1,
-      ), "The reopened PDF should preserve the Square's saved geometry");
+        const state = window.__syncBridgeState;
+        return state && !state.dirty && state.confirmedRevision >= state.revision;
+      }, { timeout: 15_000 });
+      const clean = await requestCheckpoint("sidecar-checkpoint-after-ack");
+      assert.equal(clean.dirty, false,
+        "Only the exact durable ACK should settle the committed revision");
+      assert.deepEqual(clean.operations, [],
+        "A clean checkpoint carries no new operation delta after the exact durable ACK");
+      const acknowledgedSnapshotRow = await page.evaluate((currentDocumentId, annotationUuid) =>
+        window.__browserSidecarHost.snapshotFor(currentDocumentId)?.annotations
+          .find((operation) => operation.uuid === annotationUuid), documentId, uuid);
+      assert.ok(acknowledgedSnapshotRow,
+        "The durable host snapshot, rather than the clean delta, retains the acknowledged operation");
+      assert.equal(acknowledgedSnapshotRow.payload.editor.annotationType, 5);
+      assert.deepEqual(acknowledgedSnapshotRow.payload.editor.rect, rawFirst.payload.editor.rect);
 
-      await viewer.evaluate((annotationRef) => {
+      const beforeSelfEcho = await viewer.evaluate((annotationUuid) => {
+        const bridge = window.__syncBridgeState;
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        const editors = [...manager.getEditors(0)].filter((editor) =>
+          editor.deleted !== true &&
+          bridge.annotationUuidByRuntimeId.get(String(editor.id)) === annotationUuid,
+        );
+        return editors.map((editor) => String(editor.id));
+      }, uuid);
+      assert.equal(beforeSelfEcho.length, 1,
+        "The committed local UUID must map to exactly one live PDF.js editor");
+      assert.ok(await page.evaluate(({ currentDocumentId, openRequest }) =>
+        window.__browserSidecarHost.broadcastSnapshot(currentDocumentId, openRequest),
+      { currentDocumentId: documentId, openRequest: 1 }),
+      "The host should replay the durable sidecar snapshot to the originating Reader");
+      await viewer.waitForFunction((annotationUuid) =>
+        window.__syncBridgeState.externalAnnotationHydration.has(annotationUuid),
+      { timeout: 10_000 }, uuid);
+      const afterSelfEcho = await viewer.evaluate((annotationUuid) => {
+        const bridge = window.__syncBridgeState;
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        const editors = [...manager.getEditors(0)].filter((editor) =>
+          editor.deleted !== true &&
+          bridge.annotationUuidByRuntimeId.get(String(editor.id)) === annotationUuid,
+        );
+        return {
+          ids: editors.map((editor) => String(editor.id)),
+          boundRuntimeId: bridge.externalAnnotationHydration.get(annotationUuid)?.runtimeId || null,
+          dirty: bridge.dirty,
+        };
+      }, uuid);
+      assert.deepEqual(afterSelfEcho.ids, beforeSelfEcho,
+        "A self-originated sidecar snapshot must not create or replace the live editor");
+      assert.equal(afterSelfEcho.boundRuntimeId, beforeSelfEcho[0]);
+      assert.equal(afterSelfEcho.dirty, false,
+        "Hydrating the writer's own snapshot must not create a new local edit");
+
+      const editorRuntimeId = beforeSelfEcho[0];
+      await viewer.evaluate((runtimeId) => {
         const app = PDFViewerApplication;
         const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(0)].find((candidate) =>
-          candidate.annotationElementId === annotationRef,
-        );
-        if (!editor) throw new Error("The applied Square editor should remain addressable by PDF ref.");
+        const editor = manager.getEditor(runtimeId);
+        if (!editor) throw new Error("The committed Square editor must remain addressable");
         manager.setSelected(editor);
         app.eventBus.dispatch("switchannotationeditorparams", {
-          source: window,
-          type: 62,
-          value: 5,
+          source: window, type: 62, value: 4,
         });
-      }, revivedIdentity.ref);
-      await viewer.waitForFunction((annotationRef) => {
+      }, editorRuntimeId);
+      await viewer.waitForFunction((runtimeId) =>
+        PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager
+          .getEditor(runtimeId)?.serialize?.()?.thickness === 4,
+      { timeout: 10_000 }, editorRuntimeId);
+      const styleCheckpoint = await requestCheckpoint("sidecar-checkpoint-square-style");
+      const styled = styleCheckpoint.operations.find((operation) => operation.uuid === uuid);
+      assert.ok(styled, "A style edit must retain the stable annotation UUID");
+      assert.equal(styled.deleted, false);
+      assert.equal(styled.kind, "Square");
+      assert.equal(styled.payload.editor.thickness, 4,
+        "A committed Square style edit must be captured from the live PDF.js editor");
+      const styledRect = styled.payload.editor.rect;
+      assert.deepEqual(styledRect.map((value, index) =>
+        Number((value - rawFirst.payload.editor.rect[index]).toFixed(3)),
+      ), [-1.5, -1.5, 1.5, 1.5],
+      "Increasing a Square border from 1pt to 4pt must preserve its visual path by expanding each edge 1.5pt");
+
+      await viewer.evaluate((runtimeId) => {
         const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(0)].find((candidate) =>
-          candidate.annotationElementId === annotationRef,
-        );
-        return editor?.serialize()?.thickness === 5;
-      }, { timeout: 15_000 }, revivedIdentity.ref);
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-checkpoint",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id: "checkpoint-post-apply-edit",
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId });
-      await page.waitForFunction(() => window.__syncHost?.checkpoints.some(
-        (entry) => entry.id === "checkpoint-post-apply-edit",
-      ), { timeout: 15_000 });
-      const postApplyCheckpoint = await page.evaluate(() => window.__syncHost.checkpoints.find(
-        (entry) => entry.id === "checkpoint-post-apply-edit",
-      ));
-      assert.equal(postApplyCheckpoint.ok, true);
-      assert.equal(postApplyCheckpoint.dirty, true,
-        "Editing the applied Square should produce a dirty current revision");
-      assert.ok(postApplyCheckpoint.operations.some((operation) =>
-        operation.uuid === uuid && operation.action === "upsert" &&
-        operation.serialized?.thickness === 5,
-      ), "The edited Square should remain associated with its UUID operation");
-
-      // Preserve exact identities after a saved ACK as well as immediately after apply.
-      const nextSaveCount = await page.evaluate(() => window.__syncHost.saves.length + 1);
-      const acknowledgedSquareHost = await saveAndWaitForPreparation(nextSaveCount);
-      assert.ok(acknowledgedSquareHost.preparedLocal.identities.some((identity) =>
-        identity.uuid === uuid && identity.ref,
-      ), "The post-apply saved ACK should keep the edited Square identity");
-      const pageTenSquareIdentity = thirdSaveHost.preparedLocal.identities.find((identity) =>
-        identity.pageIndex === 9 && identity.kind?.toLowerCase() === "square" &&
-        identity.uuid !== uuid && identity.ref,
-      );
-      assert.ok(pageTenSquareIdentity);
-      const originalPageTenSquare = baseInspection.identities.find((identity) =>
-        identity.pageIndex === 9 && identity.kind === "square",
-      );
-      assert.equal(pageTenSquareIdentity.uuid, originalPageTenSquare.uuid,
-        "The saved-editor history regression should use the original page 10 Square identity");
-
-      // A saved, unchanged PDF.js editor can be live after Undo while its
-      // serialize() result and AnnotationStorage row are both absent. Exercise
-      // the complete save/Undo/save/Redo/save path for that exact saved ref.
-      await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]')
-        .scrollIntoView({ block: "start" }));
-      await viewer.waitForFunction((annotationRef) => {
-        const app = PDFViewerApplication;
-        return app.pdfViewer.getPageView(9)?.renderingState === 3 &&
-          [...app.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(9)]
-            .some((editor) => editor.annotationElementId === annotationRef && !editor.deleted);
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      await viewer.evaluate((annotationRef) => {
-        const manager = PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager;
-        const editor = [...manager.getEditors(9)].find((candidate) =>
-          candidate.annotationElementId === annotationRef && !candidate.deleted,
-        );
-        if (!editor) throw new Error("The saved page 10 Square editor should be live before deletion.");
+        const editor = manager.getEditor(runtimeId);
+        if (!editor) throw new Error("The local Square editor must be available for delete/undo testing");
         manager.deleteEditor(editor);
-      }, pageTenSquareIdentity.ref);
-      const deleteSavedSquare = await requestCheckpoint(
-        "checkpoint-delete-saved-existing-square",
-        { openRequest: 2 },
-      );
-      const savedSquareDeleteOperation = deleteSavedSquare.checkpoint.operations.find(
-        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
-      );
-      assert.equal(savedSquareDeleteOperation?.action, "delete");
-      assert.equal(savedSquareDeleteOperation?.ref, pageTenSquareIdentity.ref);
-      assert.equal(savedSquareDeleteOperation?.pageIndex, 9);
-      assert.equal(savedSquareDeleteOperation?.kind, "Square");
-      const savedSquareDeleteSaveCount = await page.evaluate(
-        () => window.__syncHost.saves.length + 1,
-      );
-      const savedSquareDeleteHost = await saveAndWaitForPreparation(
-        savedSquareDeleteSaveCount,
-      );
-      assert.equal(
-        savedSquareDeleteHost.preparedLocal.ledger.entries.find((entry) =>
-          entry.uuid === pageTenSquareIdentity.uuid,
-        )?.deleted,
-        true,
-        "The existing saved Square deletion should persist its exact UUID tombstone",
-      );
+      }, editorRuntimeId);
+      const deleteCheckpoint = await requestCheckpoint("sidecar-checkpoint-square-delete");
+      const deletedOperation = deleteCheckpoint.operations.find((operation) => operation.uuid === uuid);
+      assert.equal(deletedOperation?.deleted, true,
+        "Deleting a local editor must create a UUID tombstone, not mutate the PDF source");
+      assert.equal(deletedOperation?.kind, "Square");
+      assert.equal(deletedOperation?.pageIndex, 0);
 
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.undo();
+      await viewer.evaluate(() => PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager.undo());
+      const undoCheckpoint = await requestCheckpoint("sidecar-checkpoint-square-undo");
+      const undoOperation = undoCheckpoint.operations.find((operation) => operation.uuid === uuid);
+      assert.equal(undoOperation?.deleted, false,
+        "Undo must restore the same UUID as an active sidecar operation");
+      assert.equal(undoOperation?.payload.editor.thickness, 4);
+      assert.deepEqual(undoOperation?.payload.editor.rect, styledRect,
+        "Undo must preserve the committed styled geometry, not revert its border inset");
+
+      await viewer.evaluate(() => PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager.redo());
+      const redoCheckpoint = await requestCheckpoint("sidecar-checkpoint-square-redo");
+      const redoOperation = redoCheckpoint.operations.find((operation) => operation.uuid === uuid);
+      assert.equal(redoOperation?.deleted, true,
+        "Redo must restore the tombstone for the same UUID");
+      await viewer.evaluate(async () => PDFViewerApplication.save());
+      await page.waitForFunction(() => window.__syncSidecarHost?.saves.length === 2, {
+        timeout: 15_000,
       });
-      await viewer.waitForFunction((annotationRef) => {
-        const manager = PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager;
-        return [...manager.getEditors(9)].some((editor) =>
-          editor.annotationElementId === annotationRef && !editor.deleted,
-        );
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      const restoredEditorState = await viewer.evaluate((annotationRef) => {
-        const app = PDFViewerApplication;
-        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(9)].find((candidate) =>
-          candidate.annotationElementId === annotationRef && !candidate.deleted,
-        );
-        const map = app.pdfDocument.annotationStorage.serializable?.map;
-        return {
-          serializeIsNull: editor?.serialize() === null,
-          storageHasRow: map instanceof Map && [...map.values()].some((value) =>
-            value?.annotationElementId === annotationRef || value?.id === annotationRef,
-          ),
+      const deleteSave = await page.evaluate(() => window.__syncSidecarHost.saves[1]);
+      assert.ok(deleteSave.operations.some((operation) =>
+        operation.uuid === uuid && operation.deleted === true,
+      ), "The durable save batch must include the exact UUID tombstone, not a PDF byte payload");
+      assert.equal(deleteSave.sourceBytes, 0);
+      await viewer.waitForFunction(() => !window.__syncBridgeState.dirty, { timeout: 15_000 });
+      const tombstone = await page.evaluate((currentDocumentId, annotationUuid) =>
+        window.__browserSidecarHost.snapshotFor(currentDocumentId)?.tombstones
+          .find((operation) => operation.uuid === annotationUuid), documentId, uuid);
+      assert.ok(tombstone, "The durable snapshot must retain the deleted UUID tombstone");
+      assert.equal(Object.hasOwn(tombstone, "deleted"), false,
+        "The compact tombstone ledger must not serialize deleted:true rows");
+
+      await viewer.evaluate(() => PDFViewerApplication.pdfViewer._layerProperties
+        .annotationEditorUIManager.undo());
+      const revivedCheckpoint = await requestCheckpoint("sidecar-checkpoint-square-revive");
+      const revived = revivedCheckpoint.operations.find((operation) => operation.uuid === uuid);
+      assert.equal(revived?.deleted, false);
+      assert.equal(revived?.payload.editor.thickness, 4);
+      await viewer.evaluate(async () => PDFViewerApplication.save());
+      await page.waitForFunction(() => window.__syncSidecarHost?.saves.length === 3, {
+        timeout: 15_000,
+      });
+      await viewer.waitForFunction(() => !window.__syncBridgeState.dirty, { timeout: 15_000 });
+      const activeSnapshotRow = await page.evaluate((currentDocumentId, annotationUuid) =>
+        window.__browserSidecarHost.snapshotFor(currentDocumentId)?.annotations
+          .find((operation) => operation.uuid === annotationUuid), documentId, uuid);
+      assert.ok(activeSnapshotRow, "Undo after a durable delete must revive the same sidecar UUID");
+      assert.equal(activeSnapshotRow.payload.editor.thickness, 4);
+
+      const remoteUuid = "remote-sidecar-square-0001";
+      const remoteRevision = await page.evaluate(({ currentDocumentId, localUuid, remoteAnnotationUuid }) => {
+        const host = window.__browserSidecarHost;
+        const documentState = host.documents.get(currentDocumentId);
+        const local = documentState?.operations.get(localUuid);
+        if (!local) throw new Error("The local durable operation is missing before remote merge");
+        const remote = structuredClone(local);
+        remote.uuid = remoteAnnotationUuid;
+        remote.embeddedRef = null;
+        remote.deleted = false;
+        remote.clock = {
+          timestamp: Math.max(Date.now(), Number(local.clock?.timestamp) || 0) + 100,
+          logical: 0,
+          deviceId: "remote-device-fixture",
+          opId: "remote-device-fixture:sidecar-square-1",
         };
-      }, pageTenSquareIdentity.ref);
-      assert.equal(restoredEditorState.serializeIsNull, true,
-        "Undo should restore the unchanged saved editor without ordinary serialization");
-      assert.equal(restoredEditorState.storageHasRow, false,
-        "Undo should leave the unchanged saved editor out of AnnotationStorage");
-      const restoredSavedSquare = await requestCheckpoint(
-        "checkpoint-undo-saved-existing-square",
-        { openRequest: 2 },
-      );
-      const restoredSavedSquareOperation = restoredSavedSquare.checkpoint.operations.find(
-        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
-      );
-      assert.equal(restoredSavedSquareOperation?.action, "upsert");
-      assert.equal(restoredSavedSquareOperation?.ref, pageTenSquareIdentity.ref);
-      assert.equal(restoredSavedSquareOperation?.pageIndex, 9);
-      assert.equal(restoredSavedSquareOperation?.kind, "Square");
-      assert.ok(
-        restoredSavedSquareOperation.timestamp > savedSquareDeleteOperation.timestamp ||
-          (restoredSavedSquareOperation.timestamp === savedSquareDeleteOperation.timestamp &&
-            restoredSavedSquareOperation.logical > savedSquareDeleteOperation.logical),
-        "The restored exact identity needs a clock newer than its saved delete",
-      );
-      assert.equal(restoredSavedSquare.checkpoint.newAnnotations.some((annotation) =>
-        annotation.uuid === pageTenSquareIdentity.uuid,
-      ), false, "Undo must not reclassify the restored saved editor as a new annotation");
-      const repeatedRestoredCheckpoint = await requestCheckpoint(
-        "checkpoint-undo-saved-existing-square-repeat",
-        { openRequest: 2 },
-      );
-      const repeatedRestoredOperation = repeatedRestoredCheckpoint.checkpoint.operations.find(
-        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
-      );
-      assert.equal(repeatedRestoredOperation?.action, "upsert");
-      assert.equal(repeatedRestoredOperation?.operationId, restoredSavedSquareOperation.operationId,
-        "Repeated snapshots must retain the synthetic restoration instead of inferring a delete from empty storage");
-      const restoredSquareSaveCount = await page.evaluate(
-        () => window.__syncHost.saves.length + 1,
-      );
-      const restoredSquareHost = await saveAndWaitForPreparation(restoredSquareSaveCount);
-      assert.ok(restoredSquareHost.preparedLocal.identities.some((identity) =>
-        identity.uuid === pageTenSquareIdentity.uuid && !identity.deleted &&
-        identity.ref === pageTenSquareIdentity.ref,
-      ), "Saving Undo should revive the same saved UUID and PDF reference");
-
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.redo();
-      });
-      await viewer.waitForFunction((annotationRef) => {
-        const manager = PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager;
-        return ![...manager.getEditors(9)].some((editor) =>
-          editor.annotationElementId === annotationRef && !editor.deleted,
-        );
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      const redoneSavedSquare = await requestCheckpoint(
-        "checkpoint-redo-saved-existing-square",
-        { openRequest: 2 },
-      );
-      const redoneSavedSquareOperation = redoneSavedSquare.checkpoint.operations.find(
-        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
-      );
-      assert.equal(redoneSavedSquareOperation?.action, "delete");
-      assert.equal(redoneSavedSquareOperation?.ref, pageTenSquareIdentity.ref);
-      assert.equal(redoneSavedSquareOperation?.pageIndex, 9);
-      assert.equal(redoneSavedSquareOperation?.kind, "Square");
-      const redoneSquareSaveCount = await page.evaluate(
-        () => window.__syncHost.saves.length + 1,
-      );
-      const redoneSquareHost = await saveAndWaitForPreparation(redoneSquareSaveCount);
-      assert.equal(
-        redoneSquareHost.preparedLocal.ledger.entries.find((entry) =>
-          entry.uuid === pageTenSquareIdentity.uuid,
-        )?.deleted,
-        true,
-        "Saving Redo should persist the exact original UUID tombstone again",
-      );
-
-      // Restore it once more so the existing post-ACK style-edit coverage below
-      // continues to exercise a live saved Square.
-      await viewer.evaluate(() => {
-        PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager.undo();
-      });
-      await viewer.waitForFunction((annotationRef) => {
-        const manager = PDFViewerApplication.pdfViewer._layerProperties
-          .annotationEditorUIManager;
-        return [...manager.getEditors(9)].some((editor) =>
-          editor.annotationElementId === annotationRef && !editor.deleted,
-        );
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      const finalRestoredSquareCheckpoint = await requestCheckpoint(
-        "checkpoint-undo-saved-existing-square-after-redo",
-        { openRequest: 2 },
-      );
-      assert.equal(finalRestoredSquareCheckpoint.checkpoint.operations.find(
-        (operation) => operation.uuid === pageTenSquareIdentity.uuid,
-      )?.action, "upsert");
-      const finalRestoredSquareSaveCount = await page.evaluate(
-        () => window.__syncHost.saves.length + 1,
-      );
-      const finalRestoredSquareHost = await saveAndWaitForPreparation(
-        finalRestoredSquareSaveCount,
-      );
-      assert.ok(finalRestoredSquareHost.preparedLocal.identities.some((identity) =>
-        identity.uuid === pageTenSquareIdentity.uuid && !identity.deleted,
-      ), "Undo after a saved Redo should restore the same live identity again");
-
-      await viewer.evaluate(() => document.querySelector('.page[data-page-number="10"]').scrollIntoView({ block: "start" }));
-      await viewer.waitForFunction((ref) => {
-        const app = PDFViewerApplication;
-        return app.pdfViewer.getPageView(9)?.renderingState === 3 &&
-          [...app.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(9)]
-            .some(editor => editor.annotationElementId === ref);
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      await viewer.evaluate((ref) => {
-        const app = PDFViewerApplication;
-        const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-        const editor = [...manager.getEditors(9)].find(candidate => candidate.annotationElementId === ref);
-        manager.setSelected(editor);
-        app.eventBus.dispatch("switchannotationeditorparams", { source: window, type: 62, value: 7 });
-      }, pageTenSquareIdentity.ref);
-      await viewer.waitForFunction((ref) => {
+        remote.payload.editor.id = null;
+        remote.payload.editor.rect = [240, 320, 310, 390];
+        documentState.operations.set(remoteAnnotationUuid, remote);
+        documentState.revision += 1;
+        host.broadcastSnapshot(currentDocumentId, 1);
+        return documentState.revision;
+      }, { currentDocumentId: documentId, localUuid: uuid, remoteAnnotationUuid: remoteUuid });
+      await viewer.waitForFunction((annotationUuid) =>
+        window.__syncBridgeState.externalAnnotationHydration.has(annotationUuid),
+      { timeout: 15_000 }, remoteUuid);
+      const remoteHydration = await viewer.evaluate((annotationUuid) => {
+        const bridge = window.__syncBridgeState;
         const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
-        return [...manager.getEditors(9)].find(editor => editor.annotationElementId === ref)?.serialize()?.thickness === 7;
-      }, { timeout: 15_000 }, pageTenSquareIdentity.ref);
-      const afterAckCheckpoint = await requestCheckpoint("checkpoint-post-ack-second-existing-edit", { openRequest: 2 });
-      assert.ok(afterAckCheckpoint.checkpoint.operations.some(operation =>
-        operation.uuid === pageTenSquareIdentity.uuid && operation.ref === pageTenSquareIdentity.ref &&
-        operation.pageIndex === 9 && operation.kind === "Square" && operation.action === "upsert" &&
-        operation.serialized?.thickness === 7,
-      ), "A post-ACK edit of another existing annotation must retain its UUID and exact ref");
-
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "flush",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id: "flush-legacy-recovery-ack",
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId });
-      await page.waitForFunction(() =>
-        window.__syncHost?.recoveries.length === 1 &&
-        window.__syncHost?.flushes.some((entry) =>
-          entry.id === "flush-legacy-recovery-ack",
-        ), { timeout: 30_000 });
-      const recoveryResult = await page.evaluate(() => ({
-        recovery: window.__syncHost.recoveries[0],
-        flushed: window.__syncHost.flushes.find((entry) =>
-          entry.id === "flush-legacy-recovery-ack",
-        ),
-      }));
-      assert.equal(recoveryResult.recovery.documentId, documentId);
-      assert.equal(recoveryResult.recovery.openRequest, 2);
-      assert.equal(recoveryResult.recovery.rendererGeneration, rendererGeneration);
-      assert.ok(recoveryResult.recovery.requestId.includes(rendererGeneration),
-        "A recovery request ID must be scoped to its renderer generation");
-      assert.ok(recoveryResult.recovery.requestId);
-      assert.equal(recoveryResult.flushed.recovered, true,
-        "A matching legacy recovered ACK should complete after an explicit wrong-generation ACK is ignored");
-      assert.equal(recoveryResult.flushed.dirty, true);
-
-      await page.evaluate(() => { window.__syncHost.rejectNextSave = true; });
-      await viewer.evaluate(async () => { await PDFViewerApplication.save(); });
-      await viewer.waitForFunction(() =>
-        document.getElementById("pdfReaderBridgeStatus")?.textContent === "legacy save error",
-      { timeout: 15_000 });
-      const legacyFailedSave = await page.evaluate(() => window.__syncHost.saves.at(-1));
-      assert.ok(legacyFailedSave.requestId.includes(rendererGeneration));
-
-      await page.evaluate(() => { window.__syncHost.rejectNextRecovery = true; });
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "flush",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id: "flush-legacy-recovery-error",
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId });
-      await page.waitForFunction(() =>
-        window.__syncHost?.recoveries.length === 2 &&
-        window.__syncHost?.flushes.some((entry) =>
-          entry.id === "flush-legacy-recovery-error",
-        ), { timeout: 30_000 });
-      const failedRecoveryResult = await page.evaluate(() => ({
-        recovery: window.__syncHost.recoveries.at(-1),
-        flushed: window.__syncHost.flushes.find((entry) =>
-          entry.id === "flush-legacy-recovery-error",
-        ),
-        status: document.querySelector("iframe").contentDocument
-          .getElementById("pdfReaderBridgeStatus")?.textContent,
-      }));
-      assert.ok(failedRecoveryResult.recovery.requestId.includes(rendererGeneration));
-      assert.equal(failedRecoveryResult.flushed.recovered, false);
-      assert.equal(failedRecoveryResult.flushed.ok, false);
-      assert.equal(failedRecoveryResult.flushed.dirty, true);
-      assert.equal(failedRecoveryResult.status, "legacy recovery error",
-        "A matching legacy recovery-error ACK should complete after a wrong-generation error is ignored");
-
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-checkpoint",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id: "checkpoint-before-apply-cancel",
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId });
-      await page.waitForFunction(() => window.__syncHost?.checkpoints.some(
-        (entry) => entry.id === "checkpoint-before-apply-cancel",
-      ), { timeout: 15_000 });
-      const cancelCheckpoint = await page.evaluate(() => window.__syncHost.checkpoints.find(
-        (entry) => entry.id === "checkpoint-before-apply-cancel",
-      ));
-      assert.equal(cancelCheckpoint.ok, true);
-
-      const preparedCancelId = "sync-apply-prepared-close-cancel";
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-prepare",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 2,
-          expectedRevision,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId, expectedRevision: cancelCheckpoint.revision });
-      await page.waitForFunction((id) => window.__syncHost?.prepared.some(
-        (entry) => entry.id === id && entry.type === "sync-apply-prepared",
-      ), { timeout: 30_000 }, preparedCancelId);
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-cancel",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: preparedCancelId });
-      await page.waitForFunction((id) => window.__syncHost?.cancelled.some(
-        (entry) => entry.id === id,
-      ), { timeout: 15_000 }, preparedCancelId);
-      const preparedCancel = await page.evaluate((id) => window.__syncHost.cancelled.find(
-        (entry) => entry.id === id,
-      ), preparedCancelId);
-      assert.equal(preparedCancel.ok, true,
-        "a prepared sync apply must acknowledge cancellation so close can continue");
-      assert.equal(preparedCancel.openRequest, 2,
-        "prepared cancellation is tied to the original PDF session");
-
-      const cancelApplyId = "sync-apply-controlled-cancel";
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-prepare",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 2,
-          expectedRevision,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId, expectedRevision: cancelCheckpoint.revision });
-      await page.waitForFunction((id) => window.__syncHost?.prepared.some(
-        (entry) => entry.id === id && entry.type === "sync-apply-prepared",
-      ), { timeout: 30_000 }, cancelApplyId);
-
-      await viewer.evaluate(() => {
-        const app = PDFViewerApplication;
-        const originalClose = app.close;
-        let release;
-        const gate = new Promise((resolve) => { release = resolve; });
-        window.__syncApplyCloseGate = {
-          release,
-          started: 0,
-          originalClose,
-          loadingTask: app.pdfLoadingTask,
-        };
-        app.close = async function () {
-          window.__syncApplyCloseGate.started += 1;
-          await gate;
-          throw new Error("controlled PDF.js close failure");
-        };
-      });
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id, expectedRevision, checkpointId }) => {
-        const host = window.__syncHost;
-        const checkpoint = host.checkpoints.find((entry) => entry.id === checkpointId);
-        const data = base64ToArrayBuffer(host.preparedLocal.bytesBase64);
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          previousOpenRequest: 2,
-          newOpenRequest: 3,
-          expectedRevision,
-          data,
-          syncState: host.syncState,
-          viewState: checkpoint.viewState,
-        }, "*", [data]);
-      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId, expectedRevision: cancelCheckpoint.revision, checkpointId: "checkpoint-before-apply-cancel" });
-      await viewer.waitForFunction(() => window.__syncApplyCloseGate?.started >= 1, {
-        timeout: 15_000,
-      });
-      await page.evaluate(({ channel: messageChannel, token: sessionToken, rendererGeneration: generation, documentId: currentDocumentId, id }) => {
-        document.querySelector("iframe").contentWindow.postMessage({
-          channel: messageChannel,
-          type: "sync-apply-cancel",
-          token: sessionToken,
-          rendererGeneration: generation,
-          id,
-          documentId: currentDocumentId,
-          openRequest: 2,
-        }, "*");
-      }, { channel, token, rendererGeneration, documentId, id: cancelApplyId });
-      await viewer.waitForFunction(() => window.__syncApplyCloseGate?.started >= 2, {
-        timeout: 15_000,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const beforeCloseSettled = await page.evaluate((id) => ({
-        cancelled: window.__syncHost.cancelled.some((entry) => entry.id === id),
-        rejected: window.__syncHost.prepared.some((entry) =>
-          entry.id === id && entry.type === "sync-apply-rejected",
-        ),
-      }), cancelApplyId);
-      assert.equal(beforeCloseSettled.cancelled, false,
-        "The host must not receive a cancellation ACK while PDF.js cleanup is held");
-      assert.equal(beforeCloseSettled.rejected, false,
-        "An apply rejection must not race ahead of PDF.js cleanup");
-      await viewer.evaluate(() => window.__syncApplyCloseGate.release());
-      await page.waitForFunction((id) => window.__syncHost?.cancelled.some(
-        (entry) => entry.id === id,
-      ), { timeout: 30_000 }, cancelApplyId);
-      const cancelResult = await page.evaluate((id) => ({
-        cancelled: window.__syncHost.cancelled.find((entry) => entry.id === id),
-        rejected: window.__syncHost.prepared.some((entry) =>
-          entry.id === id && entry.type === "sync-apply-rejected",
-        ),
-        applied: window.__syncHost.applied.some((entry) => entry.id === id),
-      }), cancelApplyId);
-      assert.equal(cancelResult.cancelled.ok, true);
-      assert.equal(cancelResult.cancelled.documentId, documentId);
-      assert.equal(cancelResult.cancelled.openRequest, 2,
-        "The cancellation ACK must identify the old open request");
-      assert.equal(cancelResult.cancelled.cleanupFallback, true,
-        "A failed app.close should use the explicit loading-task destroy fallback");
-      assert.equal(cancelResult.rejected, false,
-        "A canceled apply should not also report an early rejection");
-      assert.equal(cancelResult.applied, false,
-        "A canceled apply must not be reported as successful");
-      const cancelledDocumentState = await viewer.evaluate(() => {
-        const gate = window.__syncApplyCloseGate;
-        PDFViewerApplication.close = gate.originalClose;
+        const binding = bridge.externalAnnotationHydration.get(annotationUuid);
+        const editor = binding && manager.getEditor(binding.runtimeId);
+        const rect = editor?.div?.getBoundingClientRect();
         return {
-          hasLoadingTask: Boolean(PDFViewerApplication.pdfLoadingTask),
-          hasPdfDocument: Boolean(PDFViewerApplication.pdfDocument),
-          hasViewerDocument: Boolean(PDFViewerApplication.pdfViewer.pdfDocument),
-          loadingTaskDestroyed: gate.loadingTask?.destroyed === true,
-          readonly: document.documentElement.hasAttribute("data-pdf-reader-readonly"),
-          status: document.getElementById("pdfReaderBridgeStatus")?.textContent || "",
+          binding: binding ? { runtimeId: binding.runtimeId, pageIndex: binding.pageIndex } : null,
+          row: binding?.row || null,
+          editorCount: [...manager.getEditors(0)].filter((candidate) =>
+            bridge.annotationUuidByRuntimeId.get(String(candidate.id)) === annotationUuid &&
+            candidate.deleted !== true,
+          ).length,
+          connected: Boolean(editor?.div?.isConnected),
+          visible: Boolean(rect?.width > 0 && rect?.height > 0),
+          dirty: bridge.dirty,
         };
+      }, remoteUuid);
+      const hostRemoteRevision = await page.evaluate((currentDocumentId) =>
+        window.__browserSidecarHost.snapshotFor(currentDocumentId)?.revision,
+      documentId);
+      assert.ok(hostRemoteRevision >= remoteRevision,
+        "The sidecar host should retain the broadcast revision");
+      assert.equal(remoteHydration.row?.uuid, remoteUuid,
+        "The Reader must hydrate the exact remote UUID from the current snapshot");
+      assert.equal(remoteHydration.row?.clock?.opId, "remote-device-fixture:sidecar-square-1");
+      assert.ok(remoteHydration.binding?.runtimeId);
+      assert.equal(remoteHydration.binding.pageIndex, 0);
+      assert.equal(remoteHydration.editorCount, 1,
+        "A remote UUID should hydrate into exactly one live editor");
+      assert.equal(remoteHydration.connected, true);
+      assert.equal(remoteHydration.visible, true);
+      assert.equal(remoteHydration.dirty, false,
+        "Remote sidecar hydration must not be mistaken for a local user edit");
+
+      const applyId = "legacy-pdf-replacement-must-fail-closed";
+      await page.evaluate(({ channel: messageChannel, sessionToken, generation, currentDocumentId, id }) => {
+        document.querySelector("iframe").contentWindow.postMessage({
+          channel: messageChannel, token: sessionToken, rendererGeneration: generation,
+          type: "sync-apply-prepare", id, documentId: currentDocumentId, openRequest: 1,
+          previousOpenRequest: 1, newOpenRequest: 2, expectedRevision: 1,
+        }, "*");
+      }, { channel, sessionToken: token, generation: rendererGeneration, currentDocumentId: documentId, id: applyId });
+      await page.waitForFunction((id) => window.__syncSidecarHost?.applyReplies.some(
+        (reply) => reply.id === id,
+      ), { timeout: 10_000 }, applyId);
+      const applyReply = await page.evaluate((id) => window.__syncSidecarHost.applyReplies.find(
+        (reply) => reply.id === id,
+      ), applyId);
+      assert.equal(applyReply.type, "sync-apply-rejected");
+      assert.equal(applyReply.ok, false);
+      assert.equal(applyReply.reason, "immutable-source-annotations-only",
+        "A sync request must not replace the immutable source PDF with a merged copy");
+
+      const reopened = await page.evaluate(() => window.__syncSidecarHost.reopen());
+      assert.equal(reopened, 2);
+      await page.waitForFunction((openRequest) => window.__syncSidecarHost?.opened.some(
+        (entry) => entry.documentId === "sync-sidecar-fixture-document" &&
+          entry.openRequest === openRequest,
+      ), { timeout: 30_000 }, reopened);
+      await viewer.waitForFunction(({ openRequest, localUuid, remoteAnnotationUuid }) => {
+        const bridge = window.__syncBridgeState;
+        return bridge?.activeOpenRequest === openRequest && bridge.externalSourceConfirmed &&
+          bridge.externalAnnotationHydration.has(remoteAnnotationUuid) &&
+          bridge.externalAnnotationHydration.has(localUuid);
+      }, { timeout: 30_000 }, {
+        openRequest: reopened, localUuid: uuid, remoteAnnotationUuid: remoteUuid,
       });
-      const { status, ...documentState } = cancelledDocumentState;
-      assert.deepEqual(documentState, {
-        hasLoadingTask: false,
-        hasPdfDocument: false,
-        hasViewerDocument: false,
-        loadingTaskDestroyed: true,
-        readonly: true,
-      }, "The apply cancellation ACK must follow PDF.js document destruction");
-      assert.match(status, /controlled PDF\.js close failure/);
-      assert.deepEqual(await page.evaluate(() => window.__syncHost.errors), []);
-      t.diagnostic(`Sync checkpoint/apply regression completed; rendererGeneration=${rendererGeneration}`);
+      const reopenedState = await viewer.evaluate(({ localUuid, remoteAnnotationUuid }) => {
+        const bridge = window.__syncBridgeState;
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        const count = (uuid) => [...manager.getEditors(0)].filter((editor) =>
+          editor.deleted !== true && bridge.annotationUuidByRuntimeId.get(String(editor.id)) === uuid,
+        ).length;
+        return {
+          documentId: bridge.activeDocumentId,
+          openRequest: bridge.activeOpenRequest,
+          localEditors: count(localUuid),
+          remoteEditors: count(remoteAnnotationUuid),
+          localHydration: bridge.externalAnnotationHydration.get(localUuid)?.runtimeId || null,
+          remoteHydration: bridge.externalAnnotationHydration.get(remoteAnnotationUuid)?.runtimeId || null,
+          dirty: bridge.dirty,
+        };
+      }, { localUuid: uuid, remoteAnnotationUuid: remoteUuid });
+      assert.equal(reopenedState.documentId, documentId);
+      assert.equal(reopenedState.openRequest, reopened);
+      assert.equal(reopenedState.localEditors, 1,
+        "The local UUID must reopen from the sidecar without duplicate editors");
+      assert.equal(reopenedState.remoteEditors, 1,
+        "The remote UUID must reopen from the sidecar without duplicate editors");
+      assert.ok(reopenedState.localHydration);
+      assert.ok(reopenedState.remoteHydration);
+      assert.equal(reopenedState.dirty, false);
+
+      const finalFixtureBytes = await readFile(fixturePath);
+      assert.equal(createHash("sha256").update(finalFixtureBytes).digest("hex"), sourceHash,
+        "Ordinary sidecar saves and sync replay must leave the source PDF byte-identical");
+      const finalHostState = await page.evaluate(() => ({
+        errors: window.__syncSidecarHost.errors,
+        saves: window.__syncSidecarHost.saves.map((save) => ({
+          requestId: save.requestId,
+          revision: save.revision,
+          operationCount: save.operations.length,
+          sourceBytes: save.sourceBytes,
+        })),
+        durableWrites: window.__browserSidecarHost.durableWrites.map((write) => ({
+          revision: write.revision,
+          operationCount: write.operationCount,
+          sourceBytes: write.sourceBytes,
+        })),
+        active: window.__browserSidecarHost.snapshotFor("sync-sidecar-fixture-document")
+          ?.annotations.map((operation) => operation.uuid).sort(),
+        tombstones: window.__browserSidecarHost.snapshotFor("sync-sidecar-fixture-document")
+          ?.tombstones.map((operation) => operation.uuid).sort(),
+      }));
+      assert.deepEqual(finalHostState.errors, []);
+      assert.equal(finalHostState.saves.length, 3,
+        "Create, delete, and undo-revive should each cross the durable sidecar save boundary");
+      assert.ok(finalHostState.saves.every((save) => save.sourceBytes === 0));
+      assert.ok(finalHostState.durableWrites.every((write) => write.sourceBytes === 0));
+      assert.ok(finalHostState.active.includes(uuid));
+      assert.ok(finalHostState.active.includes(remoteUuid));
+      assert.equal(finalHostState.tombstones.includes(uuid), false,
+        "Undo after a durable deletion must remove its active tombstone by a newer operation");
+      const sourceBytesLoadedByHost = await page.evaluate(() =>
+        window.__syncSidecarHost.sourceBytes.byteLength,
+      );
+      assert.equal(sourceBytesLoadedByHost, fixtureBytes.byteLength);
+      t.diagnostic(`Sidecar sync lifecycle verified; source SHA-256=${sourceHash}; rendererGeneration=${rendererGeneration}`);
     } catch (error) {
       primaryError = error;
       try {
-        const hostState = page && !page.isClosed()
+        const state = page && !page.isClosed()
           ? await page.evaluate(() => {
-              const host = window.__syncHost;
-              return host && {
-                opened: host.opened,
-                startupTimings: host.startupTimings,
-                saves: host.saves,
-                recoveries: host.recoveries,
-                checkpoints: host.checkpoints.map(({ data, ...entry }) => entry),
-                prepared: host.prepared,
-                applied: host.applied,
-                rejected: host.rejected,
-                errors: host.errors,
-              };
-            })
-          : null;
-        const viewerFrame = page?.frames().find((frame) =>
-          frame.url().includes("/viewer/web/viewer.html"),
-        );
-        const viewerDiagnostics = viewerFrame
-          ? await viewerFrame.evaluate(() => {
-              const app = window.PDFViewerApplication;
-              const pageView = app?.pdfViewer?.getPageView(0);
-              const buttons = [
-                "editorUnderlineButton",
-                "editorSquareButton",
-                "editorHighlightButton",
-                "editorInkButton",
-                "editorFreeTextButton",
-              ].map((id) => {
-                const button = document.getElementById(id);
-                return {
-                  id,
-                  present: Boolean(button),
-                  disabled: button?.disabled ?? null,
-                };
-              });
+              const host = window.__syncSidecarHost;
+              const frame = document.querySelector("iframe")?.contentWindow;
+              const bridge = frame?.__syncBridgeState;
+              const manager = frame?.PDFViewerApplication?.pdfViewer?._layerProperties
+                ?.annotationEditorUIManager;
               return {
-                hostOpenedDocumentId: window.parent.__syncHost?.opened?.at(-1)?.documentId || null,
-                hostOpenedRequest: window.parent.__syncHost?.opened?.at(-1)?.openRequest ?? null,
-                pdfDocumentMatchesViewer: Boolean(
-                  app?.pdfDocument && app?.pdfViewer?.pdfDocument === app.pdfDocument,
-                ),
-                annotationLayerConnected: Boolean(pageView?.annotationLayer?.div?.isConnected),
-                editorLayerConnected: Boolean(pageView?.annotationEditorLayer?.div?.isConnected),
-                editorManagerPresent: Boolean(
-                  app?.pdfViewer?._layerProperties?.annotationEditorUIManager,
-                ),
-                buttons,
+                host: host && {
+                  opened: host.opened,
+                  saves: host.saves,
+                  recoveries: host.recoveries,
+                  checkpoints: host.checkpoints,
+                  applyReplies: host.applyReplies,
+                  errors: host.errors,
+                  sidecarWrites: window.__browserSidecarHost?.durableWrites,
+                  snapshot: window.__browserSidecarHost?.snapshotFor("sync-sidecar-fixture-document"),
+                },
+                bridge: bridge && {
+                  activeDocumentId: bridge.activeDocumentId,
+                  activeOpenRequest: bridge.activeOpenRequest,
+                  revision: bridge.revision,
+                  confirmedRevision: bridge.confirmedRevision,
+                  dirty: bridge.dirty,
+                  externalSourceConfirmed: bridge.externalSourceConfirmed,
+                  hydration: [...bridge.externalAnnotationHydration.entries()].map(([uuid, binding]) => ({
+                    uuid, runtimeId: binding.runtimeId, pageIndex: binding.pageIndex,
+                  })),
+                  editors: manager ? [...manager.getEditors(0)].map((editor) => ({
+                    id: String(editor.id),
+                    uuid: bridge.annotationUuidByRuntimeId.get(String(editor.id)) || null,
+                    type: editor.constructor?._editorType || editor.editorType,
+                    deleted: editor.deleted === true,
+                    serialized: editor.serialize?.(true) || null,
+                  })) : [],
+                },
+                viewer: frame?.PDFViewerApplication && (() => {
+                  const pageElement = frame.document.querySelector('.page[data-page-number="1"]');
+                  const layer = pageElement?.querySelector(".annotationEditorLayer");
+                  const pageRect = pageElement?.getBoundingClientRect();
+                  const layerRect = layer?.getBoundingClientRect();
+                  const geometry = frame.__syncDrawGeometry;
+                  const pointHit = (point) => {
+                    if (!point || !frame.document.elementFromPoint) return null;
+                    const hit = frame.document.elementFromPoint(
+                      point.x - (geometry?.iframeRect?.x || 0),
+                      point.y - (geometry?.iframeRect?.y || 0),
+                    );
+                    return hit?.className || hit?.id || hit?.tagName || null;
+                  };
+                  return {
+                    editorMode: frame.PDFViewerApplication.pdfViewer.annotationEditorMode,
+                    geometry,
+                    pageRect: pageRect && { x: pageRect.x, y: pageRect.y, width: pageRect.width, height: pageRect.height },
+                    layerRect: layerRect && { x: layerRect.x, y: layerRect.y, width: layerRect.width, height: layerRect.height },
+                    startHit: pointHit(geometry?.start),
+                    endHit: pointHit(geometry?.end),
+                    pointers: frame.__syncPointerProbe,
+                  };
+                })(),
               };
-            }).catch((diagnosticError) => ({
-              error: String(diagnosticError?.message || diagnosticError),
-            }))
+            }).catch((diagnosticError) => ({ error: String(diagnosticError?.message || diagnosticError) }))
           : null;
         const artifact = path.join(artifactsPath, `sync-bridge-failure-${runId}.json`);
         await writeFile(artifact, `${JSON.stringify({
           error: error?.stack || String(error),
           rendererGeneration,
-          hostState,
-          prepareFailures,
-          viewerDiagnostics,
+          sourceHash,
+          state,
         }, null, 2)}\n`, "utf8");
         t.diagnostic(`Sync regression failure evidence: ${artifact}`);
       } catch (captureError) {

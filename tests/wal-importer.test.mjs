@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
@@ -58,7 +59,7 @@ function makeAdapter(shared = { files: new Map(), folders: new Set(), writes: []
       return { files: directFiles, folders: [...directFolders] };
     },
   };
-  return { adapter, shared };
+  return { adapter: withAtomicProcess(adapter, shared), shared };
 }
 
 function makeLegacyStore(adapter) {

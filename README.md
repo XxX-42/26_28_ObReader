@@ -12,6 +12,13 @@ Windows, macOS and iPadOS share one three-file package. See
 [the protocol](ANNOTATION_STORE.md) and
 [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).
 
+The separate [`codex/wal-v3.2-jsonl` branch](WAL_V3_2_MERGE_RECOMMENDATION.md)
+is an **unreleased WAL v3.2 candidate**, not the current 0.8.2 release. Its
+merge recommendation, verification results, and remaining release gates are
+tracked separately; do not treat its successful test-vault validation as
+approval to replace the production plugin or claim real cross-device Sync
+safety.
+
 Ordinary annotation saves now use per-device/per-document WAL shards. Reader
 state joins a shared materialized Sidecar with all validated sparse anchors and
 short tails. Registry loss can be repaired; a Sidecar rollback is recovered

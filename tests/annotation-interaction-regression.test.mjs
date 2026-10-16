@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
@@ -837,11 +838,12 @@ test(
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style>
         <iframe name="pdf-reader" title="PDF Web Reader"
           sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-same-origin allow-scripts"></iframe>
+        ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: view.token })}
         <script>
           const channel='pdf-web-reader', token=${JSON.stringify(view.token)};
           const documentId='fixtures/tracemonkey.pdf';
           const iframe=document.querySelector('iframe');
-          const state=window.__hostState={opened:0,saves:0,savedData:null,received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
+          const state=window.__hostState={opened:0,saves:0,savedOperations:[],received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
           let fixtureBytes;
           const sendOpen=(data,label)=>{
             state.opensSent.push({label,documentId,byteLength:data.byteLength,openRequest:null,rendererGeneration:state.readyGenerations.at(-1)??null});
@@ -859,16 +861,19 @@ test(
             } else if(message.type==='opened') { state.opened+=1; state.openedMessages.push({documentId:message.documentId??null,sessionId:message.sessionId??null,openRequest:message.openRequest??null,revision:message.revision??null,confirmedRevision:message.confirmedRevision??null,dirty:message.dirty??null,restorePaused:message.restorePaused??null}); }
             else if(message.type==='error') state.errors.push({documentId:message.documentId??null,requestId:message.requestId??null,code:message.code??null,message:message.message??null});
             else if(message.type==='save'){
-              state.saves+=1; state.savedData=message.data.slice(0);
-              const acknowledgement={channel,type:'saved',token,documentId,requestId:message.requestId};
-              for(const field of ['sessionId','revision'])if(field in message)acknowledgement[field]=message[field];
+              state.saves+=1;
+              const operations=Array.isArray(message.operations)?message.operations:[];
+              state.savedOperations.push({documentId:message.documentId,revision:message.revision,operations:structuredClone(operations)});
+              const acknowledgement={channel,type:'saved',token,documentId:message.documentId,requestId:message.requestId,openRequest:message.openRequest,revision:message.revision,external:true,operationCount:operations.length};
+              if(operations.length>0)acknowledgement.batchId='annotation-interaction-'+message.requestId;
+              for(const field of ['sessionId','rendererGeneration'])if(field in message)acknowledgement[field]=message[field];
               iframe.contentWindow.postMessage(acknowledgement,'*');
-              state.saveAcks.push({documentId,requestId:message.requestId,sessionId:message.sessionId??null,revision:message.revision??null});
+              state.saveAcks.push({documentId:message.documentId,requestId:message.requestId,sessionId:message.sessionId??null,revision:message.revision??null,operationCount:operations.length,batchId:acknowledgement.batchId??null});
             }
           });
           window.__reopenSavedData=()=>{
-            const data=state.savedData.slice(0);
-            sendOpen(data,'reopen-saved-data');
+            const data=fixtureBytes.slice(0);
+            sendOpen(data,'reopen-source-with-sidecar');
           };
           window.__reopenFixture=()=>{
             const data=fixtureBytes.slice(0);
@@ -1251,8 +1256,8 @@ test(
           const host = await page.evaluate(() => ({
             opened: window.__hostState?.opened,
             saves: window.__hostState?.saves,
-            savedDataByteLength:
-              window.__hostState?.savedData?.byteLength ?? null,
+            savedOperationCount:
+              window.__hostState?.savedOperations?.reduce((count, row) => count + row.operations.length, 0) ?? 0,
             errors: window.__hostState?.errors ?? [],
           }));
           const diagnostic = {
@@ -1282,17 +1287,18 @@ test(
             ]),
           );
         });
-      const pdfSubtypeCounts = async () =>
-        viewer.evaluate(async () => {
-          const page = await PDFViewerApplication.pdfDocument.getPage(1);
-          const annotations = await page.getAnnotations();
+      const sidecarSubtypeCounts = async () =>
+        page.evaluate(() => {
+          const snapshot = window.__browserSidecarHost.snapshotFor(
+            "fixtures/tracemonkey.pdf",
+          );
+          const annotations = snapshot?.annotations ?? [];
           return Object.fromEntries(
             ["FreeText", "Square", "Highlight", "Underline", "Ink"].map(
-              (subtype) => [
-                subtype,
-                annotations.filter(
-                  (annotation) => annotation.subtype === subtype,
-                ).length,
+              (kind) => [
+                kind,
+                annotations.filter((annotation) => annotation.kind === kind)
+                  .length,
               ],
             ),
           );
@@ -1354,6 +1360,14 @@ test(
           range.setStart(node, from);
           range.setEnd(node, to);
           const rect = range.getBoundingClientRect();
+          const describeHit = (x, y) => {
+            const hit = document.elementFromPoint(x, y);
+            return {
+              tag: hit?.tagName ?? null,
+              className: typeof hit?.className === "string" ? hit.className : "",
+              text: hit?.textContent?.slice(0, 100) ?? "",
+            };
+          };
           const box = {
             x: rect.x,
             y: rect.y,
@@ -1372,6 +1386,27 @@ test(
             end: {
               x: last.right - Math.min(1, (last.right - last.left) / 2),
               y: (last.top + last.bottom) / 2,
+            },
+            textSelectionProbe: {
+              nodeText: node.textContent,
+              from,
+              to,
+              firstChar: first,
+              lastChar: last,
+              rangeClientRects: [...range.getClientRects()].map((item) => ({
+                left: item.left,
+                right: item.right,
+                top: item.top,
+                bottom: item.bottom,
+              })),
+              startHit: describeHit(
+                first.left + Math.min(1, (first.right - first.left) / 2),
+                (first.top + first.bottom) / 2,
+              ),
+              endHit: describeHit(
+                last.right - Math.min(1, (last.right - last.left) / 2),
+                (last.top + last.bottom) / 2,
+              ),
             },
           };
         }, phrase);
@@ -1410,10 +1445,12 @@ test(
         const point = {
           x: square.rect.x + square.rect.width / 2,
           y: square.rect.y + square.rect.height / 2,
+          editorId: square.id,
           uid: square.uid,
         };
-        await viewer.waitForFunction(
-          ({ x, y, uid }) => {
+        try {
+          await viewer.waitForFunction(
+          ({ x, y, editorId, uid }) => {
             const page = document.querySelector(
               '.page[data-page-number="1"]',
             );
@@ -1424,15 +1461,51 @@ test(
             ) {
               return false;
             }
-            const annotation = [
-              ...page.querySelectorAll(".annotationLayer .squareAnnotation"),
-            ].find((element) => element.id.endsWith(uid));
+            const editor = document.getElementById(editorId);
+            const rawEditor = PDFViewerApplication.pdfDocument.annotationStorage
+              .getRawValue(editorId);
             const hit = document.elementFromPoint(x, y);
-            return !!annotation && hit?.closest(".squareAnnotation") === annotation;
+            return !!editor && editor.isConnected &&
+              editor.classList.contains("inkEditor") &&
+              rawEditor?.constructor?._editorType === 5 && rawEditor.uid === uid &&
+              hit?.closest(".inkEditor") === editor;
           },
           { timeout: 30_000 },
           point,
-        );
+          );
+        } catch (error) {
+          const diagnostic = await viewer.evaluate(({ x, y, editorId }) => {
+            const editor = document.getElementById(editorId);
+            const rect = editor?.getBoundingClientRect();
+            const hit = document.elementFromPoint(x, y);
+            return {
+              point: { x, y },
+              mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+              editor: editor ? {
+                id: editor.id,
+                className: editor.className,
+                connected: editor.isConnected,
+                rect: rect ? {
+                  x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom,
+                  width: rect.width, height: rect.height,
+                } : null,
+                style: {
+                  display: getComputedStyle(editor).display,
+                  visibility: getComputedStyle(editor).visibility,
+                  opacity: getComputedStyle(editor).opacity,
+                  pointerEvents: getComputedStyle(editor).pointerEvents,
+                },
+              } : null,
+              hit: hit ? {
+                tag: hit.tagName, id: hit.id, className: hit.className,
+              } : null,
+              stack: document.elementsFromPoint(x, y).slice(0, 8).map((element) => ({
+                tag: element.tagName, id: element.id, className: element.className,
+              })),
+            };
+          }, point);
+          throw new Error(`${error.message}; sidecar Square hit diagnostic=${JSON.stringify(diagnostic)}`);
+        }
       };
       const getTextDragPoints = async (
         phrase = "Dynamic languages such as JavaScript",
@@ -1468,11 +1541,30 @@ test(
               Math.min(rect.bottom, target.rect.bottom) >
                 Math.max(rect.y, target.rect.y),
           );
-          const y = overlapping
-            ? (Math.max(overlapping.rect.y, target.rect.y) +
-                Math.min(overlapping.rect.bottom, target.rect.bottom)) /
-              2
-            : (target.start.y + target.end.y) / 2;
+          let y = (target.start.y + target.end.y) / 2;
+          if (overlapping) {
+            const top = Math.max(overlapping.rect.y, target.rect.y);
+            const bottom = Math.min(overlapping.rect.bottom, target.rect.bottom);
+            const height = bottom - top;
+            const candidates = Array.from({ length: 17 }, (_, index) =>
+              top + (height * (index + 0.5)) / 17,
+            );
+            const hitText = (x, candidateY) =>
+              document.elementsFromPoint(x, candidateY).find((element) =>
+                element.tagName === "SPAN" && element.closest(".textLayer"),
+              )?.textContent ?? "";
+            const validY = candidates.find((candidateY) => {
+              const startText = hitText(target.start.x, candidateY);
+              const endText = hitText(target.end.x, candidateY);
+              return startText.includes(target.phrase) && endText.includes(target.phrase);
+            });
+            if (validY === undefined) {
+              throw new Error(
+                `No text-hit point overlaps the existing ${overlapping.className} for ${target.phrase}; intersection=${JSON.stringify({ top, bottom, start: target.start, end: target.end, candidates: candidates.map((candidateY) => ({ y: candidateY, start: hitText(target.start.x, candidateY), end: hitText(target.end.x, candidateY) })) })}`,
+              );
+            }
+            y = validY;
+          }
           const start = { ...target.start, y };
           const end = { ...target.end, y };
           const describe = (element) =>
@@ -1525,7 +1617,7 @@ test(
             return {
               opened: state.opened,
               saves: state.saves,
-              savedDataByteLength: state.savedData?.byteLength || 0,
+              savedOperationCount: state.savedOperations.reduce((count,row)=>count+row.operations.length,0),
               readyGenerations: state.readyGenerations,
               opensSent: state.opensSent,
               openedMessages: state.openedMessages,
@@ -1710,12 +1802,30 @@ test(
           () => !PDFViewerApplication._hasChanges(),
           { timeout: 60_000 },
         );
-        const byteLength = await page.evaluate(
-          () => window.__hostState.savedData?.byteLength || 0,
+        const savedState = await page.evaluate((index) => {
+          const save = window.__hostState.savedOperations[index];
+          const snapshot = window.__browserSidecarHost.snapshotFor(save.documentId);
+          return {
+            documentId: save?.documentId ?? null,
+            revision: save?.revision ?? null,
+            operations: save?.operations ?? [],
+            snapshotRevision: snapshot?.revision ?? null,
+            activeAnnotations: snapshot?.annotations ?? [],
+          };
+        }, expectedSave - 1);
+        assert.equal(savedState.documentId, "fixtures/tracemonkey.pdf");
+        assert.ok(savedState.operations.length > 0, JSON.stringify(savedState));
+        assert.ok(savedState.snapshotRevision >= savedState.revision, JSON.stringify(savedState));
+        assert.ok(
+          savedState.activeAnnotations.every((operation) =>
+            typeof operation.uuid === "string" && operation.uuid.length > 0 &&
+              Number.isInteger(operation.pageIndex) && operation.pageIndex >= 0 &&
+              typeof operation.kind === "string" && operation.payload &&
+              typeof operation.payload === "object"),
+          "The durable sidecar snapshot must retain complete annotation operation identity and payloads",
         );
-        assert.ok(byteLength > 0, "Host save bridge should retain a PDF copy");
         await reopenSavedData();
-        return { byteLength, save: expectedSave };
+        return { operationCount: savedState.operations.length, save: expectedSave };
       };
       const createSquareAroundText = async (phrase) => {
         const target = await phraseGeometry(phrase);
@@ -2076,12 +2186,12 @@ test(
       await persistProgress();
       assertTextSelectionWasPrioritized(underlineOnSquare, 10);
       const underlineSave = await saveAndReopen();
-      const pdfAfterUnderlineSave = await pdfSubtypeCounts();
+      const sidecarAfterUnderlineSave = await sidecarSubtypeCounts();
       results.at(-1).save = underlineSave;
-      results.at(-1).pdfAfterSave = pdfAfterUnderlineSave;
+      results.at(-1).sidecarAfterSave = sidecarAfterUnderlineSave;
       await persistProgress();
       assert.ok(
-        pdfAfterUnderlineSave.Underline >= 1,
+        sidecarAfterUnderlineSave.Underline >= 1,
         "A mouse-created Underline over old markup must survive save/reopen",
       );
       const underlineOverUnderline = await createTextMarkup(10);
@@ -2128,14 +2238,14 @@ test(
         { timeout: 8_000 },
       );
       const squaresAfterSave = await squareEditors();
-      const pdfAfterSquareSave = await pdfSubtypeCounts();
+      const sidecarAfterSquareSave = await sidecarSubtypeCounts();
       results.at(-1).save = twoSquareSave;
       results.at(-1).squaresAfterSave = squaresAfterSave;
-      results.at(-1).pdfAfterSave = pdfAfterSquareSave;
+      results.at(-1).sidecarAfterSave = sidecarAfterSquareSave;
       await persistProgress();
       assert.ok(
-        squaresAfterSave.length >= 2 && pdfAfterSquareSave.Square >= 2,
-        `Both mouse-created Squares must survive save/reopen; editors=${squaresAfterSave.length}, PDF=${pdfAfterSquareSave.Square}`,
+        squaresAfterSave.length >= 2 && sidecarAfterSquareSave.Square >= 2,
+        `Both mouse-created Squares must survive save/reopen; editors=${squaresAfterSave.length}, sidecar=${sidecarAfterSquareSave.Square}`,
       );
 
       // Ink starts in the restored Square body. The page editor layer should
@@ -2726,25 +2836,52 @@ test(
       assert.equal(freeTextOnSquare.events.mode, 3);
       const freeTextSave = await saveAndReopen();
       const savedFreeText = await viewer.evaluate(async () => {
-        const page = await PDFViewerApplication.pdfDocument.getPage(1);
-        return (await page.getAnnotations())
-          .filter((annotation) => annotation.subtype === "FreeText")
-          .map((annotation) => ({
-            contents: annotation.contents,
-            contentsObj: annotation.contentsObj?.str,
-            rect: annotation.rect,
-          }));
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        const editors = [...manager.getEditors(0)]
+          .filter((editor) =>
+            editor.constructor?._editorType === 3 || editor.editorType === "freetext",
+          )
+          .map((editor) => {
+            const rect = editor.div?.getBoundingClientRect();
+            const internal = editor.div?.querySelector(".internal");
+            const style = editor.div ? getComputedStyle(editor.div) : null;
+            return {
+              uuid: editor.id ?? editor.uid ?? null,
+              value: editor.value ?? internal?.textContent ?? "",
+              textContent: internal?.textContent ?? "",
+              width: rect?.width ?? 0,
+              height: rect?.height ?? 0,
+              display: style?.display ?? null,
+              visibility: style?.visibility ?? null,
+              opacity: style?.opacity ?? null,
+            };
+          });
+        const snapshot = parent.__browserSidecarHost.snapshotFor(
+          "fixtures/tracemonkey.pdf",
+        );
+        const sidecarRows = snapshot?.annotations.filter(
+          (operation) => operation.kind === "FreeText" &&
+            operation.payload?.editor?.value?.includes("12345"),
+        ) ?? [];
+        return { editors, sidecarRows };
       });
       results.at(-1).save = freeTextSave;
       results.at(-1).savedFreeText = savedFreeText;
       await persistProgress();
       assert.ok(
-        savedFreeText.some(
-          (annotation) =>
-            annotation.contents?.includes("12345") ||
-            annotation.contentsObj?.includes("12345"),
+        savedFreeText.sidecarRows.some((operation) =>
+          operation.payload.editor.value.includes("12345"),
         ),
         "Entered FreeText '12345' must survive save/reopen",
+      );
+      assert.ok(
+        savedFreeText.editors.some((editor) =>
+          editor.textContent.includes("12345") && editor.width > 0 &&
+          editor.height > 0 && editor.display !== "none" &&
+          editor.visibility !== "hidden" && editor.opacity !== "0",
+        ),
+        `The reopened sidecar FreeText must have nonempty text, visible geometry, and positive area: ${JSON.stringify(savedFreeText)}`,
       );
 
       // Create a Highlight over the old markup, save/reopen it, and verify
@@ -2826,82 +2963,54 @@ test(
       await page.mouse.click(
         iframeBox.x + firstSquare.rect.x + firstSquare.rect.width / 2,
         iframeBox.y + firstSquare.rect.y + firstSquare.rect.height / 2,
-        { button: "left", count: 2, delay: 80 },
+        { button: "left" },
       );
-      try {
-        await viewer.waitForFunction(
-          () =>
-            PDFViewerApplication.pdfViewer.annotationEditorMode === 5 &&
-            document.querySelector(
-              '.page[data-page-number="1"] .annotationEditorLayer .explicitlyEditing',
-            ),
-          { timeout: 8_000 },
-        );
-        const editEvents = await eventSummary();
-        const firstPointerDown = editEvents.events.find(
-          (event) => event.type === "pointerdown",
-        );
-        assert.ok(
-          firstPointerDown?.stack?.some(
-            (element) =>
-              element.className === "squareAnnotation" &&
-              element.id.endsWith(firstSquare.uid),
-          ),
-          "The genuine double-click must land on the intended rendered Square",
-        );
-      } catch (error) {
-        const failure = {
-          scenario: "none-doubleclick-edit-timeout",
-          target: firstSquare,
-          mode: await viewer.evaluate(
-            () => PDFViewerApplication.pdfViewer.annotationEditorMode,
-          ),
-          events: await eventSummary(),
-          pointHits: await viewer.evaluate(
-            (point) =>
-              document
-                .elementsFromPoint(point.x, point.y)
-                .slice(0, 8)
-                .map((element) => ({
-                  tag: element.tagName,
-                  id: element.id,
-                  className: element.className,
-                })),
-            {
-              x: firstSquare.rect.x + firstSquare.rect.width / 2,
-              y: firstSquare.rect.y + firstSquare.rect.height / 2,
-            },
-          ),
-          layers: await viewer.evaluate(() => {
-            const page = document.querySelector('.page[data-page-number="1"]');
-            return [
-              ...page.querySelectorAll(
-                ".annotationEditorLayer, .annotationLayer",
-              ),
-            ].map((layer) => ({
-              className: layer.className,
-              pointerEvents: getComputedStyle(layer).pointerEvents,
-              children: [...layer.children].slice(0, 10).map((child) => ({
-                tag: child.tagName,
-                className: child.className,
-                id: child.id,
-              })),
-            }));
-          }),
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+        { timeout: 8_000 },
+      );
+      const firstClickSelection = await viewer.evaluate((editorId) => {
+        const selected = document.getElementById(editorId);
+        const raw = PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(editorId);
+        return {
+          id: selected?.id || null,
+          className: selected?.className || null,
+          editorType: raw?.constructor?._editorType ?? raw?._editorType ?? null,
+          selected: selected?.classList.contains("selectedEditor") || false,
+          mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
         };
-        results.push(failure);
-        await persistProgress();
-        await page.screenshot({
-          path: path.join(
-            artifacts,
-            `annotation-interaction-${artifactId}-explicit-timeout.png`,
-          ),
-          fullPage: false,
+      }, firstSquare.id);
+      assert.equal(firstClickSelection.id, firstSquare.id,
+        "A real NONE-mode click must hit the intended sidecar Square editor");
+      assert.equal(firstClickSelection.editorType, 5,
+        "The hit editor must still identify as a Square after entering its tool mode");
+      assert.equal(firstClickSelection.selected, true,
+        "The clicked sidecar Square must become the selected editor");
+      const clickEvents = await eventSummary();
+      const firstPointerDown = clickEvents.events.find(
+        (event) => event.type === "pointerdown",
+      );
+      assert.equal(firstPointerDown?.target?.id, firstSquare.id,
+        "The trusted pointerdown must target the intended sidecar editor, not a native PDF annotation node");
+      assert.equal(firstPointerDown?.targetInEditorLayer, true);
+
+      // A click in NONE selects the durable sidecar editor and activates its
+      // matching tool. Use PDF.js's explicit editId route to test the toolbar
+      // state independently of the obsolete PDF-annotation double-click path.
+      await viewer.evaluate((editId) => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          mode: 5,
+          editId,
+          mustEnterInEditMode: true,
         });
-        throw new Error(
-          `${error.message}; evidence: ${JSON.stringify(failure)}`,
+      }, firstSquare.uid);
+      await viewer.waitForFunction((uid) => {
+        const explicit = document.querySelector(
+          '.page[data-page-number="1"] .annotationEditorLayer .explicitlyEditing',
         );
-      }
+        return explicit &&
+          PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(explicit.id)?.uid === uid;
+      }, { timeout: 8_000 }, firstSquare.uid);
       const explicitFirst = await viewer.evaluate(() => {
         const layer = document.querySelector(
           '.page[data-page-number="1"] .annotationEditorLayer',

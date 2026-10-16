@@ -22,16 +22,23 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
   let top = scrollTop;
   let left = 0;
   const frames = new Map();
+  const containerClasses = new Set();
   const container = {
     isConnected: true,
     scrollHeight: maxTop + 500,
     clientHeight: 500,
     scrollWidth: 500,
     clientWidth: 500,
+    style: { scrollBehavior: "smooth" },
     get scrollTop() { return top; },
     set scrollTop(value) { top = Math.max(0, Math.min(maxTop, value)); },
     get scrollLeft() { return left; },
     set scrollLeft(value) { left = Math.max(0, Math.min(0, value)); },
+    classList: {
+      add(name) { containerClasses.add(name); },
+      remove(name) { containerClasses.delete(name); },
+      contains(name) { return containerClasses.has(name); },
+    },
     setPointerCapture() {},
   };
   const pdfDocument = {};
@@ -59,6 +66,7 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
   };
   const context = {
     state,
+    runtimeLogRecord() {},
     rendererGeneration: 1,
     iosInputPolicy: true,
     document,
@@ -508,14 +516,19 @@ test("hiding cancels inertia and prevents an active finger from restarting it", 
   h.document.visibilityState = "hidden";
   h.api.onManualDocumentVisibilityChange();
   assert.equal(h.state.manualMomentum, null);
+  assert.equal(h.container.classList.contains("pdfReaderBackgrounded"), true,
+    "The hidden Viewer scroll surface must be frozen during backgrounding");
   assert.equal(pointer.blockedByVisibility, true);
   assert.equal(pointer.moved, false);
 
   h.document.visibilityState = "visible";
   h.setTime(startTime + 32);
+  h.api.onManualDocumentVisibilityChange();
   h.api.finishManualPointer(
     pointer.pointerId,
     { clientX: 50, clientY: 100, timeStamp: startTime + 32 },
   );
   assert.equal(h.state.manualMomentum, null);
+  assert.equal(h.container.classList.contains("pdfReaderBackgrounded"), false,
+    "Foregrounding must release the background scroll freeze");
 });

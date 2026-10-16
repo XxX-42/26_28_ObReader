@@ -67,9 +67,14 @@
     dirty: false,
     activePointers: new Map(),
     manualPointers: new Map(),
+    nativePenPanPointers: new Map(),
     nativeTouchPointers: new Map(),
     fingerTextSelectionSuppressionOwned: false,
+    fingerTextSuppressionTarget: null,
+    fingerTextSuppressionAppliedTarget: null,
     manualMomentum: null,
+    hiddenViewerScrollPosition: null,
+    foregroundScrollGuard: null,
     pendingPenHighlight: null,
     penPolicyPointers: new Map(),
     lastTouchClickPage: null,
@@ -79,6 +84,7 @@
       dropped: 0,
       samples: [],
     },
+    pendingSidecarFreeTextClick: null,
     editorHistory: {
       canUndo: false,
       canRedo: false,
@@ -180,6 +186,8 @@
   const runtimeLogStarted = performance.now();
   let runtimeLogRows = [], runtimeLogBytes = 0, runtimeLogLost = 0, runtimeLogSequence = 0, runtimeLogCall = 0, runtimeLogClosed = false, runtimeLogClosing = false;
   const runtimeLogListeners = [];
+  let runtimeLogScrollFrame = null;
+  let runtimeLogPendingScroll = null;
   function runtimeLogRecord(kind, fields = {}) {
     if (runtimeLogClosed) return;
     try {
@@ -231,9 +239,31 @@
     };
     runtimeLogConsoleRestore.push([level, original, console[level]]);
   }
-  for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointermove", "pointerup", "pointercancel", "wheel", "keydown", "input", "change", "compositionstart", "compositionend", "scroll"]) {
+  for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointermove", "pointerup", "pointercancel", "wheel", "keydown", "input", "change", "compositionstart", "compositionend"]) {
     runtimeLogListen(type, event => runtimeLogRecord("user", { event: type, trusted: event.isTrusted === true, target: event.target?.id || event.target?.tagName || "window", pointerType: event.pointerType, pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY, deltaX: event.deltaX, deltaY: event.deltaY, key: type === "keydown" ? (/^(Enter|Escape|Tab|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Shift|Control|Alt|Meta|CapsLock|Dead|Process|Unidentified|F[0-9]{1,2})$/.test(event.key || "") ? event.key : "character") : undefined, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, scrollTop: type === "scroll" ? event.target?.scrollTop : undefined }));
   }
+  runtimeLogListen("scroll", event => {
+    const target = event.target;
+    runtimeLogPendingScroll = {
+      kind: "user",
+      event: "scroll",
+      trusted: event.isTrusted === true,
+      target: target?.id || target?.tagName || "window",
+      scrollTop: target?.scrollTop,
+      scrollLeft: target?.scrollLeft,
+    };
+    if (runtimeLogScrollFrame === null) {
+      runtimeLogScrollFrame = requestAnimationFrame(() => {
+        runtimeLogScrollFrame = null;
+        const fields = runtimeLogPendingScroll;
+        runtimeLogPendingScroll = null;
+        if (fields) {
+          const { kind, ...eventFields } = fields;
+          runtimeLogRecord(kind, eventFields);
+        }
+      });
+    }
+  });
   runtimeLogListen("error", event => runtimeLogRecord("error", { error: runtimeLogError(event.error || event.message), source: event.filename, line: event.lineno, column: event.colno }));
   runtimeLogListen("unhandledrejection", event => runtimeLogRecord("unhandledrejection", { error: runtimeLogError(event.reason) }));
   const runtimeLogTimer = setInterval(runtimeLogFlush, 1000);
@@ -244,6 +274,15 @@
     if (runtimeLogClosing) return;
     runtimeLogClosing = true;
     clearInterval(runtimeLogTimer);
+    if (runtimeLogScrollFrame !== null) {
+      cancelAnimationFrame(runtimeLogScrollFrame);
+      runtimeLogScrollFrame = null;
+    }
+    if (runtimeLogPendingScroll) {
+      const { kind, ...eventFields } = runtimeLogPendingScroll;
+      runtimeLogPendingScroll = null;
+      runtimeLogRecord(kind, eventFields);
+    }
     for (const [level, original, wrapped] of runtimeLogConsoleRestore) if (console[level] === wrapped) console[level] = original;
     for (const [type, fn] of runtimeLogListeners.splice(0)) window.removeEventListener(type, fn, true);
     Promise.resolve().then(() => { runtimeLogRecord("viewer.end"); runtimeLogClosed = true; runtimeLogFlush(); });
@@ -1902,7 +1941,17 @@
       state.externalAnnotationRefs.clear();
       state.externalSource = null;
       state.pendingExternalAnnotationsUpdate = null;
+      updateSidecarEditorHitTesting();
     }
+  }
+
+  function updateSidecarEditorHitTesting() {
+    const hasActiveSidecarEditors = [...state.externalAnnotationRows.values()]
+      .some((row) => row?.deleted !== true);
+    document.documentElement.toggleAttribute(
+      "data-pdf-reader-sidecar-editors",
+      hasActiveSidecarEditors,
+    );
   }
 
   function findEmbeddedEditor(manager, pageIndex, reference) {
@@ -2331,6 +2380,7 @@
     state.externalAnnotationRefs = new Set(
       [...merged.values()].filter((row) => row.embeddedRef).map((row) => row.embeddedRef),
     );
+    updateSidecarEditorHitTesting();
     state.externalSource = normalized.source;
     state.compactInkEncoding = normalized.compactInkEncoding === true;
     applyLegacyAnnotationIdentities(normalized.legacyIdentities);
@@ -2949,10 +2999,6 @@
   }) {
     stopOpenStartupObserver();
     const completed = new Set(Object.keys(reportedTimings));
-    const toolsExpected = !state.readOnly;
-    if (!toolsExpected) {
-      completed.add("toolsUsableMs");
-    }
     if (
       typeof MutationObserver !== "function" ||
       !document.getElementById("viewerContainer") ||
@@ -2969,6 +3015,8 @@
       }
       stopped = true;
       observer?.disconnect();
+      app.eventBus?._off?.("annotationeditoruimanager", onAnnotationEditorManager);
+      app.eventBus?._off?.("annotationeditormodechanged", onAnnotationEditorModeChanged);
       session.signal.removeEventListener("abort", cleanup);
       if (state.openStartupObserverCleanup === cleanup) {
         state.openStartupObserverCleanup = null;
@@ -3014,7 +3062,7 @@
           "editorFreeTextButton",
         ].map((id) => document.getElementById(id));
         if (
-          toolsExpected &&
+          !state.readOnly &&
           manager &&
           toolButtons.every((button) => button && !button.disabled)
         ) {
@@ -3036,10 +3084,14 @@
         cleanup();
       }
     };
+    const onAnnotationEditorManager = () => check();
+    const onAnnotationEditorModeChanged = () => check();
 
     observer = new MutationObserver(check);
     state.openStartupObserverCleanup = cleanup;
     session.signal.addEventListener("abort", cleanup, { once: true });
+    app.eventBus?._on?.("annotationeditoruimanager", onAnnotationEditorManager);
+    app.eventBus?._on?.("annotationeditormodechanged", onAnnotationEditorModeChanged);
     observer.observe(document.getElementById("viewerContainer"), {
       childList: true,
       subtree: true,
@@ -3946,6 +3998,13 @@
       return;
     }
     state.revision += 1;
+    runtimeLogRecord("annotation-operation.mutation", {
+      schedule,
+      saveInFlight: Boolean(state.savePromise),
+      autoSavePending: state.autoSavePending,
+      autoSaveEnabled: state.autoSaveEnabled,
+      autoSavePaused: state.autoSavePaused,
+    });
     refreshAnnotationOperations(state.revision);
     state.dirty = true;
     state.lastRecoveredDocumentId = null;
@@ -3973,6 +4032,22 @@
     }
     state.autoSavePending = true;
     clearAutoSaveTimer();
+    const blockedBy = !state.autoSaveEnabled ? "disabled"
+      : state.autoSavePaused ? "paused"
+        : state.closeControl ? "closing"
+          : !state.activeDocumentId ? "no-document"
+            : state.readOnly ? "read-only"
+              : state.syncCheckpointInProgress ? "checkpoint"
+                : state.syncApplyControl ? "sync-apply"
+                  : state.isComposing ? "composition"
+                    : hasActivePointerInteraction() ? "pointer" : null;
+    runtimeLogRecord("autosave.schedule", {
+      pending: state.autoSavePending,
+      saveInFlight: Boolean(state.savePromise),
+      blockedBy,
+      delayMs: autoSaveDelayMs(),
+      revision: state.revision,
+    });
     if (
       !state.autoSaveEnabled ||
       state.autoSavePaused ||
@@ -4309,6 +4384,8 @@
     revision,
     openRequest,
     operations,
+    origin,
+    heavyLeaseId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -4346,6 +4423,10 @@
             requestId,
             revision,
             operations,
+            origin,
+            ...(typeof heavyLeaseId === "string" && heavyLeaseId
+              ? { heavyLeaseId }
+              : {}),
           },
         )
       ) {
@@ -4362,6 +4443,7 @@
     revision,
     timeoutMs,
     openRequest,
+    reason,
     operations,
     source,
   }) {
@@ -4400,6 +4482,7 @@
             openRequest,
             requestId,
             revision,
+            reason,
             operations,
             source,
           },
@@ -4442,6 +4525,7 @@
     let revisionAtStart = null;
     let dirtySnapshot = null;
     let requestId = null;
+    let heavyLease = null;
     let saveStarted = false;
     let autoStartedAt = null;
     const finishSavePhase = () => {
@@ -4510,6 +4594,27 @@
         }
         return sessionIsCurrent() ? SAVE_RETRY_AFTER_IDLE : false;
       }
+      if (state.hostHeavyLeaseRequired) {
+        heavyLease = await waitForHostHeavyLease({ documentId, openRequest });
+        if (!sessionIsCurrent()) {
+          releaseHostHeavyLease(heavyLease, documentId);
+          heavyLease = null;
+          return false;
+        }
+        if (
+          state.revision !== revisionAtStart ||
+          isEditBoundaryBusy() ||
+          state.pendingInkCommit
+        ) {
+          releaseHostHeavyLease(heavyLease, documentId);
+          heavyLease = null;
+          restoreChanges(app, {
+            hadAnnotationChanges: true,
+            hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+          });
+          return SAVE_RETRY_AFTER_IDLE;
+        }
+      }
       autoStartedAt = origin === "auto" ? Date.now() : null;
       if (autoStartedAt !== null) {
         state.lastAutoSaveStartedAt = autoStartedAt;
@@ -4536,11 +4641,18 @@
         revision: revisionAtStart,
         openRequest,
         operations: operationsAtStart,
+        origin,
+        heavyLeaseId: heavyLease?.leaseId || null,
       });
       if (sessionIsCurrent()) {
         state.confirmedRevision = revisionAtStart;
         clearConfirmedDirtyState(revisionAtStart);
         schedulePendingExternalAnnotationUpdate();
+        runtimeLogRecord("annotation-operation.ack-state", {
+          revisionAtStart,
+          currentRevision: state.revision,
+          dirtyBeforeReconcile: state.dirty,
+        });
         if (state.revision === revisionAtStart) {
           state.dirty = false;
           pdfDocument.annotationStorage?.resetModified?.();
@@ -4582,6 +4694,10 @@
       }
       return false;
     } finally {
+      if (heavyLease) {
+        releaseHostHeavyLease(heavyLease, documentId);
+        heavyLease = null;
+      }
       finishSavePhase();
       if (autoStartedAt !== null) {
         state.lastAutoSaveDurationMs = Math.max(0, Date.now() - autoStartedAt);
@@ -4729,6 +4845,7 @@
           revision: revisionAtStart,
           timeoutMs,
           openRequest: state.activeOpenRequest,
+          reason,
           operations: operationsAtStart,
           source,
         });
@@ -4877,7 +4994,17 @@
     }
     state.savePromise = runSaveSequence(origin).finally(() => {
       state.savePromise = null;
-      if (!isDirty()) {
+      const stillDirty = isDirty();
+      runtimeLogRecord("annotation-operation.flight-settled", {
+        origin,
+        stillDirty,
+        autoSavePending: state.autoSavePending,
+        autoSaveEnabled: state.autoSaveEnabled,
+        autoSavePaused: state.autoSavePaused,
+        closeControl: Boolean(state.closeControl),
+        revision: state.revision,
+      });
+      if (!stillDirty) {
         state.autoSavePending = false;
       } else if (
         state.autoSavePending &&
@@ -4961,6 +5088,30 @@
     }
     const cleanups = [];
 
+    function revealRestoredExternalEditors() {
+      const pageCount = Number.isSafeInteger(app.pdfDocument?.numPages)
+        ? app.pdfDocument.numPages
+        : 0;
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const editors = manager.getEditors?.(pageIndex);
+        if (!editors || typeof editors[Symbol.iterator] !== "function") continue;
+        for (const editor of editors) {
+          if (!editor || editor.deleted === true || editor.pageIndex !== pageIndex) continue;
+          const uuid = state.annotationUuidByRuntimeId.get(String(editor.id));
+          const row = typeof uuid === "string"
+            ? state.externalAnnotationRows.get(uuid)
+            : null;
+          if (!row || row.deleted === true) continue;
+          // Removing the last sidecar editor can hide PDF.js's editor layer.
+          // Undo restores the editor model without going through hydration, so
+          // explicitly reveal the layer before its restored geometry is read or
+          // painted. Keep ordinary PDF.js editors and unrelated rows untouched.
+          app.pdfViewer?.getPageView?.(pageIndex)?.annotationEditorLayer?.show?.();
+          break;
+        }
+      }
+    }
+
     // Commands represent completed model edits (including moves, resizes,
     // parameter changes and drawing steps). UI state events also report focus
     // and selection, so they aren't used as a mutation signal.
@@ -5015,6 +5166,7 @@
             noteMutation();
           }
           reconcileSavedEditorHistory(manager, direction, savedEditorHistory);
+          revealRestoredExternalEditors();
           if (changedEditors.length > 0) {
             queueFreeTextAppearanceRepair(app, manager, changedEditors);
           }
@@ -6193,20 +6345,33 @@
   }
 
   function refreshFingerTextSelectionSuppression() {
-    document.documentElement.classList.toggle(
-      "pdfReaderFingerTextSelectionSuppressed",
-      fingerTextSelectionSuppressionIsOwned(),
-    );
+    const shouldSuppress = fingerTextSelectionSuppressionIsOwned();
+    document.documentElement.classList.toggle("pdfReaderFingerTextSelectionSuppressed", shouldSuppress);
+    const target = shouldSuppress && state.fingerTextSuppressionTarget?.isConnected
+      ? state.fingerTextSuppressionTarget
+      : null;
+    if (state.fingerTextSuppressionAppliedTarget !== target) {
+      state.fingerTextSuppressionAppliedTarget?.classList.remove(
+        "pdfReaderFingerTextSelectionSuppressedTarget",
+      );
+      state.fingerTextSuppressionAppliedTarget = target;
+      target?.classList.add("pdfReaderFingerTextSelectionSuppressedTarget");
+    }
   }
 
   function clearFingerTextSelectionSuppression() {
     state.fingerTextSelectionSuppressionOwned = false;
+    state.fingerTextSuppressionTarget = null;
     for (const pointer of state.manualPointers.values()) {
       pointer.suppressesFingerTextSelection = false;
     }
     document.documentElement.classList.remove(
       "pdfReaderFingerTextSelectionSuppressed",
     );
+    state.fingerTextSuppressionAppliedTarget?.classList.remove(
+      "pdfReaderFingerTextSelectionSuppressedTarget",
+    );
+    state.fingerTextSuppressionAppliedTarget = null;
   }
 
   function isPdfTextLayerTarget(target) {
@@ -6264,6 +6429,7 @@
     if (!isViewerSurfaceTarget(event.target) || isNativeContextTarget(event.target)) {
       return;
     }
+    releaseForegroundScrollGuard("touchstart");
     const activePenGesture = hasActivePenEditorGesture();
     const activeEditorStylus = touchEventContainsStylus(event) &&
       isViewerSurfaceTarget(event.target) &&
@@ -6290,6 +6456,21 @@
       // This only arbitrates contacts while a Pencil/editor gesture is active,
       // including a finger arriving as a palm contact during that gesture.
       event.preventDefault();
+    }
+  }
+
+  function onBridgeIosTouchCancel(event) {
+    if (
+      iosInputPolicy &&
+      event.target instanceof Element &&
+      isViewerSurfaceTarget(event.target) &&
+      !isNativeContextTarget(event.target) &&
+      !hasActivePenEditorGesture()
+    ) {
+      // A real touchcancel ends the contact rather than handing it to native
+      // scrolling. Unlike pointercancel caused by touch-action arbitration, it
+      // has no later touchend boundary to release tool-owned text suppression.
+      clearFingerTextSelectionSuppression();
     }
   }
 
@@ -6329,6 +6510,7 @@
     state.lastTouchClickPage = page;
     if (annotationToolIsActive() && !hasActivePenEditorGesture()) {
       state.fingerTextSelectionSuppressionOwned = true;
+      state.fingerTextSuppressionTarget = event.target.closest?.(".textLayer span") || null;
       refreshFingerTextSelectionSuppression();
     }
     // Keep PDF.js from interpreting a finger contact as an editor gesture.
@@ -6358,9 +6540,88 @@
     state.manualMomentum = null;
   }
 
+  function releaseForegroundScrollGuard(reason) {
+    const guard = state.foregroundScrollGuard;
+    if (!guard) {
+      return;
+    }
+    state.foregroundScrollGuard = null;
+    queueMicrotask(() => runtimeLogRecord(
+      "viewer.foreground-scroll-guard-released",
+      {
+        reason,
+        correctedScrollEvents: guard.correctedScrollEvents,
+      },
+    ));
+  }
+
+  function holdViewerScrollPosition(container, scrollLeft, scrollTop, reason) {
+    if (!container?.isConnected) {
+      return;
+    }
+    state.foregroundScrollGuard = {
+      container,
+      scrollLeft,
+      scrollTop,
+      correctedScrollEvents: 0,
+      correcting: false,
+    };
+    runtimeLogRecord("viewer.foreground-scroll-guard-started", {
+      reason,
+      scrollLeft,
+      scrollTop,
+    });
+  }
+
+  function correctForegroundMomentumScroll() {
+    const guard = state.foregroundScrollGuard;
+    if (!guard || guard.correcting) {
+      return;
+    }
+    const container = guard.container;
+    if (!container?.isConnected) {
+      releaseForegroundScrollGuard("container-disconnected");
+      return;
+    }
+    if (
+      container.scrollLeft === guard.scrollLeft &&
+      container.scrollTop === guard.scrollTop
+    ) {
+      return;
+    }
+    guard.correctedScrollEvents++;
+    guard.correcting = true;
+    container.scrollLeft = guard.scrollLeft;
+    container.scrollTop = guard.scrollTop;
+    guard.correcting = false;
+    if (guard.correctedScrollEvents === 1) {
+      runtimeLogRecord("viewer.foreground-momentum-scroll-corrected", {
+        scrollLeft: guard.scrollLeft,
+        scrollTop: guard.scrollTop,
+      });
+    }
+  }
+
   function onManualDocumentVisibilityChange() {
     if (document.visibilityState === "hidden") {
+      releaseForegroundScrollGuard("hidden-again");
       cancelManualMomentum();
+      const container = document.getElementById("viewerContainer");
+      state.hiddenViewerScrollPosition = container ? {
+        scrollLeft: container.scrollLeft,
+        scrollTop: container.scrollTop,
+        documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest,
+        pdfDocument: state.app?.pdfDocument,
+      } : null;
+      container?.classList.add("pdfReaderBackgrounded");
+      runtimeLogRecord("viewer.visibility-hidden", {
+        scrollLeft: container?.scrollLeft ?? null,
+        scrollTop: container?.scrollTop ?? null,
+        documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest,
+        hasPdfDocument: Boolean(state.app?.pdfDocument),
+      });
       clearFingerTextSelectionSuppression();
       for (const pointer of state.manualPointers.values()) {
         if (pointer.pointerType === "touch") {
@@ -6368,6 +6629,53 @@
           pointer.moved = false;
         }
       }
+      return;
+    }
+    if (document.visibilityState === "visible") {
+      const saved = state.hiddenViewerScrollPosition;
+      state.hiddenViewerScrollPosition = null;
+      const container = document.getElementById("viewerContainer");
+      if (
+        !saved || !container?.isConnected ||
+        state.activeDocumentId !== saved.documentId ||
+        state.activeOpenRequest !== saved.openRequest ||
+        state.app?.pdfDocument !== saved.pdfDocument
+      ) {
+        container?.classList.remove("pdfReaderBackgrounded");
+        runtimeLogRecord("viewer.visibility-restored-without-scroll-restore", {
+          hasSavedPosition: Boolean(saved),
+          containerConnected: Boolean(container?.isConnected),
+          savedDocumentId: saved?.documentId ?? null,
+          activeDocumentId: state.activeDocumentId,
+          savedOpenRequest: saved?.openRequest ?? null,
+          activeOpenRequest: state.activeOpenRequest,
+          savedPdfMatches: Boolean(saved && state.app?.pdfDocument === saved.pdfDocument),
+        });
+        return;
+      }
+      // Some browser scroll engines suspend native touch momentum while a tab
+      // is hidden and apply the accumulated distance on foregrounding. Freeze
+      // the scroll container while hidden to terminate that native gesture,
+      // then restore the last visible position before normal input resumes.
+      holdViewerScrollPosition(
+        container,
+        saved.scrollLeft,
+        saved.scrollTop,
+        "visibility-restore",
+      );
+      container.classList.remove("pdfReaderBackgrounded");
+      const previousScrollBehavior = container.style.scrollBehavior;
+      container.style.scrollBehavior = "auto";
+      container.scrollLeft = saved.scrollLeft;
+      container.scrollTop = saved.scrollTop;
+      container.style.scrollBehavior = previousScrollBehavior;
+      cancelManualMomentum();
+      runtimeLogRecord("viewer.visibility-scroll-restored", {
+        restoredScrollLeft: saved.scrollLeft,
+        restoredScrollTop: saved.scrollTop,
+        actualScrollLeft: container.scrollLeft,
+        actualScrollTop: container.scrollTop,
+      });
     }
   }
 
@@ -6704,6 +7012,7 @@
     if (pointerType === "touch") {
       if (pointer.suppressesFingerTextSelection) {
         state.fingerTextSelectionSuppressionOwned = true;
+        state.fingerTextSuppressionTarget = pointer.originalTarget?.closest?.(".textLayer span") || null;
       }
       refreshFingerTextSelectionSuppression();
       state.lastTouchClickPage = pointer.pageTarget;
@@ -6809,6 +7118,7 @@
     invalidatePendingPenHighlight();
     const pointers = [...state.manualPointers.values()];
     state.manualPointers.clear();
+    state.nativePenPanPointers.clear();
     state.nativeTouchPointers.clear();
     for (const pointer of pointers) {
       releasePointerCapture(pointer);
@@ -6822,6 +7132,13 @@
   }
 
   function onBridgeIosClick(event) {
+    if (
+      iosInputPolicy &&
+      event.target instanceof Element &&
+      event.target.closest("#previous, #next, #pageNumber")
+    ) {
+      releaseForegroundScrollGuard("explicit-page-navigation");
+    }
     if (
       !iosInputPolicy ||
       !(event.target instanceof Element) ||
@@ -6867,6 +7184,123 @@
     ) {
       stopDirectManipulationEvent(event);
     }
+  }
+
+  function activateSidecarFreeTextEditor(runtimeId, uuid) {
+    const pdfViewer = state.app?.pdfViewer;
+    const manager = pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const editor = manager?.getEditor?.(runtimeId);
+    if (
+      !editor ||
+      editor.editorType !== "freetext" ||
+      editor.deleted ||
+      !editor.canChangeContent ||
+      state.annotationUuidByRuntimeId.get(String(runtimeId)) !== uuid
+    ) {
+      return false;
+    }
+    try {
+      pdfViewer.annotationEditorMode = {
+        mode:3,
+        editId:editor.uid,
+        isFromKeyboard:false,
+        isTemporary:false,
+        mustEnterInEditMode:true,
+        createNewEditor:false,
+      };
+      return true;
+    } catch (error) {
+      runtimeLogRecord("external-annotation.freetext-double-click-error", {
+        annotationUuid:uuid,
+        error:runtimeLogError(error),
+      });
+      return false;
+    }
+  }
+
+  function handleSidecarFreeTextDoubleClick(event, target) {
+    const prior = state.pendingSidecarFreeTextClick;
+    state.pendingSidecarFreeTextClick = null;
+    if (
+      event.isTrusted !== true ||
+      event.pointerType !== "mouse" ||
+      event.button !== 0 ||
+      state.readOnly ||
+      !prior ||
+      ![0, 3].includes(state.editorMode)
+    ) {
+      return false;
+    }
+    const elapsed = event.timeStamp - prior.timeStamp;
+    const closeEnough = Math.hypot(
+      event.clientX - prior.x,
+      event.clientY - prior.y,
+    ) <= 8;
+    const editorElement = document.getElementById(prior.runtimeId);
+    const rect = editorElement?.getBoundingClientRect();
+    const stillOverEditor = !!rect &&
+      event.clientX >= rect.left && event.clientX <= rect.right &&
+      event.clientY >= rect.top && event.clientY <= rect.bottom;
+    if (
+      elapsed < 0 || elapsed > 500 ||
+      !closeEnough || !stillOverEditor
+    ) {
+      return false;
+    }
+    const uuid = state.annotationUuidByRuntimeId.get(prior.runtimeId);
+    const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const editor = manager?.getEditor?.(prior.runtimeId);
+    if (
+      !uuid || !editor || editor.editorType !== "freetext" ||
+      editor.deleted || !editor.canChangeContent
+    ) {
+      return false;
+    }
+
+    // PDF.js's native double-click detector listens on the page text layer.
+    // A sidecar FreeText editor is a sibling layer; its first click selects
+    // the editor and changes the layer's hit target, so the next pointerdown
+    // otherwise creates a new empty editor. Route that second press to the
+    // selected editor by runtime ID/stable UUID before PDF.js sees it.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    activateSidecarFreeTextEditor(prior.runtimeId, uuid);
+    runtimeLogRecord("external-annotation.freetext-double-click", {
+      annotationUuid:uuid,
+      runtimeId:prior.runtimeId,
+      elapsedMs:Math.round(elapsed),
+    });
+    return true;
+  }
+
+  function rememberSidecarFreeTextClick(event, target) {
+    if (
+      event.isTrusted !== true ||
+      event.pointerType !== "mouse" ||
+      event.button !== 0 ||
+      !(target instanceof Element) ||
+      state.readOnly
+    ) {
+      state.pendingSidecarFreeTextClick = null;
+      return;
+    }
+    const editorElement = target.closest(".freeTextEditor");
+    const runtimeId = editorElement?.id || "";
+    const uuid = runtimeId && state.annotationUuidByRuntimeId.get(runtimeId);
+    const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const editor = uuid && manager?.getEditor?.(runtimeId);
+    if (!editor || editor.editorType !== "freetext" || editor.deleted) {
+      state.pendingSidecarFreeTextClick = null;
+      return;
+    }
+    state.pendingSidecarFreeTextClick = {
+      runtimeId,
+      uuid,
+      pointerId:event.pointerId,
+      timeStamp:event.timeStamp,
+      x:event.clientX,
+      y:event.clientY,
+    };
   }
 
   function pointerInteractionKind(event, target) {
@@ -7049,6 +7483,13 @@
       pointer.mode === 9 &&
       pointer.penTextSelectionGesture
     )) {
+      stopDirectManipulationEvent(event);
+      return;
+    }
+    if (state.nativePenPanPointers.size > 0) {
+      // Keep the browser's native Pencil contact untouched while preventing
+      // its compatibility mouse sequence from starting PDF text selection.
+      // The click event remains available for a stationary Pencil tap.
       stopDirectManipulationEvent(event);
     }
   }
@@ -7296,6 +7737,20 @@
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(event);
+    if (
+      iosInputPolicy &&
+      ["mouse", "pen"].includes(event.pointerType) &&
+      event.target instanceof Element &&
+      !isViewerSurfaceTarget(event.target)
+    ) {
+      const container = document.getElementById("viewerContainer");
+      holdViewerScrollPosition(
+        container,
+        container?.scrollLeft ?? 0,
+        container?.scrollTop ?? 0,
+        `${event.pointerType}-contact-outside-viewer`,
+      );
+    }
     if (iosInputPolicy && event.pointerType !== "touch") {
       clearFingerTextSelectionSuppression();
     }
@@ -7308,6 +7763,10 @@
       return;
     }
     const target = event.target;
+    if (handleSidecarFreeTextDoubleClick(event, target)) {
+      return;
+    }
+    rememberSidecarFreeTextClick(event, target);
     if (iosInputPolicy && event.pointerType !== "touch") {
       // A real mouse or Pencil press starts a fresh interaction. This keeps a
       // prior finger tap from suppressing a later physical click without a
@@ -7346,9 +7805,20 @@
         });
         suspendTouchPansForPen();
       } else if (!nativeOperation) {
-        // Read-mode Pencil is a native WebKit contact. In particular, avoid
-        // tracking an editorLayer pointer as a synthetic bridge gesture: that
-        // would activate the Pencil touch-action guard after this down event.
+        // Read-mode Pencil remains a native WebKit contact: track only its
+        // compatibility-mouse boundary, without capture, cancellation, or
+        // changing touch-action so iPadOS retains native scrolling.
+        state.nativePenPanPointers.set(event.pointerId, {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          pageTarget: directManipulationPage(target),
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+          pdfDocument: state.app?.pdfDocument,
+          rendererGeneration,
+          moved: false,
+        });
         return;
       }
     }
@@ -7479,6 +7949,7 @@
       ["pointerout", onBridgePointerOut],
       ["lostpointercapture", onBridgeLostPointerCapture],
       ["wheel", onBridgeWheel],
+      ["scroll", correctForegroundMomentumScroll],
       ["click", onBridgeIosClick],
       ["dblclick", onBridgeIosDoubleClick],
       ["selectstart", onBridgeFingerSelectStart],
@@ -7502,6 +7973,11 @@
         passive: false,
         signal: controller.signal,
       });
+      window.addEventListener("touchcancel", onBridgeIosTouchCancel, {
+        capture: true,
+        passive: false,
+        signal: controller.signal,
+      });
     }
     document.addEventListener(
       "visibilitychange",
@@ -7510,7 +7986,18 @@
     );
   }
 
-  function onBridgeWheel() {
+  function onBridgeWheel(event) {
+    if (event.deltaX === 0 && event.deltaY === 0) {
+      const container = document.getElementById("viewerContainer");
+      holdViewerScrollPosition(
+        container,
+        container?.scrollLeft ?? 0,
+        container?.scrollTop ?? 0,
+        "zero-delta-wheel-cancel",
+      );
+    } else {
+      releaseForegroundScrollGuard("wheel");
+    }
     cancelManualMomentum();
   }
 
@@ -7522,6 +8009,14 @@
         event.clientY - nativeTouch.startY,
       ) > 1;
       event.stopImmediatePropagation();
+      return;
+    }
+    const nativePenPan = state.nativePenPanPointers.get(event.pointerId);
+    if (nativePenPan) {
+      nativePenPan.moved ||= Math.hypot(
+        event.clientX - nativePenPan.startX,
+        event.clientY - nativePenPan.startY,
+      ) >= 3;
       return;
     }
     const manualPointer = state.manualPointers.get(event.pointerId);
@@ -7563,8 +8058,34 @@
     if (nativeTouch) {
       state.nativeTouchPointers.delete(event.pointerId);
       event.stopImmediatePropagation();
-      if (state.nativeTouchPointers.size === 0 && !hasActivePenEditorGesture()) {
-        clearFingerTextSelectionSuppression();
+      // iOS can deliver a delayed selectstart after the native contact ends.
+      // Keep the tool-owned guard through that boundary; mode changes,
+      // non-touch input, visibility loss, or document teardown release it.
+      return;
+    }
+    const nativePenPan = state.nativePenPanPointers.get(event.pointerId);
+    if (nativePenPan) {
+      nativePenPan.moved ||= Math.hypot(
+        event.clientX - nativePenPan.startX,
+        event.clientY - nativePenPan.startY,
+      ) >= 3;
+      if (
+        event.type === "pointerup" && nativePenPan.moved &&
+        state.activeDocumentId === nativePenPan.documentId &&
+        state.activeOpenRequest === nativePenPan.openRequest &&
+        state.app?.pdfDocument === nativePenPan.pdfDocument &&
+        rendererGeneration === nativePenPan.rendererGeneration
+      ) {
+        state.lastPenPanClickPage = nativePenPan.pageTarget;
+      }
+      if (event.type === "pointercancel") {
+        state.nativePenPanPointers.delete(event.pointerId);
+      } else {
+        setDeferredTimeout(() => {
+          if (state.nativePenPanPointers.get(event.pointerId) === nativePenPan) {
+            state.nativePenPanPointers.delete(event.pointerId);
+          }
+        }, 0);
       }
       return;
     }
@@ -7670,6 +8191,7 @@
   }
 
   function onBridgePointerKeyDown(event) {
+    releaseForegroundScrollGuard("keydown");
     if (event.key === "Escape") {
       for (const [pointerId, pointer] of state.activePointers) {
         if (pointer.button === 2) {
@@ -7917,7 +8439,14 @@
             if (!state.pendingSave && state.heavyLeaseWaiters.size > 0) {
               cancelPendingHeavyLeaseWaiters("Close is capturing a durable recovery revision.");
             }
-            if (state.savePromise) {
+            // A save that is still waiting for the host lease has not yet
+            // serialized/published an operation batch. Cancel that waiter
+            // above and let recovery capture the current committed editors.
+            // Once pendingSave exists, however, the operation payload is
+            // already immutable and in the host's hands; do not make close
+            // wait for its ACK before persisting the same latest revision via
+            // the recovery channel.
+            if (state.savePromise && !state.pendingSave) {
               await state.savePromise;
             }
             if (
@@ -9383,6 +9912,15 @@
         app.eventBus?._on(
           "annotationeditormodechanged",
           ({ mode }) => {
+            if (iosInputPolicy && mode !== state.editorMode) {
+              const container = document.getElementById("viewerContainer");
+              holdViewerScrollPosition(
+                container,
+                container?.scrollLeft ?? 0,
+                container?.scrollTop ?? 0,
+                "annotation-tool-change",
+              );
+            }
             cancelManualMomentum();
             invalidatePendingPenHighlight();
             state.editorMode = mode;

@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -35,7 +36,8 @@ function viewerHtml(source) {
 
 function hostHtml() {
   return `<!doctype html><meta charset="utf-8"><iframe id="pdf-reader" name="pdf-reader"
-    style="display:block;width:100vw;height:100vh;border:0"></iframe><script>
+    style="display:block;width:100vw;height:100vh;border:0"></iframe>
+    ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: "native-finger-test" })}<script>
     const frame=document.getElementById("pdf-reader"), channel="pdf-web-reader", token="native-finger-test";
     let request=0; window.__host={opened:[],errors:[]};
     window.__open=async()=>{const data=await fetch("/fixture.pdf").then(r=>r.arrayBuffer());
@@ -73,6 +75,13 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
   // The large legacy iPad test remains historical evidence for the old manual path.
   const vendorSource = await readFile(path.join(vendorWeb, "viewer.html"), "utf8");
   const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
+  const bridgeSource = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  const instrumentedBridgeSource = bridgeSource.replace(
+    "  if (iosInputPolicy) {",
+    "  window.__nativeFingerBridgeState = state;\n  if (iosInputPolicy) {",
+  );
+  assert.notEqual(instrumentedBridgeSource, bridgeSource,
+    "The test harness must expose pointer ownership only inside this disposable Reader");
   const assetHtml = viewerHtml(vendorSource);
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -83,6 +92,11 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
     }
     if (url.pathname === "/viewer/viewer.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(assetHtml);
+      return;
+    }
+    if (url.pathname === "/bridge.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" })
+        .end(instrumentedBridgeSource);
       return;
     }
     const target = targetFor(url.pathname);
@@ -263,10 +277,33 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
         button: 0, buttons: 1, clientX: 20, clientY: 20,
       });
       target.dispatchEvent(readModePointer);
+      const bridge = window.__nativeFingerBridgeState;
+      const trackedOnDown = {
+        nativePen: bridge.nativePenPanPointers.has(999),
+        manual: bridge.manualPointers.has(999),
+        editor: bridge.activePointers.has(999),
+      };
+      target.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true, cancelable: true, pointerId: 999, pointerType: "pen",
+        button: 0, buttons: 0, clientX: 20, clientY: 20,
+      }));
       return {
         readModeTouchPrevented: readModeStylus.defaultPrevented,
         readModePointerPrevented: readModePointer.defaultPrevented,
         penGuardClassAfterReadPointer: document.documentElement.classList.contains("pdfReaderPenGestureActive"),
+        ownershipOnPointerDown: trackedOnDown,
+      };
+    });
+    // Read-mode Pencil ownership intentionally survives synchronously through
+    // the browser's compatibility-click boundary. Give its zero-delay cleanup
+    // task a real event-loop turn before asserting that the pointer is gone.
+    await viewer.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const readModePenOwnershipAfterPointerEnd = await viewer.evaluate(() => {
+      const bridge = window.__nativeFingerBridgeState;
+      return {
+        nativePen: bridge.nativePenPanPointers.has(999),
+        manual: bridge.manualPointers.has(999),
+        editor: bridge.activePointers.has(999),
       };
     });
     await viewer.evaluate(() => PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
@@ -285,12 +322,18 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
       target.dispatchEvent(activeToolStylus);
       return activeToolStylus.defaultPrevented;
     });
-    const stylusGuard = { ...readModeStylusGuard, activeToolTouchPrevented };
+    const stylusGuard = {
+      ...readModeStylusGuard,
+      ownershipAfterPointerUp: readModePenOwnershipAfterPointerEnd,
+      activeToolTouchPrevented,
+    };
     assert.deepEqual(stylusGuard, {
       readModeTouchPrevented: false,
       readModePointerPrevented: false,
       activeToolTouchPrevented: true,
       penGuardClassAfterReadPointer: false,
+      ownershipOnPointerDown: { nativePen: true, manual: false, editor: false },
+      ownershipAfterPointerUp: { nativePen: false, manual: false, editor: false },
     }, "Read-mode Pencil stays browser-owned while active-tool stylus input retains the legacy guard");
 
     const telemetry = await viewer.evaluate(() => window.__nativeTouchProbe);
@@ -302,13 +345,6 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
     assert.deepEqual(telemetry.captures, [], "The bridge never captures finger pointers");
 
     assert.deepEqual(pageErrors, [], "Native ownership regression has no uncaught page errors");
-    const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
-    const readPenBranch = bridge.slice(bridge.indexOf("function onBridgePointerDown"), bridge.indexOf("function shouldCaptureTrackedPointer"));
-    assert.match(readPenBranch, /else if \(!nativeOperation\)[\s\S]*?Read-mode Pencil is a native WebKit contact/,
-      "Read-mode Pencil returns before any editor-layer pointer is tracked");
-    assert.doesNotMatch(readPenBranch, /startManualPointer\(event,\s*"(?:touch|pen)"\)/,
-      "Neither finger nor read-mode Pencil can enter the manual pan path");
-
     t.diagnostic(JSON.stringify({
       trustedTouchPointers: telemetry.pointers.length,
       preventedTrustedTouchEvents: telemetry.prevented.filter((event) => event.trusted).length,

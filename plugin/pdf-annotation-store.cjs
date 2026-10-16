@@ -28,6 +28,7 @@ const GC_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const COMPACT_PAYLOAD_ENCODING = "float32le-base64-v1";
 const VALID_TYPES = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
 const HASH_PREFIX = /^(xxh64-v1|sha256-v1):([a-f0-9]+)$/i;
+const { legacyReadOnlyAdapter } = require("./storage/protocol-barrier.cjs");
 
 function createPdfAnnotationStore({
   adapter,
@@ -53,6 +54,7 @@ function createPdfAnnotationStore({
 
   const baseRoot = normalizePath(root);
   if (!baseRoot || baseRoot.split("/").includes("..")) throw new TypeError("Invalid annotation store root.");
+  adapter = legacyReadOnlyAdapter(adapter, baseRoot);
   const registryPath = `${baseRoot}/_index.json`;
   const operationsRoot = `${baseRoot}/ops`;
   const identityEventsRoot = `${baseRoot}/identity-events`;
@@ -346,7 +348,7 @@ function createPdfAnnotationStore({
     return tracked;
   }
 
-  async function materializeDocument(normalizedDocument, queueWaitMs) {
+  async function materializeDocument(normalizedDocument, queueWaitMs, attempt = 0) {
     const startedAtMonotonicMs = safeTimingNow();
     const startedAtEpochMs = safeEpochNow();
     let state;
@@ -403,6 +405,9 @@ function createPdfAnnotationStore({
       status = "success";
       return snapshot;
     } catch (error) {
+      if (error.code === "PDF_ANNOTATION_CHECKPOINT_CONFLICT" && attempt < 2) {
+        return materializeDocument(normalizedDocument, queueWaitMs, attempt + 1);
+      }
       errorCode = typeof error?.code === "string" ? error.code : "unknown";
       throw error;
     } finally {
@@ -508,8 +513,9 @@ function createPdfAnnotationStore({
 
   async function replay(document, { readOnly = false } = {}) {
     const normalizedDocument = await resolveDocument(document, { readOnly });
+    const baselinePrimaryText = await readTextIfExists(pathsFor(normalizedDocument).checkpoint);
     const batchFiles = await listOperationBatches(normalizedDocument, { readOnly });
-    const checkpoint = await readCheckpoint(normalizedDocument);
+    const checkpoint = await readCheckpoint(normalizedDocument, { primaryText: baselinePrimaryText });
     const latest = new Map();
     const operationDigests = new Map();
     const coveredBatches = checkpoint ? cloneBatchManifest(checkpoint.coveredBatches) : {};
@@ -626,6 +632,7 @@ function createPdfAnnotationStore({
       annotations[uuidKey] = latest.get(uuidKey);
     }
     return {
+      baselinePrimaryText,
       batchFiles,
       annotations,
       revision,
@@ -1197,12 +1204,13 @@ function createPdfAnnotationStore({
     return canonicalHash(await hash(utf8(text)));
   }
 
-  async function readCheckpoint(document) {
+  async function readCheckpoint(document, baseline = {}) {
     const locations = pathsFor(document);
     let primaryError = null;
     for (const path of [locations.checkpoint, locations.checkpointBackup]) {
-      const text = await readTextIfExists(path);
-      if (text === null) continue;
+      const text = path === locations.checkpoint && Object.hasOwn(baseline, "primaryText")
+        ? baseline.primaryText : await readTextIfExists(path);
+      if (text === null || text === "") continue;
       try {
         const checkpoint = JSON.parse(text);
         if (path === locations.checkpoint && checkpoint?.kind === "pdf-annotation-snapshot" &&
@@ -1353,29 +1361,38 @@ function createPdfAnnotationStore({
     await ensureDirectory(locations.checkpointBackup.slice(0, locations.checkpointBackup.lastIndexOf("/")));
     const text = canonicalJson(checkpoint);
     if (currentRow?.checkpoint.integrity === checkpoint.integrity) {
-      if (backupRow?.checkpoint.integrity === currentRow.checkpoint.integrity && typeof adapter.remove === "function") {
-        await adapter.remove(locations.checkpointBackup);
-      }
+      state.baselinePrimaryText = currentRow.text;
       return currentRow.checkpoint;
     }
-
-    // `.previous` is the prior distinct verified checkpoint. Preserve the
-    // current primary before replacing it; never manufacture a second copy of
-    // the new state. If the primary is damaged, keep the verified backup.
+    if (typeof adapter.process !== "function" || typeof adapter.append !== "function") {
+      throw codedError("PDF_ANNOTATION_ATOMIC_PROCESS_REQUIRED",
+        "Legacy checkpoint materialization requires local DataAdapter.process and append; read-only migration remains available.");
+    }
+    const replaceExpected = async (path, expected, replacement) => {
+      // Empty append creates a missing file without truncating a concurrently
+      // published file. The subsequent decision is inside the Adapter lock.
+      if (!(await adapter.exists(path))) await adapter.append(path, "");
+      let conflict = false;
+      await adapter.process(path, (current) => {
+        if (current === replacement) return current;
+        if (current !== (expected ?? "")) { conflict = true; return current; }
+        return replacement;
+      });
+      if (conflict) throw codedError("PDF_ANNOTATION_CHECKPOINT_CONFLICT",
+        "Checkpoint bytes advanced since replay; retry from the current verified state.");
+    };
+    // Reject stale candidates before touching recovery state. The previous
+    // file is advanced by its own exact-byte guard, so a delayed continuation
+    // cannot overwrite a newer previous checkpoint. Crashes between these
+    // writes retain the operation log; GC still requires both verified states.
+    await replaceExpected(locations.checkpoint, state.baselinePrimaryText, text);
+    state.baselinePrimaryText = text;
     if (currentRow && currentRow.checkpoint.integrity !== checkpoint.integrity &&
         backupRow?.checkpoint.integrity !== currentRow.checkpoint.integrity) {
-      await adapter.write(locations.checkpointBackup, currentRow.text);
-      if (await adapter.read(locations.checkpointBackup) !== currentRow.text) {
-        throw codedError("PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED",
-          "The previous distinct checkpoint could not be verified; current checkpoint was left unchanged.");
-      }
+      await replaceExpected(locations.checkpointBackup, backupRow?.text, currentRow.text);
     }
-    await adapter.write(locations.checkpoint, text);
     if (await adapter.read(locations.checkpoint) !== text) {
-      throw codedError("PDF_ANNOTATION_CHECKPOINT_UNCONFIRMED", "Verified annotation checkpoint write could not be confirmed.");
-    }
-    if (backupRow?.checkpoint.integrity === checkpoint.integrity && typeof adapter.remove === "function") {
-      await adapter.remove(locations.checkpointBackup);
+      throw codedError("PDF_ANNOTATION_CHECKPOINT_CONFLICT", "Checkpoint advanced during recovery-state publication.");
     }
     return checkpoint;
   }

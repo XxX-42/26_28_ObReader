@@ -1,0 +1,5 @@
+{
+  "vault": "D:\\Documents\\Obsidian\\测试插件",
+  "append": "function(e,t,n){var i=this;return this.queue((function(){return y(i,void 0,void 0,(function(){var i;return b(this,(function(r){switch(r.label){case 0:i=this.getFullPath(e),r.label=1;case 1:return r.trys.push([1,,4,6]),[4,this.fsPromises.appendFile(i,t,\"utf8\")];case 2:return r.sent(),[4,this.applyWriteOptions(i,n)];case 3:return r.sent(),[3,6];case 4:return[4,this.reconcileInternalFile(e)];case 5:return r.sent(),[7];case 6:return[2]}}))}))}))}",
+  "atomic": "function(e,t,n){var i=this;return this.queue((function(){return y(i,void 0,void 0,(function(){var i,r,o;return b(this,(function(a){switch(a.label){case 0:return i=this.getFullPath(e),[4,this.fsPromises.readFile(i,\"utf8\")];case 1:if(r=a.sent(),(o=t(r))===r)return[2,r];a.label=2;case 2:return a.trys.push([2,,5,7]),[4,this.fsPromises.writeFile(i,o,\"utf8\")];case 3:return a.sent(),[4,this.applyWriteOptions(i,n)];case 4:return a.sent(),[3,7];case 5:return[4,this.reconcileInternalFile(e)];case 6:return a.sent(),[7];case 7:return[2,o]}}))}))}))}"
+}

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "test:release": "npm run build && npm test && npm run test:offline",
     "test:offline": "node tests/offline-smoke.mjs",
     "test:network-firewall": "node tests/test-network-firewall-browser.mjs",

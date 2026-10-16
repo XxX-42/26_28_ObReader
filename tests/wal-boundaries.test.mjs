@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { transformSync } from "esbuild";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationHost } = require("../plugin/pdf-annotation-host.cjs");
@@ -121,12 +122,26 @@ async function runtimeDependencyGraph(entry) {
   return visited;
 }
 
+function assertNoNodeGlobals(source, label) {
+  const transformed = transformSync(source, { loader: "js", treeShaking: false,
+    define: { process: "__pdfReaderForbiddenProcess", Buffer: "__pdfReaderForbiddenBuffer",
+      "globalThis.process": "__pdfReaderForbiddenProcess", "globalThis.Buffer": "__pdfReaderForbiddenBuffer" } }).code;
+  assert.doesNotMatch(transformed, /\b__pdfReaderForbidden(?:Process|Buffer)\b/, label);
+}
+
+test("host-global audit distinguishes adapter process capability from actual Node globals", () => {
+  assertNoNodeGlobals('adapter["process"](path, callback); adapter.process(path, callback);', "portable adapter capability");
+  for (const source of ["process.env.HOME", "Buffer.from('x')", "typeof process", "globalThis.process.env", "globalThis.Buffer.alloc(1)"]) {
+    assert.throws(() => assertNoNodeGlobals(source, "forbidden runtime global"), /forbidden runtime global/);
+  }
+});
+
 test("WAL storage runtime dependency graph stays relative and free of host-only APIs", async () => {
   const entry = path.resolve(HERE, "../plugin/storage/wal-annotation-store.cjs");
   const graph = await runtimeDependencyGraph(entry);
   assert.ok(graph.has(entry));
   for (const [file, source] of graph) {
-    assert.doesNotMatch(source, /\b(?:process|Buffer)\b/, `${file} must not depend on Node globals`);
+    assertNoNodeGlobals(source, `${file} must not depend on Node globals`);
     assert.doesNotMatch(source, /\b(?:modifyBinary|appendBinary|saveDocument)\b/,
       `${file} must not write or serialize the source PDF`);
   }

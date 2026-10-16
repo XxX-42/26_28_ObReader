@@ -2739,6 +2739,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.prewarmTimer = null;
     this.annotationHost = createPdfAnnotationHost({
       app: this.app,
+      enableJsonl: true,
       hashRuntime: this.pdfHashRuntime,
       identityHash: (bytes) => sha256Bytes(bytes),
       inspectLegacy: (bytes) => this.getLegacyMergeClient().inspect({ bytes, fastOpen: true }),
@@ -2911,7 +2912,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return;
     }
     try {
-      if (this.annotationHost.store.sourceProtocol === "wal-sidecar-v3.1") {
+      if (this.annotationHost.store.sourceProtocol?.startsWith("wal-sidecar-v3.")) {
         const { devices, errors } = await this.annotationHost.store.inspectDevices(view.annotationDocument);
         new Notice(`WAL v3.1：${devices.length} 个已验证设备分片，${errors.length} 个待恢复分片。此协议无需检查点 ACK 或设备退役。`, 8000);
         return;

@@ -17,12 +17,14 @@ function createPdfAnnotationHost({
   Notice = null,
   log = () => {},
   storeFactory = createWalAnnotationStore,
+  enableJsonl = false,
 }) {
   if (!app?.vault?.adapter || !hashRuntime || typeof hashRuntime.fingerprint !== "function") {
     throw new TypeError("PDF annotation host requires a Vault adapter and hash runtime.");
   }
   const backingAdapter = app.vault.adapter;
   const selfSidecarWrites = new Map();
+  const appendAccumulators = new Map();
   const MAX_TRACKED_SELF_SIDECAR_WRITES = 4096;
   const isSidecarPath = (path) => {
     const normalized = normalizePath(path);
@@ -48,6 +50,14 @@ function createPdfAnnotationHost({
   };
   const rememberSelfSidecarWrite = (path, value) =>
     rememberSelfSidecarFingerprint(path, fingerprintSidecarValue(value));
+  const trackAppendContent = (path, value) => {
+    const normalized = normalizePath(path);
+    if (!normalized.endsWith(".jsonl") || !isSidecarPath(normalized) || typeof value !== "string") return;
+    const accumulator = hashRuntime.createAccumulator();
+    const bytes = utf8(value);
+    accumulator.update(bytes);
+    appendAccumulators.set(normalized, { accumulator, byteLength: bytes.byteLength });
+  };
   const forgetSelfSidecarWrite = (tracked) => {
     if (tracked && selfSidecarWrites.get(tracked.path) === tracked.record) {
       selfSidecarWrites.delete(tracked.path);
@@ -55,26 +65,79 @@ function createPdfAnnotationHost({
   };
   const adapter = new Proxy(backingAdapter, {
     get(target, property) {
-      if (property === "write") {
-        return async (path, value) => {
-          const tracked = rememberSelfSidecarWrite(path, value);
+      if (property === "process") {
+        if (typeof target.process !== "function") return undefined;
+        return async (path, modify) => {
+          let tracked = null;
+          let replacement;
           try {
-            return await target.write.call(target, path, value);
+            const result = await target.process.call(target, path, (current) => {
+              const next = modify(current);
+              if (typeof next !== "string") throw new TypeError("Adapter callback must synchronously return text.");
+              if (next !== current) {
+                replacement = next;
+                tracked = rememberSelfSidecarWrite(path, next);
+              }
+              return next;
+            });
+            if (tracked) trackAppendContent(path, replacement);
+            return result;
           } catch (error) {
             forgetSelfSidecarWrite(tracked);
             throw error;
           }
         };
       }
+      if (property === "write") {
+        return async (path, value) => {
+          const tracked = rememberSelfSidecarWrite(path, value);
+          try {
+            const result = await target.write.call(target, path, value);
+            trackAppendContent(path, value);
+            return result;
+          } catch (error) {
+            appendAccumulators.delete(normalizePath(path));
+            forgetSelfSidecarWrite(tracked);
+            throw error;
+          }
+        };
+      }
+      if (property === "read") {
+        return async (path) => {
+          const value = await target.read.call(target, path);
+          trackAppendContent(path, value);
+          return value;
+        };
+      }
       if (property === "append") {
         if (typeof target.append !== "function") return undefined;
         return async (path, value) => {
-          let previous = "";
-          try { previous = await target.read.call(target, path); } catch { /* New append target. */ }
-          const tracked = rememberSelfSidecarWrite(path, `${previous}${value}`);
+          const normalized = normalizePath(path);
+          let tracked;
+          if (normalized.endsWith(".jsonl") && isSidecarPath(normalized)) {
+            let known = appendAccumulators.get(normalized);
+            if (!known) {
+              let previous = "";
+              try { previous = await target.read.call(target, path); } catch { /* New append target. */ }
+              trackAppendContent(path, previous);
+              known = appendAccumulators.get(normalized);
+            }
+            const bytes = utf8(value);
+            known.accumulator.update(bytes);
+            known.byteLength += bytes.byteLength;
+            tracked = rememberSelfSidecarFingerprint(path, {
+              byteLength: known.byteLength,
+              digest: known.accumulator.digest(),
+            });
+          } else {
+            let previous = "";
+            try { previous = await target.read.call(target, path); } catch { /* New append target. */ }
+            tracked = rememberSelfSidecarWrite(path, `${previous}${value}`);
+          }
           try {
             return await target.append.call(target, path, value);
           } catch (error) {
+            appendAccumulators.delete(normalized);
             forgetSelfSidecarWrite(tracked);
             throw error;
           }
@@ -91,6 +154,8 @@ function createPdfAnnotationHost({
           try {
             const result = await target.rename.call(target, fromPath, toPath);
             selfSidecarWrites.delete(normalizePath(fromPath));
+            appendAccumulators.delete(normalizePath(fromPath));
+            appendAccumulators.delete(normalizePath(toPath));
             return result;
           } catch (error) {
             forgetSelfSidecarWrite(tracked);
@@ -108,6 +173,7 @@ function createPdfAnnotationHost({
               selfSidecarWrites.delete(trackedPath);
             }
           }
+          appendAccumulators.delete(normalized);
           return result;
         };
       }
@@ -126,6 +192,7 @@ function createPdfAnnotationHost({
     identityHash: identityHash || hashRuntime.fingerprint,
     verifyHash: typeof hashRuntime.matches === "function" ? hashRuntime.matches : undefined,
     deviceId,
+    jsonlMode: enableJsonl,
     onTiming: (details) => log("annotation-performance", details),
   });
   const queues = new Map();
@@ -135,6 +202,7 @@ function createPdfAnnotationHost({
   const maintenanceRequests = new Map();
   const maintenanceTimers = new Set();
   const maintenanceByDocument = new Map();
+  const pendingSidecarChecks = new Map();
   let disposed = false;
   let logicalClock = 0;
 
@@ -459,7 +527,9 @@ function createPdfAnnotationHost({
         });
         // Snapshot materialization is a rebuildable cache; never hold the
         // save/close acknowledgement for this larger replay/write.
-        void scheduleSnapshotMaterialization(captured.document);
+        void scheduleSnapshotMaterialization(captured.document, {
+          immediate: result.pendingSinceCheckpoint >= 100,
+        });
         void broadcastDocument(captured.document, view);
         return result;
       });
@@ -482,7 +552,7 @@ function createPdfAnnotationHost({
         revision: acknowledgedRevision,
         confirmedRevision: view.confirmedRevision,
         batchId: result.batchId,
-        operationCount: store.sourceProtocol === "wal-sidecar-v3.1" ? operations.length : result.operationCount,
+        operationCount: store.sourceProtocol?.startsWith("wal-sidecar-v3.") ? operations.length : result.operationCount,
         external: true,
         quarantined: result.quarantined === true,
       });
@@ -548,8 +618,8 @@ function createPdfAnnotationHost({
     return sizeChanged || mtimeChanged;
   }
 
-  async function scheduleSnapshotMaterialization(document) {
-    if (store.sourceProtocol === "wal-sidecar-v3.1") {
+  async function scheduleSnapshotMaterialization(document, { immediate = false } = {}) {
+    if (store.sourceProtocol?.startsWith("wal-sidecar-v3.")) {
       const previous = maintenanceByDocument.get(document.documentId);
       if (previous) { globalThis.clearTimeout(previous); maintenanceTimers.delete(previous); }
       const timer = globalThis.setTimeout(() => {
@@ -567,7 +637,7 @@ function createPdfAnnotationHost({
           maintenanceRequests.delete(probeId);
         }, 2000);
         maintenanceTimers.add(expiry);
-      }, app.isMobile ? 3000 : 1000);
+      }, immediate ? 0 : app.isMobile ? 3000 : 1000);
       maintenanceTimers.add(timer);
       maintenanceByDocument.set(document.documentId, timer);
       return;
@@ -629,6 +699,45 @@ function createPdfAnnotationHost({
     if (disposed || !file?.path) return false;
     const changedPath = normalizePath(file.path);
     if (!changedPath.startsWith(`${ANNOTATION_ROOT}/`)) return false;
+    const current = pendingSidecarChecks.get(changedPath);
+    if (current) {
+      current.generation += 1;
+      return current.promise;
+    }
+    const pending = { generation: 1, checkedGeneration: 0, failed: false, promise: null };
+    pendingSidecarChecks.set(changedPath, pending);
+    pending.promise = (async () => {
+      do {
+        // Multiple Vault events for the same WAL are checked against one
+        // exact final fingerprint. They are not ignored by a time window:
+        // a changed external payload still flows through replay below.
+        const scheduledGeneration = pending.generation;
+        await nextTask(40);
+        if (disposed) return true;
+        // A newer event arrived while this check waited. Keep the request
+        // pending and verify the settled generation once, rather than reading
+        // an ever-growing own WAL on every timer tick. No event is discarded;
+        // the final bytes still undergo the exact fingerprint check below.
+        if (pending.generation !== scheduledGeneration && selfSidecarWrites.has(changedPath)) continue;
+        const generation = pending.generation;
+        await inspectSidecarChange(changedPath, pending, generation);
+        pending.checkedGeneration = generation;
+      } while (!disposed && pending.generation !== pending.checkedGeneration);
+      return true;
+    })().catch((error) => {
+      pending.failed = true;
+      throw error;
+    }).finally(() => {
+      if (pendingSidecarChecks.get(changedPath) === pending) pendingSidecarChecks.delete(changedPath);
+      if (!disposed && !pending.failed && pending.generation !== pending.checkedGeneration) {
+        void Promise.resolve(handleSidecarChange({ path: changedPath })).catch((error) =>
+          log("annotation-sidecar-check-failed", { path: changedPath, code: error.code || "unknown" }));
+      }
+    });
+    return pending.promise;
+  }
+
+  async function inspectSidecarChange(changedPath, pending, generation) {
     store.invalidateRegistry?.();
     const affectedDocuments = [];
     for (const [documentId, state] of sourceStates) {
@@ -646,11 +755,10 @@ function createPdfAnnotationHost({
       ].some((directory) => changedPath.startsWith(`${directory}/`));
       if (matches) affectedDocuments.push({ documentId, document: state.document });
     }
-    if (!affectedDocuments.length) return true;
+    if (!affectedDocuments.length) return;
     // A Sync provider may deliver a directory entry, immutable operation, ACK,
     // and checkpoint in separate steps. Re-read after the short write window;
     // a still-missing referenced object stays read-only until its own event.
-    await nextTask(40);
     // DataAdapter writes trigger the same Vault events as Sync writes. Suppress
     // only a path whose current bytes still match an exact payload written by
     // this host; a changed hash falls through to normal external replay.
@@ -659,18 +767,20 @@ function createPdfAnnotationHost({
       try {
         const current = await backingAdapter.read(changedPath);
         const currentFingerprint = fingerprintSidecarValue(current);
+        if (pending.generation !== generation || selfSidecarWrites.get(changedPath) !== expectedSelfWrite) return;
         if (currentFingerprint && currentFingerprint.byteLength === expectedSelfWrite.byteLength &&
             currentFingerprint.digest === expectedSelfWrite.digest) {
-          return true;
+          return;
         }
       } catch { /* A missing or unreadable path is not an acknowledged self-write. */ }
       if (selfSidecarWrites.get(changedPath) === expectedSelfWrite) selfSidecarWrites.delete(changedPath);
     }
+    if (pending.generation !== generation) return;
+    store.invalidateExternal?.(changedPath);
     for (const { documentId, document } of affectedDocuments) {
       await broadcastDocument(document);
       log("annotation-sidecar-changed", { documentId, path: changedPath });
     }
-    return true;
   }
 
   async function handleSourceModify(file) {
@@ -734,7 +844,7 @@ function createPdfAnnotationHost({
     const set = documentViews.get(id);
     set?.delete(view);
     if (set?.size === 0) documentViews.delete(id);
-    if (set?.size === 0 && !disposed && store.sourceProtocol === "wal-sidecar-v3.1") {
+    if (set?.size === 0 && !disposed && store.sourceProtocol?.startsWith("wal-sidecar-v3.")) {
       void scheduleSnapshotMaterialization(view.annotationDocument);
     }
   }
@@ -840,7 +950,7 @@ function createPdfAnnotationHost({
     disposed = true;
     for (const timer of maintenanceTimers) globalThis.clearTimeout(timer);
     maintenanceTimers.clear(); maintenanceRequests.clear(); maintenanceByDocument.clear();
-    queues.clear(); snapshotReads.clear(); selfSidecarWrites.clear();
+    queues.clear(); snapshotReads.clear(); selfSidecarWrites.clear(); appendAccumulators.clear(); pendingSidecarChecks.clear();
     for (const set of documentViews.values()) set.clear();
     documentViews.clear(); sourceStates.clear();
   }

@@ -29,6 +29,10 @@ export function browserSidecarHarnessScript({
         operationsFor(documentId) {
           return [...(documents.get(documentId)?.operations?.values() || [])];
         },
+        snapshotFor(documentId) {
+          const document = documents.get(documentId);
+          return document?.identity ? snapshot(documentId, document) : null;
+        },
         broadcastSnapshot(documentId, openRequest, sourceMatch = "MATCH") {
           const document = documents.get(documentId);
           if (!document?.identity || !frame?.contentWindow) return false;

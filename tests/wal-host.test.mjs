@@ -26,6 +26,11 @@ function makeAdapter(shared = {
       files.set(path, value);
       writes.push(path);
     },
+    async append(path, value) {
+      if (!files.has(path)) throw new Error(`missing append target: ${path}`);
+      files.set(path, `${files.get(path)}${value}`);
+      writes.push(path);
+    },
     async rename(from, to) {
       if (!files.has(from)) throw new Error(`missing rename source: ${from}`);
       if (files.has(to)) throw new Error(`rename target exists: ${to}`);
@@ -102,13 +107,19 @@ function makeView(app, path = "Books/a.pdf", sourceBytes = new TextEncoder().enc
   };
 }
 
-function makeHost(app, deviceId = "wal-host-device") {
+function makeHost(app, deviceId = "wal-host-device", enableJsonl = false) {
   let token = 0;
   return createPdfAnnotationHost({
     app,
-    hashRuntime: { fingerprint: hash },
+    hashRuntime: { fingerprint: hash,
+      createAccumulator() {
+        const hasher = createHash("sha256");
+        return { update(bytes) { hasher.update(bytes); },
+          digest() { return `sha256-v1:${hasher.copy().digest("hex")}`; } };
+      } },
     makeToken: () => `${deviceId}-token-${++token}`,
     deviceId,
+    enableJsonl,
   });
 }
 
@@ -233,6 +244,103 @@ test("default WAL host saves and recovers all annotation kinds, reopens them, an
   assert.equal((await reopenedHost.store.documentForPath(newPath)).documentId, firstView.documentId);
   assert.deepEqual(app.vault.bytesByPath.get(newPath), originalPdfBytes);
   reopenedHost.dispose();
+});
+
+test("v3.2 host saves a batch with one portable append and leaves the source PDF untouched", async () => {
+  const { adapter, shared } = makeAdapter();
+  const app = makeApp(adapter);
+  const host = makeHost(app, "jsonl-host-device", true);
+  try {
+    const view = makeView(app, "Books/jsonl-fixture.pdf");
+    const before = hash(view.sourceBytes);
+    await initializeAndConfirm(host, view);
+    await host.handleMessage(view, {
+      type: "save", documentId: view.documentId, openRequest: view.openRequest,
+      requestId: "jsonl-batch", revision: 1,
+      operations: initialOperations.slice(0, 3).map((operation, index) => ({ ...operation,
+        clock: { timestamp: 100 + index, logical: index, deviceId: "viewer", opId: `jsonl-${index}` },
+      })),
+    });
+    assert.equal(view.messages.at(-1)?.type, "saved");
+    assert.equal(view.messages.at(-1)?.operationCount, 3);
+    const wal = `${ROOT}/wal/jsonl-host-device/${view.annotationDocument.docKey}.jsonl`;
+    assert.equal(shared.writes.filter((path) => path === wal).length, 2,
+      "initial empty-file creation and one batched append are the only WAL writes");
+    const rows = shared.files.get(wal).trimEnd().split("\n");
+    assert.equal(rows.length, 3);
+    assert.equal(hash(view.sourceBytes), before);
+    assert.equal([...shared.files.keys()].some((path) => path.endsWith(".pdf")), false);
+    const snapshot = await host.store.readDocument(view.annotationDocument);
+    assert.equal(snapshot.storageProtocol, "wal-sidecar-v3.2-jsonl");
+    assert.deepEqual(snapshot.annotations.map((row) => row.uuid).sort(),
+      ["kind-highlight", "kind-square", "kind-underline"]);
+  } finally {
+    host.dispose();
+  }
+});
+
+test("v3.2 host checks a burst of self WAL events once and still detects changed external bytes", async () => {
+  const { adapter, shared } = makeAdapter();
+  const app = makeApp(adapter);
+  const host = makeHost(app, "jsonl-event-device", true);
+  try {
+    const view = makeView(app, "Books/jsonl-event-fixture.pdf");
+    await initializeAndConfirm(host, view);
+    await host.handleMessage(view, {
+      type: "save", documentId: view.documentId, openRequest: view.openRequest,
+      requestId: "event-save", revision: 1,
+      operations: [{ ...initialOperations[2],
+        clock: { timestamp: 100, logical: 1, deviceId: "viewer", opId: "event-1" } }],
+    });
+    const wal = `${ROOT}/wal/jsonl-event-device/${view.annotationDocument.docKey}.jsonl`;
+    // The save broadcasts asynchronously; finish that independent read before
+    // measuring only the Vault-event burst below.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let walReads = 0;
+    const originalRead = adapter.read;
+    adapter.read = async (path) => {
+      if (path === wal) walReads++;
+      return originalRead(path);
+    };
+    const before = walReads;
+    await Promise.all(Array.from({ length: 50 }, () => host.handleSidecarChange({ path: wal })));
+    assert.equal(walReads - before, 1, "one exact hash check covers a burst of self events");
+    // A torn final row is repairable and should not force syncPending. Use a
+    // complete invalid external row to prove a changed fingerprint is replayed.
+    shared.files.set(wal, `${shared.files.get(wal)}{"lsn":2,"op":"CREATE"}\n`);
+    await host.handleSidecarChange({ path: wal });
+    const update = view.messages.filter((message) => message.type === "external-annotations-update").at(-1);
+    assert.equal(update?.externalAnnotations?.syncPending, true,
+      "a changed external WAL must not be hidden by the previous self-write fingerprint");
+  } finally {
+    host.dispose();
+  }
+});
+
+test("continuous self WAL events defer full verification until the event generation settles", async () => {
+  const { adapter } = makeAdapter();
+  const app = makeApp(adapter);
+  const host = makeHost(app, "jsonl-continuous-device", true);
+  try {
+    const view = makeView(app, "Books/jsonl-continuous-fixture.pdf");
+    await initializeAndConfirm(host, view);
+    await host.handleMessage(view, { type: "save", documentId: view.documentId,
+      openRequest: view.openRequest, requestId: "continuous-save", revision: 1,
+      operations: [{ ...initialOperations[2], clock: { timestamp: 100, logical: 1,
+        deviceId: "viewer", opId: "continuous-1" } }] });
+    const wal = `${ROOT}/wal/jsonl-continuous-device/${view.annotationDocument.docKey}.jsonl`;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    let reads = 0;
+    const originalRead = adapter.read;
+    adapter.read = async (path) => { if (path === wal) reads++; return originalRead(path); };
+    const pending = [];
+    for (let index = 0; index < 8; index++) {
+      pending.push(host.handleSidecarChange({ path: wal }));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    await Promise.all(pending);
+    assert.equal(reads, 1, "a sustained write burst must not repeatedly reread its growing WAL");
+  } finally { host.dispose(); }
 });
 
 test("a save from one Reader view broadcasts the committed state to another view", async () => {

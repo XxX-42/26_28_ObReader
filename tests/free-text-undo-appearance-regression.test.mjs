@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser, getTestBrowserLaunchMetadata } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
@@ -220,14 +221,24 @@ async function collectOwnedCrashpadMetadata(crashpadDirectory) {
 }
 
 test(
-  "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
+  "saved sidecar FreeText stays visible across NONE-mode right-eraser undo and redo",
   { skip: !browserPath && "Chrome or Edge is required for this browser regression", timeout: 120_000 },
   async (t) => {
     await mkdir(artifactsPath, { recursive: true });
+    const sourcePdfBefore = {
+      sha256: createHash("sha256").update(await readFile(fixturePath)).digest("hex"),
+      mtimeMs: (await stat(fixturePath)).mtimeMs,
+    };
     const viewerPath = path.join(root, "vendor", "pdfjs-generic-legacy", "web", "viewer.html");
     const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
     const viewerHtml = await readFile(viewerPath, "utf8");
     const bridgeSource = await readFile(bridgePath, "utf8");
+    const instrumentedBridgeSource = bridgeSource.replace(
+      "  if (iosInputPolicy) {",
+      "  window.__freeTextUndoBridgeState = state;\n  if (iosInputPolicy) {",
+    );
+    assert.notEqual(instrumentedBridgeSource, bridgeSource,
+      "The browser regression should expose the private UUID binding map only for diagnostics");
     const bridgeCss = await readFile(
       path.join(root, "viewer-adapter", "bridge.css"),
       "utf8",
@@ -389,7 +400,7 @@ test(
           '<!doctype html><meta charset="utf-8">' +
             '<style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>' +
             '<iframe name="pdf-reader" title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>' +
-            '<script>' +
+            browserSidecarHarnessScript({ channel, token }) + '<script>' +
             'const channel=' +
             JSON.stringify(channel) +
             ',token=' +
@@ -407,17 +418,16 @@ test(
             'const sendOpen=(data,label)=>{' +
             'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
             'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,openRequest:state.openRequest,data},"*",[data]);};' +
-            'window.__sendOpenSaved=()=>sendOpen(state.savedData.slice(0),"saved-data");' +
+            'window.__sendOpenSaved=()=>sendOpen(fixtureBytes.slice(0),"source-reopen");' +
             'window.__holdNextSaveAck=()=>{state.holdNextSaveAck=true;};' +
-            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0)){iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:save.documentId,requestId:save.requestId,revision:save.revision},"*");}};' +
+            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0).reverse()){iframe.contentWindow.postMessage(save.acknowledgement,"*");}};' +
             'window.__sendFlush=(id)=>iframe.contentWindow.postMessage({channel,type:"flush",token,id},"*");' +
             'window.addEventListener("message",event=>{' +
             'if(event.source!==iframe.contentWindow)return;const message=event.data;' +
             'if(!message||message.channel!==channel||message.token!==token)return;' +
             'if(message.type==="ready"){state.ready=true;if(fixtureBytes)sendOpen(fixtureBytes.slice(0),"fixture");}' +
             'else if(message.type==="opened"){state.opened+=1;state.openedMessages ||= [];state.openedMessages.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,dirty:message.dirty});}' +
-            'else if(message.type==="save"){const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,origin:message.origin,byteLength:message.data?.byteLength||0,data:message.data?.slice(0),receivedAt:performance.now()};state.saves.push(save);state.savedData=save.data.slice(0);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}}' +
-            'else if(message.type==="recover"){const recovery={documentId:message.documentId,requestId:message.requestId,revision:message.revision,reason:message.reason,data:message.data?.slice(0)};state.recoveries.push(recovery);iframe.contentWindow.postMessage({channel,type:"recovered",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}' +
+            'else if(message.type==="save"||message.type==="recover"){const operations=Array.isArray(message.operations)?message.operations:[];for(const operation of operations){if(operation.kind==="FreeText")state.freeTextUuid=operation.uuid;}const acknowledgement={channel,type:message.type==="recover"?"recovered":"saved",token,documentId:message.documentId,requestId:message.requestId,openRequest:message.openRequest,revision:message.revision,external:true,operationCount:operations.length};if(operations.length>0)acknowledgement.batchId="free-text-undo-"+message.requestId;const record={documentId:message.documentId,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:operations.length,operations:structuredClone(operations),acknowledgement,receivedAt:performance.now()};if(message.type==="recover"){record.reason=message.reason;state.recoveries.push(record);}else{state.saves.push(record);}if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(record);}else{iframe.contentWindow.postMessage(acknowledgement,"*");}}' +
             'else if(message.type==="error"){state.errors.push({code:message.code,message:message.message,documentId:message.documentId,requestId:message.requestId});}' +
             'else if(message.type==="flushed"){state.flushes ||= [];state.flushes.push({id:message.id,ok:message.ok,dirty:message.dirty,revision:message.revision,recovered:message.recovered||false});}' +
             '});' +
@@ -433,7 +443,7 @@ test(
       }
       if (url.pathname === "/vendor/pdfjs-generic-legacy/web/obsidian-bridge.js") {
         response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-        response.end(bridgeSource);
+        response.end(instrumentedBridgeSource);
         return;
       }
 
@@ -785,7 +795,7 @@ test(
           const manager = app.pdfViewer?._layerProperties?.annotationEditorUIManager;
           const editors = manager ? [...manager.getEditors(0)] : [];
           const editor = editors.find((candidate) =>
-            candidate.annotationElementId && candidate.editorType === "freetext" &&
+            candidate.editorType === "freetext" &&
             (candidate.serialize?.()?.value?.includes("UndoVisibilityProof") ||
               candidate.div?.textContent?.includes("UndoVisibilityProof") ||
               app.pdfDocument.annotationStorage.getRawValue(candidate.id)?.value?.includes("UndoVisibilityProof")),
@@ -793,6 +803,7 @@ test(
           const annotation = app.pdfDocument.annotationStorage.serializable.map?.values?.();
           const rawValues = [...(annotation || [])].map((entry) => ({
             id: entry.id,
+            uid: entry.uid,
             annotationType: entry.annotationType,
             deleted: entry.deleted,
             value: entry.value,
@@ -830,6 +841,9 @@ test(
                 id: node.id,
                 text: node.textContent.trim(),
                 className: node.className,
+                display: getComputedStyle(node).display,
+                visibility: getComputedStyle(node).visibility,
+                opacity: getComputedStyle(node).opacity,
                 rect: (() => {
                   const rect = node.getBoundingClientRect();
                   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
@@ -839,12 +853,21 @@ test(
             editor: editor ? {
               id: editor.id,
               uid: editor.uid,
+              uuid: window.__freeTextUndoBridgeState?.annotationUuidByRuntimeId.get(String(editor.id)) || null,
               annotationElementId: editor.annotationElementId,
               deleted: editor.deleted,
               type: editor.editorType,
               serialized: editor.serialize?.() || null,
               divConnected: !!editor.div?.isConnected,
+              className: editor.div?.className || null,
+              display: editor.div ? getComputedStyle(editor.div).display : null,
+              visibility: editor.div ? getComputedStyle(editor.div).visibility : null,
+              opacity: editor.div ? getComputedStyle(editor.div).opacity : null,
+              rect: editor.div ? (() => { const rect = editor.div.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }; })() : null,
             } : null,
+            sidecarRow: window.parent.__browserSidecarHost?.operationsFor(
+              window.parent.__hostState.documentId,
+            ).find((row) => row.uuid === window.parent.__hostState.freeTextUuid) || null,
             rawValues,
             canvasRoi: window.__samplePageCanvasRoi(
               roiValue,
@@ -854,11 +877,11 @@ test(
           };
         }, { label, canvasRoi });
         const host = await page.evaluate(() => ({
-          saves: (window.__hostState?.saves || []).map(({ documentId, revision, origin, byteLength }) => ({ documentId, revision, origin, byteLength })),
+          saves: (window.__hostState?.saves || []).map(({ documentId, revision, origin, operationCount, operations }) => ({ documentId, revision, origin, operationCount, operations })),
           opened: window.__hostState?.opened,
           opens: window.__hostState?.opens,
           errors: window.__hostState?.errors,
-          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, revision, reason, data }) => ({ documentId, revision, reason, byteLength: data?.byteLength || 0 })),
+          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, revision, reason, operationCount, operations }) => ({ documentId, revision, reason, operationCount, operations })),
         }));
         const result = { ...state, host };
         evidence.push(result);
@@ -890,6 +913,19 @@ test(
         x: iframeRect.x + pageRect.x + pageRect.width * 0.78,
         y: iframeRect.y + pageRect.y + pageRect.height * 0.55,
       };
+      const compositeClip = {
+        x: Math.max(0, Math.floor(createPoint.x - 8)),
+        y: Math.max(0, Math.floor(createPoint.y - 8)),
+        width: Math.min(240, page.viewport().width - Math.max(0, Math.floor(createPoint.x - 8))),
+        height: Math.min(120, page.viewport().height - Math.max(0, Math.floor(createPoint.y - 8))),
+      };
+      assert.ok(compositeClip.width > 0 && compositeClip.height > 0);
+      const compositeHash = async () => {
+        await page.mouse.move(10, 10);
+        const png = await page.screenshot({ type: "png", clip: compositeClip });
+        return { sha256: createHash("sha256").update(png).digest("hex"), bytes: png.length };
+      };
+      const compositeBeforeCreate = await compositeHash();
       const creationHit = await viewer.evaluate(
         ({ x, y }) => {
           const hit = document.elementFromPoint(x, y);
@@ -987,39 +1023,28 @@ test(
       await waitForOpenCount(expectedOpen);
       await waitForPageReady();
       const afterReopen = await snapshot("reopened-original");
-      const originalCanvasRoi = afterReopen.canvasRoi;
-      assert.ok(
-        originalCanvasRoi?.canvasFound &&
-          originalCanvasRoi.targetRect &&
-          Number.isFinite(originalCanvasRoi.nonWhitePixels),
-        "The reopened FreeText must map to a readable page-canvas ROI: " +
-          JSON.stringify(originalCanvasRoi),
+      const originalCompositeRoi = await compositeHash();
+      assert.ok(afterReopen.editor, "Reopened sidecar FreeText must hydrate into a PDF.js editor");
+      assert.equal(afterReopen.editor.type, "freetext");
+      assert.equal(afterReopen.editor.deleted, false);
+      assert.ok(afterReopen.editor.rect.width > 0 && afterReopen.editor.rect.height > 0);
+      assert.notEqual(
+        originalCompositeRoi.sha256,
+        compositeBeforeCreate.sha256,
+        "The final iframe composite ROI must contain visible sidecar FreeText pixels",
       );
-      assert.ok(
-        originalCanvasRoi.nonWhitePixels > 0,
-        "The saved FreeText AP must contribute non-white pixels to the page canvas: " +
-          JSON.stringify(originalCanvasRoi),
-      );
-      const reopenedAnnotation = await viewer.evaluate(async () => {
-        const page = await PDFViewerApplication.pdfDocument.getPage(1);
-        const annotation = (await page.getAnnotations()).find((entry) =>
-          entry.subtype === "FreeText" &&
-          (entry.contents?.includes("UndoVisibilityProof") || entry.contentsObj?.str?.includes("UndoVisibilityProof")),
-        );
-        return annotation ? {
-          id: annotation.id,
-          hasAppearance: annotation.hasAppearance,
-          contents: annotation.contents,
-          contentsObj: annotation.contentsObj?.str,
-        } : null;
-      });
-      evidence.push({ stage: "saved-annotation-data", annotation: reopenedAnnotation });
+      const reopenedAnnotation = {
+        id: afterReopen.sidecarRow?.uuid,
+        uuid: afterReopen.editor.uuid,
+        value: afterReopen.editor.serialized?.value,
+      };
+      evidence.push({ stage: "saved-sidecar-data", annotation: reopenedAnnotation, composite: originalCompositeRoi });
       await persistEvidence();
-      assert.ok(reopenedAnnotation, "Saved FreeText must appear in PDF annotation data");
-      assert.equal(reopenedAnnotation.hasAppearance, true, "Saved FreeText must carry a rendered AP");
-      assert.ok(afterReopen.annotation?.rect?.width > 0, "Saved FreeText AP must be visible after reopening");
-      const eraseRect = afterReopen.annotation.rect;
-      assert.ok(eraseRect.width > 0 && eraseRect.height > 0, "Expected a positive FreeText AP target rect");
+      assert.ok(reopenedAnnotation.id, "Saved FreeText must have a durable sidecar UUID");
+      assert.equal(reopenedAnnotation.uuid, reopenedAnnotation.id, "Hydrated FreeText editor runtime ID must retain its sidecar UUID binding");
+      assert.ok(reopenedAnnotation.value?.includes("UndoVisibilityProof"));
+      const eraseRect = afterReopen.editor.rect;
+      assert.ok(eraseRect.width > 0 && eraseRect.height > 0, "Expected a positive sidecar FreeText editor rect");
       const eraseStart = {
         x: iframeRect.x + eraseRect.x + Math.min(eraseRect.width / 2, 8),
         y: iframeRect.y + eraseRect.y + Math.min(eraseRect.height / 2, 8),
@@ -1042,213 +1067,151 @@ test(
       }));
       evidence.push({ stage: "erase-save-held", ...heldEraseSave });
       assert.equal(heldEraseSave.held, 1, "The eraser save must remain unacknowledged for the undo boundary case");
-      const afterErase = await snapshot(
-        "after-right-erase-save-held",
-        originalCanvasRoi.targetRect,
+      const afterErase = await snapshot("after-right-erase-save-held");
+      const erasedCompositeRoi = await compositeHash();
+      assert.equal(afterErase.sidecarRow?.uuid, reopenedAnnotation.id);
+      assert.equal(afterErase.sidecarRow?.deleted, true,
+        "Right-drag must durably serialize a sidecar FreeText tombstone");
+      assert.ok(
+        afterErase.editor?.deleted === true || afterErase.sidecarRow?.deleted === true,
+        "Right-drag must remove the hydrated sidecar FreeText from the visible editor state",
       );
       assert.ok(
-        afterErase.rawValues.some(
-          (entry) => entry.deleted === true && entry.id === reopenedAnnotation.id,
-        ),
-        "Right-drag must serialize a deleted FreeText tombstone",
+        erasedCompositeRoi.sha256 !== originalCompositeRoi.sha256,
+        "Right eraser must change the final viewer composite where the sidecar FreeText was visible",
       );
-      assert.ok(
-        !afterErase.annotation ||
-          afterErase.annotation.hidden ||
-          afterErase.annotation.display === "none" ||
-          afterErase.annotation.rect.width === 0,
-        "Erased FreeText AP must be hidden after returning to NONE",
-      );
-      await waitForCanvasChangeFromBaseline(originalCanvasRoi.targetRect);
-      const erasedCanvasRoi = await viewer.evaluate((targetRect) =>
-        window.__samplePageCanvasRoi(targetRect),
-        originalCanvasRoi.targetRect,
-      );
-      assert.ok(
-        erasedCanvasRoi.differentPixels > 0 &&
-          erasedCanvasRoi.fingerprint !== originalCanvasRoi.fingerprint,
-        "Right eraser must remove pixels from the saved AP's page-canvas ROI: " +
-          JSON.stringify({ original: originalCanvasRoi, erased: erasedCanvasRoi }),
-      );
-      evidence.push({ stage: "erased-page-canvas-roi", canvasRoi: erasedCanvasRoi });
+      evidence.push({ stage: "erased-composite-roi", composite: erasedCompositeRoi });
       await persistEvidence();
 
       await page.keyboard.down("Meta");
       await page.keyboard.press("z");
       await page.keyboard.up("Meta");
-      await viewer.waitForFunction(() => {
+      await viewer.waitForFunction((uuid) => {
         const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
         return [...(manager?.getEditors(0) || [])].some((editor) =>
-          editor.annotationElementId && editor.deleted === false &&
-          editor.editorType === "freetext",
+          window.__freeTextUndoBridgeState?.annotationUuidByRuntimeId.get(String(editor.id)) === uuid &&
+          editor.deleted === false && editor.editorType === "freetext" &&
+          editor.div?.isConnected && editor.div.textContent?.includes("UndoVisibilityProof") &&
+          getComputedStyle(editor.div).display !== "none" &&
+          getComputedStyle(editor.div).visibility !== "hidden" &&
+          editor.div.getBoundingClientRect().width > 0 &&
+          editor.div.getBoundingClientRect().height > 0,
         );
-      }, { timeout: 10_000 });
-      const undoWhileSaveHeld = await snapshot(
-        "undo-while-erase-save-held",
-        originalCanvasRoi.targetRect,
-      );
-      const undoKey = undoWhileSaveHeld.trustedUndo?.at(-1);
-      assert.ok(undoKey?.metaKey && String(undoKey.key).toLowerCase() === "z", "Undo must be a trusted Meta-Z key");
-      assert.equal(undoWhileSaveHeld.mode, 0, "Undo must leave the editor in NONE mode while the prior save is pending");
-      assert.equal(undoWhileSaveHeld.editor?.annotationElementId, reopenedAnnotation.id, "Undo must restore the same saved FreeText editor");
-      assert.equal(
-        undoWhileSaveHeld.canvasRoi.fingerprint,
-        erasedCanvasRoi.fingerprint,
-        "The page canvas must stay erased until the held save is acknowledged",
-      );
-      assert.ok(
-        !undoWhileSaveHeld.annotation ||
-          undoWhileSaveHeld.annotation.hidden ||
-          undoWhileSaveHeld.annotation.display === "none" ||
-          undoWhileSaveHeld.annotation.rect.width === 0,
-        "The AP repair must wait until the real host save is acknowledged",
-      );
+      }, { timeout: 10_000 }, reopenedAnnotation.id);
+      const undoWhileSavesHeld = await snapshot("undo-while-save-acks-held");
+      const undoCompositeRoi = await compositeHash();
+      assert.ok(undoWhileSavesHeld.trustedUndo?.at(-1)?.metaKey);
+      assert.equal(undoWhileSavesHeld.mode, 0);
+      assert.equal(undoWhileSavesHeld.editor?.uuid, reopenedAnnotation.id);
+      assert.equal(undoWhileSavesHeld.editor?.deleted, false);
+      assert.ok(undoWhileSavesHeld.editor?.rect?.width > 0 && undoWhileSavesHeld.editor?.rect?.height > 0);
+      assert.equal(undoWhileSavesHeld.editor?.display, "block");
+      assert.notEqual(undoCompositeRoi.sha256, erasedCompositeRoi.sha256);
+      const heldAckState = await page.evaluate(() => ({
+        saves: window.__hostState.saves.length,
+        held: window.__hostState.heldSaves.length,
+        dirty: document.querySelector("iframe").contentWindow.PDFViewerApplication._hasChanges(),
+      }));
+      assert.equal(heldAckState.held, 1, "Only the in-flight delete batch should be held before its durable ACK");
+      assert.equal(heldAckState.saves, eraseSaveCount, "Undo must queue behind, not overlap, the in-flight sidecar save");
+      assert.equal(heldAckState.dirty, true, "Undo during an in-flight delete must remain dirty until its compensating operation is durable");
       await page.evaluate(() => window.__releaseHeldSaveAcks());
       await waitForSaveCount(eraseSaveCount + 1);
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
-      await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect.width > 0 && rect.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
-      await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
-      const afterUndo = await snapshot(
-        "after-trusted-meta-z-and-ack",
-        originalCanvasRoi.targetRect,
-      );
-      assert.ok(
-        afterUndo.annotation?.rect?.width > 0 && afterUndo.annotation?.rect?.height > 0,
-        "Undo must restore a visible saved FreeText AP in NONE mode",
-      );
-      assert.equal(afterUndo.mode, 0, "Undo must keep the viewer in NONE mode after deferred repair");
-      assert.equal(afterUndo.annotation?.annotationId, reopenedAnnotation.id, "Undo must show the same saved AP");
-      assert.equal(afterUndo.editor?.annotationElementId, reopenedAnnotation.id, "Undo must retain the same saved editor identity");
-      assert.equal(afterUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Page repaint must preserve the exact undo-restored editor instance");
-      assert.equal(
-        afterUndo.host.saves.length,
-        eraseSaveCount + 1,
-        "The visual page repaint must not create an extra document revision or host save",
-      );
-      assert.ok(
-        afterUndo.canvasRoi.nonWhitePixels >= Math.max(1, Math.floor(originalCanvasRoi.nonWhitePixels * 0.75)),
-        "Undo must repaint the saved AP pixels on the PDF page canvas: " +
-          JSON.stringify({ before: originalCanvasRoi, after: afterUndo.canvasRoi }),
-      );
-      assert.equal(
-        afterUndo.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "Undo must restore the original page-canvas ROI pixels exactly",
-      );
-      assert.equal(afterUndo.canvasRoi.differentPixels, 0, "Undo page-canvas ROI must match the original saved AP pixel-for-pixel");
+      const afterUndo = await snapshot("after-undo-and-exact-acks");
+      const afterUndoComposite = await compositeHash();
+      assert.equal(afterUndo.mode, 0);
+      assert.equal(afterUndo.editor?.uuid, reopenedAnnotation.id);
+      assert.equal(afterUndo.editor?.deleted, false);
+      assert.ok(afterUndo.editor?.serialized?.value?.includes("UndoVisibilityProof"));
+      assert.equal(afterUndoComposite.sha256, originalCompositeRoi.sha256);
+      assert.ok(afterUndo.sidecarRow && afterUndo.sidecarRow.deleted !== true);
 
       await page.keyboard.down("Meta");
       await page.keyboard.down("Shift");
       await page.keyboard.press("z");
       await page.keyboard.up("Shift");
       await page.keyboard.up("Meta");
-      await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 10_000 });
-      await viewer.waitForFunction(({ targetRect, erasedFingerprint }) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const sample = window.__samplePageCanvasRoi(targetRect);
-        return (!section || section.hidden || getComputedStyle(section).display === "none" ||
-          section.getBoundingClientRect().width === 0) &&
-          sample.fingerprint === erasedFingerprint &&
-          sample.differentPixels > 0;
-      }, { timeout: 15_000 }, {
-        targetRect: originalCanvasRoi.targetRect,
-        erasedFingerprint: erasedCanvasRoi.fingerprint,
-      });
-      const afterRedo = await snapshot("after-trusted-meta-shift-z", originalCanvasRoi.targetRect);
-      assert.ok(
-        !afterRedo.annotation ||
-          afterRedo.annotation.hidden ||
-          afterRedo.annotation.display === "none" ||
-          afterRedo.annotation.rect.width === 0,
-        "Redo must hide the restored FreeText AP again",
-      );
-      assert.equal(
-        afterRedo.canvasRoi.fingerprint,
-        erasedCanvasRoi.fingerprint,
-        "Redo must restore the same erased page-canvas ROI pixels",
-      );
+      await viewer.waitForFunction((uuid) => {
+        const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        const editor = [...(manager?.getEditors(0) || [])].find((candidate) =>
+          window.__freeTextUndoBridgeState?.annotationUuidByRuntimeId.get(String(candidate.id)) === uuid,
+        );
+        return PDFViewerApplication.pdfViewer.annotationEditorMode === 0 &&
+          (editor?.deleted === true || editor?.div?.isConnected !== true);
+      }, { timeout: 10_000 }, reopenedAnnotation.id);
+      await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
+      const afterRedo = await snapshot("after-redo");
+      const redoCompositeRoi = await compositeHash();
+      assert.ok(afterRedo.sidecarRow?.deleted === true);
+      assert.notEqual(redoCompositeRoi.sha256, originalCompositeRoi.sha256);
 
       await page.keyboard.down("Meta");
       await page.keyboard.press("z");
       await page.keyboard.up("Meta");
-      await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect?.width > 0 && rect?.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
-      await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
-      const afterSecondUndo = await snapshot("after-second-meta-z", originalCanvasRoi.targetRect);
-      assert.ok(afterSecondUndo.annotation?.rect?.width > 0, "A second undo must remain usable after redo");
-      assert.equal(afterSecondUndo.mode, 0, "A second undo must remain in NONE mode");
-      assert.equal(afterSecondUndo.annotation?.annotationId, reopenedAnnotation.id, "A second undo must restore the same saved AP");
-      assert.equal(afterSecondUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Redo and second undo must preserve the same editor history identity");
-      assert.equal(
-        afterSecondUndo.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "A second undo must restore the original page-canvas ROI pixels",
-      );
-      assert.equal(afterSecondUndo.canvasRoi.differentPixels, 0, "Second-undo page-canvas ROI must match the original AP pixel-for-pixel");
-
-      const finalSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
-      await waitForSaveCount(finalSaveCount);
+      await viewer.waitForFunction((uuid) => {
+        const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        const editor = [...(manager?.getEditors(0) || [])].find((candidate) =>
+          window.__freeTextUndoBridgeState?.annotationUuidByRuntimeId.get(String(candidate.id)) === uuid,
+        );
+        return editor?.deleted === false && editor?.div?.textContent?.includes("UndoVisibilityProof");
+      }, { timeout: 10_000 }, reopenedAnnotation.id);
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
+      const afterSecondUndo = await snapshot("after-second-undo");
+      const secondUndoComposite = await compositeHash();
+      assert.equal(afterSecondUndo.editor?.uuid, reopenedAnnotation.id);
+      assert.equal(afterSecondUndo.editor?.deleted, false);
+      assert.equal(secondUndoComposite.sha256, originalCompositeRoi.sha256);
+
       const reopenedCount = await page.evaluate(() => window.__hostState.opened + 1);
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(reopenedCount);
       await waitForPageReady();
-      const afterFinalReopen = await snapshot(
-        "reopened-restored-free-text",
-        originalCanvasRoi.targetRect,
-      );
-      const finalAnnotation = await viewer.evaluate(async () => {
+      await viewer.waitForFunction((uuid) => {
+        const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        return [...(manager?.getEditors(0) || [])].some((editor) =>
+          window.__freeTextUndoBridgeState?.annotationUuidByRuntimeId.get(String(editor.id)) === uuid &&
+          editor.editorType === "freetext" && !editor.deleted &&
+          editor.div?.textContent?.includes("UndoVisibilityProof"),
+        );
+      }, { timeout: 15_000 }, reopenedAnnotation.id);
+      const afterFinalReopen = await snapshot("reopened-restored-free-text");
+      const finalCompositeRoi = await compositeHash();
+      const sourcePdfAfter = {
+        sha256: createHash("sha256").update(await readFile(fixturePath)).digest("hex"),
+        mtimeMs: (await stat(fixturePath)).mtimeMs,
+      };
+      assert.equal(afterFinalReopen.sidecarRow?.uuid, reopenedAnnotation.id);
+      assert.equal(afterFinalReopen.sidecarRow?.deleted, false);
+      assert.equal(afterFinalReopen.editor?.uuid, reopenedAnnotation.id);
+      assert.equal(afterFinalReopen.editor?.serialized?.value, "UndoVisibilityProof");
+      assert.ok(afterFinalReopen.editor.rect.width > 0 && afterFinalReopen.editor.rect.height > 0);
+      assert.equal(afterFinalReopen.editor.display, "block");
+      assert.equal(afterFinalReopen.editor.visibility, "visible");
+      assert.notEqual(finalCompositeRoi.sha256, compositeBeforeCreate.sha256);
+      assert.equal(sourcePdfAfter.sha256, sourcePdfBefore.sha256, "Ordinary sidecar edits must not change source PDF bytes");
+      assert.equal(sourcePdfAfter.mtimeMs, sourcePdfBefore.mtimeMs, "Ordinary sidecar edits must not touch source PDF mtime");
+      const sourcePdfAnnotation = await viewer.evaluate(async () => {
         const page = await PDFViewerApplication.pdfDocument.getPage(1);
-        const annotation = (await page.getAnnotations()).find((entry) =>
+        return (await page.getAnnotations()).some((entry) =>
           entry.subtype === "FreeText" &&
           (entry.contents?.includes("UndoVisibilityProof") || entry.contentsObj?.str?.includes("UndoVisibilityProof")),
         );
-        return annotation
-          ? {
-              id: annotation.id,
-              hasAppearance: annotation.hasAppearance,
-              contents: annotation.contents,
-              contentsObj: annotation.contentsObj?.str,
-            }
-          : null;
       });
-      assert.ok(
-        afterFinalReopen.annotation?.rect?.width > 0 &&
-          afterFinalReopen.annotation?.text?.includes("UndoVisibilityProof"),
-        "Saved/restored FreeText AP must remain visible with its text after a full save/reopen",
-      );
-      assert.equal(
-        finalAnnotation?.hasAppearance,
-        true,
-        "The final saved FreeText must retain its PDF appearance stream",
-      );
-      assert.equal(
-        afterFinalReopen.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "The restored FreeText AP must retain the same page-canvas pixels after save/reopen",
-      );
+      assert.equal(sourcePdfAnnotation, false, "Ordinary sidecar saves must not write FreeText into the source PDF");
       evidence.push({
         stage: "pass",
+        originalCompositeRoi,
+        erasedCompositeRoi,
+        undoCompositeRoi,
+        redoCompositeRoi,
+        secondUndoComposite,
+        finalCompositeRoi,
         afterUndo,
         afterRedo,
         afterSecondUndo,
         afterFinalReopen,
-        finalAnnotation,
+        sourcePdf: { before: sourcePdfBefore, after: sourcePdfAfter },
       });
       assert.deepEqual(externalRequests, [], "The PDF fixture must not request external origins");
       await persistEvidence();

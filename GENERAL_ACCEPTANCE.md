@@ -1,3 +1,103 @@
+# WAL v3.2 latest verification — suite green, release not accepted (2026-10-17)
+
+The 2026-10-16 failure counts below are retained as historical evidence. On
+2026-10-17, after the browser-test teardown and test-host fixes, the complete
+`npm test` suite completed with **559 total, 554 passed, 0 failed, 0 cancelled,
+and 5 existing platform-conditional skips**. Test files now run with
+`--test-concurrency=1`; this changes scheduling only, not assertions, timeout
+values, or skip conditions. The five skips are platform-specific process-query
+cases unavailable on Windows. The independent `npm run test:offline` smoke also
+passed, and `npm run build` verified the three release files, 406 embedded
+assets, and 402 frozen vendor files.
+
+This establishes a green serial suite for this candidate. It does **not** prove
+parallel multi-Chromium suite stability, physical iPad Sync convergence,
+destructive multi-device GC safety, or the 15-minute large-document soak. The
+release/deployment gate therefore remains false. See the complete
+[WAL v3.2 merge recommendation](WAL_V3_2_MERGE_RECOMMENDATION.md). Historical
+failure logs and classifications below remain unchanged.
+
+# WAL v3.2 failure repair — NOT ACCEPTED (2026-10-16)
+
+No push, release, main-Vault deployment or user PDF/sidecar write occurred.
+This section supersedes counts below without deleting historical failures.
+
+| Full run | Total | Pass | Fail | Cancelled | Existing skips | Exit |
+|---|---:|---:|---:|---:|---:|---:|
+| Frozen incident baseline | 555 | 514 | 35 | 1 | 5 | 1 |
+| Repair run 1 (missing test adapter capabilities exposed) | 556 | 489 | 62 | 0 | 5 | 1 |
+| Repair run 2 (capabilities and atomic-write self-echo fixed) | 557 | 535 | 17 | 0 | 5 | 1 |
+| Repair run 3 (awaited Viewer teardown enabled by default) | 557 | 536 | 16 | 0 | 5 | 1 |
+
+All raw logs remain in `benchmarks/reports/failure-repair-full[-02/-03]-20261016.log`.
+These are different source/test revisions, not three stable repetitions of one
+candidate and not a claimed three-concurrent-run acceptance. No timeout was
+increased and no new skip was added.
+
+Verified fixes: bundled legacy Format3 mutation barrier after JSONL epoch
+activation (read-only import retained); exact-byte local Adapter checkpoint
+guard and bounded replay retry; previous-distinct/30-day-GC fixtures; real
+child-process crash boundaries; atomic-process writes included in host self-echo
+fingerprints; save origin metadata restored; asynchronous Windows identity
+queries; case-insensitive Windows launch environment; explicitly awaited PDF.js
+loading-task/Worker/document/page-view teardown and cleared selection.
+
+Focused evidence: Store races 14/14; Host/source-binding/boundaries 87/87;
+JSONL/epoch/migration 9/9; seven real child-process crash cases pass. Full run 3
+also passes selection differential, one/two/four-line Highlight and both mobile
+browser resource/Blob cases, but that does not prove stability across runs.
+Remaining 16 failures include obsolete binary-save/merge fake-host contracts,
+autosave/lifecycle/pointer cases and Windows ownership/cleanup failures under
+full load. They remain blocking, not dismissed as CPU contention.
+
+Latest offline smoke: `failure-repair-offline-03-20261016.log`, exit 0, real
+five-tool create/sidecar save/reopen and natural browser exit. Independent
+read-only Node replay: `failure-repair-independent-cold-verified-witness-20261016.json`:
+1,000 active/unique UUIDs and all snapshot/raw-operation fields match expected
+hashes; source SHA-256 and mtime unchanged; zero mutations, no fixture `.tmp`.
+An existing empty `.jsonl.pending` exactly matches its committed target and was
+retained as the implementation's recovery witness, not deleted to satisfy a gate.
+The earlier overly strict blanket-pending rejection is also retained as evidence.
+
+Read-only inspection of the actual test-Vault desktop runtime confirms append
+delegates to `fsPromises.appendFile` and process executes read/callback/write in
+its Adapter queue (`failure-repair-native-adapter-capabilities-20261016.json`).
+This is local Adapter serialization, NOT PC+iPad distributed CAS. Old unmodified
+binaries cannot be made to obey the new marker; JSONL authoritative storage has
+a separate namespace. Real cross-device Sync remains NOT_VERIFIED.
+
+Current three-file hashes (candidate only; not deployed this repair):
+
+- main.js: `6bacae11353c6114f91bad89f81eb44d6e53ddf1f50593df0b6e357963bfcb93`
+- manifest.json: `e7b3e9ea49d38695282ceb3db62040b659ed53f95f304602e0836599c9ae6f77`
+- styles.css: `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650`
+
+Detailed classification: [35 failures + 1 cancellation audit](tests/FAILURE_35_AUDIT_20261016.md).
+
+`FULL_SUITE_ACCEPTED = FALSE`
+`THREE_CONCURRENT_STABLE_RUNS = NOT_RUN`
+`READY_FOR_DEPLOYMENT = FALSE`
+
+---
+
+# WAL v3.2 JSONL candidate — durable ACK and cold replay (2026-10-16)
+
+Current worktree branch: `codex/wal-v3.2-jsonl`, base `44f6dd594209ef4b0d0088fb1d8547adb3196ad3`; product and test changes remain uncommitted. Only the isolated test vault received the candidate build.
+
+The public Obsidian DataAdapter append path now retains per-device JSONL, batched single append, existing v3.1 reads, retained immutable device archives and derived checkpoints. The saved ACK still awaits the adapter append promise. No early in-memory saved ACK was introduced.
+
+The real Windows/Obsidian 1,000-call profile measured total P50 4.6 ms / P99 11.5 ms. Adapter append alone measured P50 4.0 ms / P99 10.7 ms and 86.37% of mean total time; Store queue P99 was 0.1 ms. Following the explicit platform-I/O decision, the durable P99 gate is fixed at 15 ms. The sub-5-ms interactive goal is not met, and the earlier 3-second total goal is not met (approximately 5.05 seconds of measured ACK durations). No outlier was removed.
+
+Checkpoint → full Reader detach → plugin reload → new Store replay and a separate read-only Node process both recovered exactly 1,000 active, unique UUIDs. All persisted fields of all 1,000 rows matched a deterministic expected-state SHA-256; the final row was also deep-compared. Existing 12 fixture tombstones were retained. Source-copy and original PDF SHA-256 and mtime were unchanged. The new input-artifact transport avoids the observed long-CLI-request JSON-parse failure; test instrumentation was removed after the run.
+
+Detailed profile, failure history, independent-process proof and build hashes: [durable ACK decision](benchmarks/reports/wal-v32-durable-15ms-decision-20261016.md). Focused Store/Bridge/Host tests passed 87/87; corrected routing/mobile-host tests passed 16/16; both no-Node mobile-browser resource/Blob startup/save/reopen tests passed. Offline smoke passed. The full regression is not claimed green. Real iPad Sync, 15-minute soak and complete safety acceptance remain pending; `READY_FOR_DEPLOYMENT = FALSE`. No push or deployment to `远程仓库1` occurred.
+
+Final full regression: **555 total, 514 passed, 35 failed, 1 cancelled, 5 skipped**, exit 1; raw evidence `benchmarks/reports/wal-v32-final-functional-regression-20261016.log`. Canonical persisted operation metadata (including original operation IDs) was additionally verified for all 1,000 records in both new runtime and independent Node process; no cached renderer state was used by the independent reader.
+
+The following entries are retained historical evidence.
+
+---
+
 # WAL-Sidecar v3.1 development validation (2026-10-16)
 
 The current feature branch is `codex/wal-sidecar-v3-1`, based on integration SHA

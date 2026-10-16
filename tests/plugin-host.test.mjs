@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { PDFDocument } from "pdf-lib";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
@@ -391,6 +392,9 @@ function createHarness({
         async write(filePath, value) {
           storedFiles.set(filePath, String(value));
         },
+        async append(filePath, value) {
+          storedFiles.set(filePath, `${storedFiles.get(filePath) || ""}${String(value)}`);
+        },
         async rename(fromPath, toPath) {
           if (!storedFiles.has(fromPath)) throw new Error(`Missing rename source: ${fromPath}`);
           if (storedFiles.has(toPath)) throw new Error(`Rename target exists: ${toPath}`);
@@ -483,6 +487,7 @@ function createHarness({
     },
   };
 
+  withAtomicProcess(app.vault.adapter, storedFiles);
   const plugin = new moduleObject.exports(app, { id: "pdf-web-reader" });
   if (inspectLegacy) {
     plugin.legacyMergeClient = {
@@ -533,7 +538,7 @@ test("WAL production host saves, reopens and renames without source writes or Fo
   assert.ok(ack.batchId);
   assert.equal(file.writes, 0);
   assert.deepEqual(file.bytes, source);
-  assert.ok([...storedFiles.keys()].some((name) => name.includes("/wal/") && name.endsWith(".json")));
+  assert.ok([...storedFiles.keys()].some((name) => name.includes("/wal/") && name.endsWith(".jsonl")));
   assert.equal([...storedFiles.keys()].some((name) => /\/(ops|checkpoints|identity-events)\//.test(name)), false);
   first.plugin.onunload();
 
@@ -542,7 +547,7 @@ test("WAL production host saves, reopens and renames without source writes or Fo
   const reopenedFile = new reopened.TFile("Books/wal-main.pdf", source);
   const second = await createSidecarReader(reopened, reopenedFile);
   assert.equal(second.view.documentId, documentId);
-  assert.equal(second.view.annotationSyncState.storageProtocol, "wal-sidecar-v3.1");
+  assert.equal(second.view.annotationSyncState.storageProtocol, "wal-sidecar-v3.2-jsonl");
   assert.deepEqual(second.view.annotationSyncState.annotations.map((row) => row.uuid), ["annotation-wal-main-edit"]);
   const oldPath = reopenedFile.path;
   reopened.files.delete(oldPath);

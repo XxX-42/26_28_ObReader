@@ -86,6 +86,17 @@ test("streaming chunks and offset views hash only their visible bytes", async ()
   assert.equal(accumulator.digest(), expected);
 });
 
+test("append-only sidecar accumulator can digest and continue for both hash backends", async () => {
+  for (const forceSha256 of [false, true]) {
+    const runtime = await createPdfHashRuntime({ forceSha256 });
+    const accumulator = runtime.createAccumulator();
+    accumulator.update(new TextEncoder().encode("first"));
+    assert.equal(accumulator.digest(), runtime.fingerprint(new TextEncoder().encode("first")));
+    accumulator.update(new TextEncoder().encode("second"));
+    assert.equal(accumulator.digest(), runtime.fingerprint(new TextEncoder().encode("firstsecond")));
+  }
+});
+
 test("legacy SHA-256 records remain readable and new hashes are tagged", async () => {
   const runtime = await createPdfHashRuntime();
   const bytes = new TextEncoder().encode("legacy checkpoint");

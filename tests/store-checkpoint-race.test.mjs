@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
@@ -54,7 +55,7 @@ function makeAdapter() {
       return { files: listedFiles, folders: [...listedFolders] };
     },
   };
-  return { adapter, files };
+  return { adapter: withAtomicProcess(adapter, files), files };
 }
 
 function createStore(adapter, onTiming = () => {}) {
@@ -171,8 +172,8 @@ test("a stale readDocument must not overwrite a newer checkpoint after its batch
     oldReadRevision: 1,
     primaryRevision: 2,
     primaryAnnotationIds: ["annotation-new", "annotation-old"],
-    backupRevision: 2,
-    backupAnnotationIds: ["annotation-new", "annotation-old"],
-    newerBatchStillExists: false,
-  }, "the stale materialization must not erase a newer annotation after its batch was GC'd");
+    backupRevision: 1,
+    backupAnnotationIds: ["annotation-old"],
+    newerBatchStillExists: true,
+  }, "previous remains the last distinct checkpoint and uncovered/young batches must survive");
 });

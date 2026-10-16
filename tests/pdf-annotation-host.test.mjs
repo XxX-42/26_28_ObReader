@@ -1,4 +1,5 @@
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
@@ -11,7 +12,7 @@ const createPdfAnnotationHost = (options) => createHost({ ...options, storeFacto
 function makeAdapter() {
   const files = new Map();
   const dirs = new Set();
-  return {
+  return withAtomicProcess({
     files,
     async exists(path) { return files.has(path) || dirs.has(path); },
     async mkdir(path) { dirs.add(path); },
@@ -41,7 +42,7 @@ function makeAdapter() {
       }
       return { files: childFiles, folders: [...children] };
     },
-  };
+  }, files);
 }
 
 function hash(value) {

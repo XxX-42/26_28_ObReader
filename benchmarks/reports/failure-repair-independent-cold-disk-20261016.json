@@ -1,0 +1,24 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+
++ [
++   'D:\\Documents\\Obsidian\\测试插件\\00_Archive\\20_PDFData\\wal\\b3e50bfd-53e1-4418-a457-bd4f6aaf7208\\fa5babad201b.jsonl.pending'
++ ]
+- []
+
+    at file:///D:/Documents/Codes/2026_7_PdfWebReader/2026_7.1_Mozilla_fork-ob-wal-v3.2/[eval1]:1:1662 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: [
+    'D:\\Documents\\Obsidian\\测试插件\\00_Archive\\20_PDFData\\wal\\b3e50bfd-53e1-4418-a457-bd4f6aaf7208\\fa5babad201b.jsonl.pending'
+  ],
+  expected: [],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

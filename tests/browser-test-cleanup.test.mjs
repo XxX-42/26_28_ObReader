@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { connect } from "node:net";
 import { once } from "node:events";
 import { lstat, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -17,6 +18,7 @@ import {
   MAX_BROWSER_SAMPLE_OUTPUT_BYTES,
   observeBrowserTestChildStderr,
   processIdentityMatches,
+  registerOwnedBrowserChild,
   readPosixProcessTable,
   sampleOwnedBrowserProcess,
 } from "./browser-test-cleanup.mjs";
@@ -37,6 +39,7 @@ async function launchControlledBrowserProcess({ ignoreTerm, profileDirectory }) 
   );
   await once(child, "spawn");
   await once(child.stdout, "data");
+  assert.equal(registerOwnedBrowserChild(child), true);
   return child;
 }
 
@@ -50,6 +53,22 @@ async function launchNaturallyClosingProcess(profileDirectory) {
     },
   );
   await once(child, "spawn");
+  assert.equal(registerOwnedBrowserChild(child), true);
+  return child;
+}
+
+async function launchCloseDelayedProcess(profileDirectory) {
+  const source = "process.on('message', message => { if (message === 'close') setTimeout(() => process.exit(0), 80); }); setInterval(() => {}, 1000);";
+  const child = spawn(
+    process.execPath,
+    ["-e", source, "--", `--user-data-dir=${profileDirectory}`],
+    {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  await once(child, "spawn");
+  assert.equal(registerOwnedBrowserChild(child), true);
   return child;
 }
 
@@ -69,6 +88,7 @@ async function launchBrowserCloseControlledProcess(profileDirectory) {
   );
   await once(child, "spawn");
   await once(child.stdout, "data");
+  assert.equal(registerOwnedBrowserChild(child), true);
   return child;
 }
 
@@ -94,6 +114,90 @@ test("browser cleanup reports a natural close separately from forced cleanup", a
 
   assert.equal(report.status, "normal");
   assert.equal(report.browser.status, "normal");
+  assert.deepEqual(report.errors, []);
+});
+
+test("browser cleanup accepts verified zero-exit when Puppeteer close remains pending", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-natural-exit-test-"));
+  const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-natural-exit");
+  await mkdir(profileDirectory);
+  let child;
+  let connected = true;
+  const browser = new EventEmitter();
+  browser.process = () => child;
+  browser.isConnected = () => connected;
+  browser.close = () => new Promise(() => {});
+  browser.disconnect = () => {
+    connected = false;
+    browser.emit("disconnected");
+  };
+  t.after(async () => {
+    await stopControlledChild(child);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  child = await launchNaturallyClosingProcess(profileDirectory);
+  child.once("exit", () => {
+    connected = false;
+    browser.emit("disconnected");
+  });
+  const report = await cleanupBrowserTestResources({
+    browser,
+    ownedPages: [],
+    browserTimeoutMs: 500,
+    processExitTimeoutMs: 100,
+  });
+
+  assert.equal(child.exitCode, 0);
+  assert.equal(child.signalCode, null);
+  assert.equal(report.browser.connectedAfterClose, false);
+  assert.equal(report.browser.closeState, "process-exited");
+  assert.equal(report.browser.closeCompletion, "verified-process-exit");
+  assert.equal(report.browser.status, "normal", JSON.stringify(report));
+  assert.equal(report.status, "normal", JSON.stringify(report));
+  assert.deepEqual(report.errors, []);
+});
+
+test("browser cleanup accepts a verified natural exit within the existing process-exit grace", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-delayed-exit-test-"));
+  const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-delayed-exit");
+  await mkdir(profileDirectory);
+  let child;
+  let connected = true;
+  const browser = new EventEmitter();
+  browser.process = () => child;
+  browser.isConnected = () => connected;
+  browser.close = () => {
+    connected = false;
+    browser.emit("disconnected");
+    child.send("close");
+    return new Promise(() => {});
+  };
+  browser.disconnect = () => {
+    connected = false;
+    browser.emit("disconnected");
+  };
+  t.after(async () => {
+    await stopControlledChild(child);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  child = await launchCloseDelayedProcess(profileDirectory);
+  const report = await cleanupBrowserTestResources({
+    browser,
+    ownedPages: [],
+    browserTimeoutMs: 50,
+    processExitTimeoutMs: 250,
+  });
+
+  assert.equal(child.exitCode, 0);
+  assert.equal(child.signalCode, null);
+  assert.equal(report.browser.connectedAfterClose, false);
+  assert.equal(report.browser.closeState, "process-exited");
+  assert.equal(report.browser.closeCompletion, "verified-process-exit");
+  assert.equal(report.browser.status, "normal", JSON.stringify(report));
+  assert.equal(report.status, "normal", JSON.stringify(report));
+  assert.deepEqual(report.browser.termination, []);
   assert.deepEqual(report.errors, []);
 });
 
@@ -192,6 +296,7 @@ test("failed owned-child exit report includes early bounded stderr and excludes 
   });
   await once(child, "spawn");
   await once(child.stdout, "data");
+  assert.equal(registerOwnedBrowserChild(child), true);
 
   const browser = new EventEmitter();
   browser.connected = true;
@@ -475,12 +580,12 @@ test("browser cleanup accepts only a zero-exit owned browser process as natural"
     await rm(root, { recursive: true, force: true });
   });
 
-  child = await launchNaturallyClosingProcess(profileDirectory);
+  child = await launchBrowserCloseControlledProcess(profileDirectory);
   const report = await cleanupBrowserTestResources({
     browser: {
       process: () => child,
       isConnected: () => typeof child.exitCode !== "number" && child.signalCode === null,
-      close: () => once(child, "exit"),
+      close: () => { const exited = once(child, "exit"); child.send("browser-close"); return exited; },
       disconnect() {},
     },
     browserTimeoutMs: 1_000,
@@ -493,7 +598,9 @@ test("browser cleanup accepts only a zero-exit owned browser process as natural"
   assert.equal(report.browser.process.signalCode, null);
   assert.equal(report.browser.process.identity.validated, true);
   assert.equal(report.browser.process.identity.pid, child.pid);
-  assert.ok(report.browser.process.identity.startedAt);
+  assert.equal(report.browser.process.identity.startedAt, null,
+    "Windows cleanup uses the exact Node ChildProcess handle instead of a PowerShell birth-time query");
+  assert.equal(report.browser.process.identity.identityMode, "node-child-process-handle");
   assert.equal(report.browser.process.identity.executableValidated, true);
   assert.equal(report.browser.process.identity.profileValidated, true);
   assert.deepEqual(report.errors, []);
@@ -631,7 +738,21 @@ test("process-query diagnostics and timeouts still fail closed without signaling
   let queryCount = 0;
   const processQuery = async (command, args, options) => {
     queryCount += 1;
-    if (queryCount === 1) return execFileAsync(command, args, options);
+    if (queryCount === 1) {
+      if (process.platform === "win32") {
+        return {
+          stdout: JSON.stringify({
+            pid: child.pid,
+            parentPid: process.pid,
+            executablePath: child.spawnfile,
+            commandLine: `${child.spawnfile} ${child.spawnargs.join(" ")}`,
+            startedAt: "2026-10-16T00:00:00.000Z",
+          }),
+          stderr: "",
+        };
+      }
+      return execFileAsync(command, args, options);
+    }
     throw Object.assign(new Error("targeted process query timed out"), {
       code: "ETIMEDOUT",
       stdout: "",
@@ -761,11 +882,13 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-inherited-stderr-test-"));
   const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-inherited-stderr");
   await mkdir(profileDirectory);
-  const descendantScript = "setTimeout(() => process.exit(0), 2000); setInterval(() => {}, 1000); process.send('ready');";
+  // Keep this test-owned pipe holder alive until explicit teardown, not until
+  // a wall-clock timer that may expire during an OS identity query.
+  const descendantScript = "const server=require('node:net').createServer(socket=>socket.once('data',()=>process.exit(0))); server.listen(0,'127.0.0.1',()=>process.send({port:server.address().port}));";
   const source = [
     "const { spawn } = require('node:child_process');",
-    `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: ['ignore', 'ignore', 2, 'ipc'] });`,
-    "descendant.once('message', () => process.stdout.write('ready:' + descendant.pid + '\\n'));",
+    `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { detached: true, stdio: ['ignore', 'ignore', 2, 'ipc'] });`,
+    "descendant.once('message', message => process.stdout.write('ready:' + descendant.pid + ':' + message.port + '\\n'));",
     "process.on('message', (message) => { if (message === 'exit-now') process.exit(0); });",
   ].join(" ");
   const child = spawn(
@@ -783,8 +906,11 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
 
   await once(child, "spawn");
   const [ready] = await once(child.stdout, "data");
+  assert.equal(registerOwnedBrowserChild(child), true);
   const grandchildPid = Number(String(ready).match(/ready:(\d+)/)?.[1]);
+  const grandchildPort = Number(String(ready).match(/ready:\d+:(\d+)/)?.[1]);
   assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0);
+  t.after(() => { try { process.kill(grandchildPid); } catch (error) { if (error.code !== "ESRCH") throw error; } });
   const browser = new EventEmitter();
   browser.connected = true;
   browser.process = () => child;
@@ -795,6 +921,7 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   let childAliveAtDisconnect = false;
   let pipesOpenAtDisconnect = false;
   let descendantAliveAtClose = false;
+  let descendantProbeError = null;
   browser.close = () => {
     const childClosed = once(child, "close");
     childAliveAtDisconnect = child.exitCode === null && child.signalCode === null;
@@ -809,6 +936,7 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
         process.kill(grandchildPid, 0);
         descendantAliveAtClose = true;
       } catch (error) {
+        descendantProbeError = { code: error.code, message: error.message };
         descendantAliveAtClose = error?.code === "EPERM";
       }
     });
@@ -843,11 +971,17 @@ test("browser cleanup releases owned pipes after natural exit and CDP disconnect
   assert.ok(disconnectedAt < childExitedAt, "the simulated CDP disconnect should arrive while the browser child is alive");
   assert.equal(childAliveAtDisconnect, true);
   assert.equal(pipesOpenAtDisconnect, true, "owned streams must stay open until the child exits");
-  assert.ok(closeResolvedAt - startedAt < closeDeadlineMs);
+  assert.ok(closeResolvedAt - report.browser.timings.cleanupStartedAt < closeDeadlineMs,
+    "the existing close deadline starts after OS ownership capture, not before it");
+  assert.ok(report.browser.timings.cleanupStartedAt >= startedAt);
   assert.ok(closeResolvedAt >= childExitedAt, "close must not finish before child exit");
-  assert.equal(descendantAliveAtClose, true, "the simulated Crashpad descendant must still hold stderr when close finishes");
+  assert.equal(descendantAliveAtClose, true, "the simulated Crashpad descendant must still hold stderr when close finishes: " + JSON.stringify(descendantProbeError));
   assert.deepEqual(report.browser.termination, []);
   assert.deepEqual(report.errors, []);
+  await new Promise((resolve, reject) => {
+    const socket = connect(grandchildPort, "127.0.0.1", () => { socket.end("fixture-complete"); resolve(); });
+    socket.once("error", reject);
+  });
   assert.equal(await waitForPidExit(grandchildPid, 2_500), true, "the unowned fixture descendant must exit on its own within the bound");
   assert.ok(Date.now() - startedAt < 3_500, "the unowned fixture descendant must exit within the bounded cleanup window");
 });
@@ -1206,12 +1340,22 @@ test("browser cleanup TERM/KILL is bounded, identity-checked, and reported as fo
 
   assert.equal(report.status, "forced");
   assert.equal(report.browser.status, "forced");
-  assert.deepEqual(
-    report.browser.termination.map(({ signal }) => signal),
-    process.platform === "win32" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"],
-  );
+  const terminationSignals = report.browser.termination.map(({ signal }) => signal);
+  if (process.platform === "win32") {
+    assert.ok(
+      JSON.stringify(terminationSignals) === JSON.stringify(["SIGTERM"]) ||
+        JSON.stringify(terminationSignals) === JSON.stringify(["SIGTERM", "SIGKILL"]),
+      `Windows cleanup must terminate through its verified signal path: ${JSON.stringify(terminationSignals)}`,
+    );
+    if (terminationSignals.length === 2) {
+      assert.equal(report.browser.termination[1].method, "taskkill.exe /PID /T /F");
+    }
+    assert.ok(report.browser.process.exitCode !== null || typeof report.browser.process.signalCode === "string");
+  } else {
+    assert.deepEqual(terminationSignals, ["SIGTERM", "SIGKILL"]);
+    assert.equal(typeof report.browser.process.signalCode, "string");
+  }
   assert.ok(report.browser.termination.every((entry) => entry.identityRevalidated));
-  assert.equal(typeof report.browser.process.signalCode, "string");
   assert.ok(report.errors.some((entry) => entry.phase === "browser.forced-cleanup"));
   assert.ok(attachCleanupErrors(null, report) instanceof AggregateError);
 });
