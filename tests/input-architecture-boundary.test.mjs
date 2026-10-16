@@ -191,6 +191,21 @@ test("DesktopInputPolicy only forwards established behavior and contains no iPad
   }
 });
 
+test("IOSInputPolicy owns finger text-selection suppression", async () => {
+  const ios = await source("ios-input-policy.js");
+  assert.match(ios, /class IOSInputPolicy/);
+  assert.match(ios, /setFingerTextSelectionSuppressionOwned/);
+  assert.match(ios, /handleTextSelectionGuard/);
+  assert.match(ios, /handlePanClick/);
+  assert.match(ios, /pdfReaderFingerTextSelectionSuppressed/);
+  const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  assert.doesNotMatch(bridge, /state\.fingerTextSelectionSuppressionOwned/);
+  assert.doesNotMatch(bridge, /pdfReaderFingerTextSelectionSuppressed/);
+  assert.doesNotMatch(bridge, /lastTouchClickPage|lastPenPanClickPage/);
+  assert.match(bridge, /state\.inputPolicy\?\.handleTextSelectionGuard\?\.\(event\)/);
+  assert.match(bridge, /state\.inputPolicy\?\.handlePanClick\?\.\(event/);
+});
+
 test("bridge delegates top-level listener installation to InputRouter", async () => {
   const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
   const install = /function installPointerTrackingListeners\(\)\s*\{([\s\S]*?)\n  \}/.exec(bridge)?.[1];

@@ -65,13 +65,10 @@
     pendingInkCommit: false,
     committingInkForSave: false,
     dirty: false,
-    fingerTextSelectionSuppressionOwned: false,
     viewportController: null,
     textSelectionController: null,
     annotationController: null,
     pendingPenHighlight: null,
-    lastTouchClickPage: null,
-    lastPenPanClickPage: null,
     pointerDiagnostics: {
       total: 0,
       dropped: 0,
@@ -6271,26 +6268,12 @@
     );
   }
 
-  function fingerTextSelectionSuppressionIsOwned() {
-    return iosInputPolicy && state.fingerTextSelectionSuppressionOwned &&
-      annotationToolIsActive();
-  }
-
   function refreshFingerTextSelectionSuppression() {
-    document.documentElement.classList.toggle(
-      "pdfReaderFingerTextSelectionSuppressed",
-      fingerTextSelectionSuppressionIsOwned(),
-    );
+    state.inputPolicy?.refreshFingerTextSelectionSuppression?.();
   }
 
   function clearFingerTextSelectionSuppression() {
-    state.fingerTextSelectionSuppressionOwned = false;
-    for (const pointer of manualPointerValues()) {
-      pointer.suppressesFingerTextSelection = false;
-    }
-    document.documentElement.classList.remove(
-      "pdfReaderFingerTextSelectionSuppressed",
-    );
+    state.inputPolicy?.clearFingerTextSelectionSuppression?.();
   }
 
   function isPdfTextLayerTarget(target) {
@@ -6303,21 +6286,11 @@
   }
 
   function onBridgeFingerSelectStart(event) {
-    if (
-      fingerTextSelectionSuppressionIsOwned() &&
-      isPdfTextLayerTarget(event.target)
-    ) {
-      event.preventDefault();
-    }
+    state.inputPolicy?.handleTextSelectionGuard?.(event);
   }
 
   function onBridgeFingerContextMenu(event) {
-    if (
-      fingerTextSelectionSuppressionIsOwned() &&
-      isPdfTextLayerTarget(event.target)
-    ) {
-      event.preventDefault();
-    }
+    state.inputPolicy?.handleTextSelectionGuard?.(event);
   }
 
   function hasActivePenEditorGesture() {
@@ -6413,10 +6386,6 @@
       blockedByPen: hasActivePenEditorGesture(),
       blockedByOtherPointer: anotherDirectPointer,
       cancelledByOtherPointer: anotherDirectPointer,
-      suppressesFingerTextSelection: pointerType === "touch" &&
-        !anotherDirectPointer &&
-        !hasActivePenEditorGesture() &&
-        annotationToolIsActive(),
       documentId: state.activeDocumentId,
       openRequest: state.activeOpenRequest,
       pdfDocument: state.app?.pdfDocument,
@@ -6424,11 +6393,15 @@
     };
     setManualPointer(event.pointerId, pointer);
     if (pointerType === "touch") {
-      if (pointer.suppressesFingerTextSelection) {
-        state.fingerTextSelectionSuppressionOwned = true;
+      if (
+        !anotherDirectPointer &&
+        !pointer.blockedByPen &&
+        annotationToolIsActive()
+      ) {
+        state.inputPolicy?.setFingerTextSelectionSuppressionOwned?.(true);
       }
       refreshFingerTextSelectionSuppression();
-      state.lastTouchClickPage = pointer.pageTarget;
+      state.inputPolicy?.rememberPanClickTarget?.("touch", pointer.pageTarget);
       state.inputRouter?.capturePointer(event.pointerId, container);
       stopDirectManipulationEvent(event);
     } else if (pointerType === "pen") {
@@ -6496,7 +6469,7 @@
       !cancel &&
       manualPointerSessionCurrent(pointer)
     ) {
-      state.lastPenPanClickPage = pointer.pageTarget;
+      state.inputPolicy?.rememberPanClickTarget?.("pen", pointer.pageTarget);
     }
     releasePointerCapture(pointer);
     return pointer;
@@ -6513,56 +6486,16 @@
     }
     clearPenPolicyPointers();
     if (clearClickTargets) {
-      state.lastTouchClickPage = null;
-      state.lastPenPanClickPage = null;
+      state.inputPolicy?.clearPanClickTargets?.();
     }
   }
 
   function onBridgeIosClick(event) {
-    if (
-      !iosInputPolicy ||
-      !(event.target instanceof Element) ||
-      !isViewerSurfaceTarget(event.target) ||
-      isNativeContextTarget(event.target)
-    ) {
-      return;
-    }
-    const page = directManipulationPage(event.target);
-    const isTouchClick = event.pointerType === "touch" || (
-      event.detail > 0 &&
-      state.lastTouchClickPage &&
-      (!page || page === state.lastTouchClickPage)
-    );
-    const isCompletedPenPan = event.detail > 0 &&
-      state.lastPenPanClickPage &&
-      (!page || page === state.lastPenPanClickPage);
-    if (isTouchClick || isCompletedPenPan) {
-      stopDirectManipulationEvent(event);
-    }
+    state.inputPolicy?.handlePanClick?.(event);
   }
 
   function onBridgeIosDoubleClick(event) {
-    if (
-      !iosInputPolicy ||
-      !(event.target instanceof Element) ||
-      !isViewerSurfaceTarget(event.target) ||
-      isNativeContextTarget(event.target) ||
-      event.detail < 2
-    ) {
-      return;
-    }
-    const page = directManipulationPage(event.target);
-    if (
-      state.lastTouchClickPage &&
-      (!page || page === state.lastTouchClickPage)
-    ) {
-      stopDirectManipulationEvent(event);
-    } else if (
-      state.lastPenPanClickPage &&
-      (!page || page === state.lastPenPanClickPage)
-    ) {
-      stopDirectManipulationEvent(event);
-    }
+    state.inputPolicy?.handlePanClick?.(event, { doubleClick: true });
   }
 
   function pointerInteractionKind(event, target) {
@@ -6778,8 +6711,7 @@
       // A real mouse or Pencil press starts a fresh interaction. This keeps a
       // prior finger tap from suppressing a later physical click without a
       // timeout-based compatibility-mouse heuristic.
-      state.lastTouchClickPage = null;
-      state.lastPenPanClickPage = null;
+      state.inputPolicy?.clearPanClickTargets?.();
     }
     if (
       iosInputPolicy &&
@@ -6972,8 +6904,17 @@
       ["keydown", onBridgePointerKeyDown],
     ]);
     const policy = iosInputPolicy
-      ? new window.PdfReaderInputRuntime.IOSInputPolicy()
+      ? new window.PdfReaderInputRuntime.IOSInputPolicy({
+        documentRef: document,
+        isAnnotationToolActive: annotationToolIsActive,
+        isTextLayerTarget: isPdfTextLayerTarget,
+        isElementTarget: (target) => target instanceof Element,
+        isViewerSurfaceTarget,
+        isNativeContextTarget,
+        directManipulationPage,
+      })
       : new window.PdfReaderInputRuntime.DesktopInputPolicy();
+    state.inputPolicy = policy;
     const router = new window.PdfReaderInputRuntime.InputRouter({
       targetWindow: window,
       targetDocument: document,
@@ -9072,6 +9013,7 @@
     state.annotationController = null;
     state.inputRouter?.stop();
     state.inputRouter = null;
+    state.inputPolicy = null;
     state.pointerAbortController = null;
     state.localOpenAbortController?.abort();
     state.localOpenAbortController = null;
