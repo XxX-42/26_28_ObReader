@@ -68,6 +68,7 @@
     nativeTouchPointers: new Map(),
     fingerTextSelectionSuppressionOwned: false,
     viewportController: null,
+    textSelectionController: null,
     pendingPenHighlight: null,
     lastTouchClickPage: null,
     lastPenPanClickPage: null,
@@ -6296,7 +6297,7 @@
     return !!(
       element &&
       isViewerSurfaceTarget(element) &&
-      element.closest(".textLayer")
+      state.textSelectionController?.resolveTarget(element)?.textLayer
     );
   }
 
@@ -6655,7 +6656,7 @@
       }
       if (
         [9, 10].includes(state.editorMode) &&
-        target.closest(".textLayer")
+        state.textSelectionController?.resolveTarget(target)?.textLayer
       ) {
         return "text-selection";
       }
@@ -6697,128 +6698,17 @@
     }
   }
 
-  function selectionSnapshot(selection) {
-    if (!selection) {
-      return null;
-    }
-    return {
-      anchorNode: selection.anchorNode,
-      anchorOffset: selection.anchorOffset,
-      focusNode: selection.focusNode,
-      focusOffset: selection.focusOffset,
-      isCollapsed: selection.isCollapsed,
-      rangeCount: selection.rangeCount,
-      text: selection.toString(),
-    };
-  }
-
-  function selectionMatchesSnapshot(selection, snapshot) {
-    return !!(
-      selection &&
-      snapshot &&
-      selection.anchorNode === snapshot.anchorNode &&
-      selection.anchorOffset === snapshot.anchorOffset &&
-      selection.focusNode === snapshot.focusNode &&
-      selection.focusOffset === snapshot.focusOffset &&
-      selection.isCollapsed === snapshot.isCollapsed &&
-      selection.rangeCount === snapshot.rangeCount &&
-      selection.toString() === snapshot.text
-    );
-  }
-
-  function caretPositionInTextLayer(clientX, clientY, textLayer) {
-    let position = null;
-    try {
-      position = document.caretPositionFromPoint?.(clientX, clientY) || null;
-    } catch {
-      // Some embedded WebKit versions expose but reject caretPositionFromPoint.
-    }
-    if (!position) {
-      try {
-        position = document.caretRangeFromPoint?.(clientX, clientY) || null;
-      } catch {
-        // Ignore an unsupported or unavailable browser caret query.
-      }
-    }
-    const node = position?.offsetNode || position?.startContainer || null;
-    const offset = position?.offset ?? position?.startOffset;
-    if (
-      !node ||
-      !Number.isInteger(offset) ||
-      !textLayer?.contains(node)
-    ) {
-      return null;
-    }
-    return { node, offset };
-  }
-
   function clearOwnedPenTextSelection(pointer) {
-    const owned = pointer?.ownedPenTextSelection;
-    if (!owned) {
-      return;
-    }
-    const selection = document.getSelection();
-    if (selectionMatchesSnapshot(selection, owned)) {
-      selection.removeAllRanges();
-    }
-    pointer.ownedPenTextSelection = null;
+    state.textSelectionController?.clearOwned(pointer);
   }
 
   function updateOwnedPenTextSelection(pointer, event) {
-    if (
-      !pointer?.penTextSelectionCandidate ||
-      state.pendingPenHighlight !== pointer ||
-      !pointer.moved ||
-      !isPointerSessionCurrent(pointer) ||
-      !pointer.textLayer?.isConnected ||
-      !pointer.textSelectionStart
-    ) {
-      return false;
-    }
-    const endpoint = caretPositionInTextLayer(
-      event.clientX,
-      event.clientY,
-      pointer.textLayer,
-    );
-    if (!endpoint) {
-      return false;
-    }
-    const selection = document.getSelection();
-    if (typeof selection?.setBaseAndExtent !== "function") {
-      return false;
-    }
-    if (pointer.ownedPenTextSelection) {
-      if (!selectionMatchesSnapshot(selection, pointer.ownedPenTextSelection)) {
-        pointer.ownedPenTextSelection = null;
-        pointer.penTextSelectionCandidate = false;
-        pointer.penTextSelectionOwnershipLost = true;
-        return false;
-      }
-    } else if (
-      !pointer.selectionAtDown?.isCollapsed ||
-      !selectionMatchesSnapshot(selection, pointer.selectionAtDown)
-    ) {
-      // A range created by the browser or another user action takes priority.
-      pointer.penTextSelectionCandidate = false;
-      return false;
-    }
-    if (!pointer.textLayer.contains(pointer.textSelectionStart.node)) {
-      pointer.penTextSelectionCandidate = false;
-      return false;
-    }
-    try {
-      selection.setBaseAndExtent(
-        pointer.textSelectionStart.node,
-        pointer.textSelectionStart.offset,
-        endpoint.node,
-        endpoint.offset,
-      );
-    } catch {
-      return false;
-    }
-    pointer.ownedPenTextSelection = selectionSnapshot(selection);
-    event.preventDefault();
-    return true;
+    const updated = state.textSelectionController?.extend(pointer, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    }) === true;
+    if (updated) event.preventDefault();
+    return updated;
   }
 
   function onBridgePenTextCompatibilityMouse(event) {
@@ -6830,19 +6720,6 @@
     )) {
       stopDirectManipulationEvent(event);
     }
-  }
-
-  function selectionChangedSincePenDown(selection, pointer) {
-    const initial = pointer.selectionAtDown;
-    return !!(
-      !initial ||
-      initial.anchorNode !== selection.anchorNode ||
-      initial.anchorOffset !== selection.anchorOffset ||
-      initial.focusNode !== selection.focusNode ||
-      initial.focusOffset !== selection.focusOffset ||
-      initial.isCollapsed !== selection.isCollapsed ||
-      initial.text !== selection.toString()
-    );
   }
 
   function hasOtherActivePenPointer(pointer) {
@@ -6870,7 +6747,6 @@
       ? pdfViewer?.getPageView?.(pageIndex)
       : null;
     const pageEditorLayerBuilder = pageView?.annotationEditorLayer;
-    const selection = document.getSelection();
     if (
       !pointer.ending ||
       pointer.kind !== "text-selection" ||
@@ -6893,28 +6769,12 @@
       !pointer.page?.contains(pointer.pageEditorLayer.div) ||
       !pointer.pageEditorLayer.hasTextLayer?.(pointer.textLayer) ||
       typeof manager?.highlightSelection !== "function" ||
-      !pointer.textLayer?.isConnected ||
-      pointer.page !== pointer.textLayer.closest(".page") ||
-      !pointer.page?.contains(pointer.textLayer) ||
-      !selection ||
-      selection.isCollapsed ||
-      selection.rangeCount === 0 ||
-      !selection.toString() ||
-      (pointer.ownedPenTextSelection &&
-        !selectionMatchesSnapshot(selection, pointer.ownedPenTextSelection)) ||
-      !selectionChangedSincePenDown(selection, pointer) ||
-      !pointer.textLayer.contains(selection.anchorNode) ||
-      !pointer.textLayer.contains(selection.focusNode) ||
+      !state.textSelectionController?.hasValidHighlightSelection(pointer) ||
       hasOtherActivePenPointer(pointer) ||
       state.closeControl ||
       state.disposed
     ) {
       return;
-    }
-    for (let index = 0; index < selection.rangeCount; index += 1) {
-      if (!pointer.textLayer.contains(selection.getRangeAt(index).commonAncestorContainer)) {
-        return;
-      }
     }
     manager.highlightSelection("main_toolbar");
   }
@@ -7144,7 +7004,7 @@
     }
     const captureTarget =
       kind === "text-selection"
-        ? event.target.closest(".textLayer")
+        ? state.textSelectionController?.resolveTarget(event.target)?.textLayer
         : event.target;
     const pointer = {
       pointerId: event.pointerId,
@@ -7177,10 +7037,9 @@
       pointer.kind === "text-selection" &&
       pointer.mode === 9
     ) {
-      pointer.textLayer = event.target.closest(".textLayer");
-      pointer.textSpan = event.target.closest(".textLayer span");
-      pointer.page = pointer.textLayer?.closest(".page");
-      const pageIndex = Number(pointer.page?.dataset.pageNumber) - 1;
+      const { textLayer, textSpan, page } =
+        state.textSelectionController?.resolveTarget(event.target) || {};
+      const pageIndex = Number(page?.dataset.pageNumber) - 1;
       pointer.pageEditorLayerBuilder = Number.isInteger(pageIndex) && pageIndex >= 0
         ? state.app?.pdfViewer?.getPageView?.(pageIndex)?.annotationEditorLayer
         : null;
@@ -7188,30 +7047,24 @@
         pointer.pageEditorLayerBuilder?.annotationEditorLayer || null;
       pointer.highlightManager =
         state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-      pointer.selectionAtDown = selectionSnapshot(document.getSelection());
-      if (
-        pointer.textLayer &&
-        pointer.page &&
+      const eligible = !!(
+        textLayer &&
+        page &&
         pointer.pageEditorLayer &&
         pointer.highlightManager
-      ) {
+      );
+      if (eligible) {
         state.pendingPenHighlight = pointer;
-        const caret = caretPositionInTextLayer(
-          event.clientX,
-          event.clientY,
-          pointer.textLayer,
-        );
-        if (
-          pointer.textSpan &&
-          pointer.textLayer.contains(pointer.textSpan) &&
-          caret &&
-          (pointer.textSpan === caret.node || pointer.textSpan.contains(caret.node)) &&
-          pointer.selectionAtDown?.isCollapsed === true &&
-          event.isTrusted
-        ) {
-          pointer.textSelectionStart = caret;
-          pointer.penTextSelectionCandidate = true;
-          pointer.penTextSelectionGesture = true;
+        const ownsGesture = state.textSelectionController?.begin(pointer, {
+          textLayer,
+          textSpan,
+          page,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          isTrusted: event.isTrusted === true,
+          eligible,
+        }) === true;
+        if (ownsGesture) {
           // Own this glyph-span gesture so the browser's compatibility mouse
           // sequence cannot start a second PDF.js selection or freehand path.
           event.preventDefault();
@@ -7246,6 +7099,12 @@
     if (state.pointerAbortController || state.disposed) {
       return;
     }
+    state.textSelectionController =
+      new window.PdfReaderInputRuntime.TextSelectionController({
+        documentRef: document,
+        isSessionCurrent: isPointerSessionCurrent,
+        isPendingPointer: (pointer) => state.pendingPenHighlight === pointer,
+      });
     state.viewportController = iosInputPolicy
       ? new window.PdfReaderInputRuntime.ViewportController({
         canPan(pointer) {
@@ -9436,11 +9295,13 @@
     clearTimeout(state.statusTimer);
     clearTimeout(state.startupTimer);
     clearScheduledWork();
+    invalidatePendingPenHighlight();
     cleanupStorageObserver();
     state.eventAbortController?.abort();
     state.eventAbortController = null;
     state.viewportController?.dispose();
     state.viewportController = null;
+    state.textSelectionController = null;
     state.inputRouter?.stop();
     state.inputRouter = null;
     state.pointerAbortController = null;
