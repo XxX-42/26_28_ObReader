@@ -181,6 +181,51 @@ function createPdfAnnotationStore({
     return document ? normalizeDocument({ ...document, sourcePath: normalizedPath }) : null;
   }
 
+  // Export the effective Format 3 state for a one-shot store migration. Unlike
+  // readDocument(), this path is strictly read-only: index repair is disabled,
+  // unresolved paths are errors, and no checkpoint, ACK, snapshot, or GC work
+  // is scheduled. Replay remains authoritative, so a missing or partial batch
+  // fails closed instead of exporting a partial view.
+  async function exportForMigration(sourcePathOrDocument) {
+    const document = await resolveDocument(sourcePathOrDocument, { readOnly: true });
+    const state = await replay(document, { readOnly: true });
+    const rows = Object.values(state.annotations)
+      .map((row) => normalizeOperation(row))
+      .sort((left, right) => compareString(left.uuid, right.uuid));
+    const metadata = {
+      documentId: document.documentId,
+      docKey: document.docKey,
+      sourcePath: document.sourcePath,
+      source: { ...document.source },
+      legacyIdentities: document.legacyIdentities.map((identity) => ({ ...identity })),
+      legacyIdentityScanComplete: document.legacyIdentityScanComplete,
+      identityEventHeads: [...document.identityEventHeads],
+    };
+    const annotations = rows.filter((row) => row.deleted !== true);
+    const tombstones = rows.filter((row) => row.deleted === true);
+    const snapshot = { annotations, tombstones };
+    return {
+      schemaVersion: 1,
+      kind: "pdf-annotation-format3-migration-export",
+      formatVersion: state.formatVersion,
+      document: metadata,
+      metadata,
+      routing: { sourcePath: document.sourcePath, documentId: document.documentId, docKey: document.docKey },
+      source: { ...document.source, sourcePath: document.sourcePath },
+      legacyIdentities: metadata.legacyIdentities,
+      legacyIdentityScanComplete: document.legacyIdentityScanComplete,
+      annotations,
+      tombstones,
+      snapshot,
+      rows,
+      state: {
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+        formatVersion: state.formatVersion,
+      },
+    };
+  }
+
   async function appendOperations({ document, operations, batchId, sourceHash, quarantined = false } = {}) {
     const normalizedDocument = await resolveDocument(document);
     if ((await readDeviceState(normalizedDocument, deviceId))?.retired === true) {
@@ -453,17 +498,17 @@ function createPdfAnnotationStore({
     return updated;
   }
 
-  async function listOperationBatches(document) {
-    const normalizedDocument = await resolveDocument(document);
+  async function listOperationBatches(document, { readOnly = false } = {}) {
+    const normalizedDocument = await resolveDocument(document, { readOnly });
     const locations = pathsFor(normalizedDocument);
     if (!(await adapter.exists(locations.operations))) return [];
     const files = await listFilesRecursive(locations.operations);
     return files.filter((path) => path.endsWith(".json")).sort();
   }
 
-  async function replay(document) {
-    const normalizedDocument = await resolveDocument(document);
-    const batchFiles = await listOperationBatches(normalizedDocument);
+  async function replay(document, { readOnly = false } = {}) {
+    const normalizedDocument = await resolveDocument(document, { readOnly });
+    const batchFiles = await listOperationBatches(normalizedDocument, { readOnly });
     const checkpoint = await readCheckpoint(normalizedDocument);
     const latest = new Map();
     const operationDigests = new Map();
@@ -623,22 +668,37 @@ function createPdfAnnotationStore({
     return result;
   }
 
-  async function resolveDocument(document) {
+  async function resolveDocument(document, { readOnly = false } = {}) {
     if (typeof document === "string") {
-      const index = await readIndex();
+      const index = await readIndex({ readOnly });
       const sourcePath = normalizeSourcePath(document);
       const found = index.documents[sourcePath];
-      if (!found) return registerDocument({ sourcePath });
+      if (!found) {
+        if (readOnly) throw codedError("PDF_ANNOTATION_IDENTITY_MISSING",
+          "No registered Format 3 document exists at the migration source path.");
+        return registerDocument({ sourcePath });
+      }
       return normalizeDocument(found);
     }
     if (document && document.sourcePath && !document.documentId) {
+      if (readOnly) {
+        const index = await readIndex({ readOnly: true });
+        const found = index.documents[normalizeSourcePath(document.sourcePath)];
+        if (!found) throw codedError("PDF_ANNOTATION_IDENTITY_MISSING",
+          "No registered Format 3 document exists at the migration source path.");
+        return normalizeDocument(found);
+      }
       return registerDocument({ sourcePath: document.sourcePath, source: document.source || {} });
     }
     if (document && document.sourcePath && document.documentId) {
-      const index = await readIndex();
+      const index = await readIndex({ readOnly });
       const found = index.documents[normalizeSourcePath(document.sourcePath)];
       if (found?.documentId === document.documentId) return normalizeDocument(found);
+      if (readOnly) throw codedError("PDF_ANNOTATION_IDENTITY_MISSING",
+        "The supplied document does not match a registered Format 3 identity.");
     }
+    if (readOnly) throw codedError("PDF_ANNOTATION_IDENTITY_MISSING",
+      "A registered Format 3 document path or identity is required for migration export.");
     return normalizeDocument(document);
   }
 
@@ -661,7 +721,7 @@ function createPdfAnnotationStore({
     return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
   }
 
-  async function readIndex() {
+  async function readIndex({ readOnly = false } = {}) {
     const raw = await readTextIfExists(registryPath);
     const cachedDocuments = {};
     const pendingRoutes = new Map();
@@ -783,7 +843,7 @@ function createPdfAnnotationStore({
           throw codedError("PDF_ANNOTATION_METADATA_PENDING",
             `The per-document page identity metadata for ${path} has not synced.`);
         }
-        await writeDocumentMetadata(document);
+        if (!readOnly) await writeDocumentMetadata(document);
         continue;
       }
       const metadataHeads = new Set(metadata.identityEventHeads);
@@ -794,7 +854,7 @@ function createPdfAnnotationStore({
         throw codedError("PDF_ANNOTATION_METADATA_PENDING",
           `Identity metadata for ${path} has conflicting heads; waiting for sync convergence.`);
       }
-      if (metadataIsOlder && !documentIsOlder) await writeDocumentMetadata(document);
+      if (!readOnly && metadataIsOlder && !documentIsOlder) await writeDocumentMetadata(document);
     }
     const result = { schemaVersion: STORE_SCHEMA, documents: merged };
     return result;
@@ -1692,6 +1752,7 @@ function createPdfAnnotationStore({
     appendOperations,
     readDocument,
     listOperationBatches,
+    exportForMigration,
     materializeSnapshot,
     updateSourceIdentity,
     updateLegacyIdentities,
