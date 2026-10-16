@@ -68,6 +68,7 @@
     fingerTextSelectionSuppressionOwned: false,
     viewportController: null,
     textSelectionController: null,
+    annotationController: null,
     pendingPenHighlight: null,
     lastTouchClickPage: null,
     lastPenPanClickPage: null,
@@ -6557,32 +6558,14 @@
   }
 
   function pointerInteractionKind(event, target) {
-    if (event.button === 0) {
-      if (target.closest(".annotationEditorLayer")) {
-        return "editor";
-      }
-      if (
-        [9, 10].includes(state.editorMode) &&
-        state.textSelectionController?.resolveTarget(target)?.textLayer
-      ) {
-        return "text-selection";
-      }
-      return null;
-    }
-    if (
-      event.pointerType !== "mouse" ||
-      isNativeContextTarget(target) ||
-      !target.closest("#viewerContainer")
-    ) {
-      return null;
-    }
-    if (event.button === 1) {
-      return "tool-wheel";
-    }
-    if (event.button === 2) {
-      return "right-eraser";
-    }
-    return null;
+    return state.annotationController?.pointerInteractionKind(event, target, {
+      editorMode: state.editorMode,
+      isTextLayerTarget: (candidate) => !!(
+        state.textSelectionController?.resolveTarget(candidate)?.textLayer
+      ),
+      isNativeContextTarget,
+      isViewerSurfaceTarget,
+    }) || null;
   }
 
   function isPointerSessionCurrent(pointer) {
@@ -6642,122 +6625,45 @@
   }
 
   function finishPenHighlightFallback(pointer) {
-    if (state.pendingPenHighlight !== pointer) {
-      return;
-    }
-    state.pendingPenHighlight = null;
-    const manager =
-      state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-    const pdfViewer = state.app?.pdfViewer;
-    const pageIndex = Number(pointer.page?.dataset.pageNumber) - 1;
-    const pageView = Number.isInteger(pageIndex) && pageIndex >= 0
-      ? pdfViewer?.getPageView?.(pageIndex)
-      : null;
-    const pageEditorLayerBuilder = pageView?.annotationEditorLayer;
-    if (
-      !pointer.ending ||
-      pointer.kind !== "text-selection" ||
-      pointer.pointerType !== "pen" ||
-      pointer.button !== 0 ||
-      pointer.mode !== 9 ||
-      !pointer.moved ||
-      pointer.penTextSelectionOwnershipLost ||
-      !isPointerSessionCurrent(pointer) ||
-      state.editorMode !== 9 ||
-      state.app?.pdfViewer?.annotationEditorMode !== 9 ||
-      manager !== pointer.highlightManager ||
-      manager?.getMode?.() !== 9 ||
-      !manager.currentLayer ||
-      manager.getLayer?.(pageIndex) !== pointer.pageEditorLayer ||
-      pageEditorLayerBuilder !== pointer.pageEditorLayerBuilder ||
-      pageEditorLayerBuilder?.annotationEditorLayer !== pointer.pageEditorLayer ||
-      pageEditorLayerBuilder?.div !== pointer.pageEditorLayer?.div ||
-      !pointer.pageEditorLayer?.div?.isConnected ||
-      !pointer.page?.contains(pointer.pageEditorLayer.div) ||
-      !pointer.pageEditorLayer.hasTextLayer?.(pointer.textLayer) ||
-      typeof manager?.highlightSelection !== "function" ||
-      !state.textSelectionController?.hasValidHighlightSelection(pointer) ||
-      hasOtherActivePenPointer(pointer) ||
-      state.closeControl ||
-      state.disposed
-    ) {
-      return;
-    }
-    manager.highlightSelection("main_toolbar");
+    return state.annotationController?.finishPenHighlight(pointer) === true;
   }
 
   function cancelPdfJsPointerSession(pointer) {
-    if (!isPointerSessionCurrent(pointer)) {
-      return;
-    }
-    if (pointer.button === 1) {
-      // PDFViewerApplication owns this non-private underscore state: the
-      // existing closeToolWheel helper is local to viewer.mjs and not
-      // callable from the bridge. Clear the same DOM/state fields if a
-      // physical middle-button session is cancelled before pointerup.
-      const app = state.app;
-      if (app?._toolWheel?.pointerId === pointer.pointerId) {
-        app._toolWheel.element?.remove();
-        app._toolWheel = null;
-        app._toolWheelPointer = null;
+    state.annotationController?.cancelPointerSession(pointer);
+  }
+
+  function scheduleAnnotationTransformCancel(pointer) {
+    // PDF.js move and resize sessions listen for pointerup/blur rather than
+    // pointercancel. The controller requests this bridge-owned event delivery
+    // only after confirming the matching editor operation.
+    setDeferredTimeout(() => {
+      if (
+        activePointer(pointer.pointerId) !== pointer ||
+        !isPointerSessionCurrent(pointer) ||
+        pointer.internalCancelDispatched
+      ) {
+        return;
       }
-      return;
-    }
-    if (pointer.button === 2) {
-      state.app?.pdfAnnotationEraser?.cancelTemporaryStroke?.();
-      return;
-    }
-    if (pointer.button === 0 && [5, 15].includes(pointer.mode)) {
-      // DrawingEditor exposes endDrawingSession(isAborted). Use PDF.js's own
-      // cancellation path so a lost physical release cannot leave its private
-      // CurrentPointers/drawing session waiting for an event that can no
-      // longer reach this document.
-      const manager =
-        state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-      manager?.currentLayer?.endDrawingSession?.(true);
-    }
-    if (
-      pointer.button === 0 &&
-      ["mouse", "pen"].includes(pointer.pointerType) &&
-      ["move", "resize"].includes(pointer.nativeOperation) &&
-      !pointer.internalCancelScheduled
-    ) {
-      // PDF.js's move and resize sessions keep their cleanup callbacks in
-      // private closures that listen for pointerup/blur, not pointercancel.
-      // Finish only this still-current pointer session with an explicitly
-      // untrusted PointerEvent; never synthesize a MouseEvent or claim a
-      // hardware pointerup was received. The private PDF.js listeners use the
-      // matching pointerId to release selection/cursor/resize state.
-      pointer.internalCancelScheduled = true;
-      setDeferredTimeout(() => {
-        if (
-          activePointer(pointer.pointerId) !== pointer ||
-          !isPointerSessionCurrent(pointer) ||
-          pointer.internalCancelDispatched
-        ) {
-          return;
-        }
-        pointer.internalCancelDispatched = true;
-        const cleanupEvent = new PointerEvent("pointerup", {
-          bubbles: true,
-          cancelable: true,
-          pointerId: pointer.pointerId,
-          pointerType: pointer.pointerType,
-          isPrimary: true,
-          clientX: pointer.lastX,
-          clientY: pointer.lastY,
-          button: 0,
-          buttons: 0,
-        });
-        recordPointerDiagnostic(
-          "pointerup",
-          pointer,
-          cleanupEvent,
-          activePointerCount(),
-        );
-        window.dispatchEvent(cleanupEvent);
-      }, 0);
-    }
+      pointer.internalCancelDispatched = true;
+      const cleanupEvent = new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: pointer.pointerId,
+        pointerType: pointer.pointerType,
+        isPrimary: true,
+        clientX: pointer.lastX,
+        clientY: pointer.lastY,
+        button: 0,
+        buttons: 0,
+      });
+      recordPointerDiagnostic(
+        "pointerup",
+        pointer,
+        cleanupEvent,
+        activePointerCount(),
+      );
+      window.dispatchEvent(cleanupEvent);
+    }, 0);
   }
 
   function releasePointerCapture(pointer) {
@@ -6883,11 +6789,10 @@
       !isNativeContextTarget(target)
     ) {
       const eraserActive = document.body.classList.contains("editorEraserMode");
-      const nativeOperation = target.closest(".resizer")
-        ? "resize"
-        : target.closest(".draggable.selectedEditor")
-          ? "move"
-          : null;
+      const nativeOperation = state.annotationController?.nativeOperation(
+        event,
+        target,
+      ) || null;
       if (state.editorMode !== 0 || eraserActive || nativeOperation) {
         setPenPolicyPointer(event.pointerId, {
           pointerId: event.pointerId,
@@ -6919,14 +6824,10 @@
       buttons: event.buttons,
       pointerType: normalizedPointerType(event.pointerType),
       kind,
-      nativeOperation:
-        event.button === 0 && ["mouse", "pen"].includes(event.pointerType)
-          ? event.target.closest(".resizer")
-            ? "resize"
-            : event.target.closest(".draggable.selectedEditor")
-              ? "move"
-              : null
-          : null,
+      nativeOperation: state.annotationController?.nativeOperation(
+        event,
+        event.target,
+      ) || null,
       mode: state.editorMode,
       startX: event.clientX,
       startY: event.clientY,
@@ -6946,20 +6847,10 @@
     ) {
       const { textLayer, textSpan, page } =
         state.textSelectionController?.resolveTarget(event.target) || {};
-      const pageIndex = Number(page?.dataset.pageNumber) - 1;
-      pointer.pageEditorLayerBuilder = Number.isInteger(pageIndex) && pageIndex >= 0
-        ? state.app?.pdfViewer?.getPageView?.(pageIndex)?.annotationEditorLayer
-        : null;
-      pointer.pageEditorLayer =
-        pointer.pageEditorLayerBuilder?.annotationEditorLayer || null;
-      pointer.highlightManager =
-        state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-      const eligible = !!(
-        textLayer &&
-        page &&
-        pointer.pageEditorLayer &&
-        pointer.highlightManager
-      );
+      const eligible = state.annotationController?.preparePenHighlight(pointer, {
+        textLayer,
+        page,
+      }) === true;
       if (eligible) {
         state.pendingPenHighlight = pointer;
         const ownsGesture = state.textSelectionController?.begin(pointer, {
@@ -7010,6 +6901,33 @@
         documentRef: document,
         isSessionCurrent: isPointerSessionCurrent,
         isPendingPointer: (pointer) => state.pendingPenHighlight === pointer,
+      });
+    state.annotationController =
+      new window.PdfReaderInputRuntime.AnnotationController({
+        getManager: () =>
+          state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager || null,
+        getPdfViewer: () => state.app?.pdfViewer || null,
+        getEraser: () => state.app?.pdfAnnotationEraser || null,
+        getEditorMode: () => state.editorMode,
+        getPdfViewerMode: () => state.app?.pdfViewer?.annotationEditorMode,
+        isPointerSessionCurrent,
+        isTextSelectionValid: (pointer) =>
+          state.textSelectionController?.hasValidHighlightSelection(pointer) === true,
+        hasOtherActivePenPointer,
+        isClosingOrDisposed: () => !!state.closeControl || state.disposed,
+        isPendingHighlight: (pointer) => state.pendingPenHighlight === pointer,
+        clearPendingHighlight: () => {
+          state.pendingPenHighlight = null;
+        },
+        clearToolWheel: (pointerId) => {
+          const app = state.app;
+          if (app?._toolWheel?.pointerId === pointerId) {
+            app._toolWheel.element?.remove();
+            app._toolWheel = null;
+            app._toolWheelPointer = null;
+          }
+        },
+        onTransformCancel: scheduleAnnotationTransformCancel,
       });
     state.viewportController = iosInputPolicy
       ? new window.PdfReaderInputRuntime.ViewportController({
@@ -9143,6 +9061,7 @@
     state.viewportController?.dispose();
     state.viewportController = null;
     state.textSelectionController = null;
+    state.annotationController = null;
     state.inputRouter?.stop();
     state.inputRouter = null;
     state.pointerAbortController = null;
