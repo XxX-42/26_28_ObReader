@@ -153,11 +153,21 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     getEditorMode: () => state.editorMode,
     isEraserActive: () => false,
     isAnnotationToolActive: () => state.editorMode !== 0,
-    getNativeOperation: () => null,
-    isViewerSurfaceTarget: () => true,
-    isNativeContextTarget: () => false,
-    directManipulationPage: (target) => target,
     invalidatePendingPenHighlight() {},
+  });
+  const toIntent = (event = {}, pointerId = null) => ({
+    type: event?.type || "pointerup",
+    pointerId: event?.pointerId ?? pointerId,
+    pointerType: event?.pointerType || "touch",
+    clientPoint: { x: event?.clientX ?? null, y: event?.clientY ?? null },
+    pageIndex: 0,
+    targetRole: "viewer",
+    timestamp: event?.timeStamp ?? null,
+    relatedTargetPresent: event?.relatedTarget != null,
+  });
+  const controlsFor = (event = {}) => ({
+    preventDefault: () => event.preventDefault?.(),
+    stopImmediatePropagation: () => event.stopImmediatePropagation?.(),
   });
   return {
     state,
@@ -167,11 +177,14 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     api: {
       touchReleaseVelocity: (pointer, now) => state.viewportController.releaseVelocity(pointer, now),
       rememberManualScroll: (pointer, time) => state.viewportController.rememberScroll(pointer, time),
-      manualPointerEventTime: (pointer, event, now) => directController.eventTime(pointer, event, now),
+      manualPointerEventTime: (pointer, event, now) => directController.eventTime(pointer, toIntent(event), now),
       startManualMomentum: (pointer, now) => state.viewportController.startMomentum(pointer, now),
-      finishManualPointer: (...args) => directController.finishManualPointer(...args),
-      startManualPointer: (...args) => directController.startManualPointer(...args),
-      applyManualPan: (...args) => directController.applyPan(...args),
+      finishManualPointer: (pointerId, event, options) =>
+        directController.finishManualPointer(pointerId, toIntent(event, pointerId), options),
+      startManualPointer: (event, pointerType) =>
+        directController.startManualPointer(toIntent(event), pointerType, controlsFor(event)),
+      applyManualPan: (pointer, event, eventTime) =>
+        directController.applyPan(pointer, toIntent(event, pointer.pointerId), eventTime),
       onManualDocumentVisibilityChange: () => directController.onDocumentVisibilityChange(),
     },
     setTime(value) { currentTime = value; },

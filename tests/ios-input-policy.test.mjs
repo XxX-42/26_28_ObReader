@@ -23,29 +23,21 @@ test("iOS policy owns finger selection suppression until explicit handoff", () =
   const policy = new runtimeWindow.PdfReaderInputRuntime.IOSInputPolicy({
     documentRef,
     isAnnotationToolActive: () => annotationToolActive,
-    isTextLayerTarget: (target) => target?.role === "text-layer",
   });
 
   policy.setFingerTextSelectionSuppressionOwned(true);
   assert.equal(suppressed, false, "read mode does not suppress text selection");
   let prevented = false;
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "text-layer" },
-    preventDefault() { prevented = true; },
-  }), false);
+  const controls = { preventDefault() { prevented = true; } };
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "text-layer" }, controls), false);
   assert.equal(prevented, false);
 
   annotationToolActive = true;
   assert.equal(policy.refreshFingerTextSelectionSuppression(), true);
   assert.equal(suppressed, true);
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "toolbar" },
-    preventDefault() { prevented = true; },
-  }), false, "toolbar interaction stays available");
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "text-layer" },
-    preventDefault() { prevented = true; },
-  }), true);
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "native-control" }, controls), false,
+    "toolbar interaction stays available");
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "text-layer" }, controls), true);
   assert.equal(prevented, true);
 
   policy.clearFingerTextSelectionSuppression();
@@ -59,46 +51,48 @@ test("iOS policy suppresses only the compatibility click after a pan", () => {
   vm.runInNewContext(policySource, { window: policyWindow });
   const policy = new policyWindow.PdfReaderInputRuntime.IOSInputPolicy({
     documentRef: {},
-    isElementTarget: (target) => target?.element === true,
-    isViewerSurfaceTarget: (target) => target?.viewer === true,
-    isNativeContextTarget: (target) => target?.native === true,
-    directManipulationPage: (target) => target.page || target,
   });
-  const target = (page, overrides = {}) => ({
-    element: true,
-    viewer: true,
-    page,
-    ...overrides,
-  });
-  const click = (eventTarget, detail = 1, pointerType = "mouse") => {
+  const click = (pageIndex, detail = 1, pointerType = "mouse", targetRole = "viewer", nativeContextTarget = false) => {
     let prevented = false;
     let stopped = false;
-    const event = {
-      target: eventTarget,
+    const intent = {
       detail,
       pointerType,
+      pageIndex,
+      targetRole,
+      nativeContextTarget,
+    };
+    const controls = {
       preventDefault() { prevented = true; },
       stopImmediatePropagation() { stopped = true; },
     };
-    return { event, wasSuppressed: policy.handlePanClick(event), prevented, stopped };
+    return {
+      intent,
+      controls,
+      wasSuppressed: policy.handlePanClick(intent, controls),
+      get prevented() { return prevented; },
+      get stopped() { return stopped; },
+    };
   };
 
-  policy.rememberPanClickTarget("touch", pageOne);
-  const samePageCompatibilityClick = click(target(pageOne));
+  policy.rememberPanClickTarget("touch", 0);
+  const samePageCompatibilityClick = click(0);
   assert.equal(samePageCompatibilityClick.wasSuppressed, true);
   assert.equal(samePageCompatibilityClick.prevented, true);
   assert.equal(samePageCompatibilityClick.stopped, true);
-  assert.equal(click(target(pageTwo)).wasSuppressed, false);
-  assert.equal(click(target(pageOne, { native: true })).wasSuppressed, false);
-  assert.equal(click(target(pageTwo), 1, "touch").wasSuppressed, true);
+  assert.equal(click(1).wasSuppressed, false);
+  assert.equal(click(0, 1, "mouse", "native-control").wasSuppressed, false);
+  assert.equal(click(0, 1, "mouse", "annotation-layer", true).wasSuppressed, false,
+    "FreeText does not inherit a pan's compatibility-click suppression");
+  assert.equal(click(1, 1, "touch").wasSuppressed, true);
 
   policy.clearPanClickTargets();
-  assert.equal(click(target(pageOne)).wasSuppressed, false);
-  policy.rememberPanClickTarget("pen", pageOne);
-  const doubleClick = click(target(pageOne), 2);
-  assert.equal(policy.handlePanClick(doubleClick.event, { doubleClick: true }), true);
+  assert.equal(click(0).wasSuppressed, false);
+  policy.rememberPanClickTarget("pen", 0);
+  const doubleClick = click(0, 2);
+  assert.equal(policy.handlePanClick(doubleClick.intent, doubleClick.controls, { doubleClick: true }), true);
   assert.equal(policy.handlePanClick({
-    ...doubleClick.event,
+    ...doubleClick.intent,
     detail: 1,
-  }, { doubleClick: true }), false);
+  }, doubleClick.controls, { doubleClick: true }), false);
 });

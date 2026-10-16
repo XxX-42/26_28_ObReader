@@ -24,6 +24,7 @@ test("InputRouter owns event subscriptions without reaching into PDF or persiste
     "scheduleAutoSave",
     "save()",
     "PDFViewerApplication",
+    "onLegacyEvent",
   ]) {
     assert.ok(!router.includes(forbidden), `InputRouter must not contain ${forbidden}`);
   }
@@ -63,14 +64,15 @@ test("InputRouter owns pointer sessions and releases capture during teardown", a
     targetWindow,
     targetDocument,
     policy: { route: (intent, forward) => forward(intent) },
-    onLegacyEvent: (intent, event) => dispatched.push([intent, event]),
+    onIntent: (intent, controls) => dispatched.push([intent, controls]),
   });
   const dispatched = [];
   router.start();
   const pointer = { pointerId: 7, type: "pointerdown" };
   listeners.get("pointerdown")(pointer);
   assert.equal(dispatched[0][0].type, "pointerdown");
-  assert.equal(dispatched[0][1], pointer);
+  assert.equal(dispatched[0].length, 2, "native events do not leave InputRouter");
+  assert.equal(typeof dispatched[0][1].preventDefault, "function");
 
   router.setActivePointer(7, pointer);
   router.setManualPointer(7, pointer);
@@ -112,7 +114,7 @@ test("InputRouter suppresses only mouse events synthesized during Pencil text hi
     targetWindow,
     targetDocument,
     policy: { route: (_intent, forward) => forward(_intent) },
-    onLegacyEvent: (_intent, event) => dispatched.push(event.type),
+    onIntent: (intent) => dispatched.push(intent.type),
   });
   router.start();
   router.setActivePointer(9, {
@@ -151,8 +153,48 @@ test("InteractionIntent contains value data and no DOM target or native event", 
   assert.match(intent, /Object\.freeze\(/);
   assert.match(intent, /pageIndex/);
   assert.match(intent, /clientPoint/);
+  assert.match(intent, /nativeOperation/);
+  assert.match(intent, /nativeContextTarget/);
+  assert.match(intent, /targetRegion/);
+  assert.match(intent, /trusted/);
   assert.match(intent, /modifiers/);
   assert.doesNotMatch(intent, /nativeEvent|rawEvent|target:\s*event\.target/);
+  const page = { dataset: { pageNumber: "4" } };
+  class FakeElement {
+    closest(selector) {
+      if (selector === ".page") return page;
+      if (selector === ".annotationEditorLayer" || selector === ".resizer") return this;
+      if (selector.includes("contenteditable") || selector.includes("role=dialog")) return null;
+      return null;
+    }
+  }
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(intent, {
+    window: runtimeWindow,
+    document: {},
+    Element: FakeElement,
+  });
+  const nativeEvent = {
+    type: "pointerdown",
+    target: new FakeElement(),
+    pointerId: 3,
+    pointerType: "pen",
+    button: 0,
+    buttons: 1,
+    clientX: 14,
+    clientY: 29,
+    timeStamp: 50,
+    isTrusted: true,
+  };
+  const value = runtimeWindow.PdfReaderInputRuntime.createInteractionIntent(nativeEvent);
+  assert.equal(value.targetRole, "annotation-layer");
+  assert.equal(value.nativeOperation, "resize");
+  assert.equal(value.pageIndex, 3);
+  assert.equal(value.clientPoint.x, 14);
+  assert.equal(value.trusted, true);
+  assert.equal("target" in value, false);
+  assert.equal(Object.isFrozen(value), true);
+  assert.equal(Object.isFrozen(value.clientPoint), true);
 });
 
 test("ViewportController owns motion math without depending on PDF, selection, or persistence", async () => {
@@ -182,6 +224,7 @@ test("TextSelectionController owns DOM selection and caret operations only", asy
   assert.match(selection, /caretRangeFromPoint/);
   assert.match(selection, /setBaseAndExtent/);
   assert.match(selection, /getRangeAt/);
+  assert.match(selection, /elementFromPoint/);
   for (const forbidden of [
     "annotationStorage",
     "highlightSelection",
@@ -214,6 +257,8 @@ test("AnnotationController owns PDF.js editor cancellation and highlight fallbac
   assert.match(annotation, /cancelTemporaryStroke/);
   assert.match(annotation, /nativeOperation/);
   for (const forbidden of [
+    "event.target",
+    "target.closest",
     "-webkit-touch-callout",
     "fingerTextSelectionSuppression",
     "manualMomentum",
@@ -261,17 +306,17 @@ test("IOSInputPolicy owns finger text-selection suppression", async () => {
   assert.doesNotMatch(bridge, /state\.fingerTextSelectionSuppressionOwned/);
   assert.doesNotMatch(bridge, /pdfReaderFingerTextSelectionSuppressed/);
   assert.doesNotMatch(bridge, /lastTouchClickPage|lastPenPanClickPage/);
-  assert.match(bridge, /state\.inputPolicy\?\.handleTextSelectionGuard\?\.\(event\)/);
-  assert.match(bridge, /state\.inputPolicy\?\.handlePanClick\?\.\(event/);
+  assert.match(bridge, /state\.inputPolicy\?\.handleTextSelectionGuard\?\.\(intent, controls\)/);
+  assert.match(bridge, /state\.inputPolicy\?\.handlePanClick\?\.\(intent, controls/);
 });
 
 test("IOSDirectManipulationController owns touch and mode-NONE Pencil panning", async () => {
   const direct = await source("ios-direct-manipulation-controller.js");
   assert.match(direct, /class IOSDirectManipulationController/);
   for (const ownedBehavior of [
-    "preparePointerDown(event)",
-    "routePointerDown(event)",
-    "startManualPointer(event, pointerType)",
+    "preparePointerDown(intent)",
+    "routePointerDown(intent, controls",
+    "startManualPointer(intent, pointerType, controls)",
     "finishManualPointer(pointerId",
     "onDocumentVisibilityChange()",
     "blockedByOtherPointer",
@@ -296,8 +341,8 @@ test("IOSDirectManipulationController owns touch and mode-NONE Pencil panning", 
   assert.doesNotMatch(bridge, /function startManualPointer\(/);
   assert.doesNotMatch(bridge, /function finishManualPointer\(/);
   assert.doesNotMatch(bridge, /function applyManualPan\(/);
-  assert.match(bridge, /state\.iosDirectManipulationController\?\.handlePointerMove\(event\)/);
-  assert.match(bridge, /state\.iosDirectManipulationController\?\.routePointerDown\(event\)/);
+  assert.match(bridge, /state\.iosDirectManipulationController\?\.handlePointerMove\(intent, controls\)/);
+  assert.match(bridge, /state\.iosDirectManipulationController\?\.routePointerDown\(intent, controls/);
 });
 
 test("bridge delegates top-level listener installation to InputRouter", async () => {

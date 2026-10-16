@@ -68,7 +68,7 @@ function createHarness() {
     rememberPanClickTarget: (type, target) => policyCalls.push(["click-target", type, target]),
     clearPanClickTargets: () => policyCalls.push(["clear-click-targets"]),
   };
-  const target = { page: "page-1", viewer: true };
+  const target = { targetRole: "text-layer", pageIndex: 3 };
   const windowRef = { PdfReaderInputRuntime: {} };
   vm.runInNewContext(controllerSource, { window: windowRef, performance });
   const Controller = windowRef.PdfReaderInputRuntime.IOSDirectManipulationController;
@@ -81,10 +81,6 @@ function createHarness() {
     getEditorMode: () => state.editorMode,
     isEraserActive: () => false,
     isAnnotationToolActive: () => state.editorMode !== 0,
-    getNativeOperation: () => null,
-    isViewerSurfaceTarget: (candidate) => candidate?.viewer === true,
-    isNativeContextTarget: () => false,
-    directManipulationPage: (candidate) => candidate.page,
     invalidatePendingPenHighlight() {},
   });
   return { controller, router, container, session, state, panCalls, momentumCalls, policyCalls, target, manual };
@@ -93,7 +89,7 @@ function createHarness() {
 function pointerEvent(type, pointerId, target, values = {}) {
   let prevented = false;
   let stopped = false;
-  return {
+  const nativeShape = {
     type,
     pointerId,
     pointerType: "touch",
@@ -109,6 +105,29 @@ function pointerEvent(type, pointerId, target, values = {}) {
     get stoppedImmediately() { return stopped; },
     ...values,
   };
+  return {
+    intent: Object.freeze({
+      type,
+      pointerId,
+      pointerType: nativeShape.pointerType,
+      button: 0,
+      buttons: nativeShape.buttons,
+      detail: 1,
+      clientPoint: Object.freeze({ x: nativeShape.clientX, y: nativeShape.clientY }),
+      pageIndex: target.pageIndex ?? null,
+      targetRole: target.targetRole || "viewer",
+      nativeContextTarget: target.nativeContextTarget === true,
+      timestamp: nativeShape.timeStamp,
+      relatedTargetPresent: nativeShape.relatedTarget !== null,
+      modifiers: Object.freeze({ alt: false, control: false, meta: false, shift: false }),
+    }),
+    controls: Object.freeze({
+      preventDefault() { prevented = true; },
+      stopImmediatePropagation() { stopped = true; },
+    }),
+    get defaultPrevented() { return prevented; },
+    get stoppedImmediately() { return stopped; },
+  };
 }
 
 test("iPad touch pan captures, pans, consumes the release endpoint, and starts momentum", () => {
@@ -116,8 +135,8 @@ test("iPad touch pan captures, pans, consumes the release endpoint, and starts m
   const { controller, router, target, manual, panCalls, momentumCalls, policyCalls } = harness;
   harness.state.editorMode = 9;
   const down = pointerEvent("pointerdown", 11, target);
-  controller.preparePointerDown(down);
-  assert.equal(controller.routePointerDown(down), true);
+  controller.preparePointerDown(down.intent);
+  assert.equal(controller.routePointerDown(down.intent, down.controls), true);
   assert.equal(manual.size, 1);
   assert.equal(router.hasPointerCapture(11), true);
   assert.equal(down.defaultPrevented, true);
@@ -125,12 +144,12 @@ test("iPad touch pan captures, pans, consumes the release endpoint, and starts m
   assert.ok(policyCalls.some(([name]) => name === "suppress"));
 
   const move = pointerEvent("pointermove", 11, target, { clientX: 35, clientY: 80, timeStamp: 120 });
-  assert.equal(controller.handlePointerMove(move), true);
+  assert.equal(controller.handlePointerMove(move.intent, move.controls), true);
   assert.equal(move.defaultPrevented, true);
   assert.deepEqual(panCalls, [{ id: 11, x: 35, y: 80 }]);
 
   const up = pointerEvent("pointerup", 11, target, { clientX: 30, clientY: 100, timeStamp: 140 });
-  assert.equal(controller.handlePointerEnd(up), true);
+  assert.equal(controller.handlePointerEnd(up.intent, up.controls), true);
   assert.equal(manual.size, 0);
   assert.equal(router.hasPointerCapture(11), false);
   assert.deepEqual(panCalls.at(-1), { id: 11, x: 30, y: 100 });
@@ -141,20 +160,22 @@ test("iPad second contact and cancellation block pans and cancel momentum", () =
   const harness = createHarness();
   const { controller, manual, panCalls, momentumCalls } = harness;
   const firstDown = pointerEvent("pointerdown", 1, harness.target);
-  controller.preparePointerDown(firstDown);
-  controller.routePointerDown(firstDown);
+  controller.preparePointerDown(firstDown.intent);
+  controller.routePointerDown(firstDown.intent, firstDown.controls);
   const secondDown = pointerEvent("pointerdown", 2, harness.target);
-  controller.preparePointerDown(secondDown);
+  controller.preparePointerDown(secondDown.intent);
   assert.equal(manual.get(1).blockedByOtherPointer, true);
-  assert.equal(controller.routePointerDown(secondDown), true);
-  controller.handlePointerMove(pointerEvent("pointermove", 1, harness.target, {
+  assert.equal(controller.routePointerDown(secondDown.intent, secondDown.controls), true);
+  const firstMove = pointerEvent("pointermove", 1, harness.target, {
     clientX: 80,
     timeStamp: 120,
-  }));
+  });
+  controller.handlePointerMove(firstMove.intent, firstMove.controls);
   assert.equal(panCalls.length, 0, "neither contact can pan after multi-touch ownership is canceled");
-  controller.handlePointerEnd(pointerEvent("pointercancel", 2, harness.target, {
+  const cancel = pointerEvent("pointercancel", 2, harness.target, {
     timeStamp: 130,
-  }));
+  });
+  controller.handlePointerEnd(cancel.intent, cancel.controls);
   assert.ok(momentumCalls.some((entry) => entry.cancel === true));
 });
 
@@ -163,30 +184,43 @@ test("mode-NONE Pencil pans while active-tool Pencil ownership suspends finger p
   const penDown = pointerEvent("pointerdown", 21, modeNone.target, {
     pointerType: "pen",
   });
-  modeNone.controller.preparePointerDown(penDown);
-  assert.equal(modeNone.controller.routePointerDown(penDown), true);
+  modeNone.controller.preparePointerDown(penDown.intent);
+  assert.equal(modeNone.controller.routePointerDown(penDown.intent, penDown.controls), true);
   assert.equal(penDown.defaultPrevented, true);
-  assert.equal(modeNone.controller.handlePointerMove(pointerEvent(
+  const penMove = pointerEvent(
     "pointermove",
     21,
     modeNone.target,
     { pointerType: "pen", clientY: 25, timeStamp: 120 },
-  )), true);
+  );
+  assert.equal(modeNone.controller.handlePointerMove(penMove.intent, penMove.controls), true);
   assert.equal(modeNone.panCalls.length, 1);
 
   const activeTool = createHarness();
   activeTool.state.editorMode = 9;
   const fingerDown = pointerEvent("pointerdown", 31, activeTool.target);
-  activeTool.controller.preparePointerDown(fingerDown);
-  activeTool.controller.routePointerDown(fingerDown);
+  activeTool.controller.preparePointerDown(fingerDown.intent);
+  activeTool.controller.routePointerDown(fingerDown.intent, fingerDown.controls);
   const activePenDown = pointerEvent("pointerdown", 32, activeTool.target, {
     pointerType: "pen",
   });
-  activeTool.controller.preparePointerDown(activePenDown);
-  assert.equal(activeTool.controller.routePointerDown(activePenDown), false,
+  activeTool.controller.preparePointerDown(activePenDown.intent);
+  assert.equal(activeTool.controller.routePointerDown(activePenDown.intent, activePenDown.controls, {
+    nativeOperationActive: false,
+  }), false,
     "active annotation mode leaves the Pencil editor gesture to PDF.js");
   assert.equal(activeTool.router.penPolicyPointerCount, 1);
   assert.equal(activeTool.manual.get(31).blockedByPen, true);
   assert.equal(activeTool.manual.get(31).moved, false);
   assert.ok(activeTool.policyCalls.some(([name]) => name === "clear-suppression"));
+});
+
+test("iPad direct manipulation leaves FreeText and native controls to their owner", () => {
+  const harness = createHarness();
+  const target = { ...harness.target, nativeContextTarget: true };
+  const down = pointerEvent("pointerdown", 41, target);
+  harness.controller.preparePointerDown(down.intent);
+  assert.equal(harness.controller.routePointerDown(down.intent, down.controls), false);
+  assert.equal(harness.manual.size, 0);
+  assert.equal(harness.router.hasPointerCapture(41), false);
 });

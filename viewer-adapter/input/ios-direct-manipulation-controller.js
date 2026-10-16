@@ -11,10 +11,6 @@
       getEditorMode,
       isEraserActive,
       isAnnotationToolActive,
-      getNativeOperation,
-      isViewerSurfaceTarget,
-      isNativeContextTarget,
-      directManipulationPage,
       invalidatePendingPenHighlight,
     }) {
       this.getInputRouter = getInputRouter;
@@ -25,10 +21,6 @@
       this.getEditorMode = getEditorMode;
       this.isEraserActive = isEraserActive;
       this.isAnnotationToolActive = isAnnotationToolActive;
-      this.getNativeOperation = getNativeOperation;
-      this.isViewerSurfaceTarget = isViewerSurfaceTarget;
-      this.isNativeContextTarget = isNativeContextTarget;
-      this.directManipulationPage = directManipulationPage;
       this.invalidatePendingPenHighlight = invalidatePendingPenHighlight;
     }
 
@@ -60,12 +52,12 @@
         );
     }
 
-    preparePointerDown(event) {
-      if (event.pointerType !== "touch") {
+    preparePointerDown(intent) {
+      if (intent.pointerType !== "touch") {
         this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
       } else if (
         this.manualPointerCount() > 0 &&
-        !this.hasManualPointer(event.pointerId)
+        !this.hasManualPointer(intent.pointerId)
       ) {
         for (const pointer of this.manualPointerValues()) {
           pointer.blockedByOtherPointer = true;
@@ -76,30 +68,29 @@
       }
     }
 
-    routePointerDown(event) {
-      if (event.pointerType !== "touch") {
+    routePointerDown(intent, controls, { nativeOperationActive = false } = {}) {
+      if (intent.pointerType !== "touch") {
         this.getInputPolicy()?.clearPanClickTargets?.();
       }
       if (
-        !this.isViewerSurfaceTarget(event.target) ||
-        this.isNativeContextTarget(event.target)
+        intent.nativeContextTarget === true ||
+        !["viewer", "text-layer", "annotation-layer"].includes(intent.targetRole)
       ) {
         return false;
       }
-      if (event.pointerType === "touch") {
-        this.startManualPointer(event, "touch");
+      if (intent.pointerType === "touch") {
+        this.startManualPointer(intent, "touch", controls);
         return true;
       }
-      if (event.pointerType !== "pen") {
+      if (intent.pointerType !== "pen") {
         return false;
       }
       const editorMode = this.getEditorMode();
       const eraserActive = this.isEraserActive();
-      const nativeOperation = this.getNativeOperation(event, event.target);
-      if (editorMode !== 0 || eraserActive || nativeOperation) {
+      if (editorMode !== 0 || eraserActive || nativeOperationActive) {
         const session = this.getCurrentSession();
-        this.setPenPolicyPointer(event.pointerId, {
-          pointerId: event.pointerId,
+        this.setPenPolicyPointer(intent.pointerId, {
+          pointerId: intent.pointerId,
           documentId: session.documentId,
           openRequest: session.openRequest,
           pdfDocument: session.pdfDocument,
@@ -109,7 +100,7 @@
       } else {
         // In mode NONE, preserve native tap behavior for links while taking
         // ownership only when the Pencil contact becomes a pan.
-        this.startManualPointer(event, "pen");
+        this.startManualPointer(intent, "pen", controls);
         return true;
       }
       return false;
@@ -141,15 +132,29 @@
       }
     }
 
-    eventTime(pointer, event, now = performance.now()) {
-      return this.viewport()?.eventTime(pointer, event, now) ?? now;
+    eventTime(pointer, intent, now = performance.now()) {
+      return this.viewport()?.eventTime(pointer, this.pointerSample(intent), now) ?? now;
     }
 
-    startManualPointer(event, pointerType) {
+    pointerSample(intent) {
+      return {
+        clientX: intent?.clientPoint?.x,
+        clientY: intent?.clientPoint?.y,
+        timeStamp: intent?.timestamp,
+      };
+    }
+
+    pageIdentity(intent) {
+      return Number.isInteger(intent?.pageIndex)
+        ? intent.pageIndex
+        : `role:${intent?.targetRole || "unknown"}`;
+    }
+
+    startManualPointer(intent, pointerType, controls) {
       const container = this.getViewerContainer();
-      if (!container || this.hasManualPointer(event.pointerId)) return null;
+      if (!container || this.hasManualPointer(intent.pointerId)) return null;
       const anotherDirectPointer = this.manualPointerCount() > 0;
-      const startTime = this.eventTime(null, event);
+      const startTime = this.eventTime(null, intent);
       if (anotherDirectPointer) {
         for (const activePointer of this.manualPointerValues()) {
           activePointer.blockedByOtherPointer = true;
@@ -157,7 +162,7 @@
           activePointer.moved = false;
           activePointer.lastMotionAt = null;
           activePointer.scrollSamples = [{
-            time: this.eventTime(activePointer, event),
+            time: this.eventTime(activePointer, intent),
             scrollTop: container.scrollTop,
             scrollLeft: container.scrollLeft,
           }];
@@ -165,14 +170,14 @@
       }
       const blockedByPen = this.hasActivePenEditorGesture();
       const pointer = {
-        pointerId: event.pointerId,
+        pointerId: intent.pointerId,
         pointerType,
-        pageTarget: this.directManipulationPage(event.target),
+        pageTarget: this.pageIdentity(intent),
         container,
-        startX: event.clientX,
-        startY: event.clientY,
-        lastX: event.clientX,
-        lastY: event.clientY,
+        startX: intent.clientPoint.x,
+        startY: intent.clientPoint.y,
+        lastX: intent.clientPoint.x,
+        lastY: intent.clientPoint.y,
         startScrollTop: container.scrollTop,
         startScrollLeft: container.scrollLeft,
         lastMotionAt: null,
@@ -190,7 +195,7 @@
         pdfDocument: this.getCurrentSession().pdfDocument,
         rendererGeneration: this.getCurrentSession().rendererGeneration,
       };
-      this.setManualPointer(event.pointerId, pointer);
+      this.setManualPointer(intent.pointerId, pointer);
       if (pointerType === "touch") {
         if (
           !anotherDirectPointer &&
@@ -201,12 +206,12 @@
         }
         this.getInputPolicy()?.refreshFingerTextSelectionSuppression?.();
         this.getInputPolicy()?.rememberPanClickTarget?.("touch", pointer.pageTarget);
-        this.capturePointer(event.pointerId, container);
-        this.stopDirectManipulationEvent(event);
+        this.capturePointer(intent.pointerId, container);
+        this.stopDirectManipulationEvent(controls);
       } else if (pointerType === "pen") {
         // Suppress compatibility mouse selection only after this Pencil has
         // become a bridge-owned mode-NONE pan.
-        event.preventDefault();
+        controls?.preventDefault?.();
       }
       return pointer;
     }
@@ -223,12 +228,12 @@
       );
     }
 
-    stopDirectManipulationEvent(event) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+    stopDirectManipulationEvent(controls) {
+      controls?.preventDefault?.();
+      controls?.stopImmediatePropagation?.();
     }
 
-    applyPan(pointer, event, eventTime = null) {
+    applyPan(pointer, intent, eventTime = null) {
       if (
         !pointer ||
         pointer.blockedByPen ||
@@ -238,18 +243,18 @@
       ) {
         return;
       }
-      this.viewport()?.applyPan(pointer, event, eventTime);
+      this.viewport()?.applyPan(pointer, this.pointerSample(intent), eventTime);
     }
 
-    finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
+    finishManualPointer(pointerId, intent = null, { cancel = false } = {}) {
       const pointer = this.manualPointer(pointerId);
       if (!pointer) return null;
-      const releaseTime = this.eventTime(pointer, event);
+      const releaseTime = this.eventTime(pointer, intent);
       if (
         pointer.pointerType === "touch" && !cancel &&
-        Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
+        Number.isFinite(intent?.clientPoint?.x) && Number.isFinite(intent?.clientPoint?.y)
       ) {
-        this.applyPan(pointer, event, releaseTime);
+        this.applyPan(pointer, intent, releaseTime);
       }
       this.deleteManualPointer(pointerId);
       if (pointer.pointerType === "touch") {
@@ -286,47 +291,47 @@
       if (clearClickTargets) this.getInputPolicy()?.clearPanClickTargets?.();
     }
 
-    handlePointerMove(event) {
-      const manualPointer = this.manualPointer(event.pointerId);
+    handlePointerMove(intent, controls) {
+      const manualPointer = this.manualPointer(intent.pointerId);
       if (!manualPointer) return false;
       if (manualPointer.pointerType === "touch") {
-        this.stopDirectManipulationEvent(event);
-        this.applyPan(manualPointer, event);
+        this.stopDirectManipulationEvent(controls);
+        this.applyPan(manualPointer, intent);
       } else {
-        this.applyPan(manualPointer, event);
+        this.applyPan(manualPointer, intent);
         if (manualPointer.moved && !manualPointer.blockedByPen) {
-          event.preventDefault();
+          controls?.preventDefault?.();
         }
       }
       return true;
     }
 
-    handlePointerEnd(event) {
-      const manualPointer = this.manualPointer(event.pointerId);
+    handlePointerEnd(intent, controls) {
+      const manualPointer = this.manualPointer(intent.pointerId);
       if (!manualPointer) return false;
-      const pointer = this.finishManualPointer(event.pointerId, event, {
-        cancel: event.type === "pointercancel",
+      const pointer = this.finishManualPointer(intent.pointerId, intent, {
+        cancel: intent.type === "pointercancel",
       });
-      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(event);
+      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(controls);
       return true;
     }
 
-    handlePointerOut(event) {
-      const manualPointer = this.manualPointer(event.pointerId);
+    handlePointerOut(intent, controls) {
+      const manualPointer = this.manualPointer(intent.pointerId);
       if (!manualPointer) return false;
-      if (event.relatedTarget !== null || this.hasPointerCapture(event.pointerId)) {
+      if (intent.relatedTargetPresent || this.hasPointerCapture(intent.pointerId)) {
         return true;
       }
-      const pointer = this.finishManualPointer(event.pointerId, event, { cancel: true });
-      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(event);
+      const pointer = this.finishManualPointer(intent.pointerId, intent, { cancel: true });
+      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(controls);
       return true;
     }
 
-    handleLostPointerCapture(event) {
-      const manualPointer = this.manualPointer(event.pointerId);
+    handleLostPointerCapture(intent, controls) {
+      const manualPointer = this.manualPointer(intent.pointerId);
       if (!manualPointer) return false;
-      const pointer = this.finishManualPointer(event.pointerId, event, { cancel: true });
-      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(event);
+      const pointer = this.finishManualPointer(intent.pointerId, intent, { cancel: true });
+      if (pointer?.pointerType === "touch") this.stopDirectManipulationEvent(controls);
       return true;
     }
   }

@@ -5,19 +5,9 @@
     constructor({
       documentRef = document,
       isAnnotationToolActive = () => false,
-      isTextLayerTarget = () => false,
-      isElementTarget = () => false,
-      isViewerSurfaceTarget = () => false,
-      isNativeContextTarget = () => false,
-      directManipulationPage = (target) => target,
     } = {}) {
       this.documentRef = documentRef;
       this.isAnnotationToolActive = isAnnotationToolActive;
-      this.isTextLayerTarget = isTextLayerTarget;
-      this.isElementTarget = isElementTarget;
-      this.isViewerSurfaceTarget = isViewerSurfaceTarget;
-      this.isNativeContextTarget = isNativeContextTarget;
-      this.directManipulationPage = directManipulationPage;
       this.fingerTextSelectionSuppressionOwned = false;
       this.lastTouchPanClickTarget = null;
       this.lastPenPanClickTarget = null;
@@ -52,22 +42,22 @@
       return this.setFingerTextSelectionSuppressionOwned(false);
     }
 
-    handleTextSelectionGuard(event) {
+    handleTextSelectionGuard(intent, controls) {
       if (
         !this.isFingerTextSelectionSuppressionActive() ||
-        !this.isTextLayerTarget(event?.target)
+        intent?.targetRole !== "text-layer"
       ) {
         return false;
       }
-      event.preventDefault();
+      controls?.preventDefault?.();
       return true;
     }
 
     rememberPanClickTarget(pointerType, target) {
       if (pointerType === "touch") {
-        this.lastTouchPanClickTarget = target || null;
+        this.lastTouchPanClickTarget = target ?? null;
       } else if (pointerType === "pen") {
-        this.lastPenPanClickTarget = target || null;
+        this.lastPenPanClickTarget = target ?? null;
       }
     }
 
@@ -76,34 +66,35 @@
       this.lastPenPanClickTarget = null;
     }
 
-    handlePanClick(event, { doubleClick = false } = {}) {
-      const target = event?.target;
+    handlePanClick(intent, controls, { doubleClick = false } = {}) {
       if (
-        !this.isElementTarget(target) ||
-        !this.isViewerSurfaceTarget(target) ||
-        this.isNativeContextTarget(target) ||
-        (doubleClick && event.detail < 2)
+        intent?.nativeContextTarget === true ||
+        !["viewer", "text-layer", "annotation-layer"].includes(intent?.targetRole) ||
+        (doubleClick && intent?.detail < 2)
       ) {
         return false;
       }
-      const page = this.directManipulationPage(target);
+      const page = Number.isInteger(intent?.pageIndex)
+        ? intent.pageIndex
+        : `role:${intent?.targetRole}`;
       const matchesPage = (previousPage) =>
-        !!previousPage && (!page || page === previousPage);
+        previousPage !== null && previousPage !== undefined &&
+        (page === null || page === previousPage);
       let suppress = false;
       if (doubleClick) {
         suppress = matchesPage(this.lastTouchPanClickTarget) ||
           matchesPage(this.lastPenPanClickTarget);
       } else {
-        const touchClick = event.pointerType === "touch" || (
-          event.detail > 0 && matchesPage(this.lastTouchPanClickTarget)
+        const touchClick = intent.pointerType === "touch" || (
+          intent.detail > 0 && matchesPage(this.lastTouchPanClickTarget)
         );
-        const completedPenPan = event.detail > 0 &&
+        const completedPenPan = intent.detail > 0 &&
           matchesPage(this.lastPenPanClickTarget);
         suppress = touchClick || completedPenPan;
       }
       if (suppress) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
+        controls?.preventDefault?.();
+        controls?.stopImmediatePropagation?.();
       }
       return suppress;
     }

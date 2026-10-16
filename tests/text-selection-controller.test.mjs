@@ -20,7 +20,14 @@ function harness() {
     contains(node) { return node === textLayer || nodes.has(node); },
     closest(selector) { return selector === ".page" ? page : null; },
   };
-  const textSpan = { contains(node) { return node === startNode; } };
+  const textSpan = {
+    contains(node) { return node === startNode; },
+    closest(selector) {
+      if (selector === ".textLayer") return textLayer;
+      if (selector === ".textLayer span") return textSpan;
+      return selector === ".page" ? page : null;
+    },
+  };
   nodes.add(textSpan);
   let selectionText = "";
   const selection = {
@@ -58,6 +65,7 @@ function harness() {
   };
   const documentRef = {
     getSelection: () => selection,
+    elementFromPoint: () => textSpan,
     caretPositionFromPoint(x) {
       return { offsetNode: x === 0 ? startNode : endNode, offset: x === 0 ? 0 : 4 };
     },
@@ -89,51 +97,30 @@ function harness() {
 
 test("Pencil text selection owns a collapsed caret and validates an extended range", () => {
   const h = harness();
-  assert.equal(h.controller.begin(h.pointer, {
-    textLayer: h.textLayer,
-    textSpan: h.textSpan,
-    page: h.page,
-    clientX: 0,
-    clientY: 1,
-    isTrusted: true,
-    eligible: true,
-  }), true);
+  const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };
+  assert.equal(h.controller.begin(h.pointer, intent, { eligible: true }), true);
+  assert.equal(h.controller.resolveTarget(intent).textLayer, h.textLayer);
   assert.equal(h.pointer.textSelectionStart.node, h.startNode);
   assert.equal(h.pointer.selectionAtDown.isCollapsed, true);
 
   h.pointer.moved = true;
-  assert.equal(h.controller.extend(h.pointer, { clientX: 1, clientY: 20 }), true);
+  assert.equal(h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } }), true);
   assert.equal(h.selection.focusNode, h.endNode);
   assert.equal(h.controller.hasValidHighlightSelection(h.pointer), true);
 });
 
 test("selection cleanup removes only the range still owned by the Pencil gesture", () => {
   const h = harness();
-  h.controller.begin(h.pointer, {
-    textLayer: h.textLayer,
-    textSpan: h.textSpan,
-    page: h.page,
-    clientX: 0,
-    clientY: 1,
-    isTrusted: true,
-    eligible: true,
-  });
+  const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };
+  h.controller.begin(h.pointer, intent, { eligible: true });
   h.pointer.moved = true;
-  h.controller.extend(h.pointer, { clientX: 1, clientY: 20 });
+  h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } });
   h.controller.clearOwned(h.pointer);
   assert.equal(h.selection.rangeCount, 0);
 
-  h.controller.begin(h.pointer, {
-    textLayer: h.textLayer,
-    textSpan: h.textSpan,
-    page: h.page,
-    clientX: 0,
-    clientY: 1,
-    isTrusted: true,
-    eligible: true,
-  });
+  h.controller.begin(h.pointer, intent, { eligible: true });
   h.pointer.moved = true;
-  h.controller.extend(h.pointer, { clientX: 1, clientY: 20 });
+  h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } });
   h.selection.anchorNode = h.externalNode;
   h.controller.clearOwned(h.pointer);
   assert.equal(h.selection.anchorNode, h.externalNode);
@@ -142,22 +129,15 @@ test("selection cleanup removes only the range still owned by the Pencil gesture
 
 test("range extension stops on session loss or foreign selection ownership", () => {
   const h = harness();
-  h.controller.begin(h.pointer, {
-    textLayer: h.textLayer,
-    textSpan: h.textSpan,
-    page: h.page,
-    clientX: 0,
-    clientY: 1,
-    isTrusted: true,
-    eligible: true,
-  });
+  const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };
+  h.controller.begin(h.pointer, intent, { eligible: true });
   h.pointer.moved = true;
   h.setPending(false);
-  assert.equal(h.controller.extend(h.pointer, { clientX: 1, clientY: 20 }), false);
+  assert.equal(h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } }), false);
 
   h.setPending(true);
   h.setCurrent(false);
-  assert.equal(h.controller.extend(h.pointer, { clientX: 1, clientY: 20 }), false);
+  assert.equal(h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } }), false);
 
   h.setCurrent(true);
   h.selection.setBaseAndExtent(h.externalNode, 0, h.externalNode, 0);
@@ -166,15 +146,8 @@ test("range extension stops on session loss or foreign selection ownership", () 
 
 test("caret results outside the target text layer never begin an owned selection", () => {
   const h = harness();
-  h.controller.begin(h.pointer, {
-    textLayer: h.textLayer,
-    textSpan: h.textSpan,
-    page: h.page,
-    clientX: 0,
-    clientY: 1,
-    isTrusted: true,
-    eligible: true,
-  });
+  const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };
+  h.controller.begin(h.pointer, intent, { eligible: true });
   const outsideLayer = { ...h.textLayer, contains: () => false };
   assert.equal(h.controller.caretPosition(1, 1, outsideLayer), null);
 });

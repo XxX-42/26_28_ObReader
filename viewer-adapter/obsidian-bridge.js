@@ -474,10 +474,9 @@
     }
   }
 
-  function dismissToolbarParameterPopups(event) {
-    const target = event.target;
-    if (!(target instanceof Element) ||
-        target.closest(".editorParamsToolbar, #editorModeButtons")) {
+  function dismissToolbarParameterPopups(intent) {
+    if (intent?.targetRegion === "editor-params-toolbar" ||
+        intent?.targetRegion === "editor-mode-buttons") {
       return;
     }
     if (document.querySelector(".editorParamsToolbar:not(.hidden)")) {
@@ -6191,7 +6190,7 @@
     return value.slice(0, 16);
   }
 
-  function recordPointerDiagnostic(type, pointer, event = null, activePointers) {
+  function recordPointerDiagnostic(type, pointer, intent = null, activePointers) {
     const diagnostics = state.pointerDiagnostics;
     diagnostics.total = Math.min(Number.MAX_SAFE_INTEGER, diagnostics.total + 1);
     if (diagnostics.samples.length === POINTER_DIAGNOSTIC_LIMIT) {
@@ -6201,22 +6200,22 @@
     const sample = {
       type,
       pointerType: normalizedPointerType(
-        event?.pointerType ?? pointer?.pointerType,
+        intent?.pointerType ?? pointer?.pointerType,
       ),
-      button: Number.isInteger(event?.button)
-        ? event.button
+      button: Number.isInteger(intent?.button)
+        ? intent.button
         : Number.isInteger(pointer?.button)
           ? pointer.button
           : null,
-      buttons: Number.isInteger(event?.buttons)
-        ? event.buttons
+      buttons: Number.isInteger(intent?.buttons)
+        ? intent.buttons
         : Number.isInteger(pointer?.buttons)
           ? pointer.buttons
           : null,
       activePointers:
         Number.isInteger(activePointers) ? activePointers : activePointerCount(),
       editorMode: Number.isInteger(state.editorMode) ? state.editorMode : null,
-      trusted: event ? event.isTrusted === true : null,
+      trusted: intent ? intent.trusted === true : null,
     };
     diagnostics.samples.push(sample);
     return sample;
@@ -6232,28 +6231,6 @@
       activePointers: activePointerCount(),
       pointers: state.pointerDiagnostics.samples.map((sample) => ({ ...sample })),
     };
-  }
-
-  function isNativeContextTarget(target) {
-    return !!target?.closest?.(
-      "input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=dialog], .editorToolbar, .editToolbar, .editorParamsToolbar",
-    );
-  }
-
-  function isViewerSurfaceTarget(target) {
-    const container = document.getElementById("viewerContainer");
-    return !!(container && target instanceof Element &&
-      (target === container || container.contains(target)));
-  }
-
-  function directManipulationPage(target) {
-    return target?.closest?.(".page") ||
-      (target instanceof Element ? target : null);
-  }
-
-  function stopDirectManipulationEvent(event) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
   }
 
   function currentInteractionMode(editorMode = state.editorMode) {
@@ -6277,21 +6254,12 @@
     state.inputPolicy?.clearFingerTextSelectionSuppression?.();
   }
 
-  function isPdfTextLayerTarget(target) {
-    const element = target instanceof Element ? target : target?.parentElement;
-    return !!(
-      element &&
-      isViewerSurfaceTarget(element) &&
-      state.textSelectionController?.resolveTarget(element)?.textLayer
-    );
+  function onBridgeFingerSelectStart(intent, controls) {
+    state.inputPolicy?.handleTextSelectionGuard?.(intent, controls);
   }
 
-  function onBridgeFingerSelectStart(event) {
-    state.inputPolicy?.handleTextSelectionGuard?.(event);
-  }
-
-  function onBridgeFingerContextMenu(event) {
-    state.inputPolicy?.handleTextSelectionGuard?.(event);
+  function onBridgeFingerContextMenu(intent, controls) {
+    state.inputPolicy?.handleTextSelectionGuard?.(intent, controls);
   }
 
   function cancelManualMomentum() {
@@ -6311,22 +6279,17 @@
       ?.isManualPointerSessionCurrent(pointer) === true;
   }
 
-  function onBridgeIosClick(event) {
-    state.inputPolicy?.handlePanClick?.(event);
+  function onBridgeIosClick(intent, controls) {
+    state.inputPolicy?.handlePanClick?.(intent, controls);
   }
 
-  function onBridgeIosDoubleClick(event) {
-    state.inputPolicy?.handlePanClick?.(event, { doubleClick: true });
+  function onBridgeIosDoubleClick(intent, controls) {
+    state.inputPolicy?.handlePanClick?.(intent, controls, { doubleClick: true });
   }
 
-  function pointerInteractionKind(event, target) {
-    return state.annotationController?.pointerInteractionKind(event, target, {
+  function pointerInteractionKind(intent) {
+    return state.annotationController?.pointerInteractionKind(intent, {
       interactionMode: currentInteractionMode(),
-      isTextLayerTarget: (candidate) => !!(
-        state.textSelectionController?.resolveTarget(candidate)?.textLayer
-      ),
-      isNativeContextTarget,
-      isViewerSurfaceTarget,
     }) || null;
   }
 
@@ -6354,12 +6317,9 @@
     state.textSelectionController?.clearOwned(pointer);
   }
 
-  function updateOwnedPenTextSelection(pointer, event) {
-    const updated = state.textSelectionController?.extend(pointer, {
-      clientX: event.clientX,
-      clientY: event.clientY,
-    }) === true;
-    if (updated) event.preventDefault();
+  function updateOwnedPenTextSelection(pointer, intent, controls) {
+    const updated = state.textSelectionController?.extend(pointer, intent) === true;
+    if (updated) controls?.preventDefault?.();
     return updated;
   }
 
@@ -6410,7 +6370,7 @@
       recordPointerDiagnostic(
         "pointerup",
         pointer,
-        cleanupEvent,
+        window.PdfReaderInputRuntime.createInteractionIntent(cleanupEvent),
         activePointerCount(),
       );
       window.dispatchEvent(cleanupEvent);
@@ -6421,7 +6381,12 @@
     state.inputRouter?.releasePointerCapture(pointer.pointerId);
   }
 
-  function finishTrackedPointer(pointerId, reason, event = null, { cancel = false } = {}) {
+  function finishTrackedPointer(
+    pointerId,
+    reason,
+    intent = null,
+    { cancel = false, controls = null } = {},
+  ) {
     const pointer = activePointer(pointerId);
     if (!pointer || pointer.ending) {
       return;
@@ -6432,12 +6397,12 @@
     ) {
       // Some WebViews deliver the last caret position only with pointerup,
       // especially when a Pencil crosses the whitespace between text lines.
-      updateOwnedPenTextSelection(pointer, event);
+      updateOwnedPenTextSelection(pointer, intent, controls);
     }
     deletePenPolicyPointer(pointerId);
     pointer.ending = true;
-    pointer.buttons = Number.isInteger(event?.buttons)
-      ? event.buttons
+    pointer.buttons = Number.isInteger(intent?.buttons)
+      ? intent.buttons
       : pointer.buttons;
     if (cancel) {
       invalidatePendingPenHighlight(pointer);
@@ -6461,7 +6426,7 @@
       recordPointerDiagnostic(
         reason === "pointerup" ? "pointerup" : "pointercancel",
         pointer,
-        event,
+        intent,
         activePointerCount(),
       );
       if (pointer.button === 0 && pointer.mode === 15) {
@@ -6488,48 +6453,45 @@
     }, 0);
   }
 
-  function onBridgePointerDown(event) {
+  function onBridgePointerDown(intent, controls) {
     cancelManualMomentum();
     invalidatePendingPenHighlight();
-    dismissToolbarParameterPopups(event);
-    state.iosDirectManipulationController?.preparePointerDown(event);
+    dismissToolbarParameterPopups(intent);
+    state.iosDirectManipulationController?.preparePointerDown(intent);
     if (state.closeControl) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      controls?.preventDefault?.();
+      controls?.stopImmediatePropagation?.();
       return;
     }
-    if (!(event.target instanceof Element)) {
-      return;
-    }
-    const target = event.target;
+    const resolvedTarget = state.textSelectionController?.resolveTarget(intent) || {};
+    if (!resolvedTarget.hitTarget) return;
     if (
-      state.iosDirectManipulationController?.routePointerDown(event) === true
+      state.iosDirectManipulationController?.routePointerDown(intent, controls, {
+        nativeOperationActive: state.annotationController?.nativeOperation(intent) != null,
+      }) === true
     ) {
       return;
     }
-    const kind = pointerInteractionKind(event, event.target);
-    if (!kind || hasActivePointer(event.pointerId)) {
+    const kind = pointerInteractionKind(intent);
+    if (!kind || hasActivePointer(intent.pointerId)) {
       return;
     }
     const captureTarget =
       kind === "text-selection"
-        ? state.textSelectionController?.resolveTarget(event.target)?.textLayer
-        : event.target;
+        ? resolvedTarget.textLayer
+        : resolvedTarget.hitTarget;
     const pointer = {
-      pointerId: event.pointerId,
-      button: event.button,
-      buttons: event.buttons,
-      pointerType: normalizedPointerType(event.pointerType),
+      pointerId: intent.pointerId,
+      button: intent.button,
+      buttons: intent.buttons,
+      pointerType: normalizedPointerType(intent.pointerType),
       kind,
-      nativeOperation: state.annotationController?.nativeOperation(
-        event,
-        event.target,
-      ) || null,
+      nativeOperation: state.annotationController?.nativeOperation(intent) || null,
       mode: state.editorMode,
-      startX: event.clientX,
-      startY: event.clientY,
-      lastX: event.clientX,
-      lastY: event.clientY,
+      startX: intent.clientPoint.x,
+      startY: intent.clientPoint.y,
+      lastX: intent.clientPoint.x,
+      lastY: intent.clientPoint.y,
       moved: false,
       moveSampled: false,
       documentId: state.activeDocumentId,
@@ -6542,51 +6504,44 @@
       pointer.kind === "text-selection" &&
       pointer.mode === 9
     ) {
-      const { textLayer, textSpan, page } =
-        state.textSelectionController?.resolveTarget(event.target) || {};
+      const { textLayer, page } = resolvedTarget;
       const eligible = state.annotationController?.preparePenHighlight(pointer, {
         textLayer,
         page,
       }) === true;
       if (eligible) {
         state.pendingPenHighlight = pointer;
-        const ownsGesture = state.textSelectionController?.begin(pointer, {
-          textLayer,
-          textSpan,
-          page,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          isTrusted: event.isTrusted === true,
+        const ownsGesture = state.textSelectionController?.begin(pointer, intent, {
           eligible,
         }) === true;
         if (ownsGesture) {
           // Own this glyph-span gesture so the browser's compatibility mouse
           // sequence cannot start a second PDF.js selection or freehand path.
-          event.preventDefault();
+          controls?.preventDefault?.();
         }
       }
     }
-    setActivePointer(event.pointerId, pointer);
-    recordPointerDiagnostic("pointerdown", pointer, event);
+    setActivePointer(intent.pointerId, pointer);
+    recordPointerDiagnostic("pointerdown", pointer, intent);
     if (shouldCaptureTrackedPointer(
       pointer,
-      event,
+      intent,
       document.body.classList.contains("editorEraserMode"),
     )) {
-      state.inputRouter?.capturePointer(event.pointerId, captureTarget);
+      state.inputRouter?.capturePointer(intent.pointerId, captureTarget);
     }
     clearAutoSaveTimer();
   }
 
-  function shouldCaptureTrackedPointer(pointer, event, eraserActive) {
+  function shouldCaptureTrackedPointer(pointer, intent, eraserActive) {
     const plainMouseTextSelection =
       pointer.pointerType === "mouse" &&
       pointer.kind === "text-selection" &&
       !pointer.nativeOperation;
     return !plainMouseTextSelection &&
-      (event.pointerType === "mouse" || pointer.nativeOperation) &&
-      event.button !== 2 &&
-      !(event.button === 0 && eraserActive);
+      (intent.pointerType === "mouse" || pointer.nativeOperation) &&
+      intent.button !== 2 &&
+      !(intent.button === 0 && eraserActive);
   }
 
   function installPointerTrackingListeners() {
@@ -6630,11 +6585,6 @@
       ? new window.PdfReaderInputRuntime.IOSInputPolicy({
         documentRef: document,
         isAnnotationToolActive: annotationToolIsActive,
-        isTextLayerTarget: isPdfTextLayerTarget,
-        isElementTarget: (target) => target instanceof Element,
-        isViewerSurfaceTarget,
-        isNativeContextTarget,
-        directManipulationPage,
       })
       : new window.PdfReaderInputRuntime.DesktopInputPolicy();
     state.inputPolicy = policy;
@@ -6669,11 +6619,6 @@
         getEditorMode: () => state.editorMode,
         isEraserActive: () => document.body.classList.contains("editorEraserMode"),
         isAnnotationToolActive: annotationToolIsActive,
-        getNativeOperation: (event, target) =>
-          state.annotationController?.nativeOperation(event, target) || null,
-        isViewerSurfaceTarget,
-        isNativeContextTarget,
-        directManipulationPage,
         invalidatePendingPenHighlight: () => invalidatePendingPenHighlight(),
       })
       : null;
@@ -6696,11 +6641,11 @@
       targetWindow: window,
       targetDocument: document,
       policy,
-      onLegacyEvent(intent, event) {
+      onIntent(intent, controls) {
         const listener = intent.type === "visibilitychange"
           ? onManualDocumentVisibilityChange
           : legacyListeners.get(intent.type);
-        listener?.(event);
+        listener?.(intent, controls);
       },
     });
     state.inputRouter = router;
@@ -6711,73 +6656,75 @@
     cancelManualMomentum();
   }
 
-  function onBridgePointerMove(event) {
-    if (state.iosDirectManipulationController?.handlePointerMove(event)) {
+  function onBridgePointerMove(intent, controls) {
+    if (state.iosDirectManipulationController?.handlePointerMove(intent, controls)) {
       return;
     }
-    const pointer = activePointer(event.pointerId);
+    const pointer = activePointer(intent.pointerId);
     if (!pointer || pointer.ending) {
       return;
     }
-    pointer.buttons = event.buttons;
-    pointer.lastX = event.clientX;
-    pointer.lastY = event.clientY;
+    pointer.buttons = intent.buttons;
+    pointer.lastX = intent.clientPoint.x;
+    pointer.lastY = intent.clientPoint.y;
     if (!pointer.moveSampled) {
       pointer.moveSampled = true;
-      recordPointerDiagnostic("pointermove", pointer, event);
+      recordPointerDiagnostic("pointermove", pointer, intent);
     }
     if (!pointer.moved) {
       pointer.moved =
-        Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >
+        Math.hypot(intent.clientPoint.x - pointer.startX, intent.clientPoint.y - pointer.startY) >
         1;
     }
     if (pointer.penTextSelectionCandidate) {
-      updateOwnedPenTextSelection(pointer, event);
+      updateOwnedPenTextSelection(pointer, intent, controls);
     }
   }
 
-  function onBridgePointerEnd(event) {
-    if (state.iosDirectManipulationController?.handlePointerEnd(event)) return;
-    deletePenPolicyPointer(event.pointerId);
-    finishTrackedPointer(event.pointerId, event.type || "pointerup", event, {
-      cancel: event.type === "pointercancel",
+  function onBridgePointerEnd(intent, controls) {
+    if (state.iosDirectManipulationController?.handlePointerEnd(intent, controls)) return;
+    deletePenPolicyPointer(intent.pointerId);
+    finishTrackedPointer(intent.pointerId, intent.type || "pointerup", intent, {
+      cancel: intent.type === "pointercancel",
+      controls,
     });
   }
 
-  function onBridgePointerOut(event) {
-    if (state.iosDirectManipulationController?.handlePointerOut(event)) return;
+  function onBridgePointerOut(intent, controls) {
+    if (state.iosDirectManipulationController?.handlePointerOut(intent, controls)) return;
     if (
-      hasPenPolicyPointer(event.pointerId) &&
-      event.relatedTarget === null
+      hasPenPolicyPointer(intent.pointerId) &&
+      !intent.relatedTargetPresent
     ) {
-      deletePenPolicyPointer(event.pointerId);
+      deletePenPolicyPointer(intent.pointerId);
     }
-    const pointer = activePointer(event.pointerId);
+    const pointer = activePointer(intent.pointerId);
     if (
       !pointer ||
       pointer.ending ||
-      event.relatedTarget !== null ||
-      state.inputRouter?.hasPointerCapture(event.pointerId)
+      intent.relatedTargetPresent ||
+      state.inputRouter?.hasPointerCapture(intent.pointerId)
     ) {
       return;
     }
-    finishTrackedPointer(event.pointerId, "pointerout", event, { cancel: true });
+    finishTrackedPointer(intent.pointerId, "pointerout", intent, { cancel: true, controls });
   }
 
-  function onBridgeLostPointerCapture(event) {
-    if (state.iosDirectManipulationController?.handleLostPointerCapture(event)) return;
-    deletePenPolicyPointer(event.pointerId);
-    const pointer = activePointer(event.pointerId);
+  function onBridgeLostPointerCapture(intent, controls) {
+    if (state.iosDirectManipulationController?.handleLostPointerCapture(intent, controls)) return;
+    deletePenPolicyPointer(intent.pointerId);
+    const pointer = activePointer(intent.pointerId);
     if (!pointer || pointer.ending) {
       return;
     }
-    finishTrackedPointer(event.pointerId, "lostpointercapture", event, {
+    finishTrackedPointer(intent.pointerId, "lostpointercapture", intent, {
       cancel: true,
+      controls,
     });
   }
 
-  function onBridgeWindowBlur(event) {
-    if (event?.target !== window) {
+  function onBridgeWindowBlur(intent) {
+    if (intent?.targetRole !== "window") {
       return;
     }
     clearManualPointerSessions();
@@ -6788,8 +6735,8 @@
     }
   }
 
-  function onBridgePointerKeyDown(event) {
-    if (event.key === "Escape") {
+  function onBridgePointerKeyDown(intent) {
+    if (intent.key === "Escape") {
       for (const [pointerId, pointer] of activePointerEntries()) {
         if (pointer.button === 2) {
           finishTrackedPointer(pointerId, "escape", null, { cancel: true });

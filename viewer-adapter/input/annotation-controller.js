@@ -32,42 +32,40 @@
       this.onTransformCancel = onTransformCancel;
     }
 
-    pointerInteractionKind(event, target, {
+    pointerInteractionKind(intent, {
       interactionMode = "READ",
-      isTextLayerTarget = () => false,
-      isNativeContextTarget = () => false,
-      isViewerSurfaceTarget = () => false,
     } = {}) {
-      if (event.button === 0) {
-        if (target?.closest?.(".annotationEditorLayer")) return "editor";
+      if (intent.button === 0) {
+        if (intent.targetRole === "annotation-layer") return "editor";
         if (
           window.PdfReaderInputRuntime.InteractionMode.isTextSelectionMode(
             interactionMode,
-          ) && isTextLayerTarget(target)
+          ) && intent.targetRole === "text-layer"
         ) {
           return "text-selection";
         }
         return null;
       }
       if (
-        event.pointerType !== "mouse" ||
-        isNativeContextTarget(target) ||
-        !isViewerSurfaceTarget(target)
+        intent.pointerType !== "mouse" ||
+        intent.nativeContextTarget === true ||
+        ["text-control", "native-control", "outside-viewer"].includes(intent.targetRole) ||
+        !["viewer", "text-layer", "annotation-layer"].includes(intent.targetRole)
       ) {
         return null;
       }
-      if (event.button === 1) return "tool-wheel";
-      if (event.button === 2) return "right-eraser";
+      if (intent.button === 1) return "tool-wheel";
+      if (intent.button === 2) return "right-eraser";
       return null;
     }
 
-    nativeOperation(event, target) {
-      if (event.button !== 0 || !["mouse", "pen"].includes(event.pointerType)) {
+    nativeOperation(intent) {
+      if (intent.button !== 0 || !["mouse", "pen"].includes(intent.pointerType)) {
         return null;
       }
-      if (target?.closest?.(".resizer")) return "resize";
-      if (target?.closest?.(".draggable.selectedEditor")) return "move";
-      return null;
+      return ["move", "resize"].includes(intent.nativeOperation)
+        ? intent.nativeOperation
+        : null;
     }
 
     preparePenHighlight(pointer, { textLayer, page }) {

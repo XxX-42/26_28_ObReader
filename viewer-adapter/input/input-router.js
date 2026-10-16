@@ -20,14 +20,14 @@
   ]);
 
   class InputRouter {
-    constructor({ targetWindow, targetDocument, policy, onLegacyEvent }) {
-      if (!targetWindow || !targetDocument || !policy || !onLegacyEvent) {
-        throw new TypeError("InputRouter requires window, document, policy, and event adapter.");
+    constructor({ targetWindow, targetDocument, policy, onIntent }) {
+      if (!targetWindow || !targetDocument || !policy || !onIntent) {
+        throw new TypeError("InputRouter requires window, document, policy, and intent adapter.");
       }
       this.targetWindow = targetWindow;
       this.targetDocument = targetDocument;
       this.policy = policy;
-      this.onLegacyEvent = onLegacyEvent;
+      this.onIntent = onIntent;
       this.controller = null;
       this._activePointers = new Map();
       this._manualPointers = new Map();
@@ -70,6 +70,13 @@
           pointer.mode === 9 &&
           pointer.penTextSelectionGesture,
         );
+    }
+
+    eventControls(event) {
+      return Object.freeze({
+        preventDefault: () => event.preventDefault(),
+        stopImmediatePropagation: () => event.stopImmediatePropagation(),
+      });
     }
 
     capturePointer(pointerId, target) {
@@ -117,17 +124,17 @@
             event.stopImmediatePropagation();
             return;
           }
-          // Transitional adapter: the native event remains inside the input
-          // boundary closure and is never attached to InteractionIntent.
+          const controls = this.eventControls(event);
           this.policy.route(intent, (routedIntent) =>
-            this.onLegacyEvent(routedIntent, event),
+            this.onIntent(routedIntent, controls),
           );
         }, { capture: true, signal });
       }
       this.targetDocument.addEventListener("visibilitychange", (event) => {
         const intent = window.PdfReaderInputRuntime.createInteractionIntent(event);
+        const controls = this.eventControls(event);
         this.policy.route(intent, (routedIntent) =>
-          this.onLegacyEvent(routedIntent, event),
+          this.onIntent(routedIntent, controls),
         );
       }, { signal });
       return controller;
