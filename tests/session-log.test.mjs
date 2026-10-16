@@ -75,7 +75,7 @@ test('historical parts use numeric order and a final shutdown marks the session 
   f.files.set(prefix+'1000.log',JSON.stringify({kind:'session.end'})+'\n');
   await f.log.exportDiagnostic({schema:1},'Diagnostics/run.json',f.adapter.write);
   const json=JSON.parse(f.files.get('Diagnostics/run.json'));
-  assert.equal(json.runtimeLog.complete,true);assert.equal(json.runtimeLog.records[0].marker,'first');assert.equal(json.runtimeLog.records[1].kind,'session.end');
+  assert.equal(json.runtimeLog.complete,true);const marker=json.runtimeLog.records.findIndex(r=>r.marker==='first'),ended=json.runtimeLog.records.findIndex(r=>r.kind==='session.end');assert.ok(marker>=0);assert.equal(ended,marker+1);
   await f.log.close();
 });
 test('no-append Adapter writes one valid JSON file within the configured byte limit',async()=>{
@@ -124,6 +124,48 @@ test('default diagnostic JSON limit is 64 MB and accepts exports above the forme
   assert.ok(result.bytes<=64_000_000);assert.ok(Buffer.byteLength(text)<=64_000_000);
   assert.equal(json.runtimeLog.sizeOmittedRecordCount,0);
   assert.equal(json.runtimeLog.maxBytes,64_000_000);
+  await f.log.close();
+});
+test('current session chunks and errors take priority over large historical logs within the byte budget',async()=>{
+  const f=fixture({maxBuffered:2*1024*1024,partLimit:250});
+  const currentSession=f.log.path.split('/').at(-1).replace(/-\d{3}\.log$/,'');
+  f.log.record('function.error',{fn:'Current.first',error:{name:'Error',message:'current-first-error'}});
+  await f.log.flush();
+  f.log.record('user',{event:'click',marker:'current-middle'});
+  await f.log.flush();
+  f.log.record('function.error',{fn:'Current.latest',error:{name:'Error',message:'current-latest-error'}});
+  await f.log.flush();
+
+  const newerPrefix='.obsidian/plugins/test/.logs/2026-10-15T00-00-00-000Z-newer-';
+  const olderPrefix='.obsidian/plugins/test/.logs/2026-10-14T00-00-00-000Z-older-';
+  const history=Array.from({length:100},(_,index)=>JSON.stringify({
+    time:`2026-10-15T00:00:${String(index%60).padStart(2,'0')}.000Z`,
+    kind:'function.error',fn:`History.failure${index}`,
+    error:{name:'Error',message:`historical-error-${index}`},padding:'h'.repeat(1200),
+  })).join('\n')+'\n';
+  f.files.set(newerPrefix+'000.log',history);
+  f.files.set(olderPrefix+'000.log',JSON.stringify({kind:'performance',fn:'Old.performance',marker:'older-session'})+'\n');
+
+  const result=await f.log.exportDiagnostic({schema:1},'Diagnostics/priority.json',f.adapter.write,1024,80_000);
+  const text=f.files.get('Diagnostics/priority.json'),json=JSON.parse(text),sources=json.runtimeLog.sources;
+  const currentSources=sources.filter(source=>source.file.startsWith(`${currentSession}-`));
+  assert.deepEqual(currentSources.map(source=>Number(source.file.match(/-(\d+)\.log$/)[1])),[2,1,0]);
+  assert.ok(currentSources.every(source=>source.recordCount>0));
+  assert.deepEqual(currentSources.map(source=>source.recordOffset),[0,1,2]);
+  const historicalSources=sources.filter(source=>!source.file.startsWith(`${currentSession}-`));
+  assert.deepEqual(historicalSources.map(source=>source.file),[newerPrefix.split('/').at(-1)+'000.log',olderPrefix.split('/').at(-1)+'000.log']);
+  const records=json.runtimeLog.records;
+  const indexOf=predicate=>records.findIndex(predicate);
+  assert.ok(indexOf(row=>row.fn==='Current.latest')<indexOf(row=>row.marker==='current-middle'));
+  assert.ok(indexOf(row=>row.marker==='current-middle')<indexOf(row=>row.kind==='session.start'));
+  assert.ok(indexOf(row=>row.kind==='session.start')<indexOf(row=>row.fn==='Current.first'));
+  const groupedMessages=json.runtimeLog.errorAnalysis.grouped.map(row=>row.message);
+  assert.ok(groupedMessages.includes('current-first-error'));
+  assert.ok(groupedMessages.includes('current-latest-error'));
+  assert.ok(json.runtimeLog.sizeOmittedRecordCount>0);
+  assert.ok(result.bytes<=80_000);
+  assert.equal(result.bytes,Buffer.byteLength(text));
+  assert.equal(json.runtimeLog.maxBytes,80_000);
   await f.log.close();
 });
 test('malformed records and missing files produce valid JSON with explicit incomplete evidence',async()=>{

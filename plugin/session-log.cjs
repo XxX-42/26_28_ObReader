@@ -283,9 +283,16 @@ function createSessionLog({ adapter, directory, version, maxBuffered = 1024 * 10
       if (!/^\d{4}-\d{2}-\d{2}T[\w-]+-\d{3,}\.log$/.test(name)) return false;
       return !name.startsWith(`${session}-`) || Number(name.slice(session.length + 1, -4)) <= lastPart;
     }).sort((a, b) => {
-      const split = file => /^(.*)-(\d+)\.log$/.exec(file);
+      const split = file => {
+        const match = /^(.*)-(\d+)\.log$/.exec(file.slice(file.lastIndexOf("/") + 1));
+        return { session: match[1], part: Number(match[2]) };
+      };
       const left = split(a), right = split(b);
-      return left[1].localeCompare(right[1]) || Number(left[2]) - Number(right[2]);
+      const leftCurrent = left.session === session, rightCurrent = right.session === session;
+      if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+      if (leftCurrent) return right.part - left.part;
+      const sessionOrder = right.session.localeCompare(left.session);
+      return sessionOrder || left.part - right.part;
     });
     async function* chunks() {
       let chunk = "";

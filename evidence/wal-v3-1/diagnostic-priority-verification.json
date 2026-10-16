@@ -1,0 +1,16 @@
+{
+  "sessionLogTests": {
+    "tests": 19,
+    "pass": 19,
+    "fail": 0
+  },
+  "build": "pass",
+  "offline": "pass",
+  "nativeEvidenceDirectory": "/Users/jiajia/Documents/ObReader-Deployment-Backups/principles-edit-20261016-120556",
+  "currentSessionFirst": true,
+  "exportBytes": 62957239,
+  "limitBytes": 64000000,
+  "originalAnnotationsUnchanged": true,
+  "sourcePdfUnchanged": true,
+  "nativeEnvironment": "Mac Obsidian mobile emulation; not physical iPad"
+}

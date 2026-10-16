@@ -1,0 +1,33 @@
+✔ tracing preserves this, argument/return identity and original thrown error (57.657334ms)
+✔ visible JSON includes prior-session errors and current function records after Readers have closed (4.492125ms)
+✔ JSON error analysis highlights stack overflows with bounded save context and Worker stack (0.924417ms)
+✔ JSON snapshot seals its source part and cannot chase export-time events (0.835375ms)
+✔ records arriving during both flushes are retained for the next cutoff (0.740667ms)
+✔ historical parts use numeric order and a final shutdown marks the session ended (61.867834ms)
+✔ no-append Adapter writes one valid JSON file within the configured byte limit (2.89475ms)
+✔ large diagnostic exports compact high-frequency events and stay below 19.99 MB (24.675041ms)
+✔ diagnostic collection calls survive runtime-log compaction (2.111125ms)
+✔ default diagnostic JSON limit is 64 MB and accepts exports above the former 19.99 MB cap (747.18225ms)
+✔ current session chunks and errors take priority over large historical logs within the byte budget (6.897459ms)
+✔ malformed records and missing files produce valid JSON with explicit incomplete evidence (1.948208ms)
+✔ cross-window promises keep identity, time completion, and ignore overridden then (10.141ms)
+✔ diagnostic attachment failure cannot replace the original result (1.000083ms)
+✔ local log parts append without rereading the existing file, and rotate without deleting (1.40225ms)
+✔ adapters without append use new parts rather than rewriting a complete log (2.998375ms)
+PDF Reader local log write failed Error: disk full
+    at f.adapter.write (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:203:84)
+    at /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/plugin/session-log.cjs:67:38
+    at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:204:16)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+✔ one stalled writer does not enqueue unbounded flushes; overflow is explicit (47.142375ms)
+✔ write failure is reported and a later successful part records log loss (24.686417ms)
+✔ Viewer tracing keeps cross-window promises and synchronous drain removes the final batch (33.696667ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1796.557459
