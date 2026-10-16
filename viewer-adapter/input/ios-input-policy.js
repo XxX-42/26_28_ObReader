@@ -6,10 +6,12 @@
       documentRef = document,
       isAnnotationToolActive = () => false,
       hasActivePenEditorGesture = () => false,
+      stopNativeScroll = () => {},
     } = {}) {
       this.documentRef = documentRef;
       this.isAnnotationToolActive = isAnnotationToolActive;
       this.hasActivePenEditorGesture = hasActivePenEditorGesture;
+      this.stopNativeScroll = stopNativeScroll;
       this.fingerTextSelectionSuppressionOwned = false;
       this.lastTouchPanClickTarget = null;
       this.lastPenPanClickTarget = null;
@@ -18,9 +20,19 @@
     route(intent, forwardExistingBehavior, controls) {
       // The existing iPad event behavior remains the compatibility target in
       // this extraction-only stage; subsequent phases move its ownership here.
+      if (intent?.type === "pointerdown" && intent.pointerType === "pen" &&
+          !intent.nativeContextTarget &&
+          ["viewer", "text-layer", "annotation-layer"].includes(intent.targetRole) &&
+          (this.isAnnotationToolActive() || intent.nativeOperation != null)) {
+        this.stopNativeScroll();
+      }
       if (intent?.type === "touchstart") this.handleTouchStart(intent, controls);
       if (intent?.type === "touchmove") this.handleTouchMove(intent, controls);
       return forwardExistingBehavior(intent);
+    }
+
+    onToolChange() {
+      if (this.isAnnotationToolActive()) this.stopNativeScroll();
     }
 
     setFingerTextSelectionSuppressionOwned(owned) {
@@ -57,6 +69,12 @@
       return true;
     }
 
+    isEditingStylusContact(intent) {
+      return intent?.touchHasStylus === true && (
+        this.isAnnotationToolActive() || intent.nativeOperation != null
+      );
+    }
+
     handleTouchStart(intent, controls) {
       if (
         intent?.nativeContextTarget === true ||
@@ -64,12 +82,10 @@
       ) {
         return false;
       }
-      const activeEditorStylus = intent.touchHasStylus === true && (
-        this.isAnnotationToolActive() || intent.nativeOperation != null
-      );
-      if (!this.hasActivePenEditorGesture() && !activeEditorStylus) return false;
+      if (!this.hasActivePenEditorGesture() && !this.isEditingStylusContact(intent)) return false;
       // WebKit decides touch-action before pointerdown, so keep the legacy
       // Pencil-only cancellation while finger/read-mode Pencil stay native.
+      this.stopNativeScroll();
       controls?.preventDefault?.();
       return true;
     }
@@ -78,10 +94,12 @@
       if (
         intent?.nativeContextTarget === true ||
         !["viewer", "text-layer", "annotation-layer"].includes(intent?.targetRole) ||
-        !this.hasActivePenEditorGesture()
+        (!this.hasActivePenEditorGesture() && !this.isEditingStylusContact(intent))
       ) {
         return false;
       }
+      // Keep ownership across WebKit touch/pointer event ordering and
+      // pointercancel; an editing Pencil must not turn into native page pan.
       controls?.preventDefault?.();
       return true;
     }

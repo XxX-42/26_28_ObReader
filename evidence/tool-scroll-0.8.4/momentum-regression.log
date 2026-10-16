@@ -1,0 +1,34 @@
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (5.694708ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (1.9685ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (2.090458ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (2.037958ms)
+✔ InteractionIntent contains value data and no DOM target or native event (1.492959ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.553667ms)
+✔ TextSelectionController owns DOM selection and caret operations only (1.71425ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.208708ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (0.5015ms)
+✔ IOSInputPolicy owns finger text-selection suppression (1.215667ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (0.986291ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.627416ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (1.277083ms)
+✔ interaction modes expose only their intended controller owners (0.119375ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (3.860542ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (0.488625ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (0.857292ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (2.421333ms)
+✔ pan click suppression preserves native activation and double-click targets (0.556417ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (0.526625ms)
+✔ every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native (3.124584ms)
+✔ selecting a tool interrupts native momentum before Pencil input, without intercepting finger or mouse (0.519417ms)
+✔ native scroll interruption preserves position and restores all inline CSS, including on error (2.948417ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (2270.443916ms)
+ℹ {"momentumBeforeEraser":{"initial":149,"moving":151,"stopped":151,"later":151,"eraser":true}}
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":139,"scrollDeltaInkMode":149,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true,"activeToolTouchMovePrevented":true}}
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2561.55175

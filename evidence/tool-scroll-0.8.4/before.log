@@ -1,0 +1,31 @@
+✔ iOS policy owns finger selection suppression until explicit handoff (2.402458ms)
+✔ pan click suppression preserves native activation and double-click targets (0.528042ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (0.478417ms)
+✖ every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native (3.666542ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 126.023333
+
+✖ failing tests:
+
+test at tests/ios-input-policy.test.mjs:146:1
+✖ every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native (3.666542ms)
+  AssertionError [ERR_ASSERTION]: FreeText: handleTouchMove
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/ios-input-policy.test.mjs:170:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

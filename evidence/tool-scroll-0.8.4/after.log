@@ -1,0 +1,31 @@
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (5.872375ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (4.633584ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (4.387209ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (2.116708ms)
+✔ InteractionIntent contains value data and no DOM target or native event (1.425958ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.825333ms)
+✔ TextSelectionController owns DOM selection and caret operations only (1.5005ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.233917ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (0.674292ms)
+✔ IOSInputPolicy owns finger text-selection suppression (1.351708ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (1.3275ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.537375ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (1.256834ms)
+✔ interaction modes expose only their intended controller owners (0.131959ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (5.373542ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (0.569417ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (0.87625ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (4.671042ms)
+✔ pan click suppression preserves native activation and double-click targets (1.3245ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (0.853458ms)
+✔ every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native (4.897166ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (2445.999667ms)
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":138,"scrollDeltaInkMode":148,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true,"activeToolTouchMovePrevented":true}}
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2760.802375

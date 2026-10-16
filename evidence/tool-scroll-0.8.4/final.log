@@ -1,0 +1,70 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (5.561292ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (2.124459ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (5.034083ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (4.102791ms)
+✔ bulk history callbacks stop when their originating session is no longer current (2.447375ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (1.872959ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (1.621083ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (1.473167ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (2.662375ms)
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (7.936917ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (1.398333ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (4.33725ms)
+✔ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (14034.571541ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792129228074-21832.cleanup.json
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (11.073625ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (8.698416ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (9.475833ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (14.10275ms)
+✔ InteractionIntent contains value data and no DOM target or native event (2.851083ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (1.722875ms)
+✔ TextSelectionController owns DOM selection and caret operations only (3.210458ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.813917ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (1.045292ms)
+✔ IOSInputPolicy owns finger text-selection suppression (3.700709ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (2.323084ms)
+✔ bridge delegates top-level listener installation to InputRouter (2.692417ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (1.023917ms)
+✔ interaction modes expose only their intended controller owners (0.111417ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (5.168ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (1.150292ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (2.853333ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (3.887833ms)
+✔ pan click suppression preserves native activation and double-click targets (0.876292ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (0.774958ms)
+✔ every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native (8.167ms)
+✔ selecting a tool interrupts native momentum before Pencil input, without intercepting finger or mouse (1.529875ms)
+✔ native scroll interruption preserves position and restores all inline CSS, including on error (9.789583ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (5942.022209ms)
+ℹ {"momentumBeforeEraser":{"initial":168,"moving":170,"stopped":170,"later":170,"eraser":true}}
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":155,"scrollDeltaInkMode":168,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true,"activeToolTouchMovePrevented":true}}
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (893.583833ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (7.303084ms)
+✔ community release output is exactly the three installer assets (12.995375ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (321.684333ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (11.247042ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (9334.906416ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792129214707-21840.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792129214707-21840.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792129214707-21840.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792129214707-21840.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792129214707-21840.json
+✔ Pencil text selection owns a collapsed caret and validates an extended range (2.264667ms)
+✔ selection cleanup removes only the range still owned by the Pencil gesture (0.855666ms)
+✔ range extension stops on session loss or foreign selection ownership (0.7525ms)
+✔ TextSelectionController owns and cancels its pending Pencil session (0.622875ms)
+✔ caret results outside the target text layer never begin an owned selection (0.676333ms)
+ℹ tests 48
+ℹ suites 0
+ℹ pass 48
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14465.3245

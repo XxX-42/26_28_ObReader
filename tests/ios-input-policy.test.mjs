@@ -141,3 +141,103 @@ test("iOS touch policy cancels only active Pencil editing and palm arbitration",
   assert.equal(policy.refreshPenGestureTouchAction(), true);
   assert.deepEqual(toggled.at(-1), ["pdfReaderPenGestureActive", true]);
 });
+
+
+test("every Pencil tool blocks native pan before pointer tracking, while finger and read mode stay native", async () => {
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(await readFile(new URL("../viewer-adapter/input/interaction-mode.js", import.meta.url), "utf8"), { window: runtimeWindow });
+  const modes = runtimeWindow.PdfReaderInputRuntime.InteractionMode;
+  const { policy } = createPolicy();
+  let editorMode = 0;
+  let eraserActive = false;
+  policy.isAnnotationToolActive = () => modes.isToolActive(modes.resolve({ editorMode, eraserActive }));
+  // WKWebView may deliver touchmove before pointer bookkeeping, or after
+  // pointercancel. Tool ownership must not depend on that transient map.
+  policy.hasActivePenEditorGesture = () => false;
+  const cases = [
+    [3, false, null, "FreeText"], [5, false, null, "Square"],
+    [9, false, null, "Highlight"], [10, false, null, "Underline"],
+    [15, false, null, "Ink"], [17, false, null, "Eraser"],
+    [0, true, null, "temporary eraser"],
+    [0, false, "move", "object move"], [0, false, "resize", "object resize"],
+  ];
+  for (const [mode, erase, nativeOperation, label] of cases) {
+    editorMode = mode;
+    eraserActive = erase;
+    for (const method of ["handleTouchStart", "handleTouchMove"]) {
+      const intent = { targetRole: "annotation-layer", nativeContextTarget: false, touchHasStylus: true, nativeOperation };
+      const pen = controls();
+      assert.equal(policy[method](intent, pen.value), true, `${label}: ${method}`);
+      assert.equal(pen.prevented, true, `${label}: Pencil must not scroll`);
+      assert.equal(pen.stopped, false, "PDF.js still receives the edit gesture");
+      const finger = controls();
+      assert.equal(policy[method]({ ...intent, touchHasStylus: false }, finger.value), false);
+      assert.equal(finger.prevented, false, `${label}: finger keeps native pan`);
+      const control = controls();
+      assert.equal(policy[method]({ ...intent, nativeContextTarget: true }, control.value), false);
+    }
+  }
+  editorMode = 0;
+  eraserActive = false;
+  for (const method of ["handleTouchStart", "handleTouchMove"]) {
+    const pen = controls();
+    assert.equal(policy[method]({ targetRole: "viewer", touchHasStylus: true }, pen.value), false);
+    assert.equal(pen.prevented, false, "tool-free Pencil keeps native scrolling");
+  }
+});
+
+test("selecting a tool interrupts native momentum before Pencil input, without intercepting finger or mouse", () => {
+  const { policy } = createPolicy();
+  let active = false;
+  let interruptions = 0;
+  policy.isAnnotationToolActive = () => active;
+  policy.stopNativeScroll = () => interruptions++;
+  policy.onToolChange();
+  assert.equal(interruptions, 0);
+  active = true;
+  policy.onToolChange();
+  assert.equal(interruptions, 1, "cancel in-flight momentum when the tool is selected");
+  const intent = { type: "pointerdown", targetRole: "viewer", pointerType: "touch" };
+  const forward = () => {};
+  policy.route(intent, forward, controls().value);
+  policy.route({ ...intent, pointerType: "mouse" }, forward, controls().value);
+  assert.equal(interruptions, 1, "ordinary finger and mouse keep native paths");
+  policy.route({ ...intent, pointerType: "pen" }, forward, controls().value);
+  assert.equal(interruptions, 2, "new Pencil edit also interrupts scrolling resumed since tool selection");
+  active = false;
+  policy.route({ ...intent, pointerType: "pen" }, forward, controls().value);
+  assert.equal(interruptions, 2, "tool-free Pencil stays native");
+});
+
+test("native scroll interruption preserves position and restores all inline CSS, including on error", async () => {
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(await readFile(new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url), "utf8"), { window: runtimeWindow });
+  const viewport = new runtimeWindow.PdfReaderInputRuntime.ViewportController();
+  const values = new Map([["overflow", ["auto", ""]], ["scroll-behavior", ["smooth", "important"]]]);
+  let layouts = 0;
+  const positions = [];
+  const container = {
+    scrollTop: 137.5, scrollLeft: 22.5,
+    get clientWidth() { layouts++; return 800; },
+    style: {
+      getPropertyValue: (name) => values.get(name)?.[0] || "",
+      getPropertyPriority: (name) => values.get(name)?.[1] || "",
+      setProperty: (name, value, priority) => values.set(name, [value, priority]),
+      removeProperty: (name) => values.delete(name),
+    },
+    scrollTo(options) {
+      assert.deepEqual(values.get("overflow"), ["hidden", "important"]);
+      assert.deepEqual(values.get("scroll-behavior"), ["auto", "important"]);
+      positions.push(JSON.parse(JSON.stringify(options)));
+    },
+  };
+  assert.equal(viewport.interruptNativeScroll(container), true);
+  assert.deepEqual(positions, [{ top: 137.5, left: 22.5, behavior: "instant" }]);
+  assert.equal(layouts, 1);
+  assert.deepEqual(values.get("overflow"), ["auto", ""]);
+  assert.deepEqual(values.get("scroll-behavior"), ["smooth", "important"]);
+  container.scrollTo = () => { throw new Error("detached"); };
+  assert.throws(() => viewport.interruptNativeScroll(container), /detached/);
+  assert.deepEqual(values.get("overflow"), ["auto", ""]);
+  assert.deepEqual(values.get("scroll-behavior"), ["smooth", "important"]);
+});

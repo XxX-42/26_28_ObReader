@@ -1,0 +1,27 @@
+{
+  "version": "0.8.4",
+  "tests": {
+    "affected": {
+      "total": 48,
+      "pass": 48,
+      "fail": 0
+    },
+    "offline": "PASS",
+    "fullSuite": "not rerun for this narrow change; inherited0.8.3 failures retained"
+  },
+  "files": {
+    "main.js": {
+      "size": 7312485,
+      "sha256": "7ddfa971f231a093ce303a9f8fd8cca1b09ade2a925f001fbcc32c653d022dd3"
+    },
+    "manifest.json": {
+      "size": 269,
+      "sha256": "082ffc8da8aafc36ffb4e2af76798f9cf50644754d2c443a5ebde13095d49fd4"
+    },
+    "styles.css": {
+      "size": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  },
+  "zipSha256": "cdd631894c87abbaffeb7efcd55d06d71091950001c09775c38c9fcba838311f"
+}

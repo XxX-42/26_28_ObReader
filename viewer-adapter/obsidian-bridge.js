@@ -7088,6 +7088,9 @@
       ? new window.PdfReaderInputRuntime.IOSInputPolicy({
         documentRef: document,
         isAnnotationToolActive: annotationToolIsActive,
+        stopNativeScroll: () => state.viewportController?.interruptNativeScroll(
+          document.getElementById("viewerContainer"),
+        ),
         hasActivePenEditorGesture: () =>
           state.iosDirectManipulationController?.hasActivePenEditorGesture() === true,
       })
@@ -8969,6 +8972,7 @@
             cancelManualMomentum();
             invalidatePendingPenHighlight();
             state.editorMode = mode;
+            state.inputPolicy?.onToolChange?.();
             if (annotationToolIsActive()) {
               refreshFingerTextSelectionSuppression();
             } else {

@@ -249,6 +249,28 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
     assert.match(bridgeCss, /\.freeTextEditor \.internal\[contenteditable="true"\]:focus\s*\{\s*touch-action:\s*none/s,
       "Only a focused FreeText editing surface retains its direct-manipulation policy");
 
+    const momentumBeforeEraser = await viewer.evaluate(async () => {
+      const container = document.getElementById("viewerContainer");
+      const initial = container.scrollTop;
+      container.scrollTo({ top: initial + 500, behavior: "smooth" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const moving = container.scrollTop;
+      PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+        source: window, mode: 17, isFromKeyboard: true, createNewEditor: false,
+      });
+      const stopped = container.scrollTop;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return { initial, moving, stopped, later: container.scrollTop,
+        eraser: document.body.classList.contains("editorEraserMode") };
+    });
+    assert.ok(momentumBeforeEraser.moving > momentumBeforeEraser.initial &&
+      momentumBeforeEraser.moving < momentumBeforeEraser.initial + 500,
+      "the eraser is selected during an unfinished native scroll animation");
+    assert.equal(momentumBeforeEraser.eraser, true);
+    assert.ok(Math.abs(momentumBeforeEraser.later - momentumBeforeEraser.stopped) <= 1,
+      "selecting eraser interrupts in-flight native smooth scrolling before the next Pencil stroke");
+    t.diagnostic(JSON.stringify({ momentumBeforeEraser }));
+
     await viewer.evaluate(() => PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
       source: window, mode: 0, isFromKeyboard: true, createNewEditor: false,
     }));
@@ -278,7 +300,7 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
       source: window, mode: 15, isFromKeyboard: true, createNewEditor: false,
     }));
     await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 15, { timeout: 5_000 });
-    const activeToolTouchPrevented = await viewer.evaluate(() => {
+    const activeToolStylusGuard = await viewer.evaluate(() => {
       const target = document.querySelector('.page[data-page-number="1"] .annotationEditorLayer');
       const stylus = new Touch({ identifier: 100, target, clientX: 20, clientY: 20 });
       Object.defineProperty(stylus, "touchType", { value: "stylus" });
@@ -288,13 +310,22 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
         touches: { value: touchList }, changedTouches: { value: touchList },
       });
       target.dispatchEvent(activeToolStylus);
-      return activeToolStylus.defaultPrevented;
+      const move = new Event("touchmove", { bubbles: true, cancelable: true });
+      Object.defineProperties(move, {
+        touches: { value: touchList }, changedTouches: { value: touchList },
+      });
+      target.dispatchEvent(move);
+      return {
+        activeToolTouchPrevented: activeToolStylus.defaultPrevented,
+        activeToolTouchMovePrevented: move.defaultPrevented,
+      };
     });
-    const stylusGuard = { ...readModeStylusGuard, activeToolTouchPrevented };
+    const stylusGuard = { ...readModeStylusGuard, ...activeToolStylusGuard };
     assert.deepEqual(stylusGuard, {
       readModeTouchPrevented: false,
       readModePointerPrevented: false,
       activeToolTouchPrevented: true,
+      activeToolTouchMovePrevented: true,
       penGuardClassAfterReadPointer: false,
     }, "Read-mode Pencil stays browser-owned while active-tool stylus input retains the legacy guard");
 

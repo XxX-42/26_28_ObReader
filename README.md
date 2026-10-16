@@ -6,8 +6,10 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-Version **0.8.3** implements **WAL-Sidecar v3.1**, based on integration
+Version **0.8.4** implements **WAL-Sidecar v3.1**, based on integration
 `19d20f3`, with current-session-first diagnostics and browser-owned iPad finger / tool-free Pencil scrolling.
+0.8.4 stops native scrolling when selecting a tool or beginning a Pencil edit,
+including erasing; tool-free Pencil and finger scrolling remain browser-owned.
 0.8.3 isolates input ownership into platform policies/controllers while preserving
 0.8.2 browser-owned scrolling. The right-side menu can delete annotations on the
 current page or, after confirmation, all pages; both actions support undo/redo.

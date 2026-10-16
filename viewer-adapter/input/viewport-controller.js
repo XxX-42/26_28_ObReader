@@ -40,6 +40,29 @@
       this.momentum = null;
     }
 
+    interruptNativeScroll(container) {
+      if (!container?.style) return false;
+      const { scrollTop, scrollLeft } = container;
+      const properties = ["overflow", "scroll-behavior"];
+      const previous = properties.map((name) => [
+        name, container.style.getPropertyValue(name), container.style.getPropertyPriority(name),
+      ]);
+      try {
+        // End the native scroll animation before a new editing gesture. A
+        // same-position scroll alone may be ignored during WebKit momentum.
+        container.style.setProperty("scroll-behavior", "auto", "important");
+        container.style.setProperty("overflow", "hidden", "important");
+        void container.clientWidth;
+        container.scrollTo({ top: scrollTop, left: scrollLeft, behavior: "instant" });
+      } finally {
+        for (const [name, value, priority] of previous) {
+          if (value) container.style.setProperty(name, value, priority);
+          else container.style.removeProperty(name);
+        }
+      }
+      return true;
+    }
+
     eventTime(pointer, event, now = performance.now()) {
       const eventTime = event?.timeStamp;
       let time = Number.isFinite(eventTime) &&
