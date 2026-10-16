@@ -247,6 +247,128 @@ test("default WAL host saves and recovers all annotation kinds, reopens them, an
   reopenedHost.dispose();
 });
 
+test("an unverifiable annotation ledger leaves the PDF readable but read-only without changing stored data", async () => {
+  const { adapter, shared } = makeAdapter();
+  const app = makeApp(adapter);
+  const sourceBytes = new TextEncoder().encode("immutable PDF with a damaged annotation ledger");
+  const document = {
+    documentId: "unverifiable-ledger-document",
+    docKey: "0123456789ab",
+    sourcePath: "Books/damaged-ledger.pdf",
+    initialPath: "Books/damaged-ledger.pdf",
+    source: { sourceHash: hash(sourceBytes), pageCount: 1, orderedPageIdentities: ["ref:4 0 R"] },
+    legacyIdentities: [{ uuid: "must-not-hydrate", ref: "5 0 R", pageIndex: 0, kind: "Ink" }],
+    legacyIdentityScanComplete: true,
+    sourceMatch: "MATCH",
+    sourceMismatch: false,
+  };
+  let identityWrites = 0;
+  const corruptStore = {
+    sourceProtocol: "wal-sidecar-v3.2-jsonl",
+    async documentForPath() { return document; },
+    async registerDocument() { return document; },
+    async readDocument() {
+      throw Object.assign(new Error("WAL integrity check failed"), { code: "WAL_INTEGRITY_MISMATCH" });
+    },
+    async updateSourceIdentity() { identityWrites += 1; throw new Error("must remain read-only"); },
+  };
+  const events = [];
+  const host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    makeToken: () => "unverifiable-ledger-token",
+    deviceId: "unverifiable-ledger-device",
+    storeFactory: () => corruptStore,
+    log: (event, details) => events.push({ event, details }),
+  });
+  const view = makeView(app, "Books/damaged-ledger.pdf", sourceBytes);
+  const snapshot = await host.initializeView(view, view.sourceBytes);
+
+  assert.equal(snapshot.documentId, document.documentId);
+  assert.deepEqual(snapshot.annotations, []);
+  assert.deepEqual(snapshot.legacyIdentities, [], "unverified identities must not suppress PDF annotations");
+  assert.equal(snapshot.syncPending, true);
+  assert.equal(view.annotationHydrationAllowed, false);
+  assert.equal(view.annotationSyncPending, true);
+  assert.match(view.lastStatus, /PDF 已只读打开/);
+  assert.ok(events.some(({ event, details }) => event === "annotation-snapshot-unavailable" &&
+    details.code === "WAL_INTEGRITY_MISMATCH"));
+
+  await host.handleMessage(view, {
+    type: "annotation-source-identity",
+    documentId: view.documentId,
+    openRequest: view.openRequest,
+    pageCount: 1,
+    orderedPageIdentities: ["ref:4 0 R"],
+  });
+  assert.equal(identityWrites, 0, "the source identity handshake must not write through an unverified ledger");
+  assert.deepEqual(new Uint8Array(app.vault.bytesByPath.get("Books/damaged-ledger.pdf")), sourceBytes);
+  assert.equal(shared.files.size, 0, "the invalid ledger is retained and no replacement state is written");
+  host.dispose();
+});
+
+test("an identity-index failure does not block reading the immutable PDF or create a replacement identity", async () => {
+  const { adapter, shared } = makeAdapter();
+  const app = makeApp(adapter);
+  const sourceBytes = new TextEncoder().encode("source remains readable while identity recovery is pending");
+  let registerCalls = 0;
+  const invalidStore = {
+    sourceProtocol: "wal-sidecar-v3.2-jsonl",
+    async documentForPath() {
+      throw Object.assign(new Error("incomplete synchronized WAL"), { code: "WAL_SYNC_PENDING" });
+    },
+    async registerDocument() { registerCalls += 1; throw new Error("must not create a replacement identity"); },
+  };
+  const events = [];
+  const host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    makeToken: (() => { let serial = 0; return () => `read-only-${++serial}`; })(),
+    deviceId: "identity-read-only-device",
+    storeFactory: () => invalidStore,
+    log: (event, details) => events.push({ event, details }),
+  });
+  const view = makeView(app, "Books/pending-identity.pdf", sourceBytes);
+  const snapshot = await host.initializeView(view, view.sourceBytes);
+
+  assert.match(snapshot.documentId, /^unverified:/);
+  assert.deepEqual(snapshot.annotations, []);
+  assert.equal(snapshot.syncPending, true);
+  assert.equal(view.annotationHydrationAllowed, false);
+  assert.equal(view.annotationStorageUnavailable, true);
+  assert.match(view.lastStatus, /PDF 已只读打开/);
+  assert.equal(registerCalls, 0, "an unreadable registry/WAL must not create a second persistent identity");
+  assert.deepEqual(new Uint8Array(app.vault.bytesByPath.get("Books/pending-identity.pdf")), sourceBytes);
+  assert.equal(shared.files.size, 0);
+  assert.ok(events.some(({ event, details }) => event === "annotation-storage-unavailable" &&
+    details.code === "WAL_SYNC_PENDING"));
+  host.dispose();
+});
+
+test("a storage-unavailable Reader remains read-only if a later notice clears the sync-pending flag", async () => {
+  const { adapter, shared } = makeAdapter();
+  const app = makeApp(adapter);
+  const host = makeHost(app, "storage-unavailable-device", true);
+  const view = makeView(app, "Books/storage-unavailable.pdf");
+  await initializeAndConfirm(host, view);
+  view.annotationStorageUnavailable = true;
+  view.annotationSyncPending = false;
+  const writesBefore = shared.writes.length;
+
+  await host.handleMessage(view, {
+    type: "save", documentId: view.documentId, openRequest: view.openRequest,
+    requestId: "blocked-unverified-storage", revision: 1,
+    operations: [{ uuid: "must-not-write", kind: "Ink", pageIndex: 0, deleted: false,
+      payload: { editor: { type: "ink", paths: [{ points: [1, 2] }] } } }],
+  });
+
+  assert.equal(view.messages.at(-1)?.type, "error");
+  assert.equal(view.messages.at(-1)?.code, "PDF_ANNOTATION_STORAGE_UNAVAILABLE");
+  assert.equal(shared.writes.length, writesBefore, "clearing sync-pending must not re-enable writes for an unverified store");
+  assert.equal(view.annotationHydrationAllowed, true, "the rejection comes from storage verification, not weakened payload validation");
+  host.dispose();
+});
+
 test("v3.2 host saves a batch with one portable append and leaves the source PDF untouched", async () => {
   const { adapter, shared } = makeAdapter();
   const app = makeApp(adapter);

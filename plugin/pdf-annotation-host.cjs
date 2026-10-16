@@ -213,19 +213,54 @@ function createPdfAnnotationHost({
     if (!file || typeof file.path !== "string") throw codedError("PDF_ANNOTATION_SOURCE_MISSING", "The source PDF is no longer available.");
     const sourcePath = normalizePath(file.path);
     const source = sourceMetadata(bytes, file, hashRuntime, sourcePath);
-    const prior = await store.documentForPath(sourcePath);
+    let prior;
+    let registered;
     let sourceHashCompatMatch = false;
-    if (prior?.source?.sourceHash && prior.source.sourceHash !== source.sourceHash &&
-        typeof hashRuntime.matches === "function" && hashRuntime.matches(bytes, prior.source.sourceHash)) {
-      // A previous build may have recorded SHA-256 while this runtime now
-      // prefers XXH64. Verify the old algorithm against the actual bytes and
-      // retain that trusted revision so the format transition cannot look
-      // like a false external modification.
-      source.sourceHash = prior.source.sourceHash;
-      source.fastHash = prior.source.sourceHash;
-      sourceHashCompatMatch = true;
+    try {
+      prior = await store.documentForPath(sourcePath);
+      if (prior?.source?.sourceHash && prior.source.sourceHash !== source.sourceHash &&
+          typeof hashRuntime.matches === "function" && hashRuntime.matches(bytes, prior.source.sourceHash)) {
+        // A previous build may have recorded SHA-256 while this runtime now
+        // prefers XXH64. Verify the old algorithm against the actual bytes and
+        // retain that trusted revision so the format transition cannot look
+        // like a false external modification.
+        source.sourceHash = prior.source.sourceHash;
+        source.fastHash = prior.source.sourceHash;
+        sourceHashCompatMatch = true;
+      }
+      registered = await store.registerDocument({ sourcePath, source });
+    } catch (error) {
+      // Identity collisions, incomplete Sync shards, and corrupt metadata are
+      // annotation-store failures, not PDF decode failures. Give this open
+      // attempt an ephemeral non-persistent identity so the immutable source
+      // remains readable. It is deliberately unusable for annotation writes.
+      const fallbackDocument = prior || {
+        documentId: `unverified:${makeToken()}`,
+        docKey: `unverified-${makeToken()}`,
+        sourcePath,
+        initialPath: sourcePath,
+        source,
+        legacyIdentities: [],
+        legacyIdentityScanComplete: false,
+      };
+      const snapshot = emptySnapshot(fallbackDocument, source);
+      snapshot.legacyIdentities = [];
+      snapshot.syncPending = true;
+      view.annotationDocument = fallbackDocument;
+      view.annotationLegacyIdentityUncertain = false;
+      view.annotationSourceHash = source.sourceHash;
+      view.annotationSourceMismatch = false;
+      view.annotationHydrationAllowed = false;
+      view.annotationSyncPending = true;
+      view.annotationSnapshot = snapshot;
+      view.annotationStorageUnavailable = true;
+      view.setStatus?.("外置批注数据无法验证；PDF 已只读打开，批注数据保留且未应用。修复同步数据后重新打开。", true);
+      log("annotation-storage-unavailable", {
+        path: sourcePath,
+        code: error?.code || "ANNOTATION_STORAGE_UNAVAILABLE",
+      });
+      return snapshot;
     }
-    const registered = await store.registerDocument({ sourcePath, source });
     let currentDocument = registered;
     let legacyIdentityScanUncertain = registered.sourceMismatch === true;
     let inspectedLegacyTombstones = [];
@@ -336,14 +371,34 @@ function createPdfAnnotationHost({
     // Source mismatch is a hard read-only boundary. readDocument() may replay,
     // materialize checkpoints, update ACKs and run GC; do not let an untrusted
     // source revision alter recovery state that belongs to the prior PDF.
-    const snapshot = registered.sourceMismatch
-      ? emptySnapshot(currentDocument, source)
-      : await readSnapshot(currentDocument);
+    let snapshotReadError = null;
+    let snapshot;
+    if (registered.sourceMismatch) {
+      snapshot = emptySnapshot(currentDocument, source);
+    } else {
+      try {
+        snapshot = await readSnapshot(currentDocument);
+      } catch (error) {
+        // A broken or partially migrated annotation ledger must not make the
+        // immutable PDF unreadable. Keep every source record untouched, show
+        // no unverified annotations, and leave this view read-only until the
+        // ledger can be verified again.
+        snapshotReadError = error;
+        snapshot = emptySnapshot(currentDocument, source);
+        snapshot.legacyIdentities = [];
+        snapshot.syncPending = true;
+        log("annotation-snapshot-unavailable", {
+          documentId: currentDocument.documentId,
+          path: sourcePath,
+          code: error?.code || "ANNOTATION_SNAPSHOT_UNAVAILABLE",
+        });
+      }
+    }
     const hasStoredPageIdentity = Number.isSafeInteger(registered.source.pageCount) &&
       Array.isArray(registered.source.orderedPageIdentities) &&
       registered.source.orderedPageIdentities.length === registered.source.pageCount;
     const hydrationAllowed = ["MATCH", "BASELINE_ESTABLISHED"].includes(registered.sourceMatch) &&
-      !registered.sourceMismatch && hasStoredPageIdentity;
+      !registered.sourceMismatch && !snapshotReadError && hasStoredPageIdentity;
     view.annotationDocument = currentDocument;
     view.annotationLegacyIdentityUncertain = legacyIdentityScanUncertain;
     view.annotationSourceHash = source.sourceHash;
@@ -351,6 +406,10 @@ function createPdfAnnotationHost({
     view.annotationHydrationAllowed = hydrationAllowed;
     view.annotationSnapshot = snapshot;
     updateSyncStatus(view, snapshot);
+    if (snapshotReadError) {
+      view.annotationStorageUnavailable = true;
+      view.setStatus?.("外置批注数据无法验证；PDF 已只读打开，批注数据保留且未应用。修复同步数据后重新打开。", true);
+    }
     if (appendedLegacyTombstones) broadcastSnapshot(currentDocument, snapshot, view);
     if (legacyIdentityScanUncertain) {
       view.setStatus?.(registered.sourceMismatch
@@ -373,7 +432,8 @@ function createPdfAnnotationHost({
     });
     if (hydrationAllowed) return snapshot;
     const provisional = emptySnapshot(currentDocument, source);
-    if (registered.sourceMismatch) provisional.legacyIdentities = [];
+    if (registered.sourceMismatch || snapshotReadError) provisional.legacyIdentities = [];
+    if (snapshotReadError) provisional.syncPending = true;
     return provisional;
   }
 
@@ -427,6 +487,13 @@ function createPdfAnnotationHost({
       log("annotation-page-identity-unavailable", { documentId: doc.documentId, pageCount });
       return;
     }
+    if (view.annotationSyncPending === true) {
+      // Do not mutate source metadata or enable editing while the annotation
+      // records themselves are unverified. A later reopen can retry the full
+      // identity handshake after Sync has delivered a complete ledger.
+      view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
+      return;
+    }
     const identityInput = {
       document: doc,
       sourceHash: view.annotationSourceHash,
@@ -435,7 +502,21 @@ function createPdfAnnotationHost({
     };
     if (pageCount !== null) identityInput.pageCount = pageCount;
     if (identities) identityInput.orderedPageIdentities = identities;
-    const result = await store.updateSourceIdentity(identityInput);
+    let result;
+    try {
+      result = await store.updateSourceIdentity(identityInput);
+    } catch (error) {
+      view.annotationSyncPending = true;
+      view.annotationHydrationAllowed = false;
+      view.annotationStorageUnavailable = true;
+      view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
+      view.setStatus?.("外置批注数据无法验证；PDF 保持只读，批注数据未修改。修复同步数据后重新打开。", true);
+      log("annotation-source-identity-confirm-failed", {
+        documentId: doc.documentId,
+        code: error?.code || "ANNOTATION_SNAPSHOT_UNAVAILABLE",
+      });
+      return;
+    }
     if (result.sourceMismatch || !["MATCH", "BASELINE_ESTABLISHED"].includes(result.sourceMatch)) {
       view.annotationSourceMismatch = true;
       view.annotationHydrationAllowed = false;
@@ -455,8 +536,23 @@ function createPdfAnnotationHost({
     view.annotationHydrationAllowed = true;
     view.annotationSourceMismatch = false;
     view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
-    const snapshot = await readSnapshot(result.document);
+    let snapshot;
+    try {
+      snapshot = await readSnapshot(result.document);
+    } catch (error) {
+      view.annotationSyncPending = true;
+      view.annotationHydrationAllowed = false;
+      view.annotationStorageUnavailable = true;
+      view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
+      view.setStatus?.("外置批注数据无法验证；PDF 保持只读，批注数据未修改。修复同步数据后重新打开。", true);
+      log("annotation-source-identity-confirm-failed", {
+        documentId: doc.documentId,
+        code: error?.code || "ANNOTATION_SNAPSHOT_UNAVAILABLE",
+      });
+      return;
+    }
     view.annotationSnapshot = snapshot;
+    view.annotationStorageUnavailable = false;
     updateSyncStatus(view, snapshot);
     const states = sourceStates.get(doc.documentId);
     if (states) states.document = result.document;
@@ -690,7 +786,8 @@ function createPdfAnnotationHost({
         openRequest: view.openRequest,
         externalAnnotations: snapshot,
         sourceMatch: "MATCH",
-        readOnly: view.annotationLegacyIdentityUncertain === true || view.annotationSyncPending === true,
+        readOnly: view.annotationLegacyIdentityUncertain === true ||
+          view.annotationSyncPending === true || view.annotationStorageUnavailable === true,
       });
     }
   }
@@ -882,6 +979,9 @@ function createPdfAnnotationHost({
     if (view.annotationSyncPending === true) {
       throw codedError("PDF_ANNOTATION_SYNC_PENDING", "Annotation history is still syncing; editing is paused until its referenced batches arrive.");
     }
+    if (view.annotationStorageUnavailable === true) {
+      throw codedError("PDF_ANNOTATION_STORAGE_UNAVAILABLE", "Annotation storage is not verified for this Reader session; reopen after Sync completes before editing.");
+    }
   }
 
   function normalizeOperations(input, actorId, createClock) {
@@ -999,6 +1099,10 @@ function now() { return globalThis.performance?.now?.() ?? Date.now(); }
 function updateSyncStatus(view, snapshot) {
   const wasPending = view.annotationSyncPending === true;
   view.annotationSyncPending = snapshot.syncPending === true;
+  if (view.annotationStorageUnavailable === true) {
+    view.setStatus?.("外置批注数据无法验证；PDF 已只读打开，批注数据保留且未应用。修复同步数据后重新打开。", true);
+    return;
+  }
   if (view.annotationSyncPending) {
     view.setStatus?.("批注同步尚未完整到达；当前显示最后一个已验证检查点并暂时只读，收到同步文件后会自动重试。", true);
   } else if (snapshot.retiredDeviceWrites?.length) {

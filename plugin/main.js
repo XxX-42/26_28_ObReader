@@ -1170,6 +1170,8 @@ class PdfReaderView extends EditableFileView {
     this.annotationSyncState = null;
     this.annotationDocument = null;
     this.annotationHydrationAllowed = false;
+    this.annotationSyncPending = false;
+    this.annotationStorageUnavailable = false;
     this.currentRevision = 0;
     this.confirmedRevision = 0;
     this.latestRecoveryDraft = null;
@@ -2142,6 +2144,8 @@ class PdfReaderView extends EditableFileView {
       this.annotationSyncState = null;
       this.annotationHydrationAllowed = false;
       this.annotationSourceMismatch = false;
+      this.annotationSyncPending = false;
+      this.annotationStorageUnavailable = false;
       this.preparedClose = null;
       this.closePreparation = null;
       this.currentRevision = 0;
@@ -2182,11 +2186,15 @@ class PdfReaderView extends EditableFileView {
       this.pendingBytes = bytes;
       this.pendingOpenState = null;
       this.lastOpenSentRequest = null;
-      this.setStatus(this.annotationLegacyIdentityUncertain
-        ? (this.annotationSourceMismatch
-          ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
-          : "检测到旧版 PDF 批注，但无法验证其身份；已进入只读模式，原 PDF 未修改。")
-        : `正在打开：${file.path}`);
+      this.setStatus(this.annotationStorageUnavailable
+        ? "外置批注数据无法验证；PDF 已只读打开，批注数据保留且未应用。修复同步数据后重新打开。"
+        : this.annotationSyncPending
+          ? "批注同步尚未完整到达；PDF 暂以只读模式打开，收到完整同步数据后重新打开。"
+          : this.annotationLegacyIdentityUncertain
+            ? (this.annotationSourceMismatch
+              ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
+              : "检测到旧版 PDF 批注，但无法验证其身份；已进入只读模式，原 PDF 未修改。")
+            : `正在打开：${file.path}`);
       if (this.ready) this.sendPendingDocument();
     } catch (error) {
       if (request === this.openRequest) {

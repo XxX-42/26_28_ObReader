@@ -946,6 +946,16 @@
     return true;
   }
 
+  function applyManagedBulkDelete(plan, deleted, { advanceRevision = false } = {}) {
+    const targets = [...(plan?.targets?.values?.() || [])];
+    if (!targets.length) return false;
+    // Live PDF.js editors also need the owner-side tombstone guard. Their
+    // remove() event can be followed by a stale AnnotationStorage/editor
+    // snapshot; guarding only sidecar-only rows lets that snapshot re-emit an
+    // upsert after the user's explicit bulk delete.
+    return applySidecarBulkDelete(targets, deleted, { advanceRevision });
+  }
+
   function addSidecarBulkDeleteUndoCommand(manager, targets, isCurrent = null) {
     if (!targets.length) return false;
     const records = targets.map((target) => ({ ...target }));
@@ -1007,27 +1017,18 @@
         showStatus("请结束当前批注或文字输入后，再删除批注。");
         return false;
       }
-      if (plan.liveEditors.length && plan.sidecarOnly.length) {
-        const records = plan.sidecarOnly.map((target) => ({ ...target }));
+      if (plan.liveEditors.length) {
         const isCurrent = () => isCurrentBulkDeleteSession(session);
         const deleted = await state.annotationController?.deleteEditors(plan.liveEditors, {
           onDelete: ({ redo }) => {
             if (!isCurrent()) return;
-            applySidecarBulkDelete(records, true, { advanceRevision: redo === true });
+            applyManagedBulkDelete(plan, true, { advanceRevision: redo === true });
           },
           onRestore: () => {
             if (!isCurrent()) return;
-            applySidecarBulkDelete(records, false, { advanceRevision: true });
+            applyManagedBulkDelete(plan, false, { advanceRevision: true });
           },
           isCurrent,
-        }) || 0;
-        if (state.disposed || !isCurrentBulkDeleteSession(session)) return false;
-        if (deleted !== plan.liveEditors.length) {
-          throw new Error("当前批注未能进入安全删除状态，未删除任何已加载批注。");
-        }
-      } else if (plan.liveEditors.length) {
-        const deleted = await state.annotationController?.deleteEditors(plan.liveEditors, {
-          isCurrent: () => isCurrentBulkDeleteSession(session),
         }) || 0;
         if (state.disposed || !isCurrentBulkDeleteSession(session)) return false;
         if (deleted !== plan.liveEditors.length) {

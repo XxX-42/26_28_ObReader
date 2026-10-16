@@ -360,6 +360,61 @@ test("a stale live snapshot cannot replace a pending bulk tombstone with an upse
   assert.equal(result.annotationOperations[0].revision, 9);
 });
 
+test("bulk delete guards every live and sidecar target with the same tombstone", () => {
+  const result = vm.runInNewContext(`(() => {
+    const state = {
+      revision: 4, app: null, annotationOperations: [], externalAnnotationRows: new Map(),
+      dirtyAnnotationRevisions: new Map(), dirtyPageRevisions: new Map(),
+      dirtyNewAnnotationIds: new Set(), dirtyDeletedAnnotationIds: new Set(),
+      pendingBulkDeletedUuids: new Set(), annotationUuidByPdfRef: new Map(),
+      annotationSnapshot: new Map(), restoredSavedAnnotations: new Map(),
+    };
+    let clock = 20;
+    function pdfAnnotationRefKey(ref) { return String(ref); }
+    function createManagedAnnotationOperation(target, deleted) {
+      const timestamp = ++clock;
+      return { uuid: target.uuid, pageIndex: target.pageIndex, kind: target.kind,
+        deleted, action: deleted ? "delete" : "upsert", timestamp,
+        logical: timestamp, deviceId: "device", operationId: "op-" + timestamp };
+    }
+    function markDirtyAnnotation(uuid, pageIndex, action, revision) {
+      state.dirtyAnnotationRevisions.set(uuid, revision);
+      state.dirtyPageRevisions.set(pageIndex, revision);
+      if (action === "delete") state.dirtyDeletedAnnotationIds.add(uuid);
+    }
+    function replaceAnnotationOperation(operation, revision) {
+      state.annotationOperations = state.annotationOperations.filter((entry) => entry.operation.uuid !== operation.uuid);
+      state.annotationOperations.push({ revision, operation });
+      markDirtyAnnotation(operation.uuid, operation.pageIndex, operation.deleted ? "delete" : "upsert", revision);
+    }
+    function syncBridgeControls() {}
+    function noteMutation() { state.revision += 1; }
+    function getAnnotationStorageRows() {
+      return new Map([
+        ["runtime-live", { uuid: "live-editor", pageIndex: 1, kind: "Ink", signature: "stale-live" }],
+        ["runtime-sidecar", { uuid: "sidecar-only", pageIndex: 2, kind: "Highlight", signature: "stale-sidecar" }],
+      ]);
+    }
+    function makeSyncStamp() { throw new Error("stale snapshots must not emit operations"); }
+    function normalizeSyncKind(kind) { return kind; }
+    const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink", "Highlight"]);
+    ${extractFunction("applySidecarBulkDelete")}
+    ${extractFunction("applyManagedBulkDelete")}
+    ${extractFunction("refreshAnnotationOperations")}
+    const plan = { targets: new Map([
+      ["live-editor", { uuid: "live-editor", pageIndex: 1, kind: "Ink", editorPayload: { paths: [1] } }],
+      ["sidecar-only", { uuid: "sidecar-only", pageIndex: 2, kind: "Highlight", editorPayload: { rect: [1, 2, 3, 4] } }],
+    ]), liveEditors: [{}], sidecarOnly: [] };
+    applyManagedBulkDelete(plan, true);
+    refreshAnnotationOperations(state.revision + 1);
+    return state;
+  })()`);
+  assert.deepEqual([...result.pendingBulkDeletedUuids].sort(), ["live-editor", "sidecar-only"]);
+  assert.equal(result.annotationOperations.filter(({ operation }) => operation.action === "delete").length, 2);
+  assert.equal(result.externalAnnotationRows.get("live-editor").deleted, true);
+  assert.equal(result.externalAnnotationRows.get("sidecar-only").deleted, true);
+});
+
 test("only the acknowledged delete revision releases the local bulk tombstone guard", () => {
   const result = vm.runInNewContext(`(() => {
     const state = { dirtyAnnotationRevisions: new Map([["deleted", 12]]),
