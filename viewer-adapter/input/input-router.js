@@ -62,6 +62,16 @@
     clearManualPointers() { this._manualPointers.clear(); }
     clearPenPolicyPointers() { this._penPolicyPointers.clear(); }
 
+    shouldSuppressPenCompatibilityMouse(type) {
+      return ["mousedown", "mousemove", "mouseup"].includes(type) &&
+        this.activePointerValues().some((pointer) =>
+          pointer.pointerType === "pen" &&
+          pointer.kind === "text-selection" &&
+          pointer.mode === 9 &&
+          pointer.penTextSelectionGesture,
+        );
+    }
+
     capturePointer(pointerId, target) {
       if (!target?.setPointerCapture) return false;
       try {
@@ -102,6 +112,11 @@
       for (const type of WINDOW_EVENTS) {
         this.targetWindow.addEventListener(type, (event) => {
           const intent = window.PdfReaderInputRuntime.createInteractionIntent(event);
+          if (this.shouldSuppressPenCompatibilityMouse(intent.type)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+          }
           // Transitional adapter: the native event remains inside the input
           // boundary closure and is never attached to InteractionIntent.
           this.policy.route(intent, (routedIntent) =>

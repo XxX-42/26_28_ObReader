@@ -6384,17 +6384,6 @@
     return updated;
   }
 
-  function onBridgePenTextCompatibilityMouse(event) {
-    if (activePointerValues().some((pointer) =>
-      pointer.pointerType === "pen" &&
-      pointer.kind === "text-selection" &&
-      pointer.mode === 9 &&
-      pointer.penTextSelectionGesture
-    )) {
-      stopDirectManipulationEvent(event);
-    }
-  }
-
   function hasOtherActivePenPointer(pointer) {
     return activePointerValues().some((candidate) =>
       candidate !== pointer &&
@@ -6725,9 +6714,6 @@
       ["pointermove", onBridgePointerMove],
       ["pointerup", onBridgePointerEnd],
       ["pointercancel", onBridgePointerEnd],
-      ["mousedown", onBridgePenTextCompatibilityMouse],
-      ["mousemove", onBridgePenTextCompatibilityMouse],
-      ["mouseup", onBridgePenTextCompatibilityMouse],
       ["pointerout", onBridgePointerOut],
       ["lostpointercapture", onBridgeLostPointerCapture],
       ["wheel", onBridgeWheel],

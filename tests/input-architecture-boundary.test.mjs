@@ -37,6 +37,11 @@ test("InputRouter owns event subscriptions without reaching into PDF or persiste
   ]) {
     assert.ok(router.includes(ownershipApi), `InputRouter must own ${ownershipApi}`);
   }
+  assert.match(router, /shouldSuppressPenCompatibilityMouse/);
+  assert.doesNotMatch(
+    await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8"),
+    /onBridgePenTextCompatibilityMouse/,
+  );
 });
 
 test("InputRouter owns pointer sessions and releases capture during teardown", async () => {
@@ -85,6 +90,60 @@ test("InputRouter owns pointer sessions and releases capture during teardown", a
   assert.equal(router.penPolicyPointerCount, 0);
   assert.equal(router.hasPointerCapture(7), false);
   assert.equal(released, 1);
+});
+
+test("InputRouter suppresses only mouse events synthesized during Pencil text highlighting", async () => {
+  const listeners = new Map();
+  const targetWindow = {
+    addEventListener(type, callback) { listeners.set(type, callback); },
+  };
+  const targetDocument = { addEventListener() {} };
+  const runtimeWindow = {
+    PdfReaderInputRuntime: {
+      createInteractionIntent: (event) => Object.freeze({ type: event.type }),
+    },
+  };
+  vm.runInNewContext(await source("input-router.js"), {
+    window: runtimeWindow,
+    AbortController,
+  });
+  const dispatched = [];
+  const router = new runtimeWindow.PdfReaderInputRuntime.InputRouter({
+    targetWindow,
+    targetDocument,
+    policy: { route: (_intent, forward) => forward(_intent) },
+    onLegacyEvent: (_intent, event) => dispatched.push(event.type),
+  });
+  router.start();
+  router.setActivePointer(9, {
+    pointerId: 9,
+    pointerType: "pen",
+    kind: "text-selection",
+    mode: 9,
+    penTextSelectionGesture: true,
+  });
+  let prevented = false;
+  let stopped = false;
+  listeners.get("mousedown")({
+    type: "mousedown",
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() { stopped = true; },
+  });
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.deepEqual(dispatched, []);
+
+  listeners.get("wheel")({ type: "wheel" });
+  assert.deepEqual(dispatched, ["wheel"], "ordinary input still reaches the adapter");
+  router.deleteActivePointer(9);
+  listeners.get("mouseup")({
+    type: "mouseup",
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() { stopped = true; },
+  });
+  assert.deepEqual(dispatched, ["wheel", "mouseup"],
+    "ordinary mouse events are forwarded when no Pencil text gesture owns them");
+  router.stop();
 });
 
 test("InteractionIntent contains value data and no DOM target or native event", async () => {
