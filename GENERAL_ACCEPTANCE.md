@@ -1,5 +1,7 @@
 # 0.9.0 JSONL WAL integration — candidate built, release gate not passed (2026-10-17)
 
+Historical candidate and evidence ZIPs referenced in this record have been removed from the repository tree and preserved in an external, checksum-verified archive. Their names and hashes below are historical records; the ZIP files are no longer downloadable from this Git repository.
+
 This section records the integration of local 0.8.9 commit
 `8ed2f81bba4b21a1b2591e8f24b1fa5cb18df16b` with
 `codex/wal-v3.2-jsonl` commit
@@ -497,7 +499,7 @@ Mac 端 `.recovery` 当前只有两份旧文件，已原样归档并校验；新
 冻结核心回归 **114/114**、资源与打包回归 **46/46** 已通过。前一冻结构建的离线五工具及保存重开退出 **0**；最终构建完成五工具与保存重开断言，脚本因 Chrome 必须强制清理退出 **1**，不称正常通过。独立库最终可信 pen 用例连续四轮分别写入 **4／8／12／16** 条批注，修订 **11／22／33／44** 与宿主确认一致；只有 **4** 次 prepareLocal，实际关闭按钮完成关闭，新 Reader 重开保留全部 **12 Ink＋4 InkHighlight**，退出 **0**。桌面／移动模拟各自未编辑、编辑后、故障写入恢复共六项真实关闭按钮测试通过，退出 **0**。两份完整成功驱动均恢复 desktop、Reader／view 为 0。先前的 SDK detach 异步清理前置断言、键盘请求早于笔迹提交完成的观察错误，以及所有产品失败均保留原证据，不重标成功。受影响自动保存浏览器回归 **1/1**（54.565s），持有 ACK／重任务许可时完成的新 Ink 正确进入下一修订并结束保存。刷新身份回归 **1/1**（4.980s），覆盖真实合并产物刷新、保存 ACK、另一已有批注再次编辑的 UUID／ref 保持；额外测试最初使用刷新前的假宿主基线和旧 openRequest，守卫正确拒绝，校正真实会话前置条件后复验通过，未移除断言。原生操作仅在 `/Users/jiajia/Documents/ObReader-Apple-Test`；实际 Mac 为 macOS27.2／arm64、Obsidian1.12.7；1.14.4 是目标最低版本。Mac 移动模拟和可信 pen 事件不是实体 Pencil／WKWebView 验收。Windows／实体 iPad 保存、关闭、同步继续需要设备复验。强退恢复、完整 PDF.js 输出内存、非原子比较到写入以及日志累计限制沿用 0.5.9，不宣称全数消除。
 
 
-[0.5.10 三文件候选](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip) SHA-256：`b1a23e399f16139c9da09d2b7290c693b1c8f501b8d53f7e21bfdfe402fac7b1`。附 [源码差异](dist/general-0.1general-0.5.10-source.diff)、[哈希清单](dist/general-0.1general-0.5.10-SHA256SUMS.txt) 与包含原始失败的 [证据包](dist/general-0.1general-0.5.10-evidence.zip)。正常推送 main，不创建 Release。0.5.9 回滚 ZIP 保留；早期未完成刷新身份修复的局部候选仅在本地标记 superseded，不发布。
+0.5.10 三文件候选（ZIP 已移出 Git） SHA-256：`b1a23e399f16139c9da09d2b7290c693b1c8f501b8d53f7e21bfdfe402fac7b1`。附 [源码差异](dist/general-0.1general-0.5.10-source.diff)、[哈希清单](dist/general-0.1general-0.5.10-SHA256SUMS.txt) 与包含原始失败的 证据包（ZIP 已移出 Git）。正常推送 main，不创建 Release。0.5.9 回滚 ZIP 保留；早期未完成刷新身份修复的局部候选仅在本地标记 superseded，不发布。
 
 已完整备份并替换授权“远程仓库1”三文件，备份 `.deploy-backups/general-0.5.10-target-1791901733357089000`；其余 **2038** 个文件哈希不变，未操作 PDF、未重载主实例。设置、缓存、旧恢复和检查点保持不变。同步后确认三文件均为本候选，有未保存编辑时先尝试恢复并确认副本，再重启加载 0.5.10；实体 iPad 连续 Ink／高亮保存、二次编辑及关闭仍由用户复验。
 
@@ -527,7 +529,7 @@ PDF.js 仍分配完整 `saveDocument()` 输出，磁盘核验仍完整读取；�
 
 耗时约减少 **9.86%**，原 PDF 写入约减少 **99.77%**；观测内存峰值差 **0.087%**，不能视为明显下降。附件型合成 PDF、单次对照、Mac CDP 的渲染器与可发现 Worker 堆／backing storage 不能代表实体 iPad 总内存、GPU／原生画布或扫描书籍，也不能宣称崩溃已解决。冻结 PDF.js 的完整输出和全文件核验仍是剩余开销。实际 Mac 为 macOS27.2/arm64、Obsidian1.12.7；1.14.4 是目标最低版本，实体 iPad 待用户确认。
 
-独立审计无新 P0，源码哈希匹配冻结产物。[0.5.9 三文件包](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip) SHA-256：`645b83263a3074efb9a4c4050e9d4859c874f185ba51da77510dc01c8a49187f`。附 [源码差异](dist/general-0.1general-0.5.9-source.diff)、[证据包](dist/general-0.1general-0.5.9-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.9-SHA256SUMS.txt)。
+独立审计无新 P0，源码哈希匹配冻结产物。0.5.9 三文件包（ZIP 已移出 Git） SHA-256：`645b83263a3074efb9a4c4050e9d4859c874f185ba51da77510dc01c8a49187f`。附 [源码差异](dist/general-0.1general-0.5.9-source.diff)、证据包（ZIP 已移出 Git）、[哈希清单](dist/general-0.1general-0.5.9-SHA256SUMS.txt)。
 
 按明确授权备份并替换“远程仓库1”三文件，备份 `.deploy-backups/0.5.9-target-1791894786082031000`；其余 **2038** 文件哈希不变，未操作 PDF 或重载主实例。旧恢复记录、设置、缓存、同步检查点与 0.5.8 回滚包保留。同步后先保存当前编辑或确认恢复副本，再重启加载 0.5.9。正常推送 main，不创建 Release。
 
@@ -544,7 +546,7 @@ PDF.js 仍分配完整 `saveDocument()` 输出，磁盘核验仍完整读取；�
 
 未重跑默认全套，不重标历史失败；本轮只验证关闭影响范围。独立审计无阻断项。此前关闭计时／checkpoint 竞争的推测经顺序复核已撤回，不作为已证实根因。已有同步 apply 未结束而阻塞关闭的顺序问题已通过关闭意图与终态取消握手修复；PDF 序列化及已接受写入仍安全等待。
 
-[0.5.8 三文件候选](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip) SHA-256：`8065df558694b41121facbf636d0e908432bae727062b4d2a126b9ab98bb1f19`。附 [源码差异](dist/general-0.1general-0.5.8-source.diff)、[证据包](dist/general-0.1general-0.5.8-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.8-SHA256SUMS.txt)。独立审计、原生失败和恢复记录均归档。
+0.5.8 三文件候选（ZIP 已移出 Git） SHA-256：`8065df558694b41121facbf636d0e908432bae727062b4d2a126b9ab98bb1f19`。附 [源码差异](dist/general-0.1general-0.5.8-source.diff)、证据包（ZIP 已移出 Git）、[哈希清单](dist/general-0.1general-0.5.8-SHA256SUMS.txt)。独立审计、原生失败和恢复记录均归档。
 
 按明确授权先备份再替换“远程仓库1”三文件，备份 `.deploy-backups/0.5.8-target-1791851792089482000`；其他 **2038** 个文件哈希不变，保留设置、缓存、恢复和同步检查点，未操作 PDF 或重载主实例。0.5.7 回滚包保持原哈希。旧版本标签页已卡住时，先尝试手动保存或确认恢复副本，再重启加载 0.5.8；不要强退来证明安全关闭。Windows／实体 iPad 待用户复验。正常推送 main，不创建 Release。
 
@@ -562,7 +564,7 @@ PDF.js 仍分配完整 `saveDocument()` 输出，磁盘核验仍完整读取；�
 
 独立测试库 `general-0.5.7-scroll-native-1791849207700.json` 通过，安装产物逐字节匹配后用真实 touch 检查工具启用时惯性滑动与再次接触停止、不生成批注，结束恢复 desktop、Reader/view 均为 0。离线验证退出 **0**，五工具及保存重开通过。本轮仅做受影响验证，不重跑默认完整套件或继续 teardown 调查；0.5.6 默认 **223/229** 的历史失败仍保留，不重标通过。
 
-[0.5.7 三文件候选](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip) ZIP SHA-256：`6ec59c3862f3accbf81179529746948091908e48bd61bbc8d738f8d6d461889e`。附 [源码差异](dist/general-0.1general-0.5.7-source.diff)、[证据包](dist/general-0.1general-0.5.7-evidence.zip) 和 [哈希清单](dist/general-0.1general-0.5.7-SHA256SUMS.txt)。三端使用相同三文件，Windows／iPad 实机仍待用户确认。
+0.5.7 三文件候选（ZIP 已移出 Git） ZIP SHA-256：`6ec59c3862f3accbf81179529746948091908e48bd61bbc8d738f8d6d461889e`。附 [源码差异](dist/general-0.1general-0.5.7-source.diff)、证据包（ZIP 已移出 Git） 和 [哈希清单](dist/general-0.1general-0.5.7-SHA256SUMS.txt)。三端使用相同三文件，Windows／iPad 实机仍待用户确认。
 
 按既有明确授权备份并替换“远程仓库1”插件三文件，备份 `.deploy-backups/0.5.7-target-1791849230176807000`；其他 **2038** 个文件逐字节哈希一致，保留设置、缓存、恢复和同步检查点，未操作 PDF、未重载主库。同步后先保存关闭旧 Reader，再重启 iPad Obsidian；验证工具启用时手指长按／拖动只翻页，Pencil 连续跨两行保存重开。0.5.6 回滚包原哈希保留；正常推送 main，不创建 Release。强退恢复、设备时钟及磁盘比较到写入的同步竞争窗口限制不变。
 
@@ -596,7 +598,7 @@ Windows、macOS、iPadOS 共用源码和同一组三文件，版本统一 **0.5.
 
 最终默认并发 `general-0.5.6-release-validation-1791837577620548000` **223/229 通过、6 失败、0 取消，退出码 1**；源码和产物哈希前后相同。四项仅在产品断言完成后因 Chrome 子进程退出码 2 失败。另两项分别是既有失焦取消保存的 5 秒等待超时，以及滚动“相等时间区间”衰减断言失败；保留为未确认的并发功能断言问题，不能统称清理异常或标记已通过。现存证据没有记录实际区间长度，不能判断区间是否相等。定向／原生验证通过，目前未证明新的真实用户 P0；按用户约定不新增重复门槛、不继续 teardown 调查，交付候选并公开局限。离线退出 **0**。先前失败轮次原样保留在证据包。
 
-[0.5.6 三文件候选](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip) 含且仅含三文件，ZIP SHA-256 `16d8895d93ea92dd8c36f032df6e5a210af34b6de1bc8559b6384f3610ea807f`，main.js `aef5de283dda9a4a756df8d545dbdc2973ab49631030b58f416e0e2a3e928e2e`。附 [源码差异](dist/general-0.1general-0.5.6-source.diff)、[原始证据](dist/general-0.1general-0.5.6-evidence.zip)、[哈希清单](dist/general-0.1general-0.5.6-SHA256SUMS.txt)。用户 PDF 和截图内容不进入公开证据。
+0.5.6 三文件候选（ZIP 已移出 Git） 含且仅含三文件，ZIP SHA-256 `16d8895d93ea92dd8c36f032df6e5a210af34b6de1bc8559b6384f3610ea807f`，main.js `aef5de283dda9a4a756df8d545dbdc2973ab49631030b58f416e0e2a3e928e2e`。附 [源码差异](dist/general-0.1general-0.5.6-source.diff)、原始证据（ZIP 已移出 Git）、[哈希清单](dist/general-0.1general-0.5.6-SHA256SUMS.txt)。用户 PDF 和截图内容不进入公开证据。
 
 已按授权备份并替换“远程仓库1”插件三文件，备份 `.deploy-backups/0.5.6-target-1791837708037886000`；其他 **2036** 个插件文件逐字节哈希不变，设置、缓存、恢复副本及同步检查点保留，未操作 PDF、未连接主库原生实例或强制重载。同步后先保存并关闭旧 Reader，再重启 iPad Obsidian 验证。若旧编辑留在恢复副本，可使用原有“恢复最近的 PDF 自动保存副本”命令；不自动覆盖用户 PDF。0.5.5 回滚包保持原哈希。Windows／iPad 实机、强退恢复和磁盘比较到写入的竞争窗口仍保留原限制。正常推送 main，不创建 Release。
 
@@ -606,7 +608,7 @@ Windows、macOS、iPadOS 共用源码和同一组三文件，版本统一 **0.5.
 
 新增惯性回归 3/3；真实浏览器指针策略与移动自动保存聚焦验证 2/2。冻结默认并发原始结果为 **216/217**、退出码 1：所有产品功能断言完成，唯一失败为移动自动保存测试清理时 Chrome 子进程退出码 2。保留原日志，不将此项重标通过，按既有约定单列基础设施问题，不调查 teardown 或增加重复门槛。离线验证正常退出 0。独立 Luna Max 只读审计无阻断项；实体 iPad 手感仍待用户确认。
 
-最新 [三文件包](dist/pdf-web-reader-0.1general-0.5.5-scroll-fix-candidate.zip) 和 [追加证据](dist/general-0.1general-0.5.5-scroll-evidence.zip) 对应该小修，最初 0.5.5 候选及 0.5.4 回滚包继续保留。已按本次明确授权替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`，旧三文件备份在 `.deploy-backups/0.5.5-scroll-target-1791832837830032000`；其余 1,629 个文件哈希一致，设置、缓存、恢复副本和同步检查点保留，未操作 PDF 或重载库实例。同步后先保存并关闭 Reader，再重新加载插件。
+最新 三文件包（ZIP 已移出 Git） 和 追加证据（ZIP 已移出 Git） 对应该小修，最初 0.5.5 候选及 0.5.4 回滚包继续保留。已按本次明确授权替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`，旧三文件备份在 `.deploy-backups/0.5.5-scroll-target-1791832837830032000`；其余 1,629 个文件哈希一致，设置、缓存、恢复副本和同步检查点保留，未操作 PDF 或重载库实例。同步后先保存并关闭 Reader，再重新加载插件。
 
 
 ## 历史：0.5.5 iPad 保存与内存候选（2026-10-13）
@@ -630,11 +632,11 @@ Windows、macOS、iPadOS 使用同一套源码与同一组三文件，统一版�
 
 ### 安装、回滚与已知限制
 
-[0.5.5 三文件候选](dist/pdf-web-reader-0.1general-0.5.5-candidate.zip)仅包含 `main.js`、`manifest.json`、`styles.css`，ZIP SHA-256：`6d1277ee0ac018380d97afda2eef4c98defa66403929702290ee7ddd34173cb6`；main.js：`5642446708a3eb88e40935ab061d912f910659cf0f11e035861291a6957e718c`。交付 [证据包](dist/general-0.1general-0.5.5-evidence.zip)、[证据清单](dist/general-0.1general-0.5.5-evidence.manifest.json)、[源码差异](dist/general-0.1general-0.5.5-source.diff) 和 [SHA-256 清单](dist/general-0.1general-0.5.5-SHA256SUMS.txt)。
+0.5.5 三文件候选（ZIP 已移出 Git）仅包含 `main.js`、`manifest.json`、`styles.css`，ZIP SHA-256：`6d1277ee0ac018380d97afda2eef4c98defa66403929702290ee7ddd34173cb6`；main.js：`5642446708a3eb88e40935ab061d912f910659cf0f11e035861291a6957e718c`。交付 证据包（ZIP 已移出 Git）、[证据清单](dist/general-0.1general-0.5.5-evidence.manifest.json)、[源码差异](dist/general-0.1general-0.5.5-source.diff) 和 [SHA-256 清单](dist/general-0.1general-0.5.5-SHA256SUMS.txt)。
 
 本轮仅更新 `/Users/jiajia/Documents/ObReader-Apple-Test`。`general-0.5.5-test-deployment-1791826658906.json` 记录完整旧插件备份 `.deploy-backups/general-0.5.5-test-deployment-1791826658906/pdf-web-reader`，替换仅三文件，原设置逐字节保留，既有恢复／检查点未写入。测试只修改每轮独占的合成 PDF。`远程仓库1` 与主库没有更新、重载或 PDF 操作；其先前 0.5.4 部署记录为历史状态。
 
-安装前保存并关闭 Reader，完整备份插件目录，只替换三文件，保留 `data.json`、缓存、恢复和 `.sync-checkpoints`。恢复 [0.5.4 回滚包](dist/pdf-web-reader-0.1general-0.5.4-candidate.zip)时也按此步骤操作；历史三文件 ZIP 原哈希仍是 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`。本地另保留 `.deploy-backups/0.5.4-before-0.5.5-20261012T165407Z` 三文件和 ZIP 备份。
+安装前保存并关闭 Reader，完整备份插件目录，只替换三文件，保留 `data.json`、缓存、恢复和 `.sync-checkpoints`。恢复 0.5.4 回滚包（ZIP 已移出 Git）时也按此步骤操作；历史三文件 ZIP 原哈希仍是 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`。本地另保留 `.deploy-backups/0.5.4-before-0.5.5-20261012T165407Z` 三文件和 ZIP 备份。
 
 实体 iPad Pro 2018 的实际内存峰值和崩溃是否消失仍待设备复验；Windows 实机也未重新验收。Mac 移动模拟不能替代 WKWebView／Jetsam 证据。较长自动保存间隔扩大了突发强退前未持久化的编辑窗口；系统强退／恢复副本写入失败仍不能承诺无损恢复。磁盘比较与写入之间的同步竞争窗口继续存在。按授权验证后正常推送 main，不创建 GitHub Release，不部署主库。
 
@@ -660,7 +662,7 @@ Windows、macOS、iPadOS 使用同一套源码与同一组三文件，统一版�
 
 最终聚焦输入记录 `ipad-pointer-policy-1791771564132-45174.json` 通过：真实坐标的可信 pen 输入使用 caret 端点形成选区，原生回调被限定抑制后仍由适配层调用原生编辑器生成 176 QuadPoints／一条存储批注；没有给测试预置 Range。覆盖惯性取消、绘制期间手指阻断、参数浮层外部收起及工具保持选中。核心聚焦回归 18/18，最终完整套件也覆盖保存绑定、旧身份兼容和二次编辑。
 
-[0.5.4 三文件候选](dist/pdf-web-reader-0.1general-0.5.4-candidate.zip) 含且仅含 `main.js`、`manifest.json`、`styles.css`，SHA-256 为 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`；main.js 为 `932a2e86471b259afa18eee2757efd20f9bf45dad0c6f21948969fc7ce7455f9`。保留旧版回滚包和被替代的本地修复前候选。
+0.5.4 三文件候选（ZIP 已移出 Git） 含且仅含 `main.js`、`manifest.json`、`styles.css`，SHA-256 为 `6e2922fe99404506e670e346507c1184b9f4d923ebce98f6fa63cc336d18b8c6`；main.js 为 `932a2e86471b259afa18eee2757efd20f9bf45dad0c6f21948969fc7ce7455f9`。保留旧版回滚包和被替代的本地修复前候选。
 
 原生 UI 记录 `general-0.5.4-ui-native-1791771921182.json` 在桌面与移动 SDK 路径通过：780/640 px 阅读区使用 32 px 单行，432/320 px 使用 64 px 双行；SVG 历史图标与原生工具同尺寸／颜色，禁用状态、缩放、页码、五工具、中键轮盘、删除撤销重做、手动保存重开和真实双击二次编辑均通过。可信 CDP 手指输入抬起时滚动 110 px，120 ms 后到 302 px，再次点按工具栏停止惯性且不创建批注。该驱动明确使用跟随已核验测试窗口尺寸的 CSS viewport 自动化；之前残留 800×600 viewport 导致的两次准备失败分别保留，没有把准备失败包装成功或调查 teardown。
 
@@ -670,7 +672,7 @@ Windows、macOS、iPadOS 使用同一套源码与同一组三文件，统一版�
 
 已按授权备份并替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader` 的三文件；`general-0.5.4-target-replacement-1791772082646.json` 确认与候选逐字节一致。旧 0.5.3 三文件在 `.deploy-backups/2026-10-12T02-28-02-602Z/remote-vault-1-three-files`，data.json 字节一致，缓存、恢复副本、同步检查点和 PDF 未改动，也未重载目标库运行实例。保存、关闭 Reader 后重新加载插件；iPad 同步后确认 **0.5.4**。已有失败编辑可以通过原有 **恢复最近的 PDF 自动保存副本** 命令取回，不清理旧恢复文件。
 
-[0.5.4 验证与调查证据](dist/general-0.1general-0.5.4-evidence.zip)、[证据清单](dist/general-0.1general-0.5.4-evidence.manifest.json)与 [SHA-256 清单](dist/general-0.1general-0.5.4-SHA256SUMS.txt)包含各次原始失败、驱动快照、原生截图、聚焦回归和源码差异。推送使用正常 `main` 更新，以 Git 历史确认；不创建 Release。Windows／iPad 实机待用户复验。
+0.5.4 验证与调查证据（ZIP 已移出 Git）、[证据清单](dist/general-0.1general-0.5.4-evidence.manifest.json)与 [SHA-256 清单](dist/general-0.1general-0.5.4-SHA256SUMS.txt)包含各次原始失败、驱动快照、原生截图、聚焦回归和源码差异。推送使用正常 `main` 更新，以 Git 历史确认；不创建 Release。Windows／iPad 实机待用户复验。
 
 ## 历史：0.5.3 工具栏收敛与 iPad 输入分工
 
@@ -694,13 +696,13 @@ iPad 输入按用户确认的当前工具自动分工：批注工具处于活动
 
 加入 Pencil 输入路由前的早期 UI 基线为 191 项中 189 通过、2 失败，记录继续作为历史保留。加入 Pencil 路由后的首次修复前默认套件为 192/193，失败是清理／浏览器退出异常；对应离线原始 Node 退出码为 1，Chrome 子进程退出码为 2。上述原始失败状态没有重标为通过，也不替代当前最终候选结果。
 
-[0.5.3 三文件候选](dist/pdf-web-reader-0.1general-0.5.3-candidate.zip) 含 `main.js`、`manifest.json`、`styles.css` 三个文件，SHA-256：`7e1b80709418a9ab3b1d3bae6d74120c113b3a2f422be44675baebd8d112f5cc`。其中 `main.js` SHA-256 为 `365755bccfe8d8887dcbd5c75aeccf84a64058846a6b69cf9e75e0e568611a4f`。
+0.5.3 三文件候选（ZIP 已移出 Git） 含 `main.js`、`manifest.json`、`styles.css` 三个文件，SHA-256：`7e1b80709418a9ab3b1d3bae6d74120c113b3a2f422be44675baebd8d112f5cc`。其中 `main.js` SHA-256 为 `365755bccfe8d8887dcbd5c75aeccf84a64058846a6b69cf9e75e0e568611a4f`。
 
 Mac 记录 `general-0.5.3-native-1791767610375.json` 显示：插件加载时在任何 Reader 打开前自动预热 **167 ms**，406 次 stat 检查、0 次缓存二进制验证读取、0 次解压；同一实例第二次 ensure 为 0 ms／0 次检查，首个 Reader 资源等待为 0 ms，工具可用约 125.1 ms；第二个 Reader 为 0 次资源检查、工具可用约 93.6 ms。外部修改刷新、实际鼠标脏批注与远端三身份合并、旧检查点保护、重复事件不重开，以及保留 90° 旋转和页宽的同 iframe 刷新均通过。此为 Mac 样本，不构成 iPad 性能承诺。最终 handoff 记录确认桌面启用、自动保存开启，Reader/view/gate 均为 0。
 
 按授权，已将最终三文件安装到 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`。`general-0.5.3-target-replacement-1791767654581.json` 记录新文件与候选逐字节一致，旧 0.5.2 三文件备份在 `.deploy-backups/2026-10-12T01-14-14-542Z/remote-vault-1-three-files`；用户数据文件一致，未改动缓存、恢复文件、同步检查点或 PDF，也没有重载该库当前运行实例。保存并关闭 Reader 后重新加载插件；iPad 同步后确认版本 0.5.3。主分支推送由主代理另行完成并以 Git 历史为准；不创建 GitHub Release。
 
-[0.5.3 验证与调查证据](dist/general-0.1general-0.5.3-evidence.zip)、[证据清单](dist/general-0.1general-0.5.3-evidence.manifest.json)与 [SHA-256 清单](dist/general-0.1general-0.5.3-SHA256SUMS.txt)随候选交付。证据包保留各次原始失败状态、驱动快照、源码差异及加入 Pencil 前的工具栏基线包。
+0.5.3 验证与调查证据（ZIP 已移出 Git）、[证据清单](dist/general-0.1general-0.5.3-evidence.manifest.json)与 [SHA-256 清单](dist/general-0.1general-0.5.3-SHA256SUMS.txt)随候选交付。证据包保留各次原始失败状态、驱动快照、源码差异及加入 Pencil 前的工具栏基线包。
 
 ## 历史：0.5.2 状态栏与工具栏调整（2026-10-12）
 
@@ -726,7 +728,7 @@ Luna Max 子代理完成开发与独立审计，主代理负责整合、原生�
 
 已按明确授权只替换 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader` 的三文件，旧三文件完整保留在 `.deploy-backups/2026-10-12T00-02-54-202Z/remote-vault-1-three-files`。记录 `general-0.5.2-target-replacement-1791763374259.json` 证明新文件与候选逐字节匹配、设置未变；没有写入该库的 PDF、缓存、恢复副本或同步检查点，没有请求重载其运行中的实例。使用中的实例需保存并关闭 Reader 后重新加载插件；iPad 同步／安装后应确认版本 **0.5.2**。Windows、macOS、iPadOS 使用同一个包，实际 Windows／iPad 验收仍待设备结果。
 
-[0.5.2 三文件候选](dist/pdf-web-reader-0.1general-0.5.2-candidate.zip) SHA-256：`efd19502a5a7eaa9c16dd003c3ecbb10d4fcb88cb78d59b21187b006b77acdbb`。
+0.5.2 三文件候选（ZIP 已移出 Git） SHA-256：`efd19502a5a7eaa9c16dd003c3ecbb10d4fcb88cb78d59b21187b006b77acdbb`。
 
 | 文件 | SHA-256 |
 | --- | --- |
@@ -734,7 +736,7 @@ Luna Max 子代理完成开发与独立审计，主代理负责整合、原生�
 | manifest.json | `c17a13380762b8780d82866457b5e78e5eb120e8eeb9381d03c3c68782253b88` |
 | styles.css | `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650` |
 
-[0.5.2 证据包](dist/general-0.1general-0.5.2-evidence.zip)、[证据清单](dist/general-0.1general-0.5.2-evidence.manifest.json) 与 [哈希清单](dist/general-0.1general-0.5.2-SHA256SUMS.txt) 保留原始成功／失败输出、审计、测试库备份与指定目录三文件替换记录。回滚使用备份的旧三文件，并保留既有设置、缓存、恢复副本和同步检查点。强退前未持久化编辑、设备时钟偏差和磁盘比较至写入之间的竞争窗口仍按既有说明保留；不创建 GitHub Release。
+0.5.2 证据包（ZIP 已移出 Git）、[证据清单](dist/general-0.1general-0.5.2-evidence.manifest.json) 与 [哈希清单](dist/general-0.1general-0.5.2-SHA256SUMS.txt) 保留原始成功／失败输出、审计、测试库备份与指定目录三文件替换记录。回滚使用备份的旧三文件，并保留既有设置、缓存、恢复副本和同步检查点。强退前未持久化编辑、设备时钟偏差和磁盘比较至写入之间的竞争窗口仍按既有说明保留；不创建 GitHub Release。
 
 ## 历史：0.5.1 iPad 重启缓存与预热修复（2026-10-12）
 
@@ -750,7 +752,7 @@ Luna Max 开发与独立审计完成。本轮针对缓存与预热的回归通�
 
 最新三文件已按用户明确授权替换到 `/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader`，旧三文件备份为 `.deploy-backups/2026-10-11T23-24-34-904Z/remote-vault-1-three-files`。只替换三文件，不操作该库的 PDF、设置、缓存或恢复副本，也未主动重载该库的 Obsidian 实例。iPad 同步/安装后确认版本 0.5.1；首次建立索引完成后，再重启复验立即打开及等待一分钟后打开两种情况。
 
-[0.5.1 三文件候选](dist/pdf-web-reader-0.1general-0.5.1-candidate.zip) SHA-256：`2a9ed0490f32b3dc1f4fa720f5842bd47ac75b74035062ca42688a9f1131a2d7`；`main.js`：`599debcf0751b4f5e082973d59b02b9b4bbfe209c9211f475ef0ea4749122c0b`。[0.5.1 启动修复证据](dist/general-0.1general-0.5.1-evidence.zip) 保留默认/离线原始输出、原生自动预热、移动脚本失败与替换备份记录；[证据清单](dist/general-0.1general-0.5.1-evidence.manifest.json) 与 [哈希清单](dist/general-0.1general-0.5.1-SHA256SUMS.txt) 随包交付。旧 0.5.0、0.4.0 包保持可回滚；不创建 Release。
+0.5.1 三文件候选（ZIP 已移出 Git） SHA-256：`2a9ed0490f32b3dc1f4fa720f5842bd47ac75b74035062ca42688a9f1131a2d7`；`main.js`：`599debcf0751b4f5e082973d59b02b9b4bbfe209c9211f475ef0ea4749122c0b`。0.5.1 启动修复证据（ZIP 已移出 Git） 保留默认/离线原始输出、原生自动预热、移动脚本失败与替换备份记录；[证据清单](dist/general-0.1general-0.5.1-evidence.manifest.json) 与 [哈希清单](dist/general-0.1general-0.5.1-SHA256SUMS.txt) 随包交付。旧 0.5.0、0.4.0 包保持可回滚；不创建 Release。
 
 ## 历史：0.5.0 交付
 
@@ -798,11 +800,11 @@ Luna Max 开发与独立审计检查了共用核心、UUID 与 writer 精确绑�
 
 | 文件 | SHA-256 |
 | --- | --- |
-| [0.1general 0.5.0 三文件候选](dist/pdf-web-reader-0.1general-0.5.0-candidate.zip) | `32354f8dcb5f4dd271b7214781caffcb00d2a85dd9b2d9df0ebbf1178a3ef804` |
+| 0.1general 0.5.0 三文件候选（ZIP 已移出 Git） | `32354f8dcb5f4dd271b7214781caffcb00d2a85dd9b2d9df0ebbf1178a3ef804` |
 | ZIP 内 `main.js` | `e81b82a978aa4936acf1f2424fa87956f7853c784033c61add6fef51933f7d3d` |
-| 保留的 [0.4.0 回滚包](dist/pdf-web-reader-0.1general-0.4.0-candidate.zip) | `4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98` |
+| 保留的 0.4.0 回滚包（ZIP 已移出 Git） | `4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98` |
 
-[源码差异](dist/general-0.1general-0.5.0-source.diff)、[本轮证据包](dist/general-0.1general-0.5.0-evidence.zip)、[逐文件证据清单](dist/general-0.1general-0.5.0-evidence.manifest.json)、[交付哈希](dist/general-0.1general-0.5.0-SHA256SUMS.txt) 随候选保留。证据包含失败轮次、最终结果、原生耗时、移动模拟、审计与部署记录；不包含用户 PDF、旧恢复副本内容或个人库快照。
+[源码差异](dist/general-0.1general-0.5.0-source.diff)、本轮证据包（ZIP 已移出 Git）、[逐文件证据清单](dist/general-0.1general-0.5.0-evidence.manifest.json)、[交付哈希](dist/general-0.1general-0.5.0-SHA256SUMS.txt) 随候选保留。证据包含失败轮次、最终结果、原生耗时、移动模拟、审计与部署记录；不包含用户 PDF、旧恢复副本内容或个人库快照。
 
 Windows、macOS、iPadOS 实机均使用同一 0.5.0 三文件包，在各自独立测试库操作；Windows 和 iPad 最终实机确认由用户执行。除 [既有鼠标与五工具清单](IPAD_ACCEPTANCE.md#three-platform-actual-device-checklist) 外，使用同一测试 PDF 检查：
 
@@ -838,8 +840,8 @@ Windows、macOS、iPadOS 实机均使用同一 0.5.0 三文件包，在各自独
 
 | 文件 | SHA-256 |
 | --- | --- |
-| [0.1general 插件 0.4.0 候选 ZIP](dist/pdf-web-reader-0.1general-0.4.0-candidate.zip) | `4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98` |
-| [修订版 0.3.0 iPad 候选 ZIP](dist/pdf-web-reader-0.3.0-ipad-mouse-revised-candidate.zip) | `358e4286e7e06fb3e57d1279d4d3db167a931bc829c796b2ecbf81532f1c1d83` |
+| 0.1general 插件 0.4.0 候选 ZIP（ZIP 已移出 Git） | `4e50caece1b50bee70caf493b298f980f8da8ff8449cc2c5102939eb56264e98` |
+| 修订版 0.3.0 iPad 候选 ZIP（ZIP 已移出 Git） | `358e4286e7e06fb3e57d1279d4d3db167a931bc829c796b2ecbf81532f1c1d83` |
 | 两个 ZIP 内的 `main.js` | `201ceee6cb7b713df3d2277e6d9934565b04661779e541e715c8a093163fb2cb` |
 
 指定 Mac 测试库的功能验收已完成；当前记录不代表 Windows 或 iPad 实机通过。候选按用户授权正常推送 `main`，不创建 Release，也不部署用户主库；实际提交以 Git 历史为准。
@@ -850,7 +852,7 @@ Windows、macOS、iPadOS 实机均使用同一 0.5.0 三文件包，在各自独
 
 `general-final-native-handoff.json` 于 `2026-10-11T20:41:12.893Z` 在唯一指定 Vault 中记录状态 `passed`：版本 0.4.0、桌面模式、插件启用、自动保存开启、Reader／View／gate 均为 0；未触碰主实例，物理 iPad 未验证。测试自有 popout leaf 已清理，插件保持 desktop false/mobile false；32 个旧恢复文件经字节核对保持不变。
 
-归档证据：[0.1general 证据包](dist/general-0.1-evidence.zip)、[证据清单](dist/general-0.1-evidence.manifest.json)、[源码差异](dist/general-0.1-source.diff)。证据包共 63,415,082 字节、847 个文件，SHA-256：`98f9867d5ce798809c863ad8331a8284d1f5e322c14d4d77a8076f680c24ef49`；清单 SHA-256：`d1ef015dd459e2da9fbfdec35fa7e5a3e659222150c10b85572b92283181bc30`。
+归档证据：0.1general 证据包（ZIP 已移出 Git）、[证据清单](dist/general-0.1-evidence.manifest.json)、[源码差异](dist/general-0.1-source.diff)。证据包共 63,415,082 字节、847 个文件，SHA-256：`98f9867d5ce798809c863ad8331a8284d1f5e322c14d4d77a8076f680c24ef49`；清单 SHA-256：`d1ef015dd459e2da9fbfdec35fa7e5a3e659222150c10b85572b92283181bc30`。
 
 ## 历史验证记录
 

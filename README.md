@@ -30,6 +30,8 @@ identity is required before external annotations are hydrated. Legacy SHA-256
 hashes remain readable; resource integrity, build artifacts, vendor provenance,
 and stable document identifiers continue to use SHA-256.
 
+Historical candidate and evidence ZIPs have been moved out of Git and archived separately. Their test reports and checksum metadata remain in this repository; installable three-file outputs and source assets are retained.
+
 The external store is under `00_Archive/20_PDFData`. A copied PDF at a new path
 gets a new document identity; Vault rename/move keeps the existing identity.
 Older plugin annotations are associated through exact PDF object references;
@@ -115,7 +117,7 @@ JSON. Detailed failure evidence is retained locally; physical iPad verification
 of this candidate remains pending. Runtime records now export through the visible
 diagnostic JSON folder; see [LOCAL_RUNTIME_LOG.md](LOCAL_RUNTIME_LOG.md).
 
-The prior [0.5.10 three-file package](dist/pdf-web-reader-0.1general-0.5.10-candidate.zip)
+The prior 0.5.10 three-file package（ZIP 已移出 Git）
 fixes retained live Ink serialization and commits strokes completed during an
 in-flight save before capturing the next revision. Host-confirmed clean flags
 do not mean the PDF.js loaded bytes already contain those editors. Save and
@@ -124,7 +126,7 @@ remains strict. Recovery acknowledges only verified nonempty serialized bytes.
 See [validation and limitations](GENERAL_ACCEPTANCE.md). Physical iPad acceptance
 remains pending; the 0.5.9 package is retained for rollback.
 
-The prior [0.5.9 three-file package](dist/pdf-web-reader-0.1general-0.5.9-candidate.zip)
+The prior 0.5.9 three-file package（ZIP 已移出 Git）
 uses verified PDF incremental revisions and binary append where the host supports
 it. Shared recovery bases plus checksummed deltas retain complete local branches;
 old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,
@@ -133,19 +135,19 @@ platforms. Unsupported append sources keep a verified full-save fallback.
 PDF.js still produces full save buffers, and exact disk validation still reads
 the file; this does not make total memory usage proportional only to edits.
 
-The prior [0.5.8 three-file package](dist/pdf-web-reader-0.1general-0.5.8-candidate.zip)
+The prior 0.5.8 three-file package（ZIP 已移出 Git）
 coordinates outstanding sync work before requesting a safe Reader close. It stops
 new refreshes, safely settles a running checkpoint/apply, then confirms saving or
 a current durable recovery copy before the native tab is detached. Failed
 cancellation or unconfirmed edits keep the Reader open; slow PDF serialization
 still needs to finish safely.
 
-The prior [0.5.7 package](dist/pdf-web-reader-0.1general-0.5.7-candidate.zip)
+The prior 0.5.7 package（ZIP 已移出 Git）
 blocks finger text selection on iPad PDF pages while an annotation tool is active.
 Finger input remains navigation; Pencil text highlighting/drawing, mouse input,
 toolbar controls and editable text fields retain their existing behavior.
 It also targets continuous Pencil text highlighting across line breaks.
-The prior [0.5.6 package](dist/pdf-web-reader-0.1general-0.5.6-candidate.zip)
+The prior 0.5.6 package（ZIP 已移出 Git）
 uses an 80 ms weighted velocity regression, a 4,000 px/s total speed cap, and
 350 ms exponential deceleration. Inertia starts at 90 px/s and stops at 10 px/s.
 It integrates real animation time, including delayed frames, and cancels on
