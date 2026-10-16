@@ -6,11 +6,11 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-This feature branch implements **WAL-Sidecar v3.1** on integration baseline
-`19d20f3`. It is a local development candidate, not a deployed release. The
-manifest version remains inherited from the 0.8.0 baseline; historical ZIPs below
-are not packages for the new protocol. See [the protocol](ANNOTATION_STORE.md)
-and [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).
+Version **0.8.1** implements **WAL-Sidecar v3.1**, based on integration
+`19d20f3`, and fixes diagnostic exports to prioritize the current session.
+Windows, macOS and iPadOS share one three-file package. See
+[the protocol](ANNOTATION_STORE.md) and
+[implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).
 
 Ordinary annotation saves now use per-device/per-document WAL shards. Reader
 state joins a shared materialized Sidecar with all validated sparse anchors and
@@ -18,7 +18,7 @@ short tails. Registry loss can be repaired; a Sidecar rollback is recovered
 from durable WAL contributions. The one-time importer preserves current Format 3
 annotations while the new writer stops creating old operation forests, ACKs and
 checkpoints. Complete sync and update every in-use device before hard cutover.
-No user data cleanup, deployment or push is part of this branch task.
+Legacy data is retained. Native testing was authorized later; see the implementation report for scope and remaining baseline failures.
 
 The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON

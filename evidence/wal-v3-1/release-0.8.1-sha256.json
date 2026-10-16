@@ -1,0 +1,18 @@
+{
+  "dist/pdf-web-reader/main.js": {
+    "bytes": 7296513,
+    "sha256": "39b710227623a48b1d2fa26f04af5dbdd184972d8cded2dea1d4c9ef1c659884"
+  },
+  "dist/pdf-web-reader/manifest.json": {
+    "bytes": 269,
+    "sha256": "25473de7e193d4e38247fa02a589da128d7d4a460e66899bfa140c14de66eb24"
+  },
+  "dist/pdf-web-reader/styles.css": {
+    "bytes": 637,
+    "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+  },
+  "dist/pdf-web-reader-0.1general-0.8.1-candidate.zip": {
+    "bytes": 5128395,
+    "sha256": "dd7c26809d0ea8a2893208c51df10788bbf7fed9037d79322f6ee0897137983a"
+  }
+}
