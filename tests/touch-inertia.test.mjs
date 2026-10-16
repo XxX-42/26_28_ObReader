@@ -7,9 +7,9 @@ const source = await readFile(
   new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url),
   "utf8",
 );
-const section = source.slice(
-  source.indexOf("  const MANUAL_INERTIA_SAMPLE_WINDOW_MS"),
-  source.indexOf("  function clearManualPointerSessions"),
+const viewportSource = await readFile(
+  new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url),
+  "utf8",
 );
 const selectionPolicySection = source.slice(
   source.indexOf("  function annotationToolIsActive"),
@@ -19,6 +19,58 @@ const pointerAccessSection = source.slice(
   source.indexOf("  function activePointerCount()"),
   source.indexOf("  function isInputBusy()"),
 );
+
+function functionSource(name) {
+  const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);
+  assert.ok(match, `missing function ${name}`);
+  const signatureEnd = source.indexOf(") {", match.index);
+  assert.notEqual(signatureEnd, -1, `missing body for ${name}`);
+  const open = signatureEnd + 2;
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      index = source.indexOf("\n", index);
+      if (index < 0) break;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      const commentEnd = source.indexOf("*/", index + 2);
+      if (commentEnd < 0) break;
+      index = commentEnd + 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}" && --depth === 0) return source.slice(match.index, index + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}
+
+const viewportBridgeFunctions = [
+  "cancelManualMomentum",
+  "onManualDocumentVisibilityChange",
+  "manualPointerEventTime",
+  "rememberManualScroll",
+  "touchReleaseVelocity",
+  "startManualMomentum",
+  "manualPointerSessionCurrent",
+  "applyManualPan",
+  "startManualPointer",
+  "finishManualPointer",
+  "releasePointerCapture",
+].map(functionSource).join("\n");
 
 function createInputRouter() {
   const active = new Map();
@@ -80,9 +132,11 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     activeDocumentId: "doc",
     activeOpenRequest: 1,
     inputRouter: createInputRouter(),
-    manualMomentum: null,
     editorMode: 0,
     fingerTextSelectionSuppressionOwned: false,
+    lastPenPanClickPage: null,
+    lastTouchClickPage: null,
+    pendingPenHighlight: null,
   };
   const classes = new Set();
   const document = {
@@ -97,18 +151,13 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     } },
     getElementById(id) { return id === "viewerContainer" ? container : null; },
   };
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
   const context = {
     state,
     rendererGeneration: 1,
     iosInputPolicy: true,
     document,
-    directManipulationPage(target) { return target; },
-    hasActivePenEditorGesture() { return false; },
-    stopDirectManipulationEvent(event) {
-      event.preventDefault?.();
-      event.stopImmediatePropagation?.();
-    },
-    window: { matchMedia: () => ({ matches: false }) },
+    window: runtimeWindow,
     performance: { now: () => currentTime },
     requestAnimationFrame(callback) {
       const id = ++frameId;
@@ -116,10 +165,34 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
       return id;
     },
     cancelAnimationFrame(id) { frames.delete(id); },
+    directManipulationPage(target) { return target; },
+    hasActivePenEditorGesture() { return false; },
+    stopDirectManipulationEvent(event) {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+    },
     releasePointerCapture() {},
   };
+  vm.runInNewContext(viewportSource, context);
+  state.viewportController = new runtimeWindow.PdfReaderInputRuntime.ViewportController({
+    canPan(pointer) {
+      return !pointer.blockedByPen &&
+        !pointer.blockedByOtherPointer &&
+        !pointer.blockedByVisibility &&
+        context.manualPointerSessionCurrent(pointer);
+    },
+    canStartMomentum(pointer) {
+      return context.iosInputPolicy &&
+        context.manualPointerCount() === 0 &&
+        context.manualPointerSessionCurrent(pointer);
+    },
+    getVisibilityState: () => document.visibilityState,
+    prefersReducedMotion: () => false,
+    requestFrame: (callback) => context.requestAnimationFrame(callback),
+    cancelFrame: (id) => context.cancelAnimationFrame(id),
+  });
   vm.runInNewContext(
-    pointerAccessSection + selectionPolicySection + section +
+    pointerAccessSection + selectionPolicySection + viewportBridgeFunctions +
       "\nglobalThis.api = { touchReleaseVelocity, rememberManualScroll, manualPointerEventTime, startManualMomentum, finishManualPointer, startManualPointer, applyManualPan, onManualDocumentVisibilityChange };",
     context,
   );
@@ -188,7 +261,7 @@ function launchHarness(speedX = 0, speedY = 0) {
     linearSamples({ speedX, speedY, start: startTime - 80, duration: 80 }),
   );
   h.api.startManualMomentum(pointer, startTime);
-  assert.ok(h.state.manualMomentum, "the test flick should launch inertia");
+  assert.ok(h.state.viewportController.momentum, "the test flick should launch inertia");
   return { h, pointer, startTime };
 }
 
@@ -352,7 +425,7 @@ test("stationary pointerup records its endpoint without refreshing last motion",
   assert.equal(pointer.scrollSamples.at(-1).time, 80);
   assert.equal(pointer.scrollSamples.at(-1).scrollTop, 40);
   assert.equal(pointer.scrollSamples.at(-1).scrollLeft, 0);
-  assert.ok(h.state.manualMomentum);
+  assert.ok(h.state.viewportController.momentum);
 
   const paused = harness({ time: 121, scrollTop: 40 });
   const oldPointer = makePointer(paused, [
@@ -367,7 +440,7 @@ test("stationary pointerup records its endpoint without refreshing last motion",
     { clientX: 50, clientY: 100, timeStamp: 121 },
   );
   assert.equal(oldPointer.lastMotionAt, 40);
-  assert.equal(paused.state.manualMomentum, null);
+  assert.equal(paused.state.viewportController.momentum, null);
 });
 
 test("pointerup applies its final position while pointercancel ignores it", () => {
@@ -383,7 +456,7 @@ test("pointerup applies its final position while pointercancel ignores it", () =
   );
   assert.equal(released.container.scrollTop, 140);
   assert.equal(released.state.inputRouter.manualPointerCount, 0);
-  assert.ok(released.state.manualMomentum);
+  assert.ok(released.state.viewportController.momentum);
 
   const cancelled = harness({ time: 116, scrollTop: 100 });
   const cancelPointer = makePointer(cancelled, [
@@ -398,7 +471,7 @@ test("pointerup applies its final position while pointercancel ignores it", () =
   );
   assert.equal(cancelled.container.scrollTop, 100);
   assert.equal(cancelled.state.inputRouter.manualPointerCount, 0);
-  assert.equal(cancelled.state.manualMomentum, null);
+  assert.equal(cancelled.state.viewportController.momentum, null);
 });
 
 test("a second direct pointer blocks both touch pans regardless of lift order", () => {
@@ -463,7 +536,7 @@ test("a second direct pointer blocks both touch pans regardless of lift order", 
         clientY: pointer.lastY,
         timeStamp: 40,
       });
-      assert.equal(h.state.manualMomentum, null,
+      assert.equal(h.state.viewportController.momentum, null,
         "No release order may create one-finger inertia after multi-touch");
       assert.equal(h.container.scrollTop, 120);
     }
@@ -504,14 +577,14 @@ test("inertia has partition-independent decay across 60, 120 Hz and an 80 ms sta
       if (elapsed === duration) {
         at200 = {
           position: h.container.scrollTop,
-          velocity: h.state.manualMomentum.velocityY,
+          velocity: h.state.viewportController.momentum.velocityY,
         };
       }
     }
     return {
       at200,
       finalPosition: h.container.scrollTop,
-      stopped: h.state.manualMomentum === null,
+      stopped: h.state.viewportController.momentum === null,
     };
   });
   const expectedPosition = 64 + 0.8 * 350 * (1 - Math.exp(-duration / 350));
@@ -533,7 +606,7 @@ test("a long frame integrates only through the exact stop time", () => {
   const { h, startTime } = launchHarness(0, 0.8);
   const stopTime = 350 * Math.log(0.8 / 0.01);
   h.frameAt(startTime + stopTime + 80);
-  assert.equal(h.state.manualMomentum, null);
+  assert.equal(h.state.viewportController.momentum, null);
   const expected = 64 + 350 * (0.8 - 0.01);
   assert.ok(Math.abs(h.container.scrollTop - expected) <= 1);
   const stoppedPosition = h.container.scrollTop;
@@ -547,7 +620,7 @@ test("hiding cancels inertia and prevents an active finger from restarting it", 
   h.setTime(startTime + 16);
   h.document.visibilityState = "hidden";
   h.api.onManualDocumentVisibilityChange();
-  assert.equal(h.state.manualMomentum, null);
+  assert.equal(h.state.viewportController.momentum, null);
   assert.equal(pointer.blockedByVisibility, true);
   assert.equal(pointer.moved, false);
 
@@ -557,5 +630,5 @@ test("hiding cancels inertia and prevents an active finger from restarting it", 
     pointer.pointerId,
     { clientX: 50, clientY: 100, timeStamp: startTime + 32 },
   );
-  assert.equal(h.state.manualMomentum, null);
+  assert.equal(h.state.viewportController.momentum, null);
 });
