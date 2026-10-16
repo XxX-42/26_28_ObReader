@@ -68,7 +68,7 @@ function createHarness() {
     rememberPanClickTarget: (type, target) => policyCalls.push(["click-target", type, target]),
     clearPanClickTargets: () => policyCalls.push(["clear-click-targets"]),
   };
-  const target = { page: "page-1", viewer: true };
+  const target = { pageIndex: 0, targetRole: "viewer" };
   const windowRef = { PdfReaderInputRuntime: {} };
   vm.runInNewContext(controllerSource, { window: windowRef, performance });
   const Controller = windowRef.PdfReaderInputRuntime.IOSDirectManipulationController;
@@ -81,10 +81,6 @@ function createHarness() {
     getEditorMode: () => state.editorMode,
     isEraserActive: () => false,
     isAnnotationToolActive: () => state.editorMode !== 0,
-    getNativeOperation: () => null,
-    isViewerSurfaceTarget: (candidate) => candidate?.viewer === true,
-    isNativeContextTarget: () => false,
-    directManipulationPage: (candidate) => candidate.page,
     invalidatePendingPenHighlight() {},
   });
   return { controller, router, container, session, state, panCalls, momentumCalls, policyCalls, target, manual };
@@ -93,21 +89,31 @@ function createHarness() {
 function pointerEvent(type, pointerId, target, values = {}) {
   let prevented = false;
   let stopped = false;
-  return {
+  const pointerType = values.pointerType || "touch";
+  const x = values.clientX ?? 40;
+  const y = values.clientY ?? 60;
+  const nativeShape = {
     type,
     pointerId,
-    pointerType: "touch",
-    target,
-    clientX: 40,
-    clientY: 60,
-    timeStamp: 100,
+    pointerType,
+    button: 0,
     buttons: type === "pointerup" ? 0 : 1,
-    relatedTarget: null,
-    preventDefault() { prevented = true; },
-    stopImmediatePropagation() { stopped = true; },
+    clientPoint: { x, y },
+    pageIndex: target.pageIndex ?? null,
+    targetRole: target.targetRole || "viewer",
+    nativeContextTarget: target.nativeContextTarget === true,
+    nativeOperation: target.nativeOperation ?? null,
+    timestamp: values.timeStamp ?? 100,
+    relatedTargetPresent: values.relatedTarget != null,
+  };
+  return {
+    intent: nativeShape,
+    controls: {
+      preventDefault() { prevented = true; },
+      stopImmediatePropagation() { stopped = true; },
+    },
     get defaultPrevented() { return prevented; },
     get stoppedImmediately() { return stopped; },
-    ...values,
   };
 }
 
@@ -116,8 +122,8 @@ test("page touch remains native and never starts a bridge pan or pointer capture
   const { controller, router, target, manual, panCalls, momentumCalls, policyCalls } = harness;
   harness.state.editorMode = 9;
   const down = pointerEvent("pointerdown", 11, target);
-  controller.preparePointerDown(down);
-  assert.equal(controller.routePointerDown(down), true);
+  controller.preparePointerDown(down.intent);
+  assert.equal(controller.routePointerDown(down.intent, down.controls), true);
   assert.equal(manual.size, 0);
   assert.equal(controller._nativeTouchPointers.size, 1);
   assert.equal(router.hasPointerCapture(11), false);
@@ -126,12 +132,12 @@ test("page touch remains native and never starts a bridge pan or pointer capture
   assert.ok(policyCalls.some(([name]) => name === "suppress"));
 
   const move = pointerEvent("pointermove", 11, target, { clientX: 35, clientY: 80, timeStamp: 120 });
-  assert.equal(controller.handlePointerMove(move), true);
+  assert.equal(controller.handlePointerMove(move.intent, move.controls), true);
   assert.equal(move.defaultPrevented, false);
   assert.deepEqual(panCalls, []);
 
   const up = pointerEvent("pointerup", 11, target, { clientX: 30, clientY: 100, timeStamp: 140 });
-  assert.equal(controller.handlePointerEnd(up), true);
+  assert.equal(controller.handlePointerEnd(up.intent, up.controls), true);
   assert.equal(manual.size, 0);
   assert.equal(controller._nativeTouchPointers.size, 0);
   assert.equal(router.hasPointerCapture(11), false);
@@ -144,11 +150,11 @@ test("native multi-touch remains uncaptured and never enters custom inertia", ()
   const harness = createHarness();
   const { controller, router, manual, panCalls, momentumCalls } = harness;
   const firstDown = pointerEvent("pointerdown", 1, harness.target);
-  controller.preparePointerDown(firstDown);
-  controller.routePointerDown(firstDown);
+  controller.preparePointerDown(firstDown.intent);
+  controller.routePointerDown(firstDown.intent, firstDown.controls);
   const secondDown = pointerEvent("pointerdown", 2, harness.target);
-  controller.preparePointerDown(secondDown);
-  assert.equal(controller.routePointerDown(secondDown), true);
+  controller.preparePointerDown(secondDown.intent);
+  assert.equal(controller.routePointerDown(secondDown.intent, secondDown.controls), true);
   assert.equal(controller._nativeTouchPointers.size, 2);
   assert.equal(manual.size, 0);
   assert.equal(router.hasPointerCapture(1), false);
@@ -156,14 +162,16 @@ test("native multi-touch remains uncaptured and never enters custom inertia", ()
   controller.handlePointerMove(pointerEvent("pointermove", 1, harness.target, {
     clientX: 80,
     timeStamp: 120,
-  }));
+  }).intent, {
+    stopImmediatePropagation() {},
+  });
   assert.equal(panCalls.length, 0, "WebKit owns both contacts without bridge pan calls");
   controller.handlePointerEnd(pointerEvent("pointercancel", 2, harness.target, {
     timeStamp: 130,
-  }));
+  }).intent, { stopImmediatePropagation() {} });
   controller.handlePointerEnd(pointerEvent("pointercancel", 1, harness.target, {
     timeStamp: 131,
-  }));
+  }).intent, { stopImmediatePropagation() {} });
   assert.equal(controller._nativeTouchPointers.size, 0);
   assert.deepEqual(momentumCalls, []);
 });
@@ -173,8 +181,8 @@ test("read-mode Pencil stays native while active-tool Pencil retains editor owne
   const penDown = pointerEvent("pointerdown", 21, modeNone.target, {
     pointerType: "pen",
   });
-  modeNone.controller.preparePointerDown(penDown);
-  assert.equal(modeNone.controller.routePointerDown(penDown), true);
+  modeNone.controller.preparePointerDown(penDown.intent);
+  assert.equal(modeNone.controller.routePointerDown(penDown.intent, penDown.controls), true);
   assert.equal(penDown.defaultPrevented, false);
   assert.equal(modeNone.router.penPolicyPointerCount, 0);
   assert.equal(modeNone.manual.size, 0);
@@ -183,19 +191,19 @@ test("read-mode Pencil stays native while active-tool Pencil retains editor owne
     21,
     modeNone.target,
     { pointerType: "pen", clientY: 25, timeStamp: 120 },
-  )), false);
+  ).intent, {}), false);
   assert.equal(modeNone.panCalls.length, 0);
 
   const activeTool = createHarness();
   activeTool.state.editorMode = 9;
   const fingerDown = pointerEvent("pointerdown", 31, activeTool.target);
-  activeTool.controller.preparePointerDown(fingerDown);
-  activeTool.controller.routePointerDown(fingerDown);
+  activeTool.controller.preparePointerDown(fingerDown.intent);
+  activeTool.controller.routePointerDown(fingerDown.intent, fingerDown.controls);
   const activePenDown = pointerEvent("pointerdown", 32, activeTool.target, {
     pointerType: "pen",
   });
-  activeTool.controller.preparePointerDown(activePenDown);
-  assert.equal(activeTool.controller.routePointerDown(activePenDown), false,
+  activeTool.controller.preparePointerDown(activePenDown.intent);
+  assert.equal(activeTool.controller.routePointerDown(activePenDown.intent, activePenDown.controls), false,
     "active annotation mode leaves the Pencil editor gesture to PDF.js");
   assert.equal(activeTool.router.penPolicyPointerCount, 1);
   assert.equal(activeTool.manual.size, 0);

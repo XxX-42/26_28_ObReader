@@ -311,14 +311,14 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
       root, "viewer-adapter", "input", "ios-direct-manipulation-controller.js",
     ), "utf8");
     const nativeRoute = directManipulation.slice(
-      directManipulation.indexOf("routePointerDown(event)"),
-      directManipulation.indexOf("    startNativeTouchPointer(event) {"),
+      directManipulation.indexOf("routePointerDown(intent, controls"),
+      directManipulation.indexOf("    startNativeTouchPointer(intent, controls) {"),
     );
-    assert.match(nativeRoute, /startNativeTouchPointer\(event\)/,
+    assert.match(nativeRoute, /startNativeTouchPointer\(intent, controls\)/,
       "Finger contact bookkeeping stays inside the iOS input module");
-    assert.match(nativeRoute, /Read-mode Pencil is owned by WebKit[\s\S]*?return true/,
+    assert.match(nativeRoute, /Read-mode Pencil uses WebKit's native scroll and activation path[\s\S]*?return true/,
       "Read-mode Pencil is delegated to WebKit before the manual-pan helper");
-    assert.doesNotMatch(nativeRoute, /startManualPointer\(event,\s*"(?:touch|pen)"\)/,
+    assert.doesNotMatch(nativeRoute, /startManualPointer\(intent,\s*"(?:touch|pen)"\)/,
       "Neither finger nor read-mode Pencil can enter the manual pan path");
 
     t.diagnostic(JSON.stringify({

@@ -16,10 +16,15 @@
       return this.document.getSelection();
     }
 
-    resolveTarget(target) {
-      const element = target?.nodeType === 1 ? target : target?.parentElement;
+    resolveTarget(intent) {
+      const point = intent?.clientPoint;
+      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+        return { hitTarget: null, textLayer: null, textSpan: null, page: null };
+      }
+      const element = this.document.elementFromPoint?.(point.x, point.y) || null;
       const textLayer = element?.closest?.(".textLayer") || null;
       return {
+        hitTarget: element,
         textLayer,
         textSpan: element?.closest?.(".textLayer span") || null,
         page: textLayer?.closest?.(".page") || null,
@@ -75,15 +80,9 @@
       return { node, offset };
     }
 
-    begin(pointer, {
-      textLayer,
-      textSpan,
-      page,
-      clientX,
-      clientY,
-      isTrusted,
-      eligible,
-    }) {
+    begin(pointer, intent, { eligible } = {}) {
+      const { textLayer, textSpan, page } = this.resolveTarget(intent);
+      const { x: clientX, y: clientY } = intent.clientPoint;
       pointer.textLayer = textLayer;
       pointer.textSpan = textSpan;
       pointer.page = page;
@@ -96,7 +95,7 @@
         !caret ||
         !(textSpan === caret.node || textSpan.contains(caret.node)) ||
         pointer.selectionAtDown?.isCollapsed !== true ||
-        !isTrusted
+        !intent.trusted
       ) {
         return false;
       }
@@ -106,7 +105,7 @@
       return true;
     }
 
-    extend(pointer, { clientX, clientY }) {
+    extend(pointer, intent) {
       if (
         !pointer?.penTextSelectionCandidate ||
         !this.isPendingPointer(pointer) ||
@@ -117,7 +116,11 @@
       ) {
         return false;
       }
-      const endpoint = this.caretPosition(clientX, clientY, pointer.textLayer);
+      const endpoint = this.caretPosition(
+        intent?.clientPoint?.x,
+        intent?.clientPoint?.y,
+        pointer.textLayer,
+      );
       if (!endpoint) return false;
       const selection = this.getSelection();
       if (typeof selection?.setBaseAndExtent !== "function") return false;

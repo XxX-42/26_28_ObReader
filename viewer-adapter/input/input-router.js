@@ -2,6 +2,8 @@
   "use strict";
 
   const WINDOW_EVENTS = Object.freeze([
+    "touchstart",
+    "touchmove",
     "pointerdown",
     "pointermove",
     "pointerup",
@@ -20,14 +22,15 @@
   ]);
 
   class InputRouter {
-    constructor({ targetWindow, targetDocument, policy, onLegacyEvent }) {
-      if (!targetWindow || !targetDocument || !policy || !onLegacyEvent) {
-        throw new TypeError("InputRouter requires window, document, policy, and event adapter.");
+    constructor({ targetWindow, targetDocument, policy, onIntent, includeTouchEvents = false }) {
+      if (!targetWindow || !targetDocument || !policy || !onIntent) {
+        throw new TypeError("InputRouter requires window, document, policy, and intent adapter.");
       }
       this.targetWindow = targetWindow;
       this.targetDocument = targetDocument;
       this.policy = policy;
-      this.onLegacyEvent = onLegacyEvent;
+      this.onIntent = onIntent;
+      this.includeTouchEvents = includeTouchEvents === true;
       this.controller = null;
       this._activePointers = new Map();
       this._manualPointers = new Map();
@@ -72,6 +75,13 @@
         );
     }
 
+    eventControls(event) {
+      return Object.freeze({
+        preventDefault: () => event.preventDefault(),
+        stopImmediatePropagation: () => event.stopImmediatePropagation(),
+      });
+    }
+
     capturePointer(pointerId, target) {
       if (!target?.setPointerCapture) return false;
       try {
@@ -109,7 +119,10 @@
       const controller = new AbortController();
       this.controller = controller;
       const signal = controller.signal;
-      for (const type of WINDOW_EVENTS) {
+      const eventTypes = this.includeTouchEvents
+        ? WINDOW_EVENTS
+        : WINDOW_EVENTS.filter((type) => type !== "touchstart" && type !== "touchmove");
+      for (const type of eventTypes) {
         this.targetWindow.addEventListener(type, (event) => {
           const intent = window.PdfReaderInputRuntime.createInteractionIntent(event);
           if (this.shouldSuppressPenCompatibilityMouse(intent.type)) {
@@ -117,17 +130,23 @@
             event.stopImmediatePropagation();
             return;
           }
-          // Transitional adapter: the native event remains inside the input
-          // boundary closure and is never attached to InteractionIntent.
+          const controls = this.eventControls(event);
           this.policy.route(intent, (routedIntent) =>
-            this.onLegacyEvent(routedIntent, event),
+            this.onIntent(routedIntent, controls),
+            controls,
           );
-        }, { capture: true, signal });
+        }, {
+          capture: true,
+          signal,
+          ...(type === "touchstart" || type === "touchmove" ? { passive: false } : {}),
+        });
       }
       this.targetDocument.addEventListener("visibilitychange", (event) => {
         const intent = window.PdfReaderInputRuntime.createInteractionIntent(event);
+        const controls = this.eventControls(event);
         this.policy.route(intent, (routedIntent) =>
-          this.onLegacyEvent(routedIntent, event),
+          this.onIntent(routedIntent, controls),
+          controls,
         );
       }, { signal });
       return controller;

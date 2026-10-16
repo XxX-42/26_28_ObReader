@@ -21,40 +21,40 @@ function createController(options = {}) {
 
 test("annotation pointer classification preserves editor, text, wheel, and eraser intents", () => {
   const controller = createController();
-  const editorTarget = { closest: (selector) => selector === ".annotationEditorLayer" };
-  const viewerTarget = { closest: () => null };
-  const common = {
-    isTextLayerTarget: () => true,
-    isNativeContextTarget: () => false,
-    isViewerSurfaceTarget: () => true,
-  };
+  const intent = (targetRole, values = {}) => ({
+    targetRole,
+    pointerType: "mouse",
+    button: 0,
+    ...values,
+  });
 
-  assert.equal(controller.pointerInteractionKind({ button: 0 }, editorTarget, common), "editor");
-  assert.equal(controller.pointerInteractionKind({ button: 0 }, viewerTarget, {
-    ...common,
+  assert.equal(controller.pointerInteractionKind(intent("annotation-layer")), "editor");
+  assert.equal(controller.pointerInteractionKind(intent("annotation-layer", {
+    nativeContextTarget: true,
+  })), "editor", "FreeText editing still belongs to PDF.js");
+  assert.equal(controller.pointerInteractionKind(intent("text-layer"), {
     interactionMode: "HIGHLIGHT",
   }), "text-selection");
-  assert.equal(controller.pointerInteractionKind({ button: 0 }, viewerTarget, {
-    ...common,
+  assert.equal(controller.pointerInteractionKind(intent("text-layer"), {
     interactionMode: "INK",
   }), null);
-  assert.equal(controller.pointerInteractionKind({ pointerType: "mouse", button: 1 }, viewerTarget, common), "tool-wheel");
-  assert.equal(controller.pointerInteractionKind({ pointerType: "mouse", button: 2 }, viewerTarget, common), "right-eraser");
-  assert.equal(controller.pointerInteractionKind({ pointerType: "touch", button: 2 }, viewerTarget, common), null);
-  assert.equal(controller.pointerInteractionKind({ pointerType: "mouse", button: 2 }, viewerTarget, {
-    ...common,
-    isNativeContextTarget: () => true,
-  }), null);
+  assert.equal(controller.pointerInteractionKind(intent("viewer", { button: 1 })), "tool-wheel");
+  assert.equal(controller.pointerInteractionKind(intent("viewer", { button: 2 })), "right-eraser");
+  assert.equal(controller.pointerInteractionKind(intent("viewer", { pointerType: "touch", button: 2 })), null);
+  assert.equal(controller.pointerInteractionKind(intent("native-control", { button: 2 })), null);
+  assert.equal(controller.pointerInteractionKind(intent("annotation-layer", {
+    button: 2,
+    nativeContextTarget: true,
+  })), null, "context menus inside native text controls remain native");
 });
 
 test("native annotation operation detection only recognizes selected editor move and resize handles", () => {
   const controller = createController();
-  const target = (selector) => ({ closest: (candidate) => candidate === selector });
-
-  assert.equal(controller.nativeOperation({ button: 0, pointerType: "pen" }, target(".resizer")), "resize");
-  assert.equal(controller.nativeOperation({ button: 0, pointerType: "mouse" }, target(".draggable.selectedEditor")), "move");
-  assert.equal(controller.nativeOperation({ button: 0, pointerType: "touch" }, target(".resizer")), null);
-  assert.equal(controller.nativeOperation({ button: 2, pointerType: "pen" }, target(".resizer")), null);
+  assert.equal(controller.nativeOperation({ button: 0, pointerType: "pen", nativeOperation: "resize" }), "resize");
+  assert.equal(controller.nativeOperation({ button: 0, pointerType: "mouse", nativeOperation: "move" }), "move");
+  assert.equal(controller.nativeOperation({ button: 0, pointerType: "touch", nativeOperation: "resize" }), null);
+  assert.equal(controller.nativeOperation({ button: 2, pointerType: "pen", nativeOperation: "resize" }), null);
+  assert.equal(controller.nativeOperation({ button: 0, pointerType: "mouse", nativeOperation: "other" }), null);
 });
 
 test("Pencil highlight fallback commits only the exact live editor and selection session", () => {

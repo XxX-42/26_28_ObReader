@@ -8,111 +8,11 @@ const policySource = await readFile(
   "utf8",
 );
 
-test("iOS policy owns finger selection suppression until explicit handoff", () => {
-  let annotationToolActive = false;
-  let suppressed = false;
-  const documentRef = {
-    documentElement: {
-      classList: {
-        toggle(_name, enabled) { suppressed = enabled; },
-      },
-    },
-  };
-  const runtimeWindow = { PdfReaderInputRuntime: {} };
-  vm.runInNewContext(policySource, { window: runtimeWindow });
-  const policy = new runtimeWindow.PdfReaderInputRuntime.IOSInputPolicy({
-    documentRef,
-    isAnnotationToolActive: () => annotationToolActive,
-    isTextLayerTarget: (target) => target?.role === "text-layer",
-  });
-
-  policy.setFingerTextSelectionSuppressionOwned(true);
-  assert.equal(suppressed, false, "read mode does not suppress text selection");
-  let prevented = false;
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "text-layer" },
-    preventDefault() { prevented = true; },
-  }), false);
-  assert.equal(prevented, false);
-
-  annotationToolActive = true;
-  assert.equal(policy.refreshFingerTextSelectionSuppression(), true);
-  assert.equal(suppressed, true);
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "toolbar" },
-    preventDefault() { prevented = true; },
-  }), false, "toolbar interaction stays available");
-  assert.equal(policy.handleTextSelectionGuard({
-    target: { role: "text-layer" },
-    preventDefault() { prevented = true; },
-  }), true);
-  assert.equal(prevented, true);
-
-  policy.clearFingerTextSelectionSuppression();
-  assert.equal(suppressed, false);
-});
-
-test("iOS policy suppresses only the compatibility click after a pan", () => {
-  const pageOne = {};
-  const pageTwo = {};
-  const policyWindow = { PdfReaderInputRuntime: {} };
-  vm.runInNewContext(policySource, { window: policyWindow });
-  const policy = new policyWindow.PdfReaderInputRuntime.IOSInputPolicy({
-    documentRef: {},
-    isElementTarget: (target) => target?.element === true,
-    isViewerSurfaceTarget: (target) => target?.viewer === true,
-    isNativeContextTarget: (target) => target?.native === true,
-    isNativeActivationTarget: (target) => target?.activation === true,
-    directManipulationPage: (target) => target.page || target,
-  });
-  const target = (page, overrides = {}) => ({
-    element: true,
-    viewer: true,
-    page,
-    ...overrides,
-  });
-  const click = (eventTarget, detail = 1, pointerType = "mouse") => {
-    let prevented = false;
-    let stopped = false;
-    const event = {
-      target: eventTarget,
-      detail,
-      pointerType,
-      preventDefault() { prevented = true; },
-      stopImmediatePropagation() { stopped = true; },
-    };
-    return { event, wasSuppressed: policy.handlePanClick(event), prevented, stopped };
-  };
-
-  policy.rememberPanClickTarget("touch", pageOne);
-  const samePageCompatibilityClick = click(target(pageOne));
-  assert.equal(samePageCompatibilityClick.wasSuppressed, true);
-  assert.equal(samePageCompatibilityClick.prevented, true);
-  assert.equal(samePageCompatibilityClick.stopped, true);
-  assert.equal(click(target(pageTwo)).wasSuppressed, false);
-  assert.equal(click(target(pageOne, { native: true })).wasSuppressed, false);
-  assert.equal(click(target(pageOne, { activation: true })).wasSuppressed, false,
-    "native links and controls retain their activation click");
-  assert.equal(click(target(pageTwo), 1, "touch").wasSuppressed, true);
-
-  policy.clearPanClickTargets();
-  assert.equal(click(target(pageOne)).wasSuppressed, false);
-  policy.rememberPanClickTarget("pen", pageOne);
-  const doubleClick = click(target(pageOne), 2);
-  assert.equal(policy.handlePanClick(doubleClick.event, { doubleClick: true }), true);
-  assert.equal(policy.handlePanClick({
-    ...doubleClick.event,
-    detail: 1,
-  }, { doubleClick: true }), false);
-});
-
-test("iOS Pencil guard handles indexed non-iterable TouchLists and leaves native contacts alone", () => {
-  let annotationToolActive = false;
-  let penGestureActive = false;
+function createPolicy({ annotationToolActive = false, penGestureActive = false } = {}) {
   const toggled = [];
   const documentRef = {
     documentElement: {
-      classList: { toggle: (name, enabled) => toggled.push([name, enabled]) },
+      classList: { toggle: (name, active) => toggled.push([name, active]) },
     },
   };
   const runtimeWindow = { PdfReaderInputRuntime: {} };
@@ -120,60 +20,124 @@ test("iOS Pencil guard handles indexed non-iterable TouchLists and leaves native
   const policy = new runtimeWindow.PdfReaderInputRuntime.IOSInputPolicy({
     documentRef,
     isAnnotationToolActive: () => annotationToolActive,
-    isElementTarget: (target) => target?.element === true,
-    isViewerSurfaceTarget: (target) => target?.viewer === true,
-    isNativeContextTarget: (target) => target?.native === true,
-    isPenEditableTarget: (target) => target?.penEditable === true,
     hasActivePenEditorGesture: () => penGestureActive,
   });
-  const stylus = { touchType: "stylus" };
-  const indexedTouchList = {
-    0: stylus,
-    length: 1,
-    item(index) { return this[index] || null; },
+  return { policy, toggled };
+}
+
+function controls() {
+  let prevented = false;
+  let stopped = false;
+  return {
+    value: {
+      preventDefault() { prevented = true; },
+      stopImmediatePropagation() { stopped = true; },
+    },
+    get prevented() { return prevented; },
+    get stopped() { return stopped; },
   };
-  assert.equal(indexedTouchList[Symbol.iterator], undefined,
-    "the fixture represents WebKit's non-iterable TouchList IDL shape");
-  const target = { element: true, viewer: true };
-  const touch = (list, touchTarget = target) => {
-    let prevented = false;
+}
+
+test("iOS policy owns finger selection suppression until explicit handoff", () => {
+  let annotationToolActive = false;
+  const { policy, toggled } = createPolicy({ annotationToolActive });
+  policy.isAnnotationToolActive = () => annotationToolActive;
+  policy.setFingerTextSelectionSuppressionOwned(true);
+  assert.deepEqual(toggled.at(-1), ["pdfReaderFingerTextSelectionSuppressed", false]);
+  let eventControls = controls();
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "text-layer" }, eventControls.value), false);
+  assert.equal(eventControls.prevented, false);
+
+  annotationToolActive = true;
+  assert.equal(policy.refreshFingerTextSelectionSuppression(), true);
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "viewer" }, eventControls.value), false);
+  assert.equal(policy.handleTextSelectionGuard({ targetRole: "text-layer" }, eventControls.value), true);
+  assert.equal(eventControls.prevented, true);
+  policy.clearFingerTextSelectionSuppression();
+  assert.deepEqual(toggled.at(-1), ["pdfReaderFingerTextSelectionSuppressed", false]);
+});
+
+test("pan click suppression preserves native activation and double-click targets", () => {
+  const { policy } = createPolicy();
+  const click = (pageIndex, overrides = {}, { doubleClick = false } = {}) => {
+    const eventControls = controls();
+    const intent = {
+      detail: doubleClick ? 2 : 1,
+      pointerType: "mouse",
+      pageIndex,
+      targetRole: "viewer",
+      nativeContextTarget: false,
+      nativeActivationTarget: false,
+      ...overrides,
+    };
     return {
-      event: {
-        target: touchTarget,
-        touches: list,
-        changedTouches: list,
-        preventDefault() { prevented = true; },
-        get defaultPrevented() { return prevented; },
-      },
+      suppressed: policy.handlePanClick(intent, eventControls.value, { doubleClick }),
+      ...eventControls,
     };
   };
 
-  assert.equal(policy.touchEventContainsStylus(touch(indexedTouchList).event), true);
-  assert.equal(policy.handleTouchStart(touch(indexedTouchList).event), false,
-    "read-mode Pencil is not canceled");
-  const fingerList = { 0: { touchType: "direct" }, length: 1, item(index) { return this[index]; } };
-  const ordinaryFinger = touch(fingerList).event;
-  assert.equal(policy.handleTouchStart(ordinaryFinger), false);
-  assert.equal(ordinaryFinger.defaultPrevented, false,
-    "ordinary finger contact retains native scrolling");
+  policy.rememberPanClickTarget("touch", 0);
+  const samePage = click(0);
+  assert.equal(samePage.suppressed, true);
+  assert.equal(samePage.prevented, true);
+  assert.equal(samePage.stopped, true);
+  assert.equal(click(1).suppressed, false);
+  assert.equal(click(0, { nativeContextTarget: true }).suppressed, false);
+  assert.equal(click(0, { nativeActivationTarget: true }).suppressed, false,
+    "native links and controls keep their synthesized activation click");
+  assert.equal(click(0, { nativeActivationTarget: true }, { doubleClick: true }).suppressed, false,
+    "native activation is also exempt from double-click suppression");
+  assert.equal(click(1, { pointerType: "touch" }).suppressed, true);
+
+  policy.clearPanClickTargets();
+  assert.equal(click(0).suppressed, false);
+  policy.rememberPanClickTarget("pen", 0);
+  assert.equal(click(0, {}, { doubleClick: true }).suppressed, true);
+  assert.equal(click(0, { detail: 1 }, { doubleClick: true }).suppressed, false,
+    "a single click does not masquerade as a native double click");
+});
+
+test("iOS touch policy cancels only active Pencil editing and palm arbitration", () => {
+  let annotationToolActive = false;
+  let penGestureActive = false;
+  const { policy, toggled } = createPolicy();
+  policy.isAnnotationToolActive = () => annotationToolActive;
+  policy.hasActivePenEditorGesture = () => penGestureActive;
+  const intent = (overrides = {}) => ({
+    type: "touchstart",
+    targetRole: "viewer",
+    nativeContextTarget: false,
+    nativeOperation: null,
+    touchHasStylus: false,
+    ...overrides,
+  });
+  const dispatch = (method, value) => {
+    const eventControls = controls();
+    const preventedByPolicy = policy[method](value, eventControls.value);
+    return { preventedByPolicy, ...eventControls };
+  };
+
+  const finger = dispatch("handleTouchStart", intent());
+  assert.equal(finger.preventedByPolicy, false);
+  assert.equal(finger.prevented, false, "finger scrolling stays native");
+  const readPencil = dispatch("handleTouchStart", intent({ touchHasStylus: true }));
+  assert.equal(readPencil.prevented, false, "read-mode Pencil stays native");
 
   annotationToolActive = true;
-  const editingStylus = touch(indexedTouchList).event;
-  assert.equal(policy.handleTouchStart(editingStylus), true,
-    "active-tool Pencil keeps the legacy editing guard");
-  assert.equal(editingStylus.defaultPrevented, true);
+  const editingPencil = dispatch("handleTouchStart", intent({ touchHasStylus: true }));
+  assert.equal(editingPencil.preventedByPolicy, true);
+  assert.equal(editingPencil.prevented, true, "active-tool Pencil keeps editor ownership");
 
   annotationToolActive = false;
   penGestureActive = true;
-  const palmContact = touch(fingerList).event;
-  assert.equal(policy.handleTouchStart(palmContact), true,
-    "a finger arriving during active Pencil input is arbitrated");
-  const palmMove = touch(fingerList).event;
-  assert.equal(policy.handleTouchMove(palmMove), true);
-  assert.equal(palmMove.defaultPrevented, true);
-  const focusedControl = touch(fingerList, { element: true, viewer: true, native: true }).event;
-  assert.equal(policy.handleTouchMove(focusedControl), false,
-    "native editing controls keep their own touch behavior");
+  const palm = dispatch("handleTouchStart", intent());
+  const palmMove = dispatch("handleTouchMove", intent({ type: "touchmove" }));
+  assert.equal(palm.preventedByPolicy, true);
+  assert.equal(palmMove.preventedByPolicy, true);
+  assert.equal(palmMove.prevented, true);
+  const nativeControl = dispatch("handleTouchMove", intent({ nativeContextTarget: true }));
+  assert.equal(nativeControl.prevented, false,
+    "native editing controls retain their own touch behavior");
   assert.equal(policy.refreshPenGestureTouchAction(), true);
   assert.deepEqual(toggled.at(-1), ["pdfReaderPenGestureActive", true]);
 });
