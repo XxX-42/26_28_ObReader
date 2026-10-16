@@ -17,6 +17,17 @@ const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const vendorWeb = path.join(vendorRoot, "web");
 const bridgeCssPath = path.join(root, "viewer-adapter", "bridge.css");
 const bridgeJsPath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
+const inputRuntimeFiles = [
+  "input/interaction-intent.js",
+  "input/interaction-mode.js",
+  "input/viewport-controller.js",
+  "input/ios-direct-manipulation-controller.js",
+  "input/text-selection-controller.js",
+  "input/annotation-controller.js",
+  "input/desktop-input-policy.js",
+  "input/ios-input-policy.js",
+  "input/input-router.js",
+];
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const browserPath = resolveBrowserPath();
 const mimeTypes = new Map([
@@ -46,6 +57,8 @@ function hostHtml() {
       let initialOpenSent = false;
       window.__openedDocuments = [];
       window.__bridgeErrors = [];
+      window.__bulkSeedAnnotations = [];
+      window.__bulkSavedOperations = [];
       window.__openPdf = async (readOnly) => {
         const data = await fetch("/fixtures/tracemonkey.pdf").then((response) => {
           if (!response.ok) throw new Error("Could not fetch PDF fixture");
@@ -73,6 +86,49 @@ function hostHtml() {
             documentPath: message.documentPath,
             filename: message.filename,
           });
+        } else if (message.type === "annotation-source-identity") {
+          frame.contentWindow.postMessage({
+            channel,
+            token,
+            type: "external-annotations-update",
+            documentId: message.documentId,
+            openRequest: message.openRequest,
+            identityConfirmed: true,
+            sourceMatch: "BASELINE_ESTABLISHED",
+            externalAnnotations: {
+              schemaVersion: 2,
+              kind: "pdf-annotation-snapshot",
+              documentId: message.documentId,
+              revision: 0,
+              source: {
+                sourcePath: "Tests/tracemonkey.pdf",
+                sourceHash: message.sourceHash ?? null,
+                pageCount: message.pageCount,
+                orderedPageIdentities: message.orderedPageIdentities,
+              },
+              legacyIdentities: [],
+              annotations: window.__bulkSeedAnnotations,
+              tombstones: [],
+            },
+          }, "*");
+        } else if (message.type === "save") {
+          const operations = Array.isArray(message.operations) ? message.operations : [];
+          window.__bulkSavedOperations.push({
+            revision: message.revision,
+            operations: structuredClone(operations),
+          });
+          frame.contentWindow.postMessage({
+            channel,
+            token,
+            type: "saved",
+            documentId: message.documentId,
+            openRequest: message.openRequest,
+            requestId: message.requestId,
+            revision: message.revision,
+            external: true,
+            operationCount: operations.length,
+            batchId: "toolbar-batch-" + message.revision,
+          }, "*");
         } else if (message.type === "error") {
           window.__bridgeErrors.push(message.message || "viewer error");
         }
@@ -262,9 +318,24 @@ async function measureToolbar(frame) {
           title: button.title,
           ariaLabel: button.getAttribute("aria-label"),
           inSecondaryMenu: button.parentElement?.id === "secondaryToolbarButtonContainer",
-          beforeSave: !!button.nextElementSibling && button.nextElementSibling.id === "secondaryDownload",
+          nextAction: button.nextElementSibling?.dataset.action || null,
         };
       })(),
+      bulkDelete: [
+        ["pdfReaderBridgeDeletePageAnnotationsButton", "delete-page-annotations", "删除本页所有批注"],
+        ["pdfReaderBridgeDeleteAllAnnotationsButton", "delete-all-annotations", "删除所有页的批注"],
+      ].map(([id]) => {
+        const button = document.getElementById(id);
+        return button && {
+          id,
+          action: button.dataset.action,
+          title: button.title,
+          ariaLabel: button.getAttribute("aria-label"),
+          inSecondaryMenu: button.parentElement?.id === "secondaryToolbarButtonContainer",
+          nextId: button.nextElementSibling?.id || null,
+          disabled: button.disabled,
+        };
+      }),
       saveControl: (() => {
         const button = document.getElementById("secondaryDownload");
         return button && {
@@ -394,11 +465,16 @@ function assertZoomPresets(layout, languagePrefix) {
   assert.equal(layout.bridgeDelete.title, "删除所选批注");
   assert.equal(layout.bridgeDelete.ariaLabel, "删除所选批注");
   assert.equal(layout.bridgeDelete.inSecondaryMenu, true);
-  assert.equal(layout.bridgeDelete.beforeSave, true);
+  assert.equal(layout.bridgeDelete.nextAction, "delete-page-annotations");
+  assert.deepEqual(layout.bulkDelete.map(({ id, action, title, ariaLabel, inSecondaryMenu, nextId }) =>
+    [id, action, title, ariaLabel, inSecondaryMenu, nextId]), [
+    ["pdfReaderBridgeDeletePageAnnotationsButton", "delete-page-annotations", "删除本页所有批注", "删除本页所有批注", true, "pdfReaderBridgeDeleteAllAnnotationsButton"],
+    ["pdfReaderBridgeDeleteAllAnnotationsButton", "delete-all-annotations", "删除所有页的批注", "删除所有页的批注", true, "secondaryDownload"],
+  ]);
   assert.deepEqual(layout.saveControl, {
-    title: "保存 PDF 到仓库（覆盖当前文件）",
-    ariaLabel: "保存 PDF 到仓库（覆盖当前文件）",
-    label: "保存到仓库",
+    title: "保存批注到外置记录",
+    ariaLabel: "保存批注到外置记录",
+    label: "保存批注",
     count: 1,
     bridgeSaveActions: 0,
   });
@@ -443,6 +519,18 @@ test(
         response.end(vendorViewerHtml);
         return;
       }
+      if (url.pathname === "/bridge.js") {
+        const source = await Promise.all([
+          ...inputRuntimeFiles.map((file) => readFile(path.join(root, "viewer-adapter", file), "utf8")),
+          readFile(bridgeJsPath, "utf8"),
+        ]);
+        response.writeHead(200, {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        response.end(source.join("\n"));
+        return;
+      }
       const target = getTarget(url.pathname);
       if (!target) {
         missingRequests.push(url.pathname);
@@ -478,7 +566,7 @@ test(
       }, { testName: "desktop-toolbar" });
       page = await browser.newPage();
       await page.setViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
-      page.on("pageerror", (error) => pageErrors.push(error.message));
+      page.on("pageerror", (error) => pageErrors.push(error.stack || error.message));
       page.on("console", (message) => {
         if (message.type() === "error") browserDiagnostics.push(message.text());
       });
@@ -513,9 +601,21 @@ test(
         () => window.__openedDocuments?.length === 1,
         { timeout: 45_000 },
       );
-      await viewer.waitForFunction(
-        () => !document.getElementById("editorUnderlineButton").disabled,
-      );
+      try {
+        await viewer.waitForFunction(
+          () => !document.getElementById("editorUnderlineButton").disabled,
+          { timeout: 15_000 },
+        );
+      } catch (error) {
+        const toolbarState = await viewer.evaluate(() => ({
+          underlineDisabled: document.getElementById("editorUnderlineButton")?.disabled,
+          activeDocumentId: window.PDFViewerApplication?.pdfDocument?.fingerprints?.[0],
+          bridgeErrors: window.parent.__bridgeErrors,
+          bridgeReady: window.__pdfReaderBridgeReady === true,
+          runtimeKeys: Object.keys(window.PdfReaderInputRuntime || {}),
+        }));
+        throw new Error(`${error.message}; toolbar=${JSON.stringify(toolbarState)}; pageErrors=${pageErrors.join(" | ")}`, { cause: error });
+      }
 
       const wide = await measureToolbar(viewer);
       assert.equal(wide.toolbarHeight, 32);
@@ -703,8 +803,20 @@ test(
         );
         const secondaryMenu = await viewer.$eval("#secondaryToolbar", (element) => {
           const box = element.getBoundingClientRect();
-          return { x: box.x, right: box.right, top: box.top, bottom: box.bottom, width: box.width };
+          return {
+            x: box.x,
+            right: box.right,
+            top: box.top,
+            bottom: box.bottom,
+            width: box.width,
+            bulkDeleteActions: [...element.querySelectorAll("#pdfReaderBridgeDeletePageAnnotationsButton, #pdfReaderBridgeDeleteAllAnnotationsButton")]
+              .map((button) => ({ action: button.dataset.action, disabled: button.disabled })),
+          };
         });
+        assert.deepEqual(secondaryMenu.bulkDeleteActions.map(({ action }) => action), [
+          "delete-page-annotations",
+          "delete-all-annotations",
+        ], "Both bulk annotation actions are available in the right-side menu");
         assertRectInside(secondaryMenu, width, `secondary menu at ${width}px`);
         assert.ok(secondaryMenu.top >= layout.toolbar.bottom - 0.5, `secondary menu opens below the toolbar at ${width}px`);
         await viewer.evaluate(() => {
@@ -952,6 +1064,121 @@ test(
         await viewer.$eval("#editorUnderlineButton", (element) => getComputedStyle(element).cursor),
         "not-allowed",
       );
+
+      const bulkDeleteFixture = await viewer.evaluate(() => {
+        const pageCount = PDFViewerApplication.pdfDocument.numPages;
+        const makeRow = (uuid, pageIndex, x) => ({
+          uuid,
+          kind: "Square",
+          pageIndex,
+          embeddedRef: null,
+          deleted: false,
+          clock: { timestamp: 1, logical: 0, deviceId: "toolbar-test", opId: uuid },
+          payload: {
+            editor: {
+              annotationType: 5,
+              pageIndex,
+              rect: [x, 90, x + 45, 135],
+              rotation: 0,
+              color: [1, 0, 0],
+              thickness: 2,
+              opacity: 1,
+              isCopy: true,
+            },
+          },
+        });
+        parent.__bulkSeedAnnotations = [
+          makeRow("visible-square", 0, 45),
+          makeRow("offscreen-square", pageCount - 1, 75),
+        ];
+        return { pageCount, offscreenPageIndex: pageCount - 1 };
+      });
+      await page.evaluate(() => window.__openPdf(false));
+      await page.waitForFunction(
+        () => window.__openedDocuments?.length === 3,
+        { timeout: 45_000 },
+      );
+      try {
+        await viewer.waitForFunction(
+          () => !document.documentElement.hasAttribute("data-pdf-reader-readonly") &&
+            PDFViewerApplication.pdfViewer.currentPageNumber === 1 &&
+            [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager
+              .getEditors(0)].some((editor) => editor.editorType === "square"),
+          { timeout: 20_000 },
+        );
+      } catch (error) {
+        const state = await viewer.evaluate(() => ({
+          readOnly: document.documentElement.hasAttribute("data-pdf-reader-readonly"),
+          pageCount: PDFViewerApplication.pdfDocument?.numPages,
+          pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+          editors: PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager
+            .getEditors(0).map((editor) => ({ type: editor.editorType, page: editor.pageIndex })),
+          status: document.getElementById("pdfReaderBridgeStatus")?.textContent,
+          parentErrors: parent.__bridgeErrors,
+        }));
+        throw new Error(`${error.message}; bulkFixture=${JSON.stringify(state)}; pageErrors=${pageErrors.join(" | ")}`, { cause: error });
+      }
+
+      const latestSavedOperation = async (uuid, expectedDeleted) => {
+        await viewer.waitForFunction(({ targetUuid, deleted }) => {
+          const operations = (parent.__bulkSavedOperations || [])
+            .flatMap((entry) => entry.operations || []);
+          const latest = operations.findLast((operation) => operation.uuid === targetUuid);
+          return latest && latest.deleted === deleted;
+        }, { timeout: 20_000 }, { targetUuid: uuid, deleted: expectedDeleted });
+      };
+      const clickMenuAction = async (selector) => {
+        await viewer.$eval("#secondaryToolbarToggle", (button) => button.click());
+        await viewer.waitForFunction(
+          (id) => !document.getElementById(id).disabled,
+          { timeout: 5_000 },
+          selector.slice(1),
+        );
+        await viewer.$eval(selector, (button) => button.click());
+      };
+
+      await clickMenuAction("#pdfReaderBridgeDeletePageAnnotationsButton");
+      await latestSavedOperation("visible-square", true);
+      assert.equal(
+        await viewer.evaluate(() => [...PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager.getEditors(0)].length),
+        0,
+        "Deleting this page removes the visible managed annotation",
+      );
+      await viewer.$eval("#pdfReaderBridgeUndoButton", (button) => button.click());
+      await latestSavedOperation("visible-square", false);
+
+      const savesBeforeCancel = await page.evaluate(() => window.__bulkSavedOperations.length);
+      await clickMenuAction("#pdfReaderBridgeDeleteAllAnnotationsButton");
+      await viewer.waitForSelector('[role="alertdialog"].pdfReaderBulkDeleteDialog');
+      assert.match(
+        await viewer.$eval("#pdfReaderBulkDeleteDescription", (element) => element.textContent),
+        /2 条本插件管理的批注/,
+      );
+      await viewer.$eval(".pdfReaderBulkDeleteCancel", (button) => button.click());
+      assert.equal(await viewer.$(".pdfReaderBulkDeleteDialog"), null,
+        "Cancel closes the confirmation without applying a delete");
+      assert.equal(await page.evaluate(() => window.__bulkSavedOperations.length), savesBeforeCancel,
+        "Cancel does not write a deletion operation");
+
+      await clickMenuAction("#pdfReaderBridgeDeleteAllAnnotationsButton");
+      await viewer.waitForSelector('[role="alertdialog"].pdfReaderBulkDeleteDialog');
+      await viewer.$eval(".pdfReaderBulkDeleteConfirm", (button) => button.click());
+      await latestSavedOperation("visible-square", true);
+      await latestSavedOperation("offscreen-square", true);
+      await viewer.$eval("#pdfReaderBridgeUndoButton", (button) => button.click());
+      await latestSavedOperation("visible-square", false);
+      await latestSavedOperation("offscreen-square", false);
+      assert.equal(
+        await viewer.evaluate(() => [...PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager.getEditors(0)].length),
+        1,
+        "One Undo restores the visible annotation in the mixed visible/offscreen delete",
+      );
+      await viewer.$eval("#pdfReaderBridgeRedoButton", (button) => button.click());
+      await latestSavedOperation("visible-square", true);
+      await latestSavedOperation("offscreen-square", true);
+      assert.ok(bulkDeleteFixture.offscreenPageIndex > 0);
       assert.deepEqual(pageErrors, [], "The real vendor viewer should remain error-free");
     } catch (error) {
       primaryError = error;

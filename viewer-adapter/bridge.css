@@ -52,6 +52,72 @@ body {
   display: none;
 }
 
+.pdfReaderBulkDeleteOverlay {
+  position: fixed;
+  z-index: 100002;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 0.42);
+}
+
+.pdfReaderBulkDeleteDialog {
+  width: min(420px, 100%);
+  padding: 20px;
+  border: 1px solid var(--toolbar-border-color, rgb(0 0 0 / 0.3));
+  border-radius: 10px;
+  color: var(--main-color, CanvasText);
+  background: var(--doorhanger-bg-color, Canvas);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.28);
+  font: message-box;
+}
+
+.pdfReaderBulkDeleteDialog h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+.pdfReaderBulkDeleteDialog p {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.pdfReaderBulkDeleteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-block-start: 20px;
+}
+
+.pdfReaderBulkDeleteActions button {
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--toolbar-border-color, rgb(0 0 0 / 0.3));
+  border-radius: 6px;
+  color: var(--main-color, CanvasText);
+  background: var(--button-bg-color, var(--doorhanger-bg-color, Canvas));
+  font: inherit;
+}
+
+.pdfReaderBulkDeleteActions .pdfReaderBulkDeleteConfirm {
+  border-color: var(--pdfjs-editor-ink-color, #b42318);
+  color: white;
+  background: var(--pdfjs-editor-ink-color, #b42318);
+}
+
+.pdfReaderBulkDeleteActions button:focus-visible {
+  outline: 2px solid var(--focus-outline-color, #1688d4);
+  outline-offset: 2px;
+}
+
+.pdfReaderBridgeBulkDeleteButton::before {
+  display: none;
+  content: none;
+}
+
 :root[data-pdf-reader-readonly] #editorUnderlineButton,
 :root[data-pdf-reader-readonly] #editorSquareButton,
 :root[data-pdf-reader-readonly] #editorHighlightButton,
