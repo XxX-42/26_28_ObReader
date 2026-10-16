@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
@@ -48,6 +49,7 @@ function hostHtml() {
     <title>PDF narrow toolbar test host</title>
     <iframe id="pdf-reader" name="pdf-reader"
       style="display:block;width:100vw;height:900px;border:0"></iframe>
+    ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: "desktop-toolbar-test" })}
     <script>
       const channel = "pdf-web-reader";
       const token = "desktop-toolbar-test";

@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const launchMetadataByBrowser = new WeakMap();
+const processIdentityByBrowser = new WeakMap();
 const DEFAULT_ARTIFACTS_DIRECTORY = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "artifacts",
@@ -217,14 +218,28 @@ export async function launchTestBrowser(
     throw error;
   }
 
+  // Windows environment keys are case-insensitive, ordinary JS objects are
+  // not. Canonicalize before merging so Path/PATH cannot shadow one another.
+  const normalizeEnvironment = (environment) => Object.fromEntries(
+    Object.entries(environment).map(([key, value]) => [process.platform === "win32" ? key.toUpperCase() : key, value]),
+  );
   const childEnvironment = {
-    ...process.env,
-    ...(launchOptions.env || {}),
+    ...normalizeEnvironment(process.env),
+    ...normalizeEnvironment(launchOptions.env || {}),
     BREAKPAD_DUMP_LOCATION: metadata.crashpadDirectory,
   };
   let browser;
   try {
-    browser = await puppeteer.launch({ ...launchOptions, env: childEnvironment });
+    const launchArgs = [...(launchOptions.args || [])];
+    for (const flag of [
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-sync",
+      "--no-first-run",
+    ]) {
+      if (!launchArgs.includes(flag)) launchArgs.push(flag);
+    }
+    browser = await puppeteer.launch({ ...launchOptions, args: launchArgs, env: childEnvironment });
   } catch (error) {
     metadata.state = "launch-failed";
     try {
@@ -256,6 +271,14 @@ export async function launchTestBrowser(
   metadata.browserPid = Number.isInteger(childProcess?.pid) ? childProcess.pid : null;
   const executable = childProcess?.spawnfile || launchOptions.executablePath;
   metadata.browserExecutable = executable ? path.basename(String(executable)) : null;
+  if (childProcess && Number.isInteger(childProcess.pid)) {
+    processIdentityByBrowser.set(browser, {
+      child: childProcess,
+      pid: childProcess.pid,
+      spawnfile: childProcess.spawnfile || null,
+      spawnargs: Array.isArray(childProcess.spawnargs) ? [...childProcess.spawnargs] : [],
+    });
+  }
   launchMetadataByBrowser.set(browser, metadata);
   await recordState(metadata, "launched");
   return browser;
@@ -265,6 +288,17 @@ export async function launchTestBrowser(
 export function getTestBrowserLaunchMetadata(browser) {
   const metadata = launchMetadataByBrowser.get(browser);
   return metadata ? metadataSnapshot(metadata) : null;
+}
+
+/**
+ * Return the immutable launch-time ChildProcess identity for a test browser.
+ * On Windows the Node ChildProcess handle itself is the exact owned process
+ * reference; avoiding a PowerShell/CIM query during teardown also prevents a
+ * slow process-table query from outliving the bounded browser-close deadline.
+ */
+export function getTestBrowserProcessIdentity(browser) {
+  const identity = processIdentityByBrowser.get(browser);
+  return identity ? { ...identity, spawnargs: [...identity.spawnargs] } : null;
 }
 
 /** Persist the verified cleanup outcome without removing the Crashpad database. */

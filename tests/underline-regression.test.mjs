@@ -1,8 +1,10 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
@@ -686,6 +688,7 @@ test(
     let adapter;
     let mainSource;
     let payload;
+    let fixtureSha256Before;
     let harness;
     let logicalAssetRoot;
     let output;
@@ -1333,6 +1336,7 @@ test(
 
     try {
       throwIfTestAborted();
+      fixtureSha256Before = createHash("sha256").update(await readFile(fixture)).digest("hex");
       server = createServer(async (request, response) => {
       for (const [name, value] of Object.entries(withTestNetworkFirewall())) {
         response.setHeader(name, value);
@@ -1522,24 +1526,28 @@ test(
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style>
         <iframe name="pdf-reader" title="PDF Web Reader"
           sandbox="allow-downloads allow-forms allow-modals allow-pointer-lock allow-same-origin allow-scripts"></iframe>
+        ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: testView.token })}
         <script>
           const channel = 'pdf-web-reader';
           const token = ${JSON.stringify(testView.token)};
           const documentId = 'fixtures/tracemonkey.pdf';
           const iframe = document.querySelector('iframe');
-          const state = window.__hostState = { opened: 0, saves: 0, savedData: null, savedDataByteLength: 0, events: [], openRequests: [], errors: [] };
+          const state = window.__hostState = { opened: 0, saves: 0, savedOperations: [], savedDataByteLength: 0, nextOpenRequest: 0, events: [], openRequests: [], errors: [] };
           let fixtureBytes;
           const recordOpenRequest = (data, reason) => {
             state.openRequests.push({
               at: performance.now(),
               reason,
               documentId,
+              openRequest: state.nextOpenRequest,
               byteLength: data?.byteLength ?? null,
             });
           };
           const postOpen = (data, reason) => {
+            state.nextOpenRequest += 1;
             recordOpenRequest(data, reason);
-            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, readOnly:false, autoSave:false}, '*', [data]);
+            const externalAnnotations = window.__browserSidecarHost.snapshotFor(documentId);
+            iframe.contentWindow.postMessage({channel, type:'open', token, data, documentId, openRequest:state.nextOpenRequest, externalAnnotations, readOnly:false, autoSave:false}, '*', [data]);
           };
           window.addEventListener('message', event => {
             if (event.source !== iframe.contentWindow) return;
@@ -1565,10 +1573,12 @@ test(
               record.openedCount = state.opened;
             } else if (message.type === 'save') {
               state.saves += 1;
-              state.savedData = message.data.slice(0);
-              state.savedDataByteLength = state.savedData.byteLength;
+              const operations = Array.isArray(message.operations) ? structuredClone(message.operations) : [];
+              state.savedOperations.push(...operations);
+              state.savedDataByteLength = message.data?.byteLength ?? 0;
               record.saveCount = state.saves;
-              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId, requestId:message.requestId, revision:message.revision}, '*');
+              record.operationCount = operations.length;
+              iframe.contentWindow.postMessage({channel, type:'saved', token, documentId:message.documentId, openRequest:message.openRequest, rendererGeneration:message.rendererGeneration, requestId:message.requestId, revision:message.revision, external:true, operationCount:operations.length, batchId:operations.length ? 'underline-sidecar-' + message.requestId : null}, '*');
               state.events.push({
                 at: performance.now(),
                 direction: 'host-to-viewer',
@@ -1583,8 +1593,8 @@ test(
             }
           });
           window.__reopenSavedData = () => {
-            const data = state.savedData.slice(0);
-            postOpen(data, 'saved-data-reopen');
+            const data = fixtureBytes.slice(0);
+            postOpen(data, 'sidecar-reopen');
           };
           window.__reopenFixture = () => {
             const data = fixtureBytes.slice(0);
@@ -1664,6 +1674,15 @@ test(
         .frames()
         .find((frame) => frame.name() === "pdf-reader");
       assert.ok(viewer, "Expected the isolated viewer frame");
+      await viewer.evaluate(() => {
+        window.__ordinaryPdfSaveDocumentCalls = 0;
+        const pdfDocument = PDFViewerApplication.pdfDocument;
+        const original = pdfDocument.saveDocument.bind(pdfDocument);
+        pdfDocument.saveDocument = (...args) => {
+          window.__ordinaryPdfSaveDocumentCalls += 1;
+          return original(...args);
+        };
+      });
       await viewer.waitForSelector(
         '.page[data-page-number="1"] .textLayer span',
       );
@@ -1967,7 +1986,7 @@ test(
           const expectedSave = await page.evaluate(
             () => window.__hostState.saves + 1,
           );
-          await viewer.evaluate(() => PDFViewerApplication.overwriteOriginal());
+          await viewer.evaluate(() => { void PDFViewerApplication.save(); });
           await page.waitForFunction(
             (expected) => window.__hostState.saves === expected,
             { timeout: 60_000 },
@@ -2058,21 +2077,11 @@ test(
         path: path.join(artifacts, `underline-regression-${successArtifactId}.png`),
         fullPage: false,
       });
-      setPhase("captured underline selections; beginning PDF save and round trip");
+      setPhase("captured underline selections; beginning sidecar save and round trip");
 
       const saveAndReopen = async (saveCount, openCount) => {
-        setPhase(`save and reopen saved PDF before open count ${openCount}`);
-        await viewer.evaluate(() => {
-          if (
-            document
-              .getElementById("secondaryToolbar")
-              .classList.contains("hidden")
-          ) {
-            document.getElementById("secondaryToolbarToggleButton").click();
-          }
-        });
-        await viewer.waitForSelector("#secondaryToolbar:not(.hidden)");
-        await viewer.click("#secondaryDownload");
+        setPhase(`save sidecar and reopen immutable source before open count ${openCount}`);
+        await viewer.evaluate(() => { void PDFViewerApplication.save(); });
         await page.waitForFunction(
           (expected) => window.__hostState.saves === expected,
           { timeout: 60_000 },
@@ -2104,24 +2113,84 @@ test(
           openCount,
           eventStart,
           90_000,
-          "Saved PDF reopen",
+          "Sidecar-backed source reopen",
         );
         await viewer.waitForSelector(
           '.page[data-page-number="1"] .textLayer span',
         );
-        return viewer.evaluate(async () => {
-          const page = await PDFViewerApplication.pdfDocument.getPage(1);
-          const annotations = await page.getAnnotations();
-          return annotations
-            .filter((annotation) => annotation.subtype === "Underline")
-            .map((annotation) => ({
-              subtype: annotation.subtype,
-              id: annotation.id,
-              rect: annotation.rect,
-              quadPoints: [...annotation.quadPoints],
-              hasAppearance: annotation.hasAppearance,
-              quadCount: annotation.quadPoints.length / 8,
-            }));
+        const hydrationProbe = await viewer.evaluate(() => {
+          const snapshot = window.top.__browserSidecarHost.snapshotFor("fixtures/tracemonkey.pdf");
+          const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+          return {
+            snapshot: snapshot && {
+              revision: snapshot.revision,
+              annotations: snapshot.annotations.map((row) => ({
+                uuid: row.uuid,
+                kind: row.kind,
+                annotationType: row.payload?.editor?.annotationType ?? null,
+                quadPointCount: row.payload?.editor?.quadPoints?.length ?? null,
+              })),
+            },
+            editors: [...manager.getEditors(0)].map((editor) => ({
+              editorType: editor.editorType,
+              annotationType: editor.serialize?.()?.annotationType ?? null,
+              constructor: editor.constructor?.name || null,
+              id: String(editor.id),
+              connected: Boolean(editor.div?.isConnected),
+              quadPointCount: editor.quadPoints?.length ?? editor.serialize?.()?.quadPoints?.length ?? null,
+            })),
+          };
+        });
+        t.diagnostic(`Sidecar reopen hydration probe: ${JSON.stringify(hydrationProbe)}`);
+        await viewer.waitForFunction(() => {
+          const rows = window.top.__browserSidecarHost.snapshotFor(
+            "fixtures/tracemonkey.pdf",
+          )?.annotations?.filter((row) => row.kind === "Underline") || [];
+          const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+          const editors = [...manager.getEditors(0)].filter((editor) =>
+            editor.deleted !== true && editor.serialize?.()?.annotationType === 10,
+          );
+          return rows.length > 0 && rows.every((row) => {
+            const expected = row.payload?.editor?.quadPoints || [];
+            return editors.some((editor) => {
+              const actual = Array.from(editor.quadPoints || editor.serialize()?.quadPoints || []);
+              return actual.length === expected.length && actual.every((value, index) =>
+                Math.abs(value - expected[index]) < 0.001,
+              );
+            });
+          });
+        }, { timeout: 15_000 });
+        return viewer.evaluate(() => {
+          const rows = window.top.__browserSidecarHost.snapshotFor(
+            "fixtures/tracemonkey.pdf",
+          )?.annotations?.filter((row) => row.kind === "Underline") || [];
+          const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+          const editors = [...manager.getEditors(0)].filter((editor) =>
+            editor.deleted !== true && editor.serialize?.()?.annotationType === 10,
+          );
+          return rows.map((row) => {
+            const expected = row.payload?.editor?.quadPoints || [];
+            const matching = editors.filter((editor) => {
+              const actual = Array.from(editor.quadPoints || editor.serialize()?.quadPoints || []);
+              return actual.length === expected.length && actual.every((value, index) =>
+                Math.abs(value - expected[index]) < 0.001,
+              );
+            });
+            const editor = matching[0];
+            const element = editor?.div;
+            const style = element ? getComputedStyle(element) : null;
+            const rect = element?.getBoundingClientRect();
+            return {
+              subtype: row.kind,
+              uuid: row.uuid,
+              rect: row.payload?.editor?.rect || null,
+              quadPoints: Array.from(expected),
+              quadCount: expected.length / 8,
+              editorVisible: Boolean(element?.isConnected && rect?.width > 0 && rect?.height > 0 &&
+                style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0),
+              editorCount: matching.length,
+            };
+          });
         });
       };
 
@@ -2132,8 +2201,8 @@ test(
         "Both real selections should save as one underline each",
       );
       assert.ok(
-        savedUnderlines.every((annotation) => annotation.hasAppearance),
-        "Saved underlines should have AP appearances after reopen",
+        savedUnderlines.every((annotation) => annotation.editorVisible && annotation.editorCount === 1),
+        "Saved sidecar underlines should rehydrate as one visible editable editor each",
       );
       assert.equal(
         savedUnderlines.reduce(
@@ -2142,8 +2211,14 @@ test(
         ),
         abstractAcrossColumns.annotation.quadCount +
           mixedHeightAuthorLine.annotation.quadCount,
-        "The PDF round trip must retain every selection quad",
+        "The sidecar round trip must retain every selection quad",
       );
+      for (const expected of [abstractAcrossColumns.annotation, mixedHeightAuthorLine.annotation]) {
+        assert.ok(savedUnderlines.some((annotation) =>
+          normalizeQuadPoints(annotation.quadPoints).join(",") ===
+            normalizeQuadPoints(expected.quadPoints).join(","),
+        ), "The sidecar reopen must retain the exact underline QuadPoints");
+      }
 
       // Select an all-body-font paragraph using element-boundary endpoints.
       // This exercises Range.setStartBefore/setEndAfter around full text spans.
@@ -2271,19 +2346,38 @@ test(
         positiveRangeRects.length,
       );
 
-      const savedBase64 = await page.evaluate(() => {
-        const bytes = new Uint8Array(window.__hostState.savedData);
-        let binary = "";
-        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-          binary += String.fromCharCode(
-            ...bytes.subarray(offset, offset + 0x8000),
-          );
-        }
-        return btoa(binary);
+      const finalSidecarEvidence = await page.evaluate(() => {
+        const snapshot = window.__browserSidecarHost.snapshotFor("fixtures/tracemonkey.pdf");
+        const state = window.__hostState;
+        return {
+          snapshot,
+          savedDataByteLength: state.savedDataByteLength,
+          savedOperationCount: state.savedOperations.length,
+          ordinaryPdfSaveDocumentCalls: document.querySelector("iframe")
+            .contentWindow.__ordinaryPdfSaveDocumentCalls,
+          durableWrites: window.__browserSidecarHost.durableWrites.map((write) => ({
+            type: write.type,
+            revision: write.revision,
+            operationCount: write.operationCount,
+            sourceBytes: write.sourceBytes,
+          })),
+        };
       });
+      const fixtureSha256After = createHash("sha256").update(await readFile(fixture)).digest("hex");
+      assert.equal(fixtureSha256After, fixtureSha256Before,
+        "Sidecar annotation saves must leave the source PDF byte-identical");
+      assert.equal(finalSidecarEvidence.savedDataByteLength, 0,
+        "Ordinary sidecar saves must not transfer serialized PDF bytes");
+      assert.equal(finalSidecarEvidence.ordinaryPdfSaveDocumentCalls, 0,
+        "Ordinary annotation saves must not call PDFDocumentProxy.saveDocument()");
+      assert.ok(finalSidecarEvidence.durableWrites.length > 0);
+      assert.ok(finalSidecarEvidence.durableWrites.every((write) => write.sourceBytes === 0));
+      const finalUuids = finalSidecarEvidence.snapshot.annotations.map((row) => row.uuid);
+      assert.equal(new Set(finalUuids).size, finalUuids.length,
+        "The persisted sidecar must contain one current row per annotation UUID");
       await writeFile(
-        path.join(artifacts, `underline-regression-${successArtifactId}.pdf`),
-        Buffer.from(savedBase64, "base64"),
+        path.join(artifacts, `underline-regression-${successArtifactId}-sidecar.json`),
+        `${JSON.stringify(finalSidecarEvidence, null, 2)}\n`,
       );
       const diagnostics = {
         captureId,
@@ -2413,7 +2507,7 @@ test(
         console.log(`Underline open trace captured in ${openTracePath}`);
       }
       console.log(
-        `Underline geometry and PDF round-trip captured in tests/artifacts/underline-regression-${successArtifactId}.{json,png,pdf}`,
+        `Underline geometry and sidecar round-trip captured in tests/artifacts/underline-regression-${successArtifactId}.{json,png,sidecar.json}`,
       );
     } catch (error) {
       primaryError = error;

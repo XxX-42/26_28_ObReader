@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -158,6 +159,7 @@ test(
           <title>PDF open lifecycle regression</title>
           <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
           <iframe name="pdf-reader" title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
+          ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: `open-lifecycle-${runId}` })}
           <script>
             const channel = "pdf-web-reader";
             const token = ${JSON.stringify(`open-lifecycle-${runId}`)};
@@ -206,6 +208,7 @@ test(
                   revision: message.revision ?? null,
                   origin: message.origin ?? null,
                   dataBytes: message.data?.byteLength ?? message.data?.length ?? null,
+                  operationCount:message.operations.length,
                 });
                 if (!host.holdSaves) {
                   host.savedAcks.push(message.requestId ?? null);
@@ -214,6 +217,7 @@ test(
                     documentId: message.documentId,
                     requestId: message.requestId,
                     revision: message.revision,
+                    external:true, operationCount:message.operations.length, batchId:message.requestId,
                   }, "*");
                 }
               } else if (message.type === "error") {
@@ -494,7 +498,8 @@ test(
       assert.equal(heldSave.opened, 1);
       assert.equal(heldSave.saves.length, 1, "The autosave should be in flight at preflight");
       assert.equal(heldSave.saves[0].origin, "auto");
-      assert.ok(heldSave.saves[0].dataBytes > 0);
+      assert.equal(heldSave.saves[0].dataBytes, null, "ordinary save must not serialize the source PDF");
+      assert.ok(heldSave.saves[0].operationCount > 0);
       assert.deepEqual(heldSave.savedAcks, [], "The host intentionally holds the save ack");
 
       await page.keyboard.type(" and unsaved tail");

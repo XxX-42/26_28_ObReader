@@ -6,24 +6,20 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-Version **0.8.4** implements **WAL-Sidecar v3.1**, based on integration
-`19d20f3`, with current-session-first diagnostics and browser-owned iPad finger / tool-free Pencil scrolling.
-0.8.4 stops native scrolling when selecting a tool or beginning a Pencil edit,
-including erasing; tool-free Pencil and finger scrolling remain browser-owned.
-0.8.3 isolates input ownership into platform policies/controllers while preserving
-0.8.2 browser-owned scrolling. The right-side menu can delete annotations on the
-current page or, after confirmation, all pages; both actions support undo/redo.
-Windows, macOS and iPadOS share one three-file package. See
-[the protocol](ANNOTATION_STORE.md) and
-[implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).
+Version **0.9.0** is the integrated **WAL-Sidecar v3.2 JSONL test candidate**.
+It combines the local 0.8.9 interface/input/close behavior with commit
+`2b5d7ad`'s per-device JSONL WAL, durable append acknowledgement, cold replay,
+snapshot materialization, and migration barrier. The source PDF remains
+immutable. Windows, macOS, and iPadOS use the same three-file package.
 
-Ordinary annotation saves now use per-device/per-document WAL shards. Reader
-state joins a shared materialized Sidecar with all validated sparse anchors and
-short tails. Registry loss can be repaired; a Sidecar rollback is recovered
-from durable WAL contributions. The one-time importer preserves current Format 3
-annotations while the new writer stops creating old operation forests, ACKs and
-checkpoints. Complete sync and update every in-use device before hard cutover.
-Legacy data is retained. Native testing was authorized later; see the implementation report for scope and remaining baseline failures.
+JSONL is the current write format. Existing v3.1 and Format 3 files remain
+read-only migration/recovery inputs; the candidate does not clean or garbage
+collect old data. The sidecar snapshot is a rebuildable cache, and device WAL
+anchors, archives, and tails provide recovery. Upgrade all devices that edit a
+document before continuing with the 0.9.0 writer. Real cross-device Obsidian
+Sync and iPad hardware acceptance remain separate from local automation; see
+[the protocol](ANNOTATION_STORE.md), [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md),
+and [acceptance record](GENERAL_ACCEPTANCE.md).
 
 The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
 stores immutable per-device annotation operation batches and rebuilds a JSON

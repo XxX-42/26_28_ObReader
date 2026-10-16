@@ -1,18 +1,84 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import { lstat, open } from "node:fs/promises";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import path from "node:path";
+import { teardownViewerPage } from "./browser-viewer-teardown.mjs";
 import { promisify } from "node:util";
 import {
   finalizeTestBrowserLaunch,
   getTestBrowserLaunchMetadata,
+  getTestBrowserProcessIdentity,
 } from "./browser-test-launch.mjs";
 
 const MAX_BROWSER_STDERR_TAIL_BYTES = 4 * 1024;
 export const MAX_BROWSER_SAMPLE_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_BROWSER_SAMPLE_STREAM_BYTES = 4 * 1024;
 const execFileAsync = promisify(execFile);
+const trackedChildIdentities = new WeakMap();
+
+/** Track a test-owned child immediately after spawn, before teardown can mutate. */
+export function registerOwnedBrowserChild(child) {
+  if (!child || !Number.isInteger(child.pid) || child.pid <= 0) return false;
+  const profile = tempProfileFromChild(child);
+  if (!profile || typeof child.spawnfile !== "string" || !child.spawnfile) return false;
+  const identity = {
+    child,
+    pid: child.pid,
+    spawnfile: child.spawnfile,
+    spawnargs: [...(Array.isArray(child.spawnargs) ? child.spawnargs : [])],
+    ...profile,
+  };
+  const existing = trackedChildIdentities.get(child);
+  if (existing) {
+    return existing.pid === identity.pid && existing.spawnfile === identity.spawnfile &&
+      existing.profileDirectory === identity.profileDirectory &&
+      JSON.stringify(existing.spawnargs) === JSON.stringify(identity.spawnargs);
+  }
+  trackedChildIdentities.set(child, identity);
+  return true;
+}
+
+const sameSpawnIdentity = (child, identity) =>
+  Boolean(
+    child && identity && child.pid === identity.pid && child.spawnfile === identity.spawnfile &&
+    JSON.stringify(child.spawnargs || []) === JSON.stringify(identity.spawnargs || []) &&
+    tempProfileFromChild(child)?.profileDirectory === identity.profileDirectory,
+  );
+
+const childHandleOwnership = (child, identity) => {
+  if (!sameSpawnIdentity(child, identity)) {
+    return {
+      available: false,
+      reason: "The ChildProcess handle no longer matches its captured launch identity",
+      pid: child?.pid ?? null,
+      ...identity,
+      identityMode: "node-child-process-handle",
+    };
+  }
+  const baselineLeader = {
+    pid: identity.pid,
+    parentPid: process.pid,
+    groupId: process.platform === "win32" ? null : identity.pid,
+    state: processHasExited(child) ? "Z" : "R",
+    startedAt: null,
+    executablePath: identity.spawnfile,
+    commandLine: identity.spawnargs.join(" "),
+  };
+  return {
+    available: true,
+    reason: null,
+    ...identity,
+    executable: identity.spawnfile,
+    pid: identity.pid,
+    baselineLeader,
+    baselineRows: [baselineLeader],
+    groupId: null,
+    groupValidatedAtStart: false,
+    groupValidationReason: null,
+    identityMode: "node-child-process-handle",
+  };
+};
 
 const boundedProcessOutput = (value) => {
   const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value ?? ""));
@@ -368,14 +434,14 @@ export const readPosixProcessTable = async (
   return String(stdout || "").split(/\r?\n/).map(splitProcessLine).filter(Boolean);
 };
 
-const readWindowsProcess = (pid) => {
+const readWindowsProcess = async (pid, processQuery = execFileAsync) => {
   const script = [
     `$processId = ${pid}`,
     "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $processId\" -ErrorAction SilentlyContinue",
     "if (-not $process) { $process = Get-WmiObject Win32_Process -Filter \"ProcessId = $processId\" -ErrorAction SilentlyContinue }",
     "if ($process) { @{ pid = $process.ProcessId; parentPid = $process.ParentProcessId; executablePath = $process.ExecutablePath; commandLine = $process.CommandLine; startedAt = $process.CreationDate } | ConvertTo-Json -Compress }",
   ].join("; ");
-  const output = execFileSync("powershell.exe", [
+  const { stdout } = await processQuery("powershell.exe", [
     "-NoProfile",
     "-NonInteractive",
     "-Command",
@@ -383,8 +449,9 @@ const readWindowsProcess = (pid) => {
   ], {
     encoding: "utf8",
     timeout: 2_000,
-    stdio: ["ignore", "pipe", "ignore"],
-  }).trim();
+    windowsHide: true,
+  });
+  const output = String(stdout || "").trim();
   if (!output) return null;
   const row = JSON.parse(output);
   return {
@@ -400,7 +467,7 @@ const readWindowsProcess = (pid) => {
 
 const readProcessTable = async (pid, groupId, processQuery = execFileAsync) => {
   if (process.platform === "win32") {
-    const row = readWindowsProcess(pid);
+    const row = await readWindowsProcess(pid, processQuery);
     return row ? [row] : [];
   }
   return readPosixProcessTable(pid, groupId, processQuery);
@@ -461,9 +528,15 @@ export const processIdentityMatches = (row, baseline) =>
 
 const liveRows = (rows) => rows.filter((row) => !String(row.state || "").includes("Z"));
 
-const captureOwnership = async (child, processQuery = execFileAsync) => {
+const captureOwnership = async (child, processQuery = execFileAsync, browserIdentity = null) => {
   if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
     return { available: false, reason: "No owned browser PID is available" };
+  }
+  if (process.platform === "win32" && processQuery === execFileAsync) {
+    const tracked = browserIdentity?.child === child
+      ? { ...browserIdentity, ...tempProfileFromChild(child) }
+      : trackedChildIdentities.get(child);
+    if (tracked) return childHandleOwnership(child, tracked);
   }
   const profile = tempProfileFromChild(child);
   if (!profile) {
@@ -526,6 +599,18 @@ const inspectOwnedTargets = async (child, ownership, processQuery = execFileAsyn
   if (!ownership?.available || !child || child.pid !== ownership.pid) {
     return { direct: false, group: false, reason: ownership?.reason || "Process identity is unavailable" };
   }
+  if (ownership.identityMode === "node-child-process-handle") {
+    if (processHasExited(child)) {
+      return { direct: false, group: false, rows: [], alreadyExited: true, reason: "The exact owned ChildProcess has exited" };
+    }
+    const direct = child === ownership.child && sameSpawnIdentity(child, ownership);
+    return {
+      direct,
+      group: false,
+      rows: direct ? [ownership.baselineLeader] : [],
+      reason: direct ? null : "The ChildProcess handle no longer matches its captured launch identity",
+    };
+  }
   try {
     const rows = await readProcessTable(child.pid, ownership.groupId, processQuery);
     const leader = rows.find((row) => row.pid === child.pid) || null;
@@ -582,6 +667,9 @@ export async function sampleOwnedBrowserProcess(
     processQuery = execFileAsync,
   } = {},
 ) {
+  if (!ownership?.baselineLeader?.startedAt) {
+    return { state: "skipped", reason: "Process identity requires an exact nonempty birth timestamp" };
+  }
   if (process.platform !== "darwin") {
     return { state: "skipped", reason: "Process sampling is available only on macOS" };
   }
@@ -781,7 +869,24 @@ const signalOwnedProcess = async (child, ownership, signal, processQuery) => {
   const target = targets.group && process.platform !== "win32" ? "owned-process-group" : "owned-browser-process";
   try {
     if (target === "owned-process-group") process.kill(-child.pid, signal);
-    else if (!child.kill(signal)) {
+    else if (process.platform === "win32" && signal === "SIGKILL") {
+      // Node's Windows child_process.kill() does not implement SIGKILL. Use
+      // taskkill only after inspectOwnedTargets has just revalidated the
+      // exact test-owned PID, executable, creation time, and unique profile.
+      await execFileAsync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        encoding: "utf8",
+        timeout: 10_000,
+        windowsHide: true,
+      });
+      return {
+        sent: true,
+        target: "owned-browser-process-tree",
+        method: "taskkill.exe /PID /T /F",
+        identityRevalidated: true,
+        validatedPid: child.pid,
+        validatedProfile: ownership.profileDirectory,
+      };
+    } else if (!child.kill(signal)) {
       if (processHasExited(child)) return { sent: false, target, alreadyExited: true };
       return { sent: false, target, validationError: `Node did not accept ${signal} for the verified child PID` };
     }
@@ -919,7 +1024,8 @@ const closeOwnedBrowserPages = async (
 
   const closeResults = await Promise.all(openPages.map(async ({ index, page }) => {
     let preparation = null;
-    if (typeof prepareOwnedPageClose === "function") {
+    const prepare = prepareOwnedPageClose || (typeof page.frames === "function" ? teardownViewerPage : null);
+    if (typeof prepare === "function") {
       const preparationStartedAt = Date.now();
       const preparationBudgetMs = remainingMs();
       let preparationSettledAt = null;
@@ -932,7 +1038,7 @@ const closeOwnedBrowserPages = async (
       } else {
         let preparationOutcomePromise;
         try {
-          const callbackValue = prepareOwnedPageClose(page, preparationBudgetMs);
+          const callbackValue = prepare(page, preparationBudgetMs);
           preparationOutcomePromise = Promise.resolve(callbackValue).then(
             (value) => {
               preparationSettledAt = Date.now();
@@ -1109,7 +1215,9 @@ async function cleanupBrowser({
   } else if (browserObserver) {
     browserObserver.dispose?.();
   }
-  const ownership = child ? await captureOwnership(child, processQuery) : null;
+  const ownership = child
+    ? await captureOwnership(child, processQuery, getTestBrowserProcessIdentity(browser))
+    : null;
   const releasePipesAfterSafeExit = () => {
     if (
       child &&
@@ -1129,6 +1237,7 @@ async function cleanupBrowser({
           ? {
               pid: ownership.pid ?? null,
               startedAt: ownership.baselineLeader?.startedAt || null,
+              identityMode: ownership.identityMode || "process-table",
               parentPid: ownership.baselineLeader?.parentPid ?? null,
               groupId: ownership.baselineLeader?.groupId ?? ownership.groupId ?? null,
               state: ownership.baselineLeader?.state || null,
@@ -1222,12 +1331,14 @@ async function cleanupBrowser({
     (value) => ({ state: "fulfilled", value }),
     (error) => ({ state: "rejected", error }),
   );
-  const closeRace = await Promise.race([
-    closeOutcomePromise.then((outcome) => ({ kind: "close", outcome })),
-    pipeReleaseWatcher.promise.then((released) => ({
-      kind: released ? "safe-pipe-release" : "timeout",
-    })),
-  ]);
+  const closeRace = timings.browserCloseCalledAt >= closeDeadlineAt
+    ? { kind: "timeout" }
+    : await Promise.race([
+        closeOutcomePromise.then((outcome) => ({ kind: "close", outcome })),
+        pipeReleaseWatcher.promise.then((released) => ({
+          kind: released ? "safe-pipe-release" : "timeout",
+        })),
+      ]);
   let closeResult;
   if (closeRace.kind === "close") {
     pipeReleaseWatcher.cancel();
@@ -1239,9 +1350,36 @@ async function cleanupBrowser({
       remainingMs,
       "Puppeteer browser.close",
     );
-    closeResult = boundedClose.state === "fulfilled"
-      ? boundedClose.value
-      : boundedClose;
+    if (boundedClose.state === "fulfilled") {
+      closeResult = boundedClose.value;
+    } else {
+      // Chrome can exit cleanly and disconnect CDP while Puppeteer's close
+      // promise remains pending. The owned process exit is the stronger
+      // completion signal, but accept it only after identity-aware exit
+      // validation and a zero exit code (never after forced termination).
+      const processExitedSafely = await waitForOwnedProcessesExit(
+        child,
+        ownership,
+        0,
+        releasePipesAfterSafeExit,
+        processQuery,
+      );
+      const cleanNaturalExit = processExitedSafely &&
+        browserConnected(browser) === false &&
+        child?.signalCode == null &&
+        child?.exitCode === 0;
+      closeResult = cleanNaturalExit
+        ? {
+            state: "process-exited",
+            error: null,
+            diagnostic: {
+              puppeteerCloseState: boundedClose.state,
+              reason: "owned browser exited with code 0 and CDP disconnected",
+            },
+          }
+        : boundedClose;
+      if (cleanNaturalExit) browserReport.closeCompletion = "verified-process-exit";
+    }
   } else {
     pipeReleaseWatcher.cancel();
     closeResult = {
@@ -1251,14 +1389,6 @@ async function cleanupBrowser({
   }
   browserReport.closeState = closeResult.state;
   browserReport.closeError = closeResult.error ? errorRecord(closeResult.error) : null;
-  if (closeResult.state !== "fulfilled") {
-    addCleanupError(
-      report,
-      "browser.close",
-      closeResult.error,
-      `Puppeteer browser.close did not complete within ${browserTimeoutMs} ms`,
-    );
-  }
 
   const needsDisconnect = browserConnected(browser) !== false;
   if (needsDisconnect) {
@@ -1363,6 +1493,7 @@ async function cleanupBrowser({
           ? {
               pid: ownership.pid ?? null,
               startedAt: ownership.baselineLeader?.startedAt || null,
+              identityMode: ownership.identityMode || "process-table",
               parentPid: ownership.baselineLeader?.parentPid ?? null,
               groupId: ownership.baselineLeader?.groupId ?? ownership.groupId ?? null,
               state: ownership.baselineLeader?.state || null,
@@ -1382,6 +1513,34 @@ async function cleanupBrowser({
         processGroupId: ownership?.groupId ?? null,
       }
     : null;
+
+  // A browser.close promise can remain pending after its configured close
+  // deadline even though CDP disconnected and the owned Chrome process then
+  // exits cleanly during the existing processExitTimeoutMs grace period.
+  // Treat that verified natural exit as completion; do not report a false
+  // close failure merely because process teardown crossed the earlier
+  // browser.close deadline. The process-exit budget is not extended here.
+  const cleanDelayedBrowserExit = closeResult.state === "timeout" &&
+    child &&
+    exitedNaturally &&
+    browserReport.connectedAfterClose === false &&
+    child.signalCode == null &&
+    child.exitCode === 0 &&
+    !browserReport.termination.some((entry) => entry.sent);
+  if (cleanDelayedBrowserExit) {
+    browserReport.closeState = "process-exited";
+    browserReport.closeError = null;
+    browserReport.closeCompletion = "verified-process-exit";
+  } else if (
+    closeResult.state !== "fulfilled" && closeResult.state !== "process-exited"
+  ) {
+    addCleanupError(
+      report,
+      "browser.close",
+      closeResult.error,
+      `Puppeteer browser.close did not complete within ${browserTimeoutMs} ms`,
+    );
+  }
 
   if (browserReport.connectedAfterClose !== false) {
     browserReport.status = "failed";
@@ -1439,7 +1598,7 @@ async function cleanupBrowser({
     browserReport.detachedStreamsAfterFailure = true;
   }
 
-  if (closeResult.state !== "fulfilled" && browserReport.status === "normal") {
+  if (!new Set(["fulfilled", "process-exited"]).has(browserReport.closeState) && browserReport.status === "normal") {
     browserReport.status = "failed";
   }
   if (

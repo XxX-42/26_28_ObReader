@@ -1,0 +1,64 @@
+{
+  "recovery": {
+    "pid": 24204,
+    "count": 1000,
+    "unique": 1000,
+    "last": {
+      "uuid": "wal-v32-native-20261016-5ms-02-999",
+      "kind": "Square",
+      "pageIndex": 285,
+      "embeddedRef": null,
+      "deleted": false,
+      "payload": {
+        "benchmark": {
+          "ordinal": 1000,
+          "run": "wal-v32-native-20261016-5ms-02"
+        },
+        "editor": {
+          "annotationType": 5,
+          "color": [
+            231,
+            17,
+            231
+          ],
+          "opacity": 0.9,
+          "rect": [
+            105,
+            100,
+            205,
+            200
+          ],
+          "thickness": 2
+        }
+      },
+      "version": {
+        "deviceId": "b3e50bfd-53e1-4418-a457-bd4f6aaf7208",
+        "rev": 1,
+        "seq": 1014
+      },
+      "clock": {
+        "timestamp": 1,
+        "logical": 1014,
+        "deviceId": "b3e50bfd-53e1-4418-a457-bd4f6aaf7208",
+        "opId": "b3e50bfd-53e1-4418-a457-bd4f6aaf7208:fa5babad201b:1014"
+      }
+    },
+    "stateHash": "3142e75ef9d2f70fd044e7721f1345cd821f158556aade14881708690bd2b5c4",
+    "operationHash": "e16053b1313e8797dea7528930d007bd1a05a03b1de324a12ccd7eb1251851e8",
+    "diskReads": 85,
+    "deniedCacheWrites": 0,
+    "syncPending": false
+  },
+  "sourceSha256": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "sourceMtimeMs": 1791951308993,
+  "ownedFiles": 8,
+  "danglingTmp": [],
+  "verifiedRecoveryWitnesses": [
+    {
+      "path": "D:\\Documents\\Obsidian\\测试插件\\00_Archive\\20_PDFData\\wal\\b3e50bfd-53e1-4418-a457-bd4f6aaf7208\\fa5babad201b.jsonl.pending",
+      "bytes": 0,
+      "identicalToCommittedTarget": true
+    }
+  ],
+  "mutations": 0
+}

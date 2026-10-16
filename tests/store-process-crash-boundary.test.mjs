@@ -36,10 +36,10 @@ const cases = [
   {
     scenario: "checkpoint-backup-written",
     boundary: "checkpoint-backup-written",
-    expectation: "A verified-format backup write survives while primary is still absent; fresh C recovers the checkpoint.",
+    expectation: "Primary revision 1 is committed before previous revision 0 rotation; fresh C recovers the newer state.",
     assertState({ before, snapshot }) {
-      assert.equal(before.checkpointPair.primary, null);
-      assert.equal(before.checkpointPair.backup.revision, 1);
+      assert.equal(before.checkpointPair.primary.revision, 1);
+      assert.equal(before.checkpointPair.backup.revision, 0);
       assert.ok(snapshot.annotations.some(({ uuid }) => uuid === "annotation-checkpoint-backup-written"));
     },
   },
@@ -49,7 +49,8 @@ const cases = [
     expectation: "Primary write is on disk before readback; fresh C validates and recovers it.",
     assertState({ before, snapshot }) {
       assert.equal(before.checkpointPair.primary.revision, 1);
-      assert.equal(before.checkpointPair.backup.revision, 1);
+      assert.equal(before.checkpointPair.backup.revision, 0, "the prior verified baseline survives at the primary boundary");
+      assert.notEqual(before.checkpointPair.backup.hash, before.checkpointPair.primary.hash);
       assert.ok(snapshot.annotations.some(({ uuid }) => uuid === "annotation-checkpoint-primary-written"));
     },
   },
@@ -59,8 +60,9 @@ const cases = [
     expectation: "The worker is killed after both checkpoint copies are durable but before its first device ACK write; fresh C recovers without assuming that ACK exists.",
     assertState({ before, snapshot, paths }) {
       assert.equal(before.checkpointPair.primary.revision, 1);
-      assert.equal(before.checkpointPair.backup.revision, 1);
-      assert.equal(before.writerAck, null, "the writer ACK file must still be absent at the pre-write boundary");
+      assert.equal(before.checkpointPair.backup.revision, 0);
+      assert.notEqual(before.writerAck?.checkpointHash, before.checkpointPair.primary.hash,
+        "the prior revision-0 ACK must not confirm revision 1");
       assert.ok(before.files.includes(paths.batch), "unacknowledged operation batch must remain on disk");
       assert.ok(snapshot.annotations.some(({ uuid }) => uuid === "annotation-ack-before-write"));
     },
@@ -71,7 +73,7 @@ const cases = [
     expectation: "Checkpoint copies and ACK bytes survive worker death before ACK readback; fresh C keeps the annotation.",
     assertState({ before, snapshot }) {
       assert.equal(before.checkpointPair.primary.revision, 1);
-      assert.equal(before.checkpointPair.backup.revision, 1);
+      assert.equal(before.checkpointPair.backup.revision, 0);
       assert.equal(before.writerAck?.checkpointHash, before.checkpointPair.primary.hash);
       assert.ok(snapshot.annotations.some(({ uuid }) => uuid === "annotation-ack-written-before-readback"));
     },

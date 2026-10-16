@@ -206,6 +206,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
     function getAnnotationEditorManager() { return manager; }
     function getAnnotationEditorLayer() { return layer; }
     function suppressEmbeddedAnnotation() { return true; }
+    function updateSidecarEditorHitTesting() {}
     function setDeferredTimeout(callback) { timers.push(callback); return timers.length; }
     function isEditBoundaryBusy() { return editBusy; }
     function setReadOnlyState(value) { state.readOnly = value; onReadOnly?.(value); }

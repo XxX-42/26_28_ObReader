@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
@@ -57,6 +58,13 @@ test(
       readFile(bridgeCssPath, "utf8"),
       readFile(viewerHtmlPath, "utf8"),
     ]);
+    const bridgeProbeMarker = "  if (iosInputPolicy) {";
+    assert.ok(bridgeSource.includes(bridgeProbeMarker),
+      "The test-only bridge probe insertion point must remain explicit");
+    const instrumentedBridgeSource = bridgeSource.replace(
+      bridgeProbeMarker,
+      `  window.__mouseBridgeState = state;\n${bridgeProbeMarker}`,
+    );
     const viewerWithBridge = viewerHtml.replace(
       /<head\b[^>]*>/i,
       (head) =>
@@ -73,13 +81,14 @@ test(
           <title>PDF mouse input regression</title>
           <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>
           <iframe name="pdf-reader" title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
+          ${browserSidecarHarnessScript({ channel, token })}
           <script>
             const channel = ${JSON.stringify(channel)};
             const token = ${JSON.stringify(token)};
             const documentId = ${JSON.stringify(documentId)};
             const rendererGeneration = ${JSON.stringify(rendererGeneration)};
             const iframe = document.querySelector('iframe');
-            const host = window.__host = { opened:0, openRequest:0, saves:[], savedData:null, errors:[], inputDiagnostics:null, rendererLifecycle:[] };
+            const host = window.__host = { opened:0, openRequest:0, saves:[], errors:[], inputDiagnostics:null, rendererLifecycle:[] };
             const hashBytes = buffer => {
               let hash = 2166136261;
               for (const byte of new Uint8Array(buffer)) hash = Math.imul(hash ^ byte, 16777619);
@@ -109,20 +118,25 @@ test(
               } else if (message.type === 'opened') {
                 host.opened += 1;
               } else if (message.type === 'save') {
-                const data = message.data.slice(0);
-                host.savedData = data;
+                const operations = Array.isArray(message.operations) ? message.operations : [];
                 host.saves.push({
                   documentId:message.documentId,
+                  openRequest:message.openRequest,
                   requestId:message.requestId,
                   revision:message.revision,
-                  byteLength:data.byteLength,
-                  hash:hashBytes(data),
+                  operationCount:operations.length,
+                  operationUuids:operations.map(operation => operation.uuid),
+                  sourceHash:host.initialHash,
                 });
                 iframe.contentWindow.postMessage({
                   channel, type:'saved', token,
                   documentId:message.documentId,
+                  openRequest:message.openRequest,
                   requestId:message.requestId,
                   revision:message.revision,
+                  external:true,
+                  operationCount:operations.length,
+                  ...(operations.length ? { batchId:'mouse-test-batch-' + host.saves.length } : {}),
                 }, '*');
               } else if (message.type === 'error') {
                 host.errors.push(message.code || message.message || 'viewer error');
@@ -133,8 +147,8 @@ test(
               }
             });
             host.reopenSaved = () => {
-              if (!host.savedData) throw new Error('No saved bytes are available');
-              sendOpen(host.savedData.slice(0));
+              if (!host.saves.length) throw new Error('No durable sidecar save is available');
+              host.fixturePromise.then(bytes => sendOpen(bytes.slice(0)));
             };
           </script>`);
         return;
@@ -143,7 +157,7 @@ test(
         response.writeHead(200, {
           "content-type": "text/javascript; charset=utf-8",
         });
-        response.end(bridgeSource);
+        response.end(instrumentedBridgeSource);
         return;
       }
       if (url.pathname === "/viewer-adapter/bridge.css") {
@@ -303,6 +317,15 @@ test(
             storage?.getRawValue(editor.id)?.constructor?._editorType === 5,
           );
       };
+      window.__getSidecarFreeTextEditor = (uuid) => {
+        const app = window.PDFViewerApplication;
+        const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        const storage = app?.pdfDocument?.annotationStorage;
+        return manager?.getEditors?.(0)?.find((editor) =>
+          window.__mouseBridgeState?.annotationUuidByRuntimeId?.get(String(editor.id)) === uuid &&
+          storage?.getRawValue(editor.id)?.constructor?._editorType === 3,
+        )?.div || null;
+      };
       window.PDFViewerApplication?.eventBus?._on?.(
         "editormovedindom",
         ({ source }) => {
@@ -400,6 +423,32 @@ test(
           });
         }, true);
       }
+      window.__mouseFreeTextTapProbe = [];
+      window.addEventListener("pointerdown", event => {
+        const target = event.target instanceof Element ? event.target : null;
+        const editorElement = target?.closest(".freeTextEditor");
+        const record = {
+          time:Math.round(event.timeStamp),
+          trusted:event.isTrusted,
+          pointerType:event.pointerType,
+          button:event.button,
+          x:event.clientX,
+          y:event.clientY,
+          targetClass:typeof target?.className === "string" ? target.className : "",
+          editorId:editorElement?.id ?? null,
+          editorClass:editorElement?.className ?? null,
+          editorUuid:editorElement
+            ? window.__mouseBridgeState?.annotationUuidByRuntimeId?.get(editorElement.id) ?? null
+            : null,
+          pendingBefore:window.__mouseBridgeState?.pendingSidecarFreeTextClick ?? null,
+        };
+        queueMicrotask(() => {
+          record.pendingAfter = window.__mouseBridgeState?.pendingSidecarFreeTextClick ?? null;
+          record.modeAfter = window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null;
+          window.__mouseFreeTextTapProbe.push(record);
+          if (window.__mouseFreeTextTapProbe.length > 24) window.__mouseFreeTextTapProbe.shift();
+        });
+      }, true);
       window.addEventListener("contextmenu", event => {
         const sample = {
           trusted:event.isTrusted,
@@ -783,12 +832,12 @@ test(
       ...window.__host.saves.at(-1),
       initialHash:window.__host.initialHash,
     }));
-    assert.ok(squareSave.byteLength > 0, "The clicked Save control should produce PDF bytes");
-    assert.notEqual(
-      squareSave.hash,
-      squareSave.initialHash,
-      "The serialized PDF bytes should include the mouse-drawn annotation",
-    );
+    assert.ok(squareSave.operationCount > 0, "The save control must durably publish sidecar operations");
+    assert.equal(squareSave.operationUuids.length, 1,
+      "The mouse-created Square must be represented by one durable sidecar UUID");
+    const squareUid = squareSave.operationUuids[0];
+    assert.equal(squareSave.sourceHash, squareSave.initialHash,
+      "An ordinary annotation save must keep the immutable source PDF unchanged");
     const openedBeforeSquareReopen = await page.evaluate(() => window.__host.opened);
     await page.evaluate(() => window.__host.reopenSaved());
     await page.waitForFunction(
@@ -800,20 +849,31 @@ test(
       '.page[data-page-number="1"] .textLayer span',
       { timeout: 20_000 },
     );
-    assert.equal(
-      await viewer.evaluate(async () => {
-        const annotations = await PDFViewerApplication.pdfDocument
-          .getPage(1)
-          .then((pdfPage) => pdfPage.getAnnotations());
-        return annotations.filter((annotation) => annotation.subtype === "Square").length;
-      }),
-      1,
-      "Saved bytes should reopen with the mouse-created Square intact",
-    );
+    await viewer.waitForFunction(() => window.__getSquareEditors().length === 1, {
+      timeout:20_000,
+    });
+    const reopenedSquareState = await viewer.evaluate(() => {
+      const editor = window.__getSquareEditors()[0];
+      const raw = PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(editor.id);
+      const rect = editor.getBoundingClientRect();
+      return {
+        runtimeId:editor.id,
+        editorType:raw?.constructor?._editorType ?? null,
+        width:rect.width,
+        height:rect.height,
+      };
+    });
+    assert.equal(reopenedSquareState.editorType, 5);
+    assert.ok(reopenedSquareState.width > 0 && reopenedSquareState.height > 0,
+      `The sidecar Square must hydrate with positive geometry: ${JSON.stringify(reopenedSquareState)}`);
+    assert.equal(await page.evaluate(() =>
+      window.__browserSidecarHost.operationsFor("mouse-regression-document")
+        .filter((operation) => operation.deleted !== true).length,
+    ), 1, "Reopening the immutable PDF must hydrate the one durable Square sidecar row");
 
-    // Reopened PDF annotations start as existing page annotations. A trusted
-    // double-click enters PDF.js explicit edit mode; then a real mouse drag
-    // moves the existing Square instead of issuing a second create gesture.
+    // A trusted click selects the reopened sidecar editor in NONE mode. Then
+    // PDF.js's explicit editId route enters edit mode without relying on the
+    // obsolete native-PDF-annotation double-click path.
     await setSquareMode(5);
     await viewer.waitForFunction(
       () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5 &&
@@ -825,7 +885,7 @@ test(
       const raw = PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(editor.id);
       const rect = editor.getBoundingClientRect();
       return {
-        uid:raw.uid,
+        runtimeId:editor.id,
         x:rect.x,
         y:rect.y,
         width:rect.width,
@@ -839,32 +899,27 @@ test(
     const squareHit = {
       x:squareBeforeEdit.x + squareBeforeEdit.width / 2,
       y:squareBeforeEdit.y + squareBeforeEdit.height / 2,
-      uid:squareBeforeEdit.uid,
     };
-    await viewer.waitForFunction(
-      ({ x, y, uid }) => {
-        const annotation = [
-          ...document.querySelectorAll(
-            '.page[data-page-number="1"] .annotationLayer .squareAnnotation',
-          ),
-        ].find((element) => element.id.endsWith(uid));
-        const hit = document.elementFromPoint(x, y);
-        return !!annotation && hit?.closest(".squareAnnotation") === annotation;
-      },
-      { timeout:8_000 },
-      squareHit,
-    );
     const offset = await iframeOffset();
-    await page.mouse.click(
-      offset.x + squareHit.x,
-      offset.y + squareHit.y,
-      { count:2, delay:80 },
-    );
+    await page.mouse.click(offset.x + squareHit.x, offset.y + squareHit.y);
     await viewer.waitForFunction(
-      () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5 &&
-        Boolean(document.querySelector(".annotationEditorLayer .explicitlyEditing")),
+      (runtimeId) => {
+        const editor = window.__getSquareEditors().find((candidate) => candidate.id === runtimeId);
+        return editor && editor.classList.contains("selectedEditor") &&
+          PDFViewerApplication.pdfViewer.annotationEditorMode === 5;
+      },
       { timeout: 8_000 },
+      reopenedSquareState.runtimeId,
     );
+    await viewer.evaluate((editId) => {
+      PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+        mode:5, editId, mustEnterInEditMode:true,
+      });
+    }, reopenedSquareState.runtimeId);
+    await viewer.waitForFunction((runtimeId) => {
+      const editor = document.querySelector(".annotationEditorLayer .explicitlyEditing");
+      return editor?.id === runtimeId;
+    }, { timeout:8_000 }, reopenedSquareState.runtimeId);
 
     const requestInputDiagnostics = async (requestId) => {
       await page.evaluate((id) => {
@@ -1038,11 +1093,12 @@ test(
       ...window.__host.saves.at(-1),
       initialHash:window.__host.initialHash,
     }));
-    assert.notEqual(
-      editedSquareSave.hash,
-      editedSquareSave.initialHash,
-      "Saving the moved/resized Square should change serialized PDF bytes",
-    );
+    assert.ok(editedSquareSave.operationCount > 0,
+      "Saving the moved/resized Square must publish its sidecar operation");
+    assert.ok(editedSquareSave.operationUuids.includes(squareUid),
+      "The moved/resized sidecar operation must retain the Square UUID");
+    assert.equal(editedSquareSave.sourceHash, editedSquareSave.initialHash,
+      "Moving or resizing an annotation must not rewrite the source PDF");
     const openedBeforeEditedSquareReopen = await page.evaluate(
       () => window.__host.opened,
     );
@@ -1056,16 +1112,13 @@ test(
       '.page[data-page-number="1"] .textLayer span',
       { timeout: 20_000 },
     );
-    assert.equal(
-      await viewer.evaluate(async () => {
-        const annotations = await PDFViewerApplication.pdfDocument
-          .getPage(1)
-          .then((pdfPage) => pdfPage.getAnnotations());
-        return annotations.filter((annotation) => annotation.subtype === "Square").length;
-      }),
-      1,
-      "The resized Square should remain after the second save and reopen",
-    );
+    await viewer.waitForFunction(() => window.__getSquareEditors().length === 1, {
+      timeout:20_000,
+    });
+    assert.equal(await page.evaluate(() =>
+      window.__browserSidecarHost.operationsFor("mouse-regression-document")
+        .filter((operation) => operation.deleted !== true).length,
+    ), 1, "A second source-PDF reopen must hydrate exactly one active Square sidecar row");
     await setSquareMode(5);
     await viewer.waitForFunction(
       () => window.__getSquareEditors().length === 1,
@@ -2873,6 +2926,13 @@ test(
           ?.filter((entry) => entry.method === "layer.pause.begin")
           .slice(pausedState.pauseCountBeforeResumeProbe)
           .map((entry) => entry.callArgs?.paused ?? null) ?? [],
+        pauseEvents:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "layer.pause.begin")
+          .slice(pausedState.pauseCountBeforeResumeProbe)
+          .map((entry) => ({
+            paused:entry.callArgs?.paused ?? null,
+            stack:entry.stack || [],
+          })) ?? [],
         manualCalls:window.__mouseManualPauseResumeCalls.slice(),
       };
       window.__mouseTestMilestones.pauseResumeToolbarFocus = snapshot;
@@ -2888,11 +2948,16 @@ test(
       [true, false, false],
       JSON.stringify(resumedFreeText),
     );
-    assert.equal(
-      resumedFreeText.pauseCalls.filter((paused) => paused === true).length,
-      1,
-      JSON.stringify(resumedFreeText),
+    const explicitToolbarPause = resumedFreeText.pauseEvents[0];
+    assert.equal(explicitToolbarPause?.paused, true, JSON.stringify(resumedFreeText));
+    const additionalPauses = resumedFreeText.pauseEvents.slice(3).filter((event) =>
+      event.paused === true,
     );
+    assert.ok(additionalPauses.every((event) => event.stack.some((frame) =>
+      frame.includes("PDFPageView.reset"),
+    )), `Any additional pause must be attributable to PDF.js page reset: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
+    assert.equal(resumedFreeText.pauseEvents.at(-1)?.paused, false,
+      `Both toolbar and redraw pauses must finish with the layer resumed: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.deepEqual(
       resumedFreeText.manualCalls,
       ["pause(true)", "show()", "show()"],
@@ -3046,6 +3111,9 @@ test(
             "[data-annotation-id]",
           ) || [])];
           const target = window.__mouseTestMilestones?.savedFreeTextAnnotationId;
+          const sidecarTarget = target
+            ? window.__getSidecarFreeTextEditor(target)
+            : null;
           const rect = (element) => {
             if (!element) return null;
             const bounds = element.getBoundingClientRect();
@@ -3086,6 +3154,8 @@ test(
                 ? annotationNodes.some((element) =>
                     element.getAttribute("data-annotation-id") === target)
                 : null,
+              sidecarTargetPresent:Boolean(sidecarTarget),
+              sidecarTargetBounds:rect(sidecarTarget),
             },
           });
           if (trace.length > 96) trace.splice(0, trace.length - 96);
@@ -3102,23 +3172,26 @@ test(
       '.page[data-page-number="1"] .textLayer span',
       { timeout:20_000 },
     );
-    const savedFreeText = await viewer.evaluate(async () => {
-      const page = await PDFViewerApplication.pdfDocument.getPage(1);
-      const annotation = (await page.getAnnotations()).find(
-        (entry) => entry.subtype === "FreeText",
+    const savedFreeText = await page.evaluate(() => {
+      const operations = window.__browserSidecarHost.operationsFor(
+        "mouse-regression-document",
       );
-      return annotation ? { id:annotation.id } : null;
+      const operation = operations.find((row) =>
+        row.kind === "FreeText" && row.deleted !== true,
+      );
+      return operation ? { id:operation.uuid, operation } : null;
     });
-    assert.ok(savedFreeText?.id, "The saved FreeText should reopen as a PDF annotation");
-    await viewer.evaluate((annotationId) => {
-      window.__mouseTestMilestones.savedFreeTextAnnotationId = annotationId;
+    assert.ok(savedFreeText?.id,
+      "The saved FreeText must exist as a durable sidecar operation after source-PDF reopen");
+    await viewer.evaluate((uuid) => {
+      window.__mouseTestMilestones.savedFreeTextAnnotationId = uuid;
     }, savedFreeText.id);
     const freeTextModeAfterReopen = await viewer.evaluate(
       () => PDFViewerApplication.pdfViewer.annotationEditorMode,
     );
     if (freeTextModeAfterReopen === 3) {
-      // Match the native annotation edit path: leave creation mode active only
-      // after PDF.js receives a real double-click on the existing annotation.
+      // A persisted sidecar editor may reopen with its creation tool selected;
+      // return to selection mode before exercising trusted pointer editing.
       const completedModeChanges = await viewer.evaluate(() =>
         window.__mouseModeActivationTrace?.filter((entry) =>
           entry.method === "event.annotationeditormodechanged" &&
@@ -3148,45 +3221,55 @@ test(
         const app = PDFViewerApplication;
         const pageView = app.pdfViewer.getPageView(0);
         const page = document.querySelector('.page[data-page-number="1"]');
-        const layer = page?.querySelector(".annotationLayer");
-        const target = [...(layer?.querySelectorAll(".freeTextAnnotation") ?? [])].find(
-          (element) => element.getAttribute("data-annotation-id") === annotationId,
-        );
+        const target = window.__getSidecarFreeTextEditor(annotationId);
         return pageView?.renderingState === 3 && page?.dataset.loaded === "true" &&
-          layer?.isConnected && target;
+          target?.isConnected;
       },
-      { timeout:30_000 },
+      { timeout:20_000 },
       savedFreeText.id,
     );
-    const reopenedPdfRect = await viewer.evaluate(async (annotationId) => {
+    const reopenedFreeText = await viewer.evaluate((annotationId) => {
+      const app = window.PDFViewerApplication;
       const pageView = PDFViewerApplication.pdfViewer.getPageView(0);
-      const annotations = await pageView.pdfPage.getAnnotations({ intent:"display" });
-      const annotation = annotations.find((entry) => entry.id === annotationId);
-      const rect = annotation?.rect || null;
+      const editor = window.__getSidecarFreeTextEditor(annotationId);
+      const internal = editor?.querySelector(".internal");
+      const liveEditor = editor && app.pdfViewer._layerProperties.annotationEditorUIManager
+        .getEditor(editor.id);
+      const rect = editor?.getBoundingClientRect();
       return {
-        rect,
-        width:rect ? Math.abs(rect[2] - rect[0]) : 0,
-        height:rect ? Math.abs(rect[3] - rect[1]) : 0,
+        pageNumber:pageView?.pdfPage?.pageNumber ?? null,
+        runtimeId:editor?.id ?? null,
+        rect:rect ? { x:rect.x, y:rect.y, width:rect.width, height:rect.height } : null,
+        width:rect?.width ?? 0,
+        height:rect?.height ?? 0,
+        // PDF.js maps ordinary spaces to NBSP in its editable DOM to preserve
+        // layout, then maps them back during FreeTextEditor.serialize().
+        // Compare the rendered text semantically and verify the exact durable
+        // representation separately.
+        text:internal?.textContent?.replace(/\u200b/g, "").replace(/\u00a0/g, " ").trim() ?? "",
+        serializedText:liveEditor?.serialize?.(false)?.value ?? null,
+        visible:!!rect && getComputedStyle(editor).display !== "none" &&
+          getComputedStyle(editor).visibility !== "hidden" &&
+          Number(getComputedStyle(editor).opacity) > 0,
       };
     }, savedFreeText.id);
     assert.ok(
-      reopenedPdfRect.width > 0 && reopenedPdfRect.height > 0,
-      `The saved FreeText must reopen with nonzero PDF geometry: ${JSON.stringify(reopenedPdfRect)}`,
+      reopenedFreeText.width > 0 && reopenedFreeText.height > 0,
+      `The saved FreeText must reopen with nonzero editor geometry: ${JSON.stringify(reopenedFreeText)}`,
     );
+    assert.equal(reopenedFreeText.text, "Mouse toolbar round trip");
+    assert.equal(reopenedFreeText.serializedText, "Mouse toolbar round trip");
+    assert.equal(reopenedFreeText.visible, true, JSON.stringify(reopenedFreeText));
     // Reopening restores the PDF's initial scroll position. Bring the exact
-    // persisted annotation back into view with normal DOM scrolling before
+    // persisted sidecar editor back into view with normal DOM scrolling before
     // checking that a real browser pointer can hit it.
     await viewer.evaluate((annotationId) => {
-      const target = [...document.querySelectorAll(
-        '.page[data-page-number="1"] .annotationLayer .freeTextAnnotation',
-      )].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+      const target = window.__getSidecarFreeTextEditor(annotationId);
       target?.scrollIntoView({ block:"center", inline:"center", behavior:"auto" });
     }, savedFreeText.id);
     const reopenedAnnotationPoint = await viewer.waitForFunction(
       (annotationId) => {
-        const target = [...document.querySelectorAll(
-          ".page[data-page-number='1'] .annotationLayer .freeTextAnnotation",
-        )].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+        const target = window.__getSidecarFreeTextEditor(annotationId);
         if (!target) return false;
         const rect = target.getBoundingClientRect();
         const x = rect.left + rect.width / 2;
@@ -3196,7 +3279,7 @@ test(
         if (!(rect.width > 0 && rect.height > 0 && viewerRect &&
           x >= Math.max(0, viewerRect.left) && x < Math.min(window.innerWidth, viewerRect.right) &&
           y >= Math.max(0, viewerRect.top) && y < Math.min(window.innerHeight, viewerRect.bottom) &&
-          hit?.closest(".freeTextAnnotation") === target)) {
+          hit?.closest(".freeTextEditor") === target)) {
           return false;
         }
         return {
@@ -3241,21 +3324,25 @@ test(
     }, reopenedTextPoint);
     assert.ok(
       outerTextHit.isFrame && outerTextHit.insideVisibleFrame,
-      `The saved FreeText double-click should remain inside the visible PDF iframe: ${JSON.stringify(outerTextHit)}`,
+      `The saved FreeText pointer interaction should remain inside the visible PDF iframe: ${JSON.stringify(outerTextHit)}`,
     );
-    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, {
-      count:2,
-      delay:80,
-    });
+    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y);
+    const selectedReopenedFreeText = await viewer.waitForFunction((annotationId) => {
+      const editor = window.__getSidecarFreeTextEditor(annotationId);
+      return editor?.classList.contains("selectedEditor") &&
+        window.__mouseBridgeState.annotationUuidByRuntimeId.get(String(editor.id)) === annotationId;
+    }, { timeout:10_000 }, savedFreeText.id);
+    assert.ok(selectedReopenedFreeText, "A single click must select the persisted FreeText without losing its identity");
+    // PDF.js enters text-edit mode for a committed FreeText editor on a
+    // double-click; this second trusted click completes the first click's pair.
+    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, { delay:80 });
     await viewer.waitForFunction((annotationId) => {
-      const internal = document.querySelector(
-        ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
-      );
-      const editor = internal?.closest(".freeTextEditor.selectedEditor");
+      const editor = window.__getSidecarFreeTextEditor(annotationId);
+      const internal = editor?.querySelector(".internal");
       return PDFViewerApplication.pdfViewer.annotationEditorMode === 3 &&
         internal?.isContentEditable && document.activeElement === internal &&
-        editor?.classList.contains("explicitlyEditing") &&
-        editor.getAttribute("annotation-id") === annotationId &&
+        editor?.classList.contains("selectedEditor") &&
+        window.__mouseBridgeState.annotationUuidByRuntimeId.get(String(editor.id)) === annotationId &&
         (() => {
           const rect = internal.getBoundingClientRect();
           const hit = document.elementFromPoint(
@@ -3265,6 +3352,11 @@ test(
           return hit?.closest("[contenteditable]:not([contenteditable=false])") === internal;
         })();
     }, { timeout:10_000 }, savedFreeText.id);
+    const editedSidecarEditorCount = await viewer.evaluate(() =>
+      document.querySelectorAll(".annotationEditorLayer .freeTextEditor").length,
+    );
+    assert.equal(editedSidecarEditorCount, 1,
+      "Double-clicking a persisted sidecar FreeText must edit the same editor, not create a duplicate");
     const focusedBeforeZoom = await viewer.evaluate(() => {
       const app = window.PDFViewerApplication;
       const pageView = app.pdfViewer.getPageView(0);
@@ -3310,10 +3402,8 @@ test(
       const pageView = app.pdfViewer.getPageView(0);
       const layer = pageView.annotationEditorLayer?.annotationEditorLayer;
       const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-      const editor = manager.getEditors(0).find((candidate) =>
-        candidate.annotationElementId === annotationId ||
-        candidate.div?.getAttribute("annotation-id") === annotationId,
-      );
+      const editorDiv = window.__getSidecarFreeTextEditor(annotationId);
+      const editor = editorDiv ? manager.getEditor(editorDiv.id) : null;
       const internal = editor?.div?.querySelector(".internal");
       const rect = editor?.div?.getBoundingClientRect();
       const hit = rect && document.elementFromPoint(
@@ -3356,14 +3446,10 @@ test(
     if (!zoomedFreeText.editing || !zoomedFreeText.active) {
       const refreshedPoint = await viewer.evaluate((annotationId) => {
         const app = window.PDFViewerApplication;
-        const editor = app.pdfViewer._layerProperties.annotationEditorUIManager
-          .getEditors(0).find((candidate) =>
-            candidate.annotationElementId === annotationId ||
-            candidate.div?.getAttribute("annotation-id") === annotationId,
-          );
-        const rect = editor?.div?.getBoundingClientRect();
+        const editor = window.__getSidecarFreeTextEditor(annotationId);
+        const rect = editor?.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) {
-          throw new Error("The zoomed FreeText annotation has no pointer hit area");
+          throw new Error("The zoomed sidecar FreeText has no pointer hit area");
         }
         return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
       }, savedFreeText.id);
@@ -3373,12 +3459,8 @@ test(
         delay:80,
       });
       await viewer.waitForFunction((annotationId) => {
-        const app = window.PDFViewerApplication;
-        const internal = [...document.querySelectorAll(
-          ".annotationEditorLayer .freeTextEditor .internal",
-        )].find((element) =>
-          element.closest(".freeTextEditor")?.getAttribute("annotation-id") === annotationId,
-        );
+        const internal = window.__getSidecarFreeTextEditor(annotationId)
+          ?.querySelector(".internal");
         return internal?.isContentEditable && document.activeElement === internal;
       }, { timeout:10_000 }, savedFreeText.id);
     }
@@ -3473,11 +3555,23 @@ test(
       "The bridge should leave the browser's native right-click menu available in an active contenteditable editor",
     );
     const savesAfterTextRightClick = await page.evaluate(() => window.__host.saves.length);
+    const saveStateAfterTextRightClick = await viewer.evaluate(() => ({
+      disabled:document.getElementById("secondaryDownload")?.disabled ?? null,
+      editorCount:document.querySelectorAll(".annotationEditorLayer .freeTextEditor").length,
+      editorText:window.__getSidecarFreeTextEditor(
+        window.__mouseTestMilestones.savedFreeTextAnnotationId,
+      )?.querySelector(".internal")?.textContent?.replace(/\u200b/g, "").replace(/\u00a0/g, " ") ?? null,
+    }));
+    assert.equal(saveStateAfterTextRightClick.disabled, true,
+      "A context-menu-only interaction must not mark the unchanged sidecar annotation dirty");
+    assert.equal(saveStateAfterTextRightClick.editorCount, 1,
+      "Right-click must not create an extra FreeText editor");
+    assert.equal(saveStateAfterTextRightClick.editorText, "Mouse toolbar round trip");
     await clickAction("save");
-    await page.waitForFunction(
-      (count) => window.__host.saves.length > count,
-      { timeout: 20_000 },
+    assert.equal(
+      await page.evaluate(() => window.__host.saves.length),
       savesAfterTextRightClick,
+      "A disabled no-op Save must not append a redundant sidecar batch",
     );
 
     // Final host diagnostics prove real pointer types/buttons were captured in
@@ -3539,11 +3633,9 @@ test(
     const externalFocusPoint = await viewer.evaluate((annotationId) => {
       const app = window.PDFViewerApplication;
       const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-      const editor = manager.getEditors(0).find((candidate) =>
-        candidate.annotationElementId === annotationId ||
-        candidate.div?.getAttribute("annotation-id") === annotationId,
-      );
-      const rect = editor?.div?.getBoundingClientRect();
+      const editorDiv = window.__getSidecarFreeTextEditor(annotationId);
+      const editor = editorDiv ? manager.getEditor(editorDiv.id) : null;
+      const rect = editorDiv?.getBoundingClientRect();
       if (!editor || !rect || rect.width <= 0 || rect.height <= 0) {
         throw new Error("The saved FreeText must remain visible before host-window focus testing");
       }
@@ -3558,12 +3650,8 @@ test(
     await viewer.waitForFunction((annotationId) => {
       const app = window.PDFViewerApplication;
       const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
-      const internal = [...document.querySelectorAll(
-        ".annotationEditorLayer .freeTextEditor .internal",
-      )].find((element) =>
-        element.closest(".freeTextEditor")?.getAttribute("annotation-id") === annotationId,
-      );
-      const editor = internal?.closest(".freeTextEditor");
+      const editor = window.__getSidecarFreeTextEditor(annotationId);
+      const internal = editor?.querySelector(".internal");
       return internal?.isContentEditable && document.activeElement === internal &&
         editor && manager.getEditor(editor.id) && document.hasFocus() &&
         window.top.document.activeElement === window.frameElement;
@@ -3575,10 +3663,8 @@ test(
       const builder = pageView.annotationEditorLayer;
       const builderLayer = builder.annotationEditorLayer;
       const manager = pdfViewer._layerProperties.annotationEditorUIManager;
-      const editor = manager.getEditors(0).find((candidate) =>
-        candidate.annotationElementId === annotationId ||
-        candidate.div?.getAttribute("annotation-id") === annotationId,
-      );
+      const editorDiv = window.__getSidecarFreeTextEditor(annotationId);
+      const editor = editorDiv ? manager.getEditor(editorDiv.id) : null;
       const internal = editor?.div?.querySelector(".internal");
       if (!editor || !internal?.isContentEditable || document.activeElement !== internal) {
         throw new Error("The saved FreeText must be actively editable before host focus moves");
@@ -3789,24 +3875,21 @@ test(
       { timeout:20_000 },
     );
     await viewer.waitForFunction(
-      (annotationId) => {
+      (uuid) => {
         const app = window.PDFViewerApplication;
         const pageView = app?.pdfViewer?.getPageView(0);
         return pageView?.renderingState === 3 && pageView.pdfPage?.pageNumber === 1 &&
-          [...(pageView.annotationLayer?.div?.querySelectorAll?.(".freeTextAnnotation") || [])]
-            .some((element) => element.getAttribute("data-annotation-id") === annotationId);
+          window.__getSidecarFreeTextEditor(uuid)?.isConnected;
       },
-      { timeout:30_000 },
+      { timeout:20_000 },
       savedFreeText.id,
     );
     const zoomedSavedAnnotation = await viewer.evaluate(async (annotationId) => {
       const app = window.PDFViewerApplication;
       const pageView = app.pdfViewer.getPageView(0);
-      const annotations = await pageView.pdfPage.getAnnotations({ intent:"display" });
-      const annotation = annotations.find((entry) => entry.id === annotationId);
-      const target = [...(pageView.annotationLayer?.div?.querySelectorAll?.(
-        ".freeTextAnnotation",
-      ) || [])].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+      const target = window.__getSidecarFreeTextEditor(annotationId);
+      const editor = target && app.pdfViewer._layerProperties.annotationEditorUIManager
+        .getEditor(target.id);
       target?.scrollIntoView({ block:"center", inline:"center", behavior:"auto" });
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = target?.getBoundingClientRect();
@@ -3821,9 +3904,9 @@ test(
         pageNumber:pageView.pdfPage?.pageNumber ?? null,
         pageRenderingState:pageView.renderingState,
         pageScale:pageView.viewport?.scale ?? null,
-        pdfRect:annotation?.rect ?? null,
-        pdfWidth:annotation?.rect ? Math.abs(annotation.rect[2] - annotation.rect[0]) : 0,
-        pdfHeight:annotation?.rect ? Math.abs(annotation.rect[3] - annotation.rect[1]) : 0,
+        sidecarRect:editor?.serialize?.(false)?.rect ?? null,
+        pdfWidth:rect?.width ?? 0,
+        pdfHeight:rect?.height ?? 0,
         annotationConnected:Boolean(target?.isConnected),
         annotationBounds:rect
           ? { x:rect.x, y:rect.y, width:rect.width, height:rect.height }
@@ -3832,7 +3915,7 @@ test(
         insideViewer:Boolean(viewerRect && x >= Math.max(viewerRect.left, 0) &&
           x < Math.min(viewerRect.right, window.innerWidth) &&
           y >= Math.max(viewerRect.top, 0) && y < Math.min(viewerRect.bottom, window.innerHeight)),
-        hitTarget:Boolean(target && hit?.closest(".freeTextAnnotation") === target),
+        hitTarget:Boolean(target && hit?.closest(".freeTextEditor") === target),
       };
     }, savedFreeText.id);
     assert.ok(
@@ -3860,22 +3943,34 @@ test(
       );
     }, { timeout:20_000 });
     const reopenEditPoint = await viewer.evaluate((annotationId) => {
-      const pageView = PDFViewerApplication.pdfViewer.getPageView(0);
-      const target = [...(pageView.annotationLayer?.div?.querySelectorAll?.(
-        ".freeTextAnnotation",
-      ) || [])].find((element) => element.getAttribute("data-annotation-id") === annotationId);
+      const target = window.__getSidecarFreeTextEditor(annotationId);
       target?.scrollIntoView({ block:"center", inline:"center", behavior:"auto" });
       const rect = target?.getBoundingClientRect();
       if (!rect || rect.width <= 0 || rect.height <= 0) {
-        throw new Error("The reopened FreeText must have a hit area for the viewport-change probe");
+        throw new Error("The reopened sidecar FreeText must have a hit area for the viewport-change probe");
       }
       return { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
     }, savedFreeText.id);
     const reopenEditFrameOffset = await iframeOffset();
+    const reopenEditScreenPoint = {
+      x:reopenEditFrameOffset.x + reopenEditPoint.x,
+      y:reopenEditFrameOffset.y + reopenEditPoint.y,
+    };
     await page.mouse.click(
-      reopenEditFrameOffset.x + reopenEditPoint.x,
-      reopenEditFrameOffset.y + reopenEditPoint.y,
-      { count:2, delay:80 },
+      reopenEditScreenPoint.x,
+      reopenEditScreenPoint.y,
+    );
+    await viewer.waitForFunction((annotationId) => {
+      const editor = window.__getSidecarFreeTextEditor(annotationId);
+      return editor?.classList.contains("selectedEditor") &&
+        window.__mouseBridgeState.annotationUuidByRuntimeId.get(String(editor.id)) === annotationId;
+    }, { timeout:10_000 }, savedFreeText.id);
+    // The second trusted click must reopen the same persisted editor in edit
+    // mode before the cross-page viewport update is exercised.
+    await page.mouse.click(
+      reopenEditScreenPoint.x,
+      reopenEditScreenPoint.y,
+      { delay:80 },
     );
     await viewer.waitForFunction((annotationId) => {
       const app = window.PDFViewerApplication;
@@ -3884,7 +3979,8 @@ test(
         ".annotationEditorLayer .freeTextEditor.selectedEditor .internal",
       );
       const editor = internal?.closest(".freeTextEditor");
-      return editor?.getAttribute("annotation-id") === annotationId &&
+      return editor && window.__mouseBridgeState.annotationUuidByRuntimeId
+        .get(String(editor.id)) === annotationId &&
         internal?.isContentEditable && document.activeElement === internal &&
         manager?.getEditor?.(editor.id)?.isInEditMode?.();
     }, { timeout:10_000 }, savedFreeText.id);
@@ -3933,8 +4029,8 @@ test(
         internalBelongsToEditor:Boolean(editor?.div?.contains(activeInternal)),
         internalIsActive:document.activeElement === activeInternal,
         editorMatchesSavedAnnotation:Boolean(
-          editor?.annotationElementId === annotationId ||
-          editor?.div?.getAttribute("annotation-id") === annotationId,
+          editor && window.__mouseBridgeState.annotationUuidByRuntimeId
+            .get(String(editor.id)) === annotationId,
         ),
         bridgeWrapperInspectorAvailable,
         receiverBridgeUpdateWrapped:bridgeUpdateWrapped,
@@ -4331,6 +4427,7 @@ test(
                 .getElementById("editorSquareParamsToolbar")
                 ?.classList.contains("hidden") ?? null,
               pointerEvents: window.__trustedMouseEvents?.slice(-20) || [],
+              freeTextTapProbe:window.__mouseFreeTextTapProbe?.slice(-12) || [],
               trustedDoubleClicks:window.__trustedDoubleClicks?.slice(-24) || [],
               annotationModeEvents:window.__mouseAnnotationModeEvents?.slice(-32) || [],
               pendingAnnotationMode:window.__mousePendingAnnotationMode || null,
@@ -4413,9 +4510,19 @@ test(
         const bridgeDiagnostics = await page?.evaluate(
           () => window.__host?.inputDiagnostics || null,
         );
-        const screenshotPath = `/tmp/pdf-reader-mouse-failure-${captureId}.png`;
+        const screenshotPath = path.join(
+          root,
+          "tests",
+          "artifacts",
+          `mouse-input-${captureId}.failure.png`,
+        );
         await page?.screenshot({ path: screenshotPath, fullPage: false });
-        const diagnosticPath = `/tmp/pdf-reader-mouse-failure-${captureId}.json`;
+        const diagnosticPath = path.join(
+          root,
+          "tests",
+          "artifacts",
+          `mouse-input-${captureId}.failure.json`,
+        );
         await writeFile(diagnosticPath, JSON.stringify({
           error: { name: error?.name, message: error?.message, stack: error?.stack },
           inputDiagnostics,

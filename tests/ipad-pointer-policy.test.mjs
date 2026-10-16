@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
@@ -17,7 +18,6 @@ import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 const browserPath = resolveBrowserPath();
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const vendorWeb = path.join(vendorRoot, "web");
-const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const bridgeCssPath = path.join(root, "viewer-adapter", "bridge.css");
 const bridgeJsPath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
 const mimeTypes = new Map([
@@ -32,12 +32,50 @@ const mimeTypes = new Map([
   [".wasm", "application/wasm"],
 ]);
 
+function createPointerPolicyPdf(pageCount = 14) {
+  const objects = new Map([
+    [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+    [3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"],
+    [4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"],
+  ]);
+  const pageRefs = [];
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const pageObject = 5 + (pageNumber - 1) * 2;
+    const contentObject = pageObject + 1;
+    const content = Array.from({ length: 6 }, (_, lineIndex) =>
+      `BT /F1 12 Tf 36 ${750 - lineIndex * 24} Td (iPad pointer policy page ${pageNumber}) Tj /F2 12 Tf 145 0 Td (selectable text line ${lineIndex + 1}) Tj ET`,
+    ).join("\n") + "\n";
+    objects.set(pageObject, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObject} 0 R >>`);
+    objects.set(contentObject, `<< /Length ${Buffer.byteLength(content, "ascii")} >>\nstream\n${content}endstream`);
+    pageRefs.push(`${pageObject} 0 R`);
+  }
+  objects.set(2, `<< /Type /Pages /Kids [${pageRefs.join(" ")}] /Count ${pageCount} >>`);
+
+  let pdf = "%PDF-1.4\n% Pointer policy test fixture\n";
+  const offsets = [0];
+  const objectCount = Math.max(...objects.keys());
+  for (let objectNumber = 1; objectNumber <= objectCount; objectNumber += 1) {
+    offsets[objectNumber] = Buffer.byteLength(pdf, "ascii");
+    pdf += `${objectNumber} 0 obj\n${objects.get(objectNumber)}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, "ascii");
+  pdf += `xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`;
+  for (let objectNumber = 1; objectNumber <= objectCount; objectNumber += 1) {
+    pdf += `${String(offsets[objectNumber]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, "ascii");
+}
+
+const pointerPolicyPdfFixture = createPointerPolicyPdf();
+
 function hostHtml() {
   return `<!doctype html>
     <meta charset="utf-8">
     <title>iPad pointer policy regression</title>
     <iframe id="pdf-reader" name="pdf-reader"
       style="display:block;width:100vw;height:100vh;border:0"></iframe>
+    ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: "ipad-pointer-policy-test" })}
     <script>
       const channel = "pdf-web-reader";
       const token = "ipad-pointer-policy-test";
@@ -46,7 +84,7 @@ function hostHtml() {
       let initialOpenSent = false;
       window.__host = { opened: [], errors: [] };
       window.__openPdf = async () => {
-        const data = await fetch("/fixtures/tracemonkey.pdf").then((response) => {
+        const data = await fetch("/fixtures/ipad-pointer-policy.pdf").then((response) => {
           if (!response.ok) throw new Error("Could not fetch PDF fixture");
           return response.arrayBuffer();
         });
@@ -54,7 +92,7 @@ function hostHtml() {
         frame.contentWindow.postMessage({
           channel, token, type: "open", data,
           documentId: "ipad-pointer-policy-" + openRequest,
-          openRequest, filename: "tracemonkey.pdf", autoSave: false,
+          openRequest, filename: "ipad-pointer-policy.pdf", autoSave: false,
         }, "*", [data]);
       };
       window.addEventListener("message", (event) => {
@@ -89,7 +127,6 @@ function viewerHtml(source) {
 
 function getTarget(pathname) {
   if (pathname === "/favicon.ico") return null;
-  if (pathname === "/fixtures/tracemonkey.pdf") return fixturePath;
   if (pathname === "/bridge.css") return bridgeCssPath;
   if (
     pathname.startsWith("/viewer/") ||
@@ -147,10 +184,26 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
     window.__ipadPointerEvents?.length || 0,
   );
   const baseTimestamp = await viewer.evaluate(() =>
-    (performance.timeOrigin + performance.now()) / 1000 - 0.06,
+    (performance.timeOrigin + performance.now()) / 1000,
   );
-  const plannedOffsetsMs = [0, 13, 26, 39, 52, 65];
-  const commands = [];
+  const profileGestureId = process.env.PDF_READER_IPAD_CPU_PROFILE_ID;
+  const profileEnabled = process.env.PDF_READER_IPAD_CPU_PROFILE === "1" &&
+    (!profileGestureId || Number(profileGestureId) === id);
+  let profileStarted = false;
+  let cpuProfile = null;
+  if (profileEnabled) {
+    try {
+      await cdp.send("Profiler.enable");
+      await cdp.send("Profiler.setSamplingInterval", { interval: 500 });
+      await cdp.send("Profiler.start");
+      profileStarted = true;
+    } catch (error) {
+      cpuProfile = { state: "start-failed", message: error?.message || String(error) };
+    }
+  }
+  const plannedOffsetsMs = [0, 22, 44, 65];
+  const dispatchTimings = [];
+  const dispatchPromises = [];
   const sendAt = (type, pointAtTime, offsetMs) => {
     const touchPoints = pointAtTime
       ? [{
@@ -162,31 +215,77 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
         force: 1,
       }]
       : [];
-    commands.push(cdp.send("Input.dispatchTouchEvent", {
+    const startedAt = performance.now();
+    const dispatchPromise = cdp.send("Input.dispatchTouchEvent", {
       type,
       touchPoints,
       timestamp: baseTimestamp + offsetMs / 1000,
-    }));
+    }).then(() => {
+      dispatchTimings.push({
+        type,
+        offsetMs,
+        startedAt,
+        completedAt: performance.now(),
+      });
+    });
+    dispatchPromises.push(dispatchPromise);
   };
 
   sendAt("touchStart", point, plannedOffsetsMs[0]);
-  for (let step = 1; step <= 4; step += 1) {
+  for (let step = 1; step <= 2; step += 1) {
+    await waitMs(plannedOffsetsMs[step] - plannedOffsetsMs[step - 1]);
     sendAt("touchMove", {
       x: point.x,
-      y: point.y - distance * step / 4,
+      y: point.y - distance * step / 2,
     }, plannedOffsetsMs[step]);
   }
+  await waitMs(plannedOffsetsMs.at(-1) - plannedOffsetsMs.at(-2));
   sendAt("touchEnd", null, plannedOffsetsMs.at(-1));
-  await Promise.all(commands);
+  await Promise.all(dispatchPromises);
 
   const timing = await touchReleaseTiming(viewer, eventOffset);
+  if (profileStarted) {
+    try {
+      const { profile } = await cdp.send("Profiler.stop");
+      const frames = new Map(profile.nodes.map((node) => [node.id, node.callFrame]));
+      const samplesByFrame = new Map();
+      for (let index = 0; index < profile.samples.length; index += 1) {
+        const frame = frames.get(profile.samples[index]);
+        if (!frame) continue;
+        const key = `${frame.url}:${frame.lineNumber}:${frame.functionName}`;
+        const row = samplesByFrame.get(key) || {
+          functionName: frame.functionName || "(anonymous)",
+          url: frame.url || "",
+          lineNumber: frame.lineNumber,
+          samples: 0,
+          sampleMs: 0,
+        };
+        row.samples += 1;
+        row.sampleMs += (profile.timeDeltas[index] || 0) / 1000;
+        samplesByFrame.set(key, row);
+      }
+      cpuProfile = {
+        state: "captured",
+        durationMs: (profile.endTime - profile.startTime) / 1000,
+        sampleCount: profile.samples.length,
+        topFrames: [...samplesByFrame.values()]
+          .sort((left, right) => right.sampleMs - left.sampleMs)
+          .slice(0, 30),
+      };
+      await cdp.send("Profiler.disable");
+    } catch (error) {
+      cpuProfile = { state: "stop-failed", message: error?.message || String(error) };
+    }
+  }
   const evidence = {
     pointerId: id,
     distance,
     baseTimestamp,
     plannedOffsetsMs,
+    dispatchTimings,
     observed: timing.sequence,
     observedMoveSpeedPxPerMs: timing.observedMoveSpeedPxPerMs,
+    ...(cpuProfile ? { cpuProfile } : {}),
   };
   report.trustedTimedFingerGestures ||= [];
   report.trustedTimedFingerGestures.push(evidence);
@@ -217,7 +316,7 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
           Math.abs(relativeTime - offset) <= 1,
         );
     assert.ok(Number.isFinite(plannedOffset) && Math.abs(relativeTime - plannedOffset) <= 1,
-      `Fast finger gesture ${id} observed event time must match the 13 ms schedule`);
+      `Fast finger gesture ${id} observed event time must match the 22 ms sample schedule`);
     if (index > 0) {
       const previous = timing.sequence[index - 1];
       assert.ok(event.timeStamp > previous.timeStamp,
@@ -238,9 +337,10 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
     (timing.sequence[0].clientY - distance)) <= 1,
   `Fast finger gesture ${id} must deliver its full trusted touch distance`);
   assert.ok(Math.abs(
-    timing.sequence.at(-1).timeStamp - lastMove.timeStamp - 13,
+    timing.sequence.at(-1).timeStamp - lastMove.timeStamp -
+      (plannedOffsetsMs.at(-1) - plannedOffsetsMs.at(-2)),
   ) <= 1,
-  `Fast finger gesture ${id} must release 13 ms after its final move`);
+  `Fast finger gesture ${id} must release at the scheduled final interval`);
   assert.ok(timing.observedMoveSpeedPxPerMs >= 1,
     `Fast finger gesture ${id} must have a clearly moving touch segment`);
   return timing;
@@ -249,15 +349,36 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
 async function touchReleaseTiming(viewer, eventOffset) {
   return viewer.evaluate((offset) => {
     const events = window.__ipadPointerEvents?.slice(offset) || [];
-    const touchEvents = events.filter((event) =>
-      event.pointerType === "touch" &&
+    const touchSamples = events.filter((event) =>
+      event.sourceType === "touch" &&
+      ["touchstart", "touchmove", "touchend", "touchcancel"].includes(event.type)
+    );
+    const touchSequence = touchSamples.map((event) => ({
+      ...event,
+      sourceType: "touch-event",
+      type: ({
+        touchstart: "pointerdown",
+        touchmove: "pointermove",
+        touchend: "pointerup",
+        touchcancel: "pointercancel",
+      })[event.type],
+      pointerId: event.touchId,
+      pointerType: "touch",
+    }));
+    const pointerEvents = events.filter((event) =>
+      event.sourceType === "pointer" && event.pointerType === "touch" &&
       ["pointerdown", "pointermove", "pointerup", "pointercancel"].includes(event.type)
     );
-    const firstDown = touchEvents.find((event) => event.type === "pointerdown");
+    const firstDown = pointerEvents.find((event) => event.type === "pointerdown");
     const pointerId = firstDown?.pointerId;
-    const sequence = pointerId === undefined
-      ? touchEvents
-      : touchEvents.filter((event) => event.pointerId === pointerId);
+    const pointerSequence = pointerId === undefined
+      ? pointerEvents
+      : pointerEvents.filter((event) => event.pointerId === pointerId);
+    // Once Chromium takes ownership of a native scroll, Pointer Events correctly
+    // emit pointercancel. Touch Events remain the authoritative physical-contact
+    // timeline, so measure the injected gesture there instead of fabricating an
+    // expected pointerup that the browser is required to cancel.
+    const sequence = touchSequence.length ? touchSequence : pointerSequence;
     const release = [...sequence].reverse().find((event) => event.type === "pointerup");
     const lastMove = [...sequence].reverse().find((event) => event.type === "pointermove");
     const recentMoves = sequence.filter((event) => event.type === "pointermove").slice(-3);
@@ -272,6 +393,7 @@ async function touchReleaseTiming(viewer, eventOffset) {
     return {
       browserPointerId: pointerId ?? null,
       sequence,
+      pointerSequence,
       lastMoveTime: lastMove?.timeStamp ?? null,
       releaseTime: release?.timeStamp ?? null,
       gapMs: lastMove && release
@@ -325,6 +447,15 @@ test(
       const url = new URL(request.url, "http://127.0.0.1");
       if (url.pathname === "/favicon.ico") {
         response.writeHead(204).end();
+        return;
+      }
+      if (url.pathname === "/fixtures/ipad-pointer-policy.pdf") {
+        response.writeHead(200, {
+          "content-type": "application/pdf",
+          "content-length": pointerPolicyPdfFixture.byteLength,
+          "x-content-type-options": "nosniff",
+        });
+        response.end(pointerPolicyPdfFixture);
         return;
       }
       if (url.pathname === "/") {
@@ -402,28 +533,78 @@ test(
       });
       await page.evaluateOnNewDocument(() => {
         window.__ipadPointerEvents = [];
+        window.__ipadEventRows = new WeakMap();
+        window.__ipadCompatMouseReachedDocument = [];
+        window.__ipadLongTasks = [];
+        if (typeof PerformanceObserver === "function") {
+          try {
+            const observer = new PerformanceObserver((list) => {
+              for (const entry of list.getEntries()) {
+                window.__ipadLongTasks.push({
+                  startTime: entry.startTime,
+                  duration: entry.duration,
+                  name: entry.name,
+                });
+              }
+            });
+            observer.observe({ type: "longtask", buffered: true });
+          } catch {
+            // The browser may not expose Long Tasks in this environment.
+          }
+        }
         for (const type of [
           "pointerdown", "pointermove", "pointerup", "pointercancel",
+          "touchstart", "touchmove", "touchend", "touchcancel",
           "mousedown", "mouseup", "click", "dblclick", "wheel",
         ]) {
           window.addEventListener(type, (event) => {
             const target = event.target instanceof Element ? event.target : null;
-            window.__ipadPointerEvents.push({
+            const touch = event.changedTouches?.[0] || event.touches?.[0] || null;
+            const row = {
               type,
+              sourceType: type.startsWith("touch") ? "touch" : "pointer",
               pointerType: event.pointerType || null,
               pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
+              touchId: Number.isFinite(touch?.identifier) ? touch.identifier : null,
               trusted: event.isTrusted === true,
+              isPrimary: typeof event.isPrimary === "boolean" ? event.isPrimary : null,
+              button: Number.isFinite(event.button) ? event.button : null,
+              buttons: Number.isFinite(event.buttons) ? event.buttons : null,
+              touchCount: Number.isFinite(event.touches?.length) ? event.touches.length : null,
+              touchIdentifiers: event.touches
+                ? Array.from(event.touches, (item) => item.identifier)
+                : null,
+              detail: Number.isFinite(event.detail) ? event.detail : null,
               timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : null,
-              observedAt: performance.now(),
-              clientX: Number.isFinite(event.clientX) ? event.clientX : null,
-              clientY: Number.isFinite(event.clientY) ? event.clientY : null,
+              observedAt: null,
+              clientX: Number.isFinite(touch?.clientX) ? touch.clientX
+                : Number.isFinite(event.clientX) ? event.clientX : null,
+              clientY: Number.isFinite(touch?.clientY) ? touch.clientY
+                : Number.isFinite(event.clientY) ? event.clientY : null,
               targetInViewer: !!target?.closest?.("#viewerContainer"),
               targetPage: target?.closest?.(".page")?.dataset.pageNumber || null,
+              targetId: target?.id || null,
+              targetToolButton: target?.closest?.("#editorSquareButton")?.id || null,
+            };
+            window.__ipadPointerEvents.push(row);
+            window.__ipadEventRows.set(event, row);
+            queueMicrotask(() => {
+              row.observedAt = performance.now();
+              row.defaultPreventedAfterDispatch = event.defaultPrevented;
+              row.pointerCaptureAfterDispatch = Number.isFinite(event.pointerId) &&
+                target?.hasPointerCapture?.(event.pointerId) === true;
             });
-            if (window.__ipadPointerEvents.length > 256) {
-              window.__ipadPointerEvents.shift();
-            }
           }, true);
+        }
+        for (const type of ["mousedown", "mousemove", "mouseup"]) {
+          document.addEventListener(type, (event) => {
+            window.__ipadCompatMouseReachedDocument.push({
+              type,
+              targetInViewer: event.target instanceof Element &&
+                !!event.target.closest?.("#viewerContainer"),
+              defaultPrevented: event.defaultPrevented,
+            });
+          });
         }
       });
       page.on("pageerror", (error) => report.pageErrors.push(error.message));
@@ -460,10 +641,46 @@ test(
       }));
       assert.deepEqual(initialPolicy, {
         flag: "true",
-        touchAction: "none",
+        touchAction: "pan-x pan-y",
         mode: 0,
       });
       const cdp = await page.target().createCDPSession();
+      const initialSquareTouchPoint = await localPointInHost(
+        viewer, page, "#editorSquareButton",
+      );
+      const initialSquareTouchOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      await dispatchTouch(cdp, "touchStart", initialSquareTouchPoint, 32);
+      await waitMs(50);
+      await dispatchTouch(cdp, "touchEnd");
+      await viewer.evaluate(() => new Promise((resolve) =>
+        requestAnimationFrame(resolve),
+      ));
+      const initialSquareTouchEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], initialSquareTouchOffset,
+      );
+      report.initialSquareTouchTap = initialSquareTouchEvents;
+      assert.ok(initialSquareTouchEvents.some((event) =>
+        event.type === "click" && event.trusted &&
+        event.targetToolButton === "editorSquareButton",
+      ), "A trusted touchscreen tap in the clean viewer must activate Square");
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+        { timeout: 3_000 },
+      );
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 0,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
+        { timeout: 3_000 },
+      );
       const penNavigationStart = await viewer.evaluate(() =>
         PDFViewerApplication.pdfViewer.currentPageNumber,
       );
@@ -501,6 +718,10 @@ test(
           (_, pageIndex) => [...manager.getEditors(pageIndex)],
         ).flat().filter((editor) => editor.serialize())
           .map((editor) => String(editor.id)).sort();
+        const drawingPaths = [...document.querySelectorAll(
+          '.page[data-page-number="1"] .canvasWrapper svg path[d]',
+        )].map((path) => path.getAttribute("d"))
+          .filter((data) => data && data.trim().length > 0);
         return {
           scrollTop: document.getElementById("viewerContainer").scrollTop,
           scrollLeft: document.getElementById("viewerContainer").scrollLeft,
@@ -512,6 +733,8 @@ test(
           editorElements: document.querySelectorAll(
             ".annotationEditorLayer .inkEditor",
           ).length,
+          drawingPathCount: drawingPaths.length,
+          drawingPaths,
           highlightElements: document.querySelectorAll(
             ".annotationEditorLayer .highlightEditor",
           ).length,
@@ -543,6 +766,9 @@ test(
       }));
       await viewer.evaluate(() => window.getSelection()?.removeAllRanges());
       const beforePenPan = await inputSnapshot();
+      await viewer.evaluate(() => {
+        window.__ipadCompatMouseReachedDocument = [];
+      });
       const penPanEventOffset = await viewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
@@ -555,28 +781,20 @@ test(
         x: penStart.x,
         y: penStart.y - 130,
       }, 0);
-      await viewer.waitForFunction(
-        (start) => document.getElementById("viewerContainer").scrollTop > start + 40,
-        { timeout: 5_000 },
-        beforePenPan.scrollTop,
-      );
       const afterPenPan = await inputSnapshot();
       assert.equal(afterPenPan.storageSize, beforePenPan.storageSize);
       assert.equal(afterPenPan.serializedSize, beforePenPan.serializedSize);
       assert.deepEqual(afterPenPan.modifiedIds, beforePenPan.modifiedIds);
       const penPanEvents = await viewer.evaluate((offset) => ({
         events: window.__ipadPointerEvents?.slice(offset) || [],
+        compatibilityMouseAtDocument: window.__ipadCompatMouseReachedDocument || [],
         selection: window.getSelection()?.toString() || "",
         pageClicks: window.__ipadPageClicksReachedDocument || [],
       }), penPanEventOffset);
       assert.equal(penPanEvents.selection, "",
         "A mode-NONE pen pan must not select PDF text");
-      assert.ok(
-        penPanEvents.events.every((event) =>
-          !(event.targetInViewer && ["mousedown", "mousemove", "mouseup"].includes(event.type)),
-        ),
-        `A mode-NONE pen pan must suppress compatibility mouse events: ${JSON.stringify(penPanEvents.events)}`,
-      );
+      assert.deepEqual(penPanEvents.compatibilityMouseAtDocument, [],
+        `A mode-NONE pen pan must stop compatibility mouse events before the PDF document: ${JSON.stringify(penPanEvents)}`);
       assert.deepEqual(penPanEvents.pageClicks, [],
         "A completed pen pan must not trigger a PDF page click");
       const penObservation = await viewer.evaluate(() =>
@@ -584,6 +802,21 @@ test(
       );
       assert.ok(penObservation.some((event) => event.type === "pointerdown"),
         "Chromium should deliver the explicitly simulated pen pointerType");
+      const penDispatch = penPanEvents.events.filter((event) =>
+        event.pointerType === "pen" && ["pointerdown", "pointermove", "pointerup"].includes(event.type),
+      );
+      assert.ok(penDispatch.some((event) => event.type === "pointerup"),
+        "The simulated pen sequence must reach pointerup");
+      assert.ok(penDispatch.every((event) => event.defaultPreventedAfterDispatch === false),
+        "Read-mode pen events remain browser-owned; bridge listeners must not cancel them");
+      assert.ok(penDispatch.every((event) => event.pointerCaptureAfterDispatch !== true),
+        "Read-mode pen events must not be captured by annotation editors");
+      report.penPanSimulation = {
+        nativeScrollEmulated: false,
+        beforeScrollTop: beforePenPan.scrollTop,
+        afterScrollTop: afterPenPan.scrollTop,
+        reason: "CDP mouse pointerType=pen verifies routing only; native iPadOS Pencil pan is covered on device, while trusted touch scrolling is tested separately.",
+      };
 
       await viewer.evaluate(() => {
         window.__ipadPageClicksReachedDocument = [];
@@ -631,14 +864,22 @@ test(
           cancelable: true,
         });
         span?.dispatchEvent(callout);
-        const textLayer = span?.closest(".textLayer");
-        const style = textLayer ? getComputedStyle(textLayer) : null;
+        const style = span ? getComputedStyle(span) : null;
+        const unrelatedSpan = [...document.querySelectorAll(
+          '.page[data-page-number="1"] .textLayer span',
+        )].find((candidate) => candidate !== span);
         return {
           mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
           guardClass: document.documentElement.classList.contains(
             "pdfReaderFingerTextSelectionSuppressed",
           ),
           userSelect: style?.userSelect || null,
+          suppressionTargetClass: span?.classList.contains(
+            "pdfReaderFingerTextSelectionSuppressedTarget",
+          ) || false,
+          unrelatedSpanUserSelect: unrelatedSpan
+            ? getComputedStyle(unrelatedSpan).userSelect
+            : null,
           webkitTouchCalloutSupported: CSS.supports(
             "-webkit-touch-callout",
             "none",
@@ -660,6 +901,8 @@ test(
         mode: 9,
         guardClass: true,
         userSelect: "none",
+        suppressionTargetClass: true,
+        unrelatedSpanUserSelect: "auto",
         selectStartPrevented: true,
         contextMenuPrevented: true,
         selectedText: "",
@@ -744,7 +987,13 @@ test(
           candidate.spans.at(-1).right - candidate.spans[0].left >= 20,
         );
         if (!line || !secondLine) {
-          throw new Error("Could not find two adjacent visible OCR text lines for pen selection");
+          throw new Error("Could not find two adjacent visible OCR text lines for pen selection: " +
+            JSON.stringify(lines.map((candidate) => ({
+              top: candidate.top,
+              spanCount: candidate.spans.length,
+              text: candidate.spans.map((span) => span.text).join(" | "),
+              width: candidate.spans.at(-1).right - candidate.spans[0].left,
+            }))));
         }
         const first = line.spans[0];
         const firstLineLast = line.spans.at(-1);
@@ -1031,7 +1280,44 @@ test(
       );
 
       await waitMs(1_000);
+      const fastFlickStartPage = await viewer.evaluate(() => {
+        const viewer = PDFViewerApplication.pdfViewer;
+        // Leave enough document below the gesture that browser momentum is
+        // measured before a scroll-boundary clamp can distort its velocity.
+        const targetPage = Math.floor(viewer.pagesCount / 3) + 1;
+        viewer.currentPageNumber = targetPage;
+        return targetPage;
+      });
+      await viewer.waitForFunction((targetPage) =>
+        PDFViewerApplication.pdfViewer.currentPageNumber === targetPage,
+      { timeout: 5_000 }, fastFlickStartPage);
+      await viewer.waitForFunction((targetPage) => {
+        const pageView = PDFViewerApplication.pdfViewer.getPageView(targetPage - 1);
+        return pageView?.renderingState === 3 &&
+          pageView.div?.dataset.loaded === "true" &&
+          pageView.canvas?.isConnected;
+      }, { timeout: 5_000 }, fastFlickStartPage);
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const bounds = container.getBoundingClientRect();
+        const visiblePages = [...container.querySelectorAll(".page")].filter((page) => {
+          const rect = page.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+        return visiblePages.length > 0 && visiblePages.every((page) => {
+          const pageNumber = Number(page.dataset.pageNumber);
+          const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+          return pageView?.renderingState === 3 &&
+            page.dataset.loaded === "true" &&
+            pageView.canvas?.isConnected;
+        });
+      }, { timeout: 5_000 });
+      await viewer.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
       const beforeFastFlick = await inputSnapshot();
+      assert.ok(beforeFastFlick.maxScrollTop - beforeFastFlick.scrollTop > 5_000,
+        "The fast-flick fixture page must leave enough scroll range to measure momentum before a boundary clamp");
       const fastFlickPoint = await localPointInHost(
         viewer,
         page,
@@ -1041,15 +1327,119 @@ test(
       const fastFlickEventOffset = await viewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
+      const profileFastFlickInertia =
+        process.env.PDF_READER_IPAD_PROFILE_INERTIA === "1";
+      let fastFlickProfilerStarted = false;
+      if (profileFastFlickInertia) {
+        try {
+          await cdp.send("Profiler.enable");
+          await cdp.send("Profiler.setSamplingInterval", { interval: 500 });
+          await cdp.send("Profiler.start");
+          fastFlickProfilerStarted = true;
+        } catch (error) {
+          report.fastFlickInertiaProfile = {
+            state: "start-failed",
+            message: error?.message || String(error),
+          };
+        }
+      }
       const fastFlickReleaseTiming = await beginFastTouchDrag(
         cdp, viewer, fastFlickPoint, 260, 21, report,
       );
+      await viewer.waitForFunction((start) =>
+        document.getElementById("viewerContainer").scrollTop > start + 180,
+      { timeout: 5_000 }, beforeFastFlick.scrollTop);
       const fastFlickAtRelease = await inputSnapshot();
       const fastFlickImmediatelyAfterRelease = await inputSnapshot();
-      await waitMs(120);
-      const fastFlickAfterFirstInterval = await inputSnapshot();
-      await waitMs(120);
-      const fastFlickAfterSecondInterval = await inputSnapshot();
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const bounds = container.getBoundingClientRect();
+        const visiblePages = [...container.querySelectorAll(".page")].filter((page) => {
+          const rect = page.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+        const allVisiblePagesRendered = visiblePages.length > 0 &&
+          visiblePages.every((page) => {
+            const pageView = PDFViewerApplication.pdfViewer.getPageView(
+              Number(page.dataset.pageNumber) - 1,
+            );
+            return pageView?.renderingState === 3 &&
+              page.dataset.loaded === "true" && pageView.canvas?.isConnected &&
+              page.querySelector(".textLayer .endOfContent");
+          });
+        const longTasks = window.__ipadLongTasks || [];
+        const mostRecentLongTaskEnd = longTasks.reduce(
+          (latest, task) => Math.max(latest, task.startTime + task.duration),
+          0,
+        );
+        return allVisiblePagesRendered &&
+          performance.now() - mostRecentLongTaskEnd >= 50;
+      }, { timeout: 5_000 });
+      const timedInertiaSamples = await viewer.evaluate(async () => {
+        const container = document.getElementById("viewerContainer");
+        const startedAt = performance.now();
+        const startScrollTop = container.scrollTop;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const firstAt = performance.now();
+        const firstScrollTop = container.scrollTop;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const secondAt = performance.now();
+        return {
+          startScrollTop,
+          firstScrollTop,
+          secondScrollTop: container.scrollTop,
+          firstIntervalMs: firstAt - startedAt,
+          secondIntervalMs: secondAt - firstAt,
+        };
+      });
+      if (fastFlickProfilerStarted) {
+        try {
+          const { profile } = await cdp.send("Profiler.stop");
+          const frames = new Map(profile.nodes.map((node) => [node.id, node.callFrame]));
+          const samplesByFrame = new Map();
+          for (let index = 0; index < profile.samples.length; index += 1) {
+            const frame = frames.get(profile.samples[index]);
+            if (!frame) continue;
+            const key = `${frame.url}:${frame.lineNumber}:${frame.functionName}`;
+            const row = samplesByFrame.get(key) || {
+              functionName: frame.functionName || "(anonymous)",
+              url: frame.url || "",
+              lineNumber: frame.lineNumber,
+              samples: 0,
+              sampleMs: 0,
+            };
+            row.samples += 1;
+            row.sampleMs += (profile.timeDeltas[index] || 0) / 1000;
+            samplesByFrame.set(key, row);
+          }
+          report.fastFlickInertiaProfile = {
+            state: "captured",
+            durationMs: (profile.endTime - profile.startTime) / 1000,
+            sampleCount: profile.samples.length,
+            topFrames: [...samplesByFrame.values()]
+              .sort((left, right) => right.sampleMs - left.sampleMs)
+              .slice(0, 30),
+          };
+          await cdp.send("Profiler.disable");
+        } catch (error) {
+          report.fastFlickInertiaProfile = {
+            state: "stop-failed",
+            message: error?.message || String(error),
+          };
+        }
+      }
+      const fastFlickAfterFirstInterval = {
+        ...fastFlickAtRelease,
+        scrollTop: timedInertiaSamples.firstScrollTop,
+      };
+      const fastFlickAfterSecondInterval = {
+        ...fastFlickAtRelease,
+        scrollTop: timedInertiaSamples.secondScrollTop,
+      };
+      const measurementStart = {
+        ...fastFlickAtRelease,
+        scrollTop: timedInertiaSamples.startScrollTop,
+      };
       await waitMs(760);
       const fastFlickSettled = await inputSnapshot();
       assert.ok(
@@ -1057,15 +1447,35 @@ test(
         "The trusted fast finger drag must pan the PDF before release",
       );
       const firstInertiaDistance = fastFlickAfterFirstInterval.scrollTop -
-        fastFlickImmediatelyAfterRelease.scrollTop;
+        measurementStart.scrollTop;
       const secondInertiaDistance = fastFlickAfterSecondInterval.scrollTop -
         fastFlickAfterFirstInterval.scrollTop;
+      const firstInertiaVelocity = firstInertiaDistance /
+        timedInertiaSamples.firstIntervalMs;
+      const secondInertiaVelocity = secondInertiaDistance /
+        timedInertiaSamples.secondIntervalMs;
+      report.fastFlickInertia = {
+        atRelease: fastFlickAtRelease.scrollTop,
+        immediatelyAfterRelease: fastFlickImmediatelyAfterRelease.scrollTop,
+        measurementStart: measurementStart.scrollTop,
+        afterFirstInterval: fastFlickAfterFirstInterval.scrollTop,
+        afterSecondInterval: fastFlickAfterSecondInterval.scrollTop,
+        settled: fastFlickSettled.scrollTop,
+        sampleIntervalsMs: [
+          timedInertiaSamples.firstIntervalMs,
+          timedInertiaSamples.secondIntervalMs,
+        ],
+        firstInertiaDistance,
+        secondInertiaDistance,
+        firstInertiaVelocityPxPerMs: firstInertiaVelocity,
+        secondInertiaVelocityPxPerMs: secondInertiaVelocity,
+      };
       assert.ok(firstInertiaDistance > 20,
         "A recent fast finger release must continue scrolling");
       assert.ok(secondInertiaDistance > 5,
         "Finger inertia must continue smoothly across animation frames");
-      assert.ok(secondInertiaDistance < firstInertiaDistance,
-        "Finger inertia must decay over equal time intervals");
+      assert.ok(secondInertiaVelocity < firstInertiaVelocity,
+        "Finger inertia velocity must decay across measured intervals");
       assert.equal(fastFlickSettled.storageSize, beforeFastFlick.storageSize);
       assert.equal(fastFlickSettled.serializedSize, beforeFastFlick.serializedSize);
       assert.deepEqual(fastFlickSettled.modifiedIds, beforeFastFlick.modifiedIds,
@@ -1104,14 +1514,17 @@ test(
         "#viewerContainer",
         [0.5, 0.52],
       );
+      const cancelEventOffset = await viewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
       await dispatchTouch(cdp, "touchStart", cancelPoint, 23);
       await dispatchTouch(cdp, "touchMove", {
         x: cancelPoint.x,
         y: cancelPoint.y - 130,
       }, 23);
-      const cancelEventOffset = await viewer.evaluate(() =>
-        window.__ipadPointerEvents?.length || 0,
-      );
+      await viewer.waitForFunction((start) =>
+        document.getElementById("viewerContainer").scrollTop > start + 50,
+      { timeout: 5_000 }, pausedRelease.scrollTop);
       const beforeTouchCancel = await inputSnapshot();
       await dispatchTouch(cdp, "touchCancel");
       const afterTouchCancel = await inputSnapshot();
@@ -1139,8 +1552,65 @@ test(
         const container = document.getElementById("viewerContainer");
         const maxScrollTop = container.scrollHeight - container.clientHeight;
         container.scrollTop = Math.max(0, maxScrollTop - 60);
-        return container.scrollTop;
+        return {
+          scrollTop: container.scrollTop,
+          pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+        };
       });
+      report.boundaryStart = boundaryStart;
+      await viewer.evaluate(() => {
+        window.__ipadStablePageObservation = {
+          pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+          stableFrames: 0,
+        };
+      });
+      await viewer.waitForFunction(() => {
+        const observation = window.__ipadStablePageObservation;
+        const currentPage = PDFViewerApplication.pdfViewer.currentPageNumber;
+        if (currentPage === observation.pageNumber) {
+          observation.stableFrames += 1;
+        } else {
+          observation.pageNumber = currentPage;
+          observation.stableFrames = 0;
+        }
+        return observation.stableFrames >= 2;
+      }, { timeout: 5_000 });
+      report.boundaryStablePageNumber = await viewer.evaluate(() =>
+        PDFViewerApplication.pdfViewer.currentPageNumber,
+      );
+      await viewer.waitForFunction((pageNumber) => {
+        const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+        return pageView?.renderingState === 3 &&
+          pageView.div?.dataset.loaded === "true" &&
+          pageView.canvas?.isConnected;
+      }, { timeout: 5_000 }, boundaryStart.pageNumber);
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const bounds = container.getBoundingClientRect();
+        const visiblePages = [...container.querySelectorAll(".page")].filter((page) => {
+          const rect = page.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+        return visiblePages.length > 0 && visiblePages.every((page) => {
+          const pageNumber = Number(page.dataset.pageNumber);
+          const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+          return pageView?.renderingState === 3 &&
+            page.dataset.loaded === "true" &&
+            pageView.canvas?.isConnected &&
+            page.querySelector(".textLayer .endOfContent");
+        });
+      }, { timeout: 5_000 });
+      await viewer.waitForFunction(() => {
+        const longTasks = window.__ipadLongTasks || [];
+        const mostRecentLongTaskEnd = longTasks.reduce(
+          (latest, task) => Math.max(latest, task.startTime + task.duration),
+          0,
+        );
+        return performance.now() - mostRecentLongTaskEnd >= 50;
+      }, { timeout: 5_000 });
+      await viewer.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
       const boundaryPoint = await localPointInHost(
         viewer,
         page,
@@ -1153,18 +1623,73 @@ test(
       await inputSnapshot();
       await waitMs(350);
       const boundaryAfterInertia = await inputSnapshot();
-      assert.ok(boundaryAfterInertia.scrollTop >= boundaryStart,
+      report.boundaryScrollOutcome = {
+        start: boundaryStart,
+        after: boundaryAfterInertia,
+      };
+      assert.ok(boundaryAfterInertia.scrollTop >= boundaryStart.scrollTop,
         "A finger flick near the lower boundary must not reverse scroll direction");
       assert.ok(
         Math.abs(boundaryAfterInertia.scrollTop - boundaryAfterInertia.maxScrollTop) <= 1,
         "Finger inertia must stop at the PDF scroll boundary",
       );
 
+      const runBackgroundInertiaScenario = async () => {
+        report.backgroundPhase = "foregrounding-reader-before-background-test";
+        await page.bringToFront();
+        await page.waitForFunction(
+          () => document.visibilityState === "visible" && document.hasFocus(),
+          { timeout: 8_000, polling: 100 },
+        );
+        await viewer.waitForFunction(
+          () => document.visibilityState === "visible" && document.hasFocus(),
+          { timeout: 8_000, polling: 100 },
+        );
+        report.backgroundPhase = "preparing-background-test";
+        await viewer.evaluate(() => {
+          if (PDFViewerApplication.pdfViewer.annotationEditorMode !== 0) {
+            PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+              source: window,
+              mode: 0,
+              isFromKeyboard: true,
+              createNewEditor: false,
+            });
+          }
+        });
+        await viewer.waitForFunction(
+          () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
+          { timeout: 3_000 },
+        );
       const backgroundStart = await viewer.evaluate(() => {
         const container = document.getElementById("viewerContainer");
         container.scrollTop = Math.min(500, container.scrollHeight - container.clientHeight);
-        return container.scrollTop;
+        return {
+          scrollTop: container.scrollTop,
+          pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+        };
       });
+      await viewer.waitForFunction((pageNumber) => {
+        const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+        return pageView?.renderingState === 3 &&
+          pageView.div?.dataset.loaded === "true" &&
+          pageView.canvas?.isConnected;
+      }, { timeout: 5_000 }, backgroundStart.pageNumber);
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const bounds = container.getBoundingClientRect();
+        const visiblePages = [...container.querySelectorAll(".page")].filter((page) => {
+          const rect = page.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+        return visiblePages.length > 0 && visiblePages.every((page) => {
+          const pageNumber = Number(page.dataset.pageNumber);
+          const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+          return pageView?.renderingState === 3 && page.dataset.loaded === "true";
+        });
+      }, { timeout: 5_000 });
+      await viewer.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
       const backgroundFlickPoint = await localPointInHost(
         viewer,
         page,
@@ -1179,42 +1704,66 @@ test(
       const beforeBackgrounding = await inputSnapshot();
       assert.ok(beforeBackgrounding.scrollTop > backgroundFlickAtRelease.scrollTop + 5,
         "The trusted finger flick must still be in motion before this page is backgrounded");
+      await viewer.evaluate(() => {
+        window.__ipadHiddenScrollSample = null;
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") {
+            window.__ipadHiddenScrollSample = {
+              scrollTop: document.getElementById("viewerContainer")?.scrollTop ?? null,
+              pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+              visibilityState: document.visibilityState,
+            };
+          }
+        }, { once: true });
+      });
 
       let backgroundPage = null;
       let backgroundPhaseError = null;
       try {
+        report.backgroundPhase = "opening-background-tab";
         backgroundPage = await browser.newPage();
+        report.backgroundPhase = "loading-background-tab";
         await backgroundPage.goto("about:blank");
+        report.backgroundPhase = "foregrounding-background-tab";
         await backgroundPage.bringToFront();
-        await page.waitForFunction(
-          () => document.visibilityState === "hidden",
-          { timeout: 8_000, polling: 100 },
-        );
-        await viewer.waitForFunction(
-          () => document.visibilityState === "hidden",
-          { timeout: 8_000, polling: 100 },
-        );
-        const hiddenAt = await inputSnapshot();
+        report.backgroundPhase = "background-tab-visible";
+        // Do not issue Runtime.evaluate calls against a backgrounded Chromium
+        // page: its renderer can be frozen, causing Puppeteer protocol calls
+        // to hang. Capture the exact visibilitychange boundary synchronously
+        // and read it only after foregrounding the page again.
         await waitMs(180);
-        const hiddenStable = await inputSnapshot();
-        assert.ok(Math.abs(hiddenStable.scrollTop - hiddenAt.scrollTop) <= 1,
-          "Backgrounding must cancel active inertia while the viewer stays hidden");
-
+        report.backgroundPhase = "restoring-reader-tab";
         await page.bringToFront();
+        report.backgroundPhase = "waiting-reader-visible";
         await page.waitForFunction(
           () => document.visibilityState === "visible",
           { timeout: 8_000, polling: 100 },
         );
+        report.backgroundPhase = "waiting-viewer-visible";
         await viewer.waitForFunction(
           () => document.visibilityState === "visible",
           { timeout: 8_000, polling: 100 },
         );
+        report.backgroundPhase = "reading-hidden-scroll-sample";
+        const hiddenAt = await viewer.evaluate(() => window.__ipadHiddenScrollSample);
+        assert.ok(hiddenAt && hiddenAt.visibilityState === "hidden" &&
+          Number.isFinite(hiddenAt.scrollTop),
+        "The viewer must record scroll position synchronously at its hidden visibility boundary");
         const afterForegrounding = await inputSnapshot();
         await waitMs(120);
         const afterForegrounding120ms = await inputSnapshot();
         await waitMs(130);
         const afterForegrounding250ms = await inputSnapshot();
-        assert.ok(Math.abs(afterForegrounding.scrollTop - hiddenStable.scrollTop) <= 1,
+        report.backgroundTabInertia = {
+          start: backgroundStart.scrollTop,
+          flickAtRelease: backgroundFlickAtRelease,
+          beforeBackgrounding,
+          hiddenAt,
+          afterForegrounding,
+          afterForegrounding120ms,
+          afterForegrounding250ms,
+        };
+        assert.ok(Math.abs(afterForegrounding.scrollTop - hiddenAt.scrollTop) <= 1,
           "Restoring the viewer must not apply hidden-time inertia as a catch-up jump");
         assert.ok(Math.abs(afterForegrounding120ms.scrollTop - afterForegrounding.scrollTop) <= 1);
         assert.ok(Math.abs(afterForegrounding250ms.scrollTop - afterForegrounding.scrollTop) <= 1,
@@ -1225,18 +1774,22 @@ test(
           iframeVisibilityWhenBackgrounded: "hidden",
           originalVisibilityWhenRestored: "visible",
           iframeVisibilityWhenRestored: "visible",
-          start: backgroundStart,
+          start: backgroundStart.scrollTop,
           flickAtRelease: backgroundFlickAtRelease,
           releaseTiming: backgroundFlickReleaseTiming,
           beforeBackgrounding,
           hiddenAt,
-          hiddenStable,
           afterForegrounding,
           afterForegrounding120ms,
           afterForegrounding250ms,
         };
       } catch (error) {
         backgroundPhaseError = error;
+        report.backgroundPhaseError = {
+          name: error?.name || "Error",
+          message: error?.message || String(error),
+          stack: error?.stack || null,
+        };
         throw error;
       } finally {
         if (backgroundPage && !backgroundPage.isClosed()) {
@@ -1252,6 +1805,21 @@ test(
         }
       }
 
+      // Closing the temporary foreground tab does not consistently restore
+      // the previous target as the active mobile-emulation input target.
+      // Re-focus it explicitly before subsequent trusted touchscreen input.
+      await page.bringToFront();
+      const foregroundAfterBackgroundClose = await viewer.evaluate(() => ({
+        visibility: document.visibilityState,
+        hasFocus: document.hasFocus(),
+      }));
+      report.foregroundAfterBackgroundClose = foregroundAfterBackgroundClose;
+      assert.deepEqual(foregroundAfterBackgroundClose, {
+        visibility: "visible",
+        hasFocus: true,
+      }, "The original viewer must regain foreground focus after closing the background-test tab");
+      };
+
       const middleScroll = await viewer.evaluate(() => {
         const container = document.getElementById("viewerContainer");
         container.scrollTop = Math.min(
@@ -1260,6 +1828,24 @@ test(
         );
         return container.scrollTop;
       });
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const bounds = container.getBoundingClientRect();
+        const visiblePages = [...container.querySelectorAll(".page")].filter((page) => {
+          const rect = page.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+        return visiblePages.length > 0 && visiblePages.every((page) => {
+          const pageNumber = Number(page.dataset.pageNumber);
+          const pageView = PDFViewerApplication.pdfViewer.getPageView(pageNumber - 1);
+          return pageView?.renderingState === 3 &&
+            page.dataset.loaded === "true" &&
+            pageView.canvas?.isConnected;
+        });
+      }, { timeout: 5_000 });
+      await viewer.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
       const toolbarTouchPoint = await localPointInHost(
         viewer,
         page,
@@ -1511,7 +2097,8 @@ test(
           observedPointerEvents: touchCancelEvents,
         },
         boundary: {
-          start: boundaryStart,
+          start: boundaryStart.scrollTop,
+          pageNumber: boundaryStart.pageNumber,
           after: boundaryAfterInertia,
           releaseTiming: boundaryReleaseTiming,
         },
@@ -1534,16 +2121,93 @@ test(
         middleScroll,
       };
 
-      const squareTool = await localPointInHost(viewer, page, "#editorSquareButton");
-      await dispatchTouch(cdp, "touchStart", squareTool, 12);
-      await dispatchTouch(cdp, "touchEnd");
-      await viewer.waitForFunction(
-        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
-        { timeout: 8_000 },
-      );
+      // The bridge intentionally pins scroll during outside-toolbar contacts
+      // until an explicit navigation/wheel/touch boundary releases the
+      // momentum guard. Return to read mode and use a no-motion finger contact
+      // in the viewer gutter to release it without touching a PDF page.
       await viewer.evaluate(() => {
-        document.getElementById("viewerContainer").scrollTop = 0;
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 0,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
       });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 0,
+        { timeout: 3_000 },
+      );
+      const beforeGuardReleaseTouch = await inputSnapshot();
+      const guardReleaseGutter = await localPointInHost(
+        viewer,
+        page,
+        "#viewerContainer",
+        [0.02, 0.5],
+      );
+      await dispatchTouch(cdp, "touchStart", guardReleaseGutter, 42);
+      await waitMs(50);
+      await dispatchTouch(cdp, "touchEnd");
+      const afterGuardReleaseTouch = await inputSnapshot();
+      assert.equal(afterGuardReleaseTouch.storageSize, beforeGuardReleaseTouch.storageSize,
+        "A no-motion gutter contact used to release the scroll guard must not create an annotation");
+      assert.equal(afterGuardReleaseTouch.editorElements, beforeGuardReleaseTouch.editorElements,
+        "A no-motion gutter contact must not create an editor");
+      await viewer.evaluate(() => {
+        document.querySelector('.page[data-page-number="1"]')?.scrollIntoView({
+          block: "start",
+          behavior: "instant",
+        });
+        PDFViewerApplication.pdfViewer.currentPageNumber = 1;
+      });
+      await page.bringToFront();
+      await page.waitForFunction(() =>
+        document.visibilityState === "visible" && document.hasFocus(),
+      { timeout: 8_000 });
+      await viewer.waitForFunction(() =>
+        document.visibilityState === "visible" && document.hasFocus(),
+      { timeout: 8_000 });
+      await viewer.waitForFunction(() => {
+        const container = document.getElementById("viewerContainer");
+        const page = document.querySelector('.page[data-page-number="1"]');
+        const pageView = PDFViewerApplication.pdfViewer.getPageView(0);
+        const editorLayer = page?.querySelector(".annotationEditorLayer");
+        const containerRect = container?.getBoundingClientRect();
+        const pageRect = page?.getBoundingClientRect();
+        const layerRect = editorLayer?.getBoundingClientRect();
+        const drawStartY = pageRect ? pageRect.top + pageRect.height * 0.52 : Infinity;
+        return PDFViewerApplication.pdfViewer.currentPageNumber === 1 &&
+          pageView?.renderingState === 3 &&
+          page?.dataset.loaded === "true" &&
+          pageView.canvas?.isConnected &&
+          page.querySelector(".textLayer span") &&
+          pageRect?.bottom > containerRect?.top &&
+          pageRect?.top < containerRect?.bottom &&
+          drawStartY >= containerRect?.top &&
+          drawStartY + 64 <= containerRect?.bottom &&
+          layerRect?.width > 0 && layerRect?.height > 0;
+      }, { timeout: 8_000 });
+      await viewer.waitForFunction(() => {
+        const mostRecentLongTaskEnd = (window.__ipadLongTasks || []).reduce(
+          (latest, task) => Math.max(latest, task.startTime + task.duration),
+          0,
+        );
+        return performance.now() - mostRecentLongTaskEnd >= 50;
+      }, { timeout: 5_000 });
+      await viewer.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 15,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
+        { timeout: 3_000 },
+      );
       const beforeMouseDraw = await inputSnapshot();
       const mouseStart = await localPointInHost(
         viewer,
@@ -1551,10 +2215,116 @@ test(
         '.page[data-page-number="1"] .annotationEditorLayer',
         [0.38, 0.52],
       );
+      report.mouseDrawProbe = await viewer.evaluate(() => {
+        const layer = document.querySelector(
+          '.page[data-page-number="1"] .annotationEditorLayer',
+        );
+        const rect = layer?.getBoundingClientRect();
+        const x = rect ? rect.left + rect.width * 0.38 : NaN;
+        const y = rect ? rect.top + rect.height * 0.52 : NaN;
+        const target = Number.isFinite(x) && Number.isFinite(y)
+          ? document.elementFromPoint(x, y)
+          : null;
+        const path = [];
+        for (let node = target; node instanceof Element; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          path.push({
+            tag: node.tagName,
+            id: node.id || null,
+            className: typeof node.className === "string" ? node.className : null,
+            pointerEvents: style.pointerEvents,
+          });
+          if (path.length === 8) break;
+        }
+        return {
+          mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+          layerMatchesEventTarget: target === layer,
+          targetPath: path,
+          layerRect: rect ? {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          } : null,
+          pageRect: layer?.closest(".page")?.getBoundingClientRect().toJSON() || null,
+          editorLayerPointerEvents: layer ? getComputedStyle(layer).pointerEvents : null,
+          editorLayerClasses: layer?.className || null,
+        };
+      });
+      await viewer.evaluate(() => {
+        const layer = document.querySelector(
+          '.page[data-page-number="1"] .annotationEditorLayer',
+        );
+        window.__inkMouseDispatchTrace = [];
+        for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+          for (const capture of [true, false]) {
+            layer.addEventListener(type, (event) => {
+              window.__inkMouseDispatchTrace.push({
+                type,
+                phase: capture ? "capture" : "bubble",
+                targetIsLayer: event.target === layer,
+                pointerType: event.pointerType,
+                pointerId: event.pointerId,
+                button: event.button,
+                buttons: event.buttons,
+                defaultPrevented: event.defaultPrevented,
+                layerClasses: layer.className,
+                drawNodes: layer.querySelectorAll("svg").length,
+                pathData: [...layer.querySelectorAll("svg path[d]")]
+                  .map((path) => path.getAttribute("d"))
+                  .filter((data) => data && data.trim().length > 0),
+              });
+            }, capture);
+          }
+        }
+      });
       await page.mouse.move(mouseStart.x, mouseStart.y);
       await page.mouse.down();
       await page.mouse.move(mouseStart.x + 88, mouseStart.y + 64, { steps: 6 });
       await page.mouse.up();
+      report.mouseDrawAfter = await viewer.evaluate(() => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties
+          .annotationEditorUIManager;
+        const layer = document.querySelector(
+          '.page[data-page-number="1"] .annotationEditorLayer',
+        );
+        const drawingPaths = [...document.querySelectorAll(
+          '.page[data-page-number="1"] .canvasWrapper svg path[d]',
+        )].map((path) => path.getAttribute("d"))
+          .filter((data) => data && data.trim().length > 0);
+        return {
+          dispatchTrace: window.__inkMouseDispatchTrace || [],
+          mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+          inkEditors: document.querySelectorAll(
+            '.page[data-page-number="1"] .annotationEditorLayer .inkEditor',
+          ).length,
+          drawingSvgCount: document.querySelectorAll(
+            '.page[data-page-number="1"] .canvasWrapper svg',
+          ).length,
+          drawingPaths,
+          currentLayerPresent: !!manager.currentLayer,
+          currentLayerClasses: manager.currentLayer?.div?.className || null,
+          editors: manager.getEditors(0).map((editor) => ({
+            editorType: editor.editorType,
+            typeName: editor.constructor?.name || null,
+            id: editor.id,
+            deleted: editor.deleted,
+            serialized: !!editor.serialize(),
+            connected: !!editor.div?.isConnected,
+          })),
+          annotationStorageSize: PDFViewerApplication.pdfDocument.annotationStorage.size,
+          serializedSize: PDFViewerApplication.pdfDocument.annotationStorage.serializable?.map?.size ?? null,
+        };
+      });
+      assert.ok(report.mouseDrawAfter.drawingPaths.length > beforeMouseDraw.drawingPathCount,
+        "Trusted mouse movement must create a non-empty PDF.js Ink drawing before commit");
+      // The harness disables background auto-save to keep this pointer-policy
+      // test isolated. PDF.js keeps Ink strokes in its live drawing session so
+      // users can add multiple strokes; finalize that real session at the same
+      // explicit boundary used by manual save/close before asserting editor
+      // serialization.
+      await viewer.evaluate(() => PDFViewerApplication.pdfViewer
+        ._layerProperties.annotationEditorUIManager.currentLayer?.commitOrRemove?.());
       await viewer.waitForFunction(
         (previous) => document.querySelectorAll(
           '.page[data-page-number="1"] .annotationEditorLayer .inkEditor',
@@ -1594,10 +2364,9 @@ test(
               trusted: event.isTrusted === true,
               targetInViewer: !!target?.closest?.("#viewerContainer"),
               targetPage: target?.closest?.(".page")?.dataset.pageNumber || null,
+              targetId: target?.id || null,
+              targetToolButton: target?.closest?.("#editorSquareButton")?.id || null,
             });
-            if (window.__ipadPointerEvents.length > 256) {
-              window.__ipadPointerEvents.shift();
-            }
           }, true);
         }
       });
@@ -1636,6 +2405,39 @@ test(
         () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
         { timeout: 8_000 },
       );
+      await penViewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 15,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await penViewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 15,
+        { timeout: 3_000 },
+      );
+      const activeToolTouchOffset = await penViewer.evaluate(() =>
+        window.__ipadPointerEvents?.length || 0,
+      );
+      await dispatchTouch(penCdp, "touchStart", penSquareTool, 15);
+      await waitMs(50);
+      await dispatchTouch(penCdp, "touchEnd");
+      report.activeToolTouchTap = await penViewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], activeToolTouchOffset,
+      );
+      await penViewer.waitForFunction(
+        () => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+        { timeout: 8_000 },
+      );
+      const activeToolTouchEvents = await penViewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], activeToolTouchOffset,
+      );
+      report.activeToolTouchTap = activeToolTouchEvents;
+      assert.ok(activeToolTouchEvents.some((event) =>
+        event.type === "click" && event.trusted &&
+        event.targetToolButton === "editorSquareButton",
+      ), "A trusted touchscreen tap must switch from an active editor tool to Square in an isolated Reader");
       const beforePenDraw = await inputSnapshot(penViewer);
       const penDrawStart = await localPointInHost(
         penViewer,
@@ -1728,17 +2530,80 @@ test(
         ),
         observedPointerEvents: penObservation,
       };
+      await runBackgroundInertiaScenario();
       assert.deepEqual(report.pageErrors, []);
       assert.deepEqual(missingRequests, []);
     } catch (error) {
       primaryError = error;
+      report.failure = {
+        name: error?.name || "Error",
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+      };
       if (viewer) {
         report.failureState = await viewer.evaluate(() => ({
           mode: window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null,
+          visibility: document.visibilityState,
+          hasFocus: document.hasFocus(),
+          activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
           scrollTop: document.getElementById("viewerContainer")?.scrollTop ?? null,
           pointerEvents: window.__ipadPointerEvents?.slice(-64) || [],
+          toolbar: (() => {
+            const button = document.getElementById("editorSquareButton");
+            const rect = button?.getBoundingClientRect();
+            const target = rect
+              ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+              : null;
+            return {
+              buttonExists: !!button,
+              disabled: button?.disabled ?? null,
+              hidden: button ? getComputedStyle(button).display === "none" : null,
+              rect: rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null,
+              hitButton: !!target?.closest?.("#editorSquareButton"),
+              hitTag: target?.tagName || null,
+              hitId: target?.id || null,
+              hitClass: typeof target?.className === "string" ? target.className : null,
+              rootClasses: document.documentElement.className,
+              activationStyles: button ? (() => {
+                const chain = [];
+                for (let element = button; element instanceof Element; element = element.parentElement) {
+                  const style = getComputedStyle(element);
+                  chain.push({
+                    tag: element.tagName,
+                    id: element.id || null,
+                    className: typeof element.className === "string" ? element.className : null,
+                    touchAction: style.touchAction,
+                    pointerEvents: style.pointerEvents,
+                    userSelect: style.userSelect,
+                  });
+                }
+                return chain;
+              })() : [],
+            };
+          })(),
+          longTasks: window.__ipadLongTasks || [],
+          bridgeLog: window.__PDF_READER_DRAIN_LOG__?.() || [],
           storageSize: window.PDFViewerApplication?.pdfDocument?.annotationStorage?.size ?? null,
           serializedSize: window.PDFViewerApplication?.pdfDocument?.annotationStorage?.serializable?.map?.size ?? null,
+        })).catch((inspectionError) => ({ inspectionError: inspectionError.message }));
+      }
+      if (penViewer) {
+        report.penFailureState = await penViewer.evaluate(() => ({
+          mode: window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null,
+          visibility: document.visibilityState,
+          hasFocus: document.hasFocus(),
+          activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+          pointerEvents: window.__ipadPointerEvents?.slice(-32) || [],
+          square: (() => {
+            const button = document.getElementById("editorSquareButton");
+            const rect = button?.getBoundingClientRect();
+            return {
+              disabled: button?.disabled ?? null,
+              rect: rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null,
+              hitButton: !!(rect && document.elementFromPoint(rect.left + rect.width / 2,
+                rect.top + rect.height / 2)?.closest?.("#editorSquareButton")),
+            };
+          })(),
         })).catch((inspectionError) => ({ inspectionError: inspectionError.message }));
       }
     } finally {

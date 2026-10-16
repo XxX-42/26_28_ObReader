@@ -5064,6 +5064,8 @@
     revision,
     openRequest,
     operations,
+    origin,
+    heavyLeaseId,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -5100,6 +5102,8 @@
             openRequest,
             requestId,
             revision,
+            origin,
+            ...(heavyLeaseId ? { heavyLeaseId } : {}),
             operations,
           },
         )
@@ -5119,6 +5123,7 @@
     openRequest,
     operations,
     source,
+    reason,
   }) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -5155,6 +5160,7 @@
             openRequest,
             requestId,
             revision,
+            reason,
             operations,
             source,
           },
@@ -5199,6 +5205,7 @@
     let requestId = null;
     let saveStarted = false;
     let autoStartedAt = null;
+    let heavyLease = null;
     const finishSavePhase = () => {
       if (!saveStarted) return;
       app._saveInProgress = false;
@@ -5273,6 +5280,22 @@
         return false;
       }
 
+      heavyLease = await waitForHostHeavyLease({ documentId, openRequest });
+      if (!sessionIsCurrent()) {
+        return false;
+      }
+      if (
+        state.revision !== revisionAtStart ||
+        isEditBoundaryBusy() ||
+        state.pendingInkCommit
+      ) {
+        restoreChanges(app, {
+          hadAnnotationChanges: true,
+          hadStructuralChanges: dirtySnapshot.hadStructuralChanges,
+        });
+        return SAVE_RETRY_AFTER_IDLE;
+      }
+
       if (
         origin === "auto" &&
         (!state.autoSaveEnabled || state.autoSavePaused)
@@ -5291,6 +5314,8 @@
         revision: revisionAtStart,
         openRequest,
         operations: operationsAtStart,
+        origin,
+        heavyLeaseId: heavyLease?.leaseId,
       });
       if (sessionIsCurrent()) {
         state.confirmedRevision = revisionAtStart;
@@ -5337,6 +5362,9 @@
       }
       return false;
     } finally {
+      if (heavyLease) {
+        releaseHostHeavyLease(heavyLease, documentId);
+      }
       finishSavePhase();
       if (autoStartedAt !== null) {
         state.lastAutoSaveDurationMs = Math.max(0, Date.now() - autoStartedAt);
@@ -5486,6 +5514,7 @@
           openRequest: state.activeOpenRequest,
           operations: operationsAtStart,
           source,
+          reason,
         });
         if (!sessionIsCurrent()) return false;
         if (recoveryAck?.ok !== true) {

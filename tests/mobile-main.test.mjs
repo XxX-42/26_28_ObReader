@@ -276,6 +276,11 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
       stored.delete(from);
     },
     async write(path, text) { stored.set(path, new TFile(path, new TextEncoder().encode(text))); },
+    async append(path, text) {
+      if (!stored.has(path)) throw new Error(`missing append target: ${path}`);
+      const previous = new TextDecoder().decode(stored.get(path).bytes);
+      stored.set(path, new TFile(path, new TextEncoder().encode(previous + text)));
+    },
     async writeBinary() {},
     async remove() {},
   };

@@ -1,5 +1,36 @@
 # WAL-Sidecar v3.1 本地实施报告
 
+## 0.9.0 JSONL WAL 集成候选（2026-10-17）
+
+- 基线：本地 0.8.9 `8ed2f81bba4b21a1b2591e8f24b1fa5cb18df16b`；集成提交 `codex/wal-v3.2-jsonl` 的 `2b5d7ad197cc36ef6c75630917983f304d90f084`。
+- 分支：`codex/integrate-wal-jsonl-0.9.0`。合并无文本冲突；本报告记录时合并尚未提交。原始主工作区没有改动。
+- 新协议初始化与路由写入仅使用 owner JSONL；现有 v3.1/Format 3 文档只读导入，迁移基线写入本机 JSONL Anchor。新增测试覆盖旧 WAL/Sidecar 字节不变及首次注册冷重开。
+- 重点定向测试：JSONL Bridge、Store、Host、Importer 与旧存储兼容 **63/63**。打包 **4/4**；离线 smoke 打开 PDF、创建五类批注、保存重开，以及批量删除保存重开不复活均通过。
+- 构建：3 个发布文件；406 个内嵌运行时资源和 402 个冻结 vendor 文件校验通过；`main.js` 未压缩 payload 6,643,838 bytes。
+- 默认并发全套：候选 **600/623 通过、23 失败**；干净 0.8.9 基线同调度 **551/590 通过、39 失败**。合并增加 33 个测试，增加 49 个通过项，减少 16 个失败项；仍有失败，不能宣称全绿。原始日志：`/tmp/obreader-0.9.0-default-tests.log`、`/tmp/obreader-0.8.9-baseline-tests.log`。
+- 单独复验：模式 NONE 下 Pencil 文字选择断言仍失败，且在 0.8.9 基线全套中同样失败；默认并发运行中的原生触摸惯性断言单独运行通过。浏览器清理测试全套中 3 项红，独立文件运行 2/31 失败，作为测试基础设施差异保留，不据此宣称通过。
+- 未完成：15 分钟大 PDF 编辑/恢复、实机 iPad 与实际 Obsidian Sync 验收。本轮没有备份、部署、推送或创建 Release；Obsidian 当时处于 `远程仓库1`，未操作其插件、外置数据或 PDF。
+- 当前候选 ZIP：`dist/pdf-web-reader-0.1general-0.9.0-candidate.zip`，只含 `main.js`、`manifest.json`、`styles.css`。
+
+三文件 SHA-256：
+
+| 文件 | SHA-256 |
+|---|---|
+| `main.js` | `a5fbf3ede172b914daac74984c9b28e7a417711cba9aa5cc52639781a869a95d` |
+| `manifest.json` | `f9aa48a5c1f047a1ab88fd2e67793fbce1913305a570804dff8983ddfebd01b2` |
+| `styles.css` | `9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650` |
+| candidate ZIP | `c5a0ad559a8987f18a40c0b0b367fe74dc7429f8724bcb02aa90b8693860a0c6` |
+
+```text
+READY_FOR_MAIN_PUSH = FALSE
+READY_FOR_REMOTE_VAULT_DEPLOYMENT = FALSE
+STORAGE_FORMAT = JSONL v3.2 candidate; legacy data retained read-only
+SOURCE_PDF_WRITES = NONE
+REAL_SYNC_OR_IPAD_ACCEPTANCE = NOT_RUN
+```
+
+---
+
 ## 基线与边界
 
 - BASE_BRANCH: origin/integration/0.8.0-sidecar-merge-20261015

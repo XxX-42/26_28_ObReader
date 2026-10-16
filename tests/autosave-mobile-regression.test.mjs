@@ -1,3 +1,4 @@
+import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -65,6 +66,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
         <meta charset="utf-8">
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
         <iframe title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
+        ${browserSidecarHarnessScript({ channel, token })}
         <script>
           const channel = ${JSON.stringify(channel)};
           const token = ${JSON.stringify(token)};
@@ -72,7 +74,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
           const documentPath = ${JSON.stringify(documentPath)};
           const iframe = document.querySelector('iframe');
           const state = window.__host = {
-            ready:false, opened:false, saves:[], flushes:[], errors:[],
+            ready:false, opened:false, saves:[], flushes:[], runtimeLogs:[], errors:[],
             heldLease:null, queuedLease:null, holdNextLease:false,
             nextLease:0, leaseEvents:[],
           };
@@ -90,7 +92,9 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
             if (event.source !== iframe.contentWindow) return;
             const message = event.data;
             if (!message || message.channel !== channel || message.token !== token) return;
-            if (message.type === 'ready') {
+            if (message.type === 'runtime-log') {
+              state.runtimeLogs.push(...(message.rows || []));
+            } else if (message.type === 'ready') {
               state.ready = true;
               fetch('/tests/fixtures/tracemonkey.pdf').then(response => response.arrayBuffer()).then(data => {
                 iframe.contentWindow.postMessage({
@@ -153,7 +157,9 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
                 save.acknowledgedAt = performance.timeOrigin + performance.now();
                 iframe.contentWindow.postMessage({
                   channel, type:'saved', token, documentId:message.documentId,
+                  openRequest:message.openRequest,
                   requestId:message.requestId, revision:message.revision,
+                  external:true, operationCount:message.operations.length, batchId:message.requestId,
                 }, '*');
               }, state.saves.length === 1 ? 1400 : 40);
             } else if (message.type === 'flushed') {
@@ -231,7 +237,12 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
       if (typeof storage.onModified !== "function") {
         throw new Error("PDF.js annotation storage has no modified callback");
       }
-      storage.onModified();
+      const index = window.__mobileEditNumber = (window.__mobileEditNumber || 0) + 1;
+      // A notification with no content change must not trigger autosave. Supply
+      // an actual committed storage editor for each distinct fixture revision.
+      const serialized = { annotationType: 5, pageIndex: 0,
+        rect: [index, 20, index + 60, 60], color: [0, 0, 0], opacity: 1, thickness: 1 };
+      storage.setValue(`mobile-fixture-${index}`, serialized);
     });
     const saveCount = () => page.evaluate(() => window.__host.saves.length);
 
@@ -252,7 +263,17 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
     );
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     assert.equal(await saveCount(), 1, "The next auto-save must wait through the mobile cooldown");
-    await page.waitForFunction(() => window.__host.saves.length === 2, { timeout: 15_000 });
+    await page.waitForFunction(() => window.__host.saves.length === 2, { timeout: 15_000 })
+      .catch(async (error) => {
+        console.error("Mobile auto-save state:", await page.evaluate(() => window.__host));
+        console.error("Mobile auto-save viewer:", await viewer.evaluate(() => ({
+          hasChanges:PDFViewerApplication._hasChanges(),
+          modified:PDFViewerApplication._annotationStorageModified,
+          storageSize:PDFViewerApplication.pdfDocument.annotationStorage.size,
+          bridgeLog:window.__PDF_READER_DRAIN_LOG__?.() || [],
+        })));
+        throw error;
+      });
     const secondSave = await page.evaluate(() => window.__host.saves[1]);
     assert.equal(secondSave.origin, "auto");
     assert.equal(

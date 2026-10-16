@@ -3,7 +3,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import puppeteer from 'puppeteer-core';
 const cfg=JSON.parse(await readFile('/tmp/obreader-native-local.json','utf8'));
 assert.equal(cfg.vault,'/Users/jiajia/Documents/ObReader-Apple-Test');
-const expected=process.env.NATIVE_VERSION||'0.8.9';
+const expected=process.env.NATIVE_VERSION||'0.9.0';
 const port=(await readFile(cfg.profile+'/DevToolsActivePort','utf8')).split('\n')[0];
 const browser=await puppeteer.connect({browserURL:`http://127.0.0.1:${port}`,defaultViewport:null});
 const page=(await browser.pages()).find(p=>p.url()==='app://obsidian.md/index.html');
@@ -42,5 +42,5 @@ try {
 }catch(e){report.status='failed';report.failure=e.stack;process.exitCode=1;}
 finally{
  await page.evaluate(async vault=>{if(app.vault.adapter.basePath!==vault)throw Error('Wrong vault');document.removeEventListener('webviewerloaded',window.__nativePaintListener,true);for(const v of [...app.plugins.plugins['pdf-web-reader'].views])await v.leaf.detach();},cfg.vault);
- await writeFile(`evidence/first-render-0.8.9/native-first-${expected}.json`,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));await browser.disconnect();
+ await writeFile(`evidence/first-render-${expected}/native-first-${expected}.json`,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));await browser.disconnect();
 }

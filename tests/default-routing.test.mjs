@@ -203,6 +203,10 @@ function createHarness() {
           return files.get(target);
         },
         write: async (target, value) => { files.set(target, String(value)); },
+        append: async (target, value) => {
+          if (!files.has(target)) throw new Error(`Missing append target: ${target}`);
+          files.set(target, `${files.get(target)}${String(value)}`);
+        },
         rename: async (from, to) => {
           if (!files.has(from)) throw new Error(`Missing test adapter file: ${from}`);
           files.set(to, files.get(from));

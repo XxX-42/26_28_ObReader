@@ -1,4 +1,5 @@
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
@@ -40,7 +41,7 @@ const transforms = {
 };
 function harness() {
   const files = new Map(), dirs = new Set();
-  const adapter = {
+  const adapter = withAtomicProcess({
     async exists(p) { return files.has(p) || dirs.has(p); },
     async mkdir(p) { dirs.add(p); },
     async read(p) { assert.ok(files.has(p), `missing ${p}`); return files.get(p); },
@@ -52,7 +53,7 @@ function harness() {
       for(const k of [...files.keys(),...dirs]) { if(!k.startsWith(prefix))continue;const rest=k.slice(prefix.length);if(rest.includes("/"))folders.add(prefix+rest.split("/")[0]);else if(files.has(k))childFiles.push(k);else if(rest)folders.add(k); }
       return {files:childFiles,folders:[...folders]};
     },
-  };
+  }, files);
   let bytes=original, sourceWrites=0;
   const file={path:"Fixtures/immutable.pdf",basename:"immutable",stat:{size:bytes.length,mtime:1}};
   const vault={adapter,getAbstractFileByPath:p=>p===file.path?file:null,readBinary:async()=>bytes.slice().buffer,

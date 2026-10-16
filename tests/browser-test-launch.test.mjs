@@ -85,7 +85,16 @@ test("test browser launches get unique Crashpad directories and preserve launch 
       assert.equal(options.executablePath, launchOptions.executablePath);
       assert.equal(options.headless, true);
       assert.equal(options.timeout, 12_345);
-      assert.deepEqual(options.args, launchOptions.args);
+      assert.deepEqual(
+        options.args.slice(0, launchOptions.args.length),
+        launchOptions.args,
+        "Caller launch arguments remain unchanged and ordered",
+      );
+      assert.deepEqual(
+        options.args.slice(launchOptions.args.length),
+        ["--disable-background-networking", "--disable-component-update", "--disable-sync", "--no-first-run"],
+        "Headless test browsers must not hold teardown open for background service traffic",
+      );
       assert.notEqual(options.env, launchOptions.env);
       assert.equal(metadata.state, "launched");
       assert.equal(metadata.browserPid, 41001 + index);

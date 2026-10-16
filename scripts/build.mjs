@@ -421,17 +421,17 @@ assert.equal([...sourceMain.matchAll(new RegExp(sessionLogMarker.source, "gs"))]
 const inlinedSessionLog = await inlineModule("session-log.cjs", "__PDFReaderSessionLog", "createSessionLog, traceFunction, traceMethods");
 const hostTrace = [...sourceMain.matchAll(/^(?:async )?function (\w+)\(/gm)].map(match => `${match[1]} = traceFunction(${match[1]}, ${JSON.stringify(`Host.${match[1]}`)}, () => activeSessionLog);`).join("\n");
 const bundledMain = sourceMain
-  .replace(requireMarker, inlinedHelper)
-  .replace(hashRuntimeMarker, inlinedHashRuntime)
-  .replace(mergeClientMarker, inlinedMergeClient)
-  .replace(annotationHostMarker, inlinedAnnotationHost)
-  .replace(heavyWorkMarker, inlinedHeavyWork)
-  .replace(recoveryMarker, inlinedRecovery)
-  .replace(sessionLogMarker, inlinedSessionLog)
-  .replace("/* BUILD:HOST_FUNCTION_TRACE */", hostTrace)
+  .replace(requireMarker, () => inlinedHelper)
+  .replace(hashRuntimeMarker, () => inlinedHashRuntime)
+  .replace(mergeClientMarker, () => inlinedMergeClient)
+  .replace(annotationHostMarker, () => inlinedAnnotationHost)
+  .replace(heavyWorkMarker, () => inlinedHeavyWork)
+  .replace(recoveryMarker, () => inlinedRecovery)
+  .replace(sessionLogMarker, () => inlinedSessionLog)
+  .replace("/* BUILD:HOST_FUNCTION_TRACE */", () => hostTrace)
   .replace(
     payloadMarker,
-    `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
+    () => `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
   );
 assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));

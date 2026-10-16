@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { webcrypto } from "node:crypto";
 import {
   access,
+  appendFile,
   mkdir,
   readFile,
   readdir,
@@ -397,6 +398,10 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
     async write(vaultPath, value) {
       await mkdir(path.dirname(resolve(vaultPath)), { recursive: true });
       await writeFile(resolve(vaultPath), value, "utf8");
+    },
+    async append(vaultPath, value) {
+      await mkdir(path.dirname(resolve(vaultPath)), { recursive: true });
+      await appendFile(resolve(vaultPath), value, "utf8");
     },
     async stat(vaultPath) {
       const value = await stat(resolve(vaultPath));

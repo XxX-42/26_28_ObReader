@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
+import { prepareRetainedGc } from "./store-gc-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
@@ -53,10 +55,12 @@ function makeAdapter(shared = { files: new Map(), folders: new Set() }) {
       return { files: listedFiles, folders: [...listedFolders] };
     },
   };
-  return { adapter, files, folders };
+  return { adapter: withAtomicProcess(adapter, shared), files, folders };
 }
 
+const clocks = new WeakMap();
 function createStore({ adapter, deviceId, onTiming = () => {} }) {
+  if (!clocks.has(adapter)) clocks.set(adapter, { value: 1000 });
   let sequence = 0;
   return createPdfAnnotationStore({
     adapter,
@@ -65,6 +69,7 @@ function createStore({ adapter, deviceId, onTiming = () => {} }) {
     uuid: () => `${deviceId}-uuid-${++sequence}`,
     hash,
     onTiming,
+    clock: () => clocks.get(adapter).value,
   });
 }
 
@@ -98,6 +103,8 @@ test("concurrent readDocument GC must not remove the same covered batch twice", 
   const remove = adapter.remove.bind(adapter);
   adapter.remove = undefined;
   await b.readDocument(documentB); // B catches up; no remove function keeps the batch for the race.
+  await prepareRetainedGc({ document: documentA, stores: [a, b],
+    witness: createStore({ adapter, deviceId: "gc-witness" }), files, paths, now: clocks.get(adapter) });
   adapter.remove = remove;
   assert.equal(files.has(batchPath), true);
 
@@ -131,8 +138,9 @@ test("concurrent readDocument GC must not remove the same covered batch twice", 
     `concurrent readers should serialize idempotent collection, got ${results.map(({ reason }) => reason?.code).join(",")}`);
   assert.equal(files.has(batchPath), false);
   assert.equal(files.has(checkpointPath), true);
-  assert.equal(files.get(backupPath), files.get(checkpointPath),
-    "the current verified backup must remain available after concurrent collection");
+  assert.notEqual(JSON.parse(files.get(backupPath)).integrity, JSON.parse(files.get(checkpointPath)).integrity,
+    "the previous distinct verified checkpoint must remain available after collection");
+  assert.deepEqual(JSON.parse(files.get(backupPath)).annotations, JSON.parse(files.get(checkpointPath)).annotations);
   const gcTimings = timings.filter(({ phase }) => phase === "gc");
   assert.equal(gcTimings.length, 2);
   assert.ok(gcTimings.every(({ status }) => status === "success"));
@@ -161,6 +169,9 @@ test("GC queues are independent across document keys", async () => {
     const remove = adapter.remove;
     adapter.remove = undefined;
     await store.readDocument(document); // Preserve each covered batch until both GCs run together.
+    await prepareRetainedGc({ document, stores: [store],
+      witness: createStore({ adapter, deviceId: `witness-${documents.length}` }),
+      files, paths: store.pathsFor(document), now: clocks.get(adapter) });
     adapter.remove = remove;
   }
   const batchPaths = new Set(documents.map((document, index) =>
@@ -209,23 +220,23 @@ test("a rejected GC does not poison the next GC for that document", async () => 
   }] });
   const paths = store.pathsFor(document);
   const batchPath = `${paths.deviceOperations}/retry-after-failure.json`;
-  const originalWrite = adapter.write.bind(adapter);
-  let backupWrites = 0;
-  adapter.write = async (path, value) => {
-    if (path === paths.checkpointBackup && ++backupWrites === 3) {
-      await originalWrite(path, "truncated backup during first GC");
-      return;
-    }
-    await originalWrite(path, value);
-  };
+  const remove = adapter.remove;
+  adapter.remove = undefined;
+  await store.readDocument(document);
+  await prepareRetainedGc({ document, stores: [store],
+    witness: createStore({ adapter, deviceId: "retry-witness" }), files, paths, now: clocks.get(adapter) });
+  adapter.remove = remove;
+  timings.length = 0;
+  adapter.remove = async (path) => { throw new Error("injected GC removal failure"); };
 
-  await assert.rejects(store.readDocument(document), { code: "PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED" });
+  await assert.rejects(store.readDocument(document), /injected GC removal failure/);
   assert.equal(files.has(batchPath), true);
-  adapter.write = originalWrite;
+  adapter.remove = remove;
 
   const snapshot = await store.readDocument(document);
 
   assert.equal(snapshot.annotations[0].uuid, "retry-annotation");
   assert.equal(files.has(batchPath), false);
-  assert.deepEqual(timings.map(({ status }) => status), ["error", "success"]);
+  assert.deepEqual(timings.filter(({ phase }) => phase === "gc").map(({ status }) => status), ["error", "success"]);
+  assert.deepEqual(timings.filter(({ phase }) => phase === "materialization").map(({ status }) => status), ["error", "success"]);
 });

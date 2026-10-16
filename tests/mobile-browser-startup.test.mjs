@@ -48,9 +48,10 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
           const prefix = `${key}/`;
           res.end(JSON.stringify({ files: [...files.keys()].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")), folders: [...directories].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")) })); return;
         }
-        if (op === "write") {
+        if (op === "write" || op === "append") {
           const chunks = []; for await (const chunk of req) chunks.push(chunk);
-          files.set(key, Buffer.concat(chunks));
+          if (op === "append" && !files.has(key)) throw Error("Missing fixture append target");
+          files.set(key, Buffer.concat(op === "append" ? [files.get(key), ...chunks] : chunks));
           if (key === "sample.pdf") sourcePdfWrites++;
           else if (key.startsWith("00_Archive/20_PDFData/")) annotationWrites++;
           res.end("null"); return;
@@ -99,6 +100,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         readBinary: target => api("read", target), writeBinary: (target, bytes) => api("write", target, bytes),
         read: async target => new TextDecoder().decode(await api("read", target)),
         write: (target, text) => api("write", target, text), remove: target => api("remove", target),
+        append: (target, text) => api("append", target, text),
         rename: (from, to) => fetch(`${base}/adapter?op=rename&path=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(response => { if (!response.ok) throw Error("Adapter rename failed"); return response.json(); }),
         list: target => api("list", target),
         getResourcePath: target => `${base}/resource/${encodeURIComponent(target)}`,

@@ -5,6 +5,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
+import { prepareRetainedGc } from "./store-gc-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
@@ -37,6 +39,7 @@ function makeWorld({ deviceA = "device-A", deviceB = "device-B", deviceC = "tabl
   const events = [];
   const removed = [];
   const gc = { A: [], B: [], C: [] };
+  const now = { value: 1000 };
   const makeAdapter = (name) => {
     const control = { beforeRead: null, beforeWrite: null, beforeRename: null, beforeList: null };
     const adapter = {
@@ -102,7 +105,7 @@ function makeWorld({ deviceA = "device-A", deviceB = "device-B", deviceC = "tabl
         return { files: listedFiles, folders: [...listedFolders] };
       },
     };
-    return { adapter, control };
+    return { adapter: withAtomicProcess(adapter, shared), control };
   };
   const a = makeAdapter("A");
   const b = makeAdapter("B");
@@ -111,21 +114,24 @@ function makeWorld({ deviceA = "device-A", deviceB = "device-B", deviceC = "tabl
   let seqB = 0;
   const storeA = createPdfAnnotationStore({
     adapter: a.adapter, root, deviceId: deviceA, hash,
+    clock: () => now.value,
     uuid: () => `a-internal-${++seqA}`,
     onTiming: (event) => { if (event.phase === "gc") gc.A.push({ ...event }); },
   });
   const storeB = createPdfAnnotationStore({
     adapter: b.adapter, root, deviceId: deviceB, hash,
+    clock: () => now.value,
     uuid: () => `b-internal-${++seqB}`,
     onTiming: (event) => { if (event.phase === "gc") gc.B.push({ ...event }); },
   });
   let seqC = 0;
   const storeC = createPdfAnnotationStore({
     adapter: c.adapter, root, deviceId: deviceC, hash,
+    clock: () => now.value,
     uuid: () => `c-internal-${++seqC}`,
     onTiming: (event) => { if (event.phase === "gc") gc.C.push({ ...event }); },
   });
-  return { shared, events, removed, gc, a, b, c, storeA, storeB, storeC, ids: { A: deviceA, B: deviceB, C: deviceC } };
+  return { shared, events, removed, gc, now, a, b, c, storeA, storeB, storeC, ids: { A: deviceA, B: deviceB, C: deviceC } };
 }
 
 function summarizeBatch(text) {
@@ -452,6 +458,8 @@ test("retired-device stale replay cannot erase a batch after real GC", async () 
       document: documentB, targetDeviceId: "device-A", confirmedCheckpointHash: confirmedHash,
     });
     evidence.publicRetirement = retirement;
+    await prepareRetainedGc({ document: documentB, stores: [world.storeB], witness: world.storeC,
+      files: world.shared.files, paths, now: world.now });
     const postRetireSnapshot = await world.storeB.readDocument(documentB);
     evidence.postRetirementSnapshot = { revision: postRetireSnapshot.revision, annotationUUIDs: postRetireSnapshot.annotations.map(({ uuid }) => uuid).sort() };
     evidence.checkpointAfterRetirementGC = checkpointPair(world, paths);
@@ -507,6 +515,8 @@ test("GC must leave an operation batch created after its checkpoint snapshot", a
     const bRemove = world.b.adapter.remove;
     world.b.adapter.remove = undefined;
     await world.storeB.readDocument(documentB); // B ACKs the checkpoint without running GC.
+    await prepareRetainedGc({ document: documentA, stores: [world.storeA, world.storeB], witness: world.storeC,
+      files: world.shared.files, paths, now: world.now });
     world.b.adapter.remove = bRemove;
     evidence.oldBatchBeforeRace = { path: old.batchPath, exists: world.shared.files.has(old.batchPath) };
 
@@ -697,6 +707,9 @@ test("an unretired device's new batch below the checkpoint timestamp remains rep
     });
     await world.storeA.readDocument(documentA);
     await world.storeB.readDocument(documentB);
+    await prepareRetainedGc({ document: documentA, stores: [world.storeA, world.storeB], witness: world.storeC,
+      files: world.shared.files, paths, now: world.now });
+    await world.storeB.readDocument(documentB); // Execute real, retention-qualified collection.
     const startCheckpoint = JSON.parse(world.shared.files.get(paths.checkpoint));
     const startDevices = await world.storeB.inspectDevices(documentB);
     evidence.acknowledgedCompactStart = {
@@ -898,12 +911,12 @@ test("primary/backup competition is repaired by a fresh third store from retaine
       document: documentA, batchId: "a-primary-backup", operations: [operation("annotation-A-primary-backup", world.ids.A, 590)],
     });
     gate = makeAdapterGate(world, evidence, {
-      side: "A", controlField: "beforeWrite", label: "primary checkpoint write after stale backup write",
-      predicate: (file) => file === paths.checkpoint, paths,
+      side: "A", controlField: "beforeRead", label: "stale replay before atomic primary decision",
+      predicate: (file) => file === paths.checkpointBackup, paths,
     });
     gate.arm();
     staleRead = world.storeA.readDocument(documentA);
-    await gate.wait(); // A has written rev1 to backup, but has not replaced the primary yet.
+    await gate.wait(); // A has replayed rev1 but holds no adapter.process critical section.
     const appended = await world.storeB.appendOperations({
       document: documentB, batchId: "b-primary-backup", operations: [operation("annotation-primary-backup", world.ids.B, 600)],
     });
@@ -926,8 +939,10 @@ test("primary/backup competition is repaired by a fresh third store from retaine
     evidence.realGcCount = world.gc.A.length + world.gc.B.length + world.gc.C.length;
     evidence.artifactPath = await persistEvidence(evidence.label, evidence);
 
-    assert.equal(evidence.mixedPairBeforeC.primary?.revision, 1, "the forced competing primary should be the stale revision 1 checkpoint");
-    assert.equal(evidence.mixedPairBeforeC.backup?.revision, 2, "the backup should retain B's newer verified revision 2 checkpoint");
+    assert.equal(evidence.mixedPairBeforeC.primary?.revision, 2, "stale replay must never regress B's newer primary");
+    assert.deepEqual(evidence.mixedPairBeforeC.backup, evidence.pairAfterB.backup,
+      "a rejected stale candidate must not rotate the previous distinct checkpoint");
+    assert.notEqual(evidence.mixedPairBeforeC.backup.hash, evidence.mixedPairBeforeC.primary.hash);
     assert.equal(evidence.batchBeforeC.exists, true, "the unacknowledged batch must remain available for fresh-store repair");
     assert.deepEqual(evidence.cFreshSnapshot.annotationUUIDs, ["annotation-A-primary-backup", "annotation-primary-backup"].sort(),
       "a genuinely new store must recover B's annotation and preserve A's primary state");

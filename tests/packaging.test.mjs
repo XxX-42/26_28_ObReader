@@ -128,7 +128,7 @@ test("community release output is exactly the three installer assets", async () 
     await readFile(path.join(root, "versions.json"), "utf8"),
   );
   assert.equal(manifest.id, "pdf-web-reader");
-  assert.equal(manifest.version, "0.8.4");
+  assert.equal(manifest.version, "0.9.0");
   assert.equal(manifest.isDesktopOnly, false);
   assert.deepEqual(manifest, rootManifest);
   assert.deepEqual(manifest, sourceManifest);
@@ -174,10 +174,12 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
     } else {
       sourceBytes = expected[index].bytes ? Buffer.from(expected[index].bytes) : await readFile(expected[index].absolute);
       if (entry.path === "web/obsidian-bridge.js") {
-        const source = sourceBytes.toString("utf8");
+        // The packaged bridge asset includes the input modules, while the
+        // build instruments only functions declared in obsidian-bridge.js.
+        const source = await readFile(path.join(adapters, "obsidian-bridge.js"), "utf8");
         const names = [...source.matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1]).filter(name => !name.startsWith("runtimeLog"));
         const assignments = names.map(name => `${name} = runtimeLogTrace(${name}, ${JSON.stringify(`Viewer.${name}`)});`).join("\n  ");
-        sourceBytes = Buffer.from(source.replace("/* BUILD:VIEWER_FUNCTION_TRACE */", assignments));
+        sourceBytes = Buffer.from(sourceBytes.toString("utf8").replace("/* BUILD:VIEWER_FUNCTION_TRACE */", assignments));
       }
     }
     assert.equal(entry.size, sourceBytes.byteLength, `${entry.path}: size`);

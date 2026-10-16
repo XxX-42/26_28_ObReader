@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { teardownViewerPage } from "./browser-viewer-teardown.mjs";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -491,6 +492,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
         sidecar: window.__browserSidecarHost.errors,
       }));
       await persistEvidence(`${variant}-complete`);
+      trace.results.at(-1).teardown = await teardownViewerPage(page);
       await page.close();
       activePage = null;
     }
