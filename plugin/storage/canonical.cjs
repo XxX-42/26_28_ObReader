@@ -60,7 +60,9 @@ function encode(value, ancestors) {
     }
 
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Object.keys(descriptors).sort();
+    // Match JSON's enumerable own-property model. Verified stores attach
+    // non-enumerable replay views which must never change canonical bytes.
+    const keys = Object.keys(descriptors).filter((key) => descriptors[key].enumerable).sort();
     const fields = [];
     for (const key of keys) {
       const descriptor = descriptors[key];
