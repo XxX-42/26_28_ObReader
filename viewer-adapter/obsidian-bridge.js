@@ -1084,6 +1084,7 @@
         pageIndex: row.pageIndex,
         embeddedRef,
         deleted,
+        authoritative: value.storageProtocol === "wal-sidecar-v3.1",
         clock: {
           timestamp: row.clock.timestamp,
           logical: row.clock.logical,
@@ -2277,10 +2278,10 @@
       }
       try {
         const current = state.externalAnnotationHydration.get(row.uuid)?.row;
-        const newer = !current || compareSyncStamps(
+        const newer = !current || (row.authoritative ? !externalAnnotationMatchesClock(row, current) : compareSyncStamps(
           { timestamp: row.clock.timestamp, logical: row.clock.logical, actorId: row.clock.deviceId, operationId: row.clock.opId },
           { timestamp: current.clock.timestamp, logical: current.clock.logical, actorId: current.clock.deviceId, operationId: current.clock.opId },
-        ) > 0;
+        ) > 0);
         if (newer && !(await hydrateExternalAnnotation(row, { replace: Boolean(current) }))) {
           complete = false;
           continue;
@@ -2318,7 +2319,7 @@
         continue;
       }
       const previous = merged.get(row.uuid);
-      if (!previous || compareSyncStamps(
+      if (!previous || row.authoritative || compareSyncStamps(
         { timestamp: row.clock.timestamp, logical: row.clock.logical, actorId: row.clock.deviceId, operationId: row.clock.opId },
         { timestamp: previous.clock.timestamp, logical: previous.clock.logical, actorId: previous.clock.deviceId, operationId: previous.clock.opId },
       ) >= 0) {
@@ -8837,6 +8838,16 @@
         state.app._contentDispositionFilename = message.filename;
         state.app.setTitle(message.filename);
       }
+      return;
+    }
+
+    if (message.type === "annotation-maintenance-probe") {
+      if (message.documentId !== state.activeDocumentId || message.openRequest !== state.activeOpenRequest) return;
+      postToHost("annotation-maintenance-state", {
+        probeId: message.probeId, documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
+        idle: !state.disposed && document.visibilityState !== "hidden" && !isEditBoundaryBusy() &&
+          !isDirty() && !state.savePromise && !state.recoveryPromise && !state.closeControl,
+      });
       return;
     }
 

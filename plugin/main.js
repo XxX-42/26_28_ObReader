@@ -2202,7 +2202,7 @@ class PdfReaderView extends EditableFileView {
       }
       return;
     }
-    if (message.type === "annotation-source-identity") {
+    if (message.type === "annotation-source-identity" || message.type === "annotation-maintenance-state") {
       void this.plugin.annotationHost.handleMessage(this, message).catch((error) => {
         this.showError(`无法确认外置批注对应的 PDF 页面：${error.message}`);
       });
@@ -2801,6 +2801,22 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       name: "审查当前 PDF 的批注同步设备",
       callback: () => void this.reviewPdfAnnotationDevices(),
     });
+    this.addCommand({
+      id: "establish-pdf-copy-identity",
+      name: "将当前无法确认身份的 PDF 作为新副本建立批注身份",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView) || view.annotationHydrationAllowed || !isPdfFile(view.documentFile || view.file)) {
+          new Notice("请先打开因副本身份不明确而暂停的 PDF。", 6000);
+          return;
+        }
+        void this.annotationHost.establishNewCopy(view).then(async () => {
+          const file = view.documentFile || view.file;
+          view.requestedPath = null;
+          await view.openFile(file);
+        }).catch((error) => new Notice(`建立副本身份失败：${error.message || error}`, 8000));
+      },
+    });
     /* 单独 .log 路径命令保留但不启用；完整运行记录并入“导出诊断 JSON”。
     this.addCommand({
       id: "flush-local-runtime-log",
@@ -2895,6 +2911,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return;
     }
     try {
+      if (this.annotationHost.store.sourceProtocol === "wal-sidecar-v3.1") {
+        const { devices, errors } = await this.annotationHost.store.inspectDevices(view.annotationDocument);
+        new Notice(`WAL v3.1：${devices.length} 个已验证设备分片，${errors.length} 个待恢复分片。此协议无需检查点 ACK 或设备退役。`, 8000);
+        return;
+      }
       const { checkpointHash, devices } = await this.annotationHost.store.inspectDevices(view.annotationDocument);
       if (!checkpointHash) {
         new Notice("此 PDF 尚无可审查的批注检查点。", 6000);

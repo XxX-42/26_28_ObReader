@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createPdfAnnotationHost } = require("../plugin/pdf-annotation-host.cjs");
+const { createPdfAnnotationHost: createHost } = require("../plugin/pdf-annotation-host.cjs");
+const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
+// Keep the Format 3 golden tests intact; wal-host.test.mjs exercises the new default.
+const createPdfAnnotationHost = (options) => createHost({ ...options, storeFactory: createPdfAnnotationStore });
 
 function makeAdapter() {
   const files = new Map();

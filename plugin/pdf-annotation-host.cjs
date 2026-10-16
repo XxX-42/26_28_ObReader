@@ -1,7 +1,7 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 "use strict";
 
-const { createPdfAnnotationStore } = require("./pdf-annotation-store.cjs");
+const { createWalAnnotationStore } = require("./storage/wal-annotation-store.cjs");
 
 const ANNOTATION_ROOT = "00_Archive/20_PDFData";
 const TAIL_SAMPLE_BYTES = 64 * 1024;
@@ -16,6 +16,7 @@ function createPdfAnnotationHost({
   deviceId,
   Notice = null,
   log = () => {},
+  storeFactory = createWalAnnotationStore,
 }) {
   if (!app?.vault?.adapter || !hashRuntime || typeof hashRuntime.fingerprint !== "function") {
     throw new TypeError("PDF annotation host requires a Vault adapter and hash runtime.");
@@ -114,19 +115,26 @@ function createPdfAnnotationHost({
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
-  const store = createPdfAnnotationStore({
+  const store = storeFactory({
     adapter,
+    coordinationAdapter: backingAdapter,
+    sourceExists: (path) => Boolean(app.vault.getAbstractFileByPath(path)),
     root: ANNOTATION_ROOT,
     normalizePath,
     uuid: makeToken,
     hash: hashRuntime.fingerprint,
     identityHash: identityHash || hashRuntime.fingerprint,
+    verifyHash: typeof hashRuntime.matches === "function" ? hashRuntime.matches : undefined,
     deviceId,
     onTiming: (details) => log("annotation-performance", details),
   });
   const queues = new Map();
   const documentViews = new Map();
   const sourceStates = new Map();
+  const snapshotReads = new Map();
+  const maintenanceRequests = new Map();
+  const maintenanceTimers = new Set();
+  const maintenanceByDocument = new Map();
   let disposed = false;
   let logicalClock = 0;
 
@@ -262,7 +270,7 @@ function createPdfAnnotationHost({
     // source revision alter recovery state that belongs to the prior PDF.
     const snapshot = registered.sourceMismatch
       ? emptySnapshot(currentDocument, source)
-      : await store.readDocument(currentDocument);
+      : await readSnapshot(currentDocument);
     const hasStoredPageIdentity = Number.isSafeInteger(registered.source.pageCount) &&
       Array.isArray(registered.source.orderedPageIdentities) &&
       registered.source.orderedPageIdentities.length === registered.source.pageCount;
@@ -285,6 +293,7 @@ function createPdfAnnotationHost({
     sourceStates.set(currentDocument.documentId, state);
     addView(currentDocument.documentId, view);
     log("annotation-open", {
+      storageProtocol: store.sourceProtocol || "format3",
       documentId: currentDocument.documentId,
       docKey: currentDocument.docKey,
       path: sourcePath,
@@ -302,6 +311,17 @@ function createPdfAnnotationHost({
 
   async function handleMessage(view, message) {
     if (disposed || !message || typeof message !== "object") return false;
+    if (message.type === "annotation-maintenance-state") {
+      const pending = maintenanceRequests.get(message.probeId);
+      if (!pending || message.documentId !== view.documentId || message.openRequest !== view.openRequest ||
+          !pending.views.delete(view)) return true;
+      if (message.idle !== true) pending.cancelled = true;
+      if (!pending.views.size) {
+        maintenanceRequests.delete(message.probeId);
+        if (!pending.cancelled) await materializeIdleDocument(pending.document);
+      }
+      return true;
+    }
     if (message.type === "annotation-source-identity") {
       await confirmPageIdentity(view, message);
       return true;
@@ -367,7 +387,7 @@ function createPdfAnnotationHost({
     view.annotationHydrationAllowed = true;
     view.annotationSourceMismatch = false;
     view.annotationPageIdentity = { pageCount, orderedPageIdentities: identities };
-    const snapshot = await store.readDocument(result.document);
+    const snapshot = await readSnapshot(result.document);
     view.annotationSnapshot = snapshot;
     updateSyncStatus(view, snapshot);
     const states = sourceStates.get(doc.documentId);
@@ -462,13 +482,14 @@ function createPdfAnnotationHost({
         revision: acknowledgedRevision,
         confirmedRevision: view.confirmedRevision,
         batchId: result.batchId,
-        operationCount: result.operationCount,
+        operationCount: store.sourceProtocol === "wal-sidecar-v3.1" ? operations.length : result.operationCount,
         external: true,
         quarantined: result.quarantined === true,
       });
       view.setStatus?.(result.quarantined ? "PDF 来源已变化；批注操作已隔离保存，未应用到当前 PDF" :
         recovery ? "恢复操作已安全写入外置记录" : "批注已保存到外置记录", true);
       log(recovery ? "annotation-recovered" : "annotation-saved", {
+        storageProtocol: store.sourceProtocol || "format3",
         documentId: captured.documentId,
         requestId: captured.requestId,
         revision: acknowledgedRevision,
@@ -528,6 +549,34 @@ function createPdfAnnotationHost({
   }
 
   async function scheduleSnapshotMaterialization(document) {
+    if (store.sourceProtocol === "wal-sidecar-v3.1") {
+      const previous = maintenanceByDocument.get(document.documentId);
+      if (previous) { globalThis.clearTimeout(previous); maintenanceTimers.delete(previous); }
+      const timer = globalThis.setTimeout(() => {
+        maintenanceTimers.delete(timer);
+        maintenanceByDocument.delete(document.documentId);
+        if (disposed) return;
+        const views = new Set([...(documentViews.get(document.documentId) || [])].filter((view) => !view.teardownStarted));
+        if (!views.size) { void materializeIdleDocument(document); return; }
+        const probeId = makeToken();
+        maintenanceRequests.set(probeId, { document, views, cancelled: false });
+        for (const view of views) post(view, { type: "annotation-maintenance-probe", probeId,
+          documentId: view.documentId, openRequest: view.openRequest });
+        const expiry = globalThis.setTimeout(() => {
+          maintenanceTimers.delete(expiry);
+          maintenanceRequests.delete(probeId);
+        }, 2000);
+        maintenanceTimers.add(expiry);
+      }, app.isMobile ? 3000 : 1000);
+      maintenanceTimers.add(timer);
+      maintenanceByDocument.set(document.documentId, timer);
+      return;
+    }
+    return materializeIdleDocument(document);
+  }
+
+  async function materializeIdleDocument(document) {
+    if (disposed) return;
     try {
       await nextTask();
       const snapshot = await store.materializeSnapshot(document);
@@ -544,11 +593,21 @@ function createPdfAnnotationHost({
 
   async function broadcastDocument(document, excludedView = null) {
     try {
-      const snapshot = await store.readDocument(document);
+      const snapshot = await readSnapshot(document);
       broadcastSnapshot(document, snapshot, excludedView);
     } catch (error) {
       log("annotation-broadcast-failed", { documentId: document.documentId, code: error.code || "unknown" });
     }
+  }
+
+  function readSnapshot(document) {
+    const previous = snapshotReads.get(document.documentId) || Promise.resolve();
+    const task = previous.catch(() => {}).then(() => store.readDocument(document));
+    snapshotReads.set(document.documentId, task);
+    void task.finally(() => {
+      if (snapshotReads.get(document.documentId) === task) snapshotReads.delete(document.documentId);
+    }).catch(() => {});
+    return task;
   }
 
   function broadcastSnapshot(document, snapshot, excludedView = null) {
@@ -574,7 +633,7 @@ function createPdfAnnotationHost({
     for (const [documentId, state] of sourceStates) {
       const paths = store.pathsFor(state.document);
       const isGlobalIndex = changedPath === `${ANNOTATION_ROOT}/_index.json`;
-      const matches = isGlobalIndex || [
+      const matches = typeof store.affectsPath === "function" ? store.affectsPath(state.document, changedPath) : isGlobalIndex || [
         paths.snapshot,
         paths.metadata,
         paths.checkpoint,
@@ -674,6 +733,17 @@ function createPdfAnnotationHost({
     const set = documentViews.get(id);
     set?.delete(view);
     if (set?.size === 0) documentViews.delete(id);
+    if (set?.size === 0 && !disposed && store.sourceProtocol === "wal-sidecar-v3.1") {
+      void scheduleSnapshotMaterialization(view.annotationDocument);
+    }
+  }
+
+  async function establishNewCopy(view) {
+    const file = view?.documentFile || view?.file;
+    if (!file || typeof store.establishNewCopy !== "function") throw codedError("WAL_COPY_SOURCE_MISSING", "Open the copied PDF first.");
+    const bytes = new Uint8Array(await app.vault.readBinary(file));
+    return store.establishNewCopy({ sourcePath: file.path,
+      source: sourceMetadata(bytes, file, hashRuntime, normalizePath(file.path)) });
   }
 
   function addView(id, view) {
@@ -765,7 +835,14 @@ function createPdfAnnotationHost({
   }
 
   function assertLive() { if (disposed) throw codedError("PDF_ANNOTATION_HOST_DISPOSED", "The annotation host has been disposed."); }
-  function dispose() { disposed = true; queues.clear(); selfSidecarWrites.clear(); for (const set of documentViews.values()) set.clear(); documentViews.clear(); sourceStates.clear(); }
+  function dispose() {
+    disposed = true;
+    for (const timer of maintenanceTimers) globalThis.clearTimeout(timer);
+    maintenanceTimers.clear(); maintenanceRequests.clear(); maintenanceByDocument.clear();
+    queues.clear(); snapshotReads.clear(); selfSidecarWrites.clear();
+    for (const set of documentViews.values()) set.clear();
+    documentViews.clear(); sourceStates.clear();
+  }
 
   return {
     store,
@@ -775,6 +852,7 @@ function createPdfAnnotationHost({
     handleSourceModify,
     renamed,
     releaseView,
+    establishNewCopy,
     broadcastDocument,
     dispose,
   };

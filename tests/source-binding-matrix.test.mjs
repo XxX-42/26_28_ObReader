@@ -9,7 +9,10 @@ import xxhash from "xxhash-wasm";
 // Real transformed PDF bytes, production host/store, memory-only adapter.
 // This is not an Obsidian Native UI acceptance or a linearization test.
 const require = createRequire(import.meta.url);
-const { createPdfAnnotationHost } = require("../plugin/pdf-annotation-host.cjs");
+const { createPdfAnnotationHost: createHost } = require("../plugin/pdf-annotation-host.cjs");
+const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
+// Retain Format 3 protection assertions; the WAL variant runs against the new default.
+const createPdfAnnotationHost = (options) => createHost({ ...options, storeFactory: createPdfAnnotationStore });
 const original = new Uint8Array(await readFile(new URL("./fixtures/tracemonkey.pdf", import.meta.url)));
 const { h64Raw } = await xxhash();
 const hash = value => `xxh64-v1:${h64Raw(value instanceof Uint8Array ? value : new Uint8Array(value)).toString(16).padStart(16,"0")}`;

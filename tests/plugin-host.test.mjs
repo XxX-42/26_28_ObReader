@@ -15,6 +15,7 @@ function createHarness({
   storedFiles = new Map(),
   directories = new Set([".obsidian"]),
   inspectLegacy = null,
+  storageProtocol = "format3",
 } = {}) {
   const notices = [];
   const files = new Map();
@@ -354,6 +355,13 @@ function createHarness({
     (name) => {
       if (name === "obsidian") return obsidian;
       if (name === "./asset-runtime.cjs") return sourceRequire(name);
+      if (name === "./pdf-annotation-host.cjs" && storageProtocol === "format3") {
+        // Preserve the exact Format 3 golden assertions and race barriers.
+        // WAL-specific cases below exercise the new production default.
+        const { createPdfAnnotationHost } = sourceRequire(name);
+        const { createPdfAnnotationStore } = sourceRequire("./pdf-annotation-store.cjs");
+        return { createPdfAnnotationHost: (options) => createPdfAnnotationHost({ ...options, storeFactory: createPdfAnnotationStore }) };
+      }
       return sourceRequire(name);
     },
     moduleObject,
@@ -510,6 +518,66 @@ const awaitSource = await readFile(
   path.join(root, "plugin", "main.js"),
   "utf8",
 );
+
+test("WAL production host saves, reopens and renames without source writes or Format 3 output", async () => {
+  const storedFiles = new Map(), directories = new Set([".obsidian"]);
+  const first = createHarness({ storedFiles, directories, storageProtocol: "wal" });
+  await first.plugin.onload();
+  const source = Uint8Array.from([37, 80, 68, 70, 10, 1, 2, 3]);
+  const file = new first.TFile("Books/wal-main.pdf", source);
+  const reader = await createSidecarReader(first, file);
+  const documentId = reader.view.documentId;
+  const ack = await saveSidecarOperations(reader, { requestId: "wal-main-edit" });
+  assert.equal(ack.type, "saved");
+  assert.equal(ack.operationCount, 1);
+  assert.ok(ack.batchId);
+  assert.equal(file.writes, 0);
+  assert.deepEqual(file.bytes, source);
+  assert.ok([...storedFiles.keys()].some((name) => name.includes("/wal/") && name.endsWith(".json")));
+  assert.equal([...storedFiles.keys()].some((name) => /\/(ops|checkpoints|identity-events)\//.test(name)), false);
+  first.plugin.onunload();
+
+  const reopened = createHarness({ storedFiles, directories, storageProtocol: "wal" });
+  await reopened.plugin.onload();
+  const reopenedFile = new reopened.TFile("Books/wal-main.pdf", source);
+  const second = await createSidecarReader(reopened, reopenedFile);
+  assert.equal(second.view.documentId, documentId);
+  assert.equal(second.view.annotationSyncState.storageProtocol, "wal-sidecar-v3.1");
+  assert.deepEqual(second.view.annotationSyncState.annotations.map((row) => row.uuid), ["annotation-wal-main-edit"]);
+  const oldPath = reopenedFile.path;
+  reopened.files.delete(oldPath);
+  reopenedFile.path = "Archive/wal-renamed.pdf";
+  reopened.files.set(reopenedFile.path, reopenedFile);
+  await reopened.plugin.annotationHost.renamed(reopenedFile, oldPath);
+  const moved = await reopened.plugin.annotationHost.store.documentForPath(reopenedFile.path);
+  assert.equal(moved.documentId, documentId);
+  assert.equal(await reopened.plugin.annotationHost.store.documentForPath(oldPath), null);
+  assert.equal(reopenedFile.writes, 0);
+  reopened.plugin.onunload();
+});
+
+test("WAL production multi-view saves are serialized and close only after the matching confirmation", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/wal-multiview.pdf", [1, 2, 3]);
+  const a = await createSidecarReader(harness, file), b = await createSidecarReader(harness, file);
+  const results = await Promise.all([
+    saveSidecarOperations(a, { requestId: "wal-a" }), saveSidecarOperations(b, { requestId: "wal-b" }),
+  ]);
+  assert.ok(results.every((result) => result.type === "saved" && result.operationCount === 1));
+  const snapshot = await harness.plugin.annotationHost.store.readDocument(a.view.annotationDocument);
+  assert.deepEqual(snapshot.annotations.map((row) => row.uuid).sort(), ["annotation-wal-a", "annotation-wal-b"]);
+  const close = a.view.onClose();
+  const flush = await waitForSentMessage(a, (message) => message.type === "flush");
+  assert.ok(a.view.iframe, "the Reader remains alive until its matching save confirmation");
+  a.view.onMessage({ source: a.frame, data: { channel: "pdf-web-reader", token: a.view.token,
+    type: "flushed", id: flush.id, documentId: a.view.documentId,
+    openRequest: a.view.openRequest, revision: 1, confirmedRevision: 1, dirty: false, ok: true } });
+  await close;
+  assert.equal(a.view.iframe, null);
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
+});
 
 async function createControlledReader(harness, file) {
   harness.files.set(file.path, file);
