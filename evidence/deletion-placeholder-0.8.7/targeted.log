@@ -1,0 +1,38 @@
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (3.365375ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (2.105208ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (1.909458ms)
+✔ bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null (0.824042ms)
+✔ a stale live snapshot cannot replace a pending bulk tombstone with an upsert (0.7225ms)
+✔ only the acknowledged delete revision releases the local bulk tombstone guard (0.484167ms)
+✔ failed save cannot veto close and is never reported as saved (2.340167ms)
+✔ unresponsive renderer allows close within the short best-effort budget (251.035958ms)
+✔ disconnected and not-ready dirty readers also publish close permission (2.16475ms)
+✔ successful save acknowledgement retains its verified revision (0.578208ms)
+✔ direct SDK teardown uses the same bounded flush, not the old 120-second wait (0.206291ms)
+✔ a throwing transport cannot lock the tab (0.579333ms)
+✔ controlled close publishes the shared session before creating its async guard (0.912083ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (3.189541ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (22.00475ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.22175ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.648334ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.144166ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.837958ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.594625ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.56125ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.596583ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.804959ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.202166ms)
+✔ deleted placeholders reuse exact identities and never allocate UUIDs or bypass validation (1.133792ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (10.8335ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (3.982ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (5.050042ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.740583ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.469458ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 408.15025

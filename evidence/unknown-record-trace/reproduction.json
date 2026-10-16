@@ -1,0 +1,13 @@
+{
+  "version": "0.8.6",
+  "condition": "retained deleted storage row with no surviving UUID/type binding",
+  "result": [
+    {
+      "uuid": "REPRO_NEW_UUID",
+      "kind": "Unknown",
+      "pageIndex": 0,
+      "deleted": true,
+      "reference": "2189R"
+    }
+  ]
+}

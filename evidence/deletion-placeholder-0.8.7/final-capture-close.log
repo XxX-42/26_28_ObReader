@@ -1,0 +1,27 @@
+✔ failed save cannot veto close and is never reported as saved (2.242792ms)
+✔ unresponsive renderer allows close within the short best-effort budget (250.792208ms)
+✔ disconnected and not-ready dirty readers also publish close permission (0.976333ms)
+✔ successful save acknowledgement retains its verified revision (0.500792ms)
+✔ direct SDK teardown uses the same bounded flush, not the old 120-second wait (0.174583ms)
+✔ a throwing transport cannot lock the tab (0.546875ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (3.718625ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (24.297ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.212958ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.803875ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.357ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.464167ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.778292ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.542708ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.309917ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.626458ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.194958ms)
+✔ deleted placeholders reuse exact identities and never allocate UUIDs or bypass validation (1.0945ms)
+✔ hydration teardown retains exact runtime binding while a native deletion remains in storage (0.261ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 378.349041

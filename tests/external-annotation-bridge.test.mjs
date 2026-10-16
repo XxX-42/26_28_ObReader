@@ -487,3 +487,79 @@ test("durable acknowledgements are scoped to the exact document, open request an
   assert.match(functionSource("recoverySourceIdentity"), /orderedPageIdentities/);
   assert.match(functionSource("recoverySourceIdentity"), /sourceHash/);
 });
+
+test("deleted placeholders reuse exact identities and never allocate UUIDs or bypass validation", () => {
+  const helpers = ["getAnnotationStorageRows", "normalizeSyncValue", "normalizeSyncKind",
+    "externalKindForEditor", "canonicalPdfAnnotationRef", "pdfAnnotationRefKey",
+    "getPdfAnnotationRef", "hasNonDegeneratePdfRect", "assertCompleteOperationSnapshot"].map(functionSource).join("\n");
+  const scope = vm.runInThisContext(`(() => {
+    const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink", "InkHighlight", "Highlight", "Underline", "Square", "FreeText"]);
+    let allocated = 0;
+    const state = {
+      annotationUuidByRuntimeId: new Map(), annotationRefByRuntimeId: new Map(),
+      annotationUuidByPdfRef: new Map(), annotationSnapshot: new Map(),
+      externalAnnotationRows: new Map(), embeddedDeletionTargets: new Map(), syncState: null,
+    };
+    const retained = new Map();
+    state.app = { pdfDocument: {numPages: 2, annotationStorage: {
+      serializable: {map: new Map()}, getRawValue: id => retained.get(id),
+    }}, pdfViewer: {_layerProperties: {annotationEditorUIManager: {getEditor: () => null}}} };
+    function makeSyncUuid() { allocated++; return "new-live-uuid"; }
+    function runtimeLogRecord() {}
+    ${helpers}
+    return {state, retained, getAnnotationStorageRows, assertCompleteOperationSnapshot, allocated: () => allocated};
+  })()`);
+  const storage=scope.state.app.pdfDocument.annotationStorage.serializable.map;
+  storage.set("retained-editor",{id:"2189R",pageIndex:0,deleted:true});
+  assert.throws(()=>scope.getAnnotationStorageRows(), e=>e.code==="annotation-deletion-identity-unresolved");
+  assert.equal(scope.allocated(),0,"unbound deletion must not mint an identity");
+  assert.equal(scope.state.annotationUuidByRuntimeId.size,0,"failed capture cannot seed a fake UUID");
+  assert.throws(()=>scope.assertCompleteOperationSnapshot({missingDirtyIds:["missing"]},"save"),/complete lossless/);
+
+  scope.state.externalAnnotationRows.set("old-uuid",{uuid:"old-uuid",kind:"Ink",pageIndex:0,embeddedRef:"2189R",deleted:true});
+  const resolved=scope.getAnnotationStorageRows().get("retained-editor");
+  assert.equal(resolved.uuid,"old-uuid");assert.equal(resolved.kind,"Ink");assert.equal(resolved.deleted,true);
+  assert.equal(scope.allocated(),0);
+
+  scope.state.annotationUuidByRuntimeId.clear();scope.state.annotationUuidByPdfRef.clear();
+  scope.state.externalAnnotationRows.set("ambiguous",{uuid:"ambiguous",kind:"Ink",pageIndex:0,embeddedRef:"2189R"});
+  assert.throws(()=>scope.getAnnotationStorageRows(),/no verified annotation UUID\/type binding/);
+  assert.equal(scope.allocated(),0);
+  scope.state.externalAnnotationRows.clear();
+
+  scope.state.annotationUuidByRuntimeId.set("retained-editor","native-uuid");
+  scope.retained.set("retained-editor",{deleted:true,editorType:"Ink",pageIndex:0,serialize(){return {id:"2189R",deleted:true};}});
+  assert.equal(scope.getAnnotationStorageRows().get("retained-editor").uuid,"native-uuid");
+  assert.equal(scope.allocated(),0,"retained native editor recovers type without new identity");
+
+  storage.clear();scope.state.annotationUuidByRuntimeId.clear();scope.state.annotationUuidByPdfRef.clear();
+  storage.set("new-editor",{annotationType:15,pageIndex:0});
+  assert.equal(scope.getAnnotationStorageRows().get("new-editor").uuid,"new-live-uuid");
+  assert.equal(scope.allocated(),1,"only genuinely new live annotations allocate UUIDs");
+});
+
+test("hydration teardown retains exact runtime binding while a native deletion remains in storage", () => {
+  const helper=functionSource("clearExternalHydration");
+  const scope=vm.runInThisContext(`(() => {
+    let retained = {deleted:true};
+    const state = {
+      app: {pdfDocument:{annotationStorage:{getRawValue:()=>retained}}},
+      annotationUuidByRuntimeId:new Map([["old-editor","old-uuid"]]),
+      annotationRefByRuntimeId:new Map([["old-editor","2189R"]]),
+      annotationUuidByPdfRef:new Map(), externalAnnotationHydration:new Map(),
+    };
+    function captureDirtySyncState(){return {dirtyAnnotationIds:[]};}
+    function getAnnotationEditorManager(){return {getEditor:()=>({remove(){}})};}
+    function restoreSuppressedEmbeddedAnnotations(){}
+    function pdfAnnotationRefKey(value){return value;}
+    function bind(){state.externalAnnotationHydration.set("old-uuid",{runtimeId:"old-editor",embeddedRef:"2189R",adoptedEmbedded:false});}
+    ${helper}
+    return {state,clearExternalHydration,bind,clearRetained(){retained=null;}};
+  })()`);
+  scope.bind();scope.clearExternalHydration();
+  assert.equal(scope.state.annotationUuidByRuntimeId.get("old-editor"),"old-uuid");
+  assert.equal(scope.state.annotationRefByRuntimeId.get("old-editor"),"2189R");
+  scope.clearRetained();scope.bind();scope.clearExternalHydration();
+  assert.equal(scope.state.annotationUuidByRuntimeId.size,0);
+  assert.equal(scope.state.annotationRefByRuntimeId.size,0);
+});

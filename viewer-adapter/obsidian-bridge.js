@@ -1897,6 +1897,10 @@
       const runtimeId = String(rawRuntimeId);
       let value = normalizeSyncValue(rawValue);
       editor ||= manager?.getEditor?.(runtimeId) || null;
+      if (!editor) {
+        const retained = app?.pdfDocument?.annotationStorage?.getRawValue?.(runtimeId);
+        if (typeof retained?.serialize === "function") editor = retained;
+      }
       if (
         normalizeSyncKind(editor?.editorType) === "FreeText" &&
         !hasNonDegeneratePdfRect(value?.rect)
@@ -1918,6 +1922,9 @@
         state.annotationRefByRuntimeId.get(runtimeId) || null;
       const referenceKey = pdfAnnotationRefKey(reference);
       const runtimeUuid = state.annotationUuidByRuntimeId.get(runtimeId);
+      const priorRow = state.annotationSnapshot?.get(runtimeId);
+      const boundRow = state.externalAnnotationRows?.get(runtimeUuid ||
+        (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)));
       const identity = state.syncState?.identities?.find(
         (candidate) => candidate?.uuid === runtimeUuid ||
           (referenceKey && pdfAnnotationRefKey(candidate?.ref) === referenceKey),
@@ -1932,27 +1939,39 @@
             ? value.pageNumber - 1
             : Number.isSafeInteger(identity?.pageIndex)
               ? identity.pageIndex
-              : null;
+              : Number.isSafeInteger(priorRow?.pageIndex)
+                ? priorRow.pageIndex
+                : Number.isSafeInteger(boundRow?.pageIndex) ? boundRow.pageIndex : null;
+      let uuid = runtimeUuid || (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)) ||
+        identity?.uuid || priorRow?.uuid || null;
+      let exactRow = uuid ? state.externalAnnotationRows?.get(uuid) || priorRow : null;
+      if (value.deleted === true && !uuid && referenceKey) {
+        const matches = [
+          ...state.externalAnnotationRows?.values?.() || [],
+          ...state.embeddedDeletionTargets?.values?.() || [],
+        ].filter(row => row?.uuid && row.pageIndex === pageIndex &&
+          pdfAnnotationRefKey(row.embeddedRef || row.ref || row.reference) === referenceKey);
+        const uuids = new Set(matches.map(row => row.uuid));
+        if (uuids.size === 1) {
+          exactRow = matches[0];
+          uuid = exactRow.uuid;
+        }
+      }
       let kind = externalKindForEditor(value, editor);
       if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) {
-        // PDF.js deletion placeholders may contain only {deleted: true}.
-        // Recover metadata exclusively through an already established identity.
-        const knownUuid = runtimeUuid || (referenceKey && state.annotationUuidByPdfRef.get(referenceKey));
-        const known = state.externalAnnotationRows?.get(knownUuid) ||
-          state.annotationSnapshot?.get(runtimeId);
-        kind = [identity?.kind, known?.kind]
+        kind = [identity?.kind, exactRow?.kind, priorRow?.kind]
           .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
       }
-      let uuid = runtimeUuid || null;
-      if (!uuid && referenceKey) {
-        uuid = state.annotationUuidByPdfRef.get(referenceKey) || null;
+      if (value.deleted === true && (!uuid || !EXTERNAL_ANNOTATION_KINDS.has(kind) ||
+          !Number.isSafeInteger(pageIndex) ||
+          (Number.isSafeInteger(exactRow?.pageIndex) && exactRow.pageIndex !== pageIndex))) {
+        // Deletion cannot create an annotation identity. Do not skip the row
+        // or acknowledge a save: preserve state and require exact resolution.
+        const error = new Error(`Deletion placeholder ${runtimeId} has no verified annotation UUID/type binding.`);
+        error.code = "annotation-deletion-identity-unresolved";
+        throw error;
       }
-      if (!uuid && identity?.uuid) {
-        uuid = identity.uuid;
-      }
-      if (!uuid) {
-        uuid = makeSyncUuid();
-      }
+      if (!uuid) uuid = makeSyncUuid();
       state.annotationUuidByRuntimeId.set(runtimeId, uuid);
       if (canonicalReference) {
         state.annotationRefByRuntimeId.set(runtimeId, canonicalReference);
@@ -2556,8 +2575,13 @@
           manager?.getEditor?.(binding.runtimeId)?.remove?.();
         }
         if (binding.runtimeId) {
-          state.annotationUuidByRuntimeId.delete(binding.runtimeId);
-          state.annotationRefByRuntimeId.delete(binding.runtimeId);
+          // A removed native editor can remain in AnnotationStorage as a
+          // deletion placeholder. Keep its exact binding until document reset.
+          const retained = state.app?.pdfDocument?.annotationStorage?.getRawValue?.(binding.runtimeId);
+          if (retained?.deleted !== true) {
+            state.annotationUuidByRuntimeId.delete(binding.runtimeId);
+            state.annotationRefByRuntimeId.delete(binding.runtimeId);
+          }
         }
         if (restoreEmbedded && binding.adoptedEmbedded) {
           // Adopted source editors remain part of the PDF's original annotation
