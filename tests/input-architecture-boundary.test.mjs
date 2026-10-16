@@ -225,6 +225,7 @@ test("TextSelectionController owns DOM selection and caret operations only", asy
   assert.match(selection, /setBaseAndExtent/);
   assert.match(selection, /getRangeAt/);
   assert.match(selection, /elementFromPoint/);
+  assert.match(selection, /pendingPointer/);
   for (const forbidden of [
     "annotationStorage",
     "highlightSelection",

@@ -5,11 +5,21 @@
     constructor({
       documentRef = document,
       isSessionCurrent = () => true,
-      isPendingPointer = () => true,
     } = {}) {
       this.document = documentRef;
       this.isSessionCurrent = isSessionCurrent;
-      this.isPendingPointer = isPendingPointer;
+      this.pendingPointer = null;
+    }
+
+    isPending(pointer) { return this.pendingPointer === pointer; }
+
+    clearPending(pointer = null) {
+      if (!pointer || this.pendingPointer === pointer) this.pendingPointer = null;
+    }
+
+    cancelPending(pointer = null) {
+      const pending = this.pendingPointer;
+      if (pending && (!pointer || pending === pointer)) this.clearOwned(pending);
     }
 
     getSelection() {
@@ -88,6 +98,7 @@
       pointer.page = page;
       pointer.selectionAtDown = this.snapshot();
       if (!eligible || !textLayer || !page) return false;
+      this.pendingPointer = pointer;
       const caret = this.caretPosition(clientX, clientY, textLayer);
       if (
         !textSpan ||
@@ -108,7 +119,7 @@
     extend(pointer, intent) {
       if (
         !pointer?.penTextSelectionCandidate ||
-        !this.isPendingPointer(pointer) ||
+        !this.isPending(pointer) ||
         !pointer.moved ||
         !this.isSessionCurrent(pointer) ||
         !pointer.textLayer?.isConnected ||
@@ -159,10 +170,12 @@
 
     clearOwned(pointer) {
       const owned = pointer?.ownedPenTextSelection;
-      if (!owned) return;
-      const selection = this.getSelection();
-      if (this.matchesSnapshot(selection, owned)) selection.removeAllRanges();
+      if (owned) {
+        const selection = this.getSelection();
+        if (this.matchesSnapshot(selection, owned)) selection.removeAllRanges();
+      }
       pointer.ownedPenTextSelection = null;
+      this.clearPending(pointer);
     }
 
     changedSinceBegin(pointer) {
