@@ -545,3 +545,28 @@ test("authoritative WAL snapshots replace clean stale bindings and defer dirty l
   assert.equal(harness.getEditor(dirtyEditor.id), dirtyEditor,
     "subsequent hydration must leave the deferred local dirty editor untouched");
 });
+
+test("confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out", async () => {
+  const harness = makeHarness();
+  const { state } = harness;
+  const uuid = "bulk-deleted-square";
+  const oldRow = remoteRow({ uuid });
+  const editor = harness.addEditor({
+    id: "bulk-runtime", pageIndex: 0, editorType: "Square",
+    serialize() { return oldRow.editor; },
+    remove() { harness.manager.remove(this); },
+  });
+  state.externalAnnotationHydration.set(uuid, { runtimeId: editor.id, pageIndex: 0, row: oldRow });
+  state.annotationSnapshot.set(editor.id, { uuid, runtimeId: editor.id });
+  state.externalAnnotationRows.set(uuid, { ...oldRow, deleted: true, editor: null });
+  state.dirtyAnnotationRevisions.set(uuid, 99);
+  assert.equal(await harness.hydrateExternalAnnotationsForPage(0), true);
+  assert.equal(harness.getEditor(editor.id), editor,
+    "an old tombstone must not erase a newer unconfirmed local undo/edit");
+  state.dirtyAnnotationRevisions.clear();
+  assert.equal(await harness.hydrateExternalAnnotationsForPage(0), true);
+  assert.equal(harness.getEditor(editor.id), null, "the confirmed deletion removes the visible editor");
+  assert.equal(state.externalAnnotationHydration.has(uuid), false);
+  assert.equal(state.annotationSnapshot.has(editor.id), false);
+  assert.equal(harness.getDeserializeCalls(), 0, "a tombstone never creates an editor");
+});

@@ -132,6 +132,8 @@
     dirtyNewAnnotationIds: new Set(),
     dirtyDeletedAnnotationIds: new Set(),
     pendingBulkDeletedUuids: new Set(),
+    embeddedDeletionTargets: new Map(),
+    embeddedDeletionScan: null,
     bulkDeleteDialog: null,
     bulkDeleteInProgress: false,
     // A saved editor restored by Undo can be live in the editor manager while
@@ -662,6 +664,13 @@
       });
     };
 
+    for (const target of state.embeddedDeletionTargets?.values() || []) {
+      const mappedUuid = state.annotationUuidByPdfRef.get(pdfAnnotationRefKey(target.ref));
+      add({ ...target, uuid: mappedUuid || target.uuid }, {
+        editorPayload: target.editorPayload, ref: target.ref, source: "embedded",
+      });
+    }
+
     for (const row of state.externalAnnotationRows.values()) {
       if (!row?.uuid) continue;
       if (row.deleted === true || state.pendingBulkDeletedUuids.has(row.uuid) ||
@@ -763,6 +772,20 @@
         liveUuids.add(row.uuid);
       }
     }
+    // Unchanged hydrated editors legitimately serialize to null and need not
+    // appear in AnnotationStorage. Their exact hydration binding still owns
+    // a live editor; do not mistake it for an offscreen-only record.
+    for (const target of targets.values()) {
+      if (liveUuids.has(target.uuid)) continue;
+      const binding = state.externalAnnotationHydration.get(target.uuid);
+      if (!binding || binding.pageIndex !== target.pageIndex) continue;
+      const editor = manager.getEditor?.(binding.runtimeId);
+      if (!editor || editor.deleted === true || editor.pageIndex !== target.pageIndex) continue;
+      const mappedUuid = state.annotationUuidByRuntimeId.get(String(editor.id));
+      if (mappedUuid && mappedUuid !== target.uuid) continue;
+      liveEditors.push(editor);
+      liveUuids.add(target.uuid);
+    }
     const sidecarOnly = [...targets.values()].filter((target) => !liveUuids.has(target.uuid));
     return { targets, liveEditors, sidecarOnly };
   }
@@ -790,6 +813,41 @@
       rendererGeneration === session.rendererGeneration &&
       session.manager != null &&
       state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager === session.manager;
+  }
+
+  async function prepareEmbeddedDeletionTargets(session, pageIndex = null) {
+    if (!isCurrentBulkDeleteSession(session)) return false;
+    if (typeof session.pdfDocument.getPage !== "function" ||
+        typeof state.annotationController?.scanEmbeddedDeletionTargets !== "function") return true;
+    if (!state.externalSourceConfirmed || state.readOnly) return false;
+    let scan = state.embeddedDeletionScan;
+    if (!scan || scan.pdfDocument !== session.pdfDocument) {
+      scan = { pdfDocument: session.pdfDocument, requests: new Map() };
+      state.embeddedDeletionScan = scan;
+      state.embeddedDeletionTargets.clear();
+    }
+    const key = pageIndex === null ? "all" : pageIndex;
+    if (scan.requests.has("all")) return scan.requests.get("all");
+    if (scan.requests.has(key)) return scan.requests.get(key);
+    const request = (async () => {
+      const targets = await state.annotationController.scanEmbeddedDeletionTargets(
+        session.pdfDocument, session.documentId, {
+          pageIndex,
+          isCurrent: () => isCurrentBulkDeleteSession(session),
+          resolveUuid: (ref, page) => {
+            const existing = [...state.externalAnnotationRows.values()].find((row) =>
+              row.pageIndex === page && canonicalPdfAnnotationRef(row.embeddedRef) === ref);
+            return existing?.uuid || state.annotationUuidByPdfRef.get(pdfAnnotationRefKey(ref));
+          },
+        },
+      );
+      if (!isCurrentBulkDeleteSession(session) || state.readOnly || !state.externalSourceConfirmed) return false;
+      for (const target of targets) state.embeddedDeletionTargets.set(target.uuid, target);
+      return true;
+    })();
+    scan.requests.set(key, request);
+    try { return await request; }
+    catch (error) { scan.requests.delete(key); throw error; }
   }
 
   function requestManagedAnnotationDeletion(pageIndex = null, expectedSession = null) {
@@ -846,10 +904,23 @@
     if (!targets.length) return false;
     const revision = state.revision + 1;
     for (const target of targets) {
-      replaceAnnotationOperation(
-        createManagedAnnotationOperation(target, deleted),
-        revision,
-      );
+      if (target.ref) {
+        const key = pdfAnnotationRefKey(target.ref);
+        const existing = state.annotationUuidByPdfRef.get(key);
+        if (existing && existing !== target.uuid) throw new Error("PDF 批注身份已变化，请重新确认删除。");
+      }
+    }
+    for (const target of targets) {
+      if (target.ref) state.annotationUuidByPdfRef.set(pdfAnnotationRefKey(target.ref), target.uuid);
+      const operation = createManagedAnnotationOperation(target, deleted);
+      replaceAnnotationOperation(operation, revision);
+      state.externalAnnotationRows?.set(target.uuid, {
+        uuid: target.uuid, pageIndex: target.pageIndex, kind: target.kind,
+        embeddedRef: target.ref || null, deleted,
+        editor: deleted ? null : target.editorPayload,
+        clock: { timestamp: operation.timestamp, logical: operation.logical,
+          deviceId: operation.deviceId, opId: operation.operationId },
+      });
       if (deleted) state.pendingBulkDeletedUuids.add(target.uuid);
       else state.pendingBulkDeletedUuids.delete(target.uuid);
     }
@@ -857,6 +928,20 @@
     // mutation observer. Undo/redo bypass addCommands, so explicitly advance
     // the revision and autosave after those history transitions.
     if (advanceRevision) noteMutation();
+    if (state.app?.pdfDocument) {
+      const session = captureBulkDeleteSession();
+      setDeferredTimeout(() => {
+        if (!isCurrentBulkDeleteSession(session)) return;
+        for (const page of new Set(targets.map((target) => target.pageIndex))) {
+          void hydrateExternalAnnotationsForPage(page).catch((error) => {
+            if (isCurrentBulkDeleteSession(session)) sendError(error.message || "无法更新批注显示。", {
+              documentId: session.documentId, openRequest: session.openRequest,
+              code: "bulk-annotation-preview-failed",
+            });
+          });
+        }
+      }, 0);
+    }
     syncBridgeControls();
     return true;
   }
@@ -894,6 +979,7 @@
     const documentId = session.documentId;
     const manager = session.manager;
     if (!manager) return false;
+    if (!(await prepareEmbeddedDeletionTargets(session, pageIndex))) return false;
     const plan = collectManagedAnnotationDeletionPlan(pageIndex);
     if (!plan.targets.size) {
       showStatus(pageIndex === null ? "没有可删除的批注。" : "本页没有可删除的批注。");
@@ -970,10 +1056,20 @@
     }
   }
 
-  function showDeleteAllAnnotationsConfirmation() {
+  async function showDeleteAllAnnotationsConfirmation() {
     if (state.bulkDeleteDialog) return;
     const session = captureBulkDeleteSession();
     if (!isCurrentBulkDeleteSession(session)) return;
+    try {
+      if (!(await prepareEmbeddedDeletionTargets(session))) return;
+    } catch (error) {
+      sendError(error?.message || "无法读取 PDF 内嵌批注。", {
+        documentId: session.documentId, openRequest: session.openRequest,
+        code: "bulk-annotation-scan-failed",
+      });
+      return;
+    }
+    if (state.bulkDeleteDialog || !isCurrentBulkDeleteSession(session)) return;
     const initialTargets = collectKnownAnnotationDeletionTargets();
     const count = initialTargets.size;
     if (!count) {
@@ -2819,11 +2915,29 @@
   async function hydrateExternalAnnotationsForPage(pageIndex) {
     if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || state.disposed) return true;
     const rows = [...state.externalAnnotationRows.values()]
-      .filter((row) => row.pageIndex === pageIndex &&
-        row.deleted !== true &&
-        !state.pendingBulkDeletedUuids.has(row.uuid) &&
-        !state.dirtyDeletedAnnotationIds.has(row.uuid));
+      .filter((row) => row.pageIndex === pageIndex && (
+        row.deleted === true
+          ? !state.dirtyAnnotationRevisions.has(row.uuid) || state.pendingBulkDeletedUuids.has(row.uuid)
+          : !state.pendingBulkDeletedUuids.has(row.uuid) &&
+            !state.dirtyDeletedAnnotationIds.has(row.uuid)
+      ));
     if (!rows.length) return true;
+    const deletedRefs = [...state.externalAnnotationRows.values()]
+      .filter(row => row.deleted && row.embeddedRef &&
+        (!state.dirtyAnnotationRevisions.has(row.uuid) || state.pendingBulkDeletedUuids.has(row.uuid)))
+      .map(row => canonicalPdfAnnotationRef(row.embeddedRef)).filter(Boolean);
+    const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(state.app?.pdfDocument?.annotationStorage, deletedRefs);
+    if (maskChanged) {
+      // Repaint only loaded pages carrying these exact source references. Keep
+      // editor/selection layers; the PDF remains immutable.
+      const pages = new Set([...state.externalAnnotationRows.values()]
+        .filter(row => row.embeddedRef).map(row => row.pageIndex));
+      for (const index of pages) {
+        const view = state.app?.pdfViewer?.getPageView?.(index);
+        if (view?.canvas) view.update?.({});
+      }
+      state.app?.pdfViewer?.forceRendering?.();
+    }
     const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
     if (!getAnnotationEditorManager() || !pageView?.annotationEditorLayer?.annotationEditorLayer) {
       return false;
@@ -2833,10 +2947,13 @@
       if (row.embeddedRef) suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
       if (row.deleted) {
         const binding = state.externalAnnotationHydration.get(row.uuid);
-        if (binding?.runtimeId) {
+        const manager = getAnnotationEditorManager();
+        const deletedEditor = manager?.getEditor?.(binding?.runtimeId) ||
+          (row.embeddedRef ? findEmbeddedEditor(manager, pageIndex, row.embeddedRef) : null);
+        if (deletedEditor) {
           state.hydratingExternalAnnotations = true;
           try {
-            getAnnotationEditorManager()?.getEditor?.(binding.runtimeId)?.remove?.();
+            deletedEditor.remove?.();
           } finally {
             state.hydratingExternalAnnotations = false;
           }
@@ -3111,6 +3228,7 @@
   }
 
   function recordSavedEditorHistoryOperation(identity, editor, action) {
+    if (action === "upsert" && state.pendingBulkDeletedUuids?.has(identity.uuid)) return;
     const stamp = makeSyncStamp();
     let serialized;
     if (action === "upsert") {
@@ -3211,6 +3329,9 @@
     }
     for (const { before, after, row } of changed.values()) {
       const currentRow = after || row;
+      // A stale editor/storage snapshot is not an undo. Keep the explicit
+      // bulk tombstone until ACK; only the undo command clears this ownership.
+      if (state.pendingBulkDeletedUuids?.has(currentRow.uuid)) continue;
       const deleted = !after || after.deleted;
       for (const pageIndex of new Set([before?.pageIndex, after?.pageIndex].filter(Number.isSafeInteger))) {
         state.dirtyPageRevisions.set(pageIndex, revision);
@@ -3384,6 +3505,7 @@
         state.dirtyAnnotationRevisions.delete(uuid);
         state.dirtyNewAnnotationIds.delete(uuid);
         state.dirtyDeletedAnnotationIds.delete(uuid);
+        state.pendingBulkDeletedUuids.delete(uuid);
       }
     }
     for (const [pageIndex, changedAt] of state.dirtyPageRevisions) {
@@ -7915,6 +8037,8 @@
     // Any queued open invalidates a pending destructive confirmation before
     // the new document can become active in this iframe.
     state.bulkDeleteDialog?.close?.();
+    state.embeddedDeletionTargets.clear();
+    state.embeddedDeletionScan = null;
     state.requestedOpenRequest = Number.isInteger(message.openRequest)
       ? message.openRequest
       : null;

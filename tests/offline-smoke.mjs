@@ -1098,6 +1098,27 @@ try {
       .length,
     1,
   );
+  // Bulk deletion of unchanged, rehydrated editors must persist as deletion
+  // operations, not be replaced by stale storage values on the save boundary.
+  await viewer.evaluate(() => {
+    if (document.getElementById("secondaryToolbar").classList.contains("hidden"))
+      document.getElementById("secondaryToolbarToggleButton").click();
+  });
+  await viewer.click("#pdfReaderBridgeDeleteAllAnnotationsButton");
+  await viewer.waitForSelector(".pdfReaderBulkDeleteConfirm");
+  const deleteDescription = await viewer.$eval("#pdfReaderBulkDeleteDescription", (node) => node.textContent);
+  assert.match(deleteDescription, /4 条/, "all four unchanged persisted annotations are recognized");
+  await viewer.click(".pdfReaderBulkDeleteConfirm");
+  await viewer.waitForFunction(() => !document.querySelector(".pdfReaderBulkDeleteOverlay"));
+  await viewer.waitForFunction(() => {
+    const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+    return [...manager.getEditors(0)].filter((editor) => !editor.deleted).length === 0;
+  });
+  await saveAndReopen(0, 6);
+  assert.deepEqual(await getSavedAnnotations(), [], "bulk tombstones survive saving and reopening");
+  assert.equal(await page.evaluate(() => [...window.__hostState.annotationRows.values()].filter((row) => !row.deleted).length), 0);
+  console.log("Bulk delete persisted: unchanged annotations removed, saved, and reopened without resurrection.");
+
   assert.equal(
     await page.evaluate(() => window.__hostState.invalidAcksSent),
     2 * await page.evaluate(() => window.__hostState.saves),

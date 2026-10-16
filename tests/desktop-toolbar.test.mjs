@@ -604,6 +604,55 @@ test(
         () => window.__openedDocuments?.length === 1,
         { timeout: 45_000 },
       );
+      const embeddedScan = await viewer.evaluate(async () => {
+        const controller = new PdfReaderInputRuntime.AnnotationController();
+        const nativePageTargets = await controller.scanEmbeddedDeletionTargets(
+          PDFViewerApplication.pdfDocument,
+          "browser-native-scan",
+          { pageIndex: 0 },
+        );
+        let annotationIntent = null;
+        const fixtureTargets = await controller.scanEmbeddedDeletionTargets({
+          numPages: 1,
+          async getPage() {
+            return {
+              async getAnnotations(options) {
+                annotationIntent = options.intent;
+                return [
+                  {
+                    id: "77R0", annotationType: 15, rect: [1, 2, 10, 12],
+                    rotation: 0, color: [4, 5, 6], opacity: 1,
+                    borderStyle: { rawWidth: 1 }, inkLists: [[1, 2, 3, 4]],
+                  },
+                  {
+                    id: "78R0", annotationType: 15, it: "InkHighlight",
+                    rect: [1, 2, 10, 12], rotation: 0, color: [255, 220, 0],
+                    opacity: 1, borderStyle: { rawWidth: 1 },
+                    inkLists: [[2, 3, 4, 5]],
+                  },
+                ];
+              },
+            };
+          },
+        }, "browser-fixture", { isCurrent: () => true });
+        return {
+          nativePageTargetCount: nativePageTargets.length,
+          annotationIntent,
+          fixtureTargets: fixtureTargets.map((target) => ({
+            kind: target.kind,
+            ref: target.ref,
+            annotationType: target.editorPayload.annotationType,
+            hasPaths: Boolean(target.editorPayload.paths),
+            hasInkLists: Boolean(target.editorPayload.inkLists),
+          })),
+        };
+      });
+      assert.ok(Number.isSafeInteger(embeddedScan.nativePageTargetCount));
+      assert.equal(embeddedScan.annotationIntent, "any");
+      assert.deepEqual(embeddedScan.fixtureTargets, [
+        { kind: "Ink", ref: "77R", annotationType: 15, hasPaths: true, hasInkLists: false },
+        { kind: "InkHighlight", ref: "78R", annotationType: 9, hasPaths: false, hasInkLists: true },
+      ]);
       try {
         await viewer.waitForFunction(
           () => !document.getElementById("editorUnderlineButton").disabled,

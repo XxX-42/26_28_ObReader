@@ -1,0 +1,19 @@
+{
+  "backup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/bulk-delete-0.8.5-20261016-151008",
+  "pdfBefore": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "files": {
+    "main.js": {
+      "sha256": "4281a122e0cacf5cde482fb08a68e99c8f6f2899e5e6b9bd744e7214e3266834",
+      "bytes": 7318109
+    },
+    "manifest.json": {
+      "sha256": "84716ccc8e6494f20fd358b0cd367b4bd40babb0041449ec115e8a0d1e72b2d4",
+      "bytes": 269
+    },
+    "styles.css": {
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650",
+      "bytes": 637
+    }
+  },
+  "pdfAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"
+}

@@ -52,7 +52,7 @@ function extractFunction(name) {
       continue;
     }
     if (char === "{") depth += 1;
-    if (char === "}" && --depth === 0) return bridge.slice(start, index + 1);
+    if (char === "}" && --depth === 0) return (bridge.slice(start - 6, start) === "async " ? "async " : "") + bridge.slice(start, index + 1);
   }
   throw new Error(`Unterminated ${name}`);
 }
@@ -89,6 +89,8 @@ test("bulk target planning ignores acknowledged stale upserts but includes dirty
       dirtyNewAnnotationIds: new Set(["dirty-local"]),
       dirtyDeletedAnnotationIds: new Set(),
       pendingBulkDeletedUuids: new Set(),
+      embeddedDeletionTargets: new Map(),
+      annotationUuidByPdfRef: new Map(),
     };
     const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink"]);
     function normalizeSyncKind(kind) { return kind; }
@@ -121,6 +123,8 @@ test("offscreen sidecar bulk delete records tombstone and undo/redo each become 
       dirtyNewAnnotationIds: new Set(),
       dirtyDeletedAnnotationIds: new Set(),
       pendingBulkDeletedUuids: new Set(),
+      embeddedDeletionTargets: new Map(),
+      annotationUuidByPdfRef: new Map(),
     };
     const deferred = [];
     let savesScheduled = 0;
@@ -207,6 +211,8 @@ test("all-page confirmation is canceled on session change and renewed after targ
         pdfViewer: { _layerProperties: { annotationEditorUIManager: {} } },
       },
       bulkDeleteDialog: null,
+      embeddedDeletionTargets: new Map(),
+      embeddedDeletionScan: null,
       openQueue: Promise.resolve(),
       queuedOpens: [],
     };
@@ -269,6 +275,7 @@ test("all-page confirmation is canceled on session change and renewed after targ
     function sendError() {}
     ${extractFunction("captureBulkDeleteSession")}
     ${extractFunction("isCurrentBulkDeleteSession")}
+    ${extractFunction("prepareEmbeddedDeletionTargets")}
     ${extractFunction("showDeleteAllAnnotationsConfirmation")}
     ${extractFunction("queueOpen")}
     globalThis.api = {
@@ -285,7 +292,7 @@ test("all-page confirmation is canceled on session change and renewed after targ
   const result = vm.runInNewContext(program);
   const find = (id) => result.created.filter((element) => element.id === id).at(-1);
 
-  result.showDeleteAllAnnotationsConfirmation();
+  await result.showDeleteAllAnnotationsConfirmation();
   const staleConfirm = result.created.find((element) => element.className === "pdfReaderBulkDeleteConfirm");
   assert.ok(staleConfirm);
   result.queueOpen({ documentId: "document-b", openRequest: 2 });
@@ -294,7 +301,7 @@ test("all-page confirmation is canceled on session change and renewed after targ
   staleConfirm.click();
   assert.equal(result.deleteCalls.length, 0, "a detached stale confirm cannot target the newly opened document");
 
-  result.showDeleteAllAnnotationsConfirmation();
+  await result.showDeleteAllAnnotationsConfirmation();
   const confirm = result.created.filter((element) => element.className === "pdfReaderBulkDeleteConfirm").at(-1);
   result.knownTargets.set("three", {});
   confirm.click();
@@ -307,4 +314,64 @@ test("all-page confirmation is canceled on session change and renewed after targ
   assert.equal(result.deleteCalls[0].pageIndex, null);
   assert.equal(result.deleteCalls[0].session.documentId, "document-b");
   assert.equal(result.deleteCalls[0].session.openRequest, 2);
+});
+
+test("bulk deletion recognizes confirmed hydrated editors even when unchanged serialization is null", () => {
+  const result = vm.runInNewContext(`(() => {
+    const editor = { id: "hydrated-runtime", pageIndex: 16, deleted: false,
+      serialize() { return null; } };
+    const target = { uuid: "persisted-annotation", pageIndex: 16, kind: "Ink", editorPayload: { pageIndex: 16 } };
+    const manager = { getEditors: (page) => page === 16 ? [editor] : [],
+      getEditor: (id) => id === editor.id ? editor : null };
+    const state = { app: { pdfDocument: { numPages: 357 }, pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } },
+      annotationUuidByRuntimeId: new Map([[editor.id, target.uuid]]),
+      externalAnnotationHydration: new Map([[target.uuid, { runtimeId: editor.id, pageIndex: 16 }]]) };
+    function collectKnownAnnotationDeletionTargets() { return new Map([[target.uuid, target]]); }
+    function getAnnotationStorageRows() { return new Map(); }
+    function normalizeSyncKind(kind) { return kind; }
+    function canonicalPdfAnnotationRef(ref) { return ref || null; }
+    const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink"]);
+    ${extractFunction("collectManagedAnnotationDeletionPlan")}
+    return collectManagedAnnotationDeletionPlan();
+  })()`);
+  assert.equal(result.targets.size, 1);
+  assert.equal(result.liveEditors.length, 1, "unchanged persisted editors still participate in grouped deletion");
+  assert.equal(result.sidecarOnly.length, 0);
+});
+
+test("a stale live snapshot cannot replace a pending bulk tombstone with an upsert", () => {
+  const result = vm.runInNewContext(`(() => {
+    const deleted = { uuid: "already-deleted", pageIndex: 2, kind: "Ink", action: "delete", deleted: true };
+    const before = { uuid: deleted.uuid, runtimeId: "old-editor", pageIndex: 2, signature: "before" };
+    const after = { ...before, signature: "stale-after", value: { pageIndex: 2 } };
+    const state = { app: {}, revision: 9, annotationSnapshot: new Map([["old-editor", before]]),
+      annotationOperations: [{ revision: 9, operation: deleted }],
+      pendingBulkDeletedUuids: new Set([deleted.uuid]), dirtyPageRevisions: new Map(),
+      restoredSavedAnnotations: new Map() };
+    function getAnnotationStorageRows() { return new Map([["old-editor", after]]); }
+    function markDirtyAnnotation() { throw new Error("must not replace the explicit delete"); }
+    function makeSyncStamp() { throw new Error("must not stamp a stale upsert"); }
+    ${extractFunction("refreshAnnotationOperations")}
+    refreshAnnotationOperations(10, { includeLiveEditors: true });
+    return state;
+  })()`);
+  assert.equal(result.annotationOperations.length, 1);
+  assert.equal(result.annotationOperations[0].operation.action, "delete");
+  assert.equal(result.annotationOperations[0].revision, 9);
+});
+
+test("only the acknowledged delete revision releases the local bulk tombstone guard", () => {
+  const result = vm.runInNewContext(`(() => {
+    const state = { dirtyAnnotationRevisions: new Map([["deleted", 12]]),
+      dirtyPageRevisions: new Map([[2, 12]]), dirtyNewAnnotationIds: new Set(),
+      dirtyDeletedAnnotationIds: new Set(["deleted"]), pendingBulkDeletedUuids: new Set(["deleted"]) };
+    ${extractFunction("clearConfirmedDirtyState")}
+    clearConfirmedDirtyState(11);
+    const retained = state.pendingBulkDeletedUuids.has("deleted");
+    clearConfirmedDirtyState(12);
+    return { retained, released: !state.pendingBulkDeletedUuids.has("deleted"), dirty: state.dirtyAnnotationRevisions.size };
+  })()`);
+  assert.equal(result.retained, true);
+  assert.equal(result.released, true);
+  assert.equal(result.dirty, 0);
 });

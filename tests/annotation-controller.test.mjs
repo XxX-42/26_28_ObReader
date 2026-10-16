@@ -57,6 +57,282 @@ test("native annotation operation detection only recognizes selected editor move
   assert.equal(controller.nativeOperation({ button: 0, pointerType: "mouse", nativeOperation: "other" }), null);
 });
 
+test("embedded deletion scanning copies supported native annotations from every page", async () => {
+  const controller = createController();
+  const calls = [];
+  const pages = [
+    [
+      {
+        id: "10R0", annotationType: 15, rect: [1, 2, 30, 40], rotation: 0,
+        color: new Uint8ClampedArray([12, 34, 56]), opacity: 0.5,
+        borderStyle: { rawWidth: 2 },
+        inkLists: [new Float32Array([1, 2, 3, 4])],
+      },
+      {
+        id: "11R0", annotationType: 9, rect: [0, 0, 20, 20], rotation: 90,
+        color: new Uint8ClampedArray([255, 240, 0]), opacity: 0.7,
+        quadPoints: new Float32Array([0, 20, 20, 20, 0, 0, 20, 0]),
+      },
+      {
+        id: "12R0", annotationType: 9, rect: [0, 0, 20, 20], rotation: 0,
+        color: new Uint8ClampedArray([255, 240, 0]), opacity: 1,
+        borderStyle: { rawWidth: 1 },
+        inkLists: [new Float32Array([2, 3, 4, 5])],
+      },
+      {
+        id: "13R0", annotationType: 5, rect: [5, 6, 15, 16], rotation: 0,
+        color: null, opacity: 1, borderStyle: { rawWidth: 0.25 },
+      },
+      {
+        id: "14R0", annotationType: 10, rect: [0, 0, 20, 20], rotation: 0,
+        color: new Uint8ClampedArray([0, 128, 255]), opacity: 0.8,
+        borderStyle: { rawWidth: 0.5 },
+        quadPoints: new Float32Array([0, 20, 20, 20, 0, 0, 20, 0]),
+      },
+      {
+        id: "15R0", annotationType: 3, rect: [1, 2, 30, 40], rotation: 0,
+        color: null,
+        defaultAppearanceData: {
+          fontColor: new Uint8ClampedArray([5, 6, 7]), fontSize: 11,
+        },
+        textContent: ["Principles annotation"], textPosition: [4, 5],
+      },
+      {
+        id: "19R0", annotationType: 15, it: "InkHighlight",
+        rect: [1, 2, 30, 40], rotation: 0,
+        color: new Uint8ClampedArray([255, 240, 0]), opacity: 0,
+        borderStyle: { rawWidth: 1.5 },
+        inkLists: [new Float32Array([6, 7, 8, 9])],
+      },
+      {
+        id: "16R0", annotationType: 3, rect: [1, 2, 30, 40], rotation: 0,
+        defaultAppearanceData: {
+          fontColor: new Uint8ClampedArray([5, 6, 7]), fontSize: 11,
+        },
+      },
+      { id: "17R0", annotationType: 2, rect: [0, 0, 20, 20], rotation: 0 },
+      {
+        id: "18R0", annotationType: 15, rect: [0, 0, 20, 20], rotation: 0,
+        color: new Uint8ClampedArray([1, 2, 3]), opacity: 1,
+        borderStyle: { rawWidth: 1 }, inkLists: [[1, 2, NaN, 4]],
+      },
+    ],
+    [
+      {
+        id: "20R0", annotationType: 5, rect: [1, 1, 8, 8],
+        color: new Uint8ClampedArray([10, 20, 30]), opacity: 0,
+        borderStyle: { rawWidth: 0 },
+      },
+      {
+        id: "21 0 R", annotationType: 5, rect: [1, 1, 8, 8],
+        color: new Uint8ClampedArray([10, 20, 30]),
+      },
+      {
+        id: "not-a-pdf-ref", annotationType: 5, rect: [1, 1, 8, 8],
+        color: new Uint8ClampedArray([10, 20, 30]),
+      },
+      {
+        id: "22R0", annotationType: 15, rect: [1, 1, 8, 8], rotation: 0,
+        color: new Uint8ClampedArray([10, 20, 30]), opacity: 1,
+        borderStyle: { rawWidth: 1 }, inkLists: [new Float32Array([100, 200])],
+      },
+      {
+        id: "23R0", annotationType: 15, it: "InkHighlight",
+        rect: [1, 1, 8, 8], rotation: 0,
+        color: new Uint8ClampedArray([255, 220, 0]), opacity: 1,
+        borderStyle: { rawWidth: 1 },
+        inkLists: [new Float32Array([2, 3]), new Float32Array([4, 5, 6, 7, 8, 9])],
+      },
+    ],
+  ];
+  const pdfDocument = {
+    numPages: pages.length,
+    async getPage(pageNumber) {
+      calls.push(`page:${pageNumber}`);
+      return {
+        async getAnnotations(options) {
+          calls.push(`annotations:${pageNumber}:${options.intent}`);
+          return pages[pageNumber - 1];
+        },
+      };
+    },
+  };
+
+  const targets = await controller.scanEmbeddedDeletionTargets(pdfDocument, "doc-7", {
+    resolveUuid: (ref, page) => ref === "10R" && page === 0 ? "existing-uuid" : null,
+  });
+  pages[0][0].inkLists[0][0] = 999;
+  pages[0][0].color[0] = 99;
+
+  assert.deepEqual(calls, [
+    "page:1", "annotations:1:any", "page:2", "annotations:2:any",
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets.map((target) => [
+    target.kind, target.pageIndex, target.ref, target.uuid,
+  ]))), [
+    ["Ink", 0, "10R", "existing-uuid"],
+    ["Highlight", 0, "11R", "embedded-v1:doc-7:0:11R"],
+    ["InkHighlight", 0, "12R", "embedded-v1:doc-7:0:12R"],
+    ["Square", 0, "13R", "embedded-v1:doc-7:0:13R"],
+    ["Underline", 0, "14R", "embedded-v1:doc-7:0:14R"],
+    ["FreeText", 0, "15R", "embedded-v1:doc-7:0:15R"],
+    ["InkHighlight", 0, "19R", "embedded-v1:doc-7:0:19R"],
+    ["Square", 1, "20R", "embedded-v1:doc-7:1:20R"],
+    ["Square", 1, "21R", "embedded-v1:doc-7:1:21R"],
+    ["Ink", 1, "22R", "embedded-v1:doc-7:1:22R"],
+    ["InkHighlight", 1, "23R", "embedded-v1:doc-7:1:23R"],
+  ]);
+  const inkPayload = JSON.parse(JSON.stringify(targets[0].editorPayload));
+  assert.deepEqual(inkPayload, {
+    annotationType: 15,
+    pageIndex: 0,
+    rect: [1, 2, 30, 40],
+    rotation: 0,
+    color: [12, 34, 56],
+    annotationElementId: "10R",
+    id: "10R",
+    deleted: false,
+    opacity: 0.5,
+    thickness: 2,
+    paths: { points: [[1, 2, 3, 4]] },
+    boxes: null,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[1].editorPayload)).quadPoints, [
+    0, 20, 20, 20, 0, 0, 20, 0,
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[2].editorPayload)).inkLists, [[2, 3, 4, 5]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[3].editorPayload)).color, [0, 0, 0]);
+  assert.equal(targets[4].editorPayload.thickness, 0.5);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[5].editorPayload)), {
+    annotationType: 3,
+    pageIndex: 0,
+    rect: [1, 2, 30, 40],
+    rotation: 0,
+    color: [5, 6, 7],
+    annotationElementId: "15R",
+    id: "15R",
+    deleted: false,
+    fontSize: 11,
+    value: "Principles annotation",
+    position: [4, 5],
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[6].editorPayload)), {
+    annotationType: 9,
+    pageIndex: 0,
+    rect: [1, 2, 30, 40],
+    rotation: 0,
+    color: [255, 240, 0],
+    annotationElementId: "19R",
+    id: "19R",
+    deleted: false,
+    opacity: 1,
+    thickness: 1.5,
+    inkLists: [[6, 7, 8, 9]],
+    boxes: null,
+  });
+  assert.equal(targets[7].editorPayload.rotation, 0);
+  assert.equal(targets[7].editorPayload.opacity, 0);
+  assert.equal(targets[7].editorPayload.thickness, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[9].editorPayload.paths.points)), [[100, 200]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets[10].editorPayload.inkLists)), [
+    [2, 3], [4, 5, 6, 7, 8, 9],
+  ]);
+  assert.ok(targets.every((target) => target.source === "embedded"));
+});
+
+test("embedded deletion scan accepts one page and rejects malformed geometry without guessing", async () => {
+  const controller = createController();
+  const requestedPages = [];
+  const pdfDocument = {
+    numPages: 3,
+    async getPage(pageNumber) {
+      requestedPages.push(pageNumber);
+      return {
+        async getAnnotations() {
+          return [{
+            id: "30R0", annotationType: 15, rect: [1, 2, 3, 4], rotation: 0,
+            color: [1, 2, 3], opacity: 1, borderStyle: { rawWidth: 1 },
+            inkLists: [[1, 2, 3]],
+          }, {
+            id: "31R0", annotationType: 5, rect: [1, 2, 1, 4], rotation: 0,
+            color: [1, 2, 3], opacity: 1, borderStyle: { rawWidth: 1 },
+          }];
+        },
+      };
+    },
+  };
+
+  const targets = await controller.scanEmbeddedDeletionTargets(pdfDocument, "doc", {
+    pageIndex: 2,
+  });
+  assert.deepEqual(requestedPages, [3]);
+  assert.deepEqual(JSON.parse(JSON.stringify(targets)), []);
+  await assert.rejects(
+    controller.scanEmbeddedDeletionTargets(pdfDocument, "doc", { pageIndex: 3 }),
+    (error) => error.name === "RangeError",
+  );
+});
+
+test("embedded deletion scanning aborts after each awaited step when the PDF session changes", async () => {
+  const controller = createController();
+  const annotation = {
+    id: "40R0", annotationType: 5, rect: [1, 2, 3, 4], rotation: 0,
+    color: [1, 2, 3], opacity: 1, borderStyle: { rawWidth: 1 },
+  };
+  const staleError = (promise) => assert.rejects(promise, (error) =>
+    error.name === "AbortError" && error.code === "ERR_ANNOTATION_SCAN_STALE_SESSION",
+  );
+
+  let current = true;
+  let annotationReads = 0;
+  const staleDuringPage = {
+    numPages: 1,
+    getPage() {
+      return Promise.resolve().then(() => {
+        current = false;
+        return { getAnnotations: async () => { annotationReads += 1; return [annotation]; } };
+      });
+    },
+  };
+  await staleError(controller.scanEmbeddedDeletionTargets(staleDuringPage, "doc", {
+    isCurrent: () => current,
+  }));
+  assert.equal(annotationReads, 0);
+
+  current = true;
+  const staleDuringAnnotations = {
+    numPages: 1,
+    async getPage() {
+      return {
+        getAnnotations() {
+          return Promise.resolve().then(() => {
+            current = false;
+            return [annotation];
+          });
+        },
+      };
+    },
+  };
+  await staleError(controller.scanEmbeddedDeletionTargets(staleDuringAnnotations, "doc", {
+    isCurrent: () => current,
+  }));
+
+  current = true;
+  const stablePdf = {
+    numPages: 1,
+    async getPage() {
+      return { getAnnotations: async () => [annotation] };
+    },
+  };
+  await staleError(controller.scanEmbeddedDeletionTargets(stablePdf, "doc", {
+    isCurrent: () => current,
+    resolveUuid: () => Promise.resolve().then(() => {
+      current = false;
+      return "known";
+    }),
+  }));
+});
+
 test("bulk deletion submits one PDF.js undoable command for the exact target editors", async () => {
   const selected = new Set();
   let deleted = null;
@@ -313,4 +589,16 @@ test("pointer cancellation delegates cleanup to the matching PDF.js owner", () =
   }), true);
   assert.equal(controller.cancelPointerSession({ pointerId: 7, button: 0, pointerType: "mouse" }), true);
   assert.deepEqual(actions, ["wheel-3", "erase-cancel", "draw-true", "transform-6"]);
+});
+
+test("embedded rendering mask composes with native changes and can be cleared without writes", () => {
+  const controller = createController();
+  const nativeIds = new Set(["12R"]);
+  const storage = { get modifiedIds() { return { ids: nativeIds, hash: "12R" }; } };
+  assert.equal(controller.setEmbeddedDeletionMask(storage, ["10R"]), true);
+  assert.deepEqual([...storage.modifiedIds.ids].sort(), ["10R", "12R"]);
+  assert.equal(controller.setEmbeddedDeletionMask(storage, ["10R"]), false);
+  assert.deepEqual([...nativeIds], ["12R"]);
+  assert.equal(controller.setEmbeddedDeletionMask(storage, []), true);
+  assert.equal(storage.modifiedIds.ids, nativeIds);
 });
