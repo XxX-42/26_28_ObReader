@@ -2421,6 +2421,10 @@ class PdfReaderView extends EditableFileView {
       // confirmed by the host. Keep all editing disabled until the verified
       // external-annotations-update handshake arrives.
       readOnly: true,
+      // initializeView verified these exact bytes against the stored source.
+      // Allow the Viewer to suppress confirmed deletions before its first draw.
+      sourceHashConfirmed: this.annotationSourceMismatch === false &&
+        this.annotationLegacyIdentityUncertain !== true && this.annotationSyncPending !== true,
       externalAnnotations: this.annotationHydrationAllowed === false
         ? { ...this.annotationSyncState, annotations: [] }
         : this.annotationSyncState,

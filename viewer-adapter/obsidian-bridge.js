@@ -8098,6 +8098,24 @@
       });
   }
 
+  function installInitialDeletionMask(app, session, snapshot, sourceHashConfirmed) {
+    const viewer = app.pdfViewer;
+    if (sourceHashConfirmed !== true || !viewer || typeof viewer.setDocument !== "function") return () => {};
+    const refs = snapshot.annotations.filter(row => row.deleted && row.embeddedRef).map(row => row.embeddedRef);
+    if (!refs.length) return () => {};
+    const original = viewer.setDocument;
+    const wrapped = function (pdfDocument, ...args) {
+      if (pdfDocument && state.openSession === session && !session.signal.aborted &&
+          snapshot.source?.pageCount === pdfDocument.numPages) {
+        state.annotationController?.setEmbeddedDeletionMask?.(pdfDocument.annotationStorage, refs);
+        runtimeLogRecord("external-annotation.before-first-render", { deletedReferences: refs.length });
+      }
+      return original.call(this, pdfDocument, ...args);
+    };
+    viewer.setDocument = wrapped;
+    return () => { if (viewer.setDocument === wrapped) viewer.setDocument = original; };
+  }
+
   function createOpenSession(documentId) {
     const controller = new AbortController();
     return {
@@ -8389,7 +8407,8 @@
       state.activeDocumentPath = null;
       state.activeFilename = null;
       state.activeOpenRequest = null;
-      state.readOnly = false;
+      state.readOnly = true;
+      setReadOnlyState(true);
       state.dirty = false;
       syncBridgeControls();
       state.editorHistory.canUndo = false;
@@ -8410,19 +8429,25 @@
       if (typeof state.pdfJsOpen !== "function") {
         throw new Error("PDF.js open handler is unavailable.");
       }
+      const provisionalExternal = validateExternalAnnotations(message.externalAnnotations);
+      const restoreSetDocument = installInitialDeletionMask(app, session, provisionalExternal, message.sourceHashConfirmed);
       const parseStartedAt = performance.now();
       session.previousLoadingTask = app.pdfLoadingTask;
       session.previousPdfDocument = app.pdfDocument;
-      session.pdfJsOpenPromise = Promise.resolve(
-        state.pdfJsOpen.call(app, {
-          data,
-          filename,
-          sourceKind: "generic-source",
-          localSessionId: null,
-          canOverwriteOriginal: false,
-        }),
-      );
-      await waitForOpenSession(session.pdfJsOpenPromise, session);
+      try {
+        session.pdfJsOpenPromise = Promise.resolve(
+          state.pdfJsOpen.call(app, {
+            data,
+            filename,
+            sourceKind: "generic-source",
+            localSessionId: null,
+            canOverwriteOriginal: false,
+          }),
+        );
+        await waitForOpenSession(session.pdfJsOpenPromise, session);
+      } finally {
+        restoreSetDocument();
+      }
       session.loadingTask = app.pdfLoadingTask;
       const parsedAt = performance.now();
 
@@ -8450,7 +8475,6 @@
         (typeof message.deviceId === "string" && message.deviceId) ||
         (typeof message.actorId === "string" && message.actorId) ||
         state.syncActorId;
-      const provisionalExternal = validateExternalAnnotations(message.externalAnnotations);
       state.externalSource = provisionalExternal.source;
       state.compactInkEncoding = provisionalExternal.compactInkEncoding === true;
       applyLegacyAnnotationIdentities(provisionalExternal.legacyIdentities);

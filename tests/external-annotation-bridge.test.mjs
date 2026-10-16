@@ -563,3 +563,31 @@ test("hydration teardown retains exact runtime binding while a native deletion r
   assert.equal(scope.state.annotationUuidByRuntimeId.size,0);
   assert.equal(scope.state.annotationRefByRuntimeId.size,0);
 });
+
+test("confirmed deletion masks are installed before PDF.js receives the document, with source and session guards", () => {
+  const helper=functionSource("installInitialDeletionMask");
+  const scope=vm.runInThisContext(`(() => {
+    const calls=[];const state={annotationController:{setEmbeddedDeletionMask(storage,refs){calls.push(["mask",storage,refs]);}}};
+    const session={signal:{aborted:false}};state.openSession=session;
+    const original=function(doc){calls.push(["setDocument",doc]);return "native-result";};
+    const app={pdfViewer:{setDocument:original}};
+    function runtimeLogRecord(){}
+    ${helper}
+    return {state,session,app,original,calls,installInitialDeletionMask};
+  })()`);
+  const snapshot={source:{pageCount:1},annotations:[{deleted:true,embeddedRef:"2189R"},{deleted:false,embeddedRef:"2190R"}]};
+  const doc={numPages:1,annotationStorage:{}};
+  const restore=scope.installInitialDeletionMask(scope.app,scope.session,snapshot,true);
+  assert.equal(scope.app.pdfViewer.setDocument(doc),"native-result");
+  assert.equal(scope.calls[0][0],"mask");assert.deepEqual(scope.calls[0][2],["2189R"]);
+  assert.equal(scope.calls[1][0],"setDocument");restore();assert.equal(scope.app.pdfViewer.setDocument,scope.original);
+  scope.calls.length=0;
+  const noTrust=scope.installInitialDeletionMask(scope.app,scope.session,snapshot,false);
+  scope.app.pdfViewer.setDocument(doc);assert.equal(scope.calls[0][0],"setDocument");noTrust();
+  scope.calls.length=0;
+  const stale=scope.installInitialDeletionMask(scope.app,scope.session,snapshot,true);scope.session.signal.aborted=true;
+  scope.app.pdfViewer.setDocument(doc);assert.equal(scope.calls[0][0],"setDocument");stale();
+  scope.calls.length=0;scope.session.signal.aborted=false;
+  const wrongPageCount=scope.installInitialDeletionMask(scope.app,scope.session,snapshot,true);
+  scope.app.pdfViewer.setDocument({...doc,numPages:2});assert.equal(scope.calls[0][0],"setDocument");wrongPageCount();
+});

@@ -127,7 +127,7 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     assert.equal(Object.keys(sidecar.annotations).length,0,"this fixture expects an already-deleted document");
   }
   const beforeHash = crypto.createHash("sha256").update(bytes).digest("hex");
-  const bridge = await readBridgeRuntimeSource();
+  const bridge = await readBridgeRuntimeSource(process.env.PDF_READER_BRIDGE_SOURCE || undefined);
   const vendor = path.join(root, "vendor/pdfjs-generic-legacy");
   const viewerHtml = (await readFile(path.join(vendor, "web/viewer.html"), "utf8")).replace(
     '<script src="viewer.mjs" type="module"></script>',
@@ -137,11 +137,11 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     window.host={rows,errors:[],saves:0,opened:0};
     const snapshot=()=>({schemaVersion:1,kind:'pdf-annotation-snapshot',documentId:${JSON.stringify(documentId)},source:identity&&{sourceHash:'xxh64-v1:test',pageCount:identity.pageCount,orderedPageIdentities:identity.orderedPageIdentities},annotations:[...rows.values()],legacyIdentities:[]});
     const send=(data)=>frame.contentWindow.postMessage({channel:'pdf-web-reader',token:'embedded-bulk',documentId:${JSON.stringify(documentId)},openRequest:sequence,...data},'*');
-    window.reopen=async()=>{sequence++;const data=await fetch('/source.pdf').then(r=>r.arrayBuffer());send({type:'open',data,filename:'native.pdf',autoSave:false,externalAnnotations:identity?snapshot():null});};
+    window.reopen=async()=>{sequence++;const data=await fetch('/source.pdf').then(r=>r.arrayBuffer());send({type:'open',data,filename:'native.pdf',autoSave:false,sourceHashConfirmed:!!identity,externalAnnotations:identity?snapshot():null});};
     addEventListener('message',event=>{if(event.source!==frame.contentWindow)return;const m=event.data;if(m?.token!=='embedded-bulk')return;
       if(m.type==='ready'&&!sequence)void reopen();
       if(m.type==='opened')host.opened++;
-      if(m.type==='annotation-source-identity'){identity=m;send({type:'external-annotations-update',identityConfirmed:true,sourceMatch:'MATCH',externalAnnotations:snapshot()});}
+      if(m.type==='annotation-source-identity'){identity=m;const update={type:'external-annotations-update',identityConfirmed:true,sourceMatch:'MATCH',externalAnnotations:snapshot()};if(sequence>1)setTimeout(()=>send(update),350);else send(update);}
       if(m.type==='save'){for(const op of m.operations||[])rows.set(op.uuid,{uuid:op.uuid,kind:op.kind,pageIndex:op.pageIndex,embeddedRef:op.embeddedRef,deleted:op.deleted,clock:op.clock,...(!op.deleted?{payload:op.payload}:{})});host.saves++;send({type:'saved',external:true,requestId:m.requestId,revision:m.revision,operationCount:m.operations.length,batchId:'test-batch'});}
       if(m.type==='error')host.errors.push(m.message);
     });</script>`;
@@ -215,9 +215,21 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     await new Promise(resolve=>setTimeout(resolve,100));
     const after=await pixel();
     assert.ok(after.every(c=>c>240),`native AP must disappear immediately: ${after}`);
+    await viewer.evaluate(()=>{
+      window.__reopenPaints=[];
+      PDFViewerApplication.eventBus._on('pagerendered',({pageNumber})=>{
+        if(pageNumber!==1)return;
+        const pv=PDFViewerApplication.pdfViewer.getPageView(0);if(!pv?.canvas)return;
+        const [x,y]=pv.viewport.convertToViewportPoint(65,65);
+        window.__reopenPaints.push([...pv.canvas.getContext('2d').getImageData(Math.floor(x*pv.outputScale.sx),Math.floor(y*pv.outputScale.sy),1,1).data].slice(0,3));
+      });
+    });
     await page.evaluate(()=>reopen());await page.waitForFunction(()=>host.opened===2);
     await viewer.waitForFunction(()=>PDFViewerApplication.pdfViewer.getPageView(0)?.renderingState===3&&!document.documentElement.hasAttribute('data-pdf-reader-readonly'));
     const reopened=await pixel();assert.ok(reopened.every(c=>c>240),`native AP must not return: ${reopened}`);
+    const firstPaints=await viewer.evaluate(()=>window.__reopenPaints);
+    assert.ok(firstPaints.length>0,'record actual first native canvas render');
+    assert.ok(firstPaints.every(rgb=>rgb.every(c=>c>240)),`deleted AP must never be painted, including the first frame: ${JSON.stringify(firstPaints)}`);
     assert.equal(await viewer.$$eval('.annotationLayer .linkAnnotation',nodes=>nodes.filter(n=>getComputedStyle(n).display!=='none').length),1,'native PDF link remains');
     await viewer.click('#editorInkButton');
     await new Promise(resolve=>setTimeout(resolve,150));
@@ -226,6 +238,6 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     assert.equal(await page.evaluate(()=>[...host.rows.values()].filter(r=>r.deleted).length),2);
     assert.deepEqual(await page.evaluate(()=>host.errors),[]);
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),beforeHash);
-    console.log(JSON.stringify({before,after,reopened,deleted:2,linksPreserved:1,sourceUnchanged:true}));
+    console.log(JSON.stringify({before,after,reopened,firstPaints,deleted:2,linksPreserved:1,sourceUnchanged:true}));
   } finally {await cleanupBrowserTestResources({browser,ownedPages:browser?await browser.pages():[],server});}
 });

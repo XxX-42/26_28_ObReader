@@ -1,0 +1,24 @@
+{
+  "file": "PDF Reader diagnostics 2026-10-16T08-38-44-641Z e1444f31.json",
+  "sha256": "34032fc37190cbda9c3ba6c2d178453826416c4c7e5da61fc86e809651341958",
+  "version": "0.8.8",
+  "exportedAt": "2026-10-16T08:38:44.641Z",
+  "platform": {
+    "mobile": true,
+    "loaderMode": "mobile-blob"
+  },
+  "currentSession": "2026-10-16T08-35-54-776Z-9h6pu0a0",
+  "currentWindowErrors": {
+    "null is not an object (evaluating 'view.editor')": 9
+  },
+  "historicalErrorEvents": 4729,
+  "complete": false,
+  "currentWindowRecordCount": 10700,
+  "readerStartup": {
+    "resourcesMs": 0,
+    "modulesMs": 224,
+    "openMs": 1416,
+    "pdfParseMs": 213,
+    "firstPageAnnotationLayerMs": 659
+  }
+}

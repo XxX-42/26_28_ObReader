@@ -1,0 +1,19 @@
+{
+  "backup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/first-render-clean-1792140337111",
+  "pdfBefore": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "files": {
+    "main.js": {
+      "sha256": "3060683701140de67e724b80222ecf69ceb6bca0ccc7ab7126458c42adcb3912",
+      "bytes": 7320455
+    },
+    "manifest.json": {
+      "sha256": "5d60b9c25f2c36337def87d9025ca67b5134cb1e3de7e68b4445cbfaf4958a40",
+      "bytes": 269
+    },
+    "styles.css": {
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650",
+      "bytes": 637
+    }
+  },
+  "pdfAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"
+}
