@@ -67,7 +67,7 @@
     dirty: false,
     nativeTouchPointers: new Map(),
     fingerTextSelectionSuppressionOwned: false,
-    manualMomentum: null,
+    viewportController: null,
     pendingPenHighlight: null,
     lastTouchClickPage: null,
     lastPenPanClickPage: null,
@@ -6418,26 +6418,8 @@
     event.stopImmediatePropagation();
   }
 
-  const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 80;
-  const MANUAL_INERTIA_MAX_SAMPLES = 128;
-  const MANUAL_INERTIA_MAX_SPEED = 4;
-  const MANUAL_INERTIA_START_SPEED = 0.09;
-  const MANUAL_INERTIA_STOP_SPEED = 0.01;
-  const MANUAL_INERTIA_DECAY_MS = 350;
-  const MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS = 8;
-  const MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS = 5000;
-
-  function prefersReducedMotion() {
-    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-  }
-
   function cancelManualMomentum() {
-    const momentum = state.manualMomentum;
-    if (!momentum) {
-      return;
-    }
-    cancelAnimationFrame(momentum.frame);
-    state.manualMomentum = null;
+    state.viewportController?.cancelMomentum();
   }
 
   function onManualDocumentVisibilityChange() {
@@ -6454,280 +6436,19 @@
   }
 
   function manualPointerEventTime(pointer, event, now = performance.now()) {
-    const eventTime = event?.timeStamp;
-    let time = Number.isFinite(eventTime) &&
-        eventTime >= 0 &&
-        eventTime <= now &&
-        now - eventTime <= MANUAL_INERTIA_TIMESTAMP_TOLERANCE_MS
-      ? eventTime
-      : now;
-    const previousTime = pointer?.scrollSamples?.at(-1)?.time;
-    if (Number.isFinite(previousTime) && time < previousTime) {
-      time = Math.max(previousTime, now);
-    }
-    return time;
+    return state.viewportController?.eventTime(pointer, event, now) ?? now;
   }
 
   function rememberManualScroll(pointer, time = performance.now()) {
-    if (pointer.pointerType !== "touch") {
-      return;
-    }
-    const sample = {
-      time: Number.isFinite(time) ? time : performance.now(),
-      scrollTop: pointer.container.scrollTop,
-      scrollLeft: pointer.container.scrollLeft,
-    };
-    const previous = pointer.scrollSamples[pointer.scrollSamples.length - 1];
-    const moved = previous && (
-      Math.abs(sample.scrollTop - previous.scrollTop) >= 0.01 ||
-      Math.abs(sample.scrollLeft - previous.scrollLeft) >= 0.01
-    );
-    if (previous && sample.time < previous.time) {
-      sample.time = previous.time;
-    }
-    if (previous && sample.time === previous.time) {
-      pointer.scrollSamples[pointer.scrollSamples.length - 1] = sample;
-    } else {
-      pointer.scrollSamples.push(sample);
-    }
-    if (moved) {
-      pointer.lastMotionAt = sample.time;
-    }
-    const oldestRecentTime = sample.time - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
-    while (
-      pointer.scrollSamples.length > 1 &&
-      pointer.scrollSamples[1].time < oldestRecentTime
-    ) {
-      pointer.scrollSamples.shift();
-    }
-    if (pointer.scrollSamples.length > MANUAL_INERTIA_MAX_SAMPLES) {
-      pointer.scrollSamples.splice(
-        0,
-        pointer.scrollSamples.length - MANUAL_INERTIA_MAX_SAMPLES,
-      );
-    }
+    state.viewportController?.rememberScroll(pointer, time);
   }
 
   function touchReleaseVelocity(pointer, now = performance.now()) {
-    if (
-      pointer.pointerType !== "touch" ||
-      !pointer.moved ||
-      pointer.blockedByPen ||
-      pointer.blockedByOtherPointer ||
-      pointer.blockedByVisibility ||
-      !Number.isFinite(pointer.lastMotionAt) ||
-      now < pointer.lastMotionAt ||
-      now - pointer.lastMotionAt > MANUAL_INERTIA_SAMPLE_WINDOW_MS
-    ) {
-      return null;
-    }
-    const windowStart = now - MANUAL_INERTIA_SAMPLE_WINDOW_MS;
-    const samples = pointer.scrollSamples.filter((sample) =>
-      Number.isFinite(sample.time) &&
-      sample.time >= windowStart &&
-      sample.time <= now &&
-      Number.isFinite(sample.scrollTop) &&
-      Number.isFinite(sample.scrollLeft)
-    );
-    const firstRecent = samples[0];
-    const predecessor = [...pointer.scrollSamples].reverse().find((sample) =>
-      Number.isFinite(sample.time) &&
-      sample.time < windowStart &&
-      Number.isFinite(sample.scrollTop) &&
-      Number.isFinite(sample.scrollLeft)
-    );
-    if (
-      predecessor &&
-      firstRecent &&
-      firstRecent.time > windowStart &&
-      firstRecent.time - predecessor.time <= MANUAL_INERTIA_SAMPLE_WINDOW_MS
-    ) {
-      const fraction = (windowStart - predecessor.time) /
-        (firstRecent.time - predecessor.time);
-      samples.unshift({
-        time: windowStart,
-        scrollLeft: predecessor.scrollLeft +
-          (firstRecent.scrollLeft - predecessor.scrollLeft) * fraction,
-        scrollTop: predecessor.scrollTop +
-          (firstRecent.scrollTop - predecessor.scrollTop) * fraction,
-      });
-    }
-    if (samples.length < 2) {
-      return null;
-    }
-    const first = samples[0];
-    const last = samples[samples.length - 1];
-    if (last.time - first.time < MANUAL_INERTIA_MIN_SAMPLE_SPAN_MS) {
-      return null;
-    }
-    let weightSum = 0;
-    let weightedTime = 0;
-    let weightedLeft = 0;
-    let weightedTop = 0;
-    for (const sample of samples) {
-      const weight = Math.exp(
-        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
-      );
-      const relativeTime = sample.time - now;
-      weightSum += weight;
-      weightedTime += weight * relativeTime;
-      weightedLeft += weight * sample.scrollLeft;
-      weightedTop += weight * sample.scrollTop;
-    }
-    if (weightSum <= 0) {
-      return null;
-    }
-    const meanTime = weightedTime / weightSum;
-    const meanLeft = weightedLeft / weightSum;
-    const meanTop = weightedTop / weightSum;
-    let timeVariance = 0;
-    let leftCovariance = 0;
-    let topCovariance = 0;
-    for (const sample of samples) {
-      const weight = Math.exp(
-        -(now - sample.time) / (MANUAL_INERTIA_SAMPLE_WINDOW_MS / 2),
-      );
-      const timeOffset = sample.time - now - meanTime;
-      timeVariance += weight * timeOffset * timeOffset;
-      leftCovariance += weight * timeOffset * (sample.scrollLeft - meanLeft);
-      topCovariance += weight * timeOffset * (sample.scrollTop - meanTop);
-    }
-    if (timeVariance <= 0) {
-      return null;
-    }
-    const velocity = {
-      x: leftCovariance / timeVariance,
-      y: topCovariance / timeVariance,
-    };
-    const speed = Math.hypot(velocity.x, velocity.y);
-    if (speed > MANUAL_INERTIA_MAX_SPEED) {
-      velocity.x *= MANUAL_INERTIA_MAX_SPEED / speed;
-      velocity.y *= MANUAL_INERTIA_MAX_SPEED / speed;
-    }
-    if (
-      Math.hypot(velocity.x, velocity.y) < MANUAL_INERTIA_START_SPEED ||
-      prefersReducedMotion()
-    ) {
-      return null;
-    }
-    return velocity;
+    return state.viewportController?.releaseVelocity(pointer, now) ?? null;
   }
 
   function startManualMomentum(pointer, now = performance.now()) {
-    if (
-      !iosInputPolicy ||
-      manualPointerCount() > 0 ||
-      document.visibilityState === "hidden" ||
-      !manualPointerSessionCurrent(pointer)
-    ) {
-      return;
-    }
-    const velocity = touchReleaseVelocity(pointer, now);
-    if (!velocity) {
-      return;
-    }
-    cancelManualMomentum();
-    const momentum = {
-      container: pointer.container,
-      pdfDocument: pointer.pdfDocument,
-      documentId: pointer.documentId,
-      openRequest: pointer.openRequest,
-      rendererGeneration: pointer.rendererGeneration,
-      velocityX: velocity.x,
-      velocityY: velocity.y,
-      targetLeft: pointer.container.scrollLeft,
-      targetTop: pointer.container.scrollTop,
-      lastFrameTime: now,
-      frame: 0,
-    };
-    state.manualMomentum = momentum;
-    const tick = (frameTime) => {
-      if (state.manualMomentum !== momentum) {
-        return;
-      }
-      if (
-        prefersReducedMotion() ||
-        document.visibilityState === "hidden"
-      ) {
-        cancelManualMomentum();
-        return;
-      }
-      if (!manualPointerSessionCurrent(momentum)) {
-        cancelManualMomentum();
-        return;
-      }
-      if (!Number.isFinite(frameTime)) {
-        cancelManualMomentum();
-        return;
-      }
-      const elapsed = Math.max(0, frameTime - momentum.lastFrameTime);
-      momentum.lastFrameTime = Math.max(momentum.lastFrameTime, frameTime);
-      const speed = Math.hypot(momentum.velocityX, momentum.velocityY);
-      const timeToStop = speed > MANUAL_INERTIA_STOP_SPEED
-        ? MANUAL_INERTIA_DECAY_MS * Math.log(
-          speed / MANUAL_INERTIA_STOP_SPEED,
-        )
-        : 0;
-      const activeElapsed = Math.min(elapsed, timeToStop);
-      if (activeElapsed > 0) {
-        const decay = Math.exp(-activeElapsed / MANUAL_INERTIA_DECAY_MS);
-        const travelFactor = MANUAL_INERTIA_DECAY_MS * (1 - decay);
-        const requestedX = momentum.velocityX * travelFactor;
-        const requestedY = momentum.velocityY * travelFactor;
-        const previousLeft = momentum.container.scrollLeft;
-        const previousTop = momentum.container.scrollTop;
-        const maxLeft = Math.max(
-          0,
-          momentum.container.scrollWidth - momentum.container.clientWidth,
-        );
-        const maxTop = Math.max(
-          0,
-          momentum.container.scrollHeight - momentum.container.clientHeight,
-        );
-        momentum.targetLeft += requestedX;
-        momentum.targetTop += requestedY;
-        momentum.container.scrollLeft = momentum.targetLeft;
-        momentum.container.scrollTop = momentum.targetTop;
-        const movedX = momentum.container.scrollLeft - previousLeft;
-        const movedY = momentum.container.scrollTop - previousTop;
-        const atXBoundary = requestedX > 0
-          ? momentum.container.scrollLeft >= maxLeft - 1
-          : requestedX < 0 && momentum.container.scrollLeft <= 1;
-        const atYBoundary = requestedY > 0
-          ? momentum.container.scrollTop >= maxTop - 1
-          : requestedY < 0 && momentum.container.scrollTop <= 1;
-        if (
-          Math.sign(movedX) !== Math.sign(requestedX) &&
-          Math.abs(movedX) > 0.01
-        ) {
-          momentum.velocityX = 0;
-        } else if (atXBoundary) {
-          momentum.velocityX = 0;
-          momentum.targetLeft = momentum.container.scrollLeft;
-        } else {
-          momentum.velocityX *= decay;
-        }
-        if (
-          Math.sign(movedY) !== Math.sign(requestedY) &&
-          Math.abs(movedY) > 0.01
-        ) {
-          momentum.velocityY = 0;
-        } else if (atYBoundary) {
-          momentum.velocityY = 0;
-          momentum.targetTop = momentum.container.scrollTop;
-        } else {
-          momentum.velocityY *= decay;
-        }
-      }
-      if (activeElapsed < elapsed ||
-        Math.hypot(momentum.velocityX, momentum.velocityY) <=
-          MANUAL_INERTIA_STOP_SPEED) {
-        cancelManualMomentum();
-        return;
-      }
-      momentum.frame = requestAnimationFrame(tick);
-    };
-    momentum.frame = requestAnimationFrame(tick);
+    state.viewportController?.startMomentum(pointer, now);
   }
 
   function startManualPointer(event, pointerType) {
@@ -6820,25 +6541,7 @@
     ) {
       return;
     }
-    pointer.lastX = event.clientX;
-    pointer.lastY = event.clientY;
-    if (!pointer.moved) {
-      pointer.moved = Math.hypot(
-        event.clientX - pointer.startX,
-        event.clientY - pointer.startY,
-      ) >= 3;
-    }
-    if (!pointer.moved) {
-      return;
-    }
-    pointer.container.scrollTop = pointer.startScrollTop -
-      (event.clientY - pointer.startY);
-    pointer.container.scrollLeft = pointer.startScrollLeft -
-      (event.clientX - pointer.startX);
-    rememberManualScroll(
-      pointer,
-      eventTime ?? manualPointerEventTime(pointer, event),
-    );
+    state.viewportController?.applyPan(pointer, event, eventTime);
   }
 
   function finishManualPointer(pointerId, event = null, { cancel = false } = {}) {
@@ -7543,6 +7246,22 @@
     if (state.pointerAbortController || state.disposed) {
       return;
     }
+    state.viewportController = iosInputPolicy
+      ? new window.PdfReaderInputRuntime.ViewportController({
+        canPan(pointer) {
+          return !pointer.blockedByPen &&
+            !pointer.blockedByOtherPointer &&
+            !pointer.blockedByVisibility &&
+            manualPointerSessionCurrent(pointer);
+        },
+        canStartMomentum(pointer) {
+          return iosInputPolicy &&
+            manualPointerCount() === 0 &&
+            manualPointerSessionCurrent(pointer);
+        },
+        getVisibilityState: () => document.visibilityState,
+      })
+      : null;
     const legacyListeners = new Map([
       ["pointerdown", onBridgePointerDown],
       ["pointermove", onBridgePointerMove],
@@ -9720,6 +9439,8 @@
     cleanupStorageObserver();
     state.eventAbortController?.abort();
     state.eventAbortController = null;
+    state.viewportController?.dispose();
+    state.viewportController = null;
     state.inputRouter?.stop();
     state.inputRouter = null;
     state.pointerAbortController = null;

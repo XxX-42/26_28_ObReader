@@ -96,6 +96,26 @@ test("InteractionIntent contains value data and no DOM target or native event", 
   assert.doesNotMatch(intent, /nativeEvent|rawEvent|target:\s*event\.target/);
 });
 
+test("ViewportController owns motion math without depending on PDF, selection, or persistence", async () => {
+  const viewport = await source("viewport-controller.js");
+  assert.match(viewport, /class ViewportController/);
+  assert.match(viewport, /scrollTop/);
+  assert.match(viewport, /scrollLeft/);
+  assert.match(viewport, /requestFrame/);
+  for (const forbidden of [
+    "document.getSelection",
+    "setBaseAndExtent",
+    "highlightSelection",
+    "annotationStorage",
+    "appendOperations",
+    "Vault",
+    "sidecar",
+    "IOSInputPolicy",
+  ]) {
+    assert.ok(!viewport.includes(forbidden), `ViewportController must not contain ${forbidden}`);
+  }
+});
+
 test("DesktopInputPolicy only forwards established behavior and contains no iPad overrides", async () => {
   const desktop = await source("desktop-input-policy.js");
   assert.match(desktop, /forwardExistingBehavior/);
@@ -119,4 +139,6 @@ test("bridge delegates top-level listener installation to InputRouter", async ()
   assert.doesNotMatch(install, /addEventListener\(/);
   assert.doesNotMatch(bridge, /state\.(?:activePointers|manualPointers|penPolicyPointers)/);
   assert.doesNotMatch(bridge, /pointer\.captureTarget|manualPointer\.captureTarget/);
+  assert.doesNotMatch(bridge, /state\.manualMomentum/);
+  assert.match(bridge, /new window\.PdfReaderInputRuntime\.ViewportController/);
 });

@@ -24,6 +24,7 @@ const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guar
 const bundledRuntimeFileCount = 406;
 const inputRuntimeFiles = [
   "input/interaction-intent.js",
+  "input/viewport-controller.js",
   "input/desktop-input-policy.js",
   "input/ios-input-policy.js",
   "input/input-router.js",
