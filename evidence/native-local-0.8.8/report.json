@@ -1,0 +1,74 @@
+{
+  "version": "0.8.8",
+  "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "port": "64370",
+  "physicalIpadValidated": false,
+  "matrix": [
+    {
+      "mobile": false,
+      "identity": {
+        "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "version": "0.8.8",
+        "mobile": false
+      },
+      "initialModes": [
+        {
+          "mode": 15,
+          "live": 0
+        },
+        {
+          "mode": 9,
+          "live": 0
+        },
+        {
+          "mode": 0,
+          "live": 0
+        },
+        {
+          "mode": 15,
+          "live": 0
+        }
+      ],
+      "closeAfterSaveMs": 80,
+      "newAnnotationReopen": true,
+      "closeAfterDeleteMs": 80,
+      "deletedReopen": true,
+      "finalCloseMs": 373
+    },
+    {
+      "mobile": true,
+      "identity": {
+        "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "version": "0.8.8",
+        "mobile": true
+      },
+      "initialModes": [
+        {
+          "mode": 15,
+          "live": 0
+        },
+        {
+          "mode": 9,
+          "live": 0
+        },
+        {
+          "mode": 0,
+          "live": 0
+        },
+        {
+          "mode": 15,
+          "live": 0
+        }
+      ],
+      "closeAfterSaveMs": 362,
+      "newAnnotationReopen": true,
+      "closeAfterDeleteMs": 79,
+      "deletedReopen": true,
+      "finalCloseMs": 369
+    }
+  ],
+  "errors": [],
+  "originalPdfHashAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "testPdfHashAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+  "status": "passed"
+}

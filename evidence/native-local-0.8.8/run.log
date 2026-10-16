@@ -1,0 +1,20 @@
+{
+  "version": "0.8.8",
+  "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "port": "64370",
+  "physicalIpadValidated": false,
+  "matrix": [
+    {
+      "mobile": false,
+      "identity": {
+        "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "version": "0.8.8",
+        "mobile": false
+      },
+      "initialModes": []
+    }
+  ],
+  "errors": [],
+  "status": "failed",
+  "failure": "AssertionError [ERR_ASSERTION]: deleted source marks must remain absent\n\n11 !== 0\n\n    at file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-principles-tombstone.mjs:33:93"
+}
