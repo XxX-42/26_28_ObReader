@@ -4,6 +4,7 @@
   const WINDOW_EVENTS = Object.freeze([
     "touchstart",
     "touchmove",
+    "touchcancel",
     "pointerdown",
     "pointermove",
     "pointerup",
@@ -16,6 +17,7 @@
     "click",
     "dblclick",
     "contextmenu",
+    "selectstart",
     "wheel",
     "keydown",
     "blur",
@@ -121,7 +123,7 @@
       const signal = controller.signal;
       const eventTypes = this.includeTouchEvents
         ? WINDOW_EVENTS
-        : WINDOW_EVENTS.filter((type) => type !== "touchstart" && type !== "touchmove");
+        : WINDOW_EVENTS.filter((type) => !type.startsWith("touch"));
       for (const type of eventTypes) {
         this.targetWindow.addEventListener(type, (event) => {
           const intent = window.PdfReaderInputRuntime.createInteractionIntent(event);

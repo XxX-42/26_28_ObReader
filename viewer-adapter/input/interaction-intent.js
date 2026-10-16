@@ -86,6 +86,9 @@
       nativeActivationTarget: target.nativeActivationTarget === true,
       touchHasStylus: touchListHasStylus(event?.changedTouches) ||
         touchListHasStylus(event?.touches),
+      activeTouchCount: Number.isInteger(event?.touches?.length)
+        ? event.touches.length
+        : null,
       timestamp: Number.isFinite(event?.timeStamp) ? event.timeStamp : null,
       trusted: event?.isTrusted === true,
       key: event?.key === "Escape" ? "Escape" : null,

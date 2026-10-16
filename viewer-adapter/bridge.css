@@ -48,6 +48,16 @@ body {
   -webkit-touch-callout: none !important;
 }
 
+/* Read-mode Pencil keeps native WebKit scrolling, but the contact is not a
+   request to select OCR/text-layer content. Hold this guard only for the
+   lifetime of that Pencil pointer session. */
+:root[data-pdf-reader-ios-input-policy="true"].pdfReaderReadPenTextSelectionSuppressed #viewerContainer .textLayer,
+:root[data-pdf-reader-ios-input-policy="true"].pdfReaderReadPenTextSelectionSuppressed #viewerContainer .textLayer * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
 .pdfReaderBridgeStatus {
   position: fixed;
   z-index: 100001;

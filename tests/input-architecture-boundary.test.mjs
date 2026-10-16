@@ -128,7 +128,10 @@ test("iOS InputRouter owns non-passive touch compatibility events", async () => 
     includeTouchEvents: true,
   });
   router.start();
-  for (const type of ["touchstart", "touchmove"]) {
+  for (const type of ["touchstart", "touchmove", "touchcancel"]) {
+    assert.equal(optionsByType.get(type).capture, true,
+      `${type} must be observed at the iOS policy boundary`);
+    if (type === "touchcancel") continue;
     assert.deepEqual(
       { capture: optionsByType.get(type).capture, passive: optionsByType.get(type).passive },
       { capture: true, passive: false },
@@ -140,8 +143,14 @@ test("iOS InputRouter owns non-passive touch compatibility events", async () => 
       stopImmediatePropagation() {},
     });
   }
+  listeners.get("touchcancel")({
+    type: "touchcancel",
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  });
   assert.deepEqual(routed.map(([type]) => type), [
     "touchstart", "forward:touchstart", "touchmove", "forward:touchmove",
+    "touchcancel", "forward:touchcancel",
   ]);
   assert.equal(typeof routed[0][1].preventDefault, "function");
   router.stop();
@@ -399,7 +408,7 @@ test("IOSDirectManipulationController delegates page touch and read-mode Pencil 
     "preparePointerDown(intent)",
     "routePointerDown(intent, controls",
     "startNativeTouchPointer(intent, controls)",
-    "clearNativeTouchPointer(pointerId)",
+    "clearNativeTouchPointer(pointerId, {",
     "onDocumentVisibilityChange()",
   ]) {
     assert.ok(direct.includes(ownedBehavior), `iOS controller must own ${ownedBehavior}`);

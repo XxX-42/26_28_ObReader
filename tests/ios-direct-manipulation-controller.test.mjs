@@ -31,6 +31,7 @@ function createHarness() {
     rendererGeneration: 7,
   };
   const state = { editorMode: 0 };
+  const documentRef = { visibilityState: "visible" };
   const router = {
     get manualPointerCount() { return manual.size; },
     get penPolicyPointerCount() { return penPolicy.size; },
@@ -65,12 +66,17 @@ function createHarness() {
     setFingerTextSelectionSuppressionOwned: (value) => policyCalls.push(["suppress", value]),
     refreshFingerTextSelectionSuppression: () => policyCalls.push(["refresh"]),
     clearFingerTextSelectionSuppression: () => policyCalls.push(["clear-suppression"]),
+    clearReadPenSelectionSuppression: () => policyCalls.push(["clear-read-pen-suppression"]),
     rememberPanClickTarget: (type, target) => policyCalls.push(["click-target", type, target]),
     clearPanClickTargets: () => policyCalls.push(["clear-click-targets"]),
   };
   const target = { pageIndex: 0, targetRole: "viewer" };
   const windowRef = { PdfReaderInputRuntime: {} };
-  vm.runInNewContext(controllerSource, { window: windowRef, performance });
+  vm.runInNewContext(controllerSource, {
+    window: windowRef,
+    performance,
+    document: documentRef,
+  });
   const Controller = windowRef.PdfReaderInputRuntime.IOSDirectManipulationController;
   const controller = new Controller({
     getInputRouter: () => router,
@@ -83,7 +89,7 @@ function createHarness() {
     isAnnotationToolActive: () => state.editorMode !== 0,
     invalidatePendingPenHighlight() {},
   });
-  return { controller, router, container, session, state, panCalls, momentumCalls, policyCalls, target, manual };
+  return { controller, router, container, session, state, panCalls, momentumCalls, policyCalls, target, manual, documentRef };
 }
 
 function pointerEvent(type, pointerId, target, values = {}) {
@@ -143,7 +149,37 @@ test("page touch remains native and never starts a bridge pan or pointer capture
   assert.equal(router.hasPointerCapture(11), false);
   assert.deepEqual(panCalls, []);
   assert.deepEqual(momentumCalls, []);
-  assert.ok(policyCalls.some(([name]) => name === "clear-suppression"));
+  assert.ok(!policyCalls.some(([name]) => name === "clear-suppression"),
+    "pointerup must not release annotation-mode finger selection suppression");
+});
+
+test("native-scroll pointercancel keeps the finger guard until a real touchcancel", () => {
+  const harness = createHarness();
+  const { controller, policyCalls, target, state } = harness;
+  state.editorMode = 9;
+  const down = pointerEvent("pointerdown", 41, target);
+  controller.preparePointerDown(down.intent);
+  controller.routePointerDown(down.intent, down.controls);
+  controller.handlePointerEnd(pointerEvent("pointercancel", 41, target).intent, {});
+  assert.ok(!policyCalls.some(([name]) => name === "clear-suppression"),
+    "WebKit pointercancel during native pan must preserve the tool guard");
+
+  assert.equal(controller.handleTouchCancel({
+    type: "touchcancel",
+    activeTouchCount: 0,
+  }), true);
+  assert.ok(policyCalls.some(([name]) => name === "clear-suppression"),
+    "an actual touchcancel with no remaining contacts releases the guard");
+});
+
+test("visibility loss and session teardown release the read-mode Pencil selection guard", () => {
+  const harness = createHarness();
+  const { controller, policyCalls, documentRef } = harness;
+  documentRef.visibilityState = "hidden";
+  controller.onDocumentVisibilityChange();
+  assert.ok(policyCalls.some(([name]) => name === "clear-read-pen-suppression"));
+  controller.clearSessions();
+  assert.equal(policyCalls.filter(([name]) => name === "clear-read-pen-suppression").length, 2);
 });
 
 test("native multi-touch remains uncaptured and never enters custom inertia", () => {

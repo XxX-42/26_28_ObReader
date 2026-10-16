@@ -10,9 +10,18 @@ const policySource = await readFile(
 
 function createPolicy({ annotationToolActive = false, penGestureActive = false } = {}) {
   const toggled = [];
+  const classes = new Set();
   const documentRef = {
     documentElement: {
-      classList: { toggle: (name, active) => toggled.push([name, active]) },
+      classList: {
+        add(name) { classes.add(name); },
+        remove(name) { classes.delete(name); },
+        toggle(name, active) {
+          toggled.push([name, active]);
+          if (active) classes.add(name);
+          else classes.delete(name);
+        },
+      },
     },
   };
   const runtimeWindow = { PdfReaderInputRuntime: {} };
@@ -22,7 +31,7 @@ function createPolicy({ annotationToolActive = false, penGestureActive = false }
     isAnnotationToolActive: () => annotationToolActive,
     hasActivePenEditorGesture: () => penGestureActive,
   });
-  return { policy, toggled };
+  return { policy, toggled, classes };
 }
 
 function controls() {
@@ -207,12 +216,37 @@ test("selecting a tool interrupts native momentum before Pencil input, without i
   active = false;
   policy.route({ ...intent, pointerType: "pen" }, forward, controls().value);
   assert.equal(interruptions, 2, "tool-free Pencil stays native");
+  policy.route({
+    ...intent,
+    pointerType: "pen",
+    targetRole: "outside-viewer",
+    targetRegion: "editor-mode-buttons",
+    nativeActivationTarget: true,
+  }, forward, controls().value);
+  assert.equal(interruptions, 3,
+    "a Pencil activation on a toolbar control interrupts momentum before changing tools");
+  const stylusStart = controls();
+  policy.isAnnotationToolActive = () => true;
+  policy.handleTouchStart({
+    type: "touchstart",
+    targetRole: "annotation-layer",
+    nativeContextTarget: false,
+    nativeOperation: null,
+    touchHasStylus: true,
+  }, stylusStart.value);
+  assert.equal(interruptions, 4,
+    "the actual active-tool stylus contact requests an interruption before editor ownership");
+  assert.equal(stylusStart.prevented, true);
 });
 
 test("native scroll interruption preserves position and restores all inline CSS, including on error", async () => {
   const runtimeWindow = { PdfReaderInputRuntime: {} };
   vm.runInNewContext(await readFile(new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url), "utf8"), { window: runtimeWindow });
-  const viewport = new runtimeWindow.PdfReaderInputRuntime.ViewportController();
+  const frames = [];
+  const viewport = new runtimeWindow.PdfReaderInputRuntime.ViewportController({
+    requestFrame(callback) { frames.push(callback); return frames.length; },
+    cancelFrame() {},
+  });
   const values = new Map([["overflow", ["auto", ""]], ["scroll-behavior", ["smooth", "important"]]]);
   let layouts = 0;
   const positions = [];
@@ -233,11 +267,17 @@ test("native scroll interruption preserves position and restores all inline CSS,
   };
   assert.equal(viewport.interruptNativeScroll(container), true);
   assert.deepEqual(positions, [{ top: 137.5, left: 22.5, behavior: "instant" }]);
-  assert.equal(layouts, 1);
+  assert.equal(layouts, 3, "measure the bound and flush layout while the temporary scroll lock is active");
+  assert.deepEqual(values.get("overflow"), ["hidden", "important"]);
+  frames.shift()();
+  assert.deepEqual(values.get("overflow"), ["hidden", "important"],
+    "keep the native scroll lock across the first rendered frame");
+  frames.shift()();
   assert.deepEqual(values.get("overflow"), ["auto", ""]);
   assert.deepEqual(values.get("scroll-behavior"), ["smooth", "important"]);
   container.scrollTo = () => { throw new Error("detached"); };
-  assert.throws(() => viewport.interruptNativeScroll(container), /detached/);
+  assert.equal(viewport.interruptNativeScroll(container), false,
+    "a detached scrolling container fails closed without leaking the temporary lock");
   assert.deepEqual(values.get("overflow"), ["auto", ""]);
   assert.deepEqual(values.get("scroll-behavior"), ["smooth", "important"]);
 });

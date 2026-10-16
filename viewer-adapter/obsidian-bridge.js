@@ -7327,6 +7327,7 @@
       ["pointermove", onBridgePointerMove],
       ["pointerup", onBridgePointerEnd],
       ["pointercancel", onBridgePointerEnd],
+      ["touchcancel", onBridgeTouchCancel],
       ["pointerout", onBridgePointerOut],
       ["lostpointercapture", onBridgeLostPointerCapture],
       ["wheel", onBridgeWheel],
@@ -7390,6 +7391,12 @@
       cancel: intent.type === "pointercancel",
       controls,
     });
+  }
+
+  function onBridgeTouchCancel(intent, controls) {
+    if (state.iosDirectManipulationController?.handleTouchCancel(intent)) {
+      controls?.stopImmediatePropagation?.();
+    }
   }
 
   function onBridgePointerOut(intent, controls) {

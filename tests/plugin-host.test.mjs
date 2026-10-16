@@ -873,7 +873,7 @@ test("mobile host save slots reject stale queued Readers and accept only the mat
   harness.plugin.heavyWork.dispose();
 });
 
-test("an explicit close tears down a renderer that cannot confirm flush without changing the PDF", async () => {
+test("an explicit close tears down a renderer that cannot confirm flush and warns without changing the PDF", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const file = new harness.TFile("Books/failed-flush-close.pdf", [1, 2, 3]);
@@ -900,7 +900,7 @@ test("an explicit close tears down a renderer that cannot confirm flush without 
   assert.equal(reader.frame.removed, true, "explicit SDK teardown still removes the unresponsive renderer");
   assert.deepEqual([...file.bytes], [1, 2, 3]);
   assert.equal(file.writes, 0);
-  assert.ok(harness.notices.some(message => message.includes("尚有未确认的批注操作")));
+  assert.ok(harness.notices.some(message => message.includes("最新更改尚未确认保存")));
 });
 
 test("merge metadata preserves the Obsidian EditableFileView syncState method", async () => {
@@ -1393,7 +1393,7 @@ test("sidecar saves require the matching opened ACK and exact Viewer page-identi
   assert.equal((await harness.plugin.annotationHost.store.listOperationBatches(view.annotationDocument)).length, 1);
 });
 
-test("a not-ready Reader closes only when clean or its sidecar operation revision is durable", async () => {
+test("a not-ready Reader can close without claiming an unconfirmed sidecar revision is durable", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const cleanFile = new harness.TFile("Books/preopen-clean.pdf", [1, 2, 3]);
@@ -1408,8 +1408,15 @@ test("a not-ready Reader closes only when clean or its sidecar operation revisio
   dirtyReader.view.ready = false;
   dirtyReader.view.currentRevision = 3;
   dirtyReader.view.confirmedRevision = 1;
-  assert.equal(await dirtyReader.view.prepareControlledClose("detach"), false);
-  assert.equal(dirtyReader.view.preparedClose, null);
+  assert.equal(await dirtyReader.view.prepareControlledClose("detach"), true);
+  assert.equal(dirtyReader.view.preparedClose.unconfirmed, true);
+
+  // Simulate the user leaving the tab open after seeing the warning, then
+  // allowing recovery persistence to finish before trying close again.
+  dirtyReader.view.cancelPreparedClose(
+    dirtyReader.view.documentId,
+    dirtyReader.view.openRequest,
+  );
 
   await dirtyReader.view.recoverFile(
     null,
@@ -2176,8 +2183,8 @@ test("close reports a persisted recovery draft distinctly from an unflushed loss
   assert.equal(sent[0].type, "flush");
   assert.equal(view.iframe, null);
   assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /未确认的批注操作写入外置记录/);
-  assert.match(harness.notices[0], /保持标签打开后重试保存/);
+  assert.match(harness.notices[0], /已写入外置恢复记录/);
+  assert.doesNotMatch(harness.notices[0], /保持标签打开/);
 });
 
 test("forced onClose keeps its failed flush warning without preparing twice on file unload", async () => {
@@ -2223,7 +2230,7 @@ test("forced onClose keeps its failed flush warning without preparing twice on f
   assert.equal(view.file, null, "The simulated SDK unload still clears its file reference");
   assert.equal(view.iframe, null);
   assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /未确认的批注操作写入外置记录/);
+  assert.match(harness.notices[0], /最新更改尚未确认保存/);
 });
 
 test("close waits for the bridge flush response before removing the frame", async () => {
@@ -2336,7 +2343,7 @@ test("controlled detach waits for a prepared ack and skips duplicate onClose flu
   assert.equal(view.iframe, null);
 });
 
-test("controlled close shares one pending prepare request and cancels a failed Viewer acknowledgement", async () => {
+test("controlled close shares one pending prepare request and permits close after a failed Viewer acknowledgement", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { leaf, view, sent, replyClose } = await createControlledReader(
@@ -2350,14 +2357,14 @@ test("controlled close shares one pending prepare request and cancels a failed V
   assert.equal(sent.filter((message) => message.type === "prepare-close").length, 1);
   assert.equal(leaf.detached, undefined);
   replyClose({ ok: false, dirty: true, prepared: false });
-  assert.deepEqual(await Promise.all([first, duplicate]), [false, false],
-    "concurrent close callers share the same failed session result");
+  assert.deepEqual(await Promise.all([first, duplicate]), [true, true],
+    "concurrent close callers share the same best-effort close result");
   assert.equal(leaf.detached, undefined);
-  assert.equal(view.preparedClose, null);
+  assert.equal(view.preparedClose.unconfirmed, true);
   assert.ok(sent.some((message) => message.type === "cancel-close"));
 });
 
-test("controlled close arms a complete Viewer acknowledgement budget at the send boundary", async () => {
+test("controlled close uses a short best-effort Viewer acknowledgement budget", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { view, sent } = await createControlledReader(
@@ -2377,16 +2384,16 @@ test("controlled close arms a complete Viewer acknowledgement budget at the send
     assert.ok(message, "the ready Viewer receives the controlled-close request");
     request = view.flushRequests.get(message.id);
     assert.ok(request);
-    assert.equal(request.deadline, now + 120000,
-      "the Viewer receives the full 120 second acknowledgement budget");
+    assert.equal(request.deadline, now + 250,
+      "the Viewer gets only a short chance to confirm before a user close proceeds");
     const timer = ownerWindow.timers.get(request.timer);
-    assert.equal(timer?.delay, 120000);
-    now += 120001;
+    assert.equal(timer?.delay, 250);
+    now += 251;
     assert.equal(ownerWindow.fireTimeout(request.timer), true,
       "the deadline expires the close request when the Viewer never responds");
-    assert.equal(await preparing, false);
+    assert.equal(await preparing, true);
     assert.equal(view.flushRequests.size, 0);
-    assert.ok(sent.some((item) => item.type === "cancel-close"));
+    assert.equal(view.preparedClose.unconfirmed, true);
   } finally {
     if (request?.timer !== null && request?.timer !== undefined) {
       ownerWindow.clearTimeout(request.timer);
@@ -2396,7 +2403,7 @@ test("controlled close arms a complete Viewer acknowledgement budget at the send
   }
 });
 
-test("controlled close does not message a Viewer that becomes stale before its send boundary", async () => {
+test("controlled close permits a same-document close if its Viewer becomes unavailable before send", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { view, sent } = await createControlledReader(
@@ -2405,13 +2412,14 @@ test("controlled close does not message a Viewer that becomes stale before its s
   );
   const preparing = view.prepareControlledClose("detach");
   view.ready = false;
-  assert.equal(await preparing, false);
+  assert.equal(await preparing, true);
   assert.equal(sent.some((message) => message.type === "prepare-close"), false,
     "the captured renderer is revalidated immediately before posting close");
   assert.equal(view.flushRequests.size, 0);
+  assert.equal(view.preparedClose.unconfirmed, true);
 });
 
-test("failed controlled detach keeps the Reader leaf open and sends cancel-close", async () => {
+test("failed controlled detach still closes the Reader leaf with an unconfirmed-save warning", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { leaf, sent, replyClose } = await createControlledReader(
@@ -2424,14 +2432,14 @@ test("failed controlled detach keeps the Reader leaf open and sends cancel-close
   replyClose({ ok: false, dirty: true, prepared: false });
   const result = await detaching;
 
-  assert.equal(result, false);
-  assert.equal(leaf.detached, undefined);
-  assert.equal(harness.leaves.includes(leaf), true);
+  assert.equal(result, leaf);
+  assert.equal(leaf.detached, true);
+  assert.equal(harness.leaves.includes(leaf), false);
   assert.ok(sent.some((message) => message.type === "cancel-close"));
-  assert.ok(harness.notices.some((notice) => notice.includes("标签保持打开")));
+  assert.ok(harness.notices.some((notice) => notice.includes("最新更改尚未确认保存")));
 });
 
-test("controlled detach rejects a close ack for a different open request", async () => {
+test("controlled detach does not trust a mismatched close ack but allows the user to close", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const { leaf, view, sent, frame } = await createControlledReader(
@@ -2458,8 +2466,9 @@ test("controlled detach rejects a close ack for a different open request", async
     },
   });
   const result = await detaching;
-  assert.equal(result, false);
-  assert.equal(leaf.detached, undefined);
+  assert.equal(result, leaf);
+  assert.equal(leaf.detached, true);
+  assert.ok(harness.notices.some((notice) => notice.includes("最新更改尚未确认保存")));
   assert.ok(sent.some((message) => message.type === "cancel-close"));
 });
 
@@ -2484,11 +2493,11 @@ test("controlled detach accepts a Viewer-confirmed durable recovery batch", asyn
 
   assert.equal(leaf.detached, true);
   assert.equal(sent.some((message) => message.type === "cancel-close"), false);
-  assert.ok(harness.notices.some((notice) => notice.includes("未确认的批注操作写入外置记录")),
-    "a recovered close is accepted but keeps the external-record warning visible to the user");
+  assert.ok(harness.notices.some((notice) => notice.includes("已写入外置恢复记录")),
+    "a recovered close is accepted and reports its durable recovery destination");
 });
 
-test("popout beforeunload waits for every Reader and resumes after a failed close", async () => {
+test("popout beforeunload gives Readers a brief flush chance then closes with an unconfirmed warning", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const reader = await createControlledReader(
@@ -2513,23 +2522,11 @@ test("popout beforeunload waits for every Reader and resumes after a failed clos
 
   const firstClose = gate.closePromise;
   reader.replyClose({ ok: false, dirty: true, prepared: false });
-  assert.equal(await firstClose, false);
-  assert.equal(popout.originalCloseCalls, 0);
-  assert.equal(ownerWindow.closed, false);
-  assert.equal(reader.leaf.detached, undefined);
-  assert.ok(reader.sent.some((message) => message.type === "cancel-close"));
-
-  const retry = { returnValue: true };
-  assert.equal(ownerWindow.dispatchEvent("beforeunload", retry), false);
-  await settleMicrotasks();
-  const successfulClose = gate.closePromise;
-  reader.replyClose({ revision: 12 });
-  await successfulClose;
-
+  await firstClose;
   assert.equal(popout.originalCloseCalls, 1);
-  assert.equal(popout.destroyWindowCalls, 1);
   assert.equal(ownerWindow.closed, true);
   assert.equal(reader.leaf.detached, true);
+  assert.ok(reader.sent.some((message) => message.type === "cancel-close"));
   assert.equal(popout.detachResults[0], reader.leaf,
     "Prepared detach must stay synchronous while the SDK parent ignores its return value");
   assert.equal(reader.sent.some((message) => message.type === "flush"), false);
@@ -2681,7 +2678,7 @@ test("an uncommitted prepared parent close cancels the freeze and resets the gat
   assert.ok(harness.notices.some((notice) => notice.includes("无法关闭 PDF 弹出窗口")));
 });
 
-test("popout parent close cancels already prepared Readers if another Reader fails", async () => {
+test("popout parent close proceeds when a Reader cannot confirm its latest save", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const first = await createControlledReader(
@@ -2702,15 +2699,17 @@ test("popout parent close cancels already prepared Readers if another Reader fai
 
   first.replyClose({ revision: 3 });
   second.replyClose({ ok: false, dirty: true, prepared: false });
-  assert.equal(await close, false);
-  assert.equal(popout.originalCloseCalls, 0);
-  assert.equal(popout.destroyWindowCalls, 0);
-  assert.equal(ownerWindow.closed, false);
-  assert.equal(first.leaf.detached, undefined);
-  assert.equal(second.leaf.detached, undefined);
+  await close;
+  assert.equal(popout.originalCloseCalls, 1);
+  assert.equal(popout.destroyWindowCalls, 1);
+  assert.equal(ownerWindow.closed, true);
+  assert.equal(first.leaf.detached, true);
+  assert.equal(second.leaf.detached, true);
   assert.equal(first.view.preparedClose, null,
-    "A successful peer must be unfrozen when any Reader cannot prepare");
-  assert.ok(first.sent.some((message) => message.type === "cancel-close"));
+    "the peer's prepared state is disposed with its Reader");
+  assert.equal(first.sent.some((message) => message.type === "cancel-close"), false,
+    "a confirmed Reader remains prepared until the parent actually closes it");
+  assert.ok(harness.notices.some((notice) => notice.includes("最新更改尚未确认保存")));
 });
 
 test("popout close aborts if a new Reader joins while close preparation is pending", async () => {

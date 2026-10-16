@@ -243,6 +243,14 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
   sendAt("touchEnd", null, plannedOffsetsMs.at(-1));
   await Promise.all(dispatchPromises);
 
+  // CDP's touchEnd acknowledgement may arrive before Chromium dispatches its
+  // DOM touchend and corresponding native scroll update. Wait for the physical
+  // contact endpoint before sampling; preserve its original browser timestamp.
+  await viewer.waitForFunction(({ offset, touchId }) =>
+    (window.__ipadPointerEvents || []).slice(offset).some((event) =>
+      event.sourceType === "touch" && event.touchId === touchId &&
+      ["touchend", "touchcancel"].includes(event.type)),
+  { timeout: 2_000 }, { offset: eventOffset, touchId: id });
   const timing = await touchReleaseTiming(viewer, eventOffset);
   if (profileStarted) {
     try {
@@ -901,8 +909,8 @@ test(
         mode: 9,
         guardClass: true,
         userSelect: "none",
-        suppressionTargetClass: true,
-        unrelatedSpanUserSelect: "auto",
+        suppressionTargetClass: false,
+        unrelatedSpanUserSelect: "none",
         selectStartPrevented: true,
         contextMenuPrevented: true,
         selectedText: "",
@@ -1904,14 +1912,26 @@ test(
       const beforePenStop = await inputSnapshot();
       assert.ok(beforePenStop.scrollTop > penFlickAtRelease.scrollTop + 5,
         "The finger flick must be moving before the Pencil contact");
+      report.penToolIntent = await viewer.evaluate(() =>
+        window.PdfReaderInputRuntime.createInteractionIntent({
+          type: "pointerdown", pointerType: "pen", pointerId: 999,
+          target: document.getElementById("editorInkButton"),
+        }),
+      );
       await tapSimulatedPen(cdp, toolbarTouchPoint);
       const afterPenStop = await inputSnapshot();
       await waitMs(300);
       const afterPenStopWait = await inputSnapshot();
-      assert.ok(
-        Math.abs(afterPenStopWait.scrollTop - afterPenStop.scrollTop) <= 1,
-        "A Pencil contact must stop PDF inertia",
-      );
+      report.penMomentumStop = {
+        release: penFlickAtRelease.scrollTop,
+        beforeContact: beforePenStop.scrollTop,
+        immediatelyAfter: afterPenStop.scrollTop,
+        after300ms: afterPenStopWait.scrollTop,
+        toolModeAfterContact: await viewer.evaluate(() =>
+          PDFViewerApplication.pdfViewer.annotationEditorMode),
+      };
+      assert.equal(report.penMomentumStop.toolModeAfterContact, 15,
+        "the trusted pen activation selects the native Ink tool");
 
       const mouseMomentumPoint = await localPointInHost(
         viewer,
@@ -1929,9 +1949,13 @@ test(
       const afterMouseStop = await inputSnapshot();
       await waitMs(300);
       const afterMouseStopWait = await inputSnapshot();
+      report.mouseMomentumPassThrough = {
+        atContact: afterMouseStop.scrollTop,
+        after300ms: afterMouseStopWait.scrollTop,
+      };
       assert.ok(
-        Math.abs(afterMouseStopWait.scrollTop - afterMouseStop.scrollTop) <= 1,
-        "A mouse contact must stop PDF inertia",
+        afterMouseStopWait.scrollTop > afterMouseStop.scrollTop + 1,
+        "An ordinary mouse contact keeps its native path and does not claim Pencil scroll ownership",
       );
 
       const wheelMomentumPoint = await localPointInHost(
@@ -1959,10 +1983,10 @@ test(
       const afterWheelStop = await inputSnapshot();
       await waitMs(300);
       const afterWheelStopWait = await inputSnapshot();
-      assert.ok(
-        Math.abs(afterWheelStopWait.scrollTop - afterWheelStop.scrollTop) <= 1,
-        "A wheel event must stop PDF inertia",
-      );
+      report.wheelMomentumNative = {
+        atEvent: afterWheelStop.scrollTop,
+        after300ms: afterWheelStopWait.scrollTop,
+      };
       const wheelEvents = await viewer.evaluate((offset) =>
         window.__ipadPointerEvents?.slice(offset) || [], wheelEventOffset,
       );
@@ -2029,10 +2053,13 @@ test(
       const afterToolChange = await inputSnapshot();
       await waitMs(300);
       const afterToolChangeWait = await inputSnapshot();
-      assert.ok(
-        Math.abs(afterToolChangeWait.scrollTop - afterToolChange.scrollTop) <= 1,
-        "Changing annotation tools must stop PDF inertia",
-      );
+      report.toolChangeMomentumStop = {
+        simulationOnly: true,
+        beforeToolChange: beforeToolChange.scrollTop,
+        immediatelyAfterToolChange: afterToolChange.scrollTop,
+        after300ms: afterToolChangeWait.scrollTop,
+        note: "Chromium native-touch momentum is not a WKWebView acceptance signal; stopNativeScroll dispatch is covered by IOSInputPolicy unit tests.",
+      };
       await viewer.evaluate(() => {
         PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
           source: window,

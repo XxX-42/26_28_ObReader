@@ -279,6 +279,14 @@ function installPdfOpenRouting(plugin) {
           );
           return undefined;
         }
+        if (currentView.preparedClose?.unconfirmed) {
+          currentView.cancelPreparedClose(
+            capturedDocumentId,
+            capturedOpenRequest,
+          );
+          currentView.notifyUnflushed();
+          return undefined;
+        }
         let result;
         try {
           result = routing.originalSetViewState.call(
@@ -1673,7 +1681,9 @@ class PdfReaderView extends EditableFileView {
     const openRequest = this.openRequest;
     if (this.hasPreparedClose(documentId, openRequest)) return true;
     if (!this.ready) {
-      if (this.pendingSaves > 0 || this.currentRevision > this.confirmedRevision) {
+      const unconfirmed =
+        this.pendingSaves > 0 || this.currentRevision > this.confirmedRevision;
+      if (unconfirmed) {
         this.notifyUnflushed();
       }
       this.preparedClose = {
@@ -1682,6 +1692,7 @@ class PdfReaderView extends EditableFileView {
         openRequest,
         revision: this.currentRevision,
         recovered: false,
+        unconfirmed,
         iframe: this.iframe,
       };
       return true;
@@ -1752,6 +1763,15 @@ class PdfReaderView extends EditableFileView {
         this.closePreparation === pending;
       if (!stillCurrent) {
         request.finish({ ok: false, dirty: true });
+        const identityMatches =
+          this.documentId === documentId && this.openRequest === openRequest;
+        if (!identityMatches || this.plugin.isUnloading) return false;
+        this.notifyUnflushed();
+        this.preparedClose = {
+          id: request.id, documentId, openRequest,
+          revision: this.currentRevision, recovered: false,
+          unconfirmed: true, iframe: request.iframe, unloaded: false,
+        };
         return true;
       }
       // Best effort only: a silent or failed renderer must never lock a tab.
@@ -1788,8 +1808,10 @@ class PdfReaderView extends EditableFileView {
         result?.prepared === true &&
         revisionCurrent &&
         (clean || recovered);
-      this.notifyFlushOutcome(result);
       if (!prepared) {
+        // A response for a different request/session is not evidence that this
+        // document was flushed, even if it claims a clean or recovered result.
+        this.notifyUnflushed();
         this.sendCancelClose(request);
         // Closing is a user decision, not a persistence veto. Preserve the
         // warning but never pretend an unconfirmed revision was saved.
@@ -1800,6 +1822,7 @@ class PdfReaderView extends EditableFileView {
         };
         return true;
       }
+      this.notifyFlushOutcome(result);
       this.preparedClose = {
         id: request.id,
         documentId,
@@ -1845,7 +1868,9 @@ class PdfReaderView extends EditableFileView {
   }
 
   notifyFlushOutcome(flush) {
-    if (!flush?.ok || flush?.dirty) {
+    if (flush?.recovered === true) {
+      this.notifyRecoveredDraft();
+    } else if (!flush?.ok || flush?.dirty) {
       this.notifyUnflushed();
     }
   }

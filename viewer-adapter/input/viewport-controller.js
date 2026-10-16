@@ -27,10 +27,15 @@
       this.requestFrame = requestFrame;
       this.cancelFrame = cancelFrame;
       this.momentum = null;
+      this.nativeScrollInterrupts = new Map();
     }
 
     dispose() {
       this.cancelMomentum();
+      for (const [container, interrupt] of this.nativeScrollInterrupts) {
+        if (interrupt.frame !== null) this.cancelFrame(interrupt.frame);
+        this.restoreNativeScrollInterrupt(container, interrupt);
+      }
     }
 
     cancelMomentum() {
@@ -42,25 +47,61 @@
 
     interruptNativeScroll(container) {
       if (!container?.style) return false;
-      const { scrollTop, scrollLeft } = container;
-      const properties = ["overflow", "scroll-behavior"];
-      const previous = properties.map((name) => [
-        name, container.style.getPropertyValue(name), container.style.getPropertyPriority(name),
-      ]);
+      let interrupt = this.nativeScrollInterrupts.get(container);
+      if (!interrupt) {
+        interrupt = {
+          generation: 0,
+          frame: null,
+          previous: ["overflow", "scroll-behavior"].map((name) => [
+            name,
+            container.style.getPropertyValue(name),
+            container.style.getPropertyPriority(name),
+          ]),
+        };
+        this.nativeScrollInterrupts.set(container, interrupt);
+      }
+      const generation = ++interrupt.generation;
       try {
         // End the native scroll animation before a new editing gesture. A
         // same-position scroll alone may be ignored during WebKit momentum.
+        // Keep overflow locked across two rendered frames: toggling it only
+        // within one JS task is invisible to the scrolling compositor.
+        const { scrollTop, scrollLeft } = container;
         container.style.setProperty("scroll-behavior", "auto", "important");
         container.style.setProperty("overflow", "hidden", "important");
         void container.clientWidth;
+        const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        const maxLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+        container.scrollTop = scrollTop < maxTop ? scrollTop + 1 : Math.max(0, scrollTop - 1);
+        container.scrollLeft = scrollLeft < maxLeft ? scrollLeft + 1 : Math.max(0, scrollLeft - 1);
+        void container.clientWidth;
+        container.scrollTop = scrollTop;
+        container.scrollLeft = scrollLeft;
         container.scrollTo({ top: scrollTop, left: scrollLeft, behavior: "instant" });
-      } finally {
-        for (const [name, value, priority] of previous) {
-          if (value) container.style.setProperty(name, value, priority);
-          else container.style.removeProperty(name);
-        }
+      } catch {
+        this.restoreNativeScrollInterrupt(container, interrupt);
+        return false;
       }
+      interrupt.frame = this.requestFrame(() => {
+        if (this.nativeScrollInterrupts.get(container) !== interrupt ||
+            interrupt.generation !== generation) return;
+        interrupt.frame = this.requestFrame(() => {
+          if (this.nativeScrollInterrupts.get(container) !== interrupt ||
+              interrupt.generation !== generation) return;
+          this.restoreNativeScrollInterrupt(container, interrupt);
+        });
+      });
       return true;
+    }
+
+    restoreNativeScrollInterrupt(container, interrupt) {
+      if (this.nativeScrollInterrupts.get(container) !== interrupt) return;
+      for (const [name, value, priority] of interrupt.previous) {
+        if (value) container.style.setProperty(name, value, priority);
+        else container.style.removeProperty(name);
+      }
+      this.nativeScrollInterrupts.delete(container);
+      interrupt.frame = null;
     }
 
     eventTime(pointer, event, now = performance.now()) {

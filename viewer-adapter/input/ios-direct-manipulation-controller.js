@@ -127,9 +127,10 @@
       controls?.stopImmediatePropagation?.();
     }
 
-    clearNativeTouchPointer(pointerId) {
+    clearNativeTouchPointer(pointerId, { clearSelectionSuppression = false } = {}) {
       if (!this._nativeTouchPointers.delete(pointerId)) return false;
       if (
+        clearSelectionSuppression &&
         this._nativeTouchPointers.size === 0 &&
         !this.hasActivePenEditorGesture()
       ) {
@@ -156,6 +157,7 @@
       if (document.visibilityState !== "hidden") return;
       this.cancelMomentum();
       this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
+      this.getInputPolicy()?.clearReadPenSelectionSuppression?.();
       for (const pointer of this.manualPointerValues()) {
         if (pointer.pointerType === "touch") {
           pointer.blockedByVisibility = true;
@@ -315,6 +317,7 @@
     clearSessions({ clearClickTargets = true } = {}) {
       this.cancelMomentum();
       this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
+      this.getInputPolicy()?.clearReadPenSelectionSuppression?.();
       this.invalidatePendingPenHighlight?.();
       const pointers = this.manualPointerValues();
       this.clearManualPointers();
@@ -349,7 +352,12 @@
     }
 
     handlePointerEnd(intent, controls) {
-      if (this.clearNativeTouchPointer(intent.pointerId)) {
+      if (this.clearNativeTouchPointer(intent.pointerId, {
+        // A pointercancel is also how WebKit reports taking a finger gesture
+        // for native scrolling. Keep the annotation-mode selection guard;
+        // a real TouchEvent cancellation is handled separately below.
+        clearSelectionSuppression: false,
+      })) {
         controls?.stopImmediatePropagation?.();
         return true;
       }
@@ -362,10 +370,21 @@
       return true;
     }
 
+    handleTouchCancel(intent) {
+      if (intent?.activeTouchCount !== 0) return false;
+      this._nativeTouchPointers.clear();
+      if (!this.hasActivePenEditorGesture()) {
+        this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
+      }
+      return true;
+    }
+
     handlePointerOut(intent, controls) {
       if (this._nativeTouchPointers.has(intent.pointerId)) {
         if (!intent.relatedTargetPresent) {
-          this.clearNativeTouchPointer(intent.pointerId);
+          this.clearNativeTouchPointer(intent.pointerId, {
+            clearSelectionSuppression: true,
+          });
           controls?.stopImmediatePropagation?.();
         }
         return true;
@@ -381,7 +400,9 @@
     }
 
     handleLostPointerCapture(intent, controls) {
-      if (this.clearNativeTouchPointer(intent.pointerId)) {
+      if (this.clearNativeTouchPointer(intent.pointerId, {
+        clearSelectionSuppression: true,
+      })) {
         controls?.stopImmediatePropagation?.();
         return true;
       }
