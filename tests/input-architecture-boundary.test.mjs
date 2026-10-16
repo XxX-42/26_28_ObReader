@@ -116,6 +116,37 @@ test("ViewportController owns motion math without depending on PDF, selection, o
   }
 });
 
+test("TextSelectionController owns DOM selection and caret operations only", async () => {
+  const selection = await source("text-selection-controller.js");
+  assert.match(selection, /document\.getSelection/);
+  assert.match(selection, /caretPositionFromPoint/);
+  assert.match(selection, /caretRangeFromPoint/);
+  assert.match(selection, /setBaseAndExtent/);
+  assert.match(selection, /getRangeAt/);
+  for (const forbidden of [
+    "annotationStorage",
+    "highlightSelection",
+    "appendOperations",
+    "scheduleAutoSave",
+    "Vault",
+    "sidecar",
+    "manualMomentum",
+    "scrollTop",
+  ]) {
+    assert.ok(!selection.includes(forbidden), `TextSelectionController must not contain ${forbidden}`);
+  }
+  const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  for (const forbidden of [
+    "document.getSelection(",
+    "caretPositionFromPoint(",
+    "caretRangeFromPoint(",
+    "setBaseAndExtent(",
+    "selection.getRangeAt(",
+  ]) {
+    assert.ok(!bridge.includes(forbidden), `Bridge must delegate ${forbidden}`);
+  }
+});
+
 test("DesktopInputPolicy only forwards established behavior and contains no iPad overrides", async () => {
   const desktop = await source("desktop-input-policy.js");
   assert.match(desktop, /forwardExistingBehavior/);
