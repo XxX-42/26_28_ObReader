@@ -11,8 +11,12 @@ const viewportSource = await readFile(
   new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url),
   "utf8",
 );
+const interactionModeSource = await readFile(
+  new URL("../viewer-adapter/input/interaction-mode.js", import.meta.url),
+  "utf8",
+);
 const selectionPolicySection = source.slice(
-  source.indexOf("  function annotationToolIsActive"),
+  source.indexOf("  function currentInteractionMode"),
   source.indexOf("  function isPdfTextLayerTarget"),
 );
 const pointerAccessSection = source.slice(
@@ -173,7 +177,7 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     },
     releasePointerCapture() {},
   };
-  vm.runInNewContext(viewportSource, context);
+  vm.runInNewContext(interactionModeSource + viewportSource, context);
   state.viewportController = new runtimeWindow.PdfReaderInputRuntime.ViewportController({
     canPan(pointer) {
       return !pointer.blockedByPen &&

@@ -33,14 +33,18 @@
     }
 
     pointerInteractionKind(event, target, {
-      editorMode = this.getEditorMode(),
+      interactionMode = "READ",
       isTextLayerTarget = () => false,
       isNativeContextTarget = () => false,
       isViewerSurfaceTarget = () => false,
     } = {}) {
       if (event.button === 0) {
         if (target?.closest?.(".annotationEditorLayer")) return "editor";
-        if ([9, 10].includes(editorMode) && isTextLayerTarget(target)) {
+        if (
+          window.PdfReaderInputRuntime.InteractionMode.isTextSelectionMode(
+            interactionMode,
+          ) && isTextLayerTarget(target)
+        ) {
           return "text-selection";
         }
         return null;

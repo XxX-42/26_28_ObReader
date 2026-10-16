@@ -7,9 +7,14 @@ const source = await readFile(
   new URL("../viewer-adapter/input/annotation-controller.js", import.meta.url),
   "utf8",
 );
+const modeSource = await readFile(
+  new URL("../viewer-adapter/input/interaction-mode.js", import.meta.url),
+  "utf8",
+);
 
 function createController(options = {}) {
   const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(modeSource, { window: runtimeWindow });
   vm.runInNewContext(source, { window: runtimeWindow });
   return new runtimeWindow.PdfReaderInputRuntime.AnnotationController(options);
 }
@@ -27,11 +32,11 @@ test("annotation pointer classification preserves editor, text, wheel, and erase
   assert.equal(controller.pointerInteractionKind({ button: 0 }, editorTarget, common), "editor");
   assert.equal(controller.pointerInteractionKind({ button: 0 }, viewerTarget, {
     ...common,
-    editorMode: 9,
+    interactionMode: "HIGHLIGHT",
   }), "text-selection");
   assert.equal(controller.pointerInteractionKind({ button: 0 }, viewerTarget, {
     ...common,
-    editorMode: 15,
+    interactionMode: "INK",
   }), null);
   assert.equal(controller.pointerInteractionKind({ pointerType: "mouse", button: 1 }, viewerTarget, common), "tool-wheel");
   assert.equal(controller.pointerInteractionKind({ pointerType: "mouse", button: 2 }, viewerTarget, common), "right-eraser");
