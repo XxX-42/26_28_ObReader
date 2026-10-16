@@ -57,6 +57,58 @@ function extractFunction(name) {
   throw new Error(`Unterminated ${name}`);
 }
 
+test("bulk target planning ignores acknowledged stale upserts but includes dirty local upserts", () => {
+  const program = `(() => {
+    const state = {
+      externalAnnotationRows: new Map([[
+        "acknowledged-stale",
+        { uuid: "acknowledged-stale", deleted: true },
+      ]]),
+      annotationSnapshot: new Map(),
+      annotationOperations: [
+        {
+          operation: {
+            uuid: "acknowledged-stale",
+            pageIndex: 3,
+            kind: "Ink",
+            deleted: false,
+            payload: { editor: { pageIndex: 3, paths: [[1, 2, 3, 4]] } },
+          },
+        },
+        {
+          operation: {
+            uuid: "dirty-local",
+            pageIndex: 8,
+            kind: "Ink",
+            deleted: false,
+            payload: { editor: { pageIndex: 8, paths: [[5, 6, 7, 8]] } },
+          },
+        },
+      ],
+      dirtyAnnotationRevisions: new Map([["dirty-local", 12]]),
+      dirtyNewAnnotationIds: new Set(["dirty-local"]),
+      dirtyDeletedAnnotationIds: new Set(),
+      pendingBulkDeletedUuids: new Set(),
+    };
+    const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink"]);
+    function normalizeSyncKind(kind) { return kind; }
+    function canonicalPdfAnnotationRef(ref) { return ref || null; }
+    ${extractFunction("collectKnownAnnotationDeletionTargets")}
+    return collectKnownAnnotationDeletionTargets();
+  })()`;
+  const targets = vm.runInNewContext(program);
+
+  assert.equal(targets.has("acknowledged-stale"), false,
+    "an acknowledged upsert cannot override the external tombstone");
+  assert.equal(targets.size, 1);
+  assert.equal(targets.has("dirty-local"), true,
+    "a genuinely dirty local upsert remains a deletion target");
+  assert.deepEqual(JSON.parse(JSON.stringify(targets.get("dirty-local").editorPayload)), {
+    pageIndex: 8,
+    paths: [[5, 6, 7, 8]],
+  });
+});
+
 test("offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions", () => {
   const program = `(() => {
     const state = {

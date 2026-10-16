@@ -1,0 +1,25 @@
+{
+  "version": "0.8.3",
+  "targeted": {
+    "total": 61,
+    "pass": 61,
+    "fail": 0
+  },
+  "wal": {
+    "total": 67,
+    "pass": 67,
+    "fail": 0
+  },
+  "offline": "PASS",
+  "defaultConcurrent": {
+    "total": 568,
+    "pass": 543,
+    "fail": 25,
+    "allGreen": false,
+    "log": "default-frozen.log"
+  },
+  "storageArchitectureChanges": "NONE",
+  "vendorChanges": "NONE",
+  "hardware": "iPad WKWebView and Windows physical validation pending",
+  "deployment": "verified three-file replacement; no PDF operations"
+}

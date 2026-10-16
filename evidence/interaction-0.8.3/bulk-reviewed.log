@@ -1,0 +1,40 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.394875ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (0.784875ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (1.999917ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (0.88ms)
+✔ bulk history callbacks stop when their originating session is no longer current (1.856959ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (3.421959ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (1.866375ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (0.855541ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (2.359125ms)
+✔ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (3.016209ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (0.814167ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (2.227209ms)
+✔ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (8541.310125ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792128683314-20142.cleanup.json
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (5.139667ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (2.598458ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (3.451042ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (1.931ms)
+✔ InteractionIntent contains value data and no DOM target or native event (1.45175ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.828709ms)
+✔ TextSelectionController owns DOM selection and caret operations only (1.598583ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.460708ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (0.395667ms)
+✔ IOSInputPolicy owns finger text-selection suppression (1.624625ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (1.294375ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.950708ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8774.611833

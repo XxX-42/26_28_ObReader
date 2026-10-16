@@ -1,0 +1,12 @@
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (9.67825ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (3.5965ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (4.552041ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (4.254708ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 139.452583

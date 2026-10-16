@@ -34,22 +34,23 @@ const mimeTypes = new Map([
 ]);
 
 function legacyCaptureDiagnostic(source) {
-  const currentGuard = `  function shouldCaptureTrackedPointer(pointer, event, eraserActive) {
+  const currentGuard = `  function shouldCaptureTrackedPointer(pointer, intent, eraserActive) {
     const plainMouseTextSelection =
       pointer.pointerType === "mouse" &&
       pointer.kind === "text-selection" &&
       !pointer.nativeOperation;
     return !plainMouseTextSelection &&
-      (event.pointerType === "mouse" || pointer.nativeOperation) &&
-      event.button !== 2 &&
-      !(event.button === 0 && eraserActive);
+      (intent.pointerType === "mouse" || pointer.nativeOperation) &&
+      intent.button !== 2 &&
+      !(intent.button === 0 && eraserActive);
   }`;
-  const oldBehavior = `  function shouldCaptureTrackedPointer(pointer, event, eraserActive) {
-    return (event.pointerType === "mouse" || pointer.nativeOperation) &&
-      event.button !== 2 &&
-      !(event.button === 0 && eraserActive);
+  const oldBehavior = `  function shouldCaptureTrackedPointer(pointer, intent, eraserActive) {
+    return (intent.pointerType === "mouse" || pointer.nativeOperation) &&
+      intent.button !== 2 &&
+      !(intent.button === 0 && eraserActive);
   }`;
-  assert.ok(source.includes(currentGuard), "The diagnostic transform must match the current capture guard exactly");
+  assert.equal(source.split(currentGuard).length - 1, 1,
+    "The diagnostic transform must find exactly one current capture guard in the concatenated runtime modules");
   return source.replace(currentGuard, oldBehavior);
 }
 

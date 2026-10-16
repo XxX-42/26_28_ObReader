@@ -1,0 +1,111 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.724417ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (3.687ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (3.462042ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (0.993291ms)
+✔ bulk history callbacks stop when their originating session is no longer current (2.112792ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (53.586375ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (8.235334ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (22.319708ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (4.862542ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (14.785709ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (4.300292ms)
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (7859.735417ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792128071148-12321.cleanup.json
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (10.70925ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (43.3585ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.213333ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (1.224875ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (3.049375ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (1.446458ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (8.6205ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (10.610417ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.313208ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (2.369208ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.24325ms)
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (85.752458ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (18.170417ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (14.982458ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (3.904166ms)
+✔ InteractionIntent contains value data and no DOM target or native event (2.641875ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.848792ms)
+✔ TextSelectionController owns DOM selection and caret operations only (126.264916ms)
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.990792ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (1.854292ms)
+✔ IOSInputPolicy owns finger text-selection suppression (4.918416ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (3.750458ms)
+✔ bridge delegates top-level listener installation to InputRouter (3.57975ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (0.977708ms)
+✔ interaction modes expose only their intended controller owners (0.13975ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (14.762583ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (1.485167ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (3.365333ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (3.139708ms)
+✔ pan click suppression preserves native activation and double-click targets (19.225791ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (0.97975ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (4442.505125ms)
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":141,"scrollDeltaInkMode":147,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true}}
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (594.921083ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (11.498209ms)
+✔ community release output is exactly the three installer assets (15.942084ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (2224.513792ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (31.416459ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (9703.784041ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128063575-12332.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128063575-12332.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128063575-12332.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128063575-12332.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128063575-12332.json
+✔ Pencil text selection owns a collapsed caret and validates an extended range (4.104667ms)
+✔ selection cleanup removes only the range still owned by the Pencil gesture (0.841791ms)
+✔ range extension stops on session loss or foreign selection ownership (1.349584ms)
+✔ TextSelectionController owns and cancels its pending Pencil session (1.185625ms)
+✔ caret results outside the target text layer never begin an owned selection (0.505042ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 53
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10808.71625
+
+✖ failing tests:
+
+test at tests/desktop-toolbar.test.mjs:489:1
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (7859.735417ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'default'
+  - 'not-allowed'
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/desktop-toolbar.test.mjs:1063:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'default',
+    expected: 'not-allowed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/input-architecture-boundary.test.mjs:334:1
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.990792ms)
+  AssertionError [ERR_ASSERTION]: AnnotationController must not contain Vault
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/input-architecture-boundary.test.mjs:355:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

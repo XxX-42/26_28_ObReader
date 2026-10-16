@@ -71,6 +71,10 @@ function deferred() {
 
 function makeHarness({ deserialize, onReadOnly } = {}) {
   const source = [
+    "normalizeSyncKind",
+    "externalKindForEditor",
+    "decodeExternalValue",
+    "normalizeSyncValue",
     "applyLegacyAnnotationIdentities",
     "canonicalPdfAnnotationRef",
     "pdfAnnotationRefKey",
@@ -88,7 +92,11 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
     "applyExternalAnnotationsSnapshot",
     "externalSourceIdentityMatchesViewer",
     "schedulePendingExternalAnnotationUpdate",
-  ].map(functionSource).join("\n");
+  ].map(functionSource);
+  const walValidatorSource = functionSource("validateExternalAnnotations")
+    .replace("function validateExternalAnnotations(", "function validateWalExternalAnnotations(");
+  source.push(walValidatorSource);
+  const executableSource = source.join("\n");
 
   const context = vm.createContext({ onReadOnly, deserialize });
   return vm.runInContext(`(() => {
@@ -122,6 +130,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
       dirtyPageRevisions: new Map(),
       dirtyNewAnnotationIds: new Set(),
       dirtyDeletedAnnotationIds: new Set(),
+      pendingBulkDeletedUuids: new Set(),
       annotationSnapshot: new Map([["confirmed-before", { uuid: "already-confirmed" }]]),
       annotationOperations: [],
       annotationUuidByRuntimeId: new Map(),
@@ -205,11 +214,16 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
     function runtimeLogRecord() {}
     function runtimeLogError(error) { return { message: String(error?.message || error) }; }
     function noteMutation() { noteMutationCalls += 1; }
-    function validateExternalAnnotations(value) { return value; }
     function seedSyncClock() {}
-    function normalizeSyncKind(value) { return value; }
     function encodeExternalValue(value) { return value; }
-    function decodeExternalValue(value) { return JSON.parse(JSON.stringify(value)); }
+    const EXTERNAL_ANNOTATION_KINDS = new Set([
+      "Underline", "Square", "Highlight", "Ink", "InkHighlight", "FreeText",
+    ]);
+    function validateExternalAnnotations(value) {
+      return value?.storageProtocol === "wal-sidecar-v3.1"
+        ? validateWalExternalAnnotations(value)
+        : value;
+    }
     function compareSyncStamps(left, right) {
       for (const key of ["timestamp", "logical"]) {
         if (left[key] !== right[key]) return left[key] > right[key] ? 1 : -1;
@@ -249,7 +263,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
       if (!callback) throw new Error("No deferred timer was scheduled.");
       callback();
     }
-    ${source}
+    ${executableSource}
     return {
       state, app, manager, layer, timers, resetModifiedCalls,
       addStorageRow, addEditor, markDirty, setBusy, fireNextTimer,
@@ -258,6 +272,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
       getDeserializeCalls: () => deserializeCalls,
       getNoteMutationCalls: () => noteMutationCalls,
       hydrateExternalAnnotation, hydrateExternalAnnotationsForPage,
+      applyExternalAnnotationsSnapshot,
       schedulePendingExternalAnnotationUpdate,
       getResetModifiedCalls: () => resetModifiedCalls,
     };
@@ -286,6 +301,28 @@ function snapshot(annotations = [remoteRow()]) {
     legacyIdentities: [],
     annotations,
     compactInkEncoding: false,
+  };
+}
+
+function walSnapshot(rows) {
+  return {
+    schemaVersion: 1,
+    storageProtocol: "wal-sidecar-v3.1",
+    source: {
+      pageCount: 1,
+      orderedPageIdentities: ["page-hash-a"],
+      sourceHash: "source-hash-a",
+    },
+    legacyIdentities: [],
+    annotations: rows.map(({ uuid, timestamp, opId, rect }) => ({
+      uuid,
+      kind: "Square",
+      pageIndex: 0,
+      embeddedRef: null,
+      deleted: false,
+      clock: { timestamp, logical: 0, deviceId: "wal-device", opId },
+      payload: { editor: { pageIndex: 0, type: "Square", rect } },
+    })),
   };
 }
 
@@ -443,4 +480,68 @@ test("a newer remote operation with a different stamp still replaces the bound e
     "the newer remote operation must install a replacement editor");
   assert.equal(binding.row.clock.opId, "new-remote-op");
   assert.deepEqual(binding.row.editor.rect, [5, 6, 50, 60]);
+});
+
+test("authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs", async () => {
+  const harness = makeHarness();
+  const { state } = harness;
+  const cleanUuid = "wal-clean-square";
+  const oldRow = remoteRow({
+    uuid: cleanUuid,
+    timestamp: 900,
+    opId: "old-high-clock-op",
+    editor: { pageIndex: 0, type: "Square", rect: [1, 2, 30, 40] },
+  });
+  const oldEditor = harness.addEditor({
+    id: "old-wal-runtime",
+    pageIndex: 0,
+    editorType: "Square",
+    serialize() { return oldRow.editor; },
+    remove() { harness.manager.remove(this); },
+  });
+  state.externalAnnotationHydration.set(cleanUuid, {
+    runtimeId: oldEditor.id,
+    pageIndex: 0,
+    embeddedRef: null,
+    row: oldRow,
+    adoptedEmbedded: false,
+  });
+  state.externalAnnotationRows.set(cleanUuid, oldRow);
+
+  const dirtyUuid = "wal-dirty-square";
+  const dirtyEditor = harness.addEditor({
+    id: "local-dirty-runtime",
+    pageIndex: 0,
+    editorType: "Square",
+    serialize() { return { pageIndex: 0, type: "Square", rect: [8, 9, 18, 19] }; },
+    remove() { harness.manager.remove(this); },
+  });
+  state.annotationUuidByRuntimeId.set(dirtyEditor.id, dirtyUuid);
+  harness.markDirty(dirtyUuid, 12);
+
+  const snapshotResult = harness.applyExternalAnnotationsSnapshot(walSnapshot([
+    { uuid: cleanUuid, timestamp: 2, opId: "wal-low-clock-clean", rect: [5, 6, 50, 60] },
+    { uuid: dirtyUuid, timestamp: 1, opId: "wal-dirty-must-defer", rect: [90, 91, 100, 101] },
+  ]));
+
+  const authoritativeRow = state.externalAnnotationRows.get(cleanUuid);
+  assert.equal(authoritativeRow.authoritative, true,
+    "the WAL storage protocol must retain authoritative snapshot provenance");
+  assert.equal(authoritativeRow.clock.timestamp, 2,
+    "the authoritative snapshot is applied even when its wall clock is below the old binding");
+  assert.deepEqual(authoritativeRow.editor.rect, [5, 6, 50, 60]);
+  assert.deepEqual([...snapshotResult.deferredUuids], [dirtyUuid],
+    "a UUID with local dirty state must be deferred from the same snapshot");
+  assert.equal(state.externalAnnotationRows.has(dirtyUuid), false,
+    "the deferred WAL row must not enter the adopted external snapshot");
+  assert.equal(harness.getEditor(dirtyEditor.id), dirtyEditor,
+    "deferring the snapshot must preserve the local dirty editor");
+
+  assert.equal(await harness.hydrateExternalAnnotationsForPage(0), true);
+  const cleanBinding = state.externalAnnotationHydration.get(cleanUuid);
+  assert.notEqual(cleanBinding.runtimeId, oldEditor.id,
+    "a different authoritative WAL clock must replace the old hydrated editor despite lower wall time");
+  assert.equal(cleanBinding.row.clock.opId, "wal-low-clock-clean");
+  assert.equal(harness.getEditor(dirtyEditor.id), dirtyEditor,
+    "subsequent hydration must leave the deferred local dirty editor untouched");
 });

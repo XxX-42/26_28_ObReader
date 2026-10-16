@@ -1,0 +1,21 @@
+✔ mode-9 highlighter preserves exact one-, two-, and four-line selections (4831.687125ms)
+ℹ Highlight multiline evidence (candidate-1-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (candidate-2-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (candidate-4-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (candidate-save-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (candidate-reopen-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (candidate-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-1-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-2-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-4-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-save-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ Highlight multiline evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128375734-15615.json
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5028.405959

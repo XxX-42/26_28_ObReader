@@ -1,0 +1,1069 @@
+
+> test
+> node --test tests/*.test.mjs
+
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (43.001209ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (2.2045ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (6.487084ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (29.398666ms)
+✔ bulk history callbacks stop when their originating session is no longer current (5.188291ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (4.834375ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (4.047333ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (23.113042ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (22.384375ms)
+✖ annotation creation tools take priority over existing markup only while creating (41395.99275ms)
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/annotation-interaction-470cc344f599-1792128070933-12429.cleanup.json
+ℹ Failure evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/annotation-interaction-470cc344f599-1792128070933-12429.partial.json; screenshot: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/annotation-interaction-470cc344f599-1792128070933-12429-failure.png
+✔ synchronous browser SHA-256 export matches standard byte vectors (5.34975ms)
+▶ asset payload integrity guards reject bad compressed data before filesystem writes
+  ✔ compressed content changed while manifest metadata is unchanged (208.957833ms)
+  ✔ declared SHA does not match valid compressed bytes (11.192958ms)
+  ✔ overall manifest hash does not match (3.956792ms)
+  ✔ decompressed bytes exceed declared size (4.388167ms)
+  ✔ non-canonical base64 padding bits are rejected (1.942666ms)
+✔ asset payload integrity guards reject bad compressed data before filesystem writes (235.319458ms)
+▶ asset path, ID, and plugin-root guards reject unsafe names before writes
+  ✔ duplicate paths differing only by case (1.142708ms)
+  ✔ case-insensitive collision with completion marker (69.448917ms)
+  ✔ Windows-reserved or trailing-dot asset id: CON (1.24525ms)
+  ✔ Windows-reserved or trailing-dot asset id: bundle. (1.110666ms)
+  ✔ unsafe plugin root: "/absolute/plugin" (1.000875ms)
+  ✔ unsafe plugin root: "plugins\\pdf-reader" (2.03725ms)
+  ✔ unsafe plugin root: "plugins/../outside" (2.182959ms)
+  ✔ unsafe asset path: "/outside.bin" (0.907333ms)
+  ✔ unsafe asset path: "web\\viewer.html" (0.243042ms)
+  ✔ unsafe asset path: "../escape.bin" (0.228958ms)
+✔ asset path, ID, and plugin-root guards reject unsafe names before writes (166.531833ms)
+✔ a failed completion-marker write cannot leave the cache committed (13.903292ms)
+✔ valid cache hits avoid decompression and repairs decode only damaged files (479.746042ms)
+✔ asset work is globally capped at four and shared directories are created once (216.113667ms)
+✔ a repair failure stops scheduling and waits for started writes before rejecting (86.667292ms)
+✔ a fresh adapter uses the persistent index for a zero-binary-read warm restart (247.626666ms)
+✔ same-size content changes with new mtime/ctime repair only that cached asset (166.715542ms)
+✔ a metadata-only touch is hashed once and refreshes its stat row without rewriting bytes (6.406708ms)
+✔ a missing cached asset is repaired without rereading unchanged assets (145.850917ms)
+▶ legacy and malformed stat indexes migrate through full SHA verification
+  ✔ legacy (6.283209ms)
+  ✔ malformed (17.655ms)
+✔ legacy and malformed stat indexes migrate through full SHA verification (24.93025ms)
+✔ forceVerify performs a full content scan, including same-stat mutations (22.659958ms)
+✔ forceVerify waits for an in-flight initialization before starting a full scan (31.191458ms)
+✔ stat-unavailable adapters fall back to full SHA checks on each restart (3.987958ms)
+✔ a one-sided stat failure uses SHA and leaves a null index row (17.466459ms)
+▶ zero mtime is unusable while a zero ctime with positive mtime remains usable
+  ✔ zero ctime (37.885667ms)
+  ✔ zero mtime (3.468167ms)
+✔ zero mtime is unusable while a zero ctime with positive mtime remains usable (41.793041ms)
+✔ a stat snapshot race invalidates the candidate and repairs before committing (5.780708ms)
+✔ built main extracts every manifest asset once, serializes concurrent requests, repairs cache and isolates versions (11619.283709ms)
+✔ bundled runtime preserves full manifest hashing and multiline canonical bytes (105.166167ms)
+✔ interrupted extraction leaves no completion marker and succeeds on retry (1535.553917ms)
+✔ temporary-root cleanup unloads prewarmed harness plugins before removing files (27.780167ms)
+✔ malicious embedded asset paths are rejected before writing outside the plugin cache (88.552292ms)
+✖ iOS auto-save waits for idle and cooldown, then writes only the latest revision (12183.80775ms)
+Auto-save failure evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/autosave-failure-1792128085193.json
+✖ Obsidian auto-save debounces complete edits and serializes revisions (14923.368083ms)
+✔ browser cleanup reports a natural close separately from forced cleanup (19.8945ms)
+✔ browser cleanup attaches launch metadata and fails if terminal recording fails (35.969292ms)
+✔ stderr observer retains only a bounded tail from the owned child stderr (1.452333ms)
+✔ stderr observer timestamps the Chromium teardown watchdog marker (0.295959ms)
+✔ failed owned-child exit report includes early bounded stderr and excludes stdout (431.591709ms)
+✔ owned pages close before browser.close within one shared deadline (304.710417ms)
+✔ page-close rejection is reported once and does not skip browser.close (2.695625ms)
+✔ owned page pre-close preparation runs before close on the existing deadline (17.973625ms)
+✔ owned page pre-close preparation failures are recorded and do not skip page or browser close (3.098917ms)
+✔ a timed out owned-page preparation does not renew the close deadline or skip close attempts (37.787125ms)
+✔ owned-page preparation is not started after synchronous page checks exhaust the deadline (26.7385ms)
+✔ browser cleanup accepts only a zero-exit owned browser process as natural (862.656083ms)
+✔ targeted async process queries allow child exit events and accept an empty exited group (619.073125ms)
+✔ Linux process-group checks use pgrep IDs and a targeted ps PID list (1.985833ms)
+✔ Linux process-group lookup accepts only a silent no-match and fails closed on diagnostics (1.226083ms)
+✔ process-query diagnostics and timeouts still fail closed without signaling (351.654ms)
+✔ explicit ownedPages skips browser.pages and leaves the initial blank target for Browser.close (895.19975ms)
+✔ browser cleanup naturally accepts an owned child that exited before cleanup began (479.731416ms)
+✔ browser cleanup releases owned pipes after natural exit and CDP disconnect (2521.1385ms)
+✔ process identity matching requires the exact nonempty birth timestamp (0.391667ms)
+✔ owned-process sampling refuses an identity with a missing birth timestamp (298.293042ms)
+✔ opt-in mayDie sampling keeps its command bound and reports timeout signal metadata (717.664916ms)
+✔ sample success without a nonempty artifact is reported as failure with bounded command output (537.376334ms)
+✔ sampler preflight preserves an oversized pre-existing output inode and contents (669.208667ms)
+✔ only an oversized artifact created during sampling is truncated to the output cap (1245.571083ms)
+✔ browser cleanup preserves a signal exit from browser.close as failure (198.068166ms)
+✔ browser cleanup TERM/KILL is bounded, identity-checked, and reported as forced (236.048583ms)
+✔ browser cleanup refuses to signal a process when the profile identity changed (177.902166ms)
+✔ cleanup errors remain attached to the original functional error (0.384958ms)
+✔ test browser launches get unique Crashpad directories and preserve launch environment/options (138.023416ms)
+✔ failed launches retain a failure record and never touch an existing global Crashpad directory (28.310792ms)
+✔ a success-record write failure returns the Browser with failed metadata for cleanup (19.649208ms)
+✔ default Crashpad databases are allocated under the system temp directory (80.549833ms)
+✔ Crashpad setup failures leave a durable artifact record without launching (50.605625ms)
+✔ launch artifact setup failures do not call the launcher (14.873291ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (94.830125ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (50.639542ms)
+✔ controlled close publishes the shared session before creating its async guard (1.105917ms)
+(node:12508) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ default PDF opens route in-place while non-PDF and embedded opens stay native (248.384584ms)
+✔ disabling restores core PDF routing; re-enabling routes new opens again (19.870083ms)
+✔ unload does not clobber a later wrapper and leaves its stale route inactive (1.139041ms)
+✔ a PDF leaf created before plugin enable remains in the built-in view (14.370125ms)
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (19132.738833ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792128091972-12514.cleanup.json
+(node:12561) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ detached close writeback rebases against a second remote arrival using real PDF merge and delta recovery (488.474334ms)
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (10.008583ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (45.175292ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.261708ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (1.199583ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (5.29125ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (3.493083ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (4.051834ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (3.858291ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (2.943334ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (13.916333ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.53ms)
+✖ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (19.19925ms)
+✖ an exact local operation echo is reused even when hydration is asked to replace (6.371083ms)
+✖ a newer remote operation with a different stamp still replaces the bound editor (6.492333ms)
+✖ saved FreeText AP stays visible across NONE-mode right-eraser undo and redo (21182.774041ms)
+ℹ PDF.js pre-close teardown diagnostic: disabled
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/free-text-undo-appearance-1792128076435-12729-731e822e-53e8-483d-b75f-83ac57adb5cd.cleanup.json
+✔ two-device create/edit/delete branches converge after materializing both incremental merge suffixes (96.579292ms)
+✔ mobile save slot keeps serialization and borrowed host cleanup serial across Readers (3.828375ms)
+✔ borrow rejects another Reader, document, stale open and detached session (0.327917ms)
+✔ cancel and stale queued sessions never grant a PDF slot to a closed Reader (0.316ms)
+✔ desktop skips the mobile budget; unload rejects queued work without prematurely detaching active host buffers (0.253583ms)
+✔ closing a Reader cannot unlock a still-running host-owned parser (1.142167ms)
+✔ cancelQueued rejects only the owner and reason match without touching active work or borrowers (1.909417ms)
+✔ cancelQueued can additionally narrow a queued cancellation by request id (0.297167ms)
+✖ mode-9 highlighter preserves exact one-, two-, and four-line selections (12.895375ms)
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (9.565042ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (3.937083ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (4.414917ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (5.763667ms)
+✔ InteractionIntent contains value data and no DOM target or native event (5.169ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (1.745667ms)
+✔ TextSelectionController owns DOM selection and caret operations only (5.563625ms)
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (4.091459ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (2.95175ms)
+✔ IOSInputPolicy owns finger text-selection suppression (3.092ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (6.125417ms)
+✔ bridge delegates top-level listener installation to InputRouter (3.729792ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (2.125583ms)
+✔ interaction modes expose only their intended controller owners (0.244166ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (9.537084ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (0.895625ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (1.090208ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (5.187458ms)
+✔ pan click suppression preserves native activation and double-click targets (1.414166ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (1.659125ms)
+✖ iPad policy routes finger scrolling separately from PDF.js editor and mouse input (4141.141292ms)
+ℹ Pointer policy evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/ipad-pointer-policy-1792128083702-13534.json
+✔ release real browser without Node: mobile PDF/save/reopen (resource imports) (22509.382417ms)
+✔ release real browser without Node: mobile PDF/save/reopen (forced Blob fallback) (21502.006708ms)
+✔ mobile loader verifies adapter assets, orders bridge and PDF.js modules, and revokes by renderer generation (34.692834ms)
+✔ mobile bridge Blob fallback uses a fresh script and settles before imports (12.752417ms)
+✔ mobile module fallback does not retry after partial PDF.js or viewer evaluation (4.96875ms)
+✔ mobile module fallback retries only a resource rejection with no evaluation effects (5.651542ms)
+✔ mobile startup exposes sanitized stages without replacing an opened document status (2.627625ms)
+✔ status bar defaults off, toggles live Readers without reload, and restores paused recovery action (11.092333ms)
+✔ iOS pointer policy follows the frozen Obsidian platform entry and survives bridge fallback (10.958667ms)
+✔ desktop and mobile emulation keep separate entries over a shared browser-only core (3.676458ms)
+✔ mobile JSON retains historical save errors with no Readers and disables the separate log command (1.915584ms)
+✔ JSON export drains Viewer records created while collecting diagnostics (2.959291ms)
+✔ mobile settings export path-free diagnostics with bounded pointer samples (2.533667ms)
+✔ ready-frame diagnostics reject stale replies and sanitize bounded input samples (1.596708ms)
+Mouse regression failure evidence: /tmp/pdf-reader-mouse-failure-1792128084094-13541.json
+✖ trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent (13342.284042ms)
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/mouse-input-1792128084094-13541.cleanup.json
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (6000.204417ms)
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":125,"scrollDeltaInkMode":163,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true}}
+✔ native selection probe is self-contained, bounded, content-safe, and cleanable (19.60725ms)
+✔ native selection probe records pre-consumption ranges and restores phase listeners and methods (7.48725ms)
+✔ Native sidecar redirect maps only the exact annotation root (2.791292ms)
+✔ Native sidecar redirect maps DataAdapter.process and both rename paths (3.595792ms)
+✔ native config retains the Windows test target (4.565209ms)
+✔ non-Windows native tests require an explicit test vault, CLI and selector (1.945041ms)
+✔ active-vault mode requires an exact test path and never sends a vault selector (2.893209ms)
+✔ macOS native config only accepts the explicit isolated test vault (0.865875ms)
+✔ custom config directory must remain inside the vault (0.240584ms)
+✔ identity and deployment guards fail closed before disk changes (3.280209ms)
+✔ Native acceptance requires the exact enabled runtime, visible window, and no existing Readers (1.89425ms)
+✔ browser resolution finds macOS Chrome and honors explicit paths (0.498666ms)
+✔ native keycode helper uses Carbon codes on macOS and preserves Windows codes (0.235333ms)
+✔ native lifecycle case allowlist defaults to all and selects only requested fixtures (1.400875ms)
+✔ native CLI captures 20 MiB stdout and stderr within the bounded test buffer (347.135042ms)
+✔ native CLI preserves a non-zero exit and stderr diagnostics (374.971375ms)
+✔ native CLI timeout remains an error (508.842166ms)
+✖ PDF open waits for its own document readiness and cancels on renderer disposal (20986.351042ms)
+ℹ Open lifecycle evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/open-lifecycle-1792128092130-13700-fa5b6809-29f3-4700-9fc4-68c7b88ade5d.json
+ℹ Open lifecycle cleanup evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/open-lifecycle-1792128092130-13700-fa5b6809-29f3-4700-9fc4-68c7b88ade5d.cleanup.json
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (1280.488125ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (12.659333ms)
+✔ community release output is exactly the three installer assets (10.349833ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (837.066292ms)
+✔ daily save persists only immutable annotation operations and leaves the PDF source untouched (150.213ms)
+✔ legacy annotation UUIDs are imported only from exact PDF object identity metadata (18.734125ms)
+✔ legacy delete tombstones migrate to the immutable operation log without guessing a live payload (15.87475ms)
+✔ a legacy-marker PDF opens read-only when exact identity inspection is unavailable (9.210292ms)
+✔ legacy delete history sharing a ref with a live annotation migrates without suppressing the live mark (76.387958ms)
+✔ ambiguous live legacy identities leave the PDF readable in read-only mode (21.281083ms)
+✔ source size or mtime changes stop the append path without modifying the source (36.3475ms)
+✔ changed source identity blocks hydration and normal save (8.2375ms)
+✔ unknown ordered page identity blocks hydration and external saves (4.493583ms)
+✔ close recovery on a changed source is quarantined under its confirmed old identity (10.221333ms)
+✔ checkpoint arrival retries a pending v3 sync and restores editing in the open Reader (94.401209ms)
+✔ self-originated sidecar notifications do not re-enter checkpoint materialization (222.3125ms)
+✔ legacy tombstones from a concurrent Reader initialization reach already-open Readers (12.3365ms)
+✔ materialization serializes per document, leaves other documents independent, and reports queue timing (28.303083ms)
+✔ concurrent first opens derive the same path identity, while copied paths get a new identity (1.643959ms)
+✔ document identity and docKey do not change with the PDF content hash algorithm (2.640917ms)
+✔ overlapping path-index writes merge unrelated documents without making the index authoritative (0.917334ms)
+✔ two devices append concurrently and deterministic LWW retains both distinct annotations (12.470792ms)
+✔ out-of-order and duplicate operations are idempotent; same actor/opId conflicts fail closed (11.263084ms)
+✔ delete tombstones win over older updates regardless of arrival order and remain in snapshots (11.521791ms)
+✔ quarantined recovery operations do not replay against a different PDF source revision (4.507875ms)
+✔ normal operation batches from another source revision remain archived but never project onto this PDF (3.698917ms)
+✔ LWW tie breaks deterministically by logical counter, deviceId, then opId (4.592125ms)
+✔ verified checkpoint is a replay base and snapshot stores live annotations separately from tombstones (12.71225ms)
+✔ checkpoint backup restores compacted state and late covered batches cannot resurrect annotations (24.447042ms)
+✔ legacy Float32 wrappers are losslessly compacted only after the checkpoint upgrade barrier (23.802375ms)
+✔ every registered device must acknowledge the same checkpoint before GC; retirement rejects late writes (34.306334ms)
+✔ format 3 waits for every upgraded device, then merges concurrent immutable branches (13.958084ms)
+✔ a v3 batch cannot trigger format cutover before its checkpoint and every device ACK arrive (1.664583ms)
+✔ incomplete device ACKs block migration until every active device confirms the same checkpoint (5.033958ms)
+✔ a device ACK cannot substitute for a missing verified checkpoint object (136.288167ms)
+✔ corrupt previous checkpoint blocks batch collection after the retention period (22.121416ms)
+✔ incomplete sync and missing parent batches pause replay without changing the checkpoint (12.028958ms)
+✔ a recognizable old-device batch arriving after cutover is imported without downgrading the checkpoint (12.5285ms)
+✔ rename preserves identity and updates source mapping; a later path copy gets a new identity (11.699791ms)
+✔ identity event replay follows causal parents when device clocks are skewed (4.116875ms)
+✔ a synced index may temporarily lead a partially synced identity event stream (7.930417ms)
+✔ source identity requires a full prefixed hash and preserves prior identity on mismatch (11.251667ms)
+✔ legacy UUID/ref mappings survive index loss and are tied to the source identity (4.241666ms)
+✔ 0.7 migrates page and legacy identity payloads out of the root index and emits incremental identity events (20.521417ms)
+✔ idle registered devices block compact-format and root-index cutover until they acknowledge (6.818167ms)
+✔ a missing per-document metadata file behind a route index fails closed (0.5065ms)
+✔ a stale legacy index cannot overwrite newer per-document identity metadata (1.618208ms)
+✔ XXH64 runtime handles empty input, size and tail fast rejection (16.149292ms)
+✔ equal-size middle changes fall through the tail check to full XXH64 (5.593875ms)
+✔ streaming chunks and offset views hash only their visible bytes (7.258375ms)
+✔ legacy SHA-256 records remain readable and new hashes are tagged (2.448583ms)
+✔ WASM fallback writes tagged SHA and can read legacy SHA records (1.089208ms)
+✔ XXH64 journal reads legacy SHA checkpoints and writes tagged XXH64 records (10.720916ms)
+✔ recovery reads legacy SHA files and writes new XXH64 files without rewriting history (1.945208ms)
+✔ incremental updates keep the exact source prefix and omit untouched streams (75.299167ms)
+✔ repeated saves chain /Prev to the previous incremental xref (35.405ms)
+✔ invalid startxref pointers are rejected before a patch can be produced (5.992708ms)
+✔ trailers with unusable size values are rejected (7.903917ms)
+✔ encrypted trailers are refused by the incremental snapshotter (0.7045ms)
+✔ schema 2 stores an append suffix and reconstructs a confirmed PDF from its shared baseline (11.766875ms)
+✔ successive append records continue only from the exact prior checkpoint (3.127875ms)
+✔ a checkpoint matching the shared base reuses that file as its journal anchor (1.648791ms)
+✔ a full-write fallback is recoverable and a failed write remains pending (49.779666ms)
+✔ schema 1 full checkpoints remain readable (6.194792ms)
+✔ a corrupt newest checkpoint falls back to the prior complete manifest (15.546917ms)
+✔ a later write preserves the prior complete manifest when current segments are damaged (1.242375ms)
+✔ the recovery list exposes only checkpoints whose complete payload verifies (122.090625ms)
+✔ the recovery list falls back to a verified prior pending manifest (50.746ms)
+✔ a failed previous-manifest backup leaves the current manifest untouched (13.381ms)
+✔ concurrent first RPCs share one source load and one lazily-created worker (13.464125ms)
+✔ worker constructor failure revokes its blob and the next call can retry (0.840541ms)
+✔ a verified-source failure is retryable and never creates a worker or blob (1.103333ms)
+✔ dispose during source loading rejects all waiting calls without creating a worker (0.651042ms)
+✔ worker failure rejects inflight RPCs, releases the dead worker, and permits a fresh worker (10.834042ms)
+✔ dispose rejects RPCs already posted to a live worker (1.973541ms)
+✔ prepare timing stays correlated to its save transaction across Worker RPC (0.694583ms)
+✔ worker failures retain the originating method and Worker stack for diagnostics (0.539541ms)
+✔ owned byte snapshots transfer once while client admission keeps later payloads off the Worker (2.704042ms)
+✔ preparation binds all five editor kinds by storage order and preserves NM plus AP (121.660792ms)
+✔ prepared saves expose a verified append patch while preserving their exact source prefix (9.115792ms)
+✔ merge rebases prepared local state into the exact remote source and returns an append patch (25.450333ms)
+✔ text and freehand HighlightEditor output bind exact refs and retain semantic highlight identity (21.407583ms)
+✔ checkpoint UUIDs survive repeat-save, delete, tombstone carry-forward, and undo with null-ref upserts (23.614042ms)
+✔ prepareLocal accepts only an exact delete operation for an absent annotation in a stale draft ledger (18.244875ms)
+✔ an older delete cannot explain an absent annotation after a newer saved upsert (6.928583ms)
+✔ a confirmed checkpoint tombstone can carry forward through a stale live draft ledger (7.508625ms)
+✔ an older checkpoint tombstone cannot eclipse a newer live base for the missing-draft exception (12.798084ms)
+✔ a delete bound to a checkpoint's reallocated ref remains verifiable (7.046375ms)
+✔ lossless checkpoint rewrite normalizes indirect stream lengths without weakening page-content lineage (1035.634709ms)
+✔ new annotation binding rejects a type/order mismatch instead of guessing a sole type match (2.343042ms)
+✔ new annotations of the same type bind by exact per-page writer order (3.916083ms)
+✔ an unsaved create-delete can leave a null-ref tombstone, but unknown saved refs are rejected (2.655667ms)
+✔ a clean PDF.js draft cannot hide a retained id-null editor behind checkpoint metadata (3.891875ms)
+✔ concurrent annotation creates converge on canonical page order and retain untracked refs (18.537708ms)
+✔ independent new annotations union, same-UUID LWW is deterministic, and merge is byte-idempotent (10.951917ms)
+✔ newer delete wins over edit and remains as a durable tombstone (9.65675ms)
+✔ newer edit wins over an older delete and reports the losing concurrent branch (5.766083ms)
+✔ a newer same-content undo upsert defeats an older concurrent delete (8.4035ms)
+✔ semantic remote equality does not discard remote non-annotation metadata (5.473708ms)
+✔ copied winner preserves AP and NM while /P, popup /Parent and /IRT target destination refs (13.759417ms)
+✔ annotation merge remaps GoTo and AP page refs to existing pages without copying the page tree (16.829083ms)
+✔ annotation merge still rejects a reference to the page-tree root (5.3335ms)
+✔ tagged annotation update is copied only when the structure-tree association is unchanged (16.653708ms)
+✔ new tagged annotation merge fails closed only when branches require a structure-tree merge (12.980834ms)
+✔ a concurrent tagged-annotation delete fails closed instead of leaving a dangling structure-tree item (11.559791ms)
+✔ delete operations must identify the loaded annotation reference, page, and kind (14.907417ms)
+✔ legacy inspect is deterministic and page-content changes fail closed (3.584709ms)
+✔ page count changes pause preparation before page fingerprinting (0.944ms)
+✔ same-count page reordering fails after ordered identity fallback (7.866292ms)
+✔ PDF rewrite with new object refs triggers full fallback and remains safe (9.725958ms)
+✔ verified ordered page identities reuse persisted fingerprints for annotation-only saves (542.011ms)
+✔ an immutable Viewer source can save a second new annotation against its confirmed checkpoint (8.304166ms)
+✔ fast open records legacy annotations without computing page-content fingerprints (4.22425ms)
+✔ large embedded merge ledgers decode without overflowing the iOS argument stack (101.24575ms)
+✔ source revision mismatch forces the full fingerprint fallback and records transaction metrics (7.124333ms)
+✔ creation stamps are mandatory and equal-clock ties use actor/op identity (7.926416ms)
+✔ three-way annotation reconciliation reuses verified ordered page fingerprints (27.764333ms)
+✔ the Worker serializes heavy RPCs even when several messages arrive together (5.9095ms)
+✔ the Worker transfers a whole owned output buffer without an extra copy (1.617875ms)
+✔ the Worker copies a partial or input-aliasing output before transfer (2.548875ms)
+✔ the Worker transfers a whole incremental patch suffix without copying (1.312666ms)
+✔ the Worker copies partial and input-aliasing incremental patch suffixes (3.916542ms)
+✔ durable compact recovery shares one baseline and reconstructs exact independent bytes (20.174042ms)
+✔ non-prefix branch keeps the full recovery fallback available (0.127292ms)
+✔ base changed after first revision cannot acknowledge a later compact recovery (6.805917ms)
+✔ partial delta write produces no completed revision and preserves shared baseline (3.449625ms)
+✔ recovery rejects malicious paths and detects corruption at reconstruction (5.587542ms)
+(node:13937) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ opening a Reader waits for the shared budget before reading PDF-sized checkpoints (14.208875ms)
+✔ clean external modification refreshes the same Viewer without migrating or writing the PDF (351.527084ms)
+✔ sync-apply timeout cancels Viewer work and keeps its lease until cancellation is acknowledged (190.683916ms)
+✔ sync-applied arriving after the timeout cancel wins as the terminal apply result (177.891125ms)
+✔ failed sync-apply cancellation keeps the lease until frame teardown forces settlement (167.80375ms)
+✔ a clean close intent does not allocate a duplicate full-PDF checkpoint (0.922083ms)
+✔ close intent cancels a queued reconcile lease without releasing accepted work (315.7015ms)
+✔ close intent waits for one active PDF checkpoint and prevents a follow-up apply (185.368375ms)
+✔ close intent cancels an already prepared apply and retains the recovery draft (175.4565ms)
+✔ close intent waits for an active apply cancellation and keeps its recovery draft (367.761041ms)
+✔ close intent refuses to proceed when active apply cancellation fails (156.928542ms)
+✔ a save-in-progress checkpoint rejection releases and retries without waiting under the host save queue (319.857792ms)
+✔ an already confirmed local checkpoint participates when an older peer version replaces disk (163.763083ms)
+✔ save transaction carries dirty state and forces fingerprint fallback when source bytes changed (2.931125ms)
+✔ save telemetry separates source mutation latency from readback and checkpoint phases (32.254416ms)
+✔ save restores runtime annotation IDs by UUID after merge metadata is returned (15.538125ms)
+✔ sync host reads cross-realm byte buffers without taking ownership (25.033167ms)
+✔ last-reader release clears cached bytes, preserves checkpoint files, and forces verification on reload (16.92875ms)
+✔ a Reader reopened on the same file survives settlement of its prior released session (18.757ms)
+✔ a revision changed during merge rejects application and leaves disk and Viewer intact (183.219375ms)
+✔ write failure retains the pending branch and prevents subsequent automatic overwrites (359.01025ms)
+✔ prepareLocal binding failure pauses sync only after preserving the raw Viewer checkpoint (1.9185ms)
+✔ a queued save keeps captured recovery identity when its Reader selects another PDF (3.4845ms)
+✔ unload aborts a queued original-file write and leaves its recovery branch intact (0.713292ms)
+✔ an exact incremental patch is journaled then appended once and verified (6.531875ms)
+✔ a prepared PDF.js prefix tail skips the full three-way merge (2.448167ms)
+✔ a partially interrupted append stays pending and is never retried blindly (204.697834ms)
+✔ a preflight TFile refresh rebinds the exact path and appends only after byte verification (165.918833ms)
+✔ a pre-append removal rolls back only its pending manifest and keeps its raw recovery copy (1.492125ms)
+✔ pre-append rollback restores the prior confirmed manifest without removing its backup (12.693208ms)
+✔ pre-append rollback preserves a newer manifest installed during prior-checkpoint validation (7.856584ms)
+✔ pre-append rollback leaves a newer concurrent manifest untouched (8.117583ms)
+✔ startup confirms an exact pending output without writing the source again (5.378791ms)
+✔ a pending branch on the exact base is merged before the next coordinated save (3.915625ms)
+✔ an invoked append on its exact parent remains paused after restart (3.841834ms)
+✔ a legacy append with unique verified prefix-delta recovery evidence may merge (11.542625ms)
+✔ an uncorrelated legacy pending append remains paused on its parent bytes (2.05025ms)
+✔ an invoked full write remains blocked even when disk still equals its recorded parent (153.827667ms)
+✔ a pending append preflight is checked against the immediate linked parent, not the common base (4.473667ms)
+✔ an incremental patch whose base differs from disk is never appended to that disk (2.17175ms)
+✔ rebase serialization alone does not request a Viewer refresh when annotation state is unchanged (1.700083ms)
+✔ background sync rebases append a verified suffix and materialize only the Viewer reload bytes (167.099416ms)
+✔ detached close writeback remerges when a remote branch arrives between observation and journal (6.376583ms)
+✔ close writeback binding failure keeps the exact raw recovery bytes and leaves source untouched (1.116417ms)
+✔ a newer raw recovery in the same Reader session suppresses older queued close jobs (0.969584ms)
+✔ same-millisecond independent Reader recoveries are serialized and merged instead of dropped (23.634958ms)
+✔ close writeback waits for an already admitted PDF open before acquiring a writer (37.819583ms)
+✔ sync reconciliation waits until an admitted same-path PDF open has parsed (654.718125ms)
+✔ detached close work acquires a Reader-free heavy lease before entering the save queue (13.017667ms)
+✔ a closed detached job releases baseline and sync bytes while the journal remains reloadable (7.996792ms)
+✔ equivalent duplicate close recoveries select one winner and supersede the replay (5.030292ms)
+✔ startup path discovery is a barrier before opening a PDF with a persisted close job (51.356959ms)
+✔ in-flight source save settles after close without poisoning the latest detached recovery (22.20825ms)
+✔ frozen TextLayerBuilder ignores delayed collapsed selection after pointer release (4.407042ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (8.498375ms)
+(node:13942) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ restart merges an intact preflight Ink branch and a fresh Square through the real PDF writer (117.636625ms)
+✔ legacy pre-write failure evidence permits preserving and merging both real PDF branches (30.092042ms)
+✔ schema-2 delta recovery from the real writer proves the legacy pre-write failure without losing Ink or new edits (20.711416ms)
+(node:13943) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ WAL production host saves, reopens and renames without source writes or Format 3 output (132.093375ms)
+✔ WAL production multi-view saves are serialized and close only after the matching confirmation (58.388375ms)
+✔ mobile host save slots reject stale queued Readers and accept only the matching lease borrower (23.428333ms)
+✔ an explicit close tears down a renderer that cannot confirm flush without changing the PDF (6.769792ms)
+✔ merge metadata preserves the Obsidian EditableFileView syncState method (3.496708ms)
+✔ different PDF paths receive distinct leaves and reopening reuses its file leaf (7.104375ms)
+✔ ACTIVE_DAILY_SIDECAR keeps the PDF immutable and restores durable operations in a new session (19.316625ms)
+✔ ACTIVE_EXPLICIT_EXPORT creates a separate PDF only after an explicit Viewer export response (26.440792ms)
+✔ ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without editing the PDF (14.041625ms)
+✔ host ignores stale source, token, and document messages (2.465958ms)
+✔ host refuses wrong-session or externally changed annotation saves and durably ACKs a valid sidecar batch (12.779833ms)
+✔ two views of one PDF serialize durable sidecar batches without overwriting the PDF (16.378791ms)
+✔ a queued annotation save stays with its source PDF when the Reader switches documents (21.319167ms)
+✔ a rename during sidecar persistence keeps the operation with its original document identity (36.305375ms)
+✔ open uses a stable session ID and sends current path, filename, and default auto-save (1.113542ms)
+✔ sidecar saves require the matching opened ACK and exact Viewer page-identity handshake (8.902958ms)
+✔ a not-ready Reader closes only when clean or its sidecar operation revision is durable (15.584ms)
+✔ popout migration reopens the unchanged PDF and rehydrates confirmed sidecar operations (21.246084ms)
+✔ async iframe adoption rebinds the owner before the fresh renderer sends ready (10.549583ms)
+✔ popout migration restores confirmed recovery operations without replacing the source PDF (25.766583ms)
+✔ a rejected SDK popout move cancels the prepared checkpoint and keeps the live renderer (6.342375ms)
+✔ the SDK popout wrapper leaves non-Reader leaves synchronous and restores the workspace method (1.147208ms)
+✔ an unexpected renderer reload reopens the confirmed PDF and sidecar log, never renderer bytes (15.280584ms)
+✔ renaming a PDF updates the path while retaining the view session ID (11.823417ms)
+✔ auto-save preference persists and is sent to open views (1.531042ms)
+✔ status bar preference defaults off and updates every live Reader immediately (2.595625ms)
+✔ sidecar write failure reports that the unacknowledged operation remains in the live Reader (12.640083ms)
+✔ recovery protocol durably stores structured Ink operations without writing the original PDF (8.715959ms)
+✔ startup initializes the legacy recovery directory before listing verified candidates (2.947542ms)
+✔ malformed primary recovery metadata falls back to its verified immutable raw descriptor (1.353042ms)
+✔ saved tombstones suppress rawmeta replay and missing or incomplete metadata falls back safely (15.121167ms)
+✔ failed recovery verification preserves the candidate and creates no partial visible copy (1.36625ms)
+✔ recovered Ink operation is durable before ACK while the source PDF remains byte-identical (199.118584ms)
+✔ queued recovery keeps its sidecar batch with the source PDF when the view switches (49.550417ms)
+✔ close reports a persisted recovery draft distinctly from an unflushed loss (23.234584ms)
+✔ forced onClose keeps its failed flush warning without preparing twice on file unload (5.896792ms)
+✔ close waits for the bridge flush response before removing the frame (1.760625ms)
+✔ controlled close registers its session before sending prepare-close (13.615333ms)
+✔ controlled detach waits for a prepared ack and skips duplicate onClose flush (9.0715ms)
+✔ controlled close shares one pending prepare request and cancels a failed Viewer acknowledgement (9.188125ms)
+✔ controlled close arms a complete Viewer acknowledgement budget at the send boundary (12.286375ms)
+✔ controlled close does not message a Viewer that becomes stale before its send boundary (7.545833ms)
+✔ failed controlled detach keeps the Reader leaf open and sends cancel-close (10.377958ms)
+✔ controlled detach rejects a close ack for a different open request (20.519916ms)
+✔ controlled detach accepts a Viewer-confirmed durable recovery batch (25.297209ms)
+✔ popout beforeunload waits for every Reader and resumes after a failed close (11.212458ms)
+✔ stale popout beforeunload gate allows native close when no Reader remains (33.119208ms)
+✔ direct SDK close disposes a stale zero-Reader popout gate (14.62825ms)
+✔ last prepared Reader leaf lets the SDK parent close synchronously (8.848541ms)
+✔ an uncommitted prepared parent close cancels the freeze and resets the gate (60.729833ms)
+✔ popout parent close cancels already prepared Readers if another Reader fails (13.814667ms)
+✔ popout close aborts if a new Reader joins while close preparation is pending (23.948709ms)
+✔ popout close aborts when a Reader document session changes before its ack (7.081042ms)
+✔ popout owner migration releases the former gate and unload preserves later close wrappers (15.426166ms)
+✔ popout close falls back with a notice when the SDK split cannot be verified (1.443125ms)
+✔ same-leaf PDF switch prepares the old document before FileView unload (15.754542ms)
+✔ failed view transition preserves the current PDF leaf and document (8.652833ms)
+✔ unload leaves a later detach wrapper intact and routes it through the inactive shim (1.566333ms)
+✔ owner-window migration rebinds listeners and startup/flush deadlines (3.061459ms)
+✔ close clears other outstanding flush timers (2.083791ms)
+✔ recovery command creates a separate visible PDF copy (6.984708ms)
+✔ recovery restore verifies bytes, falls back to an intact candidate, and retains corruption (6.080916ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (9264.757459ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128098629-13945.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128098629-13945.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128098629-13945.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128098629-13945.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128098629-13945.json
+✔ ordinary mouse text selection is tracked without pointer capture (4.950625ms)
+✔ tracing preserves this, argument/return identity and original thrown error (15.371791ms)
+✔ visible JSON includes prior-session errors and current function records after Readers have closed (3.094ms)
+✔ JSON error analysis highlights stack overflows with bounded save context and Worker stack (0.732792ms)
+✔ JSON snapshot seals its source part and cannot chase export-time events (0.6375ms)
+✔ records arriving during both flushes are retained for the next cutoff (1.601875ms)
+✔ historical parts use numeric order and a final shutdown marks the session ended (17.072708ms)
+✔ no-append Adapter writes one valid JSON file within the configured byte limit (4.060166ms)
+✔ large diagnostic exports compact high-frequency events and stay below 19.99 MB (18.622ms)
+✔ diagnostic collection calls survive runtime-log compaction (0.728417ms)
+✔ default diagnostic JSON limit is 64 MB and accepts exports above the former 19.99 MB cap (759.025ms)
+✔ current session chunks and errors take priority over large historical logs within the byte budget (8.316416ms)
+✔ malformed records and missing files produce valid JSON with explicit incomplete evidence (1.221584ms)
+✔ cross-window promises keep identity, time completion, and ignore overridden then (2.870208ms)
+✔ diagnostic attachment failure cannot replace the original result (0.978208ms)
+✔ local log parts append without rereading the existing file, and rotate without deleting (0.403125ms)
+✔ adapters without append use new parts rather than rewriting a complete log (0.145125ms)
+PDF Reader local log write failed Error: disk full
+    at f.adapter.write (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:203:84)
+    at /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/plugin/session-log.cjs:67:38
+    at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:204:16)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+✔ one stalled writer does not enqueue unbounded flushes; overflow is explicit (33.520958ms)
+✔ write failure is reported and a later successful part records log loss (15.008959ms)
+✔ Viewer tracing keeps cross-window promises and synchronous drain removes the final batch (10.2245ms)
+FreeText geometry regression evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/sidecar-freetext-geometry-failure-1792128114350.json
+✖ real FreeText sidecar hydration preserves geometry at every rotation and scale (14333.430375ms)
+✔ FreeText sidecar capture keeps geometry and self-echo hydration adopts the live editor (4590.06ms)
+✔ source binding fails closed for actual PDF transformation: metadata-only edit (706.7565ms)
+✔ source binding fails closed for actual PDF transformation: object references rebuilt by copying unchanged pages (544.468917ms)
+✔ source binding fails closed for actual PDF transformation: object-stream optimization (350.911584ms)
+✔ source binding fails closed for actual PDF transformation: unchanged document with different full-file hash (217.59725ms)
+✔ source binding fails closed for actual PDF transformation: page insertion (315.721458ms)
+✔ source binding fails closed for actual PDF transformation: page deletion (338.305834ms)
+✔ source binding fails closed for actual PDF transformation: page reorder (322.449083ms)
+✔ mobile prewarm starts without layout readiness or an opened Reader, then reuses prepared bytes (145.897167ms)
+✔ opening during background preparation shares the initialization task (79.694834ms)
+✔ a failed prewarm records its failure and retries without requiring a PDF click (65.520167ms)
+✔ prewarm retries are bounded, foreground can retry, and unload cancels pending startup (76.221458ms)
+✖ a stale readDocument must not overwrite a newer checkpoint after its batch was collected (58.262208ms)
+✖ independent stale replay cannot overwrite a newer checkpoint (35.327417ms)
+✖ retired-device stale replay cannot erase a batch after real GC (34.466333ms)
+✖ GC must leave an operation batch created after its checkpoint snapshot (34.393833ms)
+✔ concurrent different UUID batches remain recoverable while a stale writer regresses the cache (49.56875ms)
+✔ same-UUID concurrent edits converge by Lamport last-writer-wins (65.572208ms)
+✖ an unretired device's new batch below the checkpoint timestamp remains replayable (44.643042ms)
+✔ delete/edit races choose the later clock in both directions (28.576042ms)
+✔ a public retirement blocks an in-flight late batch and later appends (13.612584ms)
+✖ primary/backup competition is repaired by a fresh third store from retained batches (16.47125ms)
+✔ six explicit process-crash boundaries are recorded as NOTRUN in this adapter harness (2.165917ms)
+✖ concurrent readDocument GC must not remove the same covered batch twice (36.813791ms)
+✖ GC queues are independent across document keys (13.014625ms)
+✖ a rejected GC does not poison the next GC for that document (2.384625ms)
+✔ child-process crash boundary: pending-before-rename (648.586334ms)
+✔ child-process crash boundary: operation-published-before-readback (372.759709ms)
+✖ child-process crash boundary: checkpoint-backup-written (1037.893209ms)
+✖ child-process crash boundary: checkpoint-primary-written (773.74625ms)
+✖ child-process crash boundary: ack-before-write (1344.760125ms)
+✖ child-process crash boundary: ack-written-before-readback (934.600458ms)
+✖ child-process crash boundary: gc-remove-before-confirmation (856.177792ms)
+✖ sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place (33164.0765ms)
+ℹ Sync regression failure evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/sync-bridge-failure-1792128108674-14186.json
+✔ Pencil text selection owns a collapsed caret and validates an extended range (7.849583ms)
+✔ selection cleanup removes only the range still owned by the Pencil gesture (1.800375ms)
+✔ range extension stops on session loss or foreign selection ownership (2.136417ms)
+✔ TextSelectionController owns and cancels its pending Pencil session (1.634291ms)
+✔ caret results outside the target text layer never begin an owned selection (1.055083ms)
+✔ release velocity is a recency-weighted regression over the final 80 ms (7.41ms)
+✔ a light flick clears the launch threshold while a paused finger does not (1.789584ms)
+✔ sample timing merges duplicate timestamps and rejects spans under 8 ms or sparse history (39.059041ms)
+✔ the 80 ms window interpolates one nearby predecessor without an edge jump (7.00525ms)
+✔ a sample exactly on the 80 ms boundary is not counted twice (3.061583ms)
+✔ event timestamps use the performance clock when origins do not match (1.680667ms)
+✔ diagonal release velocity is capped at 4 px/ms by vector magnitude (1.56275ms)
+✔ stationary pointerup records its endpoint without refreshing last motion (6.359208ms)
+✔ pointerup applies its final position while pointercancel ignores it (3.91925ms)
+✔ a second direct pointer blocks both touch pans regardless of lift order (5.299792ms)
+✔ inertia has partition-independent decay across 60, 120 Hz and an 80 ms stall (27.406ms)
+✔ a long frame integrates only through the exact stop time (1.36875ms)
+✔ hiding cancels inertia and prevents an active finger from restarting it (7.5045ms)
+✖ underline selection geometry stays single-stroke across text runs and columns (37177.911916ms)
+✔ WAL storage runtime dependency graph stays relative and free of host-only APIs (83.561458ms)
+✔ default annotation host uses WAL storage and saves without source PDF write APIs (229.34675ms)
+✔ default host rebuilds a deleted registry from verified sidecar and WAL routing (134.123875ms)
+✔ default host rebuilds a corrupt registry from verified sidecar and WAL routing (38.483083ms)
+✔ 50 seeded device-WAL arrival permutations converge through duplicates, rollback, and compaction (4592.903125ms)
+✔ a partial arriving WAL stays pending and blocks writes until its valid shard arrives (17.800333ms)
+✔ default WAL host saves and recovers all annotation kinds, reopens them, and follows a rename route (692.972125ms)
+✔ a save from one Reader view broadcasts the committed state to another view (201.943042ms)
+✔ an invalid remote WAL shard marks the view pending and blocks edits (174.776458ms)
+✔ a changed source PDF stays byte-identical and blocks annotation hydration and saves (59.239625ms)
+✔ retrying a save with the same origin operation ID acknowledges once without advancing the WAL (56.922458ms)
+✔ disposed and stale host sessions cannot persist a queued Reader save (27.829958ms)
+✔ recovery for a replaced source is quarantined under the original PDF identity (68.657667ms)
+✖ idle maintenance compacts only after a safe matching probe and clears pending timers (6266.181458ms)
+✔ Format 3 export is read-only and interrupted/repeated imports preserve current state (231.614833ms)
+✔ Format 3 export fails closed on an incomplete operation and never repairs it (10.245166ms)
+✔ one-shot sidecar bytes ignore device-local source modification times (46.54975ms)
+✔ canonical JSON sorts nested keys and preserves Float32LE encoded payload objects (14.370667ms)
+✔ seal and verify use the canonical unsigned envelope and reject changed contents (3.291708ms)
+✔ version tuples compare by rev, then lexical deviceId, then seq (0.31675ms)
+✔ operation validation rejects malformed tuples and invalid annotation payload metadata (0.741916ms)
+✔ join is idempotent and commutative across operation permutations (21.344208ms)
+✔ same logical object and version cannot identify different op IDs or content (2.43675ms)
+✔ a tombstone wins by version and a later set clears it (0.816375ms)
+✔ effective state joins a verified sidecar, anchor records, and WAL tails (0.503792ms)
+✔ routing keeps the highest version and carries source and legacy metadata (1.075ms)
+✔ document identity uses normalized initial path and the complete tagged source hash (2.061083ms)
+✔ sidecar write failure restores the last valid file (21.269042ms)
+✔ a partial canonical JSON file recovers from the verified pending write (2.099208ms)
+✔ a failed staging write leaves the prior sidecar intact across a crash boundary (4.322542ms)
+✔ writing a subset preserves unrelated winners and tombstones from the existing sidecar (13.367625ms)
+✔ the current hash runtime verifies sidecars sealed by the previous algorithm (11.08575ms)
+✔ WAL writes enforce owner identity and persist the agreed device-WAL schema (36.317291ms)
+✔ a device WAL rejects reusing one owner sequence for different anchored annotations (6.216875ms)
+✔ a sidecar rejects reusing one device sequence for different annotation map entries (1.744167ms)
+✔ a valid sidecar for another documentId at the same docKey raises DOC_KEY_COLLISION (4.847167ms)
+✔ a valid WAL for another documentId at the same docKey and owner raises DOC_KEY_COLLISION (24.198167ms)
+✔ a valid Sync rollback is rejected after higher WAL sequence progress was observed (45.109416ms)
+✔ writer coordinators serialize instances sharing one adapter and document (0.827833ms)
+✔ compaction keeps a sidecar-only witness, then evicts a zombie when another WAL durably witnesses its winner (164.909709ms)
+✔ compaction keeps only the local winner for repeated edits to one annotation (110.046208ms)
+✔ a remote tombstone WAL witness lets compaction discard all dominated local payloads (9.365ms)
+✔ devices materializing the same observed state write identical canonical sidecars (36.334041ms)
+✔ compaction rejects verified contributors with conflicting immutable source metadata before writing (74.771208ms)
+✔ compaction rejects a winning route whose source metadata changes immutable PDF identity (4.519291ms)
+✔ source binding fails closed for actual PDF transformation: metadata-only edit (772.554208ms)
+✔ source binding fails closed for actual PDF transformation: object references rebuilt by copying unchanged pages (309.719958ms)
+✔ source binding fails closed for actual PDF transformation: object-stream optimization (309.184875ms)
+✔ source binding fails closed for actual PDF transformation: unchanged document with different full-file hash (261.718334ms)
+✔ source binding fails closed for actual PDF transformation: page insertion (331.2435ms)
+✔ source binding fails closed for actual PDF transformation: page deletion (420.649709ms)
+✔ source binding fails closed for actual PDF transformation: page reorder (288.437166ms)
+✔ Format 3 migration preserves effective live rows and tombstones through WAL recovery (133.720958ms)
+✔ registry deletion is repaired from verified sidecar and WAL records (54.005375ms)
+✔ an unverified pending header cannot impersonate a verified docKey (4.866834ms)
+✔ a stale registry documentId is ignored and rebuilt from verified records (3.289625ms)
+✔ two integrity-validated identities sharing one docKey fail closed (5.249041ms)
+✔ distinct verified identities routing to one path fail closed after discovery and cache invalidation (82.509458ms)
+✔ a verified pending sidecar is discoverable after a staged-write crash and WAL loss (9.922833ms)
+✔ failed sidecar replacement rolls back to the last verified primary (7.977375ms)
+✔ same-path source replacement cannot hydrate or append against the prior PDF identity (14.351791ms)
+✔ copying a renamed PDF back to its original path is reported as identity ambiguity (18.234417ms)
+✔ a renamed PDF waits for its route operation instead of creating an empty identity (42.780625ms)
+✔ duplicate save retries are idempotent across concurrent store instances (16.017916ms)
+✔ duplicate stable opIds in one save batch append only once (34.588417ms)
+✔ compaction safely replays the same assigned operation from sidecar and WAL anchor (86.425667ms)
+✔ materialization never seeds a missing WAL below its sidecar watermark (33.607834ms)
+ℹ tests 566
+ℹ suites 0
+ℹ pass 535
+ℹ fail 31
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 81524.8355
+
+✖ failing tests:
+
+test at tests/annotation-interaction-regression.test.mjs:52:1
+✖ annotation creation tools take priority over existing markup only while creating (41395.99275ms)
+  TimeoutError: Waiting failed: 30000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/annotation-interaction-regression.test.mjs:896:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/autosave-mobile-regression.test.mjs:43:1
+✖ iOS auto-save waits for idle and cooldown, then writes only the latest revision (12183.80775ms)
+  TimeoutError: Waiting failed: 8000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at CdpPage.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Page.js:1537:37)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/autosave-mobile-regression.test.mjs:239:16)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/autosave-regression.test.mjs:46:1
+✖ Obsidian auto-save debounces complete edits and serializes revisions (14923.368083ms)
+  TimeoutError: Waiting failed: 10000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at setSquareMode (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/autosave-regression.test.mjs:365:20)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/autosave-regression.test.mjs:426:13)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/desktop-toolbar.test.mjs:489:1
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (19132.738833ms)
+  TimeoutError: Waiting failed: 10000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/desktop-toolbar.test.mjs:1031:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/external-hydration-race.test.mjs:292:1
+✖ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (19.19925ms)
+  Error: Cannot read properties of undefined (reading 'has')
+      at sendError (evalmachine.<anonymous>:111:41)
+      at evalmachine.<anonymous>:760:11
+      at evalmachine.<anonymous>:766:9
+      at Object.fireNextTimer (evalmachine.<anonymous>:157:7)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/external-hydration-race.test.mjs:340:11)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at tests/external-hydration-race.test.mjs:363:1
+✖ an exact local operation echo is reused even when hydration is asked to replace (6.371083ms)
+  TypeError: Cannot read properties of undefined (reading 'has')
+      at evalmachine.<anonymous>:586:40
+      at Array.filter (<anonymous>)
+      at Object.hydrateExternalAnnotationsForPage (evalmachine.<anonymous>:584:8)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/external-hydration-race.test.mjs:397:34)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+test at tests/external-hydration-race.test.mjs:409:1
+✖ a newer remote operation with a different stamp still replaces the bound editor (6.492333ms)
+  TypeError: Cannot read properties of undefined (reading 'has')
+      at evalmachine.<anonymous>:586:40
+      at Array.filter (<anonymous>)
+      at Object.hydrateExternalAnnotationsForPage (evalmachine.<anonymous>:584:8)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/external-hydration-race.test.mjs:436:34)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+test at tests/free-text-undo-appearance-regression.test.mjs:223:1
+✖ saved FreeText AP stays visible across NONE-mode right-eraser undo and redo (21182.774041ms)
+  TimeoutError: Waiting failed: 15000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/free-text-undo-appearance-regression.test.mjs:947:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/highlight-multiline-regression.test.mjs:56:1
+✖ mode-9 highlighter preserves exact one-, two-, and four-line selections (12.895375ms)
+  AssertionError [ERR_ASSERTION]: The diagnostic transform must match the current capture guard exactly
+      at legacyCaptureDiagnostic (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/highlight-multiline-regression.test.mjs:52:10)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/highlight-multiline-regression.test.mjs:68:28)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/input-architecture-boundary.test.mjs:334:1
+✖ AnnotationController owns PDF.js editor cancellation and highlight fallback only (4.091459ms)
+  AssertionError [ERR_ASSERTION]: AnnotationController must not contain Vault
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/input-architecture-boundary.test.mjs:355:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/ipad-pointer-policy.test.mjs:313:1
+✖ iPad policy routes finger scrolling separately from PDF.js editor and mouse input (4141.141292ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+      flag: 'true',
+      mode: 0,
+  +   touchAction: 'pan-x pan-y'
+  -   touchAction: 'none'
+    }
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/ipad-pointer-policy.test.mjs:461:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { flag: 'true', touchAction: 'pan-x pan-y', mode: 0 },
+    expected: { flag: 'true', touchAction: 'none', mode: 0 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests/mouse-input-regression.test.mjs:48:1
+✖ trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent (13342.284042ms)
+  TimeoutError: Waiting failed: 8000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at waitForAnnotationModeChange (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/mouse-input-regression.test.mjs:550:20)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/mouse-input-regression.test.mjs:745:11)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/open-lifecycle-regression.test.mjs:55:1
+✖ PDF open waits for its own document readiness and cancels on renderer disposal (20986.351042ms)
+  TimeoutError: Waiting failed: 15000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at CdpPage.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Page.js:1537:37)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/open-lifecycle-regression.test.mjs:485:18)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/sidecar-freetext-geometry.test.mjs:53:1
+✖ real FreeText sidecar hydration preserves geometry at every rotation and scale (14333.430375ms)
+  TimeoutError: Waiting failed: 10000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/sidecar-freetext-geometry.test.mjs:262:18)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/store-checkpoint-race.test.mjs:83:1
+✖ a stale readDocument must not overwrite a newer checkpoint after its batch was collected (58.262208ms)
+  AssertionError [ERR_ASSERTION]: the stale materialization must not erase a newer annotation after its batch was GC'd
+  + actual - expected
+  
+    {
+      backupAnnotationIds: [
+  -     'annotation-new',
+        'annotation-old'
+      ],
+  +   backupRevision: 1,
+  +   newerBatchStillExists: true,
+  -   backupRevision: 2,
+  -   newerBatchStillExists: false,
+      oldReadRevision: 1,
+      primaryAnnotationIds: [
+        'annotation-new',
+        'annotation-old'
+      ],
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-checkpoint-race.test.mjs:163:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { oldReadRevision: 1, primaryRevision: 2, primaryAnnotationIds: [ 'annotation-new', 'annotation-old' ], backupRevision: 1, backupAnnotationIds: [ 'annotation-old' ], newerBatchStillExists: true },
+    expected: { oldReadRevision: 1, primaryRevision: 2, primaryAnnotationIds: [ 'annotation-new', 'annotation-old' ], backupRevision: 2, backupAnnotationIds: [ 'annotation-new', 'annotation-old' ], newerBatchStillExists: false },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-cross-instance-race.test.mjs:365:1
+✖ independent stale replay cannot overwrite a newer checkpoint (35.327417ms)
+  AssertionError [ERR_ASSERTION]: stale replay A must not replace B's newer durable checkpoint
+  + actual - expected
+  
+  + 'sha256-v1:cb6362751919a9f7b05b02290aa044bc6c0f14a0ce8bcafa5122a5c2d4253f78'
+  - 'sha256-v1:84cbbd70618e7da5b89a976be3b1cb92f138edb9a6e6cef454a5924079019dd3'
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-cross-instance-race.test.mjs:406:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'sha256-v1:cb6362751919a9f7b05b02290aa044bc6c0f14a0ce8bcafa5122a5c2d4253f78',
+    expected: 'sha256-v1:84cbbd70618e7da5b89a976be3b1cb92f138edb9a6e6cef454a5924079019dd3',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-cross-instance-race.test.mjs:420:1
+✖ retired-device stale replay cannot erase a batch after real GC (34.466333ms)
+  AssertionError [ERR_ASSERTION]: B must remove the covered immutable batch through the real GC path
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-cross-instance-race.test.mjs:474:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/store-cross-instance-race.test.mjs:489:1
+✖ GC must leave an operation batch created after its checkpoint snapshot (34.393833ms)
+  AssertionError [ERR_ASSERTION]: the test must exercise a real eligible GC pass
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-cross-instance-race.test.mjs:536:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/store-cross-instance-race.test.mjs:683:1
+✖ an unretired device's new batch below the checkpoint timestamp remains replayable (44.643042ms)
+  AssertionError [ERR_ASSERTION]: the anchor batch must already be collected so it cannot explain recovery of the later annotation
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-cross-instance-race.test.mjs:721:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-cross-instance-race.test.mjs:882:1
+✖ primary/backup competition is repaired by a fresh third store from retained batches (16.47125ms)
+  AssertionError [ERR_ASSERTION]: the backup should retain B's newer verified revision 2 checkpoint
+  
+  0 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-cross-instance-race.test.mjs:930:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-gc-race.test.mjs:71:1
+✖ concurrent readDocument GC must not remove the same covered batch twice (36.813791ms)
+  AssertionError [ERR_ASSERTION]: only the first serialized GC should remove the batch; the next GC should observe it is gone
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-gc-race.test.mjs:128:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-gc-race.test.mjs:146:1
+✖ GC queues are independent across document keys (13.014625ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-gc-race.test.mjs:192:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-gc-race.test.mjs:197:1
+✖ a rejected GC does not poison the next GC for that document (2.384625ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-gc-race.test.mjs:222:3)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: { code: 'PDF_ANNOTATION_CHECKPOINT_BACKUP_UNCONFIRMED' },
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at tests/store-process-crash-boundary.test.mjs:185:3
+✖ child-process crash boundary: checkpoint-backup-written (1037.893209ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + {
+  +   annotationUUIDs: [
+  +     'annotation-checkpoint-backup-written'
+  +   ],
+  +   hash: 'sha256-v1:a607458613795d0d8a25d13e2ce589eb6da2670bc7becce6865198fdd263a66e',
+  +   kind: 'pdf-annotation-checkpoint',
+  +   revision: 1,
+  +   tombstoneUUIDs: []
+  + }
+  - null
+  
+      at Object.assertState (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:41:14)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:250:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { kind: 'pdf-annotation-checkpoint', revision: 1, hash: 'sha256-v1:a607458613795d0d8a25d13e2ce589eb6da2670bc7becce6865198fdd263a66e', annotationUUIDs: [ 'annotation-checkpoint-backup-written' ], tombstoneUUIDs: [] },
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/store-process-crash-boundary.test.mjs:185:3
+✖ child-process crash boundary: checkpoint-primary-written (773.74625ms)
+  TypeError: Cannot read properties of null (reading 'revision')
+      at Object.assertState (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:52:49)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:250:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at tests/store-process-crash-boundary.test.mjs:185:3
+✖ child-process crash boundary: ack-before-write (1344.760125ms)
+  TypeError: Cannot read properties of null (reading 'revision')
+      at Object.assertState (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:62:49)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:250:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at tests/store-process-crash-boundary.test.mjs:185:3
+✖ child-process crash boundary: ack-written-before-readback (934.600458ms)
+  TypeError: Cannot read properties of null (reading 'revision')
+      at Object.assertState (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:74:49)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:250:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at tests/store-process-crash-boundary.test.mjs:185:3
+✖ child-process crash boundary: gc-remove-before-confirmation (856.177792ms)
+  Error: worker failed before boundary gc-remove-before-confirmation: Error: target gc-remove-before-confirmation was not reached during readDocument
+      at runWorker (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-worker.mjs:163:11)
+      at ChildProcess.onMessage (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/store-process-crash-boundary.test.mjs:151:50)
+      at ChildProcess.emit (node:events:509:20)
+      at emit (node:internal/child_process:956:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:91:21)
+
+test at tests/sync-bridge-regression.test.mjs:129:1
+✖ sync bridge keeps UUID operations across saves and applies a prepared checkpoint in place (33164.0765ms)
+  TimeoutError: Waiting failed: 30000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/sync-bridge-regression.test.mjs:398:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/underline-regression.test.mjs:680:1
+✖ underline selection geometry stays single-stroke across text runs and columns (37177.911916ms)
+  TimeoutError: Waiting failed: 30000ms exceeded
+  Underline failure diagnostics: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/underline-regression-470cc344f599-1792128113676-14283-failure.json
+  Underline failure screenshot: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/underline-regression-470cc344f599-1792128113676-14283-failure.png
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/underline-regression.test.mjs:1670:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/wal-host.test.mjs:533:1
+✖ idle maintenance compacts only after a safe matching probe and clears pending timers (6266.181458ms)
+  AssertionError [ERR_ASSERTION]: the bridge has a bounded maintenance-probe branch
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/wal-host.test.mjs:625:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

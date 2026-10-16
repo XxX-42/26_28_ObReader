@@ -1,0 +1,161 @@
+✔ annotation pointer classification preserves editor, text, wheel, and eraser intents (2.51375ms)
+✔ native annotation operation detection only recognizes selected editor move and resize handles (1.605375ms)
+✔ bulk deletion submits one PDF.js undoable command for the exact target editors (2.011792ms)
+✔ bulk deletion aborts after toolbar setup when its document session changes (1.143375ms)
+✔ bulk history callbacks stop when their originating session is no longer current (2.984917ms)
+✔ bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable (10.8895ms)
+✔ Pencil highlight fallback commits only the exact live editor and selection session (1.522125ms)
+✔ stale Pencil highlight references and selection ownership loss fail closed (5.297ms)
+✔ pointer cancellation delegates cleanup to the matching PDF.js owner (1.27225ms)
+✖ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (5.372791ms)
+✔ offscreen sidecar bulk delete records tombstone and undo/redo each become autosaved revisions (5.494333ms)
+✔ all-page confirmation is canceled on session change and renewed after target drift (2.032791ms)
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (6496.829583ms)
+ℹ {"viewportWidth":780,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":778}
+ℹ {"viewportWidth":720,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":664,"availableSingleRowWidth":718}
+ℹ {"viewportWidth":640,"toolbarHeight":32,"twoRows":false,"requiredSingleRowWidth":574,"availableSingleRowWidth":638}
+ℹ {"viewportWidth":432,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":430}
+ℹ {"viewportWidth":320,"toolbarHeight":64,"twoRows":true,"requiredSingleRowWidth":509,"availableSingleRowWidth":318}
+ℹ {"fitBoundaryWidth":575,"exactFit":{"twoRows":false,"required":574,"available":574},"onePixelNarrow":{"twoRows":true,"required":574,"available":573},"growBack":{"twoRows":false,"required":574,"available":574}}
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/desktop-toolbar-1792128405762-15723.cleanup.json
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (7.374625ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (23.868ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.199125ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.886459ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.463917ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (1.162917ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (14.315625ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (4.086166ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (3.965042ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (3.816ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (1.025ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (14.167166ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (5.167333ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (5.184667ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (7.814792ms)
+✔ mode-9 highlighter preserves exact one-, two-, and four-line selections (7740.467833ms)
+ℹ Highlight multiline evidence (candidate-1-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (candidate-2-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (candidate-4-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (candidate-save-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (candidate-reopen-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (candidate-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-1-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-2-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-4-line-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-save-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (legacy-capture-diagnostic-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+ℹ Highlight multiline evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/highlight-multiline-regression-1792128399304-15726.json
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (22.033791ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (6.398416ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (3.47225ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (3.896334ms)
+✔ InteractionIntent contains value data and no DOM target or native event (6.6765ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (1.4165ms)
+✔ TextSelectionController owns DOM selection and caret operations only (2.787375ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (3.856542ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (1.184417ms)
+✔ IOSInputPolicy owns finger text-selection suppression (3.065667ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (2.588958ms)
+✔ bridge delegates top-level listener installation to InputRouter (3.353833ms)
+✔ PDF.js editor tools resolve to narrow interaction modes (0.995542ms)
+✔ interaction modes expose only their intended controller owners (0.105958ms)
+✔ page touch remains native and never starts a bridge pan or pointer capture (10.418125ms)
+✔ native multi-touch remains uncaptured and never enters custom inertia (1.211167ms)
+✔ read-mode Pencil stays native while active-tool Pencil retains editor ownership (4.357ms)
+✔ iOS policy owns finger selection suppression until explicit handoff (9.183542ms)
+✔ pan click suppression preserves native activation and double-click targets (0.72025ms)
+✔ iOS touch policy cancels only active Pencil editing and palm arbitration (1.793833ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (3663.718083ms)
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":125,"scrollDeltaInkMode":125,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true}}
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (677.537584ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (174.507583ms)
+✔ community release output is exactly the three installer assets (166.932083ms)
+✖ built main embeds all runtime files with checked deterministic gzip and hashes (1380.912917ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (14.573542ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (7866.5795ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128399637-15734.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128399637-15734.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128399637-15734.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128399637-15734.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792128399637-15734.json
+✔ Pencil text selection owns a collapsed caret and validates an extended range (3.939458ms)
+✔ selection cleanup removes only the range still owned by the Pencil gesture (0.62275ms)
+✔ range extension stops on session loss or foreign selection ownership (0.460292ms)
+✔ TextSelectionController owns and cancels its pending Pencil session (0.449375ms)
+✔ caret results outside the target text layer never begin an owned selection (0.406333ms)
+ℹ tests 61
+ℹ suites 0
+ℹ pass 58
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8654.608458
+
+✖ failing tests:
+
+test at tests/bulk-annotation-delete.test.mjs:60:1
+✖ bulk target planning ignores acknowledged stale upserts but includes dirty local upserts (5.372791ms)
+  AssertionError [ERR_ASSERTION]: Values have same structure but are not reference-equal:
+  
+  {
+    pageIndex: 8,
+    paths: [
+      [
+        5,
+        6,
+        7,
+        8
+      ]
+    ]
+  }
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/bulk-annotation-delete.test.mjs:106:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { pageIndex: 8, paths: [ [Array] ] },
+    expected: { pageIndex: 8, paths: [ [Array] ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at tests/desktop-toolbar.test.mjs:489:1
+✖ narrow Obsidian panes keep PDF tools, popups, and the secondary menu inside the viewport (6496.829583ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'default'
+  - 'not-allowed'
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/desktop-toolbar.test.mjs:1063:14)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'default',
+    expected: 'not-allowed',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/packaging.test.mjs:141:1
+✖ built main embeds all runtime files with checked deterministic gzip and hashes (1380.912917ms)
+  AssertionError [ERR_ASSERTION]: web/obsidian-bridge.js: size
+  
+  419902 !== 420211
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/packaging.test.mjs:183:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 419902,
+    expected: 420211,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

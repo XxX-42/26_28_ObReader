@@ -1,0 +1,22 @@
+{
+  "version": "0.8.3",
+  "files": {
+    "main.js": {
+      "size": 7311817,
+      "sha256": "4754d46f02e5b9d2e2d0b3078532a183aa93327188bdea8539d314f323101502"
+    },
+    "manifest.json": {
+      "size": 269,
+      "sha256": "2a0abd6f88d0e647db5c269de0d4ce564a096280fcbfd5a4ce18ee97fe4e33b3"
+    },
+    "styles.css": {
+      "size": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  },
+  "zip": {
+    "path": "dist/pdf-web-reader-0.1general-0.8.3-candidate.zip",
+    "size": 5139029,
+    "sha256": "eee0e22ca6bcf7a38715dc46ccda3a2e7adb0576165f3a9ee8b27dc727f29667"
+  }
+}

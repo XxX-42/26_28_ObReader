@@ -1,0 +1,23 @@
+{
+  "baseBranch": "origin/main",
+  "baseSha": "44f6dd594209ef4b0d0088fb1d8547adb3196ad3",
+  "version": "0.8.2",
+  "integrationBranch": "codex/interaction-and-bulk-delete-0.8.3",
+  "frozen": [
+    "plugin/storage",
+    "plugin/pdf-annotation-store.cjs",
+    "plugin/pdf-annotation-host.cjs",
+    "plugin/pdf-sync-host.cjs",
+    "plugin/pdf-journal.cjs",
+    "plugin/pdf-recovery*.cjs",
+    "plugin/pdf-merge-*.cjs",
+    "vendor"
+  ],
+  "walRegression": {
+    "tests": 67,
+    "pass": 67,
+    "fail": 0
+  },
+  "deploymentBackup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/interaction-0.8.3-20261016-130640",
+  "deviceAcceptance": "iPad WKWebView and Windows hardware not exercised by Chromium regression"
+}

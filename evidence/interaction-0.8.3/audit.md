@@ -1,0 +1,11 @@
+# Independent read-only audit: 0.8.3 integration
+
+Compared the integration to `44f6dd5` and reviewed the current source diff. No P0/P1 findings.
+
+The WAL/storage implementation and vendored PDF.js sources are unchanged from the baseline. Within `plugin/`, the only changed source-adjacent file is `plugin/manifest.json` for the 0.8.3 version bump. The generated bundle includes the new viewer runtime and reports the frozen vendor files verified; no vendor-file diff is present. The WAL-authoritative snapshot merge/hydration behavior and `annotation-maintenance-probe` bridge branch are present. The bulk target planner now lets only dirty operations override sidecar snapshots, preventing retained acknowledged upserts from resurrecting tombstoned rows; a focused regression fixture covers this.
+
+The extracted input routes preserve the 0.8.2 ownership boundary: finger contacts and no-tool Pencil use WebKit scrolling; active Pencil editing remains routed through PDF.js; touch cancellation is limited to active stylus editing/active pen gestures; desktop does not register iOS touch listeners. The former manual pan/momentum implementation is not called by the current pointer-down route. Native WebKit behavior still requires hardware validation and is not claimed by this source audit.
+
+Bulk-delete confirmation and execution bind to document ID, open request, app/PDF/manager object identity, and renderer generation. The tuple is checked before and after asynchronous work and in PDF.js delete/undo/redo callbacks. Confirmation rechecks the target UUID set and requires a second confirmation when it changes. Delete writes use the existing annotation-operation path; I found no direct storage/WAL writes in the bulk-delete addition.
+
+Verification evidence inspected (tests were not run by this reviewer): `wal-final.log` reports 67/67 passing; `offline-final.log` reports a passing open/edit/save/reopen smoke test; `build-final.log` reports a successful build with 402 frozen vendor files verified. The primary reports 543/568 in the broader run, with 25 inherited Format 3/browser/cleanup-timeout failures, and a focused final rerun still in progress. The earlier `targeted-final.log` artifact is red (53/55), so it is not treated here as evidence that the focused suite passed.

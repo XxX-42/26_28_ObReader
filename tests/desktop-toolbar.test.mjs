@@ -55,6 +55,7 @@ function hostHtml() {
       const locale = new URL(location.href).searchParams.get("locale") || "en-US";
       let sequence = 0;
       let initialOpenSent = false;
+      const readOnlyByDocumentId = new Map();
       window.__openedDocuments = [];
       window.__bridgeErrors = [];
       window.__bulkSeedAnnotations = [];
@@ -65,6 +66,7 @@ function hostHtml() {
           return response.arrayBuffer();
         });
         const documentId = "toolbar-doc-" + (++sequence);
+        readOnlyByDocumentId.set(documentId, readOnly === true);
         frame.contentWindow.postMessage({
           channel, token, type: "open", data, documentId,
           documentPath: "Tests/tracemonkey.pdf",
@@ -93,6 +95,7 @@ function hostHtml() {
             type: "external-annotations-update",
             documentId: message.documentId,
             openRequest: message.openRequest,
+            readOnly: readOnlyByDocumentId.get(message.documentId) === true,
             identityConfirmed: true,
             sourceMatch: "BASELINE_ESTABLISHED",
             externalAnnotations: {
