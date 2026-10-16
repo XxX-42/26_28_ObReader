@@ -67,6 +67,7 @@
     dirty: false,
     activePointers: new Map(),
     manualPointers: new Map(),
+    nativeTouchPointers: new Map(),
     fingerTextSelectionSuppressionOwned: false,
     manualMomentum: null,
     pendingPenHighlight: null,
@@ -6159,6 +6160,12 @@
     );
   }
 
+  function isNativeActivationTarget(target) {
+    return !!target?.closest?.(
+      "a[href], button, [role=button], [role=link]",
+    );
+  }
+
   function isViewerSurfaceTarget(target) {
     const container = document.getElementById("viewerContainer");
     return !!(container && target instanceof Element &&
@@ -6233,8 +6240,67 @@
     return state.penPolicyPointers.size > 0 ||
       [...state.activePointers.values()].some((pointer) =>
         pointer.pointerType === "pen" &&
-        (pointer.kind === "editor" || !!pointer.nativeOperation),
+        (pointer.kind === "editor" || pointer.kind === "text-selection" ||
+          !!pointer.nativeOperation),
       );
+  }
+
+  function touchEventContainsStylus(event) {
+    for (const touches of [event.changedTouches, event.touches]) {
+      for (let index = 0; index < (touches?.length || 0); index += 1) {
+        const touch = touches.item?.(index) || touches[index];
+        if (touch?.touchType === "stylus" || touch?.touchType === "pen") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function onBridgeIosTouchStart(event) {
+    if (!iosInputPolicy || !(event.target instanceof Element)) {
+      return;
+    }
+    if (!isViewerSurfaceTarget(event.target) || isNativeContextTarget(event.target)) {
+      return;
+    }
+    const activePenGesture = hasActivePenEditorGesture();
+    const activeEditorStylus = touchEventContainsStylus(event) &&
+      isViewerSurfaceTarget(event.target) &&
+      !isNativeContextTarget(event.target) &&
+      (annotationToolIsActive() || !!event.target.closest(
+        ".annotationEditorLayer .resizer, .annotationEditorLayer .draggable.selectedEditor",
+      ));
+    if (activePenGesture || activeEditorStylus) {
+      // WebKit's pointer touch-action decision is made before pointerdown.
+      // Preserve active Pencil editing with its legacy stylus event while
+      // allowing ordinary fingers and read-mode Pencil to scroll natively.
+      event.preventDefault();
+    }
+  }
+
+  function onBridgeIosTouchMove(event) {
+    if (
+      iosInputPolicy &&
+      event.target instanceof Element &&
+      isViewerSurfaceTarget(event.target) &&
+      !isNativeContextTarget(event.target) &&
+      hasActivePenEditorGesture()
+    ) {
+      // This only arbitrates contacts while a Pencil/editor gesture is active,
+      // including a finger arriving as a palm contact during that gesture.
+      event.preventDefault();
+    }
+  }
+
+  function refreshPenGestureTouchAction() {
+    if (!iosInputPolicy) {
+      return;
+    }
+    document.documentElement.classList.toggle(
+      "pdfReaderPenGestureActive",
+      hasActivePenEditorGesture(),
+    );
   }
 
   function suspendTouchPansForPen() {
@@ -6245,6 +6311,29 @@
         pointer.moved = false;
       }
     }
+    refreshPenGestureTouchAction();
+  }
+
+  function startNativeTouchPointer(event) {
+    if (state.nativeTouchPointers.has(event.pointerId)) {
+      return;
+    }
+    const page = directManipulationPage(event.target);
+    state.nativeTouchPointers.set(event.pointerId, {
+      pointerId: event.pointerId,
+      pageTarget: page,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    });
+    state.lastTouchClickPage = page;
+    if (annotationToolIsActive() && !hasActivePenEditorGesture()) {
+      state.fingerTextSelectionSuppressionOwned = true;
+      refreshFingerTextSelectionSuppression();
+    }
+    // Keep PDF.js from interpreting a finger contact as an editor gesture.
+    // Stopping propagation does not cancel the browser's native scroll.
+    event.stopImmediatePropagation();
   }
 
   const MANUAL_INERTIA_SAMPLE_WINDOW_MS = 80;
@@ -6720,10 +6809,12 @@
     invalidatePendingPenHighlight();
     const pointers = [...state.manualPointers.values()];
     state.manualPointers.clear();
+    state.nativeTouchPointers.clear();
     for (const pointer of pointers) {
       releasePointerCapture(pointer);
     }
     state.penPolicyPointers.clear();
+    refreshPenGestureTouchAction();
     if (clearClickTargets) {
       state.lastTouchClickPage = null;
       state.lastPenPanClickPage = null;
@@ -6735,7 +6826,8 @@
       !iosInputPolicy ||
       !(event.target instanceof Element) ||
       !isViewerSurfaceTarget(event.target) ||
-      isNativeContextTarget(event.target)
+      isNativeContextTarget(event.target) ||
+      isNativeActivationTarget(event.target)
     ) {
       return;
     }
@@ -7169,6 +7261,7 @@
       }
       releasePointerCapture(pointer);
       state.activePointers.delete(pointerId);
+      refreshPenGestureTouchAction();
       recordPointerDiagnostic(
         reason === "pointerup" ? "pointerup" : "pointercancel",
         pointer,
@@ -7205,19 +7298,6 @@
     dismissToolbarParameterPopups(event);
     if (iosInputPolicy && event.pointerType !== "touch") {
       clearFingerTextSelectionSuppression();
-    } else if (
-      iosInputPolicy && event.pointerType === "touch" &&
-      state.manualPointers.size > 0 &&
-      !state.manualPointers.has(event.pointerId)
-    ) {
-      // A second finger anywhere in the document cancels manual panning, but
-      // keeps the touch-owned text-selection guard until Pencil/mouse handoff.
-      for (const pointer of state.manualPointers.values()) {
-        pointer.blockedByOtherPointer = true;
-        pointer.cancelledByOtherPointer = true;
-        pointer.moved = false;
-        pointer.lastMotionAt = null;
-      }
     }
     if (state.closeControl) {
       event.preventDefault();
@@ -7241,7 +7321,7 @@
       isViewerSurfaceTarget(target) &&
       !isNativeContextTarget(target)
     ) {
-      startManualPointer(event, "touch");
+      startNativeTouchPointer(event);
       return;
     }
     if (
@@ -7265,11 +7345,10 @@
           rendererGeneration,
         });
         suspendTouchPansForPen();
-      } else {
-        // Mode NONE has no editor gesture to preserve. Let the native down/up
-        // continue so Pencil taps still activate PDF links, while bridge-owned
-        // moves scroll the viewer if the contact becomes a drag.
-        startManualPointer(event, "pen");
+      } else if (!nativeOperation) {
+        // Read-mode Pencil is a native WebKit contact. In particular, avoid
+        // tracking an editorLayer pointer as a synthetic bridge gesture: that
+        // would activate the Pencil touch-action guard after this down event.
         return;
       }
     }
@@ -7355,6 +7434,7 @@
       }
     }
     state.activePointers.set(event.pointerId, pointer);
+    refreshPenGestureTouchAction();
     recordPointerDiagnostic("pointerdown", pointer, event);
     if (shouldCaptureTrackedPointer(
       pointer,
@@ -7411,6 +7491,18 @@
         signal: controller.signal,
       });
     }
+    if (iosInputPolicy) {
+      window.addEventListener("touchstart", onBridgeIosTouchStart, {
+        capture: true,
+        passive: false,
+        signal: controller.signal,
+      });
+      window.addEventListener("touchmove", onBridgeIosTouchMove, {
+        capture: true,
+        passive: false,
+        signal: controller.signal,
+      });
+    }
     document.addEventListener(
       "visibilitychange",
       onManualDocumentVisibilityChange,
@@ -7423,6 +7515,15 @@
   }
 
   function onBridgePointerMove(event) {
+    const nativeTouch = state.nativeTouchPointers.get(event.pointerId);
+    if (nativeTouch) {
+      nativeTouch.moved ||= Math.hypot(
+        event.clientX - nativeTouch.startX,
+        event.clientY - nativeTouch.startY,
+      ) > 1;
+      event.stopImmediatePropagation();
+      return;
+    }
     const manualPointer = state.manualPointers.get(event.pointerId);
     if (manualPointer) {
       if (manualPointer.pointerType === "touch") {
@@ -7458,6 +7559,15 @@
   }
 
   function onBridgePointerEnd(event) {
+    const nativeTouch = state.nativeTouchPointers.get(event.pointerId);
+    if (nativeTouch) {
+      state.nativeTouchPointers.delete(event.pointerId);
+      event.stopImmediatePropagation();
+      if (state.nativeTouchPointers.size === 0 && !hasActivePenEditorGesture()) {
+        clearFingerTextSelectionSuppression();
+      }
+      return;
+    }
     const manualPointer = state.manualPointers.get(event.pointerId);
     if (manualPointer) {
       const pointer = finishManualPointer(event.pointerId, event, {
@@ -7469,12 +7579,23 @@
       return;
     }
     state.penPolicyPointers.delete(event.pointerId);
+    refreshPenGestureTouchAction();
     finishTrackedPointer(event.pointerId, event.type || "pointerup", event, {
       cancel: event.type === "pointercancel",
     });
   }
 
   function onBridgePointerOut(event) {
+    if (state.nativeTouchPointers.has(event.pointerId)) {
+      if (event.relatedTarget === null) {
+        state.nativeTouchPointers.delete(event.pointerId);
+        if (state.nativeTouchPointers.size === 0 && !hasActivePenEditorGesture()) {
+          clearFingerTextSelectionSuppression();
+        }
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
     const manualPointer = state.manualPointers.get(event.pointerId);
     if (manualPointer) {
       if (
@@ -7494,6 +7615,7 @@
       event.relatedTarget === null
     ) {
       state.penPolicyPointers.delete(event.pointerId);
+      refreshPenGestureTouchAction();
     }
     const pointer = state.activePointers.get(event.pointerId);
     if (
@@ -7508,6 +7630,14 @@
   }
 
   function onBridgeLostPointerCapture(event) {
+    if (state.nativeTouchPointers.has(event.pointerId)) {
+      state.nativeTouchPointers.delete(event.pointerId);
+      if (state.nativeTouchPointers.size === 0 && !hasActivePenEditorGesture()) {
+        clearFingerTextSelectionSuppression();
+      }
+      event.stopImmediatePropagation();
+      return;
+    }
     const manualPointer = state.manualPointers.get(event.pointerId);
     if (manualPointer) {
       const pointer = finishManualPointer(event.pointerId, event, { cancel: true });
@@ -7517,6 +7647,7 @@
       return;
     }
     state.penPolicyPointers.delete(event.pointerId);
+    refreshPenGestureTouchAction();
     const pointer = state.activePointers.get(event.pointerId);
     if (!pointer || pointer.ending) {
       return;

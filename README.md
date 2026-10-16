@@ -6,8 +6,8 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-Version **0.8.1** implements **WAL-Sidecar v3.1**, based on integration
-`19d20f3`, and fixes diagnostic exports to prioritize the current session.
+Version **0.8.2** implements **WAL-Sidecar v3.1**, based on integration
+`19d20f3`, with current-session-first diagnostics and browser-owned iPad finger / tool-free Pencil scrolling.
 Windows, macOS and iPadOS share one three-file package. See
 [the protocol](ANNOTATION_STORE.md) and
 [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md).

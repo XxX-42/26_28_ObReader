@@ -1,0 +1,36 @@
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (3689.232458ms)
+ℹ Error: Hit test missed .page[data-page-number="1"] .annotationEditorLayer .inkEditorCanvas: annotationEditorLayer creationPriority inkEditing
+    at  ( at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27), <anonymous>:13:18)
+    at #evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:402:19)
+    at async ExecutionContext.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:288:16)
+    at async IsolatedWorld.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/IsolatedWorld.js:104:16)
+    at async CdpFrame.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:364:20)
+    at async Promise.all (index 1)
+    at async pointInViewer (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:159:37)
+    at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:239:23)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4011.441292
+
+✖ failing tests:
+
+test at tests/native-finger-ownership.test.mjs:68:1
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (3689.232458ms)
+  Error: Hit test missed .page[data-page-number="1"] .annotationEditorLayer .inkEditorCanvas: annotationEditorLayer creationPriority inkEditing
+      at  ( at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27), <anonymous>:13:18)
+      at #evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:402:19)
+      at async ExecutionContext.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:288:16)
+      at async IsolatedWorld.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/cdp/IsolatedWorld.js:104:16)
+      at async CdpFrame.evaluate (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:364:20)
+      at async Promise.all (index 1)
+      at async pointInViewer (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:159:37)
+      at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:239:23)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

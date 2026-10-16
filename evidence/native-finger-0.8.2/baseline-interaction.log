@@ -1,0 +1,56 @@
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (8.076875ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (41.854625ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.188958ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (1.094959ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.532458ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.496958ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.549167ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.511708ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.426792ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (1.471125ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.18925ms)
+✖ iPad policy routes finger scrolling separately from PDF.js editor and mouse input (12169.553291ms)
+ℹ Pointer policy evidence: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/ipad-pointer-policy-1792125318624-2462.json
+Mouse regression failure evidence: /tmp/pdf-reader-mouse-failure-1792125318632-2463.json
+✖ trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent (12561.496959ms)
+ℹ Cleanup report: /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/mouse-input-1792125318632-2463.cleanup.json
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (11.405917ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (7806.06375ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125318629-2465.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125318629-2465.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125318629-2465.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125318629-2465.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125318629-2465.json
+ℹ tests 15
+ℹ suites 0
+ℹ pass 13
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12902.684083
+
+✖ failing tests:
+
+test at tests/ipad-pointer-policy.test.mjs:313:1
+✖ iPad policy routes finger scrolling separately from PDF.js editor and mouse input (12169.553291ms)
+  TimeoutError: Waiting failed: 8000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/ipad-pointer-policy.test.mjs:602:20)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/mouse-input-regression.test.mjs:47:1
+✖ trusted browser mouse input keeps PDF.js wheel, annotation, and click controls consistent (12561.496959ms)
+  TimeoutError: Waiting failed: 8000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at waitForAnnotationModeChange (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/mouse-input-regression.test.mjs:549:20)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/mouse-input-regression.test.mjs:744:11)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)

@@ -1,0 +1,51 @@
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (2232.111083ms)
+ℹ AssertionError [ERR_ASSERTION]: Read-mode Pencil stays browser-owned while active-tool stylus input retains the legacy guard
++ actual - expected
+
+  {
+    activeToolTouchPrevented: true,
++   penGuardClassAfterReadPointer: true,
+-   penGuardClassAfterReadPointer: false,
+    readModePointerPrevented: false,
++   readModeTouchPrevented: true
+-   readModeTouchPrevented: false
+  }
+
+    at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:275:12)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2546.547584
+
+✖ failing tests:
+
+test at tests/native-finger-ownership.test.mjs:68:1
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (2232.111083ms)
+  AssertionError [ERR_ASSERTION]: Read-mode Pencil stays browser-owned while active-tool stylus input retains the legacy guard
+  + actual - expected
+  
+    {
+      activeToolTouchPrevented: true,
+  +   penGuardClassAfterReadPointer: true,
+  -   penGuardClassAfterReadPointer: false,
+      readModePointerPrevented: false,
+  +   readModeTouchPrevented: true
+  -   readModeTouchPrevented: false
+    }
+  
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:275:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { readModeTouchPrevented: true, readModePointerPrevented: false, activeToolTouchPrevented: true, penGuardClassAfterReadPointer: true },
+    expected: { readModeTouchPrevented: false, readModePointerPrevented: false, activeToolTouchPrevented: true, penGuardClassAfterReadPointer: false },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

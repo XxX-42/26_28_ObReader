@@ -1,0 +1,29 @@
+{
+  "version": "0.8.2",
+  "files": [
+    {
+      "file": "main.js",
+      "bytes": 7297905,
+      "sha256": "f7652fb8e0d258a2c9ff1a24ce82b1a26dffa25389901789a90370bd4749a3c1"
+    },
+    {
+      "file": "manifest.json",
+      "bytes": 269,
+      "sha256": "e7b3e9ea49d38695282ceb3db62040b659ed53f95f304602e0836599c9ae6f77"
+    },
+    {
+      "file": "styles.css",
+      "bytes": 637,
+      "sha256": "9dd5d3a26025cb83a7f68d63293fde69aec3bfbc7e9a5367f377853e11463650"
+    }
+  ],
+  "zip": {
+    "file": "dist/pdf-web-reader-0.1general-0.8.2-candidate.zip",
+    "bytes": 5129252,
+    "sha256": "95eb1600711a4b40c48126a301428962d8af4368a5119af818b1fa26718f2507"
+  },
+  "deploymentBackup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/native-scroll-0.8.2-20261016-123947",
+  "target": "/Users/jiajia/Documents/Documents/Obsidian/远程仓库1/.obsidian/plugins/pdf-web-reader",
+  "settingsUnchanged": true,
+  "activation": "not reloaded: current Obsidian window is Documents, not authorized target vault"
+}

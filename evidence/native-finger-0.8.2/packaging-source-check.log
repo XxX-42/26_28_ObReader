@@ -1,0 +1,12 @@
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (78.452792ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (4.959ms)
+✔ community release output is exactly the three installer assets (5.264583ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (172.221542ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 386.377459

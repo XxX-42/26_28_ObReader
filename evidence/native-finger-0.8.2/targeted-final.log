@@ -1,0 +1,57 @@
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (8.84625ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (41.082125ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.399125ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.88075ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.941708ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.611792ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.796583ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (1.022041ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.76725ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.795625ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.243583ms)
+✔ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (3587.529833ms)
+ℹ {"trustedTouchPointers":7,"preventedTrustedTouchEvents":0,"capturedTouchPointers":0,"scrollDeltaReadMode":151,"scrollDeltaInkMode":149,"inkPolicy":{"viewer":"pan-x pan-y","activeLayer":"annotationEditorLayer creationPriority inkEditing","activeLayerTouchAction":"auto","editors":0},"stylusGuard":{"readModeTouchPrevented":false,"readModePointerPrevented":false,"penGuardClassAfterReadPointer":false,"activeToolTouchPrevented":true}}
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (299.664875ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (11.147ms)
+✔ community release output is exactly the three installer assets (10.461958ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (462.073625ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (13.749125ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (7207.813ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792126345670-5971.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792126345670-5971.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792126345670-5971.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792126345670-5971.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792126345670-5971.json
+✔ tracing preserves this, argument/return identity and original thrown error (13.835209ms)
+✔ visible JSON includes prior-session errors and current function records after Readers have closed (2.465417ms)
+✔ JSON error analysis highlights stack overflows with bounded save context and Worker stack (0.8265ms)
+✔ JSON snapshot seals its source part and cannot chase export-time events (0.591125ms)
+✔ records arriving during both flushes are retained for the next cutoff (1.555625ms)
+✔ historical parts use numeric order and a final shutdown marks the session ended (15.981125ms)
+✔ no-append Adapter writes one valid JSON file within the configured byte limit (2.024292ms)
+✔ large diagnostic exports compact high-frequency events and stay below 19.99 MB (13.252042ms)
+✔ diagnostic collection calls survive runtime-log compaction (0.522625ms)
+✔ default diagnostic JSON limit is 64 MB and accepts exports above the former 19.99 MB cap (493.105625ms)
+✔ current session chunks and errors take priority over large historical logs within the byte budget (3.542292ms)
+✔ malformed records and missing files produce valid JSON with explicit incomplete evidence (0.542666ms)
+✔ cross-window promises keep identity, time completion, and ignore overridden then (1.585417ms)
+✔ diagnostic attachment failure cannot replace the original result (0.147917ms)
+✔ local log parts append without rereading the existing file, and rotate without deleting (0.192334ms)
+✔ adapters without append use new parts rather than rewriting a complete log (0.127458ms)
+PDF Reader local log write failed Error: disk full
+    at f.adapter.write (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:203:84)
+    at /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/plugin/session-log.cjs:67:38
+    at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:204:16)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+✔ one stalled writer does not enqueue unbounded flushes; overflow is explicit (12.043708ms)
+✔ write failure is reported and a later successful part records log loss (2.903875ms)
+✔ Viewer tracing keeps cross-window promises and synchronous drain removes the final batch (5.063083ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7675.301959

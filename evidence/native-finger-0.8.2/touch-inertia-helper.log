@@ -1,0 +1,21 @@
+✔ release velocity is a recency-weighted regression over the final 80 ms (3.100917ms)
+✔ a light flick clears the launch threshold while a paused finger does not (0.857583ms)
+✔ sample timing merges duplicate timestamps and rejects spans under 8 ms or sparse history (3.457375ms)
+✔ the 80 ms window interpolates one nearby predecessor without an edge jump (2.144708ms)
+✔ a sample exactly on the 80 ms boundary is not counted twice (1.120708ms)
+✔ event timestamps use the performance clock when origins do not match (0.557417ms)
+✔ diagonal release velocity is capped at 4 px/ms by vector magnitude (0.643333ms)
+✔ stationary pointerup records its endpoint without refreshing last motion (2.627708ms)
+✔ pointerup applies its final position while pointercancel ignores it (2.599083ms)
+✔ a second direct pointer blocks both touch pans regardless of lift order (1.426459ms)
+✔ inertia has partition-independent decay across 60, 120 Hz and an 80 ms stall (5.210542ms)
+✔ a long frame integrates only through the exact stop time (0.581792ms)
+✔ hiding cancels inertia and prevents an active finger from restarting it (0.547125ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 195.847666

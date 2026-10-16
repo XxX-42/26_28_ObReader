@@ -1,0 +1,55 @@
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (3.087667ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (16.4635ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.259625ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (0.761917ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.522125ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.487917ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.624958ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.544667ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.478666ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.812125ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.231292ms)
+✔ vendored PDF.js runtime matches its frozen SHA-256 manifest (110.09425ms)
+✔ vendored viewer retains all five controls and the 1–5 mode order (3.246417ms)
+✔ community release output is exactly the three installer assets (6.527458ms)
+✔ built main embeds all runtime files with checked deterministic gzip and hashes (301.094834ms)
+✔ PDF.js retires stale Ink drawing listeners and guards a missing current draw (8.128166ms)
+✔ selection differential U0/U1/U2 and same-document viewer teardown (4645.562583ms)
+ℹ Selection differential evidence (U0-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125875942-4153.json
+ℹ Selection differential evidence (U1-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125875942-4153.json
+ℹ Selection differential evidence (U2-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125875942-4153.json
+ℹ Selection differential evidence (lifecycle-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125875942-4153.json
+ℹ Selection differential evidence (validation-complete): /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/artifacts/selection-differential-1792125875942-4153.json
+✔ tracing preserves this, argument/return identity and original thrown error (8.314917ms)
+✔ visible JSON includes prior-session errors and current function records after Readers have closed (1.739333ms)
+✔ JSON error analysis highlights stack overflows with bounded save context and Worker stack (0.570208ms)
+✔ JSON snapshot seals its source part and cannot chase export-time events (0.4635ms)
+✔ records arriving during both flushes are retained for the next cutoff (0.431833ms)
+✔ historical parts use numeric order and a final shutdown marks the session ended (8.000333ms)
+✔ no-append Adapter writes one valid JSON file within the configured byte limit (1.195125ms)
+✔ large diagnostic exports compact high-frequency events and stay below 19.99 MB (5.725ms)
+✔ diagnostic collection calls survive runtime-log compaction (0.290875ms)
+✔ default diagnostic JSON limit is 64 MB and accepts exports above the former 19.99 MB cap (219.503333ms)
+✔ current session chunks and errors take priority over large historical logs within the byte budget (1.894125ms)
+✔ malformed records and missing files produce valid JSON with explicit incomplete evidence (0.314042ms)
+✔ cross-window promises keep identity, time completion, and ignore overridden then (1.201458ms)
+✔ diagnostic attachment failure cannot replace the original result (0.147042ms)
+✔ local log parts append without rereading the existing file, and rotate without deleting (0.177959ms)
+✔ adapters without append use new parts rather than rewriting a complete log (0.104041ms)
+PDF Reader local log write failed Error: disk full
+    at f.adapter.write (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:203:84)
+    at /Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/plugin/session-log.cjs:67:38
+    at async TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/session-log.test.mjs:204:16)
+    at async Test.run (node:internal/test_runner/test:1389:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+✔ one stalled writer does not enqueue unbounded flushes; overflow is explicit (5.500666ms)
+✔ write failure is reported and a later successful part records log loss (1.330166ms)
+✔ Viewer tracing keeps cross-window promises and synchronous drain removes the final batch (2.401292ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4908.355208

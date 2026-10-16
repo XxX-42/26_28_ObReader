@@ -11,14 +11,31 @@ body {
   min-width: 0;
 }
 
-/* iOS separates finger navigation from Pencil editor input in the bridge.
-   Disable the browser's all-pointer native pan here so the bridge can route
-   touch contacts to manual viewer scrolling while leaving Pencil pointer
-   events available to PDF.js. */
+/* Let WebKit own page scrolling. PDF.js sets touch-action:none on its ink
+   canvas and active highlight layer; override those page surfaces too so a
+   finger can scroll while the bridge suppresses touch annotation input. */
 :root[data-pdf-reader-ios-input-policy="true"] #viewerContainer {
-  touch-action: none;
+  touch-action: pan-x pan-y;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .textLayer.highlighting,
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .annotationEditorLayer .inkEditorCanvas,
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .annotationEditorLayer .freeTextEditor {
+  touch-action: pan-x pan-y;
+}
+
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .annotationEditorLayer .freeTextEditor .internal[contenteditable="true"]:focus {
+  touch-action: none;
+}
+
+/* Text inputs remain interactive. During a Pencil/editor gesture, make new
+   contacts non-scrolling; changing this after a WebKit gesture starts cannot
+   take ownership away from that already active native gesture. */
+:root[data-pdf-reader-ios-input-policy="true"].pdfReaderPenGestureActive #viewerContainer,
+:root[data-pdf-reader-ios-input-policy="true"].pdfReaderPenGestureActive #viewerContainer .textLayer.highlighting,
+:root[data-pdf-reader-ios-input-policy="true"].pdfReaderPenGestureActive #viewerContainer .annotationEditorLayer .inkEditorCanvas {
+  touch-action: none;
 }
 
 /* While a drawing tool is active, a finger-owned page contact also blocks

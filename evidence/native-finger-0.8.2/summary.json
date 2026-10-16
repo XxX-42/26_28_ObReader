@@ -1,0 +1,38 @@
+{
+  "baseSha": "427d79c3677e92964895d825cab536b89f43c5a8",
+  "version": "0.8.2",
+  "targeted": {
+    "tests": 37,
+    "pass": 37,
+    "fail": 0
+  },
+  "wal": {
+    "tests": 67,
+    "pass": 67,
+    "fail": 0
+  },
+  "baselineInteraction": {
+    "tests": 15,
+    "pass": 13,
+    "fail": 2
+  },
+  "offline": "passed normal exit",
+  "frozenStorageAndVendorDiff": [],
+  "hardwareIpadVerified": false,
+  "oldManualContractTest": "not green: expects touch-action none / manual pan, preserved; new native contract covered separately",
+  "desktopMouseBaseline": "existing tool-mode wait failure preserved, not expanded",
+  "earlyNativeTestFailures": "fixture readiness, target geometry/legacy canvas selector, cleanup invocation and synthetic guard assertions; raw logs retained",
+  "independentAudit": "Luna Max read-only: no P0/P1 source blocker; earlier compatibility and test harness findings fixed",
+  "finalNativeReview": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "uncaughtPageErrors": 0,
+    "readScrollPx": 140,
+    "inkModeScrollPx": 150,
+    "trustedTouchPreventDefault": 0,
+    "explicitTouchCapture": 0,
+    "existingInkCanvasInstantiated": false,
+    "hardwareStylusVerified": false
+  }
+}

@@ -1,0 +1,5 @@
+
+> build
+> node scripts/build.mjs
+
+Built dist/pdf-web-reader: 3 release files, 406 embedded runtime assets, 402 frozen vendor files verified, payload 6621866 bytes before release transport compression.

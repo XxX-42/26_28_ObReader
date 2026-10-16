@@ -1,0 +1,31 @@
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (6299.749292ms)
+
+Interrupted while running:
+
+⚠ tests/native-finger-ownership.test.mjs (tests/native-finger-ownership.test.mjs:1:1)
+✖ tests/native-finger-ownership.test.mjs (27179.336375ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 1
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 27186.057708
+
+✖ failing tests:
+
+test at tests/native-finger-ownership.test.mjs:68:1
+✖ native touch ownership keeps page scrolling browser-owned and suppresses finger annotation (6299.749292ms)
+  TimeoutError: Waiting failed: 5000ms exceeded
+      at new WaitTask (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)
+      at IsolatedWorld.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)
+      at CdpFrame.waitForFunction (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)
+      at CdpFrame.<anonymous> (file:///Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)
+      at TestContext.<anonymous> (file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-finger-ownership.test.mjs:196:18)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at tests/native-finger-ownership.test.mjs:1:1
+✖ tests/native-finger-ownership.test.mjs (27179.336375ms)
+  'Promise resolution is still pending but the event loop has already resolved'
