@@ -1,0 +1,11 @@
+CONSOLE_ERROR Failed to load resource: the server responded with a status of 404 (Not Found)
+{"before":[0,0,255],"after":[255,255,255],"reopened":[255,255,255],"firstPaints":[[255,255,255]],"deleted":2,"linksPreserved":1,"sourceUnchanged":true}
+✔ embedded AP marks delete, persist, and stay absent after reopen while PDF links remain (3400.831875ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3734.201166

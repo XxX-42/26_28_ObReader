@@ -1,0 +1,21 @@
+{
+  "backup": "/Users/jiajia/Documents/ObReader-Deployment-Backups/first-render-clean-1792140337111",
+  "removed": [
+    "_index.json",
+    "checkpoints",
+    "documents",
+    "identity-events",
+    "native-20261007092024560--8b3af3a3024c.pdfdata.json",
+    "ops",
+    "五工具测试--8588985ea9e4.pdfdata.json",
+    "原则 (瑞·达利欧) (z-library.sk, 1lib.sk, z-lib.sk)--552fed3184f3.pdfdata.json"
+  ],
+  "retained": [
+    "_registry.json",
+    "sidecars",
+    "wal"
+  ],
+  "verifiedDocuments": 3,
+  "currentEffectiveStateUnchanged": true,
+  "sourcePdfSha256": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378"
+}

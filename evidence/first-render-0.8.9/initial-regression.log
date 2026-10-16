@@ -1,0 +1,38 @@
+✔ daily save, recovery, checkpoint, sync and close never serialize a PDF (4.065792ms)
+✔ external annotation operation batches preserve identity, tombstones and binary editor state (28.280083ms)
+✔ free-highlight payloads are distinguished from text highlights for lossless hydration (0.235042ms)
+✔ schema 2 snapshots synthesize deletion operations from a compact tombstone ledger (1.258208ms)
+✔ hydration waits for host source confirmation and touches only exact embedded references (1.306042ms)
+✔ legacy UUIDs bind by exact annotation object reference before dirty diffs (0.47525ms)
+✔ save-boundary capture snapshots the live committed editor when AnnotationStorage is stale (1.665041ms)
+✔ empty undo/redo does not mark the PDF dirty, while an editor change still does (0.674333ms)
+✔ only a complete stable empty annotation diff can settle a stale dirty flag (1.784375ms)
+✔ operation snapshot completeness and durable ACK validate every dirty operation (0.642666ms)
+✔ durable acknowledgements are scoped to the exact document, open request and revision (0.1975ms)
+✔ deleted placeholders reuse exact identities and never allocate UUIDs or bypass validation (1.160083ms)
+✔ hydration teardown retains exact runtime binding while a native deletion remains in storage (0.278ms)
+✔ a queued snapshot and awaited hydration cannot baseline or clear a concurrent local stroke (16.90075ms)
+✔ an exact local operation echo is reused even when hydration is asked to replace (6.368167ms)
+✔ a newer remote operation with a different stamp still replaces the bound editor (6.067375ms)
+✔ authoritative WAL snapshots replace clean stale bindings and defer dirty local UUIDs (5.513209ms)
+✔ confirmed bulk tombstones remove an already hydrated annotation rather than being filtered out (3.735292ms)
+✔ InputRouter owns event subscriptions without reaching into PDF or persistence APIs (4.675667ms)
+✔ InputRouter owns pointer sessions and releases capture during teardown (2.308625ms)
+✔ iOS InputRouter owns non-passive touch compatibility events (3.494917ms)
+✔ InputRouter suppresses only mouse events synthesized during Pencil text highlighting (0.984ms)
+✔ InteractionIntent contains value data and no DOM target or native event (1.400125ms)
+✔ ViewportController owns motion math without depending on PDF, selection, or persistence (0.602ms)
+✔ TextSelectionController owns DOM selection and caret operations only (1.383167ms)
+✔ AnnotationController owns PDF.js editor cancellation and highlight fallback only (1.300375ms)
+✔ DesktopInputPolicy only forwards established behavior and contains no iPad overrides (0.696459ms)
+✔ IOSInputPolicy owns finger text-selection suppression (3.80425ms)
+✔ IOSDirectManipulationController delegates page touch and read-mode Pencil to WebKit (2.658125ms)
+✔ bridge delegates top-level listener installation to InputRouter (1.922708ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 178.618583

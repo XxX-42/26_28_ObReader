@@ -1,0 +1,18 @@
+{
+  "version": "0.8.8",
+  "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "physicalIpadValidated": false,
+  "initial": {
+    "mobile": true,
+    "version": "0.8.8"
+  },
+  "firstPaints": [
+    {
+      "pageNumber": 2,
+      "changed": 263332,
+      "pixels": 1564200
+    }
+  ],
+  "status": "failed",
+  "failure": "AssertionError [ERR_ASSERTION]: first source paint must equal annotation-disabled control; no deleted source marks may flash\n    at file:///Users/jiajia/.codex/worktrees/wal-sidecar-v3-1/26_7_PdfRD_OB/tests/native-first-paint-deletions.mjs:41:9"
+}

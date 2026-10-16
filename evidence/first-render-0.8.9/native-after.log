@@ -1,0 +1,17 @@
+{
+  "version": "0.8.9",
+  "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "physicalIpadValidated": false,
+  "initial": {
+    "mobile": true,
+    "version": "0.8.9"
+  },
+  "firstPaints": [
+    {
+      "pageNumber": 2,
+      "changed": 0,
+      "pixels": 1564200
+    }
+  ],
+  "status": "passed"
+}
