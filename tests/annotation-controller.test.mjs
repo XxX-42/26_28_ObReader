@@ -57,6 +57,136 @@ test("native annotation operation detection only recognizes selected editor move
   assert.equal(controller.nativeOperation({ button: 0, pointerType: "mouse", nativeOperation: "other" }), null);
 });
 
+test("bulk deletion submits one PDF.js undoable command for the exact target editors", async () => {
+  const selected = new Set();
+  let deleted = null;
+  const commands = [];
+  const sidecarEvents = [];
+  const first = { id: "a", isEmpty: () => false };
+  const second = { id: "b", isEmpty: () => false };
+  const ignored = { id: "empty", isEmpty: () => true };
+  const manager = {
+    setSelected(editor) {
+      selected.clear();
+      selected.add(editor);
+    },
+    toggleSelected(editor) {
+      if (selected.has(editor)) selected.delete(editor);
+      else selected.add(editor);
+    },
+    delete() {
+      const editors = [...selected];
+      this.addCommands({
+        cmd() { deleted = editors; },
+        undo() { deleted = []; },
+        mustExec: true,
+      });
+    },
+    addCommands(command) {
+      commands.push(command);
+      if (command.mustExec) command.cmd();
+    },
+  };
+  const controller = createController({ getManager: () => manager });
+
+  assert.equal(await controller.deleteEditors([first, second, first, ignored, null], {
+    onDelete: ({ redo }) => sidecarEvents.push(redo ? "redo-delete" : "delete"),
+    onRestore: () => sidecarEvents.push("restore"),
+  }), 2);
+  assert.deepEqual(deleted, [first, second]);
+  assert.equal(commands.length, 1, "all editors share one PDF.js history entry");
+  assert.deepEqual(sidecarEvents, ["delete"]);
+  commands[0].undo();
+  assert.deepEqual(sidecarEvents, ["delete", "restore"]);
+  commands[0].cmd();
+  assert.deepEqual(sidecarEvents, ["delete", "restore", "redo-delete"]);
+});
+
+test("bulk deletion aborts after toolbar setup when its document session changes", async () => {
+  let sessionCurrent = true;
+  let resolveToolbar;
+  let deleteCalls = 0;
+  let selectionCalls = 0;
+  const manager = {
+    setSelected() { selectionCalls += 1; },
+    toggleSelected() { selectionCalls += 1; },
+    delete() { deleteCalls += 1; },
+    addCommands() {},
+  };
+  const editor = {
+    deleted: false,
+    isEmpty: () => false,
+    addEditToolbar() {
+      return new Promise((resolve) => {
+        resolveToolbar = () => {
+          this._editToolbar = { div: { querySelector: () => ({}) } };
+          resolve();
+        };
+      });
+    },
+  };
+  const controller = createController({ getManager: () => manager });
+  const deletion = controller.deleteEditors([editor], {
+    isCurrent: () => sessionCurrent,
+  });
+  await Promise.resolve();
+  sessionCurrent = false;
+  resolveToolbar();
+
+  assert.equal(await deletion, 0);
+  assert.equal(selectionCalls, 0);
+  assert.equal(deleteCalls, 0);
+});
+
+test("bulk history callbacks stop when their originating session is no longer current", async () => {
+  let sessionCurrent = true;
+  const sidecarEvents = [];
+  let deleted = false;
+  const commands = [];
+  const manager = {
+    setSelected() {},
+    toggleSelected() {},
+    delete() {
+      const command = {
+        cmd() { deleted = true; },
+        undo() { deleted = false; },
+        mustExec: true,
+      };
+      this.addCommands(command);
+    },
+    addCommands(command) {
+      commands.push(command);
+      if (command.mustExec) command.cmd();
+    },
+  };
+  const editor = { deleted: false, isEmpty: () => false };
+  const controller = createController({ getManager: () => manager });
+
+  assert.equal(await controller.deleteEditors([editor], {
+    isCurrent: () => sessionCurrent,
+    onDelete: ({ redo }) => sidecarEvents.push(redo ? "redo-delete" : "delete"),
+    onRestore: () => sidecarEvents.push("restore"),
+  }), 1);
+  assert.equal(deleted, true);
+  assert.deepEqual(sidecarEvents, ["delete"]);
+
+  sessionCurrent = false;
+  commands[0].undo();
+  commands[0].cmd();
+  assert.equal(deleted, true, "stale history commands do not mutate the new session");
+  assert.deepEqual(sidecarEvents, ["delete"], "stale history commands do not write sidecar operations");
+});
+
+test("bulk deletion safely falls back to PDF.js deleteEditor when group selection is unavailable", async () => {
+  const removed = [];
+  const manager = { deleteEditor: (editor) => removed.push(editor.id) };
+  const controller = createController({ getManager: () => manager });
+
+  assert.equal(await controller.deleteEditors([{ id: "one" }, { id: "two", deleted: true }]), 1);
+  assert.deepEqual(removed, ["one"]);
+  assert.equal(await createController().deleteEditors([{ id: "no-manager" }]), 0);
+});
+
 test("Pencil highlight fallback commits only the exact live editor and selection session", () => {
   const textLayer = { id: "text" };
   const page = {

@@ -68,6 +68,106 @@
         : null;
     }
 
+    async deleteEditors(editors, {
+      onDelete = null,
+      onRestore = null,
+      isCurrent = null,
+    } = {}) {
+      const manager = this.getManager();
+      const targets = [...new Set(editors || [])].filter((editor) =>
+        editor && editor.deleted !== true && !editor.isEmpty?.(),
+      );
+      if (!manager || !targets.length) return 0;
+      if (
+        typeof manager.setSelected === "function" &&
+        typeof manager.toggleSelected === "function" &&
+        typeof manager.delete === "function" &&
+        typeof manager.addCommands === "function"
+      ) {
+        const toolbarsReady = await Promise.all(targets.map((editor) =>
+          this.waitForDeleteToolbar(editor),
+        ));
+        if (toolbarsReady.some((ready) => !ready) ||
+            (typeof isCurrent === "function" && !isCurrent())) return 0;
+        manager.setSelected(targets[0]);
+        for (const editor of targets.slice(1)) manager.toggleSelected(editor);
+        // Let callers attach owner-managed effects to the same PDF.js history
+        // command. This keeps one user action as one undo/redo step while the
+        // controller remains unaware of persistence details.
+        const originalAddCommands = manager.addCommands;
+        let commandCaptured = false;
+        let firstExecution = true;
+        manager.addCommands = function (params) {
+          if (!commandCaptured && params?.mustExec === true) {
+            commandCaptured = true;
+            const originalCommand = params.cmd;
+            const originalUndo = params.undo;
+            params = {
+              ...params,
+              cmd() {
+                if (typeof isCurrent === "function" && !isCurrent()) return;
+                originalCommand?.();
+                if (typeof isCurrent === "function" && !isCurrent()) return;
+                onDelete?.({ redo: !firstExecution });
+                firstExecution = false;
+              },
+              undo() {
+                if (typeof isCurrent === "function" && !isCurrent()) return;
+                originalUndo?.();
+                if (typeof isCurrent === "function" && !isCurrent()) return;
+                onRestore?.();
+              },
+            };
+          }
+          return originalAddCommands.call(manager, params);
+        };
+        try {
+          manager.delete();
+        } finally {
+          manager.addCommands = originalAddCommands;
+        }
+        if (!commandCaptured) return 0;
+        return targets.length;
+      }
+      if (onDelete || onRestore) return 0;
+      if (typeof manager.deleteEditor !== "function") return 0;
+      for (const editor of targets) manager.deleteEditor(editor);
+      return targets.length;
+    }
+
+    async waitForDeleteToolbar(editor) {
+      if (typeof editor?.addEditToolbar !== "function") return true;
+      try {
+        // Start construction before manager.delete() selects and immediately
+        // removes the editor. PDF.js builds some toolbar buttons asynchronously.
+        await editor.addEditToolbar();
+      } catch {
+        return false;
+      }
+      const isReady = () => Boolean(
+        editor?._editToolbar?.div?.querySelector?.(".deleteButton"),
+      );
+      if (isReady()) return true;
+      if (typeof MutationObserver !== "function" || !editor?.div) return false;
+      return new Promise((resolve) => {
+        let finished = false;
+        let observer = null;
+        const timeout = setTimeout(() => finish(false), 3000);
+        const finish = (ready) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeout);
+          observer?.disconnect();
+          resolve(ready);
+        };
+        observer = new MutationObserver(() => {
+          if (isReady()) finish(true);
+        });
+        observer.observe(editor.div, { childList: true, subtree: true });
+        if (isReady()) finish(true);
+      });
+    }
+
     preparePenHighlight(pointer, { textLayer, page }) {
       if (!textLayer || !page) return false;
       const pageIndex = Number(page.dataset?.pageNumber) - 1;

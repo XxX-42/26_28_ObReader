@@ -131,6 +131,9 @@
     dirtyPageRevisions: new Map(),
     dirtyNewAnnotationIds: new Set(),
     dirtyDeletedAnnotationIds: new Set(),
+    pendingBulkDeletedUuids: new Set(),
+    bulkDeleteDialog: null,
+    bulkDeleteInProgress: false,
     // A saved editor restored by Undo can be live in the editor manager while
     // PDF.js omits it from AnnotationStorage because it is unchanged against
     // the loaded PDF base. Keep that exact saved identity until Redo removes
@@ -498,6 +501,10 @@
       !canEdit || !state.editorHistory.canRedo;
     controls.deleteButton.disabled =
       !canEdit || !state.editorHistory.hasSelection;
+    controls.deletePageAnnotationsButton.disabled =
+      !canEdit || state.bulkDeleteInProgress;
+    controls.deleteAllAnnotationsButton.disabled =
+      !canEdit || state.bulkDeleteInProgress;
     controls.saveButton.disabled =
       !canEdit || !hasUnsavedAnnotationChanges();
   }
@@ -612,10 +619,457 @@
           manager.delete();
         }
         break;
+      case "delete-page-annotations":
+        if (manager && !state.readOnly) {
+          state.app.secondaryToolbar?.close();
+          const currentPageNumber = state.app.pdfViewer.currentPageNumber;
+          if (Number.isSafeInteger(currentPageNumber) && currentPageNumber > 0) {
+            requestManagedAnnotationDeletion(
+              currentPageNumber - 1,
+              captureBulkDeleteSession(),
+            );
+          }
+        }
+        break;
+      case "delete-all-annotations":
+        if (manager && !state.readOnly) {
+          state.app.secondaryToolbar?.close();
+          showDeleteAllAnnotationsConfirmation();
+        }
+        break;
       case "save":
         void requestSave("manual");
         break;
     }
+  }
+
+  function collectKnownAnnotationDeletionTargets(pageIndex = null) {
+    const targets = new Map();
+    const authoritativeTombstones = new Set();
+    const add = (row, { editorPayload, ref, source } = {}) => {
+      if (!row || typeof row.uuid !== "string" || !row.uuid ||
+          !Number.isSafeInteger(row.pageIndex) || row.pageIndex < 0 ||
+          (pageIndex !== null && row.pageIndex !== pageIndex)) return;
+      const kind = normalizeSyncKind(row.kind);
+      if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) return;
+      targets.set(row.uuid, {
+        uuid: row.uuid,
+        pageIndex: row.pageIndex,
+        kind,
+        ref: canonicalPdfAnnotationRef(ref || row.embeddedRef || row.reference || row.operationReference),
+        editorPayload: editorPayload && typeof editorPayload === "object" ? editorPayload : null,
+        source,
+      });
+    };
+
+    for (const row of state.externalAnnotationRows.values()) {
+      if (!row?.uuid) continue;
+      if (row.deleted === true || state.pendingBulkDeletedUuids.has(row.uuid) ||
+          state.dirtyDeletedAnnotationIds.has(row.uuid)) {
+        authoritativeTombstones.add(row.uuid);
+        targets.delete(row.uuid);
+        continue;
+      }
+      add(row, { editorPayload: row.editor, ref: row.embeddedRef, source: "sidecar" });
+    }
+
+    for (const row of state.annotationSnapshot.values()) {
+      if (!row?.uuid || authoritativeTombstones.has(row.uuid)) continue;
+      if (row.deleted === true) {
+        targets.delete(row.uuid);
+        continue;
+      }
+      add(row, {
+        editorPayload: row.value,
+        ref: row.operationReference || row.reference,
+        source: "editor-snapshot",
+      });
+    }
+
+    const latestOperations = new Map();
+    for (const entry of state.annotationOperations) {
+      if (entry?.operation?.uuid) latestOperations.set(entry.operation.uuid, entry.operation);
+    }
+    for (const operation of latestOperations.values()) {
+      if (operation.deleted === true || operation.action === "delete") {
+        targets.delete(operation.uuid);
+        continue;
+      }
+      const payload = operation.payload?.editor ?? operation.serialized;
+      add(operation, {
+        editorPayload: payload,
+        ref: operation.embeddedRef || operation.ref,
+        source: "pending-operation",
+      });
+    }
+    return targets;
+  }
+
+  function countKnownAnnotationDeletionTargets(pageIndex = null) {
+    return collectKnownAnnotationDeletionTargets(pageIndex).size;
+  }
+
+  function latestPendingAnnotationOperation(uuid) {
+    for (let index = state.annotationOperations.length - 1; index >= 0; index -= 1) {
+      const operation = state.annotationOperations[index]?.operation;
+      if (operation?.uuid === uuid) return operation;
+    }
+    return null;
+  }
+
+  function collectManagedAnnotationDeletionPlan(pageIndex = null) {
+    const app = state.app;
+    const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    if (!app?.pdfDocument || !manager?.getEditors) {
+      return { targets: new Map(), liveEditors: [], sidecarOnly: [] };
+    }
+    const targets = collectKnownAnnotationDeletionTargets(pageIndex);
+    // Refresh runtime-to-stable UUID bindings before looking up editor objects.
+    // This enumerates the live PDF.js model once at the user's explicit action.
+    const currentRows = getAnnotationStorageRows(app, { includeLiveEditors: true });
+    for (const row of currentRows.values()) {
+      if (!row?.uuid || row.deleted === true) continue;
+      if (pageIndex !== null && row.pageIndex !== pageIndex) continue;
+      let target = targets.get(row.uuid);
+      if (!target) {
+        const kind = normalizeSyncKind(row.kind);
+        if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) continue;
+        target = {
+          uuid: row.uuid,
+          pageIndex: row.pageIndex,
+          kind,
+          ref: canonicalPdfAnnotationRef(row.operationReference || row.reference),
+          editorPayload: row.value && typeof row.value === "object" ? row.value : null,
+          source: "editor-snapshot",
+        };
+        targets.set(row.uuid, target);
+      }
+      target.editorPayload = row.value && typeof row.value === "object"
+        ? row.value : target.editorPayload;
+      target.ref ||= canonicalPdfAnnotationRef(row.operationReference || row.reference);
+    }
+
+    const liveEditors = [];
+    const liveUuids = new Set();
+    for (const row of currentRows.values()) {
+      if (!row?.uuid || row.deleted === true || !targets.has(row.uuid)) continue;
+      const editor = manager.getEditor?.(row.runtimeId);
+      if (editor && editor.deleted !== true) {
+        liveEditors.push(editor);
+        liveUuids.add(row.uuid);
+      }
+    }
+    const sidecarOnly = [...targets.values()].filter((target) => !liveUuids.has(target.uuid));
+    return { targets, liveEditors, sidecarOnly };
+  }
+
+  function captureBulkDeleteSession() {
+    const app = state.app;
+    return {
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+      app,
+      pdfDocument: app?.pdfDocument || null,
+      manager: app?.pdfViewer?._layerProperties?.annotationEditorUIManager || null,
+      rendererGeneration,
+    };
+  }
+
+  function isCurrentBulkDeleteSession(session) {
+    return !!session && !state.disposed &&
+      state.activeDocumentId === session.documentId &&
+      state.activeOpenRequest === session.openRequest &&
+      state.requestedOpenRequest === session.openRequest &&
+      state.app === session.app &&
+      session.pdfDocument != null &&
+      state.app?.pdfDocument === session.pdfDocument &&
+      rendererGeneration === session.rendererGeneration &&
+      session.manager != null &&
+      state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager === session.manager;
+  }
+
+  function requestManagedAnnotationDeletion(pageIndex = null, expectedSession = null) {
+    if (expectedSession && !isCurrentBulkDeleteSession(expectedSession)) return;
+    void deleteManagedAnnotations(pageIndex, expectedSession).catch((error) => {
+      state.bulkDeleteInProgress = false;
+      syncBridgeControls();
+      if (expectedSession && !isCurrentBulkDeleteSession(expectedSession)) return;
+      sendError(error?.message || "无法安全删除批注。", {
+        documentId: expectedSession?.documentId ?? state.activeDocumentId,
+        openRequest: expectedSession?.openRequest ?? state.activeOpenRequest,
+        code: "bulk-annotation-delete-failed",
+      });
+    });
+  }
+
+  function replaceAnnotationOperation(operation, revision) {
+    const existingIndex = state.annotationOperations.findIndex(
+      (entry) => entry.operation?.uuid === operation.uuid,
+    );
+    if (existingIndex >= 0) state.annotationOperations.splice(existingIndex, 1);
+    state.annotationOperations.push({ revision, operation });
+    markDirtyAnnotation(
+      operation.uuid,
+      operation.pageIndex,
+      operation.deleted ? "delete" : "upsert",
+      revision,
+      false,
+    );
+  }
+
+  function createManagedAnnotationOperation(target, deleted) {
+    const stamp = makeSyncStamp();
+    const editorPayload = target.editorPayload && typeof target.editorPayload === "object"
+      ? normalizeSyncValue(target.editorPayload)
+      : null;
+    if (!deleted && !editorPayload) {
+      throw new Error(`无法安全恢复批注 ${target.uuid}：缺少完整编辑数据。`);
+    }
+    return {
+      uuid: target.uuid,
+      ref: target.ref || null,
+      pageIndex: target.pageIndex,
+      kind: target.kind,
+      deleted,
+      action: deleted ? "delete" : "upsert",
+      ...stamp,
+      serialized: deleted ? { deleted: true } : editorPayload,
+      payload: deleted ? null : { editor: editorPayload },
+    };
+  }
+
+  function applySidecarBulkDelete(targets, deleted, { advanceRevision = false } = {}) {
+    if (!targets.length) return false;
+    const revision = state.revision + 1;
+    for (const target of targets) {
+      replaceAnnotationOperation(
+        createManagedAnnotationOperation(target, deleted),
+        revision,
+      );
+      if (deleted) state.pendingBulkDeletedUuids.add(target.uuid);
+      else state.pendingBulkDeletedUuids.delete(target.uuid);
+    }
+    // Initial command execution is followed by the existing addCommands
+    // mutation observer. Undo/redo bypass addCommands, so explicitly advance
+    // the revision and autosave after those history transitions.
+    if (advanceRevision) noteMutation();
+    syncBridgeControls();
+    return true;
+  }
+
+  function addSidecarBulkDeleteUndoCommand(manager, targets, isCurrent = null) {
+    if (!targets.length) return false;
+    const records = targets.map((target) => ({ ...target }));
+    let firstExecution = true;
+    manager.addCommands({
+      cmd: () => {
+        if (typeof isCurrent === "function" && !isCurrent()) return;
+        applySidecarBulkDelete(records, true, {
+          advanceRevision: !firstExecution,
+        });
+        firstExecution = false;
+      },
+      undo: () => {
+        if (typeof isCurrent === "function" && !isCurrent()) return;
+        applySidecarBulkDelete(records, false, { advanceRevision: true });
+      },
+      mustExec: true,
+    });
+    return true;
+  }
+
+  async function deleteManagedAnnotations(pageIndex = null, expectedSession = null) {
+    const session = expectedSession || captureBulkDeleteSession();
+    if (!isCurrentBulkDeleteSession(session)) return false;
+    if (state.readOnly || state.bulkDeleteInProgress || isEditBoundaryBusy() ||
+        state.pendingInkCommit || state.freeTextInputPending ||
+        (state.freeTextFocused && !state.freeTextCommittedForSave)) {
+      showStatus("请结束当前批注或文字输入后，再删除批注。");
+      return false;
+    }
+    const documentId = session.documentId;
+    const manager = session.manager;
+    if (!manager) return false;
+    const plan = collectManagedAnnotationDeletionPlan(pageIndex);
+    if (!plan.targets.size) {
+      showStatus(pageIndex === null ? "没有可删除的批注。" : "本页没有可删除的批注。");
+      return false;
+    }
+    const incomplete = plan.sidecarOnly.filter((target) => !target.editorPayload);
+    if (incomplete.length) {
+      showStatus("部分批注缺少可验证的编辑数据，已停止批量删除；没有写入这些批注。");
+      return false;
+    }
+
+    state.bulkDeleteInProgress = true;
+    syncBridgeControls();
+    try {
+      // A freshly hydrated editor may still be completing its async toolbar
+      // construction. Let that PDF.js microtask finish before remove() tears
+      // the toolbar down, which otherwise can leave a rejected addButton task.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (state.disposed || !isCurrentBulkDeleteSession(session) ||
+          state.activeDocumentId !== documentId || state.app?.pdfDocument == null) {
+        return false;
+      }
+      if (isEditBoundaryBusy() || state.pendingInkCommit || state.freeTextInputPending ||
+          (state.freeTextFocused && !state.freeTextCommittedForSave)) {
+        showStatus("请结束当前批注或文字输入后，再删除批注。");
+        return false;
+      }
+      if (plan.liveEditors.length && plan.sidecarOnly.length) {
+        const records = plan.sidecarOnly.map((target) => ({ ...target }));
+        const isCurrent = () => isCurrentBulkDeleteSession(session);
+        const deleted = await state.annotationController?.deleteEditors(plan.liveEditors, {
+          onDelete: ({ redo }) => {
+            if (!isCurrent()) return;
+            applySidecarBulkDelete(records, true, { advanceRevision: redo === true });
+          },
+          onRestore: () => {
+            if (!isCurrent()) return;
+            applySidecarBulkDelete(records, false, { advanceRevision: true });
+          },
+          isCurrent,
+        }) || 0;
+        if (state.disposed || !isCurrentBulkDeleteSession(session)) return false;
+        if (deleted !== plan.liveEditors.length) {
+          throw new Error("当前批注未能进入安全删除状态，未删除任何已加载批注。");
+        }
+      } else if (plan.liveEditors.length) {
+        const deleted = await state.annotationController?.deleteEditors(plan.liveEditors, {
+          isCurrent: () => isCurrentBulkDeleteSession(session),
+        }) || 0;
+        if (state.disposed || !isCurrentBulkDeleteSession(session)) return false;
+        if (deleted !== plan.liveEditors.length) {
+          throw new Error("当前批注未能进入安全删除状态，未删除任何已加载批注。");
+        }
+      } else if (plan.sidecarOnly.length) {
+        addSidecarBulkDeleteUndoCommand(
+          manager,
+          plan.sidecarOnly,
+          () => isCurrentBulkDeleteSession(session),
+        );
+      }
+      state.app?.secondaryToolbar?.close();
+      showStatus(`已删除 ${plan.targets.size} 条批注，正在保存；可用撤销恢复。`);
+      return true;
+    } catch (error) {
+      sendError(error?.message || "无法删除批注。", {
+        documentId: state.activeDocumentId,
+        openRequest: state.activeOpenRequest,
+        code: "bulk-annotation-delete-failed",
+      });
+      return false;
+    } finally {
+      state.bulkDeleteInProgress = false;
+      syncBridgeControls();
+    }
+  }
+
+  function showDeleteAllAnnotationsConfirmation() {
+    if (state.bulkDeleteDialog) return;
+    const session = captureBulkDeleteSession();
+    if (!isCurrentBulkDeleteSession(session)) return;
+    const initialTargets = collectKnownAnnotationDeletionTargets();
+    const count = initialTargets.size;
+    if (!count) {
+      showStatus("没有可删除的批注。");
+      return;
+    }
+    const previousFocus = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.className = "pdfReaderBulkDeleteOverlay";
+    overlay.setAttribute("data-pdf-reader-ui", "true");
+    const dialog = document.createElement("section");
+    dialog.className = "pdfReaderBulkDeleteDialog";
+    dialog.setAttribute("role", "alertdialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "pdfReaderBulkDeleteTitle");
+    dialog.setAttribute("aria-describedby", "pdfReaderBulkDeleteDescription");
+    const title = document.createElement("h2");
+    title.id = "pdfReaderBulkDeleteTitle";
+    title.textContent = "删除所有页的批注？";
+    const description = document.createElement("p");
+    description.id = "pdfReaderBulkDeleteDescription";
+    description.textContent = `将删除 ${count} 条本插件管理的批注。此操作会写入可同步的删除记录，原始 PDF 文件保持不变；删除后可用撤销恢复。`;
+    const actions = document.createElement("div");
+    actions.className = "pdfReaderBulkDeleteActions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "pdfReaderBulkDeleteCancel";
+    cancel.textContent = "取消";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "pdfReaderBulkDeleteConfirm";
+    confirm.textContent = "删除所有批注";
+    actions.append(cancel, confirm);
+    dialog.append(title, description, actions);
+    overlay.append(dialog);
+    document.body.append(overlay);
+
+    const close = () => {
+      if (state.bulkDeleteDialog?.overlay !== overlay) return;
+      overlay.remove();
+      state.bulkDeleteDialog = null;
+      if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
+        previousFocus.focus();
+      }
+    };
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusables = [...dialog.querySelectorAll("button:not(:disabled)")];
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    cancel.addEventListener("click", close);
+    const dialogState = {
+      overlay,
+      close,
+      documentId: session.documentId,
+      openRequest: session.openRequest,
+      targetUuids: new Set(initialTargets.keys()),
+    };
+    confirm.addEventListener("click", () => {
+      if (state.bulkDeleteDialog !== dialogState) return;
+      if (!isCurrentBulkDeleteSession(session)) {
+        close();
+        return;
+      }
+      const currentTargets = collectKnownAnnotationDeletionTargets();
+      const currentUuids = new Set(currentTargets.keys());
+      const targetsChanged = currentUuids.size !== dialogState.targetUuids.size ||
+        [...currentUuids].some((uuid) => !dialogState.targetUuids.has(uuid));
+      if (targetsChanged) {
+        dialogState.targetUuids = currentUuids;
+        if (!currentTargets.size) {
+          close();
+          showStatus("没有可删除的批注。");
+          return;
+        }
+        description.textContent = `批注列表已变化。将删除 ${currentTargets.size} 条本插件管理的批注。此操作会写入可同步的删除记录，原始 PDF 文件保持不变；删除后可用撤销恢复。请再次确认。`;
+        return;
+      }
+      close();
+      requestManagedAnnotationDeletion(null, session);
+    });
+    state.bulkDeleteDialog = dialogState;
+    cancel.focus();
   }
 
   function installBridgeControls() {
@@ -671,6 +1125,36 @@
       secondaryContainer.insertBefore(deleteButton, saveButton);
     }
 
+    const deletePageAnnotationsButton = document.createElement("button");
+    deletePageAnnotationsButton.id = "pdfReaderBridgeDeletePageAnnotationsButton";
+    deletePageAnnotationsButton.type = "button";
+    deletePageAnnotationsButton.className = "toolbarButton labeled pdfReaderBridgeBulkDeleteButton";
+    deletePageAnnotationsButton.title = "删除本页所有批注";
+    deletePageAnnotationsButton.setAttribute("aria-label", deletePageAnnotationsButton.title);
+    deletePageAnnotationsButton.dataset.action = "delete-page-annotations";
+    const deletePageLabel = document.createElement("span");
+    deletePageLabel.textContent = deletePageAnnotationsButton.title;
+    deletePageAnnotationsButton.append(deletePageLabel);
+    deletePageAnnotationsButton.addEventListener("click", () =>
+      runBridgeAction("delete-page-annotations"),
+    );
+    secondaryContainer.insertBefore(deletePageAnnotationsButton, saveButton);
+
+    const deleteAllAnnotationsButton = document.createElement("button");
+    deleteAllAnnotationsButton.id = "pdfReaderBridgeDeleteAllAnnotationsButton";
+    deleteAllAnnotationsButton.type = "button";
+    deleteAllAnnotationsButton.className = "toolbarButton labeled pdfReaderBridgeBulkDeleteButton";
+    deleteAllAnnotationsButton.title = "删除所有页的批注";
+    deleteAllAnnotationsButton.setAttribute("aria-label", deleteAllAnnotationsButton.title);
+    deleteAllAnnotationsButton.dataset.action = "delete-all-annotations";
+    const deleteAllLabel = document.createElement("span");
+    deleteAllLabel.textContent = deleteAllAnnotationsButton.title;
+    deleteAllAnnotationsButton.append(deleteAllLabel);
+    deleteAllAnnotationsButton.addEventListener("click", () =>
+      runBridgeAction("delete-all-annotations"),
+    );
+    secondaryContainer.insertBefore(deleteAllAnnotationsButton, saveButton);
+
     const secondaryToolbar = document.getElementById("secondaryToolbarToggle");
     if (secondaryToolbar?.parentElement === toolbar) {
       toolbar.insertBefore(group, secondaryToolbar);
@@ -681,6 +1165,8 @@
       group,
       historyButtons,
       deleteButton,
+      deletePageAnnotationsButton,
+      deleteAllAnnotationsButton,
       saveButton,
     };
     installAdaptiveToolbarLayout();
@@ -1593,6 +2079,7 @@
       state.dirtyPageRevisions.clear();
       state.dirtyNewAnnotationIds.clear();
       state.dirtyDeletedAnnotationIds.clear();
+      state.pendingBulkDeletedUuids.clear();
       state.annotationSnapshot = new Map();
       state.restoredSavedAnnotations.clear();
       state.syncOperationSequence = 0;
@@ -2327,7 +2814,10 @@
   async function hydrateExternalAnnotationsForPage(pageIndex) {
     if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || state.disposed) return true;
     const rows = [...state.externalAnnotationRows.values()]
-      .filter((row) => row.pageIndex === pageIndex);
+      .filter((row) => row.pageIndex === pageIndex &&
+        row.deleted !== true &&
+        !state.pendingBulkDeletedUuids.has(row.uuid) &&
+        !state.dirtyDeletedAnnotationIds.has(row.uuid));
     if (!rows.length) return true;
     const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
     if (!getAnnotationEditorManager() || !pageView?.annotationEditorLayer?.annotationEditorLayer) {
@@ -2404,6 +2894,24 @@
         { timestamp: previous.clock.timestamp, logical: previous.clock.logical, actorId: previous.clock.deviceId, operationId: previous.clock.opId },
       ) >= 0) {
         merged.set(row.uuid, row);
+      }
+      if (state.pendingBulkDeletedUuids.has(row.uuid)) {
+        const pendingDelete = latestPendingAnnotationOperation(row.uuid);
+        const incomingStamp = {
+          timestamp: row.clock.timestamp,
+          logical: row.clock.logical,
+          actorId: row.clock.deviceId,
+          operationId: row.clock.opId,
+        };
+        const pendingStamp = pendingDelete && {
+          timestamp: pendingDelete.timestamp,
+          logical: pendingDelete.logical,
+          actorId: pendingDelete.deviceId || pendingDelete.actorId,
+          operationId: pendingDelete.operationId,
+        };
+        if (!pendingStamp || compareSyncStamps(incomingStamp, pendingStamp) >= 0) {
+          state.pendingBulkDeletedUuids.delete(row.uuid);
+        }
       }
     }
     state.externalAnnotationRows = merged;
@@ -7396,6 +7904,9 @@
     if (state.disposed) {
       return;
     }
+    // Any queued open invalidates a pending destructive confirmation before
+    // the new document can become active in this iframe.
+    state.bulkDeleteDialog?.close?.();
     state.requestedOpenRequest = Number.isInteger(message.openRequest)
       ? message.openRequest
       : null;
@@ -8399,6 +8910,11 @@
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
+          "pagechanging",
+          () => syncBridgeControls(),
+          { signal: state.eventAbortController.signal },
+        );
+        app.eventBus?._on(
           "annotationlayerrendered",
           ({ pageNumber }) => {
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
@@ -8643,6 +9159,7 @@
     if (state.disposed) {
       return;
     }
+    state.bulkDeleteDialog?.close?.();
     updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
