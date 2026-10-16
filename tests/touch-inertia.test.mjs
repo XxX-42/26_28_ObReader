@@ -77,7 +77,6 @@ function harness({ time = 0, scrollTop = 100, maxTop = 9500 } = {}) {
     activeOpenRequest: 1,
     inputRouter: createInputRouter(),
     editorMode: 0,
-    pendingPenHighlight: null,
   };
   const classes = new Set();
   const document = {

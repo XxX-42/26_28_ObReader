@@ -69,7 +69,6 @@
     iosDirectManipulationController: null,
     textSelectionController: null,
     annotationController: null,
-    pendingPenHighlight: null,
     pointerDiagnostics: {
       total: 0,
       dropped: 0,
@@ -6305,17 +6304,7 @@
   }
 
   function invalidatePendingPenHighlight(pointer = null) {
-    if (!state.pendingPenHighlight) {
-      return;
-    }
-    if (!pointer || state.pendingPenHighlight === pointer) {
-      clearOwnedPenTextSelection(state.pendingPenHighlight);
-      state.pendingPenHighlight = null;
-    }
-  }
-
-  function clearOwnedPenTextSelection(pointer) {
-    state.textSelectionController?.clearOwned(pointer);
+    state.textSelectionController?.cancelPending?.(pointer);
   }
 
   function updateOwnedPenTextSelection(pointer, intent, controls) {
@@ -6514,7 +6503,6 @@
         page,
       }) === true;
       if (eligible) {
-        state.pendingPenHighlight = pointer;
         const ownsGesture = state.textSelectionController?.begin(pointer, intent, {
           eligible,
         }) === true;
@@ -6556,7 +6544,6 @@
       new window.PdfReaderInputRuntime.TextSelectionController({
         documentRef: document,
         isSessionCurrent: isPointerSessionCurrent,
-        isPendingPointer: (pointer) => state.pendingPenHighlight === pointer,
       });
     state.annotationController =
       new window.PdfReaderInputRuntime.AnnotationController({
@@ -6571,10 +6558,9 @@
           state.textSelectionController?.hasValidHighlightSelection(pointer) === true,
         hasOtherActivePenPointer,
         isClosingOrDisposed: () => !!state.closeControl || state.disposed,
-        isPendingHighlight: (pointer) => state.pendingPenHighlight === pointer,
-        clearPendingHighlight: () => {
-          state.pendingPenHighlight = null;
-        },
+        isPendingHighlight: (pointer) =>
+          state.textSelectionController?.isPending(pointer) === true,
+        clearPendingHighlight: () => state.textSelectionController?.clearPending(),
         clearToolWheel: (pointerId) => {
           const app = state.app;
           if (app?._toolWheel?.pointerId === pointerId) {

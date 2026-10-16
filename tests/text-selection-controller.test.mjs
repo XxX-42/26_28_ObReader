@@ -72,12 +72,10 @@ function harness() {
   };
   const runtimeWindow = { PdfReaderInputRuntime: {} };
   vm.runInNewContext(source, { window: runtimeWindow });
-  let pending = true;
   let current = true;
   const controller = new runtimeWindow.PdfReaderInputRuntime.TextSelectionController({
     documentRef,
     isSessionCurrent: () => current,
-    isPendingPointer: () => pending,
   });
   const pointer = { pointerId: 1, moved: false };
   return {
@@ -90,7 +88,10 @@ function harness() {
     startNode,
     endNode,
     externalNode,
-    setPending(value) { pending = value; },
+    setPending(value) {
+      if (value) controller.pendingPointer = pointer;
+      else controller.clearPending(pointer);
+    },
     setCurrent(value) { current = value; },
   };
 }
@@ -141,7 +142,17 @@ test("range extension stops on session loss or foreign selection ownership", () 
 
   h.setCurrent(true);
   h.selection.setBaseAndExtent(h.externalNode, 0, h.externalNode, 0);
-  assert.equal(h.controller.extend(h.pointer, { clientX: 1, clientY: 20 }), false);
+  assert.equal(h.controller.extend(h.pointer, { clientPoint: { x: 1, y: 20 } }), false);
+});
+
+test("TextSelectionController owns and cancels its pending Pencil session", () => {
+  const h = harness();
+  const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };
+  assert.equal(h.controller.begin(h.pointer, intent, { eligible: true }), true);
+  assert.equal(h.controller.isPending(h.pointer), true);
+  h.controller.cancelPending(h.pointer);
+  assert.equal(h.controller.isPending(h.pointer), false);
+  assert.equal(h.pointer.ownedPenTextSelection, null);
 });
 
 test("caret results outside the target text layer never begin an owned selection", () => {
