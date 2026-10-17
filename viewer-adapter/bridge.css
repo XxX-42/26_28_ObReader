@@ -113,12 +113,12 @@ body {
   position: fixed;
   z-index: 100005;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 42px;
+  grid-template-columns: minmax(0, 1fr) auto auto 42px;
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "heading status close"
-    "body body body"
-    "actions actions actions";
+    "heading status occurrence close"
+    "body body body body"
+    "actions actions actions actions";
   align-items: center;
   gap: 8px 8px;
   width: max-content;
@@ -244,7 +244,7 @@ body {
      iPad pinch zoom. The controller supplies its width so the status chip
      cannot crowd the close button outside the capped card. */
   min-width: 0;
-  max-width: max(0px, min(8rem, calc(var(--pill-visual-width, 100vw) - 150px)));
+  max-width: max(0px, min(8rem, calc(var(--pill-visual-width, 100vw) - 190px)));
   overflow: hidden;
   padding: 3px 7px;
   border-radius: 999px;
@@ -305,7 +305,7 @@ body {
 }
 
 .pdfReaderVocabularyPillOccurrenceActions {
-  grid-column: 1;
+  grid-area: occurrence;
   display: flex;
   justify-content: flex-start;
   min-width: 0;
@@ -332,11 +332,20 @@ body {
 
 .pdfReaderVocabularyPillOccurrenceLink {
   min-width: 0 !important;
-  min-height: 38px !important;
-  padding: 6px 12px !important;
+  min-height: 40px !important;
+  padding: 5px 8px !important;
   border-radius: 999px !important;
   color: var(--text-accent, var(--interactive-accent, #6957d5)) !important;
-  font-size: 0.86em !important;
+  font-size: 0.8em !important;
+  line-height: 1.2 !important;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.pdfReaderVocabularyPillOccurrenceLink.is-copied {
+  color: var(--text-on-accent, white) !important;
+  background: var(--interactive-accent, #6957d5) !important;
 }
 
 .pdfReaderVocabularyPill button {
@@ -418,9 +427,31 @@ body {
 .pdfReaderVocabularyPill[data-placement="below"] {
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
-    "heading status close"
-    "actions actions actions"
-    "body body body";
+    "heading status occurrence close"
+    "actions actions actions actions"
+    "body body body body";
+}
+
+.pdfReaderVocabularyPill[data-compact-header="true"] {
+  gap: 4px;
+  padding: 6px;
+}
+
+.pdfReaderVocabularyPill[data-compact-header="true"] .pdfReaderVocabularyPillHeading {
+  font-size: 0.88em;
+}
+
+.pdfReaderVocabularyPill[data-compact-header="true"] .pdfReaderVocabularyPillStatus {
+  max-width: max(1rem, min(3.5rem, calc(var(--pill-visual-width, 100vw) - 190px)));
+  padding: 2px 4px;
+  font-size: 0.65em;
+}
+
+.pdfReaderVocabularyPill[data-compact-header="true"] .pdfReaderVocabularyPillOccurrenceLink {
+  min-width: 40px !important;
+  min-height: 40px !important;
+  padding: 4px 5px !important;
+  font-size: 0.72em !important;
 }
 
 .pdfReaderBulkDeleteOverlay {

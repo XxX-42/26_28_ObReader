@@ -9,6 +9,16 @@ import {
 import { VocabularyHighlightRenderer } from "./canvas-overlay.js";
 import { vocabularyEntryPresentation, vocabularyStatusLabel } from "./presentation.js";
 
+function vocabularyPillStatusLabel(record) {
+  const presentation = vocabularyEntryPresentation(record);
+  // Keep the underlying distinction between missing personal state and
+  // dictionary data; the compact card uses a friendlier label for an
+  // unrecorded word.
+  return presentation.status === null && !presentation.hasPersonalRecord
+    ? "陌生词"
+    : presentation.statusLabel;
+}
+
 // CSS-pixel placement shared by desktop and touch viewports. Only the open
 // card is measured; this never queries vocabulary or scans a PDF text layer.
 export function computeVocabularyPillPlacement({ viewport, anchor, width, height, minHeight = 150 }) {
@@ -751,7 +761,9 @@ export class VocabularyController {
     const copyOccurrence = this.document.createElement("button");
     copyOccurrence.type = "button";
     copyOccurrence.className = "pdfReaderVocabularyPillOccurrenceLink";
-    copyOccurrence.textContent = "复制此处链接";
+    copyOccurrence.textContent = "🔗 Link";
+    copyOccurrence.setAttribute("aria-label", "复制此处链接");
+    copyOccurrence.title = "复制此处链接";
     copyOccurrence.addEventListener("click", (event) => {
       event.stopPropagation?.();
       if (copyOccurrence.disabled) return;
@@ -821,8 +833,8 @@ export class VocabularyController {
     });
     const body = this.document.createElement("div");
     body.className = "pdfReaderVocabularyPillBody";
-    body.append(pronunciation, meanings, occurrenceActions, backlinkActions);
-    popup.append(heading, status, body, actions, close);
+    body.append(pronunciation, meanings, backlinkActions);
+    popup.append(heading, status, occurrenceActions, close, body, actions);
     this.document.body.appendChild(popup);
     this.entryPill = {
       popup, page, entry, requestId, heading, statusElement: status,
@@ -900,6 +912,7 @@ export class VocabularyController {
     const maxWidth = Math.max(1, viewport.width - 20);
     const maxHeight = Math.max(1, viewport.height - 20);
     popup.style.setProperty?.("--pill-visual-width", `${viewport.width}px`);
+    popup.dataset.compactHeader = String(viewport.width < 300);
     popup.style.maxWidth = `${Math.min(420, maxWidth)}px`;
     popup.style.maxHeight = `${Math.min(420, maxHeight)}px`;
     const anchor = this.pillAnchor(x, y);
@@ -964,8 +977,10 @@ export class VocabularyController {
         message?.requestId !== pill.occurrenceRequestId) return false;
     pill.occurrenceRequestId = null;
     pill.occurrenceButton.disabled = message.ok === true;
-    pill.occurrenceButton.textContent = message.ok === true ? "已复制链接" : "复制此处链接";
-    if (message.ok !== true) pill.occurrenceButton.title = message.message || "创建链接失败";
+    pill.occurrenceButton.textContent = "🔗 Link";
+    pill.occurrenceButton.setAttribute("aria-label", message.ok === true ? "已复制链接" : "复制此处链接");
+    pill.occurrenceButton.title = message.ok === true ? "已复制链接" : message.message || "复制此处链接";
+    pill.occurrenceButton.classList.toggle("is-copied", message.ok === true);
     this.scheduleEntryPillLayout();
     return true;
   }
@@ -1003,7 +1018,7 @@ export class VocabularyController {
       button.classList.toggle("is-active", pill.status === status);
     }
     pill.statusElement.textContent = pill.pendingStatus === null
-      ? presentation.statusLabel
+      ? vocabularyPillStatusLabel(record)
       : "正在保存…";
     pill.pronunciation.textContent = presentation.pronunciation;
     pill.pronunciation.hidden = presentation.pronunciation.length === 0;
@@ -1055,7 +1070,7 @@ export class VocabularyController {
       button.classList.toggle("is-active", pill.status === status);
     }
     pill.statusElement.textContent = pill.pendingStatus === null
-      ? vocabularyEntryPresentation(pill.record).statusLabel
+      ? vocabularyPillStatusLabel(pill.record)
       : "正在保存…";
     this.scheduleEntryPillLayout();
     return true;

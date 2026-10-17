@@ -53,7 +53,7 @@ function frameScript({ runtimeSource, bridgeCss, viewerHtml }) {
 }
 
 function boundsAssertion(geometry, label) {
-  const { popup, headingText, status, close, buttons, safe, meaning, heading, body, actions, placement } = geometry;
+  const { popup, headingText, status, occurrence, close, buttons, safe, meaning, heading, body, actions, placement } = geometry;
   assert.ok(popup, `${label}: the lookup card should remain open`);
   const contains = (rect, outer, tolerance = 1) => rect.left >= outer.left - tolerance &&
     rect.top >= outer.top - tolerance && rect.right <= outer.right + tolerance &&
@@ -63,6 +63,8 @@ function boundsAssertion(geometry, label) {
   assert.ok(contains(close, safe, 1), `${label}: close control must remain inside visualViewport safe bounds`);
   assert.ok(contains(status, popup, 1), `${label}: status chip must remain inside the visible card`);
   assert.ok(contains(status, safe, 1), `${label}: status chip must remain inside visualViewport safe bounds`);
+  assert.ok(contains(occurrence, popup, 1), `${label}: occurrence link must remain inside the card header`);
+  assert.ok(contains(occurrence, safe, 1), `${label}: occurrence link must remain inside visualViewport safe bounds`);
   for (const button of buttons) {
     assert.ok(contains(button, popup, 1), `${label}: status ${button.status} must be fully reachable inside the card: ${JSON.stringify(geometry)}`);
     assert.ok(contains(button, safe, 1), `${label}: status ${button.status} escaped visualViewport safe bounds: ${JSON.stringify(geometry)}`);
@@ -72,8 +74,11 @@ function boundsAssertion(geometry, label) {
       `${label}: long and unbroken definition text must wrap within the card: ${JSON.stringify(meaning)}`);
   }
   if (heading && body && actions) {
-    assert.ok(headingText.right <= status.left + 1 && status.right <= close.left + 1,
-      `${label}: heading, status chip, and close control must not overlap: ${JSON.stringify(geometry)}`);
+    assert.ok(headingText.right <= status.left + 1 && status.right <= occurrence.left + 1 &&
+      occurrence.right <= close.left + 1,
+      `${label}: heading, status chip, link button, and close control must share the top row without overlap: ${JSON.stringify(geometry)}`);
+    assert.ok(Math.abs(occurrence.top - close.top) <= 1,
+      `${label}: occurrence link must remain on the first row beside the close button: ${JSON.stringify(geometry)}`);
     if (placement === "below") {
       assert.ok(heading.bottom <= actions.top + 1 && actions.bottom <= body.top + 1,
         `${label}: header, grade buttons, and definition body must not overlap: ${JSON.stringify(geometry)}`);
@@ -235,11 +240,13 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
     const meanings=pill.querySelector('.pdfReaderVocabularyPillMeanings');
     const headingElement=pill.querySelector('.pdfReaderVocabularyPillHeading');
     const statusElement=pill.querySelector('.pdfReaderVocabularyPillStatus');
+    const occurrenceElement=pill.querySelector('.pdfReaderVocabularyPillOccurrenceLink');
     const closeElement=pill.querySelector('.pdfReaderVocabularyPillClose');
-    const headerElements=[headingElement,statusElement,closeElement].filter(Boolean).map(rect);
+    const headerElements=[headingElement,statusElement,occurrenceElement,closeElement].filter(Boolean).map(rect);
     const header={top:Math.min(...headerElements.map(item=>item.top)),bottom:Math.max(...headerElements.map(item=>item.bottom))};
     return {popup:rect(pill),safe,headingText:rect(headingElement),status:rect(statusElement),
-      statusMaxWidth:getComputedStyle(statusElement).maxWidth,close:rect(closeElement),
+      statusMaxWidth:getComputedStyle(statusElement).maxWidth,occurrence:rect(occurrenceElement),
+      occurrenceText:occurrenceElement?.textContent||'',close:rect(closeElement),
       buttons:[...pill.querySelectorAll('.pdfReaderVocabularyPillActions button[data-status]')].map(button=>({status:Number(button.dataset.status),...rect(button)})),
       heading:header,body:rect(pill.querySelector('.pdfReaderVocabularyPillBody')),
       actions:rect(pill.querySelector('.pdfReaderVocabularyPillActions')),placement:pill.dataset.placement,
@@ -426,7 +433,7 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
         status:Number(button.dataset.status),active:button.classList.contains('is-active'),pressed:button.getAttribute('aria-pressed'),
       })),
     }));
-    assert.equal(state.status,'无个人学习状态',`${label}: dictionary results without a personal status should show the long status chip`);
+    assert.equal(state.status,'陌生词',`${label}: a word without personal learning state should show the “陌生词” chip`);
     assert.equal(state.meaning,unlearnedMeaning,`${label}: four short Chinese dictionary definitions should remain intact`);
     assert.ok(state.buttons.length===5&&state.buttons.every(button=>!button.active&&button.pressed==='false'),
       `${label}: no grade should appear active when the dictionary record has status:null: ${JSON.stringify(state.buttons)}`);
@@ -451,22 +458,25 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
       const body=document.querySelector('.pdfReaderVocabularyPillBody'),copy=document.querySelector('.pdfReaderVocabularyPillOccurrenceLink');
       const backlinks=document.querySelector('.pdfReaderVocabularyPillBacklinksButton');
       const actions=document.querySelector('.pdfReaderVocabularyPillActions');
+      const popup=document.querySelector('.pdfReaderVocabularyPill');
       const rect=(element)=>{const r=element.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};};
-      const bodyRect=rect(body),copyRect=rect(copy),backlinkRect=rect(backlinks),actionsRect=rect(actions);
+      const bodyRect=rect(body),popupRect=rect(popup),copyRect=rect(copy),backlinkRect=rect(backlinks),actionsRect=rect(actions);
       const centerHit=(element)=>{const r=element.getBoundingClientRect(),hit=document.elementFromPoint((r.left+r.right)/2,(r.top+r.bottom)/2);return hit===element||element.contains(hit);};
       return {scrollTop:body.scrollTop,scrollHeight:body.scrollHeight,clientHeight:body.clientHeight,body:bodyRect,
-        copy:copyRect,backlinks:backlinkRect,actions:actionsRect,copyVisible:copyRect.top>=bodyRect.top-1&&copyRect.bottom<=bodyRect.bottom+1,
+        copy:copyRect,backlinks:backlinkRect,actions:actionsRect,copyVisible:copyRect.top>=popupRect.top-1&&copyRect.bottom<=popupRect.bottom+1,
         backlinksVisible:backlinkRect.top>=bodyRect.top-1&&backlinkRect.bottom<=bodyRect.bottom+1,
         copyHit:centerHit(copy),backlinkHit:centerHit(backlinks)};
     });
     assert.ok(controls.scrollTop>0&&controls.scrollHeight>controls.clientHeight,
       `The secondary rows must be reached by scrolling the body: ${JSON.stringify(controls)}`);
     assert.ok(controls.copyVisible&&controls.backlinksVisible,
-      `Copy and backlink controls should be visible at the end of the body: ${JSON.stringify(controls)}`);
+      `The top-row link and scrollable backlink control should remain visible after scrolling definitions: ${JSON.stringify(controls)}`);
     assert.ok(controls.copyHit&&controls.backlinkHit,
       `Secondary control centers must hit their real buttons: ${JSON.stringify(controls)}`);
     assert.ok(Math.abs(controls.actions.top-before.actions.top)<=1&&Math.abs(controls.actions.bottom-before.actions.bottom)<=1,
       `Scrolling the body must leave the grade row fixed: ${JSON.stringify({before:before.actions,after:controls.actions})}`);
+    assert.ok(Math.abs(controls.copy.top-before.occurrence.top)<=1&&Math.abs(controls.copy.bottom-before.occurrence.bottom)<=1,
+      `Scrolling definitions must leave the top-row link button fixed: ${JSON.stringify({before:before.occurrence,after:controls.copy})}`);
     boundsAssertion(await geometry(),'portrait after scrolling to occurrence and backlink controls');
     await screenshot('touch-portrait-body-scrolled');
     const frameOffset=await page.$eval('iframe',frame=>{const r=frame.getBoundingClientRect();return {x:r.x,y:r.y};});
@@ -474,7 +484,7 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
     const beforeOccurrence=await page.evaluate(()=>window.__vocabularyPillHost.occurrenceRequests.length);
     await tap({x:(controls.copy.left+controls.copy.right)/2,y:(controls.copy.top+controls.copy.bottom)/2});
     await page.waitForFunction((count)=>window.__vocabularyPillHost.occurrenceRequests.length===count+1,{timeout:5_000},beforeOccurrence);
-    await viewer.waitForFunction(()=>document.querySelector('.pdfReaderVocabularyPillOccurrenceLink')?.textContent==='已复制链接',
+    await viewer.waitForFunction(()=>document.querySelector('.pdfReaderVocabularyPillOccurrenceLink')?.getAttribute('aria-label')==='已复制链接',
       {timeout:5_000});
     const copyCapture=await viewer.evaluate(()=>window.__vocabularyPillHitEvents?.at(-1)||null);
     assert.ok(copyCapture?.targetIsOccurrence,`Copy control should receive the trusted click: ${JSON.stringify(copyCapture)}`);
