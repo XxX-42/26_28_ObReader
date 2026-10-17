@@ -101,3 +101,7 @@ The preserved Phase A pre-merge WIP is `1f982f4f69c2985aa8efe87783ce771cd46dbdb2
 ## Baseline
 
 The original infrastructure baseline is WIP commit `3a840a6` (`wip: preserve vocabulary 0.11.3 changes before v2 workbench`). Phase A pre-merge work is preserved at `1f982f4`; the current merge target is pinned by `MERGE_HEAD` to 0.11.6 commit `c27fcdc`. The runner unit tests use fake child processes and do not launch a browser. Neither those unit tests nor the focused stability report claims that the complete Browser and Race gates passed.
+
+## Phase A commit receipt
+
+The accepted Phase A tree was committed as `319912931b2c5bd6a9da924f8b65619c460b1498` and merged with `--no-ff` into local `integration/vocabulary-workbench-v2` at `f877e16cf0d00ee9984dfa76d4f2ecfe086f8b09`. The integration worktree was clean before creating `codex/vocabulary-v2-phase-b-contracts` from that exact commit. The pinned upstream parent is `c27fcdc38f96df59b9bf61e88863cda0abc7e1e8` (0.11.6). Descriptions of pending commits above record the pre-commit verification state; this receipt supersedes them. Phase B implementation begins only after this accepted commit. Nothing was pushed, merged into main, or deployed.

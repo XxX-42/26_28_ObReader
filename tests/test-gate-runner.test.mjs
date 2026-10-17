@@ -64,6 +64,9 @@ test("gate manifest explicitly classifies every test file once", async () => {
   assert.deepEqual(RACE_TESTS, [
     "tests/autosave-mobile-regression.test.mjs",
     "tests/highlight-multiline-regression.test.mjs",
+    "tests/vocabulary-transactions.test.mjs",
+    "tests/vocabulary-review-transaction-integration.test.mjs",
+    "tests/vocabulary-v2-runtime.test.mjs",
   ]);
 });
 
@@ -235,7 +238,7 @@ test("a skipped TAP case fails the gate even when the child exits zero", async (
   assert.equal(result.status, "failed");
 });
 
-test("race gate launches both tests in every one of 10 rounds and keeps an early failure red", async (t) => {
+test("race gate retains the historical browser pair and every added data race for all 10 rounds", async (t) => {
   const root = await temporaryRoot();
   t.after(() => rm(root, { recursive: true, force: true }));
   const counters = { started: 0, active: 0, maxActive: 0, environments: [] };
@@ -250,17 +253,19 @@ test("race gate launches both tests in every one of 10 rounds and keeps an early
       failureFor: ({ testFile, round }) => testFile === RACE_TESTS[0] && round === 1,
     }),
   });
-  assert.equal(counters.started, 20);
+  const total = RACE_TESTS.length * 10;
+  assert.equal(counters.started, total);
   assert.equal(counters.maxActive, 2);
   assert.equal(rounds.length, 10);
+  for (const round of rounds) assert.deepEqual(round.tests.map((item) => item.test), [...RACE_TESTS]);
   assert.equal(rounds[0].status, "failed");
   assert.ok(rounds.slice(1).every((round) => round.status === "passed"));
   assert.equal(rounds.flatMap((round) => round.tests).filter((result) => result.status === "failed").length, 1);
   const summary = summarizeGates({ race: rounds });
   assert.deepEqual(summary, {
-    race: { total: 20, passed: 19, failed: 1, skipped: 0 },
-    total: 20,
-    passed: 19,
+    race: { total, passed: total - 1, failed: 1, skipped: 0 },
+    total,
+    passed: total - 1,
     failed: 1,
     skipped: 0,
   });

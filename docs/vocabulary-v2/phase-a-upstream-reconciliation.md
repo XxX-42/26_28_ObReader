@@ -69,3 +69,7 @@ The integrated controller and CSS retain upstream visual-viewport pill placement
 ## Required closure evidence
 
 The native AP diagnostic is resolved and the focused native case passes without dropping original coverage. The complete gate on the integrated source passed: Fast 74/74, Browser 21/21, Race 20/20 over ten two-process rounds; total 115/115, zero failures or skips, stable source fingerprint, and `acceptanceEligible: true`. Historical failures and raw logs remain intact. Phase A implementation and acceptance criteria are complete; the merge commit/local integration remain pending root action. Schema v2 has not started.
+
+## Phase A commit receipt
+
+The accepted Phase A tree was committed as `319912931b2c5bd6a9da924f8b65619c460b1498` and merged with `--no-ff` into local `integration/vocabulary-workbench-v2` at `f877e16cf0d00ee9984dfa76d4f2ecfe086f8b09`. The integration worktree was clean before creating `codex/vocabulary-v2-phase-b-contracts` from that exact commit. The pinned upstream parent is `c27fcdc38f96df59b9bf61e88863cda0abc7e1e8` (0.11.6). Descriptions of pending commits above record the pre-commit verification state; this receipt supersedes them. Phase B implementation begins only after this accepted commit. Nothing was pushed, merged into main, or deployed.

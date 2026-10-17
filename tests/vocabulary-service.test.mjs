@@ -212,6 +212,11 @@ test("legacy duplicate inflection records keep their own definitions but receive
     ],
   }));
   const service = makeService(adapter);
+  assert.equal((await service.getTerm("walking")).key, "walked",
+    "before migration the status/richness selection keeps the original v1 storage key");
+  await service.migrate();
+  assert.equal((await service.getTerm("walking")).key, "walk",
+    "after migration family status normalization makes the tie-break deterministic");
   const exact = await service.getTerm("walk");
   assert.equal(exact.key, "walk");
   assert.equal(exact.translation, "步行", "an exact key keeps its own metadata");
@@ -221,7 +226,7 @@ test("legacy duplicate inflection records keep their own definitions but receive
   service.subscribe((change) => changes.push(change));
   const revisionBefore = service.getRevision();
   const updated = await service.setStatus("walking", 3);
-  assert.equal(updated.key, "walked", "without an exact entry, richest/status/lexical tie-break is deterministic");
+  assert.equal(updated.key, "walk", "migration normalizes statuses before the deterministic lexical tie-break");
   assert.equal(service.getRevision(), revisionBefore + 1);
   assert.deepEqual(changes.at(-1).changedKeys.sort(), ["walk", "walked"]);
 
@@ -249,15 +254,20 @@ test("ambiguous lay prefers its exact record and keeps lie and lay families sepa
     ],
   }));
   const service = makeService(adapter);
+  assert.equal((await service.getTerm("lays")).key, "lay",
+    "before migration v1 keeps the higher-status bare-lay record selected");
+  assert.equal((await service.getTerm("lays")).status, 4);
+  await service.migrate();
 
   assert.equal((await service.getTerm("lay")).key, "lay");
   assert.equal((await service.getTerm("lay")).translation, "放置");
   assert.equal((await service.getTerm("lying")).key, "lie");
   assert.equal((await service.getTerm("lying")).status, 2, "the ambiguous lay row is excluded from lie aliases");
-  assert.equal((await service.getTerm("lays")).key, "lay");
+  assert.equal((await service.getTerm("lays")).key, "laid",
+    "after family status normalization, the lexical tie-break selects the existing inflection record");
   assert.equal((await service.getTerm("lays")).status, 4);
   const updated = await service.setStatus("laying", 5);
-  assert.equal(updated.key, "lay", "status tie-break reuses the deterministic existing family record");
+  assert.equal(updated.key, "laid", "status mutation reuses the deterministic existing family record");
   assert.equal((await service.getTerm("lay")).status, 5);
   assert.equal((await service.getTerm("lain")).status, 2);
   assert.deepEqual(snapshot(adapter).records.map((record) => record.key).sort(), ["laid", "lay", "lie"]);
@@ -283,6 +293,7 @@ test("page token matching uses a cached word index and phrase trie without n-gra
     ],
   }));
   const service = makeService(adapter);
+  await service.migrate();
 
   const tokens = ["they", "were", "walking", "to", "take", "care", "of", "laid", "down", "lay", "down"];
   const first = await service.matchPageTokens(tokens);
@@ -365,6 +376,7 @@ test("older schema-v1 vocabulary records remain readable and are preserved when 
   adapter.files.set(VOCABULARY_PATH, oldSnapshot);
   const service = makeService(adapter);
   assert.equal((await service.getTerm("familiar")).note, "keep this");
+  await service.migrate();
   await service.upsertTerm("familiar", { phonetic: "/fəˈmɪliər/" });
   const saved = await service.getTerm("familiar");
   assert.equal(saved.status, 4);
