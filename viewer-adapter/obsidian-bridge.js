@@ -21,6 +21,9 @@
     bridgeScript.dataset.rendererGeneration
       ? bridgeScript.dataset.rendererGeneration
       : null;
+  function performanceNow() {
+    return globalThis.performance?.now?.() ?? Date.now();
+  }
   const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
   const vocabularyEnabledAtBoot = bridgeScript.dataset.vocabularyEnabled === "true";
   const VOCABULARY_DISPLAY_MODES = ["all", "learning", "focus"];
@@ -448,93 +451,105 @@
       if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex !== target.pageIndex) {
         result.reason = "page-identity-unresolved";
       } else {
-        let pageRoot = pageElementForIndex(pageIndex);
-        pageRoot?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-        if (!isCurrent()) {
-          result.reason = "stale-session";
-        } else
-        if (target.kind === "selection") {
-          if (!target.anchor || target.anchor.sourceHash !== current.sourceHash || target.anchor.pageIdentity !== target.pageIdentity) {
-            result.reason = "source-or-page-mismatch";
+        const pdfViewer = state.app?.pdfViewer;
+        const targetPageNumber = pageIndex + 1;
+        if (!pdfViewer || !Number.isSafeInteger(targetPageNumber)) {
+          result.reason = "pdf-viewer-navigation-unavailable";
+        } else {
+          // PDF.js pages live inside its own scroll container. Calling
+          // scrollIntoView() on an offscreen page root does not reliably
+          // update that container, so navigate through the public viewer API.
+          pdfViewer.currentPageNumber = targetPageNumber;
+          if (pdfViewer.currentPageNumber !== targetPageNumber) {
+            result.reason = "pdf-viewer-navigation-rejected";
           } else {
-            let textLayer = textLayerForPage(pageRoot);
-            for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
-              await new Promise((resolve) => setTimeout(resolve, 50));
-              if (!isCurrent()) {
-                result.reason = "stale-session";
-                break;
-              }
-              pageRoot = pageElementForIndex(pageIndex);
-              textLayer = textLayerForPage(pageRoot);
-            }
-            const range = isCurrent()
-              ? state.textSelectionController?.rangeForAnchor?.(textLayer, target.anchor)
-              : null;
-            if (!isCurrent()) result.reason = "stale-session";
-            else if (!range) result.reason = "selection-not-unique";
-            else {
-              const startNode = range.startContainer?.nodeType === 1
-                ? range.startContainer
-                : range.startContainer?.parentElement;
-              startNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-              if (!isCurrent()) {
-                result.reason = "stale-session";
+            let pageRoot = pageElementForIndex(pageIndex);
+            if (!isCurrent()) {
+              result.reason = "stale-session";
+            } else if (target.kind === "selection") {
+              if (!target.anchor || target.anchor.sourceHash !== current.sourceHash || target.anchor.pageIdentity !== target.pageIdentity) {
+                result.reason = "source-or-page-mismatch";
               } else {
+                let textLayer = textLayerForPage(pageRoot);
+                for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+                  if (!isCurrent()) {
+                    result.reason = "stale-session";
+                    break;
+                  }
+                  pageRoot = pageElementForIndex(pageIndex);
+                  textLayer = textLayerForPage(pageRoot);
+                }
+                const range = isCurrent()
+                  ? state.textSelectionController?.rangeForAnchor?.(textLayer, target.anchor)
+                  : null;
+                if (!isCurrent()) result.reason = "stale-session";
+                else if (!range) result.reason = "selection-not-unique";
+                else {
+                  const startNode = range.startContainer?.nodeType === 1
+                    ? range.startContainer
+                    : range.startContainer?.parentElement;
+                  startNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+                  if (!isCurrent()) {
+                    result.reason = "stale-session";
+                  } else {
+                    const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
+                    range.getBoundingClientRect?.();
+                    range.detach?.();
+                    result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+                  }
+                }
+              }
+            } else if (target.kind === "annotation") {
+              const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+              let editorNode = null;
+              for (let attempt = 0; attempt < 40 && !editorNode; attempt += 1) {
+                if (!isCurrent()) {
+                  result.reason = "stale-session";
+                  break;
+                }
+                for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
+                  if (uuid !== target.id) continue;
+                  const editor = manager?.getEditor?.(runtimeId);
+                  if (editor && editor.pageIndex === pageIndex) {
+                    editorNode = editor.div || document.getElementById?.(String(runtimeId)) || null;
+                    break;
+                  }
+                }
+                if (!editorNode && attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              if (isCurrent()) {
+                editorNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+                result = editorNode
+                  ? { ok: true, reason: null }
+                  : { ok: false, reason: "annotation-rendered-target-unresolved" };
+              }
+            } else if (target.kind === "page-number" && typeof target.selection === "string") {
+              let textLayer = textLayerForPage(pageRoot);
+              for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                if (!isCurrent()) {
+                  result.reason = "stale-session";
+                  break;
+                }
+                pageRoot = pageElementForIndex(pageIndex);
+                textLayer = textLayerForPage(pageRoot);
+              }
+              const range = isCurrent()
+                ? state.textSelectionController?.rangeForNativeSelection?.(textLayer, target.selection)
+                : null;
+              if (!isCurrent()) result.reason = "stale-session";
+              else if (!range) result = { ok: false, reason: "native-selection-unresolved" };
+              else {
+                range.startContainer?.parentElement?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
                 const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
-                range.getBoundingClientRect?.();
                 range.detach?.();
                 result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
               }
+            } else {
+              result = { ok: true, reason: null };
             }
           }
-        } else if (target.kind === "annotation") {
-          const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-          let editorNode = null;
-          for (let attempt = 0; attempt < 40 && !editorNode; attempt += 1) {
-            if (!isCurrent()) {
-              result.reason = "stale-session";
-              break;
-            }
-            for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
-              if (uuid !== target.id) continue;
-              const editor = manager?.getEditor?.(runtimeId);
-              if (editor && editor.pageIndex === pageIndex) {
-                editorNode = editor.div || document.getElementById?.(String(runtimeId)) || null;
-                break;
-              }
-            }
-            if (!editorNode && attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50));
-          }
-          if (isCurrent()) {
-            editorNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-            result = editorNode
-              ? { ok: true, reason: null }
-              : { ok: false, reason: "annotation-rendered-target-unresolved" };
-          }
-        } else if (target.kind === "page-number" && typeof target.selection === "string") {
-          let textLayer = textLayerForPage(pageRoot);
-          for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            if (!isCurrent()) {
-              result.reason = "stale-session";
-              break;
-            }
-            pageRoot = pageElementForIndex(pageIndex);
-            textLayer = textLayerForPage(pageRoot);
-          }
-          const range = isCurrent()
-            ? state.textSelectionController?.rangeForNativeSelection?.(textLayer, target.selection)
-            : null;
-          if (!isCurrent()) result.reason = "stale-session";
-          else if (!range) result = { ok: false, reason: "native-selection-unresolved" };
-          else {
-            range.startContainer?.parentElement?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-            const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
-            range.detach?.();
-            result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
-          }
-        } else {
-          result = { ok: true, reason: null };
         }
       }
     }

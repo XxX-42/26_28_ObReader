@@ -7,8 +7,9 @@ const bridgePath = new URL("../viewer-adapter/obsidian-bridge.js", import.meta.u
 const bridge = await readFile(bridgePath, "utf8");
 
 function functionSource(name) {
-  const start = bridge.indexOf(`function ${name}(`);
+  let start = bridge.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `missing function ${name}`);
+  if (bridge.slice(start - 6, start) === "async ") start -= 6;
   const signatureEnd = bridge.indexOf(") {", start);
   const open = signatureEnd + 2;
   assert.notEqual(open, -1, `missing body for ${name}`);
@@ -65,10 +66,78 @@ function region(start, end) {
   return bridge.slice(from, to);
 }
 
-function evaluateHelpers(names, body) {
+function evaluateHelpers(names, body, exposed = []) {
   const helpers = names.map(functionSource).join("\n");
-  return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${names.join(", ")} }; })()`);
+  return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
+
+test("stable page anchors navigate through the PDF.js viewer scroll container", async () => {
+  const { navigateReaderAnchor, state, messages, pageScrollCalls } = evaluateHelpers(
+    ["performanceNow", "navigateReaderAnchor"],
+    `
+      const rendererGeneration = 4;
+      const messages = [];
+      const pageScrollCalls = [];
+      const source = { sourceHash: "sha256-v1:source", orderedPageIdentities: ["ref:3R", "ref:14R"] };
+      const state = {
+        actualSourceIdentity: source,
+        activeDocumentId: "doc-1",
+        activeOpenRequest: "open-2",
+        app: { pdfViewer: { _page: 16,
+          get currentPageNumber() { return this._page; },
+          set currentPageNumber(value) { this._page = value; } } },
+      };
+      function pageElementForIndex(index) {
+        return { scrollIntoView() { pageScrollCalls.push(index); } };
+      }
+      function postToHost(type, fields) { messages.push({ type, ...fields }); }
+    `,
+    ["state", "messages", "pageScrollCalls"],
+  );
+
+  await navigateReaderAnchor({
+    documentId: "doc-1",
+    openRequest: "open-2",
+    rendererGeneration: 4,
+    target: { kind: "page", pageIdentity: "ref:14R", pageIndex: 1 },
+  });
+
+  assert.equal(state.app.pdfViewer.currentPageNumber, 2);
+  assert.deepEqual(pageScrollCalls, [], "offscreen page roots are not used as the navigation mechanism");
+  assert.equal(messages[0]?.type, "reader-anchor-navigation-result");
+  assert.equal(messages[0]?.ok, true);
+});
+
+test("stable page anchors fail closed when the ordered identity does not match", async () => {
+  const { navigateReaderAnchor, state, messages } = evaluateHelpers(
+    ["performanceNow", "navigateReaderAnchor"],
+    `
+      const rendererGeneration = 4;
+      const messages = [];
+      const source = { sourceHash: "sha256-v1:source", orderedPageIdentities: ["ref:3R", "ref:14R"] };
+      const state = {
+        actualSourceIdentity: source,
+        activeDocumentId: "doc-1",
+        activeOpenRequest: "open-2",
+        app: { pdfViewer: { currentPageNumber: 16 } },
+      };
+      function pageElementForIndex() { return null; }
+      function postToHost(type, fields) { messages.push({ type, ...fields }); }
+    `,
+    ["state", "messages"],
+  );
+
+  await navigateReaderAnchor({
+    documentId: "doc-1",
+    openRequest: "open-2",
+    rendererGeneration: 4,
+    target: { kind: "page", pageIdentity: "ref:14R", pageIndex: 2 },
+  });
+
+  assert.equal(state.app.pdfViewer.currentPageNumber, 16);
+  assert.equal(messages[0]?.ok, false);
+  assert.equal(messages[0]?.reason, "page-identity-unresolved");
+});
 
 test("daily save, recovery, checkpoint, sync and close never serialize a PDF", () => {
   assert.equal([...bridge.matchAll(/\.saveDocument\s*\(/g)].length, 1);
