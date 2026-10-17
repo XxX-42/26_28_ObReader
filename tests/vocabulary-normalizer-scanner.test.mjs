@@ -77,6 +77,14 @@ test("normalizes lowercase, NFC, apostrophe variants, and the common ligatures w
   assert.equal(normalizeTermKey("well--being"), "");
 });
 
+test("accepts common imported dictionary notation without dropping the stored term", () => {
+  assert.equal(normalizeTermKey("a.m."), "a.m.");
+  assert.equal(normalizeTermKey("aim at/for sth"), "aim at/for sth");
+  assert.equal(normalizeTermKey("associate… with…"), "associate… with…");
+  assert.equal(normalizeTermKey("warn (sb) of sth"), "warn sb of sth");
+  assert.equal(normalizeTermKey("bright- coloured"), "bright coloured");
+});
+
 test("scans ordinary ASCII words as lowercase surface keys without changing their forms", () => {
   const document = makeDocument();
   const source = makeText("The quick brown fox jumped.", document);

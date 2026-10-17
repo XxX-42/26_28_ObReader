@@ -6,19 +6,21 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-Version **0.9.1** is a maintenance update to the **WAL-Sidecar v3.2 JSONL test candidate**.
-It combines the 0.9.0 storage and interface behavior with commit
+Version **0.10.3** combines the **WAL-Sidecar v3.2 JSONL test candidate** with
+opt-in English vocabulary learning. It combines the 0.9.0 storage and interface behavior with commit
 `2b5d7ad`'s per-device JSONL WAL, durable append acknowledgement, cold replay,
 snapshot materialization, and migration barrier. It also gates embedded PDF
 annotations until external identity and tombstones are confirmed, and suppresses
-WebKit long-press callouts on PDF text on iPad. The source PDF remains
+WebKit long-press callouts on PDF text on iPad. Vocabulary records stay in a
+separate Vault JSON store and can be reviewed, edited, imported, and exported.
+The source PDF remains
 immutable. Windows, macOS, and iPadOS use the same three-file package.
 
 JSONL is the current write format. Existing v3.1 and Format 3 files remain
 read-only migration/recovery inputs; the candidate does not clean or garbage
 collect old data. The sidecar snapshot is a rebuildable cache, and device WAL
 anchors, archives, and tails provide recovery. Upgrade all devices that edit a
-document before continuing with the 0.9.1 writer. Real cross-device Obsidian
+document before continuing with the 0.10.3 writer. Real cross-device Obsidian
 Sync and iPad hardware acceptance remain separate from local automation; see
 [the protocol](ANNOTATION_STORE.md), [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md),
 and [acceptance record](GENERAL_ACCEPTANCE.md).
@@ -423,7 +425,7 @@ entry does not install desktop popout coordination.
 
 - `plugin/`: Obsidian host, resource cache, sync coordinator and lazy PDF merge Worker/client.
 - `viewer-adapter/`: host/Viewer message bridge and iframe styles.
-- `plugin/vocabulary/` and `viewer-adapter/vocabulary/`: isolated, optional Vault-local LingQ-style word/phrase study feature; disabled by default. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the PDF-core and vocabulary boundaries.
+- `plugin/vocabulary/` and `viewer-adapter/vocabulary/`: isolated, optional Vault-local LingQ-style word/phrase study feature; disabled by default. Settings independently control highlighting for word and phrase statuses 1–5 (all enabled by default); known (status 5) terms use violet. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the PDF-core and vocabulary boundaries.
 - `vendor/pdfjs-generic-legacy/`: complete frozen PDF.js Viewer snapshot.
 - `scripts/`: deterministic packaging and safe deployment.
 - `tests/`: packaging, host, offline browser, and native Obsidian checks.

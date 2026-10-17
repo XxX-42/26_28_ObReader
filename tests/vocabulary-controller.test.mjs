@@ -91,10 +91,25 @@ test("only currently visible PDF.js pages are scanned and offscreen resources ar
   runtime.listeners.get("textlayerrendered")({ pageNumber: 2 });
   assert.equal(runtime.getScanCalls(), 1, "offscreen text-layer events do not trigger whole-document scanning");
   runtime.setVisiblePageIds([2]);
+  runtime.listeners.get("updateviewarea")();
   runtime.listeners.get("textlayerrendered")({ pageNumber: 2 });
-  assert.equal(runtime.getScanCalls(), 2);
+  assert.equal(runtime.getScanCalls(), 3);
   assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
   assert.equal(runtime.overlays[0].disposeCount, 1, "offscreen page overlay is disposed");
+  runtime.controller.dispose();
+});
+
+test("visible-page scanning uses the frozen PDF.js _getVisiblePages API when no public getter exists", () => {
+  const runtime = makeRuntime();
+  const viewer = runtime.controller.app.pdfViewer;
+  const getVisiblePages = viewer.getVisiblePages.bind(viewer);
+  delete viewer.getVisiblePages;
+  viewer._getVisiblePages = getVisiblePages;
+
+  runtime.controller.setDocument("doc-1", 7, true);
+  assert.equal(runtime.getScanCalls(), 1);
+  assert.equal(runtime.overlays.length, 1, "the visible page gets a vocabulary canvas overlay");
+  assert.equal(runtime.posted.length, 1, "the visible page is queried for saved vocabulary records");
   runtime.controller.dispose();
 });
 
@@ -155,16 +170,66 @@ test("enabled controller queries only visible/rendered pages and phrase results 
     assert.equal(runtime.posted.length, 1, "canvas rerenders reuse page-local results without querying again");
     runtime.replaceTextNodes();
     runtime.listeners.get("textlayerrendered")({ pageNumber: 1 });
-    assert.equal(runtime.posted.length, 2);
-    assert.notEqual(runtime.posted[1].requestId, oldRequest);
+    assert.equal(runtime.posted.length, 1, "same vocabulary keys reuse results after PDF.js replaces physical TextNodes");
+    assert.ok(runtime.overlays[0].draws.length >= 2, "cached records are rebound to the replacement text layer");
+    assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+      ["alpha", 1], ["beta", 3], ["gamma", 3],
+    ]);
     assert.equal(runtime.controller.handlePageResults({
       documentId: "doc-1", openRequest: 7, pageNumber: 1,
       requestId: oldRequest, queryId: query.queryId, partIndex: query.partIndex, records: [],
-    }), false, "a stale page reply is ignored");
+    }), false, "a page reply from a retired query generation is ignored");
     runtime.controller.dispose();
     assert.equal(runtime.overlays[0].disposeCount, 1);
     assert.equal(runtime.listeners.size, 0);
   });
+});
+
+test("known words and phrases (status 5) are included in the vocabulary highlight overlay", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const query = runtime.posted[0];
+  assert.equal(runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+    records: [
+      { key: "gamma", type: "word", status: 5 },
+      { key: "alpha beta", type: "phrase", status: 5 },
+    ],
+  }), true);
+  assert.deepEqual(runtime.overlays[0].draws[0].map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 5], ["beta", 5], ["gamma", 5],
+  ]);
+  runtime.controller.dispose();
+});
+
+test("word and phrase highlight levels are independently configurable and update existing overlays immediately", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const query = runtime.posted[0];
+  runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+    records: [
+      { key: "alpha", type: "word", status: 1 },
+      { key: "gamma", type: "word", status: 5 },
+      { key: "alpha beta", type: "phrase", status: 2 },
+      { key: "beta gamma", type: "phrase", status: 5 },
+    ],
+  });
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 2], ["beta", 2], ["gamma", 5],
+  ]);
+
+  runtime.controller.setHighlightLevels({ words: [5], phrases: [2] });
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 2], ["beta", 2], ["gamma", 5],
+  ], "changing preferences redraws cached results without another host query");
+  assert.equal(runtime.posted.length, 1);
+
+  runtime.controller.setHighlightLevels({ words: [], phrases: [] });
+  assert.deepEqual(runtime.overlays[0].draws.at(-1), [], "both categories can be disabled independently of stored vocabulary");
+  runtime.controller.dispose();
 });
 
 test("selection request returns physical surfaces and logical keys through the existing bridge callback", () => {
@@ -184,11 +249,12 @@ test("selection request returns physical surfaces and logical keys through the e
   runtime.controller.dispose();
 });
 
-test("Canvas overlay is one aria-hidden, pointer-transparent canvas and removes itself on dispose", () => {
+test("legacy WebView fallback paints text-sized translucent rectangles and removes its canvas", () => {
   const drawn = [];
   const context = {
     setTransform() {}, clearRect() {},
-    fillRect(...args) { drawn.push(args); },
+    fillStyle: "",
+    fillRect(...args) { drawn.push({ args, color: this.fillStyle }); },
   };
   const documentRef = {
     createElement(tag) {
@@ -218,10 +284,88 @@ test("Canvas overlay is one aria-hidden, pointer-transparent canvas and removes 
   assert.equal(pageRoot.children.length, 1);
   assert.equal(overlay.canvas["aria-hidden"], "true");
   assert.equal(overlay.canvas.style.pointerEvents, "none");
-  overlay.draw([{ token: { segments: [{ textNode: {}, startOffset: 0, endOffset: 3 }] }, status: 2 }]);
-  assert.deepEqual(drawn, [[5, 14, 25, 2]]);
+  overlay.draw([
+    { token: { segments: [{ textNode: {}, startOffset: 0, endOffset: 3 }] }, status: 2 },
+    { token: { segments: [{ textNode: {}, startOffset: 0, endOffset: 3 }] }, status: 5 },
+  ]);
+  assert.deepEqual(drawn, [
+    { args: [5, 5, 25, 11], color: "rgba(202, 138, 4, 0.22)" },
+    { args: [5, 5, 25, 11], color: "rgba(124, 58, 237, 0.18)" },
+  ]);
   overlay.dispose();
   assert.equal(pageRoot.children.length, 0);
+});
+
+test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges", () => {
+  class FakeHighlight {
+    ranges = [];
+    add(range) { this.ranges.push(range); }
+  }
+  const registry = new Map();
+  const styles = [];
+  const documentRef = {
+    head: { appendChild(node) { styles.push(node); node.parentNode = this; } },
+    createElement(tag) {
+      assert.equal(tag, "style");
+      return { dataset: {}, textContent: "", remove() { this.removed = true; } };
+    },
+    createRange() {
+      return { setStart(node, offset) { this.start = [node, offset]; }, setEnd(node, offset) { this.end = [node, offset]; } };
+    },
+  };
+  const pageRoot = { ownerDocument: documentRef, appendChild() {} };
+  const renderer = new VocabularyCanvasOverlay(pageRoot, {
+    documentRef,
+    windowRef: { CSS: { highlights: registry }, Highlight: FakeHighlight },
+  });
+  const node = {};
+  assert.equal(renderer.customHighlights, true);
+  assert.equal(styles.length, 1);
+  assert.match(styles[0].textContent, /::highlight\(pdfReaderVocabulary\d+Status5\)/);
+  renderer.draw([{ token: { segments: [{ textNode: node, startOffset: 2, endOffset: 7 }] }, status: 5 }]);
+  assert.equal(registry.size, 1);
+  const [name, highlight] = [...registry.entries()][0];
+  assert.match(name, /Status5$/);
+  assert.equal(highlight.ranges.length, 1);
+  assert.deepEqual(highlight.ranges[0].start, [node, 2]);
+  renderer.clear();
+  assert.equal(registry.size, 0);
+  renderer.dispose();
+  assert.equal(styles[0].removed, true);
+});
+
+test("scrolling keeps visible highlights stable and reuses completed results when returning to a page", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const firstQuery = runtime.posted[0];
+  const firstOverlay = runtime.overlays[0];
+  const initialClearCount = firstOverlay.clearCount;
+
+  for (let index = 0; index < 5; index += 1) runtime.listeners.get("updateviewarea")();
+  assert.equal(runtime.posted.length, 1, "unchanged scroll frames do not re-query the host");
+  assert.equal(firstOverlay.clearCount, initialClearCount, "scroll frames do not clear a painted overlay");
+  runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: firstQuery.requestId, queryId: firstQuery.queryId, partIndex: firstQuery.partIndex,
+    records: [{ key: "alpha", type: "word", status: 5 }],
+  });
+  assert.equal(firstOverlay.draws.length, 1);
+
+  runtime.setVisiblePageIds([2]);
+  runtime.listeners.get("updateviewarea")();
+  const secondQuery = runtime.posted[1];
+  runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 2,
+    requestId: secondQuery.requestId, queryId: secondQuery.queryId, partIndex: secondQuery.partIndex,
+    records: [],
+  });
+  runtime.setVisiblePageIds([1]);
+  runtime.listeners.get("updateviewarea")();
+  assert.equal(runtime.posted.length, 2, "a completed page result is restored from the bounded cache");
+  const returnedPageOverlay = runtime.overlays.at(-1);
+  assert.equal(returnedPageOverlay.draws.length, 1);
+  assert.deepEqual(returnedPageOverlay.draws[0].map(({ token, status }) => [token.surfaceKey, status]), [["alpha", 5]]);
+  runtime.controller.dispose();
 });
 
 test("eligible collapsed single-word click opens a local pill and durable status ACK updates the overlay", () => {

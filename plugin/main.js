@@ -37,6 +37,21 @@ function drainViewerRuntimeLog(view) {
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
 const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
+const DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS = Object.freeze({
+  words: Object.freeze([1, 2, 3, 4, 5]),
+  phrases: Object.freeze([1, 2, 3, 4, 5]),
+});
+
+function normalizeVocabularyHighlightLevels(value) {
+  const normalize = (items) => Array.isArray(items)
+    ? [...new Set(items.filter((item) => Number.isInteger(item) && item >= 1 && item <= 5))].sort((a, b) => a - b)
+    : [...DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS.words];
+  return {
+    words: normalize(value?.words),
+    phrases: normalize(value?.phrases),
+  };
+}
+
 const MOBILE_DIAGNOSTICS_DIRECTORY = "PDF Reader Diagnostics";
 const MOBILE_RESOURCE_SCRIPT_PATHS = Object.freeze({
   bridge: "web/obsidian-bridge.js",
@@ -879,6 +894,21 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.vocabularyEnabled)
         .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled)));
+    for (const [type, label, key] of [
+      ["word", "单词", "words"],
+      ["phrase", "短语", "phrases"],
+    ]) {
+      for (const status of [1, 2, 3, 4, 5]) {
+        const statusLabel = status === 5 ? "已学（等级 5）" : `等级 ${status}`;
+        const enabled = this.plugin.settings.vocabularyHighlightLevels[key].includes(status);
+        new Setting(containerEl)
+          .setName(`${label} · ${statusLabel}高亮`)
+          .setDesc(`控制 PDF 中${label}的此等级是否显示高亮；不会修改或删除词库记录。`)
+          .addToggle((toggle) => toggle
+            .setValue(enabled)
+            .onChange((value) => this.plugin.setVocabularyHighlightLevelEnabled(type, status, value)));
+      }
+    }
     {
       const diagnosticSetting = new Setting(containerEl)
         .setName(this.plugin.isMobileRuntime ? "导出移动端诊断" : "导出阅读器诊断")
@@ -1943,6 +1973,7 @@ class PdfReaderView extends EditableFileView {
       `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
       `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
       `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
+      `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -2101,6 +2132,7 @@ class PdfReaderView extends EditableFileView {
         `data-channel="${CHANNEL}" data-token="${escapeAttribute(this.token)}" ` +
         `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
         `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
+        `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2253,6 +2285,18 @@ class PdfReaderView extends EditableFileView {
       documentId: this.documentId,
       openRequest: this.openRequest,
       enabled: isEnabled,
+    });
+  }
+
+  setVocabularyHighlightLevels(levels) {
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "vocab-set-highlight-levels",
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      levels: normalizeVocabularyHighlightLevels(levels),
     });
   }
 
@@ -2714,6 +2758,7 @@ class PdfReaderView extends EditableFileView {
       openRequest: this.openRequest,
       autoSave: this.plugin.settings.autoSave,
       vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
+      vocabularyHighlightLevels: this.plugin.settings.vocabularyHighlightLevels,
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
       confirmedRevision:
@@ -3036,11 +3081,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       autoSave: true,
       showStatusBar: false,
       vocabularyEnabled: false,
+      vocabularyHighlightLevels: normalizeVocabularyHighlightLevels(null),
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
     this.settings.showStatusBar = this.settings.showStatusBar === true;
     this.settings.vocabularyEnabled = this.settings.vocabularyEnabled === true;
+    this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
     this.vocabularyService = null;
     this.views = new Set();
     this.popoutCloseGates = new Map();
@@ -3841,6 +3888,25 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } finally {
       for (const view of this.views) view.setVocabularyEnabled(this.settings.vocabularyEnabled);
     }
+  }
+
+  async setVocabularyHighlightLevelEnabled(type, status, enabled) {
+    const key = type === "word" ? "words" : type === "phrase" ? "phrases" : null;
+    if (!key || !Number.isInteger(status) || status < 1 || status > 5) return false;
+    const levels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
+    const selected = new Set(levels[key]);
+    if (enabled === true) selected.add(status);
+    else selected.delete(status);
+    levels[key] = [...selected].sort((a, b) => a - b);
+    this.settings.vocabularyHighlightLevels = levels;
+    try {
+      await this.saveData(this.settings);
+    } catch (error) {
+      new Notice(`词汇高亮设置无法保存：${error.message || error}`, 8000);
+    } finally {
+      for (const view of this.views) view.setVocabularyHighlightLevels?.(levels);
+    }
+    return true;
   }
 
   exportMobileDiagnostics() {

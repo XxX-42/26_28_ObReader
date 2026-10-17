@@ -8,7 +8,7 @@ const LOGICAL_LIGATURES = Object.freeze({
 
 const COMMON_APOSTROPHES = /[\u2018\u2019\u02BC\uFF07]/gu;
 const LIGATURES = /[\uFB00-\uFB04]/gu;
-const ALLOWED_WORD = /^[\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+(?:['-][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*$/u;
+const ALLOWED_WORD = /^[\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+(?:['./…-][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*(?:\.|…)?$/u;
 
 /**
  * Return a stable lookup key for an English surface form.
@@ -25,6 +25,9 @@ export function normalizeTermKey(surface) {
     .normalize("NFC")
     .replace(LIGATURES, (ligature) => LOGICAL_LIGATURES[ligature])
     .replace(COMMON_APOSTROPHES, "'")
+    .replace(/\(([\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)\)/gu, "$1")
+    .replace(/-\s+/gu, " ")
+    .replace(/\.{3,}/gu, "…")
     .toLowerCase()
     .normalize("NFC")
     .replace(/\s+/gu, " ")

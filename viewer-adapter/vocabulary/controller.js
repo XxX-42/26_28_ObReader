@@ -1,6 +1,6 @@
 import { scanPageTextLayer } from "./page-scanner.js";
 import { getSelectedPageTokens, matchPhrases } from "./phrase-matcher.js";
-import { VocabularyCanvasOverlay } from "./canvas-overlay.js";
+import { VocabularyHighlightRenderer } from "./canvas-overlay.js";
 
 function isPositivePageNumber(value) {
   return Number.isInteger(value) && value > 0;
@@ -10,9 +10,29 @@ function pageKey(pageNumber) {
   return String(pageNumber);
 }
 
+function normalizeHighlightLevels(value) {
+  const normalize = (items) => new Set(Array.isArray(items)
+    ? items.filter((status) => Number.isInteger(status) && status >= 1 && status <= 5)
+    : [1, 2, 3, 4, 5]);
+  return { words: normalize(value?.words), phrases: normalize(value?.phrases) };
+}
+
+function getVisiblePageViews(pdfViewer) {
+  const getVisiblePages = typeof pdfViewer?.getVisiblePages === "function"
+    ? pdfViewer.getVisiblePages
+    : pdfViewer?._getVisiblePages;
+  const result = getVisiblePages?.call(pdfViewer);
+  return Array.isArray(result?.views) ? result.views : null;
+}
+
 const PAGE_QUERY_KEY_LIMIT = 32768;
 const PAGE_QUERY_CHUNK_SIZE = 2048;
 const PAGE_QUERY_TEXT_LIMIT = 131072;
+const PAGE_RESULT_CACHE_LIMIT = 32;
+
+function pageTokenSignature(tokens) {
+  return Array.isArray(tokens) ? tokens.map((token) => token?.surfaceKey || "").join("\u001f") : "";
+}
 
 /**
  * Render-generation-scoped page queries and selection requests for the
@@ -27,11 +47,12 @@ export class VocabularyController {
     postToHost,
     getIdentity,
     isEnabled = false,
+    highlightLevels,
     makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     scan = scanPageTextLayer,
     selectTokens = getSelectedPageTokens,
     phraseMatcher = matchPhrases,
-    makeOverlay = (pageRoot) => new VocabularyCanvasOverlay(pageRoot, { documentRef }),
+    makeOverlay = (pageRoot) => new VocabularyHighlightRenderer(pageRoot, { documentRef, windowRef }),
   } = {}) {
     if (!app || typeof postToHost !== "function" || typeof getIdentity !== "function") {
       throw new TypeError("VocabularyController requires the PDF.js app and existing bridge callbacks.");
@@ -48,8 +69,10 @@ export class VocabularyController {
     this.phraseMatcher = phraseMatcher;
     this.makeOverlay = makeOverlay;
     this.enabled = isEnabled === true;
+    this.highlightLevels = normalizeHighlightLevels(highlightLevels);
     this.identity = null;
     this.pages = new Map();
+    this.pageResultCache = new Map();
     this.disposed = false;
     this.querySequence = 0;
     this.onTextLayerRendered = ({ pageNumber } = {}) => this.refreshPage(pageNumber, { refreshTokens: true });
@@ -77,7 +100,10 @@ export class VocabularyController {
       return;
     }
     const changed = !this.identity || this.identity.documentId !== documentId || this.identity.openRequest !== openRequest;
-    if (changed) this.clearPages();
+    if (changed) {
+      this.clearPages();
+      this.pageResultCache.clear();
+    }
     this.identity = next;
     this.enabled = enabled === true;
     if (this.enabled) this.scanRenderedPages();
@@ -89,6 +115,15 @@ export class VocabularyController {
     this.enabled = enabled === true;
     if (this.enabled && this.identity) this.scanRenderedPages();
     else this.clearPages();
+  }
+
+  setHighlightLevels(levels) {
+    if (this.disposed) return false;
+    this.highlightLevels = normalizeHighlightLevels(levels);
+    if (this.enabled) {
+      for (const page of this.pages.values()) this.renderPageResults(page, page.records);
+    }
+    return true;
   }
 
   identityIsCurrent(identity = this.identity) {
@@ -106,7 +141,7 @@ export class VocabularyController {
   }
 
   scanRenderedPages() {
-    const visiblePages = this.app.pdfViewer?.getVisiblePages?.()?.views;
+    const visiblePages = getVisiblePageViews(this.app.pdfViewer);
     if (!Array.isArray(visiblePages)) return;
     const visible = new Set(visiblePages.map((page) => page?.id).filter(isPositivePageNumber));
     for (const pageNumber of visible) this.refreshPage(pageNumber);
@@ -114,7 +149,7 @@ export class VocabularyController {
   }
 
   pruneOffscreenPages(visiblePageNumbers) {
-    const current = this.app.pdfViewer?.getVisiblePages?.()?.views;
+    const current = getVisiblePageViews(this.app.pdfViewer);
     const visible = visiblePageNumbers instanceof Set
       ? visiblePageNumbers
       : new Set(Array.isArray(current) ? current.map((page) => page?.id).filter(isPositivePageNumber) : []);
@@ -126,51 +161,65 @@ export class VocabularyController {
   }
 
   isPageVisible(pageNumber) {
-    const visiblePages = this.app.pdfViewer?.getVisiblePages?.()?.views;
+    const visiblePages = getVisiblePageViews(this.app.pdfViewer);
     if (!Array.isArray(visiblePages)) return false;
     return visiblePages.some((page) => page?.id === pageNumber);
   }
 
   refreshPage(pageNumber, { refreshTokens = false } = {}) {
     if (!this.enabled || !this.identityIsCurrent() || !isPositivePageNumber(pageNumber) || !this.isPageVisible(pageNumber)) return false;
-    this.pruneOffscreenPages();
     const pageRoot = this.getPageRoot(pageNumber);
     const textLayer = pageRoot?.querySelector?.(".textLayer");
     if (!pageRoot || !textLayer) return false;
     const key = pageKey(pageNumber);
     let page = this.pages.get(key);
     const pageReplaced = !page || page.pageRoot !== pageRoot || page.textLayer !== textLayer;
+    if (!pageReplaced && !refreshTokens) return false;
     if (pageReplaced) page?.overlay?.dispose?.();
-    if (pageReplaced || refreshTokens) {
-      let tokens;
-      try { tokens = this.scan(textLayer); } catch {
-        page?.overlay?.dispose?.();
-        this.pages.delete(key);
-        return false;
-      }
-      if (!Array.isArray(tokens)) {
-        page?.overlay?.dispose?.();
-        this.pages.delete(key);
-        return false;
-      }
-      if (!pageReplaced && sameTokenSegments(page.tokens, tokens)) return false;
-      let overlay;
-      if (pageReplaced) {
-        try { overlay = this.makeOverlay(pageRoot); } catch { return false; }
-      }
-      page = pageReplaced
-        ? { pageNumber, pageRoot, textLayer, tokens, overlay, query: null, records: [] }
-        : { ...page, tokens, query: null, records: [] };
-      this.pages.set(key, page);
+    let tokens;
+    try { tokens = this.scan(textLayer); } catch {
+      page?.overlay?.dispose?.();
+      this.pages.delete(key);
+      return false;
     }
+    if (!Array.isArray(tokens)) {
+      page?.overlay?.dispose?.();
+      this.pages.delete(key);
+      return false;
+    }
+    if (!pageReplaced && sameTokenSegments(page.tokens, tokens)) return false;
+    let overlay;
+    if (pageReplaced) {
+      try { overlay = this.makeOverlay(pageRoot); } catch { return false; }
+    }
+    page = pageReplaced
+      ? { pageNumber, pageRoot, textLayer, tokens, signature: pageTokenSignature(tokens), overlay, query: null, records: [] }
+      : { ...page, tokens, signature: pageTokenSignature(tokens), query: null, records: [] };
+    this.pages.set(key, page);
     return this.queryPage(page);
   }
 
-  queryPage(page) {
+  queryPage(page, { force = false } = {}) {
     if (!this.enabled || !this.identityIsCurrent() || !page?.tokens?.length) {
       page?.overlay?.clear?.();
       return false;
     }
+    // A forced host refresh supersedes an in-flight query. The response from
+    // the old query is rejected by queryId once this page points at the new
+    // generation; normal scroll/render events keep the existing request.
+    if (page.query?.pending?.size > 0 && !force) return true;
+    if (!force) {
+      const cached = this.pageResultCache.get(page.pageNumber);
+      if (cached?.signature === page.signature) {
+        this.pageResultCache.delete(page.pageNumber);
+        this.pageResultCache.set(page.pageNumber, cached);
+        page.records = cached.records;
+        page.query = { id: null, pending: new Map(), records: new Map(), finished: true };
+        this.renderPageResults(page, page.records);
+        return false;
+      }
+    }
+    if (force) this.pageResultCache.delete(page.pageNumber);
     const queryId = `vocab-page-${++this.querySequence}-${this.makeId()}`;
     const keys = new Set();
     // Include all page words first, then page-local n-grams for saved phrases.
@@ -222,7 +271,10 @@ export class VocabularyController {
       partIndex += 1;
     }
     query.finished = true;
-    if (query.pending.size === 0) this.renderPageResults(page, []);
+    if (query.pending.size === 0) {
+      this.cachePageResults(page, []);
+      this.renderPageResults(page, []);
+    }
     return query.pending.size > 0;
   }
 
@@ -242,9 +294,23 @@ export class VocabularyController {
       page.query.records.set(record.key, record);
     }
     if (page.query.finished && page.query.pending.size === 0) {
-      this.renderPageResults(page, [...page.query.records.values()]);
+      const records = [...page.query.records.values()];
+      this.cachePageResults(page, records);
+      this.renderPageResults(page, records);
     }
     return true;
+  }
+
+  cachePageResults(page, records) {
+    if (!page || typeof page.signature !== "string") return;
+    this.pageResultCache.delete(page.pageNumber);
+    this.pageResultCache.set(page.pageNumber, {
+      signature: page.signature,
+      records: records.map(({ key, type, status }) => ({ key, type, status })),
+    });
+    while (this.pageResultCache.size > PAGE_RESULT_CACHE_LIMIT) {
+      this.pageResultCache.delete(this.pageResultCache.keys().next().value);
+    }
   }
 
   /**
@@ -396,6 +462,7 @@ export class VocabularyController {
     const index = pill.page.records.findIndex((record) => record.key === message.record.key);
     if (index >= 0) pill.page.records[index] = message.record;
     else pill.page.records.push(message.record);
+    this.cachePageResults(pill.page, pill.page.records);
     this.renderPageResults(pill.page, pill.page.records);
     return true;
   }
@@ -419,13 +486,13 @@ export class VocabularyController {
     page.records = records;
     const highlights = new Map();
     for (const record of page.records) {
-      if (record.type !== "word" || record.status === 5) continue;
+      if (record.type !== "word" || !this.highlightLevels.words.has(record.status)) continue;
       for (const [index, token] of page.tokens.entries()) {
         if (token.surfaceKey === record.key && !highlights.has(index)) highlights.set(index, record.status);
       }
     }
     const phraseRecords = page.records
-      .filter((record) => record.type === "phrase" && record.status !== 5)
+      .filter((record) => record.type === "phrase" && this.highlightLevels.phrases.has(record.status))
       .map((record) => ({ ...record, surfaceKeys: record.key.split(" ") }));
     const phraseMatches = this.phraseMatcher(page.tokens, phraseRecords);
     for (const match of phraseMatches) {
@@ -433,7 +500,9 @@ export class VocabularyController {
         highlights.set(index, match.record.status);
       }
     }
-    page.overlay.draw([...highlights].map(([index, status]) => ({ token: page.tokens[index], status })));
+    page.overlay.draw([...highlights]
+      .sort(([leftIndex], [rightIndex]) => leftIndex - rightIndex)
+      .map(([index, status]) => ({ token: page.tokens[index], status })));
     return true;
   }
 
@@ -485,11 +554,24 @@ export class VocabularyController {
     if (!this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
         message?.openRequest !== this.identity.openRequest) return false;
     if (message.pageNumber == null) {
+      this.pageResultCache.clear();
+      const alreadyRendered = new Set(this.pages.values());
       this.scanRenderedPages();
+      // New visible pages were queried by scanRenderedPages(). Replace only
+      // pre-existing page queries so a host refresh does not double-submit.
+      for (const page of this.pages.values()) {
+        if (alreadyRendered.has(page)) this.queryPage(page, { force: true });
+      }
       return true;
     }
-    const page = this.pages.get(pageKey(message.pageNumber));
-    return page && this.isPageVisible(page.pageNumber) ? this.queryPage(page) : false;
+    this.pageResultCache.delete(message.pageNumber);
+    let page = this.pages.get(pageKey(message.pageNumber));
+    if (!page && this.isPageVisible(message.pageNumber)) {
+      this.refreshPage(message.pageNumber, { refreshTokens: true });
+      page = this.pages.get(pageKey(message.pageNumber));
+      return Boolean(page);
+    }
+    return page && this.isPageVisible(page.pageNumber) ? this.queryPage(page, { force: true }) : false;
   }
 
   clearPages() {
@@ -502,6 +584,7 @@ export class VocabularyController {
     if (this.disposed) return;
     this.disposed = true;
     this.clearPages();
+    this.pageResultCache.clear();
     this.identity = null;
     this.eventBus?._off?.("textlayerrendered", this.onTextLayerRendered);
     this.eventBus?._off?.("pagerendered", this.onPageRendered);

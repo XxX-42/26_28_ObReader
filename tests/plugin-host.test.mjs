@@ -1959,7 +1959,8 @@ test("auto-save preference persists and is sent to open views", async () => {
   await harness.plugin.setAutoSaveEnabled(false);
 
   assert.equal(harness.plugin.settings.autoSave, false);
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false, vocabularyEnabled: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false, vocabularyEnabled: false,
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
   assert.equal(sent.at(-1).type, "configure-auto-save");
   assert.equal(sent.at(-1).enabled, false);
 });
@@ -1975,11 +1976,13 @@ test("status bar preference defaults off and updates every live Reader immediate
   assert.equal(harness.plugin.settings.showStatusBar, true);
   assert.ok(readers.every((view) => view.statusBarEnabled === true));
   await pending;
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true, vocabularyEnabled: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true, vocabularyEnabled: false,
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
 
   await harness.plugin.setStatusBarEnabled(false);
   assert.ok(readers.every((view) => view.statusBarEnabled === false));
-  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false, vocabularyEnabled: false });
+  assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false, vocabularyEnabled: false,
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
 });
 
 test("LingQ-style vocabulary setting renders off, persists across reload, and toggles the authenticated view", async () => {
@@ -2041,6 +2044,53 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   harness.plugin.onunload();
   reloaded.plugin.onunload();
   disabledReload.plugin.onunload();
+});
+
+test("word and phrase highlight levels have separate persistent controls and update every open Reader", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
+    { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] },
+    "old settings without level preferences keep all levels visible by default");
+  harness.plugin.settingTab.display();
+  const settings = harness.plugin.settingTab.containerEl.settings;
+  const wordKnown = settings.find((entry) => entry.name === "单词 · 已学（等级 5）高亮");
+  const phraseLevelTwo = settings.find((entry) => entry.name === "短语 · 等级 2高亮");
+  assert.equal(wordKnown?.toggle.value, true);
+  assert.equal(phraseLevelTwo?.toggle.value, true);
+  assert.match(wordKnown.description, /不会修改或删除词库记录/);
+
+  const readers = [harness.createView(), harness.createView()];
+  const sent = readers.map((view) => {
+    view.ready = true;
+    view.documentId = "vocab-level-doc";
+    view.openRequest = 12;
+    view.rendererGeneration = "vocab-level-renderer";
+    const messages = [];
+    view.iframe = { contentWindow: { postMessage: (message) => messages.push(message) } };
+    return messages;
+  });
+  await wordKnown.toggle.change(false);
+  assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
+    { words: [1, 2, 3, 4], phrases: [1, 2, 3, 4, 5] });
+  assert.deepEqual(harness.plugin.persistedData.vocabularyHighlightLevels,
+    { words: [1, 2, 3, 4], phrases: [1, 2, 3, 4, 5] });
+  assert.ok(sent.every((messages) => messages.at(-1).type === "vocab-set-highlight-levels"));
+  assert.ok(sent.every((messages) => messages.at(-1).levels.words.join(",") === "1,2,3,4"));
+
+  await phraseLevelTwo.toggle.change(false);
+  assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
+    { words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] }, "word and phrase levels do not affect each other");
+
+  const reloaded = createHarness();
+  reloaded.plugin.persistedData = structuredClone(harness.plugin.persistedData);
+  await reloaded.plugin.onload();
+  reloaded.plugin.settingTab.display();
+  const restoredSettings = reloaded.plugin.settingTab.containerEl.settings;
+  assert.equal(restoredSettings.find((entry) => entry.name === "单词 · 已学（等级 5）高亮").toggle.value, false);
+  assert.equal(restoredSettings.find((entry) => entry.name === "短语 · 等级 2高亮").toggle.value, false);
+  reloaded.plugin.onunload();
+  harness.plugin.onunload();
 });
 
 test("sidecar write failure reports that the unacknowledged operation remains in the live Reader", async () => {

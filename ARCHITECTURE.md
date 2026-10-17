@@ -20,7 +20,7 @@ The vocabulary implementation is grouped by responsibility and stays out of the 
 
 - `plugin/vocabulary/service.cjs` is the local vocabulary data service. It uses only the Vault `DataAdapter` and owns the canonical `00_Archive/21_VocabularyData/en.vocab.json` snapshot and import/export policies.
 - `plugin/vocabulary/modals.cjs` contains the vocabulary entry and CSV/JSON transfer UI. Obsidian's `Modal` and `Notice` constructors are injected so these UI classes don't depend on the PDF host implementation.
-- `viewer-adapter/vocabulary/**` contains conservative English surface normalization, physical text-layer scanning, same-page phrase matching, controller lifecycle, and the pointer-transparent canvas overlay.
+- `viewer-adapter/vocabulary/**` contains conservative English surface normalization, physical text-layer scanning, same-page phrase matching, controller lifecycle, and text-range highlights through CSS Custom Highlights (with a text-rectangle canvas fallback for older WebViews).
 - `viewer-adapter/vocabulary/runtime-entry.js` is the single bundle entry for the isolated viewer feature.
 - `plugin/main.js` and `viewer-adapter/obsidian-bridge.js` retain only the integration seams needed to enter the existing Reader: the persisted setting/commands, open-state value, and authenticated `vocab-*` request/reply handling. Those messages remain bound to the existing channel, session token, renderer generation, document ID, and open request. Clicks continue through the existing annotation/direct-manipulation priority owner.
 

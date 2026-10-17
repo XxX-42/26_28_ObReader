@@ -23,6 +23,17 @@
       : null;
   const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
   const vocabularyEnabledAtBoot = bridgeScript.dataset.vocabularyEnabled === "true";
+  function normalizeVocabularyHighlightLevels(value) {
+    const normalize = (items) => Array.isArray(items)
+      ? [...new Set(items.filter((item) => Number.isInteger(item) && item >= 1 && item <= 5))].sort((a, b) => a - b)
+      : [1, 2, 3, 4, 5];
+    return { words: normalize(value?.words), phrases: normalize(value?.phrases) };
+  }
+  function readVocabularyHighlightLevels(value) {
+    try { return normalizeVocabularyHighlightLevels(JSON.parse(value || "{}")); }
+    catch { return normalizeVocabularyHighlightLevels(null); }
+  }
+  const vocabularyHighlightLevelsAtBoot = readVocabularyHighlightLevels(bridgeScript.dataset.vocabularyHighlightLevels);
   const AUTO_SAVE_IDLE_DELAY_MS = iosInputPolicy ? 3000 : 1000;
   const IOS_AUTO_SAVE_MIN_INTERVAL_MS = 10000;
   const IOS_AUTO_SAVE_MAX_INTERVAL_MS = 30000;
@@ -180,6 +191,7 @@
     startupTimer: null,
     startupFailed: false,
     vocabularyEnabled: vocabularyEnabledAtBoot,
+    vocabularyHighlightLevels: vocabularyHighlightLevelsAtBoot,
     vocabularyController: null,
   };
   if (iosInputPolicy) {
@@ -300,6 +312,7 @@
       postToHost,
       getIdentity: () => ({ documentId: state.activeDocumentId, openRequest: state.activeOpenRequest }),
       isEnabled: true,
+      highlightLevels: state.vocabularyHighlightLevels,
     });
     return state.vocabularyController;
   }
@@ -315,6 +328,30 @@
     if (controller && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       controller.setDocument(state.activeDocumentId, state.activeOpenRequest, true);
     }
+  }
+
+  function setVocabularyHighlightLevels(levels) {
+    state.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(levels);
+    state.vocabularyController?.setHighlightLevels?.(state.vocabularyHighlightLevels);
+  }
+
+  function handleVocabularyHighlightLevelsMessage(message) {
+    if (message?.rendererGeneration !== rendererGeneration || !message.levels ||
+        !Array.isArray(message.levels.words) || !Array.isArray(message.levels.phrases)) return false;
+    const matchesActive = message.documentId === state.activeDocumentId &&
+      message.openRequest === state.activeOpenRequest;
+    if (matchesActive) {
+      setVocabularyHighlightLevels(message.levels);
+      return true;
+    }
+    const matchesPending = message.documentId === state.requestedDocumentId &&
+      message.openRequest === state.requestedOpenRequest;
+    if (!matchesPending || state.pendingVocabularySettings?.documentId !== message.documentId ||
+        state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
+    state.pendingVocabularySettings.levels = normalizeVocabularyHighlightLevels(message.levels);
+    setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
+    state.vocabularyController?.setDocument?.(null, null, false);
+    return true;
   }
 
   function handleVocabularyEnabledMessage(message) {
@@ -344,6 +381,10 @@
       pending?.openRequest === message.openRequest
       ? pending.enabled === true
       : message.vocabularyEnabled === true;
+    setVocabularyHighlightLevels(pending?.documentId === message.documentId &&
+      pending?.openRequest === message.openRequest
+      ? pending.levels
+      : message.vocabularyHighlightLevels);
   }
 
   function bindVocabularyToOpenedDocument(documentId, openRequest) {
@@ -8340,8 +8381,10 @@
       documentId: state.requestedDocumentId,
       openRequest: state.requestedOpenRequest,
       enabled: message.vocabularyEnabled === true,
+      levels: normalizeVocabularyHighlightLevels(message.vocabularyHighlightLevels),
     };
     state.vocabularyEnabled = state.pendingVocabularySettings.enabled;
+    setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
     if (!state.ready) {
       state.queuedOpens.push(message);
       return;
@@ -9015,6 +9058,11 @@
 
     if (message.type === "vocab-set-enabled") {
       handleVocabularyEnabledMessage(message);
+      return;
+    }
+
+    if (message.type === "vocab-set-highlight-levels") {
+      handleVocabularyHighlightLevelsMessage(message);
       return;
     }
 

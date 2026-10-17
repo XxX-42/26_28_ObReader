@@ -474,6 +474,29 @@ test("corrupt existing store fails closed and preserves original bytes", async (
   assert.equal(adapter.files.get(VOCABULARY_PATH), corrupt);
 });
 
+test("loads common imported dictionary notation without modifying the snapshot", async () => {
+  const adapter = new MemoryAdapter();
+  const records = [
+    { key: "a.m.", surface: "a.m.", type: "word", status: 5, createdAt: 1, updatedAt: 1, source: "import" },
+    { key: "aim at/for sth", surface: "aim at/for sth", type: "phrase", status: 5, createdAt: 1, updatedAt: 1, source: "import" },
+    { key: "associate… with…", surface: "associate… with…", type: "phrase", status: 5, createdAt: 1, updatedAt: 1, source: "import" },
+    { key: "warn (sb) of sth", surface: "warn (sb) of sth", type: "phrase", status: 5, createdAt: 1, updatedAt: 1, source: "import" },
+    { key: "bright- coloured", surface: "bright- coloured", type: "phrase", status: 5, createdAt: 1, updatedAt: 1, source: "import" },
+  ];
+  const original = JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 0, records,
+  });
+  adapter.files.set(VOCABULARY_PATH, original);
+  const service = makeService(adapter);
+
+  await service.load();
+  const exported = JSON.parse(await service.exportJson());
+  assert.equal(exported.records.length, records.length);
+  assert.deepEqual(exported.records.map((record) => record.surface).sort(), records.map((record) => record.surface).sort());
+  assert.equal(adapter.files.get(VOCABULARY_PATH), original);
+  assert.equal(adapter.writeCount, 0);
+});
+
 test("status mutation revisions are monotonic and subscribers cannot mutate records", async () => {
   const adapter = new MemoryAdapter();
   const service = makeService(adapter);

@@ -43,6 +43,9 @@ function normalizeTermKey(value) {
       "\uFB04": "ffl",
     })[ligature])
     .replace(/[\u2018\u2019\u02BC\uFF07]/g, "'")
+    .replace(/\(([\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)\)/gu, "$1")
+    .replace(/-\s+/gu, " ")
+    .replace(/\.{3,}/gu, "…")
     .toLowerCase()
     .normalize("NFC")
     .replace(/\s+/gu, " ")
@@ -51,7 +54,11 @@ function normalizeTermKey(value) {
   // English words and phrases may contain letters, combining marks, spaces,
   // apostrophes, and hyphens. Do not strip arbitrary punctuation into a key.
   const words = key.split(" ");
-  const allowedWord = /^[\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+(?:['-][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*$/u;
+  // Imported dictionaries commonly use dotted abbreviations (a.m.), slash
+  // alternatives (at/for), ellipsis placeholders (consider… as), and
+  // parenthesized labels (sb/sth). Preserve those distinctions in the stored
+  // key rather than rejecting the entire otherwise-valid snapshot.
+  const allowedWord = /^[\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+(?:['./…-][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*(?:\.|…)?$/u;
   if (words.some((word) => word.length > 128 || !allowedWord.test(word)) || key.length > 1600) return "";
   return words.some((word) => [...word].some((character) => /\p{Script=Latin}/u.test(character))) ? key : "";
 }
