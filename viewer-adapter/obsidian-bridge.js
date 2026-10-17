@@ -333,6 +333,23 @@
     return pageRoot?.querySelector?.(".textLayer") || null;
   }
 
+  function readerPageNumberForRoot(pageRoot) {
+    if (!pageRoot) return null;
+    // PDF.js page divs normally have no id; data-page-number is their page
+    // label. Confirm the DOM root against the current viewer before using it
+    // to select a verified page identity. Preserve legacy ids only when they
+    // agree with that same viewer-owned root.
+    const dataNumber = pageRoot.dataset?.pageNumber ?? pageRoot.getAttribute?.("data-page-number");
+    const legacy = /^page([1-9]\d*)$/i.exec(pageRoot.id || "");
+    const value = dataNumber ?? legacy?.[1];
+    if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;
+    const pageNumber = Number(value);
+    if (!Number.isSafeInteger(pageNumber) ||
+        (legacy && Number(legacy[1]) !== pageNumber) ||
+        pageElementForIndex(pageNumber - 1) !== pageRoot) return null;
+    return pageNumber;
+  }
+
   function captureReaderSelection() {
     const selected = state.textSelectionController?.rangeSnapshot?.();
     if (!selected?.text) return null;
@@ -344,7 +361,7 @@
       : selected.endContainer?.parentElement?.closest?.(".textLayer");
     if (!textLayer || textLayer !== endTextLayer) return null;
     const pageRoot = textLayer.closest?.(".page");
-    const pageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const pageNumber = readerPageNumberForRoot(pageRoot);
     const actual = state.actualSourceIdentity;
     const pageIndex = pageNumber - 1;
     const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];
@@ -373,7 +390,7 @@
       : range.endContainer?.parentElement?.closest?.(".textLayer");
     if (!textLayer || textLayer !== endTextLayer) return null;
     const pageRoot = textLayer.closest?.(".page");
-    const parsedPageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const parsedPageNumber = readerPageNumberForRoot(pageRoot);
     const actual = state.actualSourceIdentity;
     const pageIndex = parsedPageNumber - 1;
     const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];
@@ -2512,6 +2529,25 @@
       if (prior && prior !== identity.uuid) {
         throw new Error(`Legacy annotation reference ${ref} maps to more than one UUID.`);
       }
+      const kind = normalizeSyncKind(identity.kind);
+      const cached = state.syncState?.identities || [];
+      const priorIdentity = cached.find((row) => row.uuid === identity.uuid ||
+        pdfAnnotationRefKey(row.ref) === key);
+      if (priorIdentity && (priorIdentity.uuid !== identity.uuid ||
+          pdfAnnotationRefKey(priorIdentity.ref) !== key ||
+          priorIdentity.pageIndex !== identity.pageIndex ||
+          normalizeSyncKind(priorIdentity.kind) !== kind)) {
+        throw new Error(`Legacy annotation reference ${ref} has conflicting page/type identity.`);
+      }
+      // The sidecar handshake replaces the old binary syncState handshake.
+      // Keep its verified identity metadata in the existing runtime cache too:
+      // unchanged native editors serialize to null after Undo, and history
+      // reconciliation must still recover their exact UUID/ref/page/type.
+      if (!priorIdentity) {
+        state.syncState ||= { version: 1, actorId: state.syncActorId || null, identities: [], ledger: null };
+        state.syncState.identities.push({ uuid: identity.uuid, ref,
+          pageIndex: identity.pageIndex, kind });
+      }
       state.annotationUuidByPdfRef.set(key, identity.uuid);
     }
   }
@@ -3347,7 +3383,7 @@
       .filter((row) => row.deleted === true && row.embeddedRef)
       .map((row) => canonicalPdfAnnotationRef(row.embeddedRef))
       .filter(Boolean))];
-    state.annotationController?.setEmbeddedDeletionMask?.(
+    const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(
       state.app?.pdfDocument?.annotationStorage,
       deletedRefs,
     );
@@ -3358,6 +3394,10 @@
         hiddenCount += 1;
       }
     }
+    // The confirmation installs this mask before page hydration runs. Consume
+    // its invalidation here: hydration will otherwise see an unchanged mask,
+    // leaving the old tombstone painted after an undo that has been saved.
+    if (maskChanged) repaintEmbeddedAnnotationMaskPages(rows);
     const isCurrentGate = token && token.documentId === documentId &&
       token.openRequest === openRequest;
     if (isCurrentGate) setNativeAnnotationLayersPending(false, token);
@@ -3482,80 +3522,96 @@
   }
 
   function addHydratedEditor(layer, editor, { freeTextFontSize = null } = {}) {
-    if (
-      typeof freeTextFontSize !== "number" ||
-      !Number.isFinite(freeTextFontSize) ||
-      freeTextFontSize <= 0
-    ) {
-      return layer.add(editor);
-    }
-    const methodName = "getInitialTranslation";
-    const ownDescriptor = Object.getOwnPropertyDescriptor(editor, methodName);
-    const originalMethod = editor?.[methodName];
-    if (
-      typeof originalMethod !== "function" ||
-      ownDescriptor?.configurable === false ||
-      (!ownDescriptor && !Object.isExtensible(editor))
-    ) {
-      return layer.add(editor);
-    }
-
+    // Hydration restores durable content, not a user creation gesture. The
+    // normal layer.add path asks onceAdded(true) to focus/select a new editor;
+    // during mode restoration that can focus a page without a currentLayer.
+    // Preserve all onceAdded bookkeeping, but do not take keyboard focus.
+    const onceAddedDescriptor = Object.getOwnPropertyDescriptor(editor, "onceAdded");
+    const onceAdded = editor.onceAdded;
+    Object.defineProperty(editor, "onceAdded", {
+      configurable: true,
+      writable: true,
+      value: function () { return onceAdded.call(this, false); },
+    });
     try {
-      Object.defineProperty(editor, methodName, {
-        configurable: true,
-        enumerable: ownDescriptor?.enumerable ?? false,
-        writable: true,
-        value: function (...args) {
-          const translation = originalMethod.apply(this, args);
-          const scale = this?.parentScale;
-          if (
-            (!Array.isArray(translation) && !ArrayBuffer.isView(translation)) ||
-            translation.length < 2 ||
-            !Number.isFinite(translation[0]) ||
-            !Number.isFinite(translation[1]) ||
-            !Number.isFinite(scale) ||
-            scale <= 0
-          ) {
-            return translation;
-          }
-          const correction = freeTextFontSize * scale;
-          if (!Number.isFinite(correction)) return translation;
-          const correctedX = translation[0];
-          const correctedY = translation[1] + correction;
-          const editorRotation = this?.rotation;
-          const parentRotation = this?.parentRotation;
-          if (!Number.isFinite(editorRotation) || !Number.isFinite(parentRotation)) {
-            return [correctedX, correctedY];
-          }
-          const relativeRotation = ((editorRotation - parentRotation) % 360 + 360) % 360;
-          switch (relativeRotation) {
-            case 90:
-              return [correctedY, -correctedX];
-            case 180:
-              return [-correctedX, -correctedY];
-            case 270:
-              return [-correctedY, correctedX];
-            default:
-              return [correctedX, correctedY];
-          }
-        },
-      });
-    } catch {
-      // If PDF.js made the editor non-extensible, preserve its normal render.
-      return layer.add(editor);
-    }
-
-    try {
-      // Hydrated FreeText rects already include the font-size translation from
-      // their original render. Cancel only that screen-space component for
-      // this synchronous render; PDF.js still applies padding and page rotation.
-      return layer.add(editor);
-    } finally {
-      if (ownDescriptor) {
-        Object.defineProperty(editor, methodName, ownDescriptor);
-      } else {
-        Reflect.deleteProperty(editor, methodName);
+      if (
+        typeof freeTextFontSize !== "number" ||
+        !Number.isFinite(freeTextFontSize) ||
+        freeTextFontSize <= 0
+      ) {
+        return layer.add(editor);
       }
+      const methodName = "getInitialTranslation";
+      const ownDescriptor = Object.getOwnPropertyDescriptor(editor, methodName);
+      const originalMethod = editor?.[methodName];
+      if (
+        typeof originalMethod !== "function" ||
+        ownDescriptor?.configurable === false ||
+        (!ownDescriptor && !Object.isExtensible(editor))
+      ) {
+        return layer.add(editor);
+      }
+
+      try {
+        Object.defineProperty(editor, methodName, {
+          configurable: true,
+          enumerable: ownDescriptor?.enumerable ?? false,
+          writable: true,
+          value: function (...args) {
+            const translation = originalMethod.apply(this, args);
+            const scale = this?.parentScale;
+            if (
+              (!Array.isArray(translation) && !ArrayBuffer.isView(translation)) ||
+              translation.length < 2 ||
+              !Number.isFinite(translation[0]) ||
+              !Number.isFinite(translation[1]) ||
+              !Number.isFinite(scale) ||
+              scale <= 0
+            ) {
+              return translation;
+            }
+            const correction = freeTextFontSize * scale;
+            if (!Number.isFinite(correction)) return translation;
+            const correctedX = translation[0];
+            const correctedY = translation[1] + correction;
+            const editorRotation = this?.rotation;
+            const parentRotation = this?.parentRotation;
+            if (!Number.isFinite(editorRotation) || !Number.isFinite(parentRotation)) {
+              return [correctedX, correctedY];
+            }
+            const relativeRotation = ((editorRotation - parentRotation) % 360 + 360) % 360;
+            switch (relativeRotation) {
+              case 90:
+                return [correctedY, -correctedX];
+              case 180:
+                return [-correctedX, -correctedY];
+              case 270:
+                return [-correctedY, correctedX];
+              default:
+                return [correctedX, correctedY];
+            }
+          },
+        });
+      } catch {
+        // If PDF.js made the editor non-extensible, preserve its normal render.
+        return layer.add(editor);
+      }
+
+      try {
+        // Hydrated FreeText rects already include the font-size translation from
+        // their original render. Cancel only that screen-space component for
+        // this synchronous render; PDF.js still applies padding and page rotation.
+        return layer.add(editor);
+      } finally {
+        if (ownDescriptor) {
+          Object.defineProperty(editor, methodName, ownDescriptor);
+        } else {
+          Reflect.deleteProperty(editor, methodName);
+        }
+      }
+    } finally {
+      if (onceAddedDescriptor) Object.defineProperty(editor, "onceAdded", onceAddedDescriptor);
+      else Reflect.deleteProperty(editor, "onceAdded");
     }
   }
 
@@ -3778,6 +3834,23 @@
     return true;
   }
 
+  function repaintEmbeddedAnnotationMaskPages(rows) {
+    const app = state.app;
+    if (state.disposed || !app?.pdfDocument) return;
+    // Reuse PDF.js page rendering only for loaded pages with exact embedded
+    // references. Its update preserves editor/selection layers and source bytes.
+    const pages = new Set(rows.filter(row => row.embeddedRef).map(row => row.pageIndex));
+    let updated = false;
+    for (const pageIndex of pages) {
+      const view = app.pdfViewer?.getPageView?.(pageIndex);
+      if (view?.canvas && typeof view.update === "function") {
+        view.update({});
+        updated = true;
+      }
+    }
+    if (updated) app.pdfViewer?.forceRendering?.();
+  }
+
   async function hydrateExternalAnnotationsForPage(pageIndex) {
     if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || state.disposed) return true;
     const rows = [...state.externalAnnotationRows.values()]
@@ -3794,15 +3867,7 @@
       .map(row => canonicalPdfAnnotationRef(row.embeddedRef)).filter(Boolean);
     const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(state.app?.pdfDocument?.annotationStorage, deletedRefs);
     if (maskChanged) {
-      // Repaint only loaded pages carrying these exact source references. Keep
-      // editor/selection layers; the PDF remains immutable.
-      const pages = new Set([...state.externalAnnotationRows.values()]
-        .filter(row => row.embeddedRef).map(row => row.pageIndex));
-      for (const index of pages) {
-        const view = state.app?.pdfViewer?.getPageView?.(index);
-        if (view?.canvas) view.update?.({});
-      }
-      state.app?.pdfViewer?.forceRendering?.();
+      repaintEmbeddedAnnotationMaskPages([...state.externalAnnotationRows.values()]);
     }
     const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
     if (!getAnnotationEditorManager() || !pageView?.annotationEditorLayer?.annotationEditorLayer) {
@@ -6614,7 +6679,9 @@
           });
           const savedEditorHistory = captureSavedEditorHistory(manager, direction);
           const before = snapshotSavedFreeTextEditors(manager, app);
+          const sidecarBefore = liveSidecarFreeTextEditors(manager, app);
           const result = original.apply(manager, args);
+          showRestoredSidecarFreeTextEditors(manager, app, sidecarBefore);
           const changedEditors = changedSavedFreeTextEditors(
             manager,
             app,
@@ -7448,6 +7515,41 @@
       }
       state.deferredAccessibilityMoves.delete(element);
       applyDeferredAccessibilityMove(move);
+    }
+  }
+
+  function liveSidecarFreeTextEditors(manager, app) {
+    const editors = new Set();
+    if (
+      state.disposed || state.app !== app || !app?.pdfDocument ||
+      app.pdfViewer?._layerProperties?.annotationEditorUIManager !== manager
+    ) return editors;
+    for (let pageIndex = 0; pageIndex < app.pdfDocument.numPages; pageIndex += 1) {
+      for (const editor of manager.getEditors(pageIndex)) {
+        if (
+          editor?.editorType === "freetext" && !editor.annotationElementId &&
+          editor.deleted !== true && !editor.isEmpty?.() &&
+          state.annotationUuidByRuntimeId.has(String(editor.id))
+        ) editors.add(editor);
+      }
+    }
+    return editors;
+  }
+
+  function showRestoredSidecarFreeTextEditors(manager, app, before) {
+    for (const editor of liveSidecarFreeTextEditors(manager, app)) {
+      if (before.has(editor)) continue;
+      const builder = app.pdfViewer.getPageView(editor.pageIndex)?.annotationEditorLayer;
+      const layer = builder?.annotationEditorLayer;
+      if (
+        editor.parent === layer && editor.div?.isConnected &&
+        editor.div.parentElement === layer?.div
+      ) {
+        // PDF.js rebuilds the editor on undo, but a layer hidden when its last
+        // Sidecar editor was erased stays hidden in reading mode. Hydration
+        // already shows that layer; history restoration needs the same adapter.
+        builder.show();
+      }
     }
   }
 

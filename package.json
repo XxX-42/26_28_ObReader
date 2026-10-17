@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "npm run test:fast && npm run test:browser",
+    "test:fast": "node scripts/test-vocabulary-gates.mjs fast",
+    "test:browser": "node scripts/test-vocabulary-gates.mjs browser",
+    "test:race": "node scripts/test-vocabulary-gates.mjs race",
+    "test:gates": "node scripts/test-vocabulary-gates.mjs all",
     "test:release": "npm run build && npm test && npm run test:offline",
     "test:offline": "node tests/offline-smoke.mjs",
     "test:network-firewall": "node tests/test-network-firewall-browser.mjs",

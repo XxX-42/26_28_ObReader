@@ -6,6 +6,7 @@ export function browserSidecarHarnessScript({
   token,
   sourceHash = `sha256:${TRACEMONKEY_SOURCE_SHA256}`,
   sourcePath = "tests/fixtures/tracemonkey.pdf",
+  holdIdentityResponses = false,
 }) {
   if (!channel || !token || !sourceHash) {
     throw new TypeError("A channel, token, and source hash are required.");
@@ -23,6 +24,9 @@ export function browserSidecarHarnessScript({
         sourcePath,
         documents,
         identityRequests: [],
+        identityConfirmations: [],
+        holdIdentityResponses: ${JSON.stringify(holdIdentityResponses)},
+        heldIdentityResponses: [],
         durableWrites: [],
         errors: [],
         snapshotBroadcasts: [],
@@ -66,6 +70,11 @@ export function browserSidecarHarnessScript({
               orderedPageIdentities: [...source.identity.orderedPageIdentities],
             } : null,
           });
+        },
+        releaseIdentityResponses() {
+          const pending = this.heldIdentityResponses.splice(0);
+          for (const deliver of pending) deliver();
+          return pending.length;
         },
       };
       const emptyDocument = () => ({ operations: new Map(), revision: 0, identity: null });
@@ -111,6 +120,7 @@ export function browserSidecarHarnessScript({
               ? [...message.orderedPageIdentities]
               : null,
             identityStatus: message.identityStatus,
+            requestedAt: Date.now(),
           });
           if (
             message.identityStatus !== "KNOWN" ||
@@ -130,7 +140,8 @@ export function browserSidecarHarnessScript({
             pageCount: message.pageCount,
             orderedPageIdentities: [...message.orderedPageIdentities],
           };
-          event.source.postMessage({
+          const source = event.source;
+          const confirmation = {
             channel,
             token,
             type: "external-annotations-update",
@@ -139,7 +150,20 @@ export function browserSidecarHarnessScript({
             sourceMatch: document.operations.size ? "MATCH" : "BASELINE_ESTABLISHED",
             identityConfirmed: true,
             externalAnnotations: snapshot(message.documentId, document),
-          }, "*");
+          };
+          const deliver = () => {
+            host.identityConfirmations.push({
+              documentId: message.documentId,
+              openRequest: message.openRequest,
+              sentAt: Date.now(),
+            });
+            source.postMessage(confirmation, "*");
+          };
+          if (host.holdIdentityResponses) {
+            host.heldIdentityResponses.push(deliver);
+          } else {
+            deliver();
+          }
         } else if (message.type === "save" || message.type === "recover") {
           const document = documents.get(message.documentId) || emptyDocument();
           documents.set(message.documentId, document);

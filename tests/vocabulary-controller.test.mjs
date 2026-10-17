@@ -822,9 +822,13 @@ test("eligible collapsed single-word click opens a local pill and durable status
   "a collapsed click on an ordinary word can open lookup so it can be added to the local vocabulary");
   const unrecordedTap = posted.find((message) => message.type === "vocab-token-tap");
   assert.ok(unrecordedTap);
+  assert.equal(controller.entryPill.heading.textContent, "Alpha",
+    "ordinary surface capitalization remains visible in the pill title");
+  assert.equal(controller.entryPill.popup.attributes["aria-label"], "LingQ 词条：Alpha",
+    "ordinary surface capitalization is retained in the accessible label");
   assert.equal(controller.handleEntryResult({ requestId: unrecordedTap.requestId, key: "alpha", pageNumber: 1,
     documentId: "doc-1", openRequest: 7, record: null }), true);
-  assert.equal(controller.entryPill.statusElement.textContent, "无个人学习状态");
+  assert.equal(controller.entryPill.statusElement.textContent, "陌生词");
   assert.equal(controller.entryPill.meanings.textContent, "未查询外部词典");
   const dictionaryTranslation = "prep. 在...之上\nadv. ...上去\na. 正起作用的\n[计] 打开";
   assert.equal(controller.handleEntryResult({ requestId: unrecordedTap.requestId, key: "alpha", pageNumber: 1,
@@ -929,18 +933,18 @@ test("LingQ lookup accepts unhighlighted words, while an enabled multiword phras
     { key: "beta gamma", type: "phrase", status: 2 },
   ];
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
-    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha",
+    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha", logicalSurface: "Alpha",
   }, "words remain available for lookup even when their stored level is not highlighted");
   const phrase = runtime.controller.entryForTappedToken(page, page.tokens[1]);
   assert.deepEqual(phrase, { type: "phrase", startIndex: 1, endIndex: 3,
-    surfaceKey: "beta gamma", rawSurface: "beta gamma" });
+    surfaceKey: "beta gamma", rawSurface: "beta gamma", logicalSurface: "beta gamma" });
   runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] });
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[2]), {
-    type: "word", startIndex: 2, endIndex: 3, surfaceKey: "gamma", rawSurface: "gamma",
+    type: "word", startIndex: 2, endIndex: 3, surfaceKey: "gamma", rawSurface: "gamma", logicalSurface: "gamma",
   }, "a phrase outside configured highlight levels falls back to the tapped word");
   runtime.controller.setHighlightLevels({ words: [5], phrases: [2] });
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
-    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha",
+    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha", logicalSurface: "Alpha",
   });
   runtime.controller.dispose();
 });

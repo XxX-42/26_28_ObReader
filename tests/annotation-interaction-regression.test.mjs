@@ -24,10 +24,11 @@ import {
   removeTempRoot,
   root,
 } from "./bundled-plugin-test-utils.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
-const artifacts = path.join(root, "tests", "artifacts");
+const artifacts = resolveTestArtifactRoot(root);
 const browserPath = resolveBrowserPath();
 
 const mimeTypes = new Map([
@@ -553,7 +554,7 @@ test(
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      }, { testName: "annotation-interaction-regression" });
+      }, { testName: "annotation-interaction-regression", artifactsDir: artifacts });
       page = await browser.newPage();
       installCDPWorkerTrace(page);
       await page.evaluateOnNewDocument(() => {
@@ -3170,7 +3171,7 @@ test(
       assert.deepEqual(externalRequests, []);
       assert.deepEqual(errors, []);
       console.log(
-        `Real-pointer annotation interaction checks captured in tests/artifacts/annotation-interaction-${artifactId}.{json,png}`,
+        `Real-pointer annotation interaction checks captured under ${artifacts}`,
       );
     } catch (error) {
       functionalError = error;

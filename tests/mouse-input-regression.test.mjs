@@ -14,9 +14,11 @@ import {
   observeBrowserTestChildStderr,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
+const artifactsPath = resolveTestArtifactRoot(root);
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const bridgePath = process.env.PDF_MOUSE_BRIDGE_SOURCE
   ? path.resolve(process.env.PDF_MOUSE_BRIDGE_SOURCE)
@@ -216,7 +218,7 @@ test(
       executablePath: browserPath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    }, { testName: "mouse-input-regression" });
+    }, { testName: "mouse-input-regression", artifactsDir: artifactsPath });
     browserStderrObserver = observeBrowserTestChildStderr(browser.process?.());
     page = await browser.newPage();
     await page.setViewport({ width: 1400, height: 1000 });
@@ -3092,12 +3094,7 @@ test(
         },
       };
     }, typedFreeText.text);
-    const lifecyclePath = path.join(
-      root,
-      "tests",
-      "artifacts",
-      `mouse-input-${artifactId}.lifecycle.json`,
-    );
+    const lifecyclePath = path.join(artifactsPath, `mouse-input-${artifactId}.lifecycle.json`);
     await writeFile(lifecyclePath, JSON.stringify(lifecycleEvidence, null, 2), "utf8");
     t.diagnostic(`Mouse lifecycle trace: ${lifecyclePath}`);
     await viewer.evaluate(() => window.__stopMousePdfEditorLifecycleTrace?.());
@@ -3360,7 +3357,7 @@ test(
     assert.ok(selectedReopenedFreeText, "A single click must select the persisted FreeText without losing its identity");
     // PDF.js enters text-edit mode for a committed FreeText editor on a
     // double-click; this second trusted click completes the first click's pair.
-    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, { clickCount:2, delay:80 });
+    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, { count:2, delay:80 });
     await viewer.waitForFunction((annotationId) => {
       const editor = window.__getSidecarFreeTextEditor(annotationId);
       const internal = editor?.querySelector(".internal");
@@ -3995,7 +3992,7 @@ test(
     await page.mouse.click(
       reopenEditScreenPoint.x,
       reopenEditScreenPoint.y,
-      { delay:80 },
+      { count:2, delay:80 },
     );
     await viewer.waitForFunction((annotationId) => {
       const app = window.PDFViewerApplication;
@@ -4171,12 +4168,7 @@ test(
     assert.equal(crossPageViewportChange.editorAfter.text, "Mouse toolbar round trip", JSON.stringify(crossPageViewportChange));
 
       assert.deepEqual(pageErrors, [], "The viewer should not throw during mouse input");
-    const focusLifecyclePath = path.join(
-      root,
-      "tests",
-      "artifacts",
-      `mouse-input-${artifactId}.focus.json`,
-    );
+    const focusLifecyclePath = path.join(artifactsPath, `mouse-input-${artifactId}.focus.json`);
     await writeFile(focusLifecyclePath, JSON.stringify({
       capturedAt:new Date().toISOString(),
       fixture:"tests/fixtures/tracemonkey.pdf",
@@ -4535,19 +4527,9 @@ test(
         const bridgeDiagnostics = await page?.evaluate(
           () => window.__host?.inputDiagnostics || null,
         );
-        const screenshotPath = path.join(
-          root,
-          "tests",
-          "artifacts",
-          `mouse-input-${captureId}.failure.png`,
-        );
+        const screenshotPath = path.join(artifactsPath, `mouse-input-${captureId}.failure.png`);
         await page?.screenshot({ path: screenshotPath, fullPage: false });
-        const diagnosticPath = path.join(
-          root,
-          "tests",
-          "artifacts",
-          `mouse-input-${captureId}.failure.json`,
-        );
+        const diagnosticPath = path.join(artifactsPath, `mouse-input-${captureId}.failure.json`);
         await writeFile(diagnosticPath, JSON.stringify({
           error: { name: error?.name, message: error?.message, stack: error?.stack },
           inputDiagnostics,
@@ -4565,12 +4547,7 @@ test(
         ownedPages: page ? [page] : [],
         server,
       });
-      const cleanupPath = path.join(
-        root,
-        "tests",
-        "artifacts",
-        `mouse-input-${artifactId}.cleanup.json`,
-      );
+      const cleanupPath = path.join(artifactsPath, `mouse-input-${artifactId}.cleanup.json`);
       try {
         await writeFile(cleanupPath, JSON.stringify(cleanupReport, null, 2), "utf8");
       } catch (error) {

@@ -43,22 +43,16 @@ async function launchControlledBrowserProcess({ ignoreTerm, profileDirectory }) 
   return child;
 }
 
-async function launchNaturallyClosingProcess(profileDirectory) {
-  const child = spawn(
-    process.execPath,
-    ["-e", "setTimeout(() => process.exit(0), 50); setInterval(() => {}, 1000);", "--", `--user-data-dir=${profileDirectory}`],
-    {
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  await once(child, "spawn");
-  assert.equal(registerOwnedBrowserChild(child), true);
-  return child;
-}
-
-async function launchCloseDelayedProcess(profileDirectory) {
-  const source = "process.on('message', message => { if (message === 'close') setTimeout(() => process.exit(0), 80); }); setInterval(() => {}, 1000);";
+async function launchReadyExitProcess(profileDirectory) {
+  const source = [
+    "process.on('message', message => {",
+    "if (message?.type !== 'schedule-exit') return;",
+    "setTimeout(() => process.exit(message.exitCode), message.delayMs);",
+    "process.send({ type: 'exit-scheduled', delayMs: message.delayMs, exitCode: message.exitCode });",
+    "});",
+    "process.send({ type: 'ready' });",
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
   const child = spawn(
     process.execPath,
     ["-e", source, "--", `--user-data-dir=${profileDirectory}`],
@@ -68,6 +62,41 @@ async function launchCloseDelayedProcess(profileDirectory) {
     },
   );
   await once(child, "spawn");
+  const [ready] = await once(child, "message");
+  assert.deepEqual(ready, { type: "ready" });
+  assert.equal(registerOwnedBrowserChild(child), true);
+  return child;
+}
+
+async function scheduleNaturalExit(child, { delayMs = 0, exitCode = 0 } = {}) {
+  const scheduled = once(child, "message");
+  child.send({ type: "schedule-exit", delayMs, exitCode });
+  const [message] = await scheduled;
+  assert.deepEqual(message, { type: "exit-scheduled", delayMs, exitCode });
+}
+
+async function launchDelayedReadyCloseProcess(profileDirectory, readyDelayMs) {
+  const source = [
+    "let ready = false;",
+    "process.on('message', message => {",
+    `if (message === 'release-ready') { setTimeout(() => { ready = true; process.send({ type: 'ready' }); }, ${readyDelayMs}); return; }`,
+    "if (message === 'close' && !ready) { process.send({ type: 'close-dropped-before-ready' }); return; }",
+    "if (message === 'close' && ready) process.exit(0);",
+    "});",
+    `process.send({ type: 'not-ready', injectedDelayMs: ${readyDelayMs} });`,
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
+  const child = spawn(
+    process.execPath,
+    ["-e", source, "--", `--user-data-dir=${profileDirectory}`],
+    {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  await once(child, "spawn");
+  const [state] = await once(child, "message");
+  assert.deepEqual(state, { type: "not-ready", injectedDelayMs: readyDelayMs });
   assert.equal(registerOwnedBrowserChild(child), true);
   return child;
 }
@@ -104,6 +133,34 @@ function browserFor(child) {
   };
 }
 
+test("a close command before delayed fixture readiness is deterministically dropped", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-delayed-ready-test-"));
+  const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-delayed-ready");
+  await mkdir(profileDirectory);
+  let child;
+  t.after(async () => {
+    await stopControlledChild(child);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  child = await launchDelayedReadyCloseProcess(profileDirectory, 80);
+  const droppedMessage = once(child, "message");
+  child.send("close");
+  const [dropped] = await droppedMessage;
+  assert.deepEqual(dropped, { type: "close-dropped-before-ready" });
+  assert.equal(child.exitCode, null, "The pre-ready close request must not produce a natural exit");
+
+  const readyMessage = once(child, "message");
+  child.send("release-ready");
+  const [ready] = await readyMessage;
+  assert.deepEqual(ready, { type: "ready" });
+  const exited = once(child, "exit");
+  child.send("close");
+  const [exitCode, signalCode] = await exited;
+  assert.equal(exitCode, 0);
+  assert.equal(signalCode, null);
+});
+
 test("browser cleanup reports a natural close separately from forced cleanup", async () => {
   const browser = {
     process: () => null,
@@ -126,7 +183,10 @@ test("browser cleanup accepts verified zero-exit when Puppeteer close remains pe
   const browser = new EventEmitter();
   browser.process = () => child;
   browser.isConnected = () => connected;
-  browser.close = () => new Promise(() => {});
+  browser.close = async () => {
+    await scheduleNaturalExit(child, { delayMs: 50, exitCode: 0 });
+    return new Promise(() => {});
+  };
   browser.disconnect = () => {
     connected = false;
     browser.emit("disconnected");
@@ -136,7 +196,7 @@ test("browser cleanup accepts verified zero-exit when Puppeteer close remains pe
     await rm(root, { recursive: true, force: true });
   });
 
-  child = await launchNaturallyClosingProcess(profileDirectory);
+  child = await launchReadyExitProcess(profileDirectory);
   child.once("exit", () => {
     connected = false;
     browser.emit("disconnected");
@@ -182,7 +242,13 @@ test("browser cleanup accepts a verified natural exit within the existing proces
     await rm(root, { recursive: true, force: true });
   });
 
-  child = await launchCloseDelayedProcess(profileDirectory);
+  child = await launchReadyExitProcess(profileDirectory);
+  browser.close = async () => {
+    connected = false;
+    browser.emit("disconnected");
+    await scheduleNaturalExit(child, { delayMs: 80, exitCode: 0 });
+    return new Promise(() => {});
+  };
   const report = await cleanupBrowserTestResources({
     browser,
     ownedPages: [],
@@ -863,8 +929,10 @@ test("browser cleanup naturally accepts an owned child that exited before cleanu
     await rm(root, { recursive: true, force: true });
   });
 
-  child = await launchNaturallyClosingProcess(profileDirectory);
-  await once(child, "exit");
+  child = await launchReadyExitProcess(profileDirectory);
+  const exited = once(child, "exit");
+  await scheduleNaturalExit(child, { delayMs: 0, exitCode: 0 });
+  await exited;
   assert.equal(child.exitCode, 0);
   let browserCloseCalls = 0;
   const report = await cleanupBrowserTestResources({
@@ -1265,6 +1333,52 @@ test("browser cleanup preserves a signal exit from browser.close as failure", as
   assert.ok(report.errors.some((entry) => entry.message.includes("exited from signal SIGTERM")));
 });
 
+test("browser cleanup reports a natural nonzero child exit and keeps exit-code details visible", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-exit-code-test-"));
+  const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-exit-code");
+  await mkdir(profileDirectory);
+  let child;
+  t.after(async () => {
+    await stopControlledChild(child);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  child = await launchReadyExitProcess(profileDirectory);
+  let connected = true;
+  child.once("exit", () => { connected = false; });
+  const report = await cleanupBrowserTestResources({
+    browser: {
+      process: () => child,
+      isConnected: () => connected,
+      close: async () => {
+        const exited = once(child, "exit");
+        await scheduleNaturalExit(child, { delayMs: 500, exitCode: 2 });
+        return exited;
+      },
+      disconnect() { connected = false; },
+    },
+    browserTimeoutMs: 1_000,
+    processExitTimeoutMs: 1_000,
+  });
+
+  assert.equal(report.status, "failed");
+  assert.equal(report.browser.status, "failed");
+  assert.equal(report.browser.closeState, "fulfilled");
+  assert.equal(report.browser.process.exitCode, 2);
+  assert.equal(report.browser.process.signalCode, null);
+  assert.equal(report.browser.process.identity.validated, true);
+  assert.ok(report.errors.some((entry) =>
+    entry.phase === "browser.process.exit" && entry.message.includes("code 2"),
+  ));
+
+  const error = attachCleanupErrors(null, report);
+  assert.ok(error instanceof AggregateError);
+  assert.match(error.message, /browser\.process\.exit/);
+  assert.match(error.message, /code 2/);
+  assert.equal(error.errors[0].phase, "browser.process.exit");
+  assert.equal(error.cleanupReport, report);
+});
+
 async function stopControlledChild(child) {
   if (!child || typeof child.exitCode === "number" || typeof child.signalCode === "string") return;
   child.kill("SIGKILL");
@@ -1431,4 +1545,77 @@ test("cleanup errors remain attached to the original functional error", () => {
   assert.match(result.message, /^functional assertion failed/);
   assert.equal(result.cleanupErrors[0].phase, "browser.forced-cleanup");
   assert.equal(result.cleanupReport, report);
+});
+
+test("cleanup AggregateError surfaces the phase and nonzero child exit in its message", () => {
+  const report = {
+    status: "failed",
+    browser: {
+      status: "failed",
+      process: { pid: 4242, exitCode: 2, signalCode: null },
+    },
+    errors: [{
+      phase: "browser.process.exit",
+      message: "Browser child 4242 exited with code 2 instead of 0",
+    }],
+  };
+
+  const error = attachCleanupErrors(null, report);
+
+  assert.ok(error instanceof AggregateError);
+  assert.match(error.message, /browser\.process\.exit/);
+  assert.match(error.message, /code 2/);
+  assert.equal(error.errors[0].phase, "browser.process.exit");
+  assert.equal(error.cleanupReport, report);
+});
+
+test("browser cleanup retains inner AggregateError causes and codes in the report and summary", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "browser-cleanup-inner-error-test-"));
+  const profileDirectory = path.join(root, "puppeteer_dev_chrome_profile-inner-error");
+  await mkdir(profileDirectory);
+  let child;
+  t.after(async () => {
+    await stopControlledChild(child);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  child = await launchReadyExitProcess(profileDirectory);
+  let connected = true;
+  const lowLevelCause = Object.assign(new Error("target session closed before disposal"), {
+    code: "ERR_TARGET_SESSION_CLOSED",
+  });
+  const innerError = Object.assign(new Error("page close handshake failed"), {
+    code: "ERR_PAGE_CLOSE_HANDSHAKE",
+    cause: lowLevelCause,
+  });
+  const closeError = new AggregateError([innerError], "Browser close aggregated a page teardown failure");
+  const report = await cleanupBrowserTestResources({
+    browser: {
+      process: () => child,
+      isConnected: () => connected,
+      close: async () => {
+        await scheduleNaturalExit(child, { delayMs: 0, exitCode: 0 });
+        throw closeError;
+      },
+      disconnect: () => { connected = false; },
+    },
+    ownedPages: [],
+    browserTimeoutMs: 1_000,
+    processExitTimeoutMs: 1_000,
+  });
+
+  const closeEntry = report.errors.find((entry) => entry.phase === "browser.close");
+  assert.ok(closeEntry);
+  assert.equal(closeEntry.name, "AggregateError");
+  assert.equal(closeEntry.errors[0].code, "ERR_PAGE_CLOSE_HANDSHAKE");
+  assert.equal(closeEntry.errors[0].cause.code, "ERR_TARGET_SESSION_CLOSED");
+  assert.equal(report.browser.process.exitCode, 0);
+  assert.equal(report.browser.process.signalCode, null);
+
+  const cleanupError = attachCleanupErrors(null, report);
+  assert.ok(cleanupError.message.includes("Browser close aggregated a page teardown failure"));
+  assert.ok(cleanupError.message.includes("ERR_PAGE_CLOSE_HANDSHAKE"));
+  assert.ok(cleanupError.message.includes("ERR_TARGET_SESSION_CLOSED"));
+  assert.equal(cleanupError.errors[0].errors[0].cause.code, "ERR_TARGET_SESSION_CLOSED");
+  assert.equal(cleanupError.cleanupReport, report);
 });

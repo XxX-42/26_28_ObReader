@@ -9,6 +9,7 @@ import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { inflateSync } from "node:zlib";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
 import {
@@ -19,11 +20,12 @@ import {
   sampleOwnedBrowserProcess,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
-const artifactsPath = path.join(root, "tests", "artifacts");
+const artifactsPath = resolveTestArtifactRoot(root);
 const channel = "pdf-web-reader";
 const token = "free-text-undo-appearance-regression";
 const documentId = "freetext-undo-appearance.pdf";
@@ -54,6 +56,78 @@ const mimeTypes = new Map([
   [".svg", "image/svg+xml"],
   [".wasm", "application/wasm"],
 ]);
+
+function decodePngRgb(png) {
+  assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "Expected a PNG screenshot");
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  const imageData = [];
+  for (let offset = 8; offset < png.length;) {
+    const length = png.readUInt32BE(offset);
+    const type = png.toString("ascii", offset + 4, offset + 8);
+    const data = png.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      imageData.push(data);
+    } else if (type === "IEND") {
+      break;
+    }
+    offset += length + 12;
+  }
+  assert.equal(bitDepth, 8, "Screenshot pixels must use eight-bit channels");
+  assert.ok(colorType === 2 || colorType === 6, "Screenshot must contain RGB or RGBA pixels");
+  assert.equal(interlace, 0, "Interlaced screenshot PNGs are not supported");
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const stride = width * bytesPerPixel;
+  const inflated = inflateSync(Buffer.concat(imageData));
+  const rgb = Buffer.alloc(width * height * 3);
+  let previous = Buffer.alloc(stride);
+  let inputOffset = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = inflated[inputOffset++];
+    const row = Buffer.from(inflated.subarray(inputOffset, inputOffset + stride));
+    inputOffset += stride;
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= bytesPerPixel ? row[x - bytesPerPixel] : 0;
+      const above = previous[x];
+      const upperLeft = x >= bytesPerPixel ? previous[x - bytesPerPixel] : 0;
+      let predictor = 0;
+      if (filter === 1) predictor = left;
+      else if (filter === 2) predictor = above;
+      else if (filter === 3) predictor = Math.floor((left + above) / 2);
+      else if (filter === 4) {
+        const p = left + above - upperLeft;
+        const leftDistance = Math.abs(p - left);
+        const aboveDistance = Math.abs(p - above);
+        const upperLeftDistance = Math.abs(p - upperLeft);
+        predictor = leftDistance <= aboveDistance && leftDistance <= upperLeftDistance
+          ? left
+          : aboveDistance <= upperLeftDistance ? above : upperLeft;
+      } else assert.equal(filter, 0, `Unsupported PNG row filter ${filter}`);
+      row[x] = (row[x] + predictor) & 0xff;
+    }
+    for (let x = 0; x < width; x += 1) {
+      const source = x * bytesPerPixel;
+      const target = (y * width + x) * 3;
+      const alpha = colorType === 6 ? row[source + 3] : 255;
+      for (let channel = 0; channel < 3; channel += 1) {
+        rgb[target + channel] = colorType === 6
+          ? Math.round((row[source + channel] * alpha + 255 * (255 - alpha)) / 255)
+          : row[source + channel];
+      }
+    }
+    previous = row;
+  }
+  return { width, height, pixels: rgb };
+}
 
 async function prepareFixturePdfViewerClose(page, remainingMs) {
   return page.evaluate(async ({ closeBudgetMs, expectedToken, expectedDocumentId }) => {
@@ -221,9 +295,10 @@ async function collectOwnedCrashpadMetadata(crashpadDirectory) {
 }
 
 test(
-  "saved FreeText AP stays visible across NONE-mode right-eraser undo and redo",
+  "saved FreeText sidecar stays visible across NONE-mode right-eraser undo and redo",
   { skip: !browserPath && "Chrome or Edge is required for this browser regression", timeout: 120_000 },
   async (t) => {
+    let markFreeTextTrace = async () => {};
     await mkdir(artifactsPath, { recursive: true });
     const viewerPath = path.join(root, "vendor", "pdfjs-generic-legacy", "web", "viewer.html");
     const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
@@ -353,6 +428,13 @@ test(
                         serialized: editor.serialize?.() ?? null,
                       }));
                     })(),
+                    trustedKeys: frame.contentWindow.__trustedKeys || [],
+                    freeTextDiagnostic: frame.contentWindow.__freeTextCommitDiagnostic
+                      ? {
+                          trace: frame.contentWindow.__freeTextCommitDiagnostic.trace,
+                          traceLimit: frame.contentWindow.__freeTextCommitDiagnostic.traceLimit,
+                        }
+                      : null,
                   }
                 : null,
               errors: window.__hostState?.errors || [],
@@ -412,7 +494,7 @@ test(
             'const persistOperations=message=>{for(const operation of Array.isArray(message.operations)?message.operations:[]){if(!operation||typeof operation.uuid!=="string")continue;state.operations.set(operation.uuid,structuredClone(operation));}state.revision=Math.max(state.revision,Number(message.revision)||0);};' +
             'const ackFor=(type,message)=>({channel,type,token,documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,ok:true,external:true,operationCount:Array.isArray(message.operations)?message.operations.length:0,batchId:message.operations?.length?"test-batch-"+message.requestId:null,externalAnnotations:sidecarSnapshot()});' +
             'const sendOpen=(data,label)=>{' +
-            'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
+            'state.openRequest+=1;state.sourceIdentityConfirmed=false;state.identity=null;state.opens.push({label,documentId,sourceHash,openRequest:state.openRequest,byteLength:data.byteLength});' +
             'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,rendererGeneration:"freetext-undo-renderer",openRequest:state.openRequest,data,externalAnnotations:sidecarSnapshot()},"*",[data]);};' +
             'window.__sendOpenSaved=()=>sendOpen(fixtureBytes.slice(0),"sidecar-reopen");' +
             'window.__holdNextSaveAck=()=>{state.holdNextSaveAck=true;};' +
@@ -425,8 +507,8 @@ test(
             'if(message.type==="ready"){state.ready=true;if(fixtureBytes)sendOpen(fixtureBytes.slice(0),"fixture");}' +
             'else if(message.type==="opened"){state.opened+=1;state.openedMessages ||= [];state.openedMessages.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,dirty:message.dirty});}' +
             'else if(message.type==="annotation-source-identity"){if(message.identityStatus!=="KNOWN"||!Number.isSafeInteger(message.pageCount)||!Array.isArray(message.orderedPageIdentities)||message.orderedPageIdentities.length!==message.pageCount||message.orderedPageIdentities.some(identity=>typeof identity!=="string")||message.sourceHash!==sourceHash){iframe.contentWindow.postMessage({channel,type:"annotation-source-mismatch",token,documentId:message.documentId,openRequest:message.openRequest,reason:"PAGE_IDENTITY_UNAVAILABLE"},"*");return;}state.sourceIdentityConfirmed=true;state.identity={pageCount:message.pageCount,orderedPageIdentities:[...message.orderedPageIdentities]};iframe.contentWindow.postMessage({channel,type:"external-annotations-update",token,documentId:message.documentId,openRequest:message.openRequest,identityConfirmed:true,sourceMatch:state.operations.size?"MATCH":"BASELINE_ESTABLISHED",externalAnnotations:sidecarSnapshot()},"*");}' +
-            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
-            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
+            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
+            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
             'else if(message.type==="export-ready"){state.exports.push({documentId:message.documentId,openRequest:message.openRequest,requestId:message.requestId,revision:message.revision,byteLength:message.data?.byteLength||0,data:new Uint8Array(message.data).slice().buffer});}' +
             'else if(message.type==="error"){state.errors.push({code:message.code,message:message.message,documentId:message.documentId,requestId:message.requestId});}' +
             'else if(message.type==="flushed"){state.flushes ||= [];state.flushes.push({id:message.id,ok:message.ok,dirty:message.dirty,revision:message.revision,recovered:message.recovered||false});}' +
@@ -495,7 +577,7 @@ test(
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
       };
       if (diagnosticProfileDirectory) launchOptions.userDataDir = diagnosticProfileDirectory;
-      browser = await launchTestBrowser(puppeteer, launchOptions, { testName: "free-text-undo-appearance-regression" });
+      browser = await launchTestBrowser(puppeteer, launchOptions, { testName: "free-text-undo-appearance-regression", artifactsDir: artifactsPath });
       const browserChild = browser.process?.();
       browserStderrObserver = observeBrowserTestChildStderr(browserChild);
       if (teardownDiagnosticsEnabled) {
@@ -613,6 +695,321 @@ test(
         { timeout: 15_000 },
       );
 
+      // Test-only instrumentation: preserve PDF.js return values and behavior
+      // while recording the exact editor/model/DOM state around each real
+      // FreeText commit. This distinguishes a layout/readiness failure from a
+      // transient blur or accessibility-layer DOM move during commit.
+      await viewer.evaluate(() => {
+        const app = PDFViewerApplication;
+        const manager = app.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        if (!manager || window.__freeTextCommitDiagnostic) {
+          throw new Error("FreeText diagnostic hook requires the active annotation editor manager");
+        }
+        const traceLimit = 300;
+        const trace = [];
+        const wrappedMethods = [];
+        const docListeners = [];
+        const diagnostic = {
+          trace,
+          traceLimit,
+          editorId: null,
+          stage: "before-editor",
+          startedAt: performance.now(),
+          mark: (label, detail = null) => {
+            diagnostic.stage = label;
+            record(label, diagnostic.editor, false, detail);
+          },
+          dispose: null,
+        };
+        const describeNode = (node) => {
+          if (!node) return null;
+          const className = typeof node.className === "string" ? node.className : "";
+          return {
+            node: node.nodeName || null,
+            id: node.id || null,
+            className: className.slice(0, 160),
+            connected: Boolean(node.isConnected),
+          };
+        };
+        const rectOf = (node) => {
+          if (!node?.getBoundingClientRect) return null;
+          try {
+            const rect = node.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+          } catch (error) {
+            return { error: String(error?.message || error).slice(0, 160) };
+          }
+        };
+        const safeValue = (read) => {
+          try { return read(); } catch (error) { return { error: String(error?.message || error).slice(0, 160) }; }
+        };
+        const nodePath = (node, limit = 7) => {
+          const path = [];
+          for (let current = node; current && path.length < limit; current = current.parentElement) {
+            const computed = getComputedStyle(current);
+            path.push({
+              ...describeNode(current),
+              display: computed.display,
+              visibility: computed.visibility,
+              opacity: computed.opacity,
+              hidden: Boolean(current.hidden),
+              rect: rectOf(current),
+            });
+          }
+          return path;
+        };
+        const activeElement = () => {
+          const active = document.activeElement;
+          return {
+            ...describeNode(active),
+            insideMonitoredEditor: Boolean(diagnostic.editor?.div?.contains(active)),
+            insideMonitoredInput: Boolean(diagnostic.editor?.editorDiv?.contains(active)),
+          };
+        };
+        const viewportState = () => {
+          const viewport = window.visualViewport;
+          const container = document.getElementById("viewerContainer");
+          const containerRect = rectOf(container);
+          return {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            visualViewport: viewport ? {
+              width: viewport.width,
+              height: viewport.height,
+              scale: viewport.scale,
+              offsetLeft: viewport.offsetLeft,
+              offsetTop: viewport.offsetTop,
+              pageLeft: viewport.pageLeft,
+              pageTop: viewport.pageTop,
+            } : null,
+            viewerContainer: {
+              rect: containerRect,
+              scrollLeft: container?.scrollLeft ?? null,
+              scrollTop: container?.scrollTop ?? null,
+            },
+            pdfViewer: {
+              currentScale: app.pdfViewer?.currentScale ?? null,
+              currentScaleValue: app.pdfViewer?._currentScaleValue ?? null,
+            },
+          };
+        };
+        const snapshot = (editor) => {
+          const page = document.querySelector('.page[data-page-number="1"]');
+          const div = editor?.div || null;
+          const input = editor?.editorDiv || div?.querySelector?.(".internal") || null;
+          let serialized = null;
+          try { serialized = editor?.serialize?.(true) ?? null; }
+          catch (error) { serialized = { error: String(error?.message || error).slice(0, 240) }; }
+          return {
+            editorId: editor?.id ?? null,
+            uid: editor?.uid ?? null,
+            editorType: editor?.editorType ?? null,
+            model: {
+              width: editor?.width ?? null,
+              height: editor?.height ?? null,
+              x: editor?.x ?? null,
+              y: editor?.y ?? null,
+              rotation: editor?.rotation ?? null,
+              parentRotation: editor?.parentRotation ?? null,
+              parentScale: safeValue(() => editor.parentScale),
+              pageDimensions: safeValue(() => [...editor.pageDimensions]),
+              parentDimensions: safeValue(() => [...editor.parentDimensions]),
+              isInEditMode: safeValue(() => editor.isInEditMode?.() ?? null),
+              isEditing: editor?.isEditing ?? null,
+              isAttachedToDOM: editor?.isAttachedToDOM ?? null,
+            },
+            text: {
+              value: serialized?.value ?? null,
+              editorText: input?.textContent?.slice(0, 240) ?? null,
+              contentEditable: input?.contentEditable ?? null,
+              inputConnected: Boolean(input?.isConnected),
+            },
+            serialized,
+            activeElement: activeElement(),
+            viewport: viewportState(),
+            editorDivRect: rectOf(div),
+            inputRect: rectOf(input),
+            pageRect: rectOf(page),
+            parentRect: rectOf(editor?.parent?.div),
+            divConnected: Boolean(div?.isConnected),
+            ancestorPath: nodePath(div),
+          };
+        };
+        function record(event, editor = diagnostic.editor, includeStack = true, detail = null) {
+          const entry = {
+            sequence: trace.length + 1,
+            event,
+            at: performance.now(),
+            elapsedMs: performance.now() - diagnostic.startedAt,
+            stage: diagnostic.stage,
+            editorId: editor?.id ?? diagnostic.editorId,
+            detail,
+            state: editor ? snapshot(editor) : {
+              activeElement: activeElement(),
+              viewport: viewportState(),
+              pageRect: rectOf(document.querySelector('.page[data-page-number="1"]')),
+            },
+          };
+          if (includeStack) entry.stack = String(new Error().stack || "").split("\n").slice(2, 10);
+          trace.push(entry);
+          if (trace.length > traceLimit) trace.splice(0, trace.length - traceLimit);
+        }
+        const addDocumentListener = (type, listener, options = true) => {
+          document.addEventListener(type, listener, options);
+          docListeners.push([type, listener, options]);
+        };
+        const targetDescription = (node) => ({
+          ...describeNode(node),
+          text: node?.textContent?.slice?.(0, 80) || null,
+        });
+        for (const type of ["focusin", "focusout", "blur", "input", "beforeinput"]) {
+          addDocumentListener(type, (event) => {
+            const current = diagnostic.editor;
+            const targetIsEditor = Boolean(current?.div?.contains(event.target));
+            const relatedIsEditor = Boolean(current?.div?.contains(event.relatedTarget));
+            if (!targetIsEditor && !relatedIsEditor && type !== "blur") return;
+            record(`dom.${type}`, current, false, {
+              eventTimeStamp: event.timeStamp,
+              trusted: event.isTrusted,
+              target: targetDescription(event.target),
+              relatedTarget: targetDescription(event.relatedTarget),
+              inputType: event.inputType || null,
+            });
+          }, true);
+        }
+        addDocumentListener("keydown", (event) => {
+          if (!event.isTrusted || !(event.metaKey || event.ctrlKey || event.key === "Enter")) return;
+          record("dom.trusted-keydown", diagnostic.editor, false, {
+            eventTimeStamp: event.timeStamp,
+            key: event.key,
+            code: event.code,
+            metaKey: event.metaKey,
+            ctrlKey: event.ctrlKey,
+            target: targetDescription(event.target),
+          });
+        }, true);
+        const onWindowBlur = (event) => record("window.blur", diagnostic.editor, false, {
+          eventTimeStamp: event.timeStamp,
+        });
+        window.addEventListener("blur", onWindowBlur, true);
+        const eventBus = app.eventBus;
+        const onEditorMovedInDom = (event) => {
+          if (!event?.source || event.source === diagnostic.editor) {
+            record("pdfjs.editormovedindom", event?.source || diagnostic.editor, false, {
+              sourceId: event?.source?.id ?? null,
+            });
+          }
+        };
+        eventBus?.on?.("editormovedindom", onEditorMovedInDom);
+        const originalDispatch = eventBus?.dispatch;
+        const eventBusHadOwnDispatch = Boolean(eventBus && Object.hasOwn(eventBus, "dispatch"));
+        const wrappedDispatch = eventBus && typeof originalDispatch === "function"
+          ? function (...args) {
+              const [eventName, eventData] = args;
+              if (eventName === "scalechanging") {
+                const source = eventData?.source;
+                record("pdfjs.scalechanging.before-listeners", diagnostic.editor, false, {
+                  scale: eventData?.scale ?? null,
+                  presetValue: eventData?.presetValue ?? null,
+                  sourceType: source?.constructor?.name ?? null,
+                  sourceCurrentScale: source?.currentScale ?? null,
+                  sourceCurrentScaleValue: source?._currentScaleValue ?? null,
+                  sourceContainerRect: rectOf(source?.container),
+                  viewport: viewportState(),
+                });
+              }
+              let result;
+              try {
+                result = originalDispatch.apply(this, args);
+              } catch (error) {
+                if (eventName === "scalechanging") {
+                  record("pdfjs.scalechanging.listener-throw", diagnostic.editor, false, {
+                    name: error?.name || "Error",
+                    message: String(error?.message || error).slice(0, 240),
+                    scale: eventData?.scale ?? null,
+                    presetValue: eventData?.presetValue ?? null,
+                    viewport: viewportState(),
+                  });
+                }
+                throw error;
+              }
+              if (eventName === "scalechanging") {
+                record("pdfjs.scalechanging.after-listeners", diagnostic.editor, false, {
+                  scale: eventData?.scale ?? null,
+                  presetValue: eventData?.presetValue ?? null,
+                  sourceType: eventData?.source?.constructor?.name ?? null,
+                  viewport: viewportState(),
+                });
+              }
+              return result;
+            }
+          : null;
+        if (wrappedDispatch) eventBus.dispatch = wrappedDispatch;
+        const originalAddEditor = manager.addEditor;
+        const managerHadOwnAddEditor = Object.hasOwn(manager, "addEditor");
+        const wrappedAddEditor = function (...args) {
+          const result = originalAddEditor.apply(this, args);
+          const editor = args[0];
+          if (editor?.editorType === "freetext" && !diagnostic.editor) {
+            diagnostic.editor = editor;
+            diagnostic.editorId = editor.id;
+            for (const name of ["commitForSave", "commit", "commitOrRemove"]) {
+              const original = editor[name];
+              if (typeof original !== "function") continue;
+              const hadOwn = Object.hasOwn(editor, name);
+              const wrapped = function (...methodArgs) {
+                record(`editor.${name}.before`, editor, true, { argsCount: methodArgs.length });
+                let result;
+                try {
+                  result = original.apply(this, methodArgs);
+                } catch (error) {
+                  record(`editor.${name}.throw`, editor, true, {
+                    name: error?.name || "Error",
+                    message: String(error?.message || error).slice(0, 240),
+                  });
+                  throw error;
+                }
+                record(`editor.${name}.after`, editor, false, {
+                  resultType: result === null ? "null" : typeof result,
+                  isPromise: Boolean(result && typeof result.then === "function"),
+                });
+                return result;
+              };
+              editor[name] = wrapped;
+              wrappedMethods.push({ editor, name, original, wrapped, hadOwn });
+            }
+            record("manager.addEditor", editor, true, {
+              divPresent: Boolean(editor.div),
+              divConnected: Boolean(editor.div?.isConnected),
+            });
+          }
+          return result;
+        };
+        manager.addEditor = wrappedAddEditor;
+        diagnostic.dispose = () => {
+          for (const [type, listener, options] of docListeners) {
+            document.removeEventListener(type, listener, options);
+          }
+          window.removeEventListener("blur", onWindowBlur, true);
+          eventBus?.off?.("editormovedindom", onEditorMovedInDom);
+          if (eventBus && eventBus.dispatch === wrappedDispatch) {
+            if (eventBusHadOwnDispatch) eventBus.dispatch = originalDispatch;
+            else delete eventBus.dispatch;
+          }
+          if (manager.addEditor === wrappedAddEditor) {
+            if (managerHadOwnAddEditor) manager.addEditor = originalAddEditor;
+            else delete manager.addEditor;
+          }
+          for (const { editor, name, original, wrapped, hadOwn } of wrappedMethods) {
+            if (editor[name] !== wrapped) continue;
+            if (hadOwn) editor[name] = original;
+            else delete editor[name];
+          }
+          record("diagnostic.disposed", diagnostic.editor, false);
+        };
+        window.__freeTextCommitDiagnostic = diagnostic;
+      });
+
       const waitForSaveCount = async (count) =>
         page.waitForFunction((expected) => window.__hostState?.saves?.length >= expected, { timeout: 30_000 }, count);
       const waitForOpenCount = async (count) =>
@@ -625,30 +1022,26 @@ test(
             pageView?.renderingState === 3 && pageView?.div?.dataset.loaded === "true" &&
             pageView?.annotationEditorLayer?.div?.isConnected;
         }, { timeout: 30_000 });
-      const waitForCanvasChangeFromBaseline = async (roi) =>
-        viewer.waitForFunction(
-          (targetRect) => {
-            const pageView = PDFViewerApplication.pdfViewer?.getPageView(0);
-            const sample = window.__samplePageCanvasRoi(targetRect);
-            return pageView?.renderingState === 3 &&
-              Number.isFinite(sample?.differentPixels) &&
-              sample.differentPixels > 0;
-          },
-          { timeout: 15_000 },
-          roi,
-        );
-      const waitForCanvasRestoreBaseline = async (roi) =>
-        viewer.waitForFunction(
-          (targetRect) => {
-            const pageView = PDFViewerApplication.pdfViewer?.getPageView(0);
-            const sample = window.__samplePageCanvasRoi(targetRect);
-            return pageView?.renderingState === 3 &&
-              sample?.differentPixels === 0 &&
-              sample?.fingerprint === sample?.baselineFingerprint;
-          },
-          { timeout: 15_000 },
-          roi,
-        );
+      const waitForVisualChangeFromBaseline = async (roi) => {
+        const deadline = Date.now() + 15_000;
+        let sample;
+        while (Date.now() < deadline) {
+          sample = await sampleVisibleRoi(roi);
+          if (sample.differentPixels > 0) return sample;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error(`The visible FreeText ROI did not change: ${JSON.stringify(sample)}`);
+      };
+      const waitForVisualRestoreBaseline = async (roi) => {
+        const deadline = Date.now() + 15_000;
+        let sample;
+        while (Date.now() < deadline) {
+          sample = await sampleVisibleRoi(roi);
+          if (sample.differentPixels === 0) return sample;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error(`The visible FreeText ROI did not restore: ${JSON.stringify(sample)}`);
+      };
       const setMode = async (mode) => {
         const previousEvents = await viewer.evaluate(() => {
           window.__modeEvents ||= [];
@@ -669,130 +1062,72 @@ test(
           { expectedMode: mode, previousEvents },
         );
       };
-      await viewer.evaluate(() => {
-        window.__pageCanvasRoiBaselines = new Map();
-        window.__samplePageCanvasRoi = (requestedRect, captureBaseline = false) => {
-          const page = document.querySelector('.page[data-page-number="1"]');
-          const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-            .find((node) => node.textContent.includes("UndoVisibilityProof"));
-          const targetRect = requestedRect || (() => {
-            const rect = section?.getBoundingClientRect();
-            return rect
-              ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-              : null;
-          })();
-          const canvasWrapper = page?.querySelector(".canvasWrapper");
-          const canvas = [...(canvasWrapper?.querySelectorAll("canvas:not(.detailView)") || [])]
-            .sort((left, right) => right.width * right.height - left.width * left.height)[0];
-          if (!targetRect || !canvas || !canvas.width || !canvas.height) {
-            return { targetRect, canvasFound: !!canvas, nonWhitePixels: null };
-          }
-          const rect = canvas.getBoundingClientRect();
-          if (!rect.width || !rect.height) {
-            return { targetRect, canvasFound: true, nonWhitePixels: null };
-          }
-          const scaleX = canvas.width / rect.width;
-          const scaleY = canvas.height / rect.height;
-          const bounds = {
-            left: Math.max(0, Math.floor((targetRect.x - rect.x) * scaleX)),
-            top: Math.max(0, Math.floor((targetRect.y - rect.y) * scaleY)),
-            right: Math.min(canvas.width, Math.ceil((targetRect.x + targetRect.width - rect.x) * scaleX)),
-            bottom: Math.min(canvas.height, Math.ceil((targetRect.y + targetRect.height - rect.y) * scaleY)),
-          };
-          if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) {
-            return {
-              targetRect,
-              canvasFound: true,
-              canvasSize: { width: canvas.width, height: canvas.height },
-              canvasRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-              bounds,
-              nonWhitePixels: null,
-            };
-          }
-          const sampleWidth = bounds.right - bounds.left;
-          const sampleHeight = bounds.bottom - bounds.top;
-          let pixels;
-          try {
-            pixels = canvas.getContext("2d", { willReadFrequently: true }).getImageData(
-              bounds.left,
-              bounds.top,
-              sampleWidth,
-              sampleHeight,
-            ).data;
-          } catch (error) {
-            return {
-              targetRect,
-              canvasFound: true,
-              bounds,
-              readError: error.message,
-              nonWhitePixels: null,
-            };
-          }
-          let nonWhitePixels = 0;
-          let darkPixels = 0;
-          let hash = 2166136261;
-          const baselineKey = JSON.stringify({
-            x: targetRect.x,
-            y: targetRect.y,
-            width: targetRect.width,
-            height: targetRect.height,
-            sampleWidth,
-            sampleHeight,
-          });
-          if (captureBaseline) {
-            window.__pageCanvasRoiBaselines.set(baselineKey, new Uint8ClampedArray(pixels));
-          }
-          const baseline = window.__pageCanvasRoiBaselines.get(baselineKey);
-          let differentPixels = baseline?.length === pixels.length ? 0 : null;
-          for (let index = 0; index < pixels.length; index += 4) {
-            const red = pixels[index];
-            const green = pixels[index + 1];
-            const blue = pixels[index + 2];
-            const alpha = pixels[index + 3];
-            if (alpha > 0 && (red < 248 || green < 248 || blue < 248)) {
-              nonWhitePixels += 1;
-            }
-            if (alpha > 0 && red + green + blue < 600) {
-              darkPixels += 1;
-            }
-            for (let channel = 0; channel < 4; channel += 1) {
-              hash = Math.imul(hash ^ pixels[index + channel], 16777619) >>> 0;
-            }
-            if (
-              baseline &&
-              (pixels[index] !== baseline[index] ||
-                pixels[index + 1] !== baseline[index + 1] ||
-                pixels[index + 2] !== baseline[index + 2] ||
-                pixels[index + 3] !== baseline[index + 3])
-            ) {
-              differentPixels += 1;
-            }
-          }
-          let baselineFingerprint = null;
-          if (baseline) {
-            let baselineHash = 2166136261;
-            for (const channel of baseline) {
-              baselineHash = Math.imul(baselineHash ^ channel, 16777619) >>> 0;
-            }
-            baselineFingerprint = baselineHash.toString(16).padStart(8, "0");
-          }
-          return {
-            targetRect,
-            canvasFound: true,
-            canvasSize: { width: canvas.width, height: canvas.height },
-            canvasRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-            bounds,
-            pixelCount: pixels.length / 4,
-            nonWhitePixels,
-            darkPixels,
-            fingerprint: hash.toString(16).padStart(8, "0"),
-            baselineFingerprint,
-            differentPixels,
-          };
+      // The source PDF is immutable in this mode: sidecar FreeText is rendered
+      // by PDF.js in the annotation editor DOM, not into the source page canvas.
+      // Capture the real browser pixels at that DOM editor's viewport ROI.
+      const visualBaselines = new Map();
+      markFreeTextTrace = async (label, detail = null) => {
+        try {
+          await viewer.evaluate(({ value, extra }) =>
+            window.__freeTextCommitDiagnostic?.mark?.(value, extra), { value: label, extra: detail });
+        } catch {}
+      };
+      const sampleVisibleRoi = async (targetRect, captureBaseline = false) => {
+        const frameRect = await page.$eval("iframe", (frame) => {
+          const rect = frame.getBoundingClientRect();
+          return { x: rect.x, y: rect.y };
+        });
+        const clip = {
+          x: Math.max(0, Math.floor(frameRect.x + targetRect.x)),
+          y: Math.max(0, Math.floor(frameRect.y + targetRect.y)),
+          width: Math.max(1, Math.ceil(targetRect.width)),
+          height: Math.max(1, Math.ceil(targetRect.height)),
         };
-      });
-      const snapshot = async (label, canvasRoi = null) => {
-        const state = await viewer.evaluate(({ label: labelValue, canvasRoi: roiValue }) => {
+        const viewport = page.viewport();
+        assert.ok(viewport, "ROI screenshot requires a known browser viewport");
+        assert.ok(
+          clip.x >= 0 && clip.y >= 0 &&
+            clip.x + clip.width <= viewport.width &&
+            clip.y + clip.height <= viewport.height,
+          "Visible FreeText screenshot ROI must fit completely inside the browser viewport: " +
+            JSON.stringify({ clip, viewport, targetRect, frameRect }),
+        );
+        const screenshotOptions = { clip, captureBeyondViewport: false };
+        await markFreeTextTrace("test.screenshot.before-roi", { screenshotOptions, viewport });
+        const screenshot = await page.screenshot(screenshotOptions);
+        await markFreeTextTrace("test.screenshot.after-roi", { screenshotOptions, viewport });
+        const decoded = decodePngRgb(Buffer.from(screenshot));
+        const pixels = decoded.pixels;
+        const baselineKey = JSON.stringify({ x: clip.x, y: clip.y, width: decoded.width, height: decoded.height });
+        if (captureBaseline) visualBaselines.set(baselineKey, Buffer.from(pixels));
+        const baseline = visualBaselines.get(baselineKey);
+        let nonWhitePixels = 0;
+        let darkPixels = 0;
+        let differentPixels = baseline?.length === pixels.length ? 0 : null;
+        for (let index = 0; index < pixels.length; index += 3) {
+          const red = pixels[index];
+          const green = pixels[index + 1];
+          const blue = pixels[index + 2];
+          if (red < 248 || green < 248 || blue < 248) nonWhitePixels += 1;
+          if (red + green + blue < 600) darkPixels += 1;
+          if (baseline && (red !== baseline[index] || green !== baseline[index + 1] || blue !== baseline[index + 2])) {
+            differentPixels += 1;
+          }
+        }
+        return {
+          targetRect,
+          screenshotClip: clip,
+          width: decoded.width,
+          height: decoded.height,
+          nonWhitePixels,
+          darkPixels,
+          fingerprint: createHash("sha256").update(pixels).digest("hex"),
+          differentPixels,
+        };
+      };
+      const snapshot = async (label, visualRoi = null) => {
+        await markFreeTextTrace(`test.snapshot.before-state:${label}`);
+        const state = await viewer.evaluate(({ label: labelValue }) => {
           const app = PDFViewerApplication;
           const page = document.querySelector('.page[data-page-number="1"]');
           const annotationLayer = page?.querySelector(".annotationLayer");
@@ -803,7 +1138,7 @@ test(
           const manager = app.pdfViewer?._layerProperties?.annotationEditorUIManager;
           const editors = manager ? [...manager.getEditors(0)] : [];
           const editor = editors.find((candidate) =>
-            candidate.annotationElementId && candidate.editorType === "freetext" &&
+            candidate.editorType === "freetext" &&
             (candidate.serialize?.()?.value?.includes("UndoVisibilityProof") ||
               candidate.div?.textContent?.includes("UndoVisibilityProof") ||
               app.pdfDocument.annotationStorage.getRawValue(candidate.id)?.value?.includes("UndoVisibilityProof")),
@@ -863,23 +1198,39 @@ test(
               serialized: editor.serialize?.() || null,
               divConnected: !!editor.div?.isConnected,
             } : null,
+            editorVisual: editor?.div ? (() => {
+              const rect = editor.div.getBoundingClientRect();
+              const internalRect = editor.div.querySelector(".internal")?.getBoundingClientRect();
+              return {
+                text: editor.div.textContent.trim(),
+                hidden: editor.div.hidden || editor.div.classList.contains("hidden"),
+                display: getComputedStyle(editor.div).display,
+                visibility: getComputedStyle(editor.div).visibility,
+                rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                textRect: internalRect
+                  ? { x: internalRect.x, y: internalRect.y, width: internalRect.width, height: internalRect.height }
+                  : null,
+              };
+            })() : null,
             rawValues,
-            canvasRoi: window.__samplePageCanvasRoi(
-              roiValue,
-              labelValue === "reopened-original",
-            ),
             trustedUndo: window.__trustedKeys?.filter((event) => /z/i.test(event.key)).slice(-3) || [],
           };
-        }, { label, canvasRoi });
+        }, { label });
+        await markFreeTextTrace(`test.snapshot.after-state:${label}`);
+        const targetRect = visualRoi || state.editorVisual?.textRect || state.editorVisual?.rect;
+        const screenshotRoi = targetRect
+          ? await sampleVisibleRoi(targetRect, label === "reopened-original")
+          : { targetRect: null, nonWhitePixels: null, fingerprint: null, differentPixels: null };
         const host = await page.evaluate(() => ({
           saves: (window.__hostState?.saves || []).map(({ documentId, openRequest, revision, origin, operationCount }) => ({ documentId, openRequest, revision, origin, operationCount })),
+          operations: [...(window.__hostState?.operations?.values?.() || [])],
           opened: window.__hostState?.opened,
           opens: window.__hostState?.opens,
           errors: window.__hostState?.errors,
           recoveries: (window.__hostState?.recoveries || []).map(({ documentId, openRequest, revision, reason, operationCount }) => ({ documentId, openRequest, revision, reason, operationCount })),
           exports: (window.__hostState?.exports || []).map(({ documentId, openRequest, revision, requestId, byteLength }) => ({ documentId, openRequest, revision, requestId, byteLength })),
         }));
-        const result = { ...state, host };
+        const result = { ...state, visualRoi: screenshotRoi, host };
         evidence.push(result);
         await persistEvidence();
         return result;
@@ -950,6 +1301,30 @@ test(
           document.activeElement === internal;
       }, { timeout: 15_000 }, editorSelector);
       evidence.push({ stage: "typed", point: createPoint, editor: await snapshot("typed") });
+      // PDF.js commits a FreeText editor with Meta+Enter on macOS and
+      // Control+Enter elsewhere. Commit before switching tools so its
+      // measured PDF rectangle is available to the immutable-source sidecar.
+      const commitModifier = await viewer.evaluate(() =>
+        navigator.platform.includes("Mac") ? "Meta" : "Control",
+      );
+      await page.keyboard.down(commitModifier);
+      try {
+        await page.keyboard.press("Enter");
+      } finally {
+        await page.keyboard.up(commitModifier);
+      }
+      await viewer.waitForFunction((value) => {
+        const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        const editor = [...(manager?.getEditors(0) || [])].find((candidate) =>
+          candidate.deleted !== true && candidate.editorType === "freetext" &&
+          candidate.div?.querySelector(".internal")?.textContent === value,
+        );
+        const serialized = editor?.serialize?.(true);
+        const rect = editor?.div?.getBoundingClientRect();
+        return Boolean(serialized?.value === value && Array.isArray(serialized.rect) &&
+          serialized.rect[2] > serialized.rect[0] && serialized.rect[3] > serialized.rect[1] &&
+          rect?.width > 0 && rect?.height > 0);
+      }, { timeout: 10_000 }, "UndoVisibilityProof");
       const noneButtonTarget = await viewer.$eval("#editorFreeTextButton", (button) => {
         const rect = button.getBoundingClientRect();
         const candidates = [
@@ -1008,6 +1383,17 @@ test(
       );
       await snapshot("created-committed");
       await waitForSaveCount(1);
+      const initialSidecarSave = await page.evaluate(() => {
+        const save = window.__hostState?.saves?.[0];
+        return save ? {
+          operationCount: save.operationCount,
+          hasBinaryPayload: save.hasBinaryPayload,
+        } : null;
+      });
+      assert.ok(initialSidecarSave?.operationCount > 0,
+        "The committed FreeText must persist a durable Sidecar operation");
+      assert.equal(initialSidecarSave.hasBinaryPayload, false,
+        "Ordinary FreeText persistence must not send a mutable PDF binary payload");
       await viewer.waitForFunction(() => {
         const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
         const editors = [...(manager?.getEditors(0) || [])];
@@ -1037,45 +1423,40 @@ test(
       const expectedOpen = 2;
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(expectedOpen);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
       const afterReopen = await snapshot("reopened-original");
-      const originalCanvasRoi = afterReopen.canvasRoi;
-      assert.ok(
-        originalCanvasRoi?.canvasFound &&
-          originalCanvasRoi.targetRect &&
-          Number.isFinite(originalCanvasRoi.nonWhitePixels),
-        "The reopened FreeText must map to a readable page-canvas ROI: " +
-          JSON.stringify(originalCanvasRoi),
+      const originalVisualRoi = afterReopen.visualRoi;
+      const sidecarOperationFor = (snapshot, uuid) => snapshot.host.operations.find((row) => row.uuid === uuid);
+      const reopenedSidecarOperation = afterReopen.host.operations.find((row) =>
+        row.kind === "FreeText" && row.payload?.editor?.value?.includes("UndoVisibilityProof"),
       );
       assert.ok(
-        originalCanvasRoi.nonWhitePixels > 0,
-        "The saved FreeText AP must contribute non-white pixels to the page canvas: " +
-          JSON.stringify(originalCanvasRoi),
+        afterReopen.editorVisual?.rect?.width > 0 && afterReopen.editorVisual?.rect?.height > 0 &&
+          afterReopen.editorVisual.text.includes("UndoVisibilityProof"),
+        "The reopened sidecar FreeText editor must render its text with positive DOM geometry: " +
+          JSON.stringify(afterReopen.editorVisual),
       );
-      const reopenedAnnotation = await viewer.evaluate(async () => {
-        const page = await PDFViewerApplication.pdfDocument.getPage(1);
-        const annotation = (await page.getAnnotations()).find((entry) =>
-          entry.subtype === "FreeText" &&
-          (entry.contents?.includes("UndoVisibilityProof") || entry.contentsObj?.str?.includes("UndoVisibilityProof")),
-        );
-        return annotation ? {
-          id: annotation.id,
-          hasAppearance: annotation.hasAppearance,
-          contents: annotation.contents,
-          contentsObj: annotation.contentsObj?.str,
-        } : null;
-      });
-      evidence.push({ stage: "saved-annotation-data", annotation: reopenedAnnotation });
+      assert.ok(
+        reopenedSidecarOperation && reopenedSidecarOperation.deleted !== true,
+        "The reopened editor must be bound to its active durable FreeText sidecar operation",
+      );
+      const savedFreeTextId = reopenedSidecarOperation.uuid;
+      evidence.push({ stage: "reopened-sidecar-operation", operation: reopenedSidecarOperation });
       await persistEvidence();
-      assert.ok(reopenedAnnotation, "Saved FreeText must appear in PDF annotation data");
-      assert.equal(reopenedAnnotation.hasAppearance, true, "Saved FreeText must carry a rendered AP");
-      assert.ok(afterReopen.annotation?.rect?.width > 0, "Saved FreeText AP must be visible after reopening");
-      const eraseRect = afterReopen.annotation.rect;
-      assert.ok(eraseRect.width > 0 && eraseRect.height > 0, "Expected a positive FreeText AP target rect");
+      assert.ok(originalVisualRoi.targetRect && originalVisualRoi.nonWhitePixels > 0,
+        "The reopened sidecar renderer must contribute visible pixels in the screenshot ROI: " +
+          JSON.stringify(originalVisualRoi));
+      assert.equal(afterReopen.editor.annotationElementId, null,
+        "A sidecar-only FreeText remains a PDF.js editor and is not misreported as an embedded PDF annotation");
+      assert.equal(afterReopen.host.opens[0].byteLength, afterReopen.host.opens[1].byteLength,
+        "Reopening a sidecar operation supplies the unchanged source PDF bytes");
+      const eraseRect = afterReopen.editorVisual.rect;
       const eraseStart = {
         x: iframeRect.x + eraseRect.x + Math.min(eraseRect.width / 2, 8),
         y: iframeRect.y + eraseRect.y + Math.min(eraseRect.height / 2, 8),
       };
+      const eraseSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
       await page.evaluate(() => window.__holdNextSaveAck());
       await page.mouse.move(eraseStart.x, eraseStart.y);
       await page.mouse.down({ button: "right" });
@@ -1084,7 +1465,6 @@ test(
       await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 15_000 });
       const eraserMode = await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
       assert.equal(eraserMode, 0, "Temporary eraser must restore NONE mode");
-      const eraseSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
       await waitForSaveCount(eraseSaveCount);
       const heldEraseSave = await page.evaluate(() => ({
         held: window.__hostState.heldSaves.length,
@@ -1096,224 +1476,221 @@ test(
       assert.equal(heldEraseSave.held, 1, "The eraser save must remain unacknowledged for the undo boundary case");
       const afterErase = await snapshot(
         "after-right-erase-save-held",
-        originalCanvasRoi.targetRect,
+        originalVisualRoi.targetRect,
+      );
+      const erasedOperation = sidecarOperationFor(afterErase, savedFreeTextId);
+      assert.ok(
+        erasedOperation?.deleted === true,
+        "Right-drag must persist a tombstone for the same FreeText sidecar UUID",
       );
       assert.ok(
-        afterErase.rawValues.some(
-          (entry) => entry.deleted === true && entry.id === reopenedAnnotation.id,
-        ),
-        "Right-drag must serialize a deleted FreeText tombstone",
+        !afterErase.editorVisual || afterErase.editorVisual.hidden ||
+          afterErase.editorVisual.display === "none" || afterErase.editorVisual.visibility === "hidden" ||
+          afterErase.editorVisual.rect.width === 0,
+        "The erased sidecar editor must disappear from the visible editor layer in NONE mode",
       );
+      const erasedVisualRoi = await waitForVisualChangeFromBaseline(originalVisualRoi.targetRect);
       assert.ok(
-        !afterErase.annotation ||
-          afterErase.annotation.hidden ||
-          afterErase.annotation.display === "none" ||
-          afterErase.annotation.rect.width === 0,
-        "Erased FreeText AP must be hidden after returning to NONE",
+        erasedVisualRoi.differentPixels > 0 &&
+          erasedVisualRoi.fingerprint !== originalVisualRoi.fingerprint,
+        "Right eraser must remove the rendered sidecar text from the visible screenshot ROI: " +
+          JSON.stringify({ original: originalVisualRoi, erased: erasedVisualRoi }),
       );
-      await waitForCanvasChangeFromBaseline(originalCanvasRoi.targetRect);
-      const erasedCanvasRoi = await viewer.evaluate((targetRect) =>
-        window.__samplePageCanvasRoi(targetRect),
-        originalCanvasRoi.targetRect,
-      );
-      assert.ok(
-        erasedCanvasRoi.differentPixels > 0 &&
-          erasedCanvasRoi.fingerprint !== originalCanvasRoi.fingerprint,
-        "Right eraser must remove pixels from the saved AP's page-canvas ROI: " +
-          JSON.stringify({ original: originalCanvasRoi, erased: erasedCanvasRoi }),
-      );
-      evidence.push({ stage: "erased-page-canvas-roi", canvasRoi: erasedCanvasRoi });
+      evidence.push({ stage: "erased-sidecar-render-roi", visualRoi: erasedVisualRoi });
       await persistEvidence();
 
+      const undoSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
       await page.keyboard.down("Meta");
       await page.keyboard.press("z");
       await page.keyboard.up("Meta");
       await viewer.waitForFunction(() => {
         const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
         return [...(manager?.getEditors(0) || [])].some((editor) =>
-          editor.annotationElementId && editor.deleted === false &&
-          editor.editorType === "freetext",
+          editor.deleted === false && editor.editorType === "freetext" &&
+          (editor.serialize?.()?.value?.includes("UndoVisibilityProof") ||
+            editor.div?.textContent?.includes("UndoVisibilityProof")),
         );
       }, { timeout: 10_000 });
-      const undoWhileSaveHeld = await snapshot(
+      const undoBeforeRepaint = await snapshot(
         "undo-while-erase-save-held",
-        originalCanvasRoi.targetRect,
+        originalVisualRoi.targetRect,
       );
-      const undoKey = undoWhileSaveHeld.trustedUndo?.at(-1);
+      const undoKey = undoBeforeRepaint.trustedUndo?.at(-1);
       assert.ok(undoKey?.metaKey && String(undoKey.key).toLowerCase() === "z", "Undo must be a trusted Meta-Z key");
-      assert.equal(undoWhileSaveHeld.mode, 0, "Undo must leave the editor in NONE mode while the prior save is pending");
-      assert.equal(undoWhileSaveHeld.editor?.annotationElementId, reopenedAnnotation.id, "Undo must restore the same saved FreeText editor");
       assert.equal(
-        undoWhileSaveHeld.canvasRoi.fingerprint,
-        erasedCanvasRoi.fingerprint,
-        "The page canvas must stay erased until the held save is acknowledged",
+        undoBeforeRepaint.mode,
+        0,
+        "Undo must leave the editor in NONE mode while the previous sidecar save is pending",
+      );
+      assert.equal(sidecarOperationFor(undoBeforeRepaint, savedFreeTextId)?.deleted, true,
+        "The host must retain the right-erase tombstone until it acknowledges the pending undo save");
+      const undoPendingVisualRoi = await waitForVisualRestoreBaseline(originalVisualRoi.targetRect);
+      const undoWhileSaveHeld = await snapshot(
+        "undo-while-erase-save-held-painted",
+        originalVisualRoi.targetRect,
       );
       assert.ok(
-        !undoWhileSaveHeld.annotation ||
-          undoWhileSaveHeld.annotation.hidden ||
-          undoWhileSaveHeld.annotation.display === "none" ||
-          undoWhileSaveHeld.annotation.rect.width === 0,
-        "The AP repair must wait until the real host save is acknowledged",
+        undoWhileSaveHeld.editorVisual?.rect?.width > 0 &&
+          undoWhileSaveHeld.editorVisual?.text.includes("UndoVisibilityProof"),
+        "Undo must immediately restore the visible sidecar FreeText while persistence is pending",
       );
+      assert.equal(undoPendingVisualRoi.differentPixels, 0,
+        "Undo restores the same rendered FreeText pixels even before the earlier save ACK arrives");
       await page.evaluate(() => window.__releaseHeldSaveAcks());
-      await waitForSaveCount(eraseSaveCount + 1);
+      await waitForSaveCount(undoSaveCount);
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
-      await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect.width > 0 && rect.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
-      await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
       const afterUndo = await snapshot(
         "after-trusted-meta-z-and-ack",
-        originalCanvasRoi.targetRect,
+        originalVisualRoi.targetRect,
       );
       assert.ok(
-        afterUndo.annotation?.rect?.width > 0 && afterUndo.annotation?.rect?.height > 0,
-        "Undo must restore a visible saved FreeText AP in NONE mode",
+        afterUndo.editorVisual?.rect?.width > 0 && afterUndo.editorVisual?.rect?.height > 0 &&
+          afterUndo.editorVisual.text.includes("UndoVisibilityProof"),
+        "Undo must restore the same visible sidecar FreeText in NONE mode",
       );
-      assert.equal(afterUndo.mode, 0, "Undo must keep the viewer in NONE mode after deferred repair");
-      assert.equal(afterUndo.annotation?.annotationId, reopenedAnnotation.id, "Undo must show the same saved AP");
-      assert.equal(afterUndo.editor?.annotationElementId, reopenedAnnotation.id, "Undo must retain the same saved editor identity");
-      assert.equal(afterUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Page repaint must preserve the exact undo-restored editor instance");
+      assert.equal(afterUndo.mode, 0, "Undo must keep the viewer in NONE mode after the sidecar save ACK");
+      assert.equal(sidecarOperationFor(afterUndo, savedFreeTextId)?.deleted, false,
+        "The durable undo operation must reactivate the same sidecar UUID");
       assert.equal(
         afterUndo.host.saves.length,
         eraseSaveCount + 1,
-        "The visual page repaint must not create an extra document revision or host save",
+        "The visual sidecar repaint must not create an extra document revision or host save",
       );
       assert.ok(
-        afterUndo.canvasRoi.nonWhitePixels >= Math.max(1, Math.floor(originalCanvasRoi.nonWhitePixels * 0.75)),
-        "Undo must repaint the saved AP pixels on the PDF page canvas: " +
-          JSON.stringify({ before: originalCanvasRoi, after: afterUndo.canvasRoi }),
+        afterUndo.visualRoi.nonWhitePixels > 0,
+        "Undo must repaint non-white FreeText pixels in the browser screenshot ROI: " +
+          JSON.stringify({ before: originalVisualRoi, after: afterUndo.visualRoi }),
       );
       assert.equal(
-        afterUndo.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "Undo must restore the original page-canvas ROI pixels exactly",
+        afterUndo.visualRoi.fingerprint,
+        originalVisualRoi.fingerprint,
+        "Undo must restore the same sidecar FreeText screenshot pixels",
       );
-      assert.equal(afterUndo.canvasRoi.differentPixels, 0, "Undo page-canvas ROI must match the original saved AP pixel-for-pixel");
+      assert.equal(afterUndo.visualRoi.differentPixels, 0, "Undo screenshot ROI must match the original sidecar rendering pixel-for-pixel");
 
+      const redoSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
       await page.keyboard.down("Meta");
       await page.keyboard.down("Shift");
       await page.keyboard.press("z");
       await page.keyboard.up("Shift");
       await page.keyboard.up("Meta");
       await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 10_000 });
-      await viewer.waitForFunction(({ targetRect, erasedFingerprint }) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const sample = window.__samplePageCanvasRoi(targetRect);
-        return (!section || section.hidden || getComputedStyle(section).display === "none" ||
-          section.getBoundingClientRect().width === 0) &&
-          sample.fingerprint === erasedFingerprint &&
-          sample.differentPixels > 0;
-      }, { timeout: 15_000 }, {
-        targetRect: originalCanvasRoi.targetRect,
-        erasedFingerprint: erasedCanvasRoi.fingerprint,
-      });
-      const afterRedo = await snapshot("after-trusted-meta-shift-z", originalCanvasRoi.targetRect);
+      await waitForSaveCount(redoSaveCount);
+      await viewer.waitForFunction((uuid) => window.parent.__hostState?.operations?.get(uuid)?.deleted === true,
+        { timeout: 15_000 }, savedFreeTextId);
+      const afterRedo = await snapshot("after-trusted-meta-shift-z", originalVisualRoi.targetRect);
       assert.ok(
-        !afterRedo.annotation ||
-          afterRedo.annotation.hidden ||
-          afterRedo.annotation.display === "none" ||
-          afterRedo.annotation.rect.width === 0,
-        "Redo must hide the restored FreeText AP again",
+        !afterRedo.editorVisual || afterRedo.editorVisual.hidden ||
+          afterRedo.editorVisual.display === "none" || afterRedo.editorVisual.visibility === "hidden" ||
+          afterRedo.editorVisual.rect.width === 0,
+        "Redo must hide the restored sidecar FreeText editor again",
       );
       assert.equal(
-        afterRedo.canvasRoi.fingerprint,
-        erasedCanvasRoi.fingerprint,
-        "Redo must restore the same erased page-canvas ROI pixels",
+        afterRedo.visualRoi.fingerprint,
+        erasedVisualRoi.fingerprint,
+        "Redo must restore the same erased FreeText screenshot ROI pixels",
       );
+      assert.equal(afterRedo.host.saves.length, redoSaveCount,
+        "Redo must persist exactly one sidecar revision");
+      assert.ok(afterRedo.visualRoi.differentPixels > 0,
+        "Redo must remove visible FreeText pixels from the screenshot ROI");
 
+      const secondUndoSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
       await page.keyboard.down("Meta");
       await page.keyboard.press("z");
       await page.keyboard.up("Meta");
       await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect?.width > 0 && rect?.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
-      await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
-      const afterSecondUndo = await snapshot("after-second-meta-z", originalCanvasRoi.targetRect);
-      assert.ok(afterSecondUndo.annotation?.rect?.width > 0, "A second undo must remain usable after redo");
+        const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
+        return [...(manager?.getEditors(0) || [])].some((editor) =>
+          editor.deleted === false && editor.editorType === "freetext" &&
+          (editor.serialize?.()?.value?.includes("UndoVisibilityProof") ||
+            editor.div?.textContent?.includes("UndoVisibilityProof")),
+        );
+      }, { timeout: 15_000 }, originalVisualRoi.targetRect);
+      await waitForSaveCount(secondUndoSaveCount);
+      await viewer.waitForFunction((uuid) => window.parent.__hostState?.operations?.get(uuid)?.deleted !== true,
+        { timeout: 15_000 }, savedFreeTextId);
+      const afterSecondUndo = await snapshot("after-second-meta-z", originalVisualRoi.targetRect);
+      assert.ok(afterSecondUndo.editorVisual?.rect?.width > 0, "A second undo must remain usable after redo");
       assert.equal(afterSecondUndo.mode, 0, "A second undo must remain in NONE mode");
-      assert.equal(afterSecondUndo.annotation?.annotationId, reopenedAnnotation.id, "A second undo must restore the same saved AP");
-      assert.equal(afterSecondUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Redo and second undo must preserve the same editor history identity");
+      assert.equal(sidecarOperationFor(afterSecondUndo, savedFreeTextId)?.deleted, false,
+        "A second undo must restore the same sidecar UUID");
+      assert.ok(afterSecondUndo.visualRoi.differentPixels === 0,
+        "A second undo must restore the original visible FreeText screenshot ROI");
       assert.equal(
-        afterSecondUndo.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "A second undo must restore the original page-canvas ROI pixels",
+        afterSecondUndo.visualRoi.fingerprint,
+        originalVisualRoi.fingerprint,
+        "A second undo must restore the original sidecar screenshot pixels",
       );
-      assert.equal(afterSecondUndo.canvasRoi.differentPixels, 0, "Second-undo page-canvas ROI must match the original AP pixel-for-pixel");
 
-      const finalSaveCount = await page.evaluate(() => window.__hostState.saves.length + 1);
-      await waitForSaveCount(finalSaveCount);
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
       const reopenedCount = await page.evaluate(() => window.__hostState.opened + 1);
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(reopenedCount);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
       const afterFinalReopen = await snapshot(
         "reopened-restored-free-text",
-        originalCanvasRoi.targetRect,
+        originalVisualRoi.targetRect,
       );
-      const finalAnnotation = await viewer.evaluate(async () => {
-        const page = await PDFViewerApplication.pdfDocument.getPage(1);
-        const annotation = (await page.getAnnotations()).find((entry) =>
-          entry.subtype === "FreeText" &&
-          (entry.contents?.includes("UndoVisibilityProof") || entry.contentsObj?.str?.includes("UndoVisibilityProof")),
-        );
-        return annotation
-          ? {
-              id: annotation.id,
-              hasAppearance: annotation.hasAppearance,
-              contents: annotation.contents,
-              contentsObj: annotation.contentsObj?.str,
-            }
-          : null;
-      });
       assert.ok(
-        afterFinalReopen.annotation?.rect?.width > 0 &&
-          afterFinalReopen.annotation?.text?.includes("UndoVisibilityProof"),
-        "Saved/restored FreeText AP must remain visible with its text after a full save/reopen",
+        afterFinalReopen.editorVisual?.rect?.width > 0 &&
+          afterFinalReopen.editorVisual?.text.includes("UndoVisibilityProof"),
+        "Saved/restored sidecar FreeText must remain visible with its text after a full save/reopen",
       );
+      assert.equal(sidecarOperationFor(afterFinalReopen, savedFreeTextId)?.deleted, false,
+        "The final reopen must hydrate the restored durable sidecar operation");
+      assert.equal(afterFinalReopen.mode, 0, "The final reopen must retain NONE mode");
+      assert.equal(afterFinalReopen.host.opens.at(-1).byteLength, afterFinalReopen.host.opens[0].byteLength,
+        "The final reopen still uses the byte-identical immutable source PDF");
       assert.equal(
-        finalAnnotation?.hasAppearance,
-        true,
-        "The final saved FreeText must retain its PDF appearance stream",
+        afterFinalReopen.visualRoi.fingerprint,
+        originalVisualRoi.fingerprint,
+        "The restored FreeText sidecar renderer must retain the same screenshot pixels after save/reopen",
       );
-      assert.equal(
-        afterFinalReopen.canvasRoi.fingerprint,
-        originalCanvasRoi.fingerprint,
-        "The restored FreeText AP must retain the same page-canvas pixels after save/reopen",
-      );
+      assert.equal(afterFinalReopen.visualRoi.differentPixels, 0,
+        "The final reopened sidecar screenshot ROI must match its original pixels");
       evidence.push({
         stage: "pass",
         afterUndo,
         afterRedo,
         afterSecondUndo,
         afterFinalReopen,
-        finalAnnotation,
       });
       assert.deepEqual(externalRequests, [], "The PDF fixture must not request external origins");
       await persistEvidence();
-      await page.screenshot({ path: path.join(artifactsPath, artifactBase + ".png"), fullPage: false });
+      const finalScreenshotOptions = {
+        path: path.join(artifactsPath, artifactBase + ".png"),
+        fullPage: false,
+        captureBeyondViewport: false,
+      };
+      await markFreeTextTrace("test.screenshot.before-final", finalScreenshotOptions);
+      await page.screenshot(finalScreenshotOptions);
+      await markFreeTextTrace("test.screenshot.after-final", finalScreenshotOptions);
+      await persistEvidence();
       t.diagnostic("Evidence: " + path.join(artifactsPath, artifactBase + ".partial.json"));
     } catch (error) {
       evidence.push({ stage: "failure", message: error.message, stack: error.stack });
       await persistEvidence().catch(() => {});
       if (page && !page.isClosed()) {
-        await page.screenshot({ path: path.join(artifactsPath, artifactBase + ".png"), fullPage: false }).catch(() => {});
+        const failureScreenshotOptions = {
+          path: path.join(artifactsPath, artifactBase + ".png"),
+          fullPage: false,
+          captureBeyondViewport: false,
+        };
+        await markFreeTextTrace("test.screenshot.before-failure", failureScreenshotOptions);
+        await page.screenshot(failureScreenshotOptions).catch(() => {});
+        await markFreeTextTrace("test.screenshot.after-failure", failureScreenshotOptions);
+        await persistEvidence().catch(() => {});
       }
       primaryError = error;
     } finally {
+      if (page && !page.isClosed()) {
+        await page.evaluate(() => {
+          const frame = document.querySelector('iframe[name="pdf-reader"]');
+          frame?.contentWindow?.__freeTextCommitDiagnostic?.dispose?.();
+        }).catch(() => {});
+      }
       cleanupReport = await cleanupBrowserTestResources({
         browser,
         browserObserver: browserStderrObserver,

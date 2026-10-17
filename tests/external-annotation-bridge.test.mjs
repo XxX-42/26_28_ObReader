@@ -71,6 +71,136 @@ function evaluateHelpers(names, body, exposed = []) {
   return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
 
+test("history reveals only newly restored Sidecar FreeText in the current editor layer", () => {
+  const helpers = evaluateHelpers(
+    ["liveSidecarFreeTextEditors", "showRestoredSidecarFreeTextEditors"],
+    "const state = { disposed: false, annotationUuidByRuntimeId: new Map() };",
+    ["state"],
+  );
+  const { state, liveSidecarFreeTextEditors, showRestoredSidecarFreeTextEditors } = helpers;
+  let shows = 0;
+  const layer = { div: {} };
+  const builder = { annotationEditorLayer: layer, show() { shows += 1; } };
+  const editors = [];
+  const manager = { *getEditors() { yield* editors; } };
+  const app = { pdfDocument: { numPages: 1 }, pdfViewer: {
+    _layerProperties: { annotationEditorUIManager: manager },
+    getPageView() { return { annotationEditorLayer: builder }; },
+  } };
+  state.app = app;
+  const makeEditor = (id, fields = {}) => ({
+    id, editorType: "freetext", pageIndex: 0, parent: layer,
+    div: { isConnected: true, parentElement: layer.div },
+    isEmpty() { return false; }, ...fields,
+  });
+  const existing = makeEditor("existing");
+  state.annotationUuidByRuntimeId.set(existing.id, "existing-uuid");
+  editors.push(existing);
+  const before = liveSidecarFreeTextEditors(manager, app);
+  const restored = makeEditor("restored");
+  state.annotationUuidByRuntimeId.set(restored.id, "same-durable-uuid");
+  editors.push(restored, makeEditor("unbound"));
+  for (const [id, fields] of [
+    ["native", { annotationElementId: "12R" }],
+    ["deleted", { deleted: true }],
+    ["empty", { isEmpty() { return true; } }],
+    ["stale", { parent: {} }],
+    ["detached", { div: { isConnected: false, parentElement: layer.div } }],
+  ]) {
+    state.annotationUuidByRuntimeId.set(id, `${id}-uuid`);
+    editors.push(makeEditor(id, fields));
+  }
+  showRestoredSidecarFreeTextEditors(manager, app, before);
+  assert.equal(shows, 1, "only the rebuilt, bound Sidecar editor reveals its live layer");
+  assert.equal(state.annotationUuidByRuntimeId.get(restored.id), "same-durable-uuid");
+  showRestoredSidecarFreeTextEditors(manager, app, liveSidecarFreeTextEditors(manager, app));
+  assert.equal(shows, 1, "unchanged history does not reveal any layer");
+  state.disposed = true;
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  state.disposed = false;
+  state.app = { ...app };
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  state.app = app;
+  app.pdfViewer._layerProperties.annotationEditorUIManager = {};
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  assert.equal(shows, 1, "disposed, cross-document and replaced-manager sessions cannot reveal stale layers");
+});
+
+test("Sidecar hydration initializes editors without taking creation focus and restores hooks on failure", () => {
+  const { addHydratedEditor } = evaluateHelpers(["addHydratedEditor"], "");
+  const focusRequests = [];
+  const prototype = { onceAdded(focus) { focusRequests.push(focus); } };
+  const editor = Object.create(prototype);
+  const layer = { add(value) { value.onceAdded(true); return value; } };
+  assert.equal(addHydratedEditor(layer, editor), editor);
+  assert.deepEqual(focusRequests, [false], "restoring content is not a new user-created focused editor");
+  assert.equal(Object.hasOwn(editor, "onceAdded"), false, "the temporary adapter cannot leak into later user gestures");
+  editor.onceAdded(true);
+  assert.deepEqual(focusRequests, [false, true], "normal user creation keeps the original PDF.js focus semantics");
+
+  const ownHook = function (focus) { focusRequests.push(focus); };
+  Object.defineProperty(editor, "onceAdded", { value: ownHook, writable: false, enumerable: true, configurable: true });
+  const before = Object.getOwnPropertyDescriptor(editor, "onceAdded");
+  assert.throws(() => addHydratedEditor({ add(value) {
+    value.onceAdded(true);
+    throw new Error("renderer failed");
+  } }, editor), /renderer failed/);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(editor, "onceAdded"), before,
+    "a failed hydration restores the exact original hook descriptor");
+  assert.equal(focusRequests.at(-1), false);
+});
+
+test("selection and LingQ link capture use viewer-owned data-page-number roots with no DOM id", () => {
+  const runtime = evaluateHelpers(
+    ["pageElementForIndex", "readerPageNumberForRoot", "captureReaderSelection", "captureReaderOccurrence"],
+    `
+      const pageRoot = { id: "", dataset: { pageNumber: "2" } };
+      const textLayer = { closest: () => pageRoot };
+      const node = { nodeType: 3, parentElement: { closest: () => textLayer } };
+      const snapshot = { startContainer: node, startOffset: 3, endContainer: node, endOffset: 15,
+        text: "subscription" };
+      const range = { ...snapshot, toString: () => snapshot.text, getBoundingClientRect: () => null };
+      let viewerRoot = pageRoot;
+      const state = {
+        app: { pdfViewer: { getPageView: index => index === 1 ? { div: viewerRoot } : null } },
+        actualSourceIdentity: { sourceHash: "xxh64-v1:source", orderedPageIdentities: ["ref:1R", "ref:2R"] },
+        vocabularyController: { rangeForOccurrence: (page, start, end, surface) =>
+          page === 2 && start === 4 && end === 5 && surface === "subscription" ? range : null },
+        textSelectionController: {
+          rangeSnapshot: () => snapshot,
+          captureRangeAnchor: (layer, selected, root) => layer === textLayer && root === pageRoot
+            ? { exactQuote: selected.text, textPosition: { start: 3, end: 15 } } : null,
+        },
+      };
+      function replaceViewerRoot() { viewerRoot = { ...pageRoot }; }
+    `,
+    ["pageRoot", "replaceViewerRoot"],
+  );
+  for (const capture of [runtime.captureReaderSelection(), runtime.captureReaderOccurrence(2, 4, 5, "subscription")]) {
+    assert.equal(capture?.pageNumber, 2);
+    assert.equal(capture?.pageIndex, 1);
+    assert.equal(capture?.pageIdentity, "ref:2R");
+    assert.equal(capture?.sourceHash, "xxh64-v1:source");
+    assert.equal(capture?.exactQuote, "subscription");
+  }
+  assert.equal(runtime.captureReaderOccurrence(1, 4, 5, "subscription"), null);
+  assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "different"), null);
+  for (const invalid of ["", "0", "2junk", "2.0", "9007199254740992", "3"]) {
+    runtime.pageRoot.dataset.pageNumber = invalid;
+    assert.equal(runtime.captureReaderSelection(), null, `invalid or foreign page label ${invalid} must fail closed`);
+    assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "subscription"), null);
+  }
+  runtime.pageRoot.dataset.pageNumber = "2";
+  runtime.pageRoot.id = "page1";
+  assert.equal(runtime.captureReaderSelection(), null, "conflicting page labels must not be guessed");
+  runtime.pageRoot.id = "page2";
+  delete runtime.pageRoot.dataset.pageNumber;
+  assert.equal(runtime.captureReaderSelection()?.pageNumber, 2, "legacy page ids still require the current viewer root");
+  runtime.replaceViewerRoot();
+  assert.equal(runtime.captureReaderSelection(), null, "a detached root cannot capture against a new viewer page");
+  assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "subscription"), null);
+});
+
 test("stable page anchors navigate through the PDF.js viewer scroll container", async () => {
   const { navigateReaderAnchor, state, messages, pageScrollCalls, pageFocus, getPageLookups } = evaluateHelpers(
     ["performanceNow", "clearTemporaryReaderAnchorFocus", "showTemporaryReaderAnchorFocus", "navigateReaderAnchor"],
@@ -415,15 +545,32 @@ test("legacy UUIDs bind by exact annotation object reference before dirty diffs"
       const match = /^(\\d+)R(\\d*)$/.exec(value || "");
       return match ? match[1] + ":" + (match[2] || "0") : null;
     }
+    ${functionSource("normalizeSyncKind")}
+    ${functionSource("exactSavedIdentityForOperation")}
     ${functionSource("applyLegacyAnnotationIdentities")}
-    return { state, applyLegacyAnnotationIdentities };
+    return { state, applyLegacyAnnotationIdentities, exactSavedIdentityForOperation };
   })()`);
   scope.applyLegacyAnnotationIdentities([
-    { uuid: "legacy-uuid", ref: "42 0 R", pageIndex: 1 },
-    { uuid: "out-of-range", ref: "43 0 R", pageIndex: 2 },
+    { uuid: "legacy-uuid", ref: "42 0 R", pageIndex: 1, kind: "freetext" },
+    { uuid: "out-of-range", ref: "43 0 R", pageIndex: 2, kind: "freetext" },
   ]);
   assert.equal(scope.state.annotationUuidByPdfRef.get("42:0"), "legacy-uuid");
   assert.equal(scope.state.annotationUuidByPdfRef.size, 1);
+  assert.deepEqual(scope.state.syncState.identities, [
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText" },
+  ], "Sidecar-confirmed identities must be eligible for unchanged native-editor Undo capture");
+  assert.deepEqual(scope.exactSavedIdentityForOperation({
+    uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText",
+  }), { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText", runtimeId: null });
+  scope.applyLegacyAnnotationIdentities([
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText" },
+  ]);
+  assert.equal(scope.state.syncState.identities.length, 1, "Repeated confirmations are idempotent");
+  assert.throws(() => scope.applyLegacyAnnotationIdentities([
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 0, kind: "FreeText" },
+  ]), /conflicting page\/type identity/);
+  assert.equal(scope.state.syncState.identities[0].pageIndex, 1,
+    "A conflicting confirmation cannot replace the verified binding");
   assert.match(functionSource("validateExternalAnnotations"), /legacyIdentityRefs/);
   assert.match(functionSource("openDocument"), /applyLegacyAnnotationIdentities\(provisionalExternal\.legacyIdentities\)/);
 });
@@ -509,6 +656,8 @@ test("empty undo/redo does not mark the PDF dirty, while an editor change still 
     function getAnnotationStorageRows(value) { return new Map(value.rows); }
     function captureSavedEditorHistory() { return []; }
     function snapshotSavedFreeTextEditors() { return { activeEditors: new Set(), editorStates: new Map() }; }
+    function liveSidecarFreeTextEditors() { return new Set(); }
+    function showRestoredSidecarFreeTextEditors() {}
     function changedSavedFreeTextEditors() { return []; }
     function hasSavedEditorHistoryTransition() { return false; }
     function noteMutation() { state.revision += 1; }
@@ -788,4 +937,69 @@ test("native annotation layers remain gated until exact tombstones are masked an
   assert.equal(scope.nativeNodes.get("22R").hidden, true);
   assert.equal(scope.nativeNodes.has("unmanaged"), false,
     "unmanaged native annotations are not suppressed by the external ledger");
+});
+
+test("confirmed native mask transitions notify the page renderer before hydration consumes the same mask", () => {
+  const scope = evaluateHelpers(["applyConfirmedNativeAnnotationLayerState"], `
+    const repaints = [];
+    let masked = true;
+    const row = { uuid: "native-text", pageIndex: 0, embeddedRef: "11R", deleted: false };
+    const state = {
+      externalSourceConfirmed: true, nativeAnnotationGateToken: null,
+      externalAnnotationRows: new Map([[row.uuid, row]]),
+      app: { pdfDocument: { annotationStorage: {} } },
+      annotationController: { setEmbeddedDeletionMask(_storage, refs) {
+        const next = refs.includes("11R"), changed = next !== masked;
+        masked = next;
+        return changed;
+      } },
+    };
+    function canonicalPdfAnnotationRef(ref) { return ref; }
+    function observeExternalAnnotationLayerMutations() {}
+    function suppressEmbeddedAnnotation() { return true; }
+    function setNativeAnnotationLayersPending() {}
+    function runtimeLogRecord() {}
+    function repaintEmbeddedAnnotationMaskPages(rows) { repaints.push(rows.map(row => row.uuid)); }
+  `, ["state", "repaints"]);
+  assert.equal(scope.applyConfirmedNativeAnnotationLayerState("doc", 1), true);
+  assert.deepEqual(scope.repaints, [["native-text"]],
+    "clearing the durable tombstone must invalidate the page even if a prior undo repair painted the old mask");
+  assert.equal(scope.state.annotationController.setEmbeddedDeletionMask({}, []), false,
+    "the later hydration sees the already-installed mask and cannot recover a lost repaint notification");
+  scope.applyConfirmedNativeAnnotationLayerState("doc", 1);
+  assert.equal(scope.repaints.length, 1, "an unchanged confirmed mask does not redraw the page again");
+  scope.state.externalAnnotationRows.get("native-text").deleted = true;
+  scope.applyConfirmedNativeAnnotationLayerState("doc", 1);
+  assert.equal(scope.repaints.length, 2, "redo's mask transition also invalidates its page");
+});
+
+test("native mask repaint uses existing loaded page renderers without touching PDF storage or unloaded pages", () => {
+  const scope = evaluateHelpers(["repaintEmbeddedAnnotationMaskPages"], `
+    const events = [];
+    const state = { disposed: false, app: {
+      pdfDocument: { get annotationStorage() { throw Error("render invalidation must not write storage"); } },
+      pdfViewer: {
+        getPageView(index) {
+          return index === 0 ? { canvas: {}, update(options) { events.push(["update", index, options]); } } :
+            index === 1 ? { update() { throw Error("unloaded page must not be rendered"); } } : null;
+        },
+        forceRendering() { events.push(["force"]); },
+      },
+    } };
+  `, ["state", "events"]);
+  scope.repaintEmbeddedAnnotationMaskPages([
+    { pageIndex: 0, embeddedRef: "11R" },
+    { pageIndex: 0, embeddedRef: "12R" },
+    { pageIndex: 1, embeddedRef: "21R" },
+    { pageIndex: 2, embeddedRef: "31R" },
+    { pageIndex: 3, embeddedRef: null },
+  ]);
+  assert.deepEqual(scope.events, [["update", 0, {}], ["force"]],
+    "only an already-rendered page with source references is invalidated, once per page");
+  scope.events.length = 0;
+  scope.repaintEmbeddedAnnotationMaskPages([{ pageIndex: 1, embeddedRef: "21R" }]);
+  assert.deepEqual(scope.events, [], "no loaded target means no unrelated forced rendering");
+  scope.state.disposed = true;
+  scope.repaintEmbeddedAnnotationMaskPages([{ pageIndex: 0, embeddedRef: "11R" }]);
+  assert.deepEqual(scope.events, [], "disposed viewers do not repaint");
 });

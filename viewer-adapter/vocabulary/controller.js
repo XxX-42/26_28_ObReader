@@ -9,6 +9,58 @@ import {
 import { VocabularyHighlightRenderer } from "./canvas-overlay.js";
 import { vocabularyEntryPresentation, vocabularyStatusLabel } from "./presentation.js";
 
+function vocabularyPillStatusLabel(record) {
+  const presentation = vocabularyEntryPresentation(record);
+  // Keep the underlying distinction between missing personal state and
+  // dictionary data; the compact card uses a friendlier label for an
+  // unrecorded word.
+  return presentation.status === null && !presentation.hasPersonalRecord
+    ? "陌生词"
+    : presentation.statusLabel;
+}
+
+// CSS-pixel placement shared by desktop and touch viewports. Only the open
+// card is measured; this never queries vocabulary or scans a PDF text layer.
+export function computeVocabularyPillPlacement({ viewport, anchor, width, height, minHeight = 150 }) {
+  const margin = 10;
+  const gap = 12;
+  const leftEdge = Number.isFinite(viewport?.left) ? viewport.left : 0;
+  const topEdge = Number.isFinite(viewport?.top) ? viewport.top : 0;
+  const viewportWidth = Math.max(1, Number(viewport?.width) || 1);
+  const viewportHeight = Math.max(1, Number(viewport?.height) || 1);
+  const insetX = Math.min(margin, viewportWidth / 4);
+  const insetY = Math.min(margin, viewportHeight / 4);
+  const maxWidth = Math.max(1, viewportWidth - insetX * 2);
+  const fullHeight = Math.max(1, viewportHeight - insetY * 2);
+  const cardWidth = Math.min(Math.max(1, Number(width) || 320), maxWidth);
+  const cardHeight = Math.min(Math.max(1, Number(height) || 180), fullHeight);
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, Math.max(min, max)));
+  const centerX = clamp((Number(anchor?.left) + Number(anchor?.right)) / 2 || leftEdge,
+    leftEdge + insetX, leftEdge + viewportWidth - insetX);
+  const anchorTop = clamp(Number(anchor?.top) || topEdge, topEdge + insetY, topEdge + viewportHeight - insetY);
+  const anchorBottom = clamp(Number(anchor?.bottom) || anchorTop, anchorTop, topEdge + viewportHeight - insetY);
+  const above = Math.max(0, anchorTop - topEdge - insetY - gap);
+  const below = Math.max(0, topEdge + viewportHeight - insetY - anchorBottom - gap);
+  const minimumSideHeight = Math.max(1, Number(minHeight) || 150);
+  // Above keeps the grade row beside the word. Below moves that same row to
+  // the top of the card, so the primary buttons stay close to the tap too.
+  const placement = above >= cardHeight || (above >= minimumSideHeight && above >= below)
+    ? "above" : below >= minimumSideHeight || below > above ? "below" : "above";
+  const sideHeight = placement === "above" ? above : below;
+  // A very short viewport cannot hold the whole card on either side. Use its
+  // full safe area; only the body scrolls, while header and grades stay fixed.
+  const maxHeight = sideHeight >= minimumSideHeight ? Math.min(fullHeight, sideHeight) : fullHeight;
+  const renderedHeight = Math.min(cardHeight, maxHeight);
+  return {
+    placement,
+    maxWidth,
+    maxHeight,
+    left: clamp(centerX - cardWidth / 2, leftEdge + insetX, leftEdge + viewportWidth - insetX - cardWidth),
+    top: clamp(placement === "above" ? anchorTop - gap - renderedHeight : anchorBottom + gap,
+      topEdge + insetY, topEdge + viewportHeight - insetY - renderedHeight),
+  };
+}
+
 function isPositivePageNumber(value) {
   return Number.isInteger(value) && value > 0;
 }
@@ -142,6 +194,9 @@ export class VocabularyController {
     this.querySequence = 0;
     this.geometryRedrawHandle = null;
     this.geometryRedrawCancel = null;
+    this.entryPillLayoutHandle = null;
+    this.entryPillLayoutCancel = null;
+    this.visualViewport = windowRef?.visualViewport || null;
     this.pendingGeometryPageNumbers = new Set();
     this.pendingAllGeometryPages = false;
     this.pageByResizeTarget = new WeakMap();
@@ -164,6 +219,7 @@ export class VocabularyController {
         // token sequence is unchanged. Keep its cache and only remeasure the
         // existing ranges in the next frame.
         this.scheduleGeometryRedraw(pageNumber);
+        this.scheduleEntryPillLayout();
         return;
       }
       // Re-scan only when PDF.js actually replaced the text nodes. The page
@@ -171,6 +227,7 @@ export class VocabularyController {
       // request or phrase match is repeated.
       this.refreshPage(pageNumber, { refreshTokens: true });
       this.scheduleGeometryRedraw(pageNumber);
+      this.scheduleEntryPillLayout();
     };
     this.onPageRendered = ({ pageNumber } = {}) => {
       // PDF.js may render the text layer just after its page canvas event.
@@ -180,14 +237,26 @@ export class VocabularyController {
         else if (this.isPageVisible(pageNumber) && page.query?.pending.size === 0) this.renderPageResults(page, page.records);
       });
     };
-    this.onViewAreaChanged = () => this.scanRenderedPages();
-    this.onScaleChanging = () => this.scheduleGeometryRedraw();
-    this.onWindowResize = () => this.scheduleGeometryRedraw();
+    this.onViewAreaChanged = () => {
+      this.scanRenderedPages();
+      this.scheduleEntryPillLayout();
+    };
+    this.onScaleChanging = () => {
+      this.scheduleGeometryRedraw();
+      this.scheduleEntryPillLayout();
+    };
+    this.onWindowResize = () => {
+      this.scheduleGeometryRedraw();
+      this.scheduleEntryPillLayout();
+    };
+    this.onVisualViewportChanged = () => this.scheduleEntryPillLayout();
     this.eventBus?._on?.("textlayerrendered", this.onTextLayerRendered);
     this.eventBus?._on?.("pagerendered", this.onPageRendered);
     this.eventBus?._on?.("updateviewarea", this.onViewAreaChanged);
     this.eventBus?._on?.("scalechanging", this.onScaleChanging);
     this.window?.addEventListener?.("resize", this.onWindowResize, { passive: true });
+    this.visualViewport?.addEventListener?.("resize", this.onVisualViewportChanged, { passive: true });
+    this.visualViewport?.addEventListener?.("scroll", this.onVisualViewportChanged, { passive: true });
   }
 
   setDocument(documentId, openRequest, enabled = this.enabled) {
@@ -555,6 +624,8 @@ export class VocabularyController {
       pageNumber,
       key: entry.surfaceKey,
       rawSurface: entry.rawSurface,
+      logicalSurface: entry.logicalSurface,
+      ...(entry.lineHyphenEvidence?.length ? { lineHyphenEvidence: entry.lineHyphenEvidence } : {}),
       entryType: entry.type,
       documentId: this.identity.documentId,
       openRequest: this.identity.openRequest,
@@ -575,6 +646,15 @@ export class VocabularyController {
         .find((match) => tokenIndex >= match.startIndex && tokenIndex < match.endIndex);
     if (phrase) {
       const tokens = page.tokens.slice(phrase.startIndex, phrase.endIndex);
+      let rawOffset = 0;
+      const lineHyphenEvidence = [];
+      for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        for (const evidence of token.lineHyphenEvidence || []) {
+          lineHyphenEvidence.push({ ...evidence, offset: evidence.offset + rawOffset });
+        }
+        rawOffset += (token.rawSurface || "").length + (index + 1 < tokens.length ? 1 : 0);
+      }
       return {
         type: "phrase",
         startIndex: phrase.startIndex,
@@ -583,6 +663,8 @@ export class VocabularyController {
         // returned by the host identifies the durable vocabulary family.
         surfaceKey: tokens.map((token) => token.surfaceKey).join(" "),
         rawSurface: tokens.map((token) => token.rawSurface).join(" "),
+        logicalSurface: tokens.map((token) => token.logicalSurface ?? token.rawSurface).join(" "),
+        ...(lineHyphenEvidence.length ? { lineHyphenEvidence } : {}),
       };
     }
     // A click in LingQ mode is also the lookup gesture for words that have
@@ -590,7 +672,11 @@ export class VocabularyController {
     // only runs when the Selection is collapsed; the tap can then add a new
     // status record through the same existing pill controls.
     return { type: "word", startIndex: tokenIndex, endIndex: tokenIndex + 1,
-      surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
+      surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface,
+      logicalSurface: tappedToken.logicalSurface ?? tappedToken.rawSurface,
+      ...(tappedToken.lineHyphenEvidence?.length
+        ? { lineHyphenEvidence: tappedToken.lineHyphenEvidence }
+        : {}) };
   }
 
   rangeForOccurrence(pageNumber, startIndex, endIndex, expectedSurface = null) {
@@ -665,9 +751,10 @@ export class VocabularyController {
     this.dismissEntryPill();
     if (!this.document?.createElement || !this.document.body) return false;
     const popup = this.document.createElement("section");
+    const displaySurface = entry.logicalSurface ?? entry.rawSurface;
     popup.className = "pdfReaderVocabularyPill";
     popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-label", `LingQ 词条：${entry.rawSurface}`);
+    popup.setAttribute("aria-label", `LingQ 词条：${displaySurface}`);
     popup.dataset.requestId = requestId;
     popup.dataset.key = entry.surfaceKey;
     popup.dataset.type = entry.type;
@@ -675,7 +762,7 @@ export class VocabularyController {
 
     const heading = this.document.createElement("div");
     heading.className = "pdfReaderVocabularyPillHeading";
-    heading.textContent = entry.rawSurface;
+    heading.textContent = displaySurface;
     const status = this.document.createElement("span");
     status.className = "pdfReaderVocabularyPillStatus";
     status.textContent = "正在读取学习状态…";
@@ -692,7 +779,9 @@ export class VocabularyController {
     const copyOccurrence = this.document.createElement("button");
     copyOccurrence.type = "button";
     copyOccurrence.className = "pdfReaderVocabularyPillOccurrenceLink";
-    copyOccurrence.textContent = "复制此处链接";
+    copyOccurrence.textContent = "🔗 Link";
+    copyOccurrence.setAttribute("aria-label", "复制此处链接");
+    copyOccurrence.title = "复制此处链接";
     copyOccurrence.addEventListener("click", (event) => {
       event.stopPropagation?.();
       if (copyOccurrence.disabled) return;
@@ -760,15 +849,27 @@ export class VocabularyController {
       event.stopPropagation?.();
       this.dismissEntryPill();
     });
-    popup.append(heading, status, pronunciation, meanings, occurrenceActions, backlinkActions, actions, close);
+    const body = this.document.createElement("div");
+    body.className = "pdfReaderVocabularyPillBody";
+    body.append(pronunciation, meanings, backlinkActions);
+    popup.append(heading, status, occurrenceActions, close, body, actions);
     this.document.body.appendChild(popup);
-    this.positionEntryPill(popup, x, y);
     this.entryPill = {
       popup, page, entry, requestId, heading, statusElement: status,
+      anchorPoint: { x, y }, body,
       pronunciation, meanings, buttons, record: null, status: null, pendingStatus: null,
       occurrenceRequestId: null, occurrenceButton: copyOccurrence,
       backlinks, openBacklinks, backlinkRequestId: null, anchorIds: [],
     };
+    this.positionEntryPill(popup, x, y);
+    const ResizeObserverImpl = this.window?.ResizeObserver || globalThis.ResizeObserver;
+    if (typeof ResizeObserverImpl === "function") {
+      const observedPill = this.entryPill;
+      observedPill.resizeObserver = new ResizeObserverImpl(() => {
+        if (this.entryPill === observedPill) this.scheduleEntryPillLayout();
+      });
+      observedPill.resizeObserver.observe(popup);
+    }
     const textPosition = this.textPositionForOccurrence(page, entry.startIndex, entry.endIndex);
     if (textPosition) {
       const backlinkRequestId = `reader-backlink-query-${++this.querySequence}-${this.makeId()}`;
@@ -788,21 +889,86 @@ export class VocabularyController {
     return true;
   }
 
+  pillViewport() {
+    const visual = this.window?.visualViewport;
+    return {
+      left: Math.max(0, Number(visual?.offsetLeft) || 0),
+      top: Math.max(0, Number(visual?.offsetTop) || 0),
+      width: Math.max(1, Number(visual?.width) || Number(this.window?.innerWidth) || 800),
+      height: Math.max(1, Number(visual?.height) || Number(this.window?.innerHeight) || 600),
+    };
+  }
+
+  pillAnchor(x, y) {
+    const pill = this.entryPill;
+    // Reuse the current lexical token range without scanning or matching.
+    const page = this.pages.get(pageKey(pill?.page?.pageNumber)) || pill?.page;
+    const tokens = page?.tokens?.slice(pill?.entry?.startIndex, pill?.entry?.endIndex);
+    const first = tokens?.[0]?.segments?.[0];
+    const last = tokens?.at(-1)?.segments?.at(-1);
+    if (first?.textNode?.isConnected !== false && last?.textNode?.isConnected !== false &&
+        first?.textNode && last?.textNode && this.document?.createRange) {
+      const range = this.document.createRange();
+      try {
+        range.setStart(first.textNode, first.startOffset);
+        range.setEnd(last.textNode, last.endOffset);
+        const rects = Array.from(range.getClientRects()).filter((rect) =>
+          [rect.left, rect.right, rect.top, rect.bottom].every(Number.isFinite) &&
+          rect.right > rect.left && rect.bottom > rect.top);
+        const distance = (rect) => Math.max(rect.left - x, 0, x - rect.right) ** 2 +
+          Math.max(rect.top - y, 0, y - rect.bottom) ** 2;
+        rects.sort((a, b) => distance(a) - distance(b));
+        if (rects.length) return rects[0];
+      } catch { /* Detached text geometry falls back to the original tap. */ }
+      finally { range.detach?.(); }
+    }
+    return { left: x, right: x, top: y, bottom: y };
+  }
+
   positionEntryPill(popup, x, y) {
-    const width = Math.max(0, Number(this.window?.innerWidth) || 0);
-    const height = Math.max(0, Number(this.window?.innerHeight) || 0);
-    popup.style.left = "8px";
-    popup.style.top = "8px";
+    const viewport = this.pillViewport();
+    const maxWidth = Math.max(1, viewport.width - 20);
+    const maxHeight = Math.max(1, viewport.height - 20);
+    popup.style.setProperty?.("--pill-visual-width", `${viewport.width}px`);
+    popup.dataset.compactHeader = String(viewport.width < 300);
+    popup.style.maxWidth = `${Math.min(420, maxWidth)}px`;
+    popup.style.maxHeight = `${Math.min(420, maxHeight)}px`;
+    const anchor = this.pillAnchor(x, y);
     const rect = popup.getBoundingClientRect?.();
-    const popupWidth = Number(rect?.width) || Number(popup.offsetWidth) || 320;
-    const popupHeight = Number(rect?.height) || Number(popup.offsetHeight) || 180;
-    const left = Math.max(8, Math.min(x + 12, Math.max(8, width - popupWidth - 8)));
-    const below = y + 14;
-    const top = below + popupHeight <= height - 8
-      ? below
-      : Math.max(8, y - popupHeight - 14);
-    popup.style.left = `${left}px`;
-    popup.style.top = `${top}px`;
+    // A narrow pinch viewport can wrap the grade row. Reserve the measured
+    // non-scrolling controls plus one line instead of clipping those controls.
+    const bodyRect = this.entryPill?.body?.getBoundingClientRect?.();
+    const minHeight = Math.max(150, (Number(rect?.height) || 0) - (Number(bodyRect?.height) || 0) + 30);
+    const placement = computeVocabularyPillPlacement({ viewport, anchor,
+      width: Number(rect?.width) || Number(popup.offsetWidth) || 320,
+      height: Number(rect?.height) || Number(popup.offsetHeight) || 180, minHeight });
+    popup.dataset.placement = placement.placement;
+    popup.style.maxHeight = `${Math.min(420, placement.maxHeight)}px`;
+    // Constraining the body can change intrinsic width/height. Measure its
+    // final layout once before clamping, including the actual VisualViewport.
+    const finalRect = popup.getBoundingClientRect?.();
+    const finalPlacement = computeVocabularyPillPlacement({ viewport, anchor,
+      width: Number(finalRect?.width) || Number(popup.offsetWidth) || 320,
+      height: Number(finalRect?.height) || Number(popup.offsetHeight) || 180, minHeight });
+    popup.style.left = `${finalPlacement.left}px`;
+    popup.style.top = `${finalPlacement.top}px`;
+  }
+
+  scheduleEntryPillLayout() {
+    const pill = this.entryPill;
+    if (!pill || this.disposed || this.entryPillLayoutHandle !== null) return false;
+    const layout = () => {
+      if (this.entryPill !== pill) return;
+      this.entryPillLayoutHandle = null;
+      this.entryPillLayoutCancel = null;
+      if (this.disposed || !this.identityIsCurrent()) return;
+      this.positionEntryPill(pill.popup, pill.anchorPoint.x, pill.anchorPoint.y);
+    };
+    if (typeof this.window?.requestAnimationFrame === "function") {
+      this.entryPillLayoutHandle = this.window.requestAnimationFrame(layout);
+      this.entryPillLayoutCancel = () => this.window.cancelAnimationFrame?.(this.entryPillLayoutHandle);
+    } else layout();
+    return true;
   }
 
   handleEntryResult(message) {
@@ -815,6 +981,7 @@ export class VocabularyController {
     if (message.error) {
       pill.statusElement.textContent = "学习状态不可用";
       pill.meanings.textContent = "个人词汇数据读取失败。";
+      this.scheduleEntryPillLayout();
       return true;
     }
     this.updatePillRecord(message.record || null);
@@ -828,8 +995,11 @@ export class VocabularyController {
         message?.requestId !== pill.occurrenceRequestId) return false;
     pill.occurrenceRequestId = null;
     pill.occurrenceButton.disabled = message.ok === true;
-    pill.occurrenceButton.textContent = message.ok === true ? "已复制链接" : "复制此处链接";
-    if (message.ok !== true) pill.occurrenceButton.title = message.message || "创建链接失败";
+    pill.occurrenceButton.textContent = "🔗 Link";
+    pill.occurrenceButton.setAttribute("aria-label", message.ok === true ? "已复制链接" : "复制此处链接");
+    pill.occurrenceButton.title = message.ok === true ? "已复制链接" : message.message || "复制此处链接";
+    pill.occurrenceButton.classList.toggle("is-copied", message.ok === true);
+    this.scheduleEntryPillLayout();
     return true;
   }
 
@@ -840,6 +1010,7 @@ export class VocabularyController {
     pill.backlinkRequestId = null;
     if (message.ok !== true || !Number.isSafeInteger(message.count) || message.count < 0) {
       pill.backlinks.textContent = "反向链接：无法确认";
+      this.scheduleEntryPillLayout();
       return true;
     }
     pill.anchorIds = Array.isArray(message.anchorIds)
@@ -848,6 +1019,7 @@ export class VocabularyController {
     pill.backlinks.textContent = `反向链接：${message.count}`;
     pill.openBacklinks.hidden = message.count === 0 || pill.anchorIds.length === 0;
     pill.openBacklinks.disabled = pill.openBacklinks.hidden;
+    this.scheduleEntryPillLayout();
     return true;
   }
 
@@ -864,7 +1036,7 @@ export class VocabularyController {
       button.classList.toggle("is-active", pill.status === status);
     }
     pill.statusElement.textContent = pill.pendingStatus === null
-      ? presentation.statusLabel
+      ? vocabularyPillStatusLabel(record)
       : "正在保存…";
     pill.pronunciation.textContent = presentation.pronunciation;
     pill.pronunciation.hidden = presentation.pronunciation.length === 0;
@@ -874,6 +1046,7 @@ export class VocabularyController {
     pill.meanings.textContent = presentation.meanings.length
       ? presentation.meanings.join("\n")
       : presentation.meaningFallbackLabel;
+    this.scheduleEntryPillLayout();
     return true;
   }
 
@@ -891,6 +1064,10 @@ export class VocabularyController {
         ? { storageKey: pill.record.storageKey }
         : {}),
       rawSurface: pill.entry.rawSurface,
+      logicalSurface: pill.entry.logicalSurface,
+      ...(pill.entry.lineHyphenEvidence?.length
+        ? { lineHyphenEvidence: pill.entry.lineHyphenEvidence }
+        : {}),
       status,
       entryType: pill.entry.type,
       pageNumber: pill.page.pageNumber,
@@ -915,8 +1092,9 @@ export class VocabularyController {
       button.classList.toggle("is-active", pill.status === status);
     }
     pill.statusElement.textContent = pill.pendingStatus === null
-      ? vocabularyEntryPresentation(pill.record).statusLabel
+      ? vocabularyPillStatusLabel(pill.record)
       : "正在保存…";
+    this.scheduleEntryPillLayout();
     return true;
   }
 
@@ -970,10 +1148,15 @@ export class VocabularyController {
     pill.pendingStatus = null;
     this.syncPillStatus(pill);
     pill.meanings.textContent = "状态保存未确认；词库数据未确认更改。";
+    this.scheduleEntryPillLayout();
     return true;
   }
 
   dismissEntryPill() {
+    this.entryPillLayoutCancel?.();
+    this.entryPillLayoutHandle = null;
+    this.entryPillLayoutCancel = null;
+    this.entryPill?.resizeObserver?.disconnect?.();
     this.entryPill?.popup?.remove?.();
     this.entryPill = null;
   }
@@ -1134,6 +1317,8 @@ export class VocabularyController {
     this.eventBus?._off?.("updateviewarea", this.onViewAreaChanged);
     this.eventBus?._off?.("scalechanging", this.onScaleChanging);
     this.window?.removeEventListener?.("resize", this.onWindowResize);
+    this.visualViewport?.removeEventListener?.("resize", this.onVisualViewportChanged);
+    this.visualViewport?.removeEventListener?.("scroll", this.onVisualViewportChanged);
   }
 }
 
@@ -1168,6 +1353,8 @@ function sameTokenSegments(previous, next) {
     const before = previous[index];
     const after = next[index];
       if (before?.surfaceKey !== after?.surfaceKey || before?.rawSurface !== after?.rawSurface ||
+          before?.logicalSurface !== after?.logicalSurface ||
+          JSON.stringify(before?.lineHyphenEvidence || []) !== JSON.stringify(after?.lineHyphenEvidence || []) ||
           before?.segments?.length !== after?.segments?.length) return false;
     for (let segmentIndex = 0; segmentIndex < before.segments.length; segmentIndex += 1) {
       const left = before.segments[segmentIndex];

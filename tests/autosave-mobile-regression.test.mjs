@@ -1,7 +1,7 @@
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +14,7 @@ import {
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -66,7 +67,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
         <meta charset="utf-8">
         <style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
         <iframe title="PDF Reader" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
-        ${browserSidecarHarnessScript({ channel, token })}
+        ${browserSidecarHarnessScript({ channel, token, holdIdentityResponses:true })}
         <script>
           const channel = ${JSON.stringify(channel)};
           const token = ${JSON.stringify(token)};
@@ -76,7 +77,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
           const state = window.__host = {
             ready:false, opened:false, saves:[], flushes:[], runtimeLogs:[], errors:[],
             heldLease:null, queuedLease:null, holdNextLease:false,
-            nextLease:0, leaseEvents:[],
+            nextLease:0, leaseEvents:[], readinessEvents:[],
           };
           function grantLease(message) {
             const leaseId = 'mobile-lease-' + (++state.nextLease);
@@ -105,6 +106,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
               }).catch(error => state.errors.push(error.message));
             } else if (message.type === 'opened') {
               state.opened = true;
+              state.openedAt = Date.now();
             } else if (message.type === 'heavy-acquire') {
               if (state.heldLease || state.queuedLease) {
                 state.errors.push('A second heavy lease was requested before the previous request settled.');
@@ -140,6 +142,9 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
                 }, '*');
               }
             } else if (message.type === 'save') {
+              if (state.saves.length === 0) {
+                state.readinessEvents.push({ type:'first-save-received', at:Date.now() });
+              }
               if (!state.heldLease || state.heldLease.leaseId !== message.heavyLeaseId) {
                 state.errors.push('Save did not carry the currently held heavyLeaseId.');
               }
@@ -223,7 +228,7 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
       executablePath: browserPath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    }, { testName: "autosave-mobile-regression" });
+    }, { testName: "autosave-mobile-regression", artifactsDir: resolveTestArtifactRoot(root) });
     page = await browser.newPage();
     await page.setViewport({ width: 1100, height: 780 });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
@@ -232,7 +237,51 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
     await page.waitForFunction(() => window.__host?.opened, { timeout: 30_000 });
     await viewer.waitForSelector('.page[data-page-number="1"] .annotationEditorLayer');
 
-    const markDirty = () => viewer.evaluate(() => {
+    await page.waitForFunction(() => window.__browserSidecarHost?.identityRequests.some(
+      (request) => request.documentId === "mobile-autosave-session" &&
+        request.openRequest === 1 && request.identityStatus === "KNOWN",
+    ), { timeout: 30_000 });
+    const pendingIdentity = await page.evaluate(() => ({
+      openedAt:window.__host.openedAt,
+      request:window.__browserSidecarHost.identityRequests.find(
+        (request) => request.documentId === "mobile-autosave-session" && request.openRequest === 1,
+      ),
+      heldCount:window.__browserSidecarHost.heldIdentityResponses.length,
+      confirmationCount:window.__browserSidecarHost.identityConfirmations.length,
+      saveCount:window.__host.saves.length,
+    }));
+    const pendingViewer = await viewer.evaluate(() => ({
+      readOnly:document.documentElement.hasAttribute("data-pdf-reader-readonly"),
+      toolDisabled:document.getElementById("editorSquareButton")?.disabled ?? null,
+      storageSize:PDFViewerApplication.pdfDocument.annotationStorage.size,
+    }));
+    assert.equal(pendingViewer.readOnly, true, "The viewer must remain read-only until identity is confirmed");
+    assert.equal(pendingViewer.toolDisabled, true, "Annotation tools must stay disabled while identity is pending");
+    assert.equal(pendingViewer.storageSize, 0, "No synthetic annotation edit may occur while identity is pending");
+    assert.equal(pendingIdentity.heldCount, 1, "The fixture must hold the deterministic identity response");
+    assert.equal(pendingIdentity.confirmationCount, 0);
+    assert.equal(pendingIdentity.saveCount, 0);
+    console.log("[autosave-readiness] identity pending:", JSON.stringify({ pendingIdentity, pendingViewer }));
+
+    const releasedIdentityCount = await page.evaluate(
+      () => window.__browserSidecarHost.releaseIdentityResponses(),
+    );
+    assert.equal(releasedIdentityCount, 1, "The held identity response must be released exactly once");
+    await viewer.waitForFunction(
+      () => !document.documentElement.hasAttribute("data-pdf-reader-readonly"),
+      { timeout: 5_000 },
+    );
+    await page.evaluate(() => {
+      window.__host.identityConfirmedObservedAt = Date.now();
+      window.__host.readinessEvents.push({ type:"identity-confirmed-observed", at:Date.now() });
+    });
+
+    const markDirty = ({ recordReadiness = false } = {}) => viewer.evaluate(({ recordReadiness }) => {
+      const readOnly = document.documentElement.hasAttribute("data-pdf-reader-readonly");
+      if (readOnly) throw new Error("Fixture attempted an annotation edit before identity confirmation");
+      if (recordReadiness) {
+        window.parent.__host.readinessEvents.push({ type:"first-mark-dirty", at:Date.now(), readOnly });
+      }
       const storage = PDFViewerApplication.pdfDocument.annotationStorage;
       if (typeof storage.onModified !== "function") {
         throw new Error("PDF.js annotation storage has no modified callback");
@@ -243,11 +292,43 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
       const serialized = { annotationType: 5, pageIndex: 0,
         rect: [index, 20, index + 60, 60], color: [0, 0, 0], opacity: 1, thickness: 1 };
       storage.setValue(`mobile-fixture-${index}`, serialized);
-    });
+    }, { recordReadiness });
     const saveCount = () => page.evaluate(() => window.__host.saves.length);
 
-    await markDirty();
-    await page.waitForFunction(() => window.__host.saves.length === 1, { timeout: 8_000 });
+    await markDirty({ recordReadiness:true });
+    await page.waitForFunction(() => window.__host.saves.length === 1, { timeout: 8_000 })
+      .catch(async (error) => {
+        console.error("Mobile first-save readiness timeline:", await page.evaluate(() => ({
+          readinessEvents:window.__host.readinessEvents,
+          openedAt:window.__host.openedAt,
+          identityRequests:window.__browserSidecarHost.identityRequests,
+          identityConfirmations:window.__browserSidecarHost.identityConfirmations,
+          heldIdentityCount:window.__browserSidecarHost.heldIdentityResponses.length,
+          saves:window.__host.saves,
+          errors:window.__host.errors,
+        })));
+        console.error("Mobile first-save viewer state:", await viewer.evaluate(() => ({
+          readOnly:document.documentElement.hasAttribute("data-pdf-reader-readonly"),
+          hasChanges:PDFViewerApplication._hasChanges(),
+          modified:PDFViewerApplication._annotationStorageModified,
+          storageSize:PDFViewerApplication.pdfDocument.annotationStorage.size,
+          bridgeLog:window.__PDF_READER_DRAIN_LOG__?.() || [],
+        })));
+        throw error;
+      });
+    const readinessTimeline = await page.evaluate(() => ({
+      request:window.__browserSidecarHost.identityRequests.find(
+        (request) => request.documentId === "mobile-autosave-session" && request.openRequest === 1,
+      ),
+      confirmation:window.__browserSidecarHost.identityConfirmations[0],
+      events:window.__host.readinessEvents,
+    }));
+    const readinessAt = Object.fromEntries(readinessTimeline.events.map(({ type, at }) => [type, at]));
+    assert.ok(readinessTimeline.request.requestedAt <= readinessTimeline.confirmation.sentAt);
+    assert.ok(readinessTimeline.confirmation.sentAt <= readinessAt["identity-confirmed-observed"]);
+    assert.ok(readinessAt["identity-confirmed-observed"] <= readinessAt["first-mark-dirty"]);
+    assert.ok(readinessAt["first-mark-dirty"] <= readinessAt["first-save-received"]);
+    console.log("[autosave-readiness] confirmed/dirty/save timeline:", JSON.stringify(readinessTimeline));
     const firstSave = await page.evaluate(() => window.__host.saves[0]);
     assert.equal(firstSave.origin, "auto");
 
@@ -380,6 +461,23 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
       ownedPages: [page].filter(Boolean),
       server,
     });
+    if (cleanupReport?.status !== "normal" || cleanupReport?.errors?.length) {
+      const artifactDirectory = resolveTestArtifactRoot(root);
+      const artifactPath = path.join(
+        artifactDirectory,
+        `autosave-mobile-cleanup-${Date.now()}-${process.pid}.json`,
+      );
+      try {
+        await mkdir(artifactDirectory, { recursive: true });
+        await writeFile(artifactPath, `${JSON.stringify(cleanupReport, null, 2)}\n`, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        console.error(`[autosave-mobile-cleanup] ${artifactPath}`);
+      } catch (error) {
+        console.error(`[autosave-mobile-cleanup] Could not write ${artifactPath}: ${error?.message || error}`);
+      }
+    }
   }
   const finalError = attachCleanupErrors(primaryError, cleanupReport);
   if (finalError) throw finalError;

@@ -9,6 +9,8 @@ const LINE_BREAK = /^[\r\n\u2028\u2029]$/u;
 const HORIZONTAL_WHITESPACE = /^[\t \f\v\u00a0]$/u;
 const ASCII_DIGIT = /^[0-9]$/u;
 const MAX_PAGE_TEXT_UNITS = 50000;
+const MAX_LINE_HYPHEN_EVIDENCE = 64;
+const MAX_LINE_HYPHEN_SEGMENT_INDEX = 255;
 
 function isLetter(character) {
   return LETTER.test(character);
@@ -226,14 +228,61 @@ function collectSegments(consumedUnits) {
   return segments;
 }
 
-function makeToken(index, consumedUnits, logicalSurface, rawSurface = consumedUnits.map((unit) => unit.character).join("")) {
+function segmentIndexForUnit(segments, unit) {
+  return segments.findIndex((segment) => segment.textNode === unit.node &&
+    unit.startOffset >= segment.startOffset && unit.endOffset <= segment.endOffset);
+}
+
+function makeLineHyphenEvidence(wraps, segments) {
+  if (wraps.length > MAX_LINE_HYPHEN_EVIDENCE) {
+    const error = new RangeError("A PDF token exceeds the line-hyphen evidence limit.");
+    error.code = "line-hyphen-evidence-limit";
+    throw error;
+  }
+  const evidence = wraps.map(({ offset, before, hyphen, after }) => ({
+    offset,
+    left: {
+      segmentIndex: segmentIndexForUnit(segments, before),
+      sourceOffset: before.startOffset,
+      text: before.character,
+    },
+    hyphen: {
+      segmentIndex: segmentIndexForUnit(segments, hyphen),
+      sourceOffset: hyphen.startOffset,
+      text: hyphen.character,
+    },
+    right: {
+      segmentIndex: segmentIndexForUnit(segments, after),
+      sourceOffset: after.startOffset,
+      text: after.character,
+    },
+  }));
+  const valid = evidence.every(({ left, hyphen, right }) =>
+    [left, hyphen, right].every((endpoint) =>
+      Number.isSafeInteger(endpoint.segmentIndex) && endpoint.segmentIndex >= 0 &&
+      endpoint.segmentIndex <= MAX_LINE_HYPHEN_SEGMENT_INDEX &&
+      Number.isSafeInteger(endpoint.sourceOffset) && endpoint.sourceOffset >= 0 &&
+      endpoint.sourceOffset <= MAX_PAGE_TEXT_UNITS,
+    ),
+  );
+  if (!valid) {
+    const error = new RangeError("A PDF token exceeds the line-hyphen evidence bounds.");
+    error.code = "line-hyphen-evidence-limit";
+    throw error;
+  }
+  return evidence;
+}
+
+function makeToken(index, consumedUnits, logicalSurface, rawSurface = consumedUnits.map((unit) => unit.character).join(""), lineHyphenEvidence = [], segments = collectSegments(consumedUnits)) {
   const surfaceKey = normalizeTermKey(logicalSurface);
   if (!surfaceKey) return null;
   return {
     index,
     rawSurface,
+    logicalSurface,
+    lineHyphenEvidence,
     surfaceKey,
-    segments: collectSegments(consumedUnits),
+    segments,
   };
 }
 
@@ -261,6 +310,8 @@ export function scanPageTextLayer(textLayer) {
     const consumedUnits = [];
     const logicalParts = [];
     const rawParts = [];
+    const wraps = [];
+    let rawLength = 0;
     let word = readWordEnd(units, index, textLayer);
     if (!word.hasLetter) {
       index = word.end > index ? word.end : index + 1;
@@ -274,6 +325,7 @@ export function scanPageTextLayer(textLayer) {
       const wordSurface = units.slice(index, word.end).map((unit) => unit.character).join("");
       logicalParts.push(wordSurface);
       rawParts.push(wordSurface);
+      rawLength += wordSurface.length;
       index = word.end;
 
       const hyphen = units[index];
@@ -293,7 +345,14 @@ export function scanPageTextLayer(textLayer) {
       }
 
       appendUnit(units, consumedUnits, index);
+      wraps.push({
+        offset: rawLength,
+        before: previous,
+        hyphen,
+        after: continuation,
+      });
       rawParts.push(hyphen.character);
+      rawLength += hyphen.character.length;
       for (let separatorIndex = index + 1; separatorIndex < continuationIndex; separatorIndex += 1) {
         appendUnit(units, consumedUnits, separatorIndex);
       }
@@ -305,7 +364,9 @@ export function scanPageTextLayer(textLayer) {
     // The source is DOM-owned; its line-end hyphen remains in rawSurface and
     // segment offsets, while only the logical key drops that line-break mark.
     const logicalSurface = logicalParts.join("");
-    const token = makeToken(tokens.length, consumedUnits, logicalSurface, rawParts.join(""));
+    const segments = collectSegments(consumedUnits);
+    const lineHyphenEvidence = makeLineHyphenEvidence(wraps, segments);
+    const token = makeToken(tokens.length, consumedUnits, logicalSurface, rawParts.join(""), lineHyphenEvidence, segments);
     if (token) tokens.push(token);
 
     // A defensive progress guard for malformed/fake DOM text inputs.

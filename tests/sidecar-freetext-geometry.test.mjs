@@ -13,6 +13,7 @@ import {
 } from "./browser-test-cleanup.mjs";
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
@@ -26,7 +27,7 @@ const viewerHtmlPath = path.join(
   "web",
   "viewer.html",
 );
-const artifactsPath = path.join(root, "tests", "artifacts");
+const artifactsPath = resolveTestArtifactRoot(root);
 const channel = "pdf-web-reader";
 const token = `sidecar-freetext-geometry-${Date.now()}-${process.pid}`;
 const documentId = `sidecar-freetext-geometry-${Date.now()}`;
