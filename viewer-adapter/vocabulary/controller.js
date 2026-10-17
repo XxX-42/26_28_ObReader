@@ -593,16 +593,39 @@ export class VocabularyController {
       surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
   }
 
-  rangeForOccurrence(pageNumber, startIndex, endIndex) {
+  rangeForOccurrence(pageNumber, startIndex, endIndex, expectedSurface = null) {
     if (!isPositivePageNumber(pageNumber) || !Number.isSafeInteger(startIndex) ||
         !Number.isSafeInteger(endIndex) || startIndex < 0 || endIndex <= startIndex || endIndex - startIndex > 12) return null;
-    const page = this.pages.get(pageKey(pageNumber));
-    const first = page?.tokens?.[startIndex]?.segments?.[0];
-    const lastSegments = page?.tokens?.[endIndex - 1]?.segments;
+    // A vocabulary pill can outlive its page's visible-page cache entry. The
+    // pill still identifies a lexical token range, but TextNodes are only
+    // cached for rendered pages. Resolve against the current PDF.js text layer
+    // on this explicit user action instead of treating an evicted page cache
+    // as loss of occurrence identity.
+    const pageRoot = this.getPageRoot(pageNumber);
+    const textLayer = pageRoot?.querySelector?.(".textLayer");
+    if (!pageRoot || !textLayer) return null;
+    let page = this.pages.get(pageKey(pageNumber));
+    const cachedNodesAreCurrent = page?.pageRoot === pageRoot && page.textLayer === textLayer &&
+      page.tokens?.every((token) => token.segments?.every((segment) => segment?.textNode &&
+        segment.textNode.isConnected !== false && textLayer.contains?.(segment.textNode) !== false));
+    if (!cachedNodesAreCurrent) {
+      let tokens;
+      try { tokens = this.scan(textLayer); } catch { return null; }
+      if (!Array.isArray(tokens)) return null;
+      page = { pageNumber, pageRoot, textLayer, tokens };
+    }
+    const occurrenceTokens = page.tokens.slice(startIndex, endIndex);
+    if (occurrenceTokens.length !== endIndex - startIndex) return null;
+    if (typeof expectedSurface === "string") {
+      const normalizeWhitespace = (value) => value.replace(/\s+/gu, " ").trim();
+      const resolvedSurface = normalizeWhitespace(occurrenceTokens.map((token) => token?.rawSurface || "").join(" "));
+      if (!expectedSurface.trim() || normalizeWhitespace(expectedSurface) !== resolvedSurface) return null;
+    }
+    const first = occurrenceTokens[0]?.segments?.[0];
+    const lastSegments = occurrenceTokens.at(-1)?.segments;
     const last = lastSegments?.[lastSegments.length - 1];
-    const textLayer = page?.pageRoot?.querySelector?.(".textLayer");
     if (!textLayer || !first?.textNode || !last?.textNode ||
-        !page.pageRoot.contains?.(first.textNode) || !page.pageRoot.contains?.(last.textNode)) return null;
+        !pageRoot.contains?.(first.textNode) || !pageRoot.contains?.(last.textNode)) return null;
     const document = this.document || first.textNode.ownerDocument;
     if (typeof document?.createRange !== "function") return null;
     try {
@@ -679,6 +702,7 @@ export class VocabularyController {
         pageNumber: page.pageNumber,
         startIndex: entry.startIndex,
         endIndex: entry.endIndex,
+        expectedSurface: entry.rawSurface,
         documentId: this.identity.documentId,
         openRequest: this.identity.openRequest,
       });

@@ -127,6 +127,46 @@ body {
   text-decoration-thickness: 2px;
 }
 
+/* A short-lived navigation focus is separate from the document selection and
+   from persistent LingQ/annotation paint. Page anchors get a page outline;
+   text anchors use the CSS Highlight API over their exact Range. */
+::highlight(pdfReaderAnchorFocusText) {
+  background-color: rgb(255 190 35 / 48%);
+  color: inherit;
+  text-decoration: underline 2px rgb(215 135 0 / 90%);
+}
+
+#viewerContainer .page.pdfReaderAnchorFocusPage {
+  animation: pdfReaderAnchorPageFocus 1.8s ease-out both;
+}
+
+@keyframes pdfReaderAnchorPageFocus {
+  0%, 12% {
+    outline: 3px solid var(--interactive-accent, #6957d5);
+    outline-offset: -4px;
+    box-shadow: inset 0 0 0 9999px rgb(255 190 35 / 12%);
+  }
+  100% {
+    outline-color: transparent;
+    box-shadow: inset 0 0 0 9999px transparent;
+  }
+}
+
+#viewerContainer .page .pdfReaderAnchorFocusTextFallback {
+  position: absolute;
+  z-index: 50;
+  border-radius: 2px;
+  background: rgb(255 190 35 / 48%);
+  box-shadow: inset 0 -2px rgb(215 135 0 / 90%);
+  pointer-events: none;
+  animation: pdfReaderAnchorTextFocus 1.8s ease-out both;
+}
+
+@keyframes pdfReaderAnchorTextFocus {
+  0%, 12% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .pdfReaderBacklinkPageBadge {
   position: absolute;
   z-index: 30;
@@ -480,6 +520,19 @@ body {
 #pdfReaderVocabularyToggleButton.is-active {
   color: var(--interactive-accent, var(--button-hover-color));
   box-shadow: inset 0 0 0 1px var(--interactive-accent, var(--focus-outline-color));
+}
+
+/* The tool wheel lives in the PDF.js document. Mirror the bridge's single
+   acknowledged vocabularyEnabled state onto the document root so the LingQ
+   sector stays visibly selected when the wheel is opened later. */
+:root[data-vocabulary-enabled="true"] .pdfToolWheel svg > path:first-of-type {
+  fill: var(--interactive-accent, #6957d5);
+  stroke: var(--interactive-accent, #6957d5);
+}
+
+:root[data-vocabulary-enabled="true"] .pdfToolWheel button[data-sector="0"] {
+  color: var(--interactive-accent, #6957d5);
+  font-weight: 650;
 }
 
 #editorStamp[hidden],

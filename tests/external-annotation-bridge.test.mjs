@@ -72,12 +72,15 @@ function evaluateHelpers(names, body, exposed = []) {
 }
 
 test("stable page anchors navigate through the PDF.js viewer scroll container", async () => {
-  const { navigateReaderAnchor, state, messages, pageScrollCalls } = evaluateHelpers(
-    ["performanceNow", "navigateReaderAnchor"],
+  const { navigateReaderAnchor, state, messages, pageScrollCalls, pageFocus, getPageLookups } = evaluateHelpers(
+    ["performanceNow", "clearTemporaryReaderAnchorFocus", "showTemporaryReaderAnchorFocus", "navigateReaderAnchor"],
     `
       const rendererGeneration = 4;
       const messages = [];
       const pageScrollCalls = [];
+      const pageFocus = new Set();
+      function setTimeout(callback, ms) { if (ms === 50) callback(); return 1; }
+      function clearTimeout() {}
       const source = { sourceHash: "sha256-v1:source", orderedPageIdentities: ["ref:3R", "ref:14R"] };
       const state = {
         actualSourceIdentity: source,
@@ -87,12 +90,16 @@ test("stable page anchors navigate through the PDF.js viewer scroll container", 
           get currentPageNumber() { return this._page; },
           set currentPageNumber(value) { this._page = value; } } },
       };
+      let pageLookups = 0;
       function pageElementForIndex(index) {
-        return { scrollIntoView() { pageScrollCalls.push(index); } };
+        pageLookups += 1;
+        if (pageLookups === 1) return null;
+        return { classList: { add(name) { pageFocus.add(name); }, remove(name) { pageFocus.delete(name); } }, scrollIntoView() { pageScrollCalls.push(index); } };
       }
+      function getPageLookups() { return pageLookups; }
       function postToHost(type, fields) { messages.push({ type, ...fields }); }
     `,
-    ["state", "messages", "pageScrollCalls"],
+    ["state", "messages", "pageScrollCalls", "pageFocus", "getPageLookups"],
   );
 
   await navigateReaderAnchor({
@@ -103,9 +110,64 @@ test("stable page anchors navigate through the PDF.js viewer scroll container", 
   });
 
   assert.equal(state.app.pdfViewer.currentPageNumber, 2);
+  assert.ok(getPageLookups() >= 2, "page-only focus waits for PDF.js to render the target page root");
   assert.deepEqual(pageScrollCalls, [], "offscreen page roots are not used as the navigation mechanism");
+  assert.equal(pageFocus.has("pdfReaderAnchorFocusPage"), true, "page-only anchor receives visible temporary page focus");
   assert.equal(messages[0]?.type, "reader-anchor-navigation-result");
   assert.equal(messages[0]?.ok, true);
+});
+
+test("selection anchors get temporary exact-range focus without replacing document selection", async () => {
+  const { navigateReaderAnchor, state, messages, highlights, pageFocus, selectionCalls } = evaluateHelpers(
+    ["performanceNow", "clearTemporaryReaderAnchorFocus", "showTemporaryReaderAnchorFocus", "navigateReaderAnchor"],
+    `
+      const rendererGeneration = 4;
+      const messages = [];
+      const highlights = new Map();
+      const pageFocus = new Set();
+      const selectionCalls = [];
+      function setTimeout(callback, ms) { return 1; }
+      function clearTimeout() {}
+      class Highlight { constructor(range) { this.range = range; } }
+      const window = { Highlight, CSS: { highlights: {
+        set(name, value) { highlights.set(name, value); },
+        delete(name) { highlights.delete(name); },
+      } } };
+      const document = { createElement() { throw new Error("CSS Highlight API should avoid fallback nodes"); } };
+      const source = { sourceHash: "sha256-v1:source", orderedPageIdentities: ["ref:14R"] };
+      const range = {
+        startContainer: { parentElement: { scrollIntoView() {} } },
+        cloneRange() { return { cloned: true }; },
+      };
+      const state = {
+        actualSourceIdentity: source,
+        activeDocumentId: "doc-1",
+        activeOpenRequest: "open-2",
+        app: { pdfViewer: { currentPageNumber: 1 } },
+        textSelectionController: {
+          rangeForAnchor() { return range; },
+          selectRange() { selectionCalls.push("selectRange"); return true; },
+        },
+      };
+      function pageElementForIndex() {
+        return { classList: { add(name) { pageFocus.add(name); }, remove(name) { pageFocus.delete(name); } } };
+      }
+      function textLayerForPage() { return {}; }
+      function postToHost(type, fields) { messages.push({ type, ...fields }); }
+    `,
+    ["state", "messages", "highlights", "pageFocus", "selectionCalls"],
+  );
+
+  await navigateReaderAnchor({
+    documentId: "doc-1", openRequest: "open-2", rendererGeneration: 4,
+    target: { kind: "selection", pageIdentity: "ref:14R", pageIndex: 0,
+      anchor: { sourceHash: "sha256-v1:source", pageIdentity: "ref:14R" } },
+  });
+
+  assert.equal(messages[0]?.ok, true);
+  assert.equal(selectionCalls.length, 0, "navigation focus does not overwrite the user's persistent DOM selection");
+  assert.equal(highlights.get("pdfReaderAnchorFocusText")?.range.cloned, true, "the exact stored Range is highlighted temporarily");
+  assert.equal(pageFocus.has("pdfReaderAnchorFocusPage"), false, "text anchors do not flash the whole page");
 });
 
 test("stable page anchors fail closed when the ordered identity does not match", async () => {

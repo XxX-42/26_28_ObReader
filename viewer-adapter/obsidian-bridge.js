@@ -215,6 +215,9 @@
     restoredAnnotationToolIdentity: null,
     vocabularyController: null,
   };
+  if (document.documentElement?.dataset) {
+    document.documentElement.dataset.vocabularyEnabled = String(state.vocabularyEnabled === true);
+  }
   if (iosInputPolicy) {
     document.documentElement.dataset.pdfReaderIosInputPolicy = "true";
   }
@@ -358,9 +361,9 @@
     };
   }
 
-  function captureReaderOccurrence(pageNumber, startIndex, endIndex) {
+  function captureReaderOccurrence(pageNumber, startIndex, endIndex, expectedSurface) {
     const controller = state.vocabularyController;
-    const range = controller?.rangeForOccurrence?.(pageNumber, startIndex, endIndex);
+    const range = controller?.rangeForOccurrence?.(pageNumber, startIndex, endIndex, expectedSurface);
     if (!range) return null;
     const textLayer = range.startContainer?.nodeType === 1
       ? range.startContainer.closest?.(".textLayer")
@@ -414,7 +417,8 @@
       if (mode === "quote") return { error: "请先在同一 PDF 页面选择一段文本。" };
     }
     if (mode === "occurrence") {
-      const capture = captureReaderOccurrence(occurrence?.pageNumber, occurrence?.startIndex, occurrence?.endIndex);
+      const capture = captureReaderOccurrence(occurrence?.pageNumber, occurrence?.startIndex,
+        occurrence?.endIndex, occurrence?.expectedSurface);
       if (!capture) return { error: "无法稳定读取当前 LingQ 词汇位置，请重新打开词条后重试。" };
       return { capture };
     }
@@ -434,6 +438,56 @@
       openRequest: state.activeOpenRequest,
       ...(result.capture ? { capture: result.capture } : { error: result.error || "目标不可用。" }),
     });
+  }
+
+  function clearTemporaryReaderAnchorFocus() {
+    if (state.readerAnchorFocusTimer) clearTimeout(state.readerAnchorFocusTimer);
+    state.readerAnchorFocusTimer = null;
+    state.readerAnchorFocusPage?.classList?.remove?.("pdfReaderAnchorFocusPage");
+    state.readerAnchorFocusPage = null;
+    try { window.CSS?.highlights?.delete?.("pdfReaderAnchorFocusText"); } catch {}
+    state.readerAnchorFocusFallbackNodes?.forEach((node) => node.remove?.());
+    state.readerAnchorFocusFallbackNodes = null;
+  }
+
+  function showTemporaryReaderAnchorFocus(pageRoot, range = null) {
+    clearTemporaryReaderAnchorFocus();
+    if (!pageRoot) return false;
+    if (!range) {
+      pageRoot.classList?.add?.("pdfReaderAnchorFocusPage");
+      state.readerAnchorFocusPage = pageRoot;
+    } else {
+      const focusRange = range.cloneRange?.() || range;
+      let installed = false;
+      try {
+        const HighlightCtor = window.Highlight;
+        if (HighlightCtor && window.CSS?.highlights?.set) {
+          window.CSS.highlights.set("pdfReaderAnchorFocusText", new HighlightCtor(focusRange));
+          installed = true;
+        }
+      } catch {}
+      if (!installed) {
+        const pageRect = pageRoot.getBoundingClientRect?.();
+        const rects = Array.from(focusRange.getClientRects?.() || []);
+        if (pageRect && rects.length) {
+          const scaleX = pageRect.width > 0 ? (pageRoot.offsetWidth || pageRect.width) / pageRect.width : 1;
+          const scaleY = pageRect.height > 0 ? (pageRoot.offsetHeight || pageRect.height) / pageRect.height : 1;
+          state.readerAnchorFocusFallbackNodes = rects.map((rect) => {
+            const node = document.createElement("span");
+            node.className = "pdfReaderAnchorFocusTextFallback";
+            node.style.left = `${(rect.left - pageRect.left) * scaleX}px`;
+            node.style.top = `${(rect.top - pageRect.top) * scaleY}px`;
+            node.style.width = `${rect.width * scaleX}px`;
+            node.style.height = `${rect.height * scaleY}px`;
+            pageRoot.appendChild(node);
+            return node;
+          });
+          installed = state.readerAnchorFocusFallbackNodes.length > 0;
+        }
+      }
+    }
+    state.readerAnchorFocusTimer = setTimeout(clearTemporaryReaderAnchorFocus, 1800);
+    return true;
   }
 
   async function navigateReaderAnchor(message) {
@@ -493,10 +547,8 @@
                   if (!isCurrent()) {
                     result.reason = "stale-session";
                   } else {
-                    const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
-                    range.getBoundingClientRect?.();
-                    range.detach?.();
-                    result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+                    const focused = showTemporaryReaderAnchorFocus(pageRoot, range);
+                    result = focused ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
                   }
                 }
               }
@@ -542,9 +594,23 @@
               else if (!range) result = { ok: false, reason: "native-selection-unresolved" };
               else {
                 range.startContainer?.parentElement?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-                const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
-                range.detach?.();
-                result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+                const focused = showTemporaryReaderAnchorFocus(pageRoot, range);
+                result = focused ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+              }
+            } else if (target.kind === "page") {
+              for (let attempt = 0; !pageRoot && attempt < 40; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                if (!isCurrent()) {
+                  result.reason = "stale-session";
+                  break;
+                }
+                pageRoot = pageElementForIndex(pageIndex);
+              }
+              if (!isCurrent()) result.reason = "stale-session";
+              else if (!pageRoot) result = { ok: false, reason: "page-rendered-target-unresolved" };
+              else {
+                const focused = showTemporaryReaderAnchorFocus(pageRoot);
+                result = focused ? { ok: true, reason: null } : { ok: false, reason: "page-focus-unavailable" };
               }
             } else {
               result = { ok: true, reason: null };
@@ -715,9 +781,12 @@
   }
 
   function syncVocabularyMenuButton() {
+    const enabled = state.vocabularyEnabled === true;
+    if (document.documentElement?.dataset) {
+      document.documentElement.dataset.vocabularyEnabled = String(enabled);
+    }
     const button = state.bridgeControls?.vocabularyToggleButton;
     if (!button) return;
-    const enabled = state.vocabularyEnabled === true;
     button.setAttribute("aria-pressed", String(enabled));
     button.classList.toggle("is-active", enabled);
     button.title = enabled ? "LingQ 模式：开启" : "LingQ 模式：关闭";
@@ -883,6 +952,7 @@
     setVocabularyDisplayMode(matchesPending ? pending.displayMode : message.vocabularyDisplayMode);
     state.preferredAnnotationToolMode = normalizeAnnotationToolMode(message.preferredAnnotationToolMode);
     state.restoredAnnotationToolIdentity = null;
+    syncVocabularyMenuButton();
   }
 
   function restorePreferredAnnotationTool(documentId, openRequest) {
@@ -9613,6 +9683,7 @@
         pageNumber: message.pageNumber,
         startIndex: message.startIndex,
         endIndex: message.endIndex,
+        expectedSurface: message.expectedSurface,
       });
       return;
     }

@@ -66,7 +66,7 @@ test("vocabulary enable changes during parsing follow the matching open and igno
     ${functions}
     return { state, calls, queueOpen, handleVocabularyEnabledMessage, handleVocabularyHighlightLevelsMessage,
       prepareVocabularyOpen, bindVocabularyToOpenedDocument };
-  })()`, {});
+  })()`, { document: { documentElement: { dataset: {} } } });
 
   const first = { documentId: "document-a", openRequest: 1, vocabularyEnabled: false,
     vocabularyDisplayMode: "focus",
@@ -151,7 +151,7 @@ test("Reader menu waits for host enable before scanning and binds toggles to a p
     function showStatus(message) { events.push("status:" + message); }
     ${functions}
     return { state, events, toggleVocabularyFromMenu, handleVocabularyEnabledMessage, bindVocabularyToOpenedDocument };
-  })()`, {});
+  })()`, { document: { documentElement: { dataset: {} } } });
 
   api.toggleVocabularyFromMenu({ preventDefault() {}, stopPropagation() {} });
   assert.equal(api.state.vocabularyEnabled, false, "the viewer does not optimistically enable page queries");

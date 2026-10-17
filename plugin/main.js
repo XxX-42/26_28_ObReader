@@ -2618,6 +2618,7 @@ class PdfReaderView extends EditableFileView {
       documentId: identity.documentId, openRequest: identity.openRequest,
       ...(mode === "occurrence" && details ? {
         pageNumber: details.pageNumber, startIndex: details.startIndex, endIndex: details.endIndex,
+        expectedSurface: details.expectedSurface,
       } : {}) });
     if (!sent) {
       globalThis.clearTimeout(pending.timer);
@@ -3004,9 +3005,12 @@ class PdfReaderView extends EditableFileView {
           message.requestId.length > 128 || !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
           !Number.isSafeInteger(message.startIndex) || message.startIndex < 0 ||
           !Number.isSafeInteger(message.endIndex) || message.endIndex <= message.startIndex ||
-          message.endIndex - message.startIndex > 12) return;
+          message.endIndex - message.startIndex > 12 ||
+          typeof message.expectedSurface !== "string" || !message.expectedSurface.trim() ||
+          message.expectedSurface.length > 1600) return;
       const accepted = this.requestReaderAnchorCapture("occurrence", {
         pageNumber: message.pageNumber, startIndex: message.startIndex, endIndex: message.endIndex,
+        expectedSurface: message.expectedSurface,
       }, message.requestId);
       if (!accepted) this.postToViewer({ channel: CHANNEL, token: this.token,
         type: "reader-anchor-occurrence-result", requestId: message.requestId,

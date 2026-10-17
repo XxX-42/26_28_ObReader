@@ -167,8 +167,35 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore+1,
         "Releasing on the LingQ sector should issue exactly one toggle request.");
     };
+    const readLingQWheelAppearance = async (expectedEnabled) => {
+      const countBefore = await page.evaluate(() => window.__host.toggleRequests.length);
+      await page.mouse.move(offset.x+center.x, offset.y+center.y);
+      await page.mouse.down({button:"middle"});
+      await viewer.waitForSelector(".pdfToolWheel", {timeout:5_000});
+      const appearance = await viewer.evaluate(() => {
+        const sector = document.querySelector(".pdfToolWheel svg > path:first-of-type");
+        const label = document.querySelector('.pdfToolWheel button[data-sector="0"]');
+        return {
+          enabled: document.documentElement.dataset.vocabularyEnabled === "true",
+          fill: sector && getComputedStyle(sector).fill,
+          labelColor: label && getComputedStyle(label).color,
+          fontWeight: label && getComputedStyle(label).fontWeight,
+        };
+      });
+      assert.equal(appearance.enabled, expectedEnabled,
+        "The wheel appearance must reflect the bridge's acknowledged vocabulary state.");
+      assert.equal(appearance.fill, expectedEnabled ? "rgb(105, 87, 213)" : "rgba(48, 52, 59, 0.933)",
+        "The LingQ wedge should be visibly selected only while LingQ is enabled.");
+      assert.equal(appearance.labelColor, expectedEnabled ? "rgb(105, 87, 213)" : "rgb(255, 255, 255)");
+      assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore,
+        "Opening and closing the wheel must not change the persisted LingQ state.");
+      await page.mouse.up({button:"middle"});
+      await viewer.waitForFunction(() => !document.querySelector(".pdfToolWheel"), {timeout:5_000});
+    };
     await toggleOnRelease(true);
+    await readLingQWheelAppearance(true);
     await toggleOnRelease(false);
+    await readLingQWheelAppearance(false);
     assert.deepEqual(await page.evaluate(() => window.__host.toggleRequests), [true, false]);
   } catch (error) {
     primaryError = error;

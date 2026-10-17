@@ -713,6 +713,54 @@ test("scrolling keeps visible highlights stable and reuses completed results whe
   runtime.controller.dispose();
 });
 
+test("occurrence link resolves a pruned page against its current text layer and rejects stale token identity", () => {
+  const textNode = { nodeType: 3, nodeValue: "mostly", isConnected: true, ownerDocument: null };
+  const textLayer = { contains: (node) => node === textNode };
+  const pageRoot = {
+    querySelector: (selector) => selector === ".textLayer" ? textLayer : null,
+    contains: (node) => node === textLayer || node === textNode,
+  };
+  const ranges = [];
+  const documentRef = {
+    createRange() {
+      const range = {
+        setStart(node, offset) { this.startContainer = node; this.startOffset = offset; },
+        setEnd(node, offset) { this.endContainer = node; this.endOffset = offset; },
+      };
+      ranges.push(range);
+      return range;
+    },
+  };
+  textNode.ownerDocument = documentRef;
+  let scanCount = 0;
+  const controller = new VocabularyController({
+    app: { pdfViewer: { getPageView: () => ({ div: pageRoot }) } },
+    documentRef,
+    postToHost: () => true,
+    getIdentity: () => ({ documentId: "doc-1", openRequest: 7 }),
+    scan: (layer) => {
+      scanCount += 1;
+      assert.equal(layer, textLayer);
+      return [{ index: 0, rawSurface: "mostly", surfaceKey: "mostly",
+        segments: [{ textNode, startOffset: 0, endOffset: 6 }] }];
+    },
+  });
+  controller.setDocument("doc-1", 7, true);
+  // The page has been pruned from the live visible-page cache while its pill
+  // remains open. An explicit copy action must rescan only this current page.
+  controller.pages.delete("1");
+  assert.equal(controller.rangeForOccurrence(1, 0, 1, "mostly"), ranges.at(-1));
+  assert.equal(scanCount, 1);
+  assert.equal(ranges.at(-1).startContainer, textNode);
+  assert.equal(ranges.at(-1).startOffset, 0);
+  assert.equal(ranges.at(-1).endContainer, textNode);
+  assert.equal(ranges.at(-1).endOffset, 6);
+  assert.equal(controller.rangeForOccurrence(1, 0, 1, "most"), null,
+    "a stale pill cannot silently bind to a different token at the same index");
+  assert.equal(scanCount, 2);
+  controller.dispose();
+});
+
 test("eligible collapsed single-word click opens a local pill and durable status ACK updates the overlay", () => {
   const posted = [];
   const body = { children: [], appendChild(node) { node.parentNode = this; this.children.push(node); } };
@@ -789,6 +837,13 @@ test("eligible collapsed single-word click opens a local pill and durable status
   const backlinkQuery = posted.filter((message) => message.type === "reader-backlink-occurrence-query").at(-1);
   assert.equal(backlinkQuery.startIndex, 0);
   assert.equal(backlinkQuery.endIndex, 5);
+  controller.entryPill.occurrenceButton.listeners.click({ stopPropagation() {} });
+  const occurrenceRequest = posted.filter((message) => message.type === "reader-anchor-occurrence-link-request").at(-1);
+  assert.equal(occurrenceRequest.pageNumber, 1);
+  assert.equal(occurrenceRequest.startIndex, 0);
+  assert.equal(occurrenceRequest.endIndex, 1);
+  assert.equal(occurrenceRequest.expectedSurface, "Alpha",
+    "the authenticated host can verify the clicked occurrence instead of trusting stale token indices alone");
   assert.equal(controller.handleOccurrenceBacklinks({ documentId: "doc-1", openRequest: 7,
     requestId: backlinkQuery.requestId, ok: true, count: 2, anchorIds: ["anchor-0001"] }), true);
   assert.equal(controller.entryPill.backlinks.textContent, "反向链接：2");
