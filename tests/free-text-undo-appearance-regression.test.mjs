@@ -494,7 +494,7 @@ test(
             'const persistOperations=message=>{for(const operation of Array.isArray(message.operations)?message.operations:[]){if(!operation||typeof operation.uuid!=="string")continue;state.operations.set(operation.uuid,structuredClone(operation));}state.revision=Math.max(state.revision,Number(message.revision)||0);};' +
             'const ackFor=(type,message)=>({channel,type,token,documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,ok:true,external:true,operationCount:Array.isArray(message.operations)?message.operations.length:0,batchId:message.operations?.length?"test-batch-"+message.requestId:null,externalAnnotations:sidecarSnapshot()});' +
             'const sendOpen=(data,label)=>{' +
-            'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
+            'state.openRequest+=1;state.sourceIdentityConfirmed=false;state.identity=null;state.opens.push({label,documentId,sourceHash,openRequest:state.openRequest,byteLength:data.byteLength});' +
             'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,rendererGeneration:"freetext-undo-renderer",openRequest:state.openRequest,data,externalAnnotations:sidecarSnapshot()},"*",[data]);};' +
             'window.__sendOpenSaved=()=>sendOpen(fixtureBytes.slice(0),"sidecar-reopen");' +
             'window.__holdNextSaveAck=()=>{state.holdNextSaveAck=true;};' +
@@ -507,8 +507,8 @@ test(
             'if(message.type==="ready"){state.ready=true;if(fixtureBytes)sendOpen(fixtureBytes.slice(0),"fixture");}' +
             'else if(message.type==="opened"){state.opened+=1;state.openedMessages ||= [];state.openedMessages.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,dirty:message.dirty});}' +
             'else if(message.type==="annotation-source-identity"){if(message.identityStatus!=="KNOWN"||!Number.isSafeInteger(message.pageCount)||!Array.isArray(message.orderedPageIdentities)||message.orderedPageIdentities.length!==message.pageCount||message.orderedPageIdentities.some(identity=>typeof identity!=="string")||message.sourceHash!==sourceHash){iframe.contentWindow.postMessage({channel,type:"annotation-source-mismatch",token,documentId:message.documentId,openRequest:message.openRequest,reason:"PAGE_IDENTITY_UNAVAILABLE"},"*");return;}state.sourceIdentityConfirmed=true;state.identity={pageCount:message.pageCount,orderedPageIdentities:[...message.orderedPageIdentities]};iframe.contentWindow.postMessage({channel,type:"external-annotations-update",token,documentId:message.documentId,openRequest:message.openRequest,identityConfirmed:true,sourceMatch:state.operations.size?"MATCH":"BASELINE_ESTABLISHED",externalAnnotations:sidecarSnapshot()},"*");}' +
-            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
-            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
+            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
+            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
             'else if(message.type==="export-ready"){state.exports.push({documentId:message.documentId,openRequest:message.openRequest,requestId:message.requestId,revision:message.revision,byteLength:message.data?.byteLength||0,data:new Uint8Array(message.data).slice().buffer});}' +
             'else if(message.type==="error"){state.errors.push({code:message.code,message:message.message,documentId:message.documentId,requestId:message.requestId});}' +
             'else if(message.type==="flushed"){state.flushes ||= [];state.flushes.push({id:message.id,ok:message.ok,dirty:message.dirty,revision:message.revision,recovered:message.recovered||false});}' +
@@ -1383,6 +1383,17 @@ test(
       );
       await snapshot("created-committed");
       await waitForSaveCount(1);
+      const initialSidecarSave = await page.evaluate(() => {
+        const save = window.__hostState?.saves?.[0];
+        return save ? {
+          operationCount: save.operationCount,
+          hasBinaryPayload: save.hasBinaryPayload,
+        } : null;
+      });
+      assert.ok(initialSidecarSave?.operationCount > 0,
+        "The committed FreeText must persist a durable Sidecar operation");
+      assert.equal(initialSidecarSave.hasBinaryPayload, false,
+        "Ordinary FreeText persistence must not send a mutable PDF binary payload");
       await viewer.waitForFunction(() => {
         const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
         const editors = [...(manager?.getEditors(0) || [])];
@@ -1412,6 +1423,7 @@ test(
       const expectedOpen = 2;
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(expectedOpen);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
       const afterReopen = await snapshot("reopened-original");
       const originalVisualRoi = afterReopen.visualRoi;
@@ -1615,6 +1627,7 @@ test(
       const reopenedCount = await page.evaluate(() => window.__hostState.opened + 1);
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(reopenedCount);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
       const afterFinalReopen = await snapshot(
         "reopened-restored-free-text",

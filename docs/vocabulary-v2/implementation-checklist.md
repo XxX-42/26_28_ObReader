@@ -1,26 +1,34 @@
 # Vocabulary v2 delivery gates
 
-This is an implementation ledger, not a claim of acceptance. A checked item must
-link to a committed implementation and retained test evidence. Phase A must pass
-before schema v2 implementation begins. No main merge, push, release, real-Vault
-deployment, user-data deletion, or History GC is authorized by this task.
+This is an implementation ledger, not by itself a claim of acceptance. Checked
+implementation and evidence items link to retained source/test artifacts;
+Phase A acceptance can be complete while its separate commit/integration item
+remains pending. Phase A must pass before schema v2 implementation begins. No
+main merge, push, release, real-Vault deployment, user-data deletion, or History
+GC is authorized by this task.
 
 ## Phase A — reproducible baseline and regression repair
 
 - [x] Preserve the original tracked binary diff and untracked files outside the
   repository, with a SHA-256 manifest; create an independent WIP commit.
-- [x] Create `integration/vocabulary-workbench-v2` from that exact commit and use
-  an isolated phase branch. Preserve the original workspace.
-- [ ] Reconcile remote changes observed after the initial snapshot; record both
-  the initial baseline and the newly integrated upstream SHA.
-- [ ] Explain all eight historical failures and map every retired test protocol
-  to assertions of the same business guarantees.
-- [ ] Verify the physical/logical wrapped-word pipeline end to end, retaining
-  authenticated message, identity, surface and size validation.
-- [ ] Pass Fast (at most four processes), Functional Browser (one browser), and
-  Race (at least ten genuinely concurrent rounds) on one frozen source state.
-- [ ] Preserve raw child exits, logs, cleanup failures and skipped assertion
-  counts; no skip or timeout relaxation may close a failure.
+- [x] Preserve the original workspace and use the isolated phase branch
+  `codex/vocabulary-v2-phase-a`; record the preserved pre-upstream WIP and
+  current merge target in [phase-a-upstream-reconciliation.md](phase-a-upstream-reconciliation.md).
+- [x] Reconcile remote changes observed after the initial snapshot; record both
+  the initial baseline and the newly integrated upstream SHA in
+  [phase-a-upstream-reconciliation.md](phase-a-upstream-reconciliation.md).
+- [x] Explain all eight historical failures and map every retired test protocol
+  to assertions of the same business guarantees in
+  [phase-a-baseline.md](phase-a-baseline.md).
+- [x] Verify the physical/logical wrapped-word pipeline end to end, retaining
+  authenticated message, identity, surface and size validation; 120 focused
+  tests pass through scanner, controller, host and pill.
+- [x] Pass Fast (at most four processes), Functional Browser (one browser), and
+  Race (ten rounds with two concurrent children) on one frozen source state;
+  final report: `tests/artifacts/vocabulary-gates/runs/run-2026-10-17T19-45-34-763Z-71721-215a3415/report.json`.
+- [x] Preserve raw child exits, logs, cleanup failures and skipped assertion
+  counts; no skip or timeout relaxation closes a failure. Historical exits and
+  current passing evidence are retained in the reports linked above.
 - [ ] Commit Phase A and merge it into the local integration branch.
 
 ## Phase B — storage contracts, before UI

@@ -2704,6 +2704,13 @@ test(
         [0.64, 0.48],
       );
       report.penDrawDispatchTarget = penDrawStart;
+      assert.equal(penDrawStart.local.hit.insideTarget, true,
+        "The simulated Pencil start must hit the visible page annotation layer");
+      assert.equal(penDrawStart.local.hit.pageNumber, "1",
+        "The simulated Pencil start must hit page 1");
+      assert.ok(penDrawStart.local.visibleRect.right - penDrawStart.local.x >= 80 &&
+        penDrawStart.local.visibleRect.bottom - penDrawStart.local.y >= 60,
+      "The visible annotation layer must have room for the complete simulated Pencil stroke");
       const penEventOffset = await penViewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
@@ -2717,8 +2724,13 @@ test(
         penViewer,
         penPage,
         '.page[data-page-number="1"]',
-        [0.18, 0.25],
+        [0.18, 0.7],
       );
+      report.fingerDuringPenTarget = fingerDuringPen;
+      assert.equal(fingerDuringPen.local.hit.pageNumber, "1",
+        "The finger contact during Pencil input must hit the visible PDF page");
+      assert.ok(fingerDuringPen.local.y - 180 >= fingerDuringPen.local.visibleRect.top,
+        "The finger pan probe must remain inside the visible PDF viewport");
       await dispatchTouch(penCdp, "touchStart", fingerDuringPen, 13);
       await dispatchTouch(penCdp, "touchMove", {
         x: fingerDuringPen.x,

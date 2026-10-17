@@ -179,6 +179,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/vocabulary-line-end-hyphen-regression.test.mjs",
     "tests/vocabulary-normalizer-scanner.test.mjs",
     "tests/vocabulary-phrase-matcher.test.mjs",
+    "tests/vocabulary-pill-placement.test.mjs",
     "tests/vocabulary-presentation.test.mjs",
     "tests/vocabulary-service.test.mjs",
     "tests/vocabulary-tap-priority.test.mjs",
@@ -203,6 +204,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/desktop-toolbar.test.mjs",
     "tests/embedded-annotation-scan.test.mjs",
     "tests/free-text-undo-appearance-regression.test.mjs",
+    "tests/free-text-native-ap-undo-regression.test.mjs",
     "tests/highlight-multiline-regression.test.mjs",
     "tests/ipad-pointer-policy.test.mjs",
     "tests/mobile-browser-startup.test.mjs",
@@ -215,6 +217,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/sync-bridge-regression.test.mjs",
     "tests/tool-wheel-lingq-browser.test.mjs",
     "tests/underline-regression.test.mjs",
+    "tests/vocabulary-pill-layout-browser.test.mjs",
   ]),
 });
 
@@ -478,6 +481,9 @@ async function runMain(argv) {
     throw new Error("--jobs is only valid for fast and all gates");
   }
 
+  if (process.env.NATIVE_AP_BRIDGE_SOURCE) {
+    throw new Error("NATIVE_AP_BRIDGE_SOURCE is a diagnostic source override and cannot be used for gate acceptance.");
+  }
   const sourceFingerprintBefore = await captureSourceFingerprint(DEFAULT_ROOT);
   const manifest = await validateManifest();
   if (!manifest.ok) {
