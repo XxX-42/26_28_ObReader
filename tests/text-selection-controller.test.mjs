@@ -110,6 +110,144 @@ test("Pencil text selection owns a collapsed caret and validates an extended ran
   assert.equal(h.controller.hasValidHighlightSelection(h.pointer), true);
 });
 
+test("selection range snapshot is obtained by the TextSelectionController as value data", () => {
+  const h = harness();
+  const rectangle = { left: 10, top: 20, right: 40, bottom: 32, width: 30, height: 12 };
+  h.selection.isCollapsed = false;
+  h.selection.rangeCount = 1;
+  h.selection.ranges = [{ startContainer: h.startNode, startOffset: 1,
+    endContainer: h.endNode, endOffset: 3, toString: () => "selected text",
+    getBoundingClientRect: () => rectangle }];
+  const snapshot = h.controller.rangeSnapshot();
+  assert.equal(snapshot.startContainer, h.startNode);
+  assert.equal(snapshot.startOffset, 1);
+  assert.equal(snapshot.endContainer, h.endNode);
+  assert.equal(snapshot.endOffset, 3);
+  assert.equal(snapshot.text, "selected text");
+  assert.deepEqual({ ...snapshot.rect }, rectangle);
+  assert.equal(Object.hasOwn(snapshot, "range"), false);
+});
+
+test("TextSelectionController resolves stable text anchors and owns applying the resulting range", () => {
+  const textNode = { nodeValue: "prefix target suffix", nodeType: 3 };
+  const selection = {
+    removeAllRanges() { this.range = null; },
+    addRange(range) { this.range = range; },
+  };
+  const documentRef = {
+    getSelection: () => selection,
+    createTreeWalker: () => {
+      let consumed = false;
+      return { nextNode: () => consumed ? null : (consumed = true, textNode) };
+    },
+    createRange() {
+      return {
+        setStart(node, offset) { this.startContainer = node; this.startOffset = offset; },
+        setEnd(node, offset) { this.endContainer = node; this.endOffset = offset; },
+        get commonAncestorContainer() { return textNode; },
+      };
+    },
+  };
+  const textLayer = {
+    ownerDocument: documentRef,
+    contains: (node) => node === textNode,
+  };
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(source, { window: runtimeWindow });
+  const SelectionController = runtimeWindow.PdfReaderInputRuntime.TextSelectionController;
+  const controller = new SelectionController({ documentRef });
+  const anchor = {
+    textPosition: { start: 7, end: 13 }, exactQuote: "target", prefix: "prefix ", suffix: " suffix",
+  };
+  const range = controller.rangeForAnchor(textLayer, anchor);
+  assert.equal(range.startContainer, textNode);
+  assert.equal(range.startOffset, 7);
+  assert.equal(range.endOffset, 13);
+  assert.equal(controller.selectRange(textLayer, range), true);
+  assert.equal(selection.range, range);
+  assert.equal(controller.rangesForAnchors(textLayer, [anchor, { ...anchor, exactQuote: "missing" }]).length, 1);
+});
+
+test("TextSelectionController captures quote, text position, native selector, and normalized geometry", () => {
+  const textNode = { nodeType: 3, nodeValue: "prefix target suffix" };
+  const span = {
+    closest: (selector) => selector === "span" || selector === ".textLayer span" ? span : null,
+  };
+  textNode.parentElement = span;
+  const selection = {};
+  const documentRef = {
+    getSelection: () => selection,
+    createTreeWalker(root) {
+      let consumed = false;
+      return { nextNode: () => consumed ? null : (consumed = true, textNode) };
+    },
+    createRange() { return {}; },
+  };
+  const textLayer = {
+    ownerDocument: documentRef,
+    contains: (node) => node === textNode,
+    querySelectorAll: () => [span],
+  };
+  const pageRoot = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 }) };
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(source, { window: runtimeWindow });
+  const controller = new runtimeWindow.PdfReaderInputRuntime.TextSelectionController({ documentRef });
+  const captured = controller.captureRangeAnchor(textLayer, {
+    startContainer: textNode, startOffset: 7,
+    endContainer: textNode, endOffset: 13,
+    text: "target",
+    rect: { left: 10, top: 20, right: 40, bottom: 32, width: 30, height: 12 },
+  }, pageRoot);
+  assert.deepEqual({ ...captured.textPosition }, { start: 7, end: 13 });
+  assert.equal(captured.exactQuote, "target");
+  assert.equal(captured.prefix, "prefix ");
+  assert.equal(captured.suffix, " suffix");
+  assert.equal(captured.nativeSelection, "0,7,0,13");
+  assert.equal(captured.geometry.x, 0.1);
+  assert.equal(captured.geometry.y, 0.2);
+  assert.ok(Math.abs(captured.geometry.width - 0.3) < 1e-12);
+  assert.equal(captured.geometry.height, 0.12);
+});
+
+test("TextSelectionController restores a four-part native PDF selection across spans", () => {
+  const firstText = { nodeType: 3, nodeValue: "first" };
+  const secondText = { nodeType: 3, nodeValue: "second" };
+  const firstSpan = {};
+  const secondSpan = {};
+  firstText.parentElement = firstSpan;
+  secondText.parentElement = secondSpan;
+  const ranges = [];
+  const documentRef = {
+    getSelection: () => null,
+    createTreeWalker(root) {
+      const nodes = root === firstSpan ? [firstText] : root === secondSpan ? [secondText] : [];
+      let index = 0;
+      return { nextNode: () => nodes[index++] || null };
+    },
+    createRange() {
+      const range = {
+        setStart(node, offset) { this.startContainer = node; this.startOffset = offset; },
+        setEnd(node, offset) { this.endContainer = node; this.endOffset = offset; },
+      };
+      ranges.push(range);
+      return range;
+    },
+  };
+  const textLayer = {
+    querySelectorAll: () => [firstSpan, secondSpan],
+  };
+  const runtimeWindow = { PdfReaderInputRuntime: {} };
+  vm.runInNewContext(source, { window: runtimeWindow });
+  const controller = new runtimeWindow.PdfReaderInputRuntime.TextSelectionController({ documentRef });
+  const range = controller.rangeForNativeSelection(textLayer, "0,2,1,3");
+  assert.equal(range.startContainer, firstText);
+  assert.equal(range.startOffset, 2);
+  assert.equal(range.endContainer, secondText);
+  assert.equal(range.endOffset, 3);
+  assert.equal(controller.rangeForNativeSelection(textLayer, "0,2,9,3"), null);
+  assert.equal(controller.rangeForNativeSelection(textLayer, "0,2,1,-1"), null);
+});
+
 test("selection cleanup removes only the range still owned by the Pencil gesture", () => {
   const h = harness();
   const intent = { clientPoint: { x: 0, y: 1 }, trusted: true };

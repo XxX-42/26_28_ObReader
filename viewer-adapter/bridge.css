@@ -118,6 +118,53 @@ body {
   box-sizing: border-box;
 }
 
+/* Markdown backlinks use a dotted underline so they stay visually distinct
+   from LingQ's fill and PDF.js's native annotation appearance. */
+::highlight(pdfReaderMarkdownBacklinks) {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--interactive-accent, #6957d5);
+  text-decoration-thickness: 2px;
+}
+
+.pdfReaderBacklinkPageBadge {
+  position: absolute;
+  z-index: 30;
+  inset-block-start: 6px;
+  inset-inline-end: 8px;
+  max-width: min(15rem, calc(100% - 16px));
+  overflow: hidden;
+  padding: 3px 9px;
+  border: 1px solid var(--background-modifier-border, rgb(0 0 0 / 0.2));
+  border-radius: 999px;
+  color: var(--text-accent, var(--interactive-accent, #6957d5));
+  background: var(--background-primary, rgb(255 255 255 / 0.92));
+  box-shadow: 0 1px 5px rgb(0 0 0 / 0.16);
+  font: message-box;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.pdfReaderAnnotationBacklinkBadge {
+  position: absolute;
+  z-index: 40;
+  inset-block-start: -12px;
+  inset-inline-end: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--background-modifier-border, rgb(0 0 0 / 0.2));
+  border-radius: 999px;
+  color: var(--text-accent, var(--interactive-accent, #6957d5));
+  background: var(--background-primary, Canvas);
+  font: message-box;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .pdfReaderVocabularyPillHeading {
   min-width: 0;
   font-size: 1.04em;
@@ -160,6 +207,40 @@ body {
   display: flex;
   justify-content: space-between;
   gap: 6px;
+}
+
+.pdfReaderVocabularyPillOccurrenceActions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.pdfReaderVocabularyPillBacklinkActions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted, #777);
+  font-size: 0.82em;
+}
+
+.pdfReaderVocabularyPillBacklinksButton {
+  min-width: 42px !important;
+  min-height: 34px !important;
+  padding: 4px 10px !important;
+  border-radius: 999px !important;
+  color: var(--text-accent, var(--interactive-accent, #6957d5)) !important;
+}
+
+.pdfReaderVocabularyPillOccurrenceLink {
+  min-width: 0 !important;
+  min-height: 38px !important;
+  padding: 6px 12px !important;
+  border-radius: 999px !important;
+  color: var(--text-accent, var(--interactive-accent, #6957d5)) !important;
+  font-size: 0.86em !important;
 }
 
 .pdfReaderVocabularyPill button {

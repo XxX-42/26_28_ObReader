@@ -577,6 +577,8 @@ export class VocabularyController {
       const tokens = page.tokens.slice(phrase.startIndex, phrase.endIndex);
       return {
         type: "phrase",
+        startIndex: phrase.startIndex,
+        endIndex: phrase.endIndex,
         // Keep the tapped phrase surface as the request identity; storageKey
         // returned by the host identifies the durable vocabulary family.
         surfaceKey: tokens.map((token) => token.surfaceKey).join(" "),
@@ -587,7 +589,53 @@ export class VocabularyController {
     // not been added yet. Drag selection remains native because handleTap()
     // only runs when the Selection is collapsed; the tap can then add a new
     // status record through the same existing pill controls.
-    return { type: "word", surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
+    return { type: "word", startIndex: tokenIndex, endIndex: tokenIndex + 1,
+      surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
+  }
+
+  rangeForOccurrence(pageNumber, startIndex, endIndex) {
+    if (!isPositivePageNumber(pageNumber) || !Number.isSafeInteger(startIndex) ||
+        !Number.isSafeInteger(endIndex) || startIndex < 0 || endIndex <= startIndex || endIndex - startIndex > 12) return null;
+    const page = this.pages.get(pageKey(pageNumber));
+    const first = page?.tokens?.[startIndex]?.segments?.[0];
+    const lastSegments = page?.tokens?.[endIndex - 1]?.segments;
+    const last = lastSegments?.[lastSegments.length - 1];
+    const textLayer = page?.pageRoot?.querySelector?.(".textLayer");
+    if (!textLayer || !first?.textNode || !last?.textNode ||
+        !page.pageRoot.contains?.(first.textNode) || !page.pageRoot.contains?.(last.textNode)) return null;
+    const document = this.document || first.textNode.ownerDocument;
+    if (typeof document?.createRange !== "function") return null;
+    try {
+      const range = document.createRange();
+      range.setStart(first.textNode, first.startOffset);
+      range.setEnd(last.textNode, last.endOffset);
+      return range;
+    } catch { return null; }
+  }
+
+  textPositionForOccurrence(page, startIndex, endIndex) {
+    const range = this.rangeForOccurrence(page?.pageNumber, startIndex, endIndex);
+    const textLayer = page?.textLayer;
+    const document = this.document;
+    if (!range || !textLayer || typeof document?.createTreeWalker !== "function") return null;
+    try {
+      const walker = document.createTreeWalker(textLayer, 4);
+      let offset = 0;
+      let start = null;
+      let end = null;
+      let node;
+      while ((node = walker.nextNode())) {
+        const length = String(node.nodeValue || "").length;
+        if (node === range.startContainer) start = offset + range.startOffset;
+        if (node === range.endContainer) end = offset + range.endOffset;
+        offset += length;
+        if (start !== null && end !== null) break;
+      }
+      return Number.isSafeInteger(start) && Number.isSafeInteger(end) && end > start
+        ? { start, end }
+        : null;
+    } catch { return null; }
+    finally { range.detach?.(); }
   }
 
   showEntryPill({ page, entry, requestId, x, y }) {
@@ -616,6 +664,54 @@ export class VocabularyController {
     meanings.textContent = "正在查询…";
     const actions = this.document.createElement("div");
     actions.className = "pdfReaderVocabularyPillActions";
+    const occurrenceActions = this.document.createElement("div");
+    occurrenceActions.className = "pdfReaderVocabularyPillOccurrenceActions";
+    const copyOccurrence = this.document.createElement("button");
+    copyOccurrence.type = "button";
+    copyOccurrence.className = "pdfReaderVocabularyPillOccurrenceLink";
+    copyOccurrence.textContent = "复制此处链接";
+    copyOccurrence.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      if (copyOccurrence.disabled) return;
+      const occurrenceRequestId = `reader-occurrence-${++this.querySequence}-${this.makeId()}`;
+      const posted = this.postToHost("reader-anchor-occurrence-link-request", {
+        requestId: occurrenceRequestId,
+        pageNumber: page.pageNumber,
+        startIndex: entry.startIndex,
+        endIndex: entry.endIndex,
+        documentId: this.identity.documentId,
+        openRequest: this.identity.openRequest,
+      });
+      if (posted) {
+        copyOccurrence.disabled = true;
+        this.entryPill.occurrenceRequestId = occurrenceRequestId;
+        copyOccurrence.textContent = "正在创建…";
+      }
+    });
+    occurrenceActions.appendChild(copyOccurrence);
+    const backlinks = this.document.createElement("div");
+    backlinks.className = "pdfReaderVocabularyPillBacklinks";
+    backlinks.textContent = "反向链接：查询中…";
+    const openBacklinks = this.document.createElement("button");
+    openBacklinks.type = "button";
+    openBacklinks.className = "pdfReaderVocabularyPillBacklinksButton";
+    openBacklinks.textContent = "查看";
+    openBacklinks.hidden = true;
+    openBacklinks.disabled = true;
+    openBacklinks.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      const pill = this.entryPill;
+      if (!pill || !pill.anchorIds?.length || !this.identityIsCurrent()) return;
+      this.postToHost("reader-backlink-occurrence-open", {
+        requestId: `reader-backlink-open-${++this.querySequence}-${this.makeId()}`,
+        anchorIds: pill.anchorIds.slice(0, 32),
+        documentId: this.identity.documentId,
+        openRequest: this.identity.openRequest,
+      });
+    });
+    const backlinkActions = this.document.createElement("div");
+    backlinkActions.className = "pdfReaderVocabularyPillBacklinkActions";
+    backlinkActions.append(backlinks, openBacklinks);
     const buttons = [];
     for (const status of [1, 2, 3, 4, 5]) {
       const button = this.document.createElement("button");
@@ -640,13 +736,31 @@ export class VocabularyController {
       event.stopPropagation?.();
       this.dismissEntryPill();
     });
-    popup.append(heading, status, pronunciation, meanings, actions, close);
+    popup.append(heading, status, pronunciation, meanings, occurrenceActions, backlinkActions, actions, close);
     this.document.body.appendChild(popup);
     this.positionEntryPill(popup, x, y);
     this.entryPill = {
       popup, page, entry, requestId, heading, statusElement: status,
       pronunciation, meanings, buttons, record: null, status: null, pendingStatus: null,
+      occurrenceRequestId: null, occurrenceButton: copyOccurrence,
+      backlinks, openBacklinks, backlinkRequestId: null, anchorIds: [],
     };
+    const textPosition = this.textPositionForOccurrence(page, entry.startIndex, entry.endIndex);
+    if (textPosition) {
+      const backlinkRequestId = `reader-backlink-query-${++this.querySequence}-${this.makeId()}`;
+      const sent = this.postToHost("reader-backlink-occurrence-query", {
+        requestId: backlinkRequestId,
+        pageNumber: page.pageNumber,
+        startIndex: textPosition.start,
+        endIndex: textPosition.end,
+        documentId: this.identity?.documentId,
+        openRequest: this.identity?.openRequest,
+      });
+      if (sent) this.entryPill.backlinkRequestId = backlinkRequestId;
+      else backlinks.textContent = "反向链接：暂不可用";
+    } else {
+      backlinks.textContent = "反向链接：位置未确认";
+    }
     return true;
   }
 
@@ -679,6 +793,36 @@ export class VocabularyController {
       return true;
     }
     this.updatePillRecord(message.record || null);
+    return true;
+  }
+
+  handleOccurrenceLinkResult(message) {
+    const pill = this.entryPill;
+    if (!pill || !this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
+        message?.openRequest !== this.identity.openRequest ||
+        message?.requestId !== pill.occurrenceRequestId) return false;
+    pill.occurrenceRequestId = null;
+    pill.occurrenceButton.disabled = message.ok === true;
+    pill.occurrenceButton.textContent = message.ok === true ? "已复制链接" : "复制此处链接";
+    if (message.ok !== true) pill.occurrenceButton.title = message.message || "创建链接失败";
+    return true;
+  }
+
+  handleOccurrenceBacklinks(message) {
+    const pill = this.entryPill;
+    if (!pill || !this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
+        message?.openRequest !== this.identity.openRequest || message?.requestId !== pill.backlinkRequestId) return false;
+    pill.backlinkRequestId = null;
+    if (message.ok !== true || !Number.isSafeInteger(message.count) || message.count < 0) {
+      pill.backlinks.textContent = "反向链接：无法确认";
+      return true;
+    }
+    pill.anchorIds = Array.isArray(message.anchorIds)
+      ? [...new Set(message.anchorIds.filter((value) => typeof value === "string" && value.length <= 128))].slice(0, 32)
+      : [];
+    pill.backlinks.textContent = `反向链接：${message.count}`;
+    pill.openBacklinks.hidden = message.count === 0 || pill.anchorIds.length === 0;
+    pill.openBacklinks.disabled = pill.openBacklinks.hidden;
     return true;
   }
 

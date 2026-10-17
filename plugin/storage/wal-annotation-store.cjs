@@ -185,7 +185,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
     return result;
   }
 
-  async function readEffective(document) {
+  async function readEffective(document, { readOnly = false } = {}) {
     const start = monotonic();
     let sidecar = null;
     let sidecarError = null;
@@ -269,7 +269,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
         if (!(await adapter.exists(path))) continue;
         try {
           const rows = await jsonl.readOperationRows(jsonlDocument, owner,
-            { repairOwnTail: owner === deviceId });
+            { repairOwnTail: !readOnly && owner === deviceId });
           jsonlRows.push({ deviceId: owner, path, operations: rows });
         } catch (error) {
           errors.push({ deviceId: owner, path, code: error?.message || error?.code || "WAL_JSONL_INVALID",
@@ -332,6 +332,19 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
     const matches = (await discover()).filter((doc) => doc.sourcePath === path);
     if (matches.length > 1) throw failure("IDENTITY_ROUTE_CONFLICT", "Multiple documents route to this PDF.");
     return matches[0] || null;
+  }
+
+  async function documentForIdentity({ docKey, documentId } = {}) {
+    if (typeof docKey !== "string" || !/^[a-f0-9]{12}$/i.test(docKey) ||
+        typeof documentId !== "string" || !documentId || documentId.length > 512) {
+      throw failure("WAL_IDENTITY_INVALID", "A complete document identity is required.");
+    }
+    const identity = { docKey: docKey.toLowerCase(), documentId };
+    const loaded = await readEffective(identity, { readOnly: true });
+    if (!loaded.document || loaded.document.docKey !== identity.docKey || loaded.document.documentId !== documentId) {
+      throw failure("WAL_IDENTITY_MISSING", "No verified route matches the requested document identity.");
+    }
+    return loaded.document;
   }
 
   async function registerDocument({ sourcePath, source = {}, newInstance = false }) {
@@ -611,12 +624,23 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
     hotDocuments.delete(prior.docKey);
     return updateMetadata(prior, { sourcePath: normalizeInitialPath(toPath) });
   }
-  async function readDocument(document) {
+  async function readDocument(document, { readOnly = false } = {}) {
     if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "Cannot hydrate annotations onto a changed source PDF.");
-    const loaded = await readEffective(document);
+    const loaded = await readEffective(document, { readOnly });
     if (!loaded.document) throw failure("WAL_DOCUMENT_MISSING", "The document recovery state is unavailable.");
-    const routed = await documentForPath(loaded.document.sourcePath);
-    if (!routed || routed.documentId !== document.documentId) throw failure("IDENTITY_ROUTE_CONFLICT", "The PDF path has conflicting document identities.");
+    if (loaded.document.docKey !== document.docKey || loaded.document.documentId !== document.documentId) {
+      throw failure("IDENTITY_ROUTE_CONFLICT", "The requested document identity does not match the verified WAL state.");
+    }
+    // Link resolution and other read-only callers must not rebuild the registry
+    // cache as a side effect. The effective state above is already assembled
+    // from integrity-verified Sidecar/WAL records. Normal hydration retains the
+    // route check, which may safely refresh the rebuildable path cache.
+    if (!readOnly) {
+      const routed = await documentForPath(loaded.document.sourcePath);
+      if (!routed || routed.documentId !== document.documentId) {
+        throw failure("IDENTITY_ROUTE_CONFLICT", "The PDF path has conflicting document identities.");
+      }
+    }
     const rows = (map, deleted) => Object.values(map).map((op) => ({ uuid: op.uuid, kind: op.kind,
       pageIndex: op.pageIndex, embeddedRef: op.embeddedRef ?? null, ...(deleted ? {} : { deleted: false }),
       ...(deleted ? {} : { payload: op.payload }), version: op.version,
@@ -709,7 +733,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
       nextSeq: wal.nextSeq, tailCount: wal.tail.length, anchorCount: wal.anchor.operations.length,
       isCurrent: wal.deviceId === deviceId })), errors: loaded.errors };
   }
-  return { registerDocument, documentForPath, appendOperations, readDocument, materializeSnapshot,
+  return { registerDocument, documentForPath, documentForIdentity, appendOperations, readDocument, materializeSnapshot,
     updateSourceIdentity, updateLegacyIdentities, renameDocument, pathsFor, affectsPath,
     readEffective, inspectDevices, sourceProtocol: jsonl ? "wal-sidecar-v3.2-jsonl" : PROTOCOL,
     invalidateRegistry: () => { routingGeneration += 1; },

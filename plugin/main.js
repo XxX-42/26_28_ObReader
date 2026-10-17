@@ -32,6 +32,8 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH } = require('./vocabulary/service.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
+/* BUILD:READER_ANCHOR_STORE_REQUIRE */ const { createReaderAnchorStore, parseReaderLinkFragment, encodeReaderLinkFragment } = require('./reader-anchor-store.cjs');
+/* BUILD:READER_BACKLINK_INDEX_REQUIRE */ const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex } = require('./reader-backlink-index.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -258,6 +260,7 @@ function installPdfOpenRouting(plugin) {
 
     let routedViewState = viewState;
     if (viewState?.type === "pdf") {
+      const readerTarget = parseReaderTargetFromViewState(viewState.state);
       const file = resolvePdfFile(
         activePlugin,
         viewState.state?.file ?? viewState.state?.path,
@@ -266,7 +269,8 @@ function installPdfOpenRouting(plugin) {
         routedViewState = {
           ...viewState,
           type: VIEW_TYPE,
-          state: { ...viewState.state, file: file.path, path: file.path },
+          state: { ...viewState.state, file: file.path, path: file.path,
+            ...(readerTarget ? { readerTarget } : {}) },
         };
       }
     }
@@ -496,6 +500,35 @@ function makeToken() {
     return globalThis.crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeReaderTarget(value) {
+  if (!value || typeof value !== "object") return null;
+  if (value.kind === "selection" && typeof value.id === "string" && value.id.length <= 128) {
+    return { kind: "selection", id: value.id, docKey: value.docKey, documentId: value.documentId,
+      pageNumber: value.pageNumber, selection: value.selection };
+  }
+  if (value.kind === "annotation" && typeof value.id === "string" && value.id.length <= 128) {
+    return { kind: "annotation", id: value.id, docKey: value.docKey, documentId: value.documentId,
+      pageNumber: value.pageNumber };
+  }
+  if (value.kind === "page" && typeof value.id === "string" && value.id.length <= 512) {
+    return { kind: "page", id: value.id, docKey: value.docKey, documentId: value.documentId,
+      pageNumber: value.pageNumber };
+  }
+  if (value.kind === "page-number" && Number.isSafeInteger(value.pageNumber) && value.pageNumber > 0) {
+    return { kind: "page-number", pageNumber: value.pageNumber, selection: value.selection || null };
+  }
+  return null;
+}
+
+function parseReaderTargetFromViewState(state) {
+  const fragment = state?.subpath ?? state?.fragment ?? state?.hash ?? "";
+  const parsed = parseReaderLinkFragment(fragment);
+  if (parsed.target) return normalizeReaderTarget({ ...parsed.target, docKey: parsed.docKey,
+    documentId: parsed.documentId, pageNumber: parsed.pageNumber, selection: parsed.selection });
+  return parsed.pageNumber ? normalizeReaderTarget({ kind: "page-number", pageNumber: parsed.pageNumber,
+    selection: parsed.selection }) : null;
 }
 
 function localAnnotationDeviceId() {
@@ -1031,6 +1064,37 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
   }
 }
 
+class ReaderBacklinksModal extends Modal {
+  constructor(app, rows, onOpenSource) {
+    super(app);
+    this.rows = Array.isArray(rows) ? rows : [];
+    this.onOpenSource = onOpenSource;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: "此页的 Markdown 反向链接" });
+    if (!this.rows.length) {
+      contentEl.createEl("p", { text: "当前页还没有 Markdown 链接。" });
+      return;
+    }
+    for (const row of this.rows) {
+      const button = contentEl.createEl("button", {
+        cls: "mod-list-item",
+        text: `${row.sourcePath}${row.line != null ? ` · 第 ${row.line + 1} 行` : ""}${row.displayText ? ` — ${row.displayText}` : ""}`,
+      });
+      if (row.targetStatus === "deleted") button.textContent += " · 目标批注已删除";
+      button.addEventListener("click", () => {
+        this.onOpenSource?.(row);
+        this.close();
+      });
+    }
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
 class PdfReaderView extends EditableFileView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -1100,6 +1164,13 @@ class PdfReaderView extends EditableFileView {
     this.syncForegroundListener = () => {};
     this.pendingVocabularySelections = new Map();
     this.vocabularyEntryModal = null;
+    this.pendingReaderAnchorCaptures = new Map();
+    this.pendingReaderTarget = null;
+    this.currentPageNumber = 1;
+    this.readerTargetApplySequence = 0;
+    this.readerTargetApplyKey = null;
+    this.readerTargetApplyPromise = null;
+    this.readerTargetApplyPendingTarget = null;
   }
 
   getViewType() {
@@ -1142,8 +1213,12 @@ class PdfReaderView extends EditableFileView {
       : state;
     if (file) {
       this.navigationState = { ...normalizedState };
+      this.pendingReaderTarget = normalizeReaderTarget(normalizedState.readerTarget);
+      this.currentPageNumber = Number.isSafeInteger(this.pendingReaderTarget?.pageNumber)
+        ? this.pendingReaderTarget.pageNumber : 1;
     }
     await super.setState(normalizedState, result);
+    if (this.pendingReaderTarget && this.annotationPageIdentity) void this.applyPendingReaderTarget();
   }
 
   async onLoadFile(file) {
@@ -1180,6 +1255,12 @@ class PdfReaderView extends EditableFileView {
       }
     }
     if (wasCurrent) this.cancelVocabularyWork();
+    if (wasCurrent) {
+      for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
+      this.pendingReaderAnchorCaptures.clear();
+      this.pendingReaderTarget = null;
+      this.readerTargetApplySequence += 1;
+    }
     this.releasePendingOpenAdmission(documentId, openRequest);
     await super.onUnloadFile(file);
     if (wasCurrent) {
@@ -1276,6 +1357,10 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
+    this.readerTargetApplySequence += 1;
+    for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
+    this.pendingReaderAnchorCaptures.clear();
+    this.pendingReaderTarget = null;
     const closingFile = this.documentFile || this.file;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
     if (!closeWasPrepared) {
@@ -1321,6 +1406,8 @@ class PdfReaderView extends EditableFileView {
     this.loadedBaseBytes = null;
     this.annotationSyncState = null;
     this.annotationDocument = null;
+    this.annotationPageIdentity = null;
+    this.annotationSourceHash = null;
     this.annotationHydrationAllowed = false;
     this.annotationSyncPending = false;
     this.annotationStorageUnavailable = false;
@@ -2333,6 +2420,8 @@ class PdfReaderView extends EditableFileView {
     if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
       this.documentId = makeToken();
       this.annotationDocument = null;
+      this.annotationPageIdentity = null;
+      this.annotationSourceHash = null;
       this.annotationSyncState = null;
       this.annotationHydrationAllowed = false;
       this.annotationSourceMismatch = false;
@@ -2495,6 +2584,149 @@ class PdfReaderView extends EditableFileView {
       new Notice("无法连接到当前 PDF 阅读器。", 6000);
     }
     return sent;
+  }
+
+  isCurrentReaderAnchorIdentity(identity) {
+    return identity?.documentId === this.documentId && identity?.openRequest === this.openRequest &&
+      identity?.rendererGeneration === this.rendererGeneration && !this.teardownStarted;
+  }
+
+  requestReaderAnchorCapture(mode = "reader", details = null, suppliedRequestId = null) {
+    if (!this.ready || !this.openAcknowledged || !this.iframe || !this.annotationDocument ||
+        this.annotationHydrationAllowed !== true) {
+      new Notice("PDF 身份尚未确认，暂不能建立链接。", 6000);
+      return false;
+    }
+    const requestId = typeof suppliedRequestId === "string" && suppliedRequestId.length <= 128
+      ? suppliedRequestId : makeToken();
+    if (this.pendingReaderAnchorCaptures.has(requestId)) return false;
+    const identity = { documentId: this.documentId, openRequest: this.openRequest,
+      rendererGeneration: this.rendererGeneration };
+    const pending = { ...identity, mode, timer: null,
+      clientRequestId: suppliedRequestId ? requestId : null };
+    pending.timer = globalThis.setTimeout(() => {
+      if (this.pendingReaderAnchorCaptures.get(requestId) !== pending) return;
+      this.pendingReaderAnchorCaptures.delete(requestId);
+      if (pending.clientRequestId) this.postToViewer({ channel: CHANNEL, token: this.token,
+        type: "reader-anchor-occurrence-result", requestId: pending.clientRequestId,
+        documentId: pending.documentId, openRequest: pending.openRequest,
+        ok: false, message: "创建链接超时，请重试。" });
+    }, 15000);
+    this.pendingReaderAnchorCaptures.set(requestId, pending);
+    const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
+      type: "reader-anchor-capture-request", requestId, mode,
+      documentId: identity.documentId, openRequest: identity.openRequest,
+      ...(mode === "occurrence" && details ? {
+        pageNumber: details.pageNumber, startIndex: details.startIndex, endIndex: details.endIndex,
+      } : {}) });
+    if (!sent) {
+      globalThis.clearTimeout(pending.timer);
+      this.pendingReaderAnchorCaptures.delete(requestId);
+      new Notice("无法连接到当前 PDF 阅读器。", 6000);
+    }
+    return sent;
+  }
+
+  async applyPendingReaderTarget() {
+    const pendingTarget = this.pendingReaderTarget;
+    const target = normalizeReaderTarget(pendingTarget);
+    const document = this.annotationDocument;
+    const pageIdentities = this.annotationPageIdentity?.orderedPageIdentities;
+    if (!target || !document || this.annotationHydrationAllowed !== true ||
+        !Array.isArray(pageIdentities) || pageIdentities.length === 0 || !this.ready || !this.openAcknowledged) return false;
+    const identity = { documentId: this.documentId, openRequest: this.openRequest,
+      rendererGeneration: this.rendererGeneration };
+    const applyKey = JSON.stringify([identity, target]);
+    if (this.readerTargetApplyPromise && this.readerTargetApplyKey === applyKey &&
+        this.readerTargetApplyPendingTarget === pendingTarget) {
+      return this.readerTargetApplyPromise;
+    }
+    const sequence = ++this.readerTargetApplySequence;
+    this.readerTargetApplyKey = applyKey;
+    this.readerTargetApplyPendingTarget = pendingTarget;
+    const isCurrent = () => sequence === this.readerTargetApplySequence &&
+      this.isCurrentReaderAnchorIdentity(identity) && this.annotationDocument === document &&
+      this.pendingReaderTarget === pendingTarget &&
+      this.annotationPageIdentity?.orderedPageIdentities === pageIdentities;
+    const run = async () => {
+      const rejectCurrent = (message) => {
+        if (isCurrent()) {
+          this.pendingReaderTarget = null;
+          new Notice(message, 7000);
+        }
+        return false;
+      };
+      if ((target.docKey && target.docKey !== document.docKey) ||
+          (target.documentId && target.documentId !== document.documentId)) {
+        return rejectCurrent("PDF 链接的文档身份与当前文件不一致，已停止跳转。");
+      }
+      let resolved = { ...target };
+      if (target.kind === "selection") {
+        let anchor;
+        try {
+          anchor = await this.plugin.readerAnchorStore.get(document.docKey, target.id, document.documentId);
+        } catch (error) {
+          if (!isCurrent()) return false;
+          return rejectCurrent(`Selection Anchor 校验失败：${error.message || "记录损坏"}；保留原生页码链接作为回退。`);
+        }
+        if (!isCurrent()) return false;
+        if (!anchor || anchor.sourceHash !== this.annotationSourceHash ||
+            anchor.pageCount !== pageIdentities.length) {
+          return rejectCurrent("Selection Anchor 缺失或 PDF 来源已变化；保留原生页码链接作为回退。");
+        }
+        const currentPageIdentityDigest = await this.plugin.pdfHashRuntime.fingerprint(
+          new TextEncoder().encode(JSON.stringify(pageIdentities)),
+        );
+        if (!isCurrent()) return false;
+        if (anchor.orderedPageIdentityDigest !== currentPageIdentityDigest) {
+          return rejectCurrent("PDF 页面身份顺序已变化，未猜测 Selection 位置；原生页码链接仍可用。");
+        }
+        const pageIndex = pageIdentities.indexOf(anchor.pageIdentity);
+        if (pageIndex < 0) {
+          return rejectCurrent("Selection Anchor 所属页面已无法可靠确认。");
+        }
+        resolved = { ...resolved, pageIndex, pageIdentity: anchor.pageIdentity, anchor };
+      } else if (target.kind === "annotation") {
+        const rows = Array.isArray(this.annotationSnapshot?.annotations)
+          ? this.annotationSnapshot.annotations : Object.values(this.annotationSnapshot?.annotations || {});
+        const row = rows.find((entry) => entry?.uuid === target.id && entry.deleted !== true);
+        if (!row || !Number.isSafeInteger(row.pageIndex) || !pageIdentities[row.pageIndex]) {
+          return rejectCurrent("批注目标已删除或页面身份无法确认；链接不会重绑。");
+        }
+        resolved = { ...resolved, pageIndex: row.pageIndex, pageIdentity: pageIdentities[row.pageIndex] };
+      } else if (target.kind === "page") {
+        const pageIndex = pageIdentities.indexOf(target.id);
+        if (pageIndex < 0) {
+          return rejectCurrent("页面身份已不存在，未按页码猜测其他页面。");
+        }
+        resolved = { ...resolved, pageIndex, pageIdentity: target.id };
+      } else if (target.kind === "page-number") {
+        resolved.pageIndex = Math.min(pageIdentities.length - 1, target.pageNumber - 1);
+        resolved.pageIdentity = pageIdentities[resolved.pageIndex];
+      }
+      if (!isCurrent() || !Number.isSafeInteger(resolved.pageIndex) || !resolved.pageIdentity) return false;
+      const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
+        type: "reader-anchor-navigate", documentId: identity.documentId,
+        openRequest: identity.openRequest, target: resolved });
+      if (sent && isCurrent()) {
+        this.pendingReaderTarget = null;
+        const { readerTarget: _readerTarget, ...state } = this.navigationState || {};
+        this.navigationState = state;
+      }
+      return sent;
+    };
+    const promise = run().catch((error) => {
+      if (isCurrent()) new Notice(`PDF 链接目标解析失败：${error.message || error}`, 7000);
+      return false;
+    }).finally(() => {
+      if (sequence === this.readerTargetApplySequence) {
+        this.readerTargetApplyKey = null;
+        this.readerTargetApplyPromise = null;
+        this.readerTargetApplyPendingTarget = null;
+      }
+    });
+    this.readerTargetApplyPromise = promise;
+    return promise;
   }
 
   isCurrentVocabularyIdentity(identity) {
@@ -2744,9 +2976,72 @@ class PdfReaderView extends EditableFileView {
       return;
     }
     if (message.type === "annotation-source-identity" || message.type === "annotation-maintenance-state") {
-      void this.plugin.annotationHost.handleMessage(this, message).catch((error) => {
+      void this.plugin.annotationHost.handleMessage(this, message).then(() => {
+        this.applyPendingReaderTarget();
+        if (message.type === "annotation-source-identity") {
+          void this.plugin.refreshReaderBacklinksForView(this);
+        }
+      }).catch((error) => {
         this.showError(`无法确认外置批注对应的 PDF 页面：${error.message}`);
       });
+      return;
+    }
+    if (message.type === "reader-anchor-capture") {
+      if (message.rendererGeneration !== this.rendererGeneration) return;
+      const pendingCapture = this.pendingReaderAnchorCaptures.get(message.requestId);
+      void this.plugin.handleReaderAnchorCapture(this, message).catch((error) => {
+        if (pendingCapture?.clientRequestId) this.postToViewer({ channel: CHANNEL, token: this.token,
+          type: "reader-anchor-occurrence-result", requestId: pendingCapture.clientRequestId,
+          documentId: pendingCapture.documentId, openRequest: pendingCapture.openRequest,
+          ok: false, message: error.message || "创建链接失败。" });
+        new Notice(`创建 PDF 链接失败：${error.message || error}`, 7000);
+      });
+      return;
+    }
+    if (message.type === "reader-anchor-occurrence-link-request") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
+          message.requestId.length > 128 || !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+          !Number.isSafeInteger(message.startIndex) || message.startIndex < 0 ||
+          !Number.isSafeInteger(message.endIndex) || message.endIndex <= message.startIndex ||
+          message.endIndex - message.startIndex > 12) return;
+      const accepted = this.requestReaderAnchorCapture("occurrence", {
+        pageNumber: message.pageNumber, startIndex: message.startIndex, endIndex: message.endIndex,
+      }, message.requestId);
+      if (!accepted) this.postToViewer({ channel: CHANNEL, token: this.token,
+        type: "reader-anchor-occurrence-result", requestId: message.requestId,
+        documentId: message.documentId, openRequest: message.openRequest,
+        ok: false, message: "当前 PDF 身份尚未准备好。" });
+      return;
+    }
+    if (message.type === "reader-backlink-page-request") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest) return;
+      void this.plugin.handleReaderBacklinkPageRequest(this, message).catch((error) => {
+        this.plugin.sessionLog?.record("readerBacklinks", { event: "page-lookup-failed",
+          code: error.code || "unknown" });
+      });
+      return;
+    }
+    if (message.type === "reader-backlink-occurrence-query" ||
+        message.type === "reader-backlink-occurrence-open") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
+          message.requestId.length > 128) return;
+      void this.plugin.handleReaderBacklinkOccurrenceMessage(this, message).catch((error) => {
+        this.postToViewer({ channel: CHANNEL, token: this.token,
+          type: "reader-backlink-occurrence-result", requestId: message.requestId,
+          documentId: this.documentId, openRequest: this.openRequest, ok: false,
+          message: error.message || "反向链接暂时不可用。" });
+      });
+      return;
+    }
+    if (message.type === "reader-anchor-navigation-result") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest) return;
+      if (message.ok !== true) new Notice(message.message || "无法可靠定位此 PDF 链接目标。", 7000);
+      this.plugin.sessionLog?.record("readerAnchor", { event: "navigation-result", ok: message.ok === true,
+        resolveMs: message.resolveMs, kind: message.kind, reason: message.reason || null });
       return;
     }
     this.plugin.sessionLog?.record("protocol", { documentId: this.documentId, type: message.type, revision: message.revision, openRequest: message.openRequest, code: message.code, bytes: message.data?.byteLength });
@@ -2865,6 +3160,7 @@ class PdfReaderView extends EditableFileView {
         this.pendingOpenGeneration = null;
         this.startupTimings.openMs = this.openStartedAt ? Date.now() - this.openStartedAt : null;
         this.startupTimings.viewer = message.startupTimings || null;
+        if (this.pendingReaderTarget && this.annotationPageIdentity) void this.applyPendingReaderTarget();
         break;
       case "startup-timings": {
         if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId || message.openRequest !== this.openRequest) return;
@@ -2957,6 +3253,8 @@ class PdfReaderView extends EditableFileView {
       documentPath: file.path,
       filename: file.basename,
       openRequest: this.openRequest,
+      initialPageNumber: Number.isSafeInteger(this.pendingReaderTarget?.pageNumber) &&
+        this.pendingReaderTarget.pageNumber > 0 ? this.pendingReaderTarget.pageNumber : null,
       autoSave: this.plugin.settings.autoSave,
       vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
       vocabularyHighlightLevels: this.plugin.settings.vocabularyHighlightLevels,
@@ -3320,6 +3618,15 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       Notice,
       log: (event, details) => this.sessionLog?.record("annotationStore", { event, ...details }),
     });
+    this.readerAnchorStore = createReaderAnchorStore({
+      adapter: this.app.vault.adapter,
+      hash: (bytes) => this.pdfHashRuntime.fingerprint(bytes),
+      makeId: makeToken,
+    });
+    this.readerBacklinkIndex = createReaderBacklinkIndex();
+    this.readerBacklinkIndexReady = false;
+    this.readerBacklinkIndexBuildPromise = null;
+    this.readerBacklinkPageIndexes = new Map();
     traceMethods(this.annotationHost, "PdfAnnotationHost", () => this.sessionLog);
     traceMethods(this.heavyWork, "HeavyWork", () => this.sessionLog);
     this.recoveryDirectory = normalizePath(
@@ -3345,6 +3652,42 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           void this.openPdf(file);
         }
         return true;
+      },
+    });
+    this.addCommand({
+      id: "copy-pdf-reader-link",
+      name: "复制当前 PDF 阅读器链接",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) return new Notice("请先打开 PDF 阅读器。", 5000);
+        view.requestReaderAnchorCapture("reader");
+      },
+    });
+    this.addCommand({
+      id: "copy-pdf-quote-reader-link",
+      name: "复制引用和 PDF 阅读器链接",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) return new Notice("请先打开 PDF 阅读器。", 5000);
+        view.requestReaderAnchorCapture("quote");
+      },
+    });
+    this.addCommand({
+      id: "copy-pdf-annotation-link",
+      name: "复制选中批注链接",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) return new Notice("请先打开 PDF 阅读器。", 5000);
+        view.requestReaderAnchorCapture("annotation");
+      },
+    });
+    this.addCommand({
+      id: "show-pdf-page-backlinks",
+      name: "查看当前 PDF 页的 Markdown 反向链接",
+      callback: () => {
+        const view = this.app.workspace.activeLeaf?.view;
+        if (!(view instanceof PdfReaderView)) return new Notice("请先打开 PDF 阅读器。", 5000);
+        view.requestReaderAnchorCapture("backlinks");
       },
     });
     this.addCommand({
@@ -3434,6 +3777,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (typeof this.app.vault.on === "function") {
       this.registerEvent(
         this.app.vault.on("modify", (file) => {
+          if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
+            this.refreshReaderBacklinkFile(file);
+          }
           void this.annotationHost.handleSidecarChange(file).then((handled) => {
             if (!handled && isPdfFile(file)) return this.annotationHost.handleSourceModify(file);
             return undefined;
@@ -3444,13 +3790,29 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("create", (file) => {
+          if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
+            this.refreshReaderBacklinkFile(file);
+          }
           void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
             event: "vault-create-check-failed", code: error.code || "unknown",
           }));
         }),
       );
       this.registerEvent(
+        this.app.vault.on("delete", (file) => {
+          if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
+            this.removeReaderBacklinkFile(file.path);
+          }
+        }),
+      );
+      this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          if (typeof oldPath === "string" && oldPath.toLowerCase().endsWith(".md")) {
+            this.removeReaderBacklinkFile(oldPath, { notify: false });
+          }
+          if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
+            this.refreshReaderBacklinkFile(file);
+          }
           if (!isPdfFile(file)) {
             void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
               event: "sidecar-rename-check-failed", path: safeFileName(file?.path), code: error.code || "unknown",
@@ -3466,6 +3828,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           }
         }),
       );
+    }
+    if (typeof this.app.metadataCache?.on === "function") {
+      this.registerEvent(this.app.metadataCache.on("changed", (file) => this.refreshReaderBacklinkFile(file)));
     }
     if (typeof this.app.workspace.on === "function") {
       this.registerEvent(
@@ -3485,7 +3850,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     // materialization or completion of the workspace layout.
     this.scheduleViewerPrewarm("plugin-load");
     if (typeof this.app.workspace.onLayoutReady === "function") {
-      this.app.workspace.onLayoutReady(() => this.scheduleViewerPrewarm("layout-ready"));
+      this.app.workspace.onLayoutReady(() => {
+        this.scheduleViewerPrewarm("layout-ready");
+        void this.rebuildReaderBacklinkIndex();
+      });
+    } else {
+      void this.rebuildReaderBacklinkIndex();
     }
     const foreground = () => {
       if (globalThis.document?.visibilityState !== "hidden") {
@@ -3496,6 +3866,483 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerDomEvent(globalThis.window, "focus", foreground);
       if (globalThis.document?.addEventListener) this.registerDomEvent(globalThis.document, "visibilitychange", foreground);
     }
+    if (typeof this.registerDomEvent === "function" && globalThis.document?.addEventListener) {
+      this.registerDomEvent(globalThis.document, "click", (event) => {
+        void this.handleEnhancedPdfLinkClick(event);
+      }, true);
+    }
+  }
+
+  async rebuildReaderBacklinkIndex() {
+    const index = this.readerBacklinkIndex;
+    if (!index || this.readerBacklinkIndexReady) return;
+    if (this.readerBacklinkIndexBuildPromise) return this.readerBacklinkIndexBuildPromise;
+    const build = async () => {
+      const startedAt = Date.now();
+      const files = this.app.vault.getMarkdownFiles?.() || [];
+      for (const file of files) this.refreshReaderBacklinkFile(file, { notify: false });
+      this.readerBacklinkIndexReady = true;
+      this.readerBacklinkPageIndexes.clear();
+      this.sessionLog?.record("readerBacklinks", {
+        event: "index-built", sourceFileCount: files.length,
+        targetCount: index.size, durationMs: Math.max(0, Date.now() - startedAt),
+      });
+      for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+    };
+    this.readerBacklinkIndexBuildPromise = build();
+    try { await this.readerBacklinkIndexBuildPromise; }
+    finally { this.readerBacklinkIndexBuildPromise = null; }
+  }
+
+  invalidateReaderBacklinkPageIndexes() {
+    this.readerBacklinkPageIndexes?.clear?.();
+  }
+
+  removeReaderBacklinkFile(sourcePath, { notify = true } = {}) {
+    const removed = this.readerBacklinkIndex?.removeFile(sourcePath) || false;
+    if (!removed) return false;
+    this.invalidateReaderBacklinkPageIndexes();
+    if (notify && this.readerBacklinkIndexReady) {
+      for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+    }
+    return true;
+  }
+
+  refreshReaderBacklinkFile(file, { notify = true } = {}) {
+    if (!file || typeof file.path !== "string" || !file.path.toLowerCase().endsWith(".md")) return false;
+    const cache = this.app.metadataCache?.getFileCache?.(file);
+    if (!cache) return this.removeReaderBacklinkFile(file.path, { notify });
+    const updated = this.readerBacklinkIndex?.replaceFile(file, cache) || false;
+    if (updated) this.invalidateReaderBacklinkPageIndexes();
+    if (updated && notify && this.readerBacklinkIndexReady) {
+      for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+    }
+    return updated;
+  }
+
+  async getReaderBacklinkPageIndex(view, identity) {
+    if (!this.readerBacklinkIndexReady) await this.rebuildReaderBacklinkIndex();
+    const document = view?.annotationDocument;
+    const pageIdentities = view?.annotationPageIdentity?.orderedPageIdentities;
+    const snapshot = view?.annotationSnapshot;
+    const sourceHash = view?.annotationSourceHash;
+    const isCurrent = () => view?.isCurrentReaderAnchorIdentity?.(identity) === true &&
+      view.annotationDocument === document && view.annotationPageIdentity?.orderedPageIdentities === pageIdentities &&
+      view.annotationSnapshot === snapshot && view.annotationSourceHash === sourceHash;
+    if (!document?.docKey || !document.documentId || !Array.isArray(pageIdentities) ||
+        !snapshot || !isCurrent()) return null;
+    const cacheKey = `${document.docKey}:${document.documentId}:${sourceHash || ""}`;
+    const indexRevision = this.readerBacklinkIndex?.revision || 0;
+    let entry = this.readerBacklinkPageIndexes.get(cacheKey);
+    if (entry && entry.indexRevision === indexRevision && entry.pageIdentities === pageIdentities &&
+        entry.snapshot === snapshot) {
+      this.readerBacklinkPageIndexes.delete(cacheKey);
+      this.readerBacklinkPageIndexes.set(cacheKey, entry);
+      const value = entry.value || await entry.promise;
+      if (!isCurrent() || this.readerBacklinkPageIndexes.get(cacheKey) !== entry) return null;
+      return { value, cacheHit: true, stats: entry.stats || null };
+    }
+    entry = { indexRevision, pageIdentities, snapshot, value: null, promise: null, stats: null };
+    this.readerBacklinkPageIndexes.set(cacheKey, entry);
+    const annotations = Array.isArray(snapshot.annotations) ? snapshot.annotations :
+      Object.values(snapshot.annotations || {});
+    const tombstones = Array.isArray(snapshot.tombstones) ? snapshot.tombstones :
+      Object.values(snapshot.tombstones || {});
+    entry.promise = buildReaderBacklinkPageIndex({
+      index: this.readerBacklinkIndex,
+      anchorStore: this.readerAnchorStore,
+      docKey: document.docKey,
+      documentId: document.documentId,
+      pageIdentities,
+      annotations,
+      tombstones,
+      onInvalidAnchor: (error) => this.sessionLog?.record("readerBacklinks", {
+        event: "anchor-invalid", code: error?.code || "unknown",
+      }),
+    });
+    try {
+      const value = await entry.promise;
+      if (!isCurrent() || this.readerBacklinkPageIndexes.get(cacheKey) !== entry ||
+          this.readerBacklinkIndex?.revision !== indexRevision) return null;
+      entry.value = value;
+      entry.stats = {
+        backlinkLookupMs: value.backlinkLookupMs,
+        anchorResolveMs: value.anchorResolveMs,
+        buildMs: value.buildMs,
+      };
+      while (this.readerBacklinkPageIndexes.size > 12) {
+        const oldest = this.readerBacklinkPageIndexes.keys().next().value;
+        if (oldest === cacheKey && this.readerBacklinkPageIndexes.size === 1) break;
+        this.readerBacklinkPageIndexes.delete(oldest);
+      }
+      return { value, cacheHit: false, stats: entry.stats };
+    } catch (error) {
+      if (this.readerBacklinkPageIndexes.get(cacheKey) === entry) this.readerBacklinkPageIndexes.delete(cacheKey);
+      throw error;
+    }
+  }
+
+  async collectReaderBacklinksForPage(view, pageIndex, identity) {
+    if (!this.readerBacklinkIndexReady) await this.rebuildReaderBacklinkIndex();
+    const document = view.annotationDocument;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const pageIdentity = pageIdentities?.[pageIndex];
+    const isCurrent = () => view.isCurrentReaderAnchorIdentity(identity) &&
+      view.annotationDocument === document && view.annotationPageIdentity?.orderedPageIdentities === pageIdentities;
+    if (!document?.docKey || !pageIdentity || !isCurrent()) return null;
+    const cached = await this.getReaderBacklinkPageIndex(view, identity);
+    if (!cached || !isCurrent()) return null;
+    const page = cached.value.forPage(pageIdentity);
+    return {
+      rows: page.rows,
+      markers: page.markers,
+      backlinkLookupMs: cached.cacheHit ? 0 : cached.stats?.backlinkLookupMs || 0,
+      anchorResolveMs: cached.cacheHit ? 0 : cached.stats?.anchorResolveMs || 0,
+      pageIndexCacheHit: cached.cacheHit,
+    };
+  }
+
+  async handleReaderBacklinkPageRequest(view, message) {
+    if (message.documentId !== view.documentId || message.openRequest !== view.openRequest ||
+        message.rendererGeneration !== view.rendererGeneration || !Number.isSafeInteger(message.pageIndex) ||
+        message.pageIndex < 0 || message.pageNumber !== message.pageIndex + 1) return false;
+    view.currentPageNumber = message.pageNumber;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const document = view.annotationDocument;
+    if (!document || view.annotationHydrationAllowed !== true || message.pageIdentity !== pageIdentities?.[message.pageIndex] ||
+        message.sourceHash !== view.annotationSourceHash) return false;
+    const identity = { documentId: view.documentId, openRequest: view.openRequest,
+      rendererGeneration: view.rendererGeneration };
+    const result = await this.collectReaderBacklinksForPage(view, message.pageIndex, identity);
+    if (!result || !view.isCurrentReaderAnchorIdentity(identity)) return false;
+    view.postToViewer({ channel: CHANNEL, token: view.token, type: "reader-backlink-page-results",
+      documentId: identity.documentId, openRequest: identity.openRequest,
+      rendererGeneration: identity.rendererGeneration, pageNumber: message.pageNumber,
+      pageIndex: message.pageIndex, pageIdentity: message.pageIdentity,
+      backlinkCount: result.rows.length, markers: result.markers.slice(0, 64),
+      backlinkLookupMs: result.backlinkLookupMs, anchorResolveMs: result.anchorResolveMs,
+      pageIndexCacheHit: result.pageIndexCacheHit });
+    return true;
+  }
+
+  async refreshReaderBacklinksForView(view) {
+    if (!this.readerBacklinkIndexReady || !view?.ready || !view.openAcknowledged ||
+        view.annotationHydrationAllowed !== true || !view.annotationPageIdentity?.orderedPageIdentities) return false;
+    const pageNumber = Number.isSafeInteger(view.currentPageNumber) ? view.currentPageNumber :
+      Number.isSafeInteger(view.pendingReaderTarget?.pageNumber) ? view.pendingReaderTarget.pageNumber : 1;
+    const pageIndex = pageNumber - 1;
+    const pageIdentity = view.annotationPageIdentity.orderedPageIdentities[pageIndex];
+    if (!pageIdentity) return false;
+    return this.handleReaderBacklinkPageRequest(view, {
+      documentId: view.documentId, openRequest: view.openRequest,
+      rendererGeneration: view.rendererGeneration, pageNumber, pageIndex,
+      pageIdentity, sourceHash: view.annotationSourceHash,
+    });
+  }
+
+  async handleReaderBacklinkOccurrenceMessage(view, message) {
+    const document = view.annotationDocument;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const isCurrent = () => view.isCurrentReaderAnchorIdentity({ documentId: message.documentId,
+      openRequest: message.openRequest, rendererGeneration: message.rendererGeneration }) &&
+      view.annotationDocument === document && view.annotationHydrationAllowed === true;
+    if (!document?.docKey || !document.documentId || !isCurrent()) return false;
+    const identity = { documentId: message.documentId, openRequest: message.openRequest,
+      rendererGeneration: message.rendererGeneration };
+    const backlinkPageIndex = await this.getReaderBacklinkPageIndex(view, identity);
+    if (!backlinkPageIndex || !isCurrent()) return false;
+    let rows = [];
+    let anchorIds = [];
+    if (message.type === "reader-backlink-occurrence-query") {
+      if (!Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+          !Number.isSafeInteger(message.startIndex) || message.startIndex < 0 ||
+          !Number.isSafeInteger(message.endIndex) || message.endIndex <= message.startIndex ||
+          message.endIndex - message.startIndex > 12) return false;
+      const pageIdentity = pageIdentities?.[message.pageNumber - 1];
+      if (!pageIdentity) return false;
+      const occurrence = backlinkPageIndex.value.forOccurrence(pageIdentity, message.startIndex, message.endIndex);
+      anchorIds = occurrence.anchorIds;
+      rows = occurrence.rows;
+    } else {
+      if (!Array.isArray(message.anchorIds) || message.anchorIds.length > 32) return false;
+      anchorIds = message.anchorIds.filter((anchorId) => typeof anchorId === "string");
+      rows = backlinkPageIndex.value.forAnchorIds(anchorIds);
+    }
+    if (!isCurrent()) return false;
+    if (message.type === "reader-backlink-occurrence-query") {
+      view.postToViewer({ channel: CHANNEL, token: view.token, type: "reader-backlink-occurrence-result",
+        requestId: message.requestId, documentId: message.documentId, openRequest: message.openRequest,
+        rendererGeneration: message.rendererGeneration, ok: true, count: rows.length,
+        anchorIds: [...new Set(anchorIds)] });
+    } else {
+      new ReaderBacklinksModal(this.app, rows,
+        (row) => this.app.workspace.openLinkText(row.sourcePath, "", true)).open();
+    }
+    return true;
+  }
+
+  async resolveReaderLinkDocument(parsed, linkPath, sourcePath = "") {
+    if (!parsed?.docKey || !parsed.documentId) throw new Error("链接缺少稳定的 PDF 文档身份。");
+    const route = await this.annotationHost.store.documentForIdentity({
+      docKey: parsed.docKey,
+      documentId: parsed.documentId,
+    });
+    if (route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
+      throw new Error("链接中的 PDF 文档身份无法验证。");
+    }
+    const currentPath = route.sourcePath;
+    const file = currentPath ? this.app.vault.getAbstractFileByPath(currentPath) : null;
+    if (!isPdfFile(file)) throw new Error("链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+    if (linkPath) {
+      const direct = this.app.metadataCache?.getFirstLinkpathDest?.(linkPath, sourcePath);
+      if (direct && isPdfFile(direct) && direct.path !== file.path) {
+        this.sessionLog?.record("readerAnchor", { event: "stale-path-routed-by-identity", docKey: parsed.docKey });
+      }
+    }
+    let readerTarget = normalizeReaderTarget({ ...parsed.target, docKey: parsed.docKey,
+      documentId: parsed.documentId, pageNumber: parsed.pageNumber, selection: parsed.selection });
+    if (!readerTarget && parsed.pageNumber) readerTarget = { kind: "page-number", pageNumber: parsed.pageNumber,
+      selection: parsed.selection };
+    if (!readerTarget) throw new Error("链接没有可识别的 Reader 目标。");
+    let effective = null;
+    if (readerTarget.kind === "annotation") {
+      const store = this.annotationHost.store;
+      // Link navigation must use a strictly read-only effective-state view:
+      // legacy Format 3 exposes exportForMigration, while the current WAL
+      // store exposes readDocument({ readOnly: true }). Neither path may ACK,
+      // compact, repair a partial JSONL tail, or materialize a checkpoint.
+      if (typeof store.exportForMigration === "function") {
+        effective = await store.exportForMigration(route);
+      } else if (typeof store.readDocument === "function") {
+        effective = await store.readDocument(route, { readOnly: true });
+      } else {
+        throw new Error("当前批注存储不支持只读链接解析。");
+      }
+      const identity = effective.document || effective;
+      if (identity.documentId !== parsed.documentId || identity.docKey !== parsed.docKey) {
+        throw new Error("批注状态与链接中的文档身份不匹配。");
+      }
+    }
+    if (readerTarget.kind === "selection") {
+      const anchor = await this.readerAnchorStore.get(parsed.docKey, readerTarget.id, parsed.documentId);
+      if (!anchor || anchor.sourceHash !== route.source?.sourceHash) {
+        throw new Error("Selection Anchor 不存在或来源版本不匹配；原生页码回退仍可用。");
+      }
+      readerTarget = { ...readerTarget, pageNumber: anchor.pageIndexHint + 1 };
+    } else if (readerTarget.kind === "annotation") {
+      const toRows = (value) => Array.isArray(value) ? value : Object.values(value || {});
+      const rows = toRows(effective?.annotations);
+      const tombstones = toRows(effective?.tombstones);
+      const row = rows.find((entry) => entry?.uuid === readerTarget.id && entry.deleted !== true &&
+        !tombstones.some((deleted) => deleted?.uuid === readerTarget.id));
+      if (!row) throw new Error("批注目标已删除或不存在；链接不会重新绑定到其他批注。");
+      readerTarget = { ...readerTarget, pageNumber: row.pageIndex + 1 };
+    }
+    return { file, readerTarget };
+  }
+
+  async resolveReaderLinkFallback(parsed, linkPath, sourcePath = "") {
+    const pageNumber = Number.isSafeInteger(parsed?.pageNumber) && parsed.pageNumber > 0
+      ? parsed.pageNumber : 1;
+    let file = null;
+    if (parsed?.docKey && parsed?.documentId) {
+      try {
+        const route = await this.annotationHost.store.documentForIdentity({
+          docKey: parsed.docKey,
+          documentId: parsed.documentId,
+        });
+        file = this.app.vault.getAbstractFileByPath(route.sourcePath);
+      } catch { /* The native path fallback below remains available. */ }
+    }
+    if (!isPdfFile(file) && linkPath) {
+      file = this.app.metadataCache?.getFirstLinkpathDest?.(linkPath, sourcePath) || null;
+    }
+    return isPdfFile(file)
+      ? { file, readerTarget: { kind: "page-number", pageNumber, selection: parsed?.selection || null } }
+      : null;
+  }
+
+  async handleEnhancedPdfLinkClick(event) {
+    const anchor = event?.target?.closest?.("a.internal-link[data-href], a.internal-link[href]");
+    if (!anchor) return false;
+    const href = anchor.getAttribute("data-href") || anchor.getAttribute("href") || "";
+    const hashIndex = href.indexOf("#");
+    if (hashIndex < 0) return false;
+    const parsed = parseReaderLinkFragment(href.slice(hashIndex + 1));
+    if (!parsed.docKey || !parsed.documentId || !parsed.target) return false;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    let linkPath = "";
+    let sourcePath = "";
+    try {
+      try { linkPath = decodeURIComponent(href.slice(0, hashIndex)); }
+      catch { linkPath = href.slice(0, hashIndex); }
+      sourcePath = anchor.closest?.(".markdown-preview-view")?.dataset?.sourcePath ||
+        this.app.workspace.activeLeaf?.view?.file?.path || "";
+      const { file, readerTarget } = await this.resolveReaderLinkDocument(parsed, linkPath, sourcePath);
+      await this.openPdf(file, readerTarget);
+    } catch (error) {
+      const fallback = await this.resolveReaderLinkFallback(parsed, linkPath, sourcePath);
+      if (fallback) {
+        new Notice(`稳定目标无法确认，已退回原生 PDF 页码链接：${error.message || error}`, 7000);
+        await this.openPdf(fallback.file, fallback.readerTarget);
+      } else {
+        new Notice(`无法打开 PDF 链接：${error.message || error}`, 7000);
+      }
+    }
+    return true;
+  }
+
+  async handleReaderAnchorCapture(view, message) {
+    const pending = view.pendingReaderAnchorCaptures.get(message.requestId);
+    if (!pending || message.rendererGeneration !== view.rendererGeneration ||
+        message.documentId !== pending.documentId || message.openRequest !== pending.openRequest ||
+        !view.isCurrentReaderAnchorIdentity(pending)) return true;
+    const respondOccurrence = (ok, messageText = null) => {
+      if (!pending.clientRequestId) return;
+      view.postToViewer({ channel: CHANNEL, token: view.token,
+        type: "reader-anchor-occurrence-result", requestId: pending.clientRequestId,
+        documentId: pending.documentId, openRequest: pending.openRequest,
+        ok, ...(messageText ? { message: messageText } : {}) });
+    };
+    globalThis.clearTimeout(pending.timer);
+    view.pendingReaderAnchorCaptures.delete(message.requestId);
+    if (message.error || !message.capture) {
+      respondOccurrence(false, message.error || "当前没有可链接的 PDF 目标。");
+      new Notice(message.error || "当前没有可链接的 PDF 目标。", 6000);
+      return true;
+    }
+    const capture = message.capture;
+    const document = view.annotationDocument;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    if (!document || !Array.isArray(pageIdentities) || pageIdentities.length !== view.annotationPageIdentity.pageCount ||
+        view.annotationHydrationAllowed !== true || view.annotationSourceMismatch === true) {
+      respondOccurrence(false, "PDF 身份或页面身份尚未确认。");
+      new Notice("PDF 身份或页面身份尚未确认，暂不能创建增强链接。", 7000);
+      return true;
+    }
+    const pageIndex = capture.pageIndex;
+    const pageIdentity = Number.isSafeInteger(pageIndex) ? pageIdentities[pageIndex] : null;
+    if (!pageIdentity || capture.pageIdentity !== pageIdentity || capture.pageNumber !== pageIndex + 1) {
+      respondOccurrence(false, "当前页面身份与已验证 PDF 不一致。");
+      new Notice("当前页面身份与已验证 PDF 不一致，未创建链接。", 7000);
+      return true;
+    }
+    if (capture.sourceHash !== view.annotationSourceHash) {
+      respondOccurrence(false, "PDF 来源版本与 Reader 确认状态不一致。");
+      new Notice("PDF 来源版本与 Reader 确认状态不一致，未创建链接。", 7000);
+      return true;
+    }
+    const identity = { documentId: pending.documentId, openRequest: pending.openRequest,
+      rendererGeneration: pending.rendererGeneration };
+    const isCurrent = () => view.isCurrentReaderAnchorIdentity(identity) &&
+      view.annotationDocument === document && view.annotationPageIdentity?.orderedPageIdentities === pageIdentities &&
+      view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true;
+    if (pending.mode === "backlinks") {
+      await this.showReaderBacklinks(view, capture, identity);
+      return true;
+    }
+    let target;
+    let selection = null;
+    if (capture.kind === "selection") {
+      const orderedPageIdentityDigest = await this.pdfHashRuntime.fingerprint(
+        new TextEncoder().encode(JSON.stringify(pageIdentities)),
+      );
+      if (!isCurrent()) return true;
+      const anchor = await this.readerAnchorStore.create({
+        anchorId: makeToken(),
+        docKey: document.docKey,
+        documentId: document.documentId,
+        sourceHash: view.annotationSourceHash,
+        pageIdentity,
+        pageIndexHint: pageIndex,
+        pageCount: view.annotationPageIdentity.pageCount,
+        orderedPageIdentityDigest,
+        textPosition: capture.textPosition,
+        exactQuote: capture.exactQuote,
+        prefix: capture.prefix,
+        suffix: capture.suffix,
+        geometry: capture.geometry,
+      });
+      if (!isCurrent()) return true;
+      target = { kind: "selection", id: anchor.anchorId };
+      selection = capture.nativeSelection || null;
+    } else if (capture.kind === "annotation") {
+      const rows = Array.isArray(view.annotationSnapshot?.annotations)
+        ? view.annotationSnapshot.annotations : Object.values(view.annotationSnapshot?.annotations || {});
+      const row = rows.find((entry) => entry?.uuid === capture.annotationUuid && entry.deleted !== true);
+      if (!row || row.pageIndex !== pageIndex) {
+        respondOccurrence(false, "所选批注不存在或已删除。");
+        new Notice("所选批注不存在或已删除；没有创建链接。", 6000);
+        return true;
+      }
+      target = { kind: "annotation", id: row.uuid };
+    } else if (capture.kind === "page") {
+      target = { kind: "page", id: pageIdentity };
+    } else {
+      respondOccurrence(false, "Reader 返回了不支持的链接目标。");
+      return true;
+    }
+    const fragment = encodeReaderLinkFragment({ pageNumber: pageIndex + 1, selection,
+      docKey: document.docKey, documentId: document.documentId, target });
+    const relativePath = view.documentFile?.path || view.file?.path;
+    if (!relativePath) throw new Error("当前 PDF 路径不可用。");
+    const label = `${view.documentFile?.basename || view.file?.basename || "PDF"} · p.${pageIndex + 1}`;
+    const safePath = relativePath.replaceAll("#", "%23").replaceAll("|", "\\|");
+    const link = `[[${safePath}#${fragment}|${label.replaceAll("|", "\\|")}]]`;
+    const output = pending.mode === "quote" && capture.kind === "selection"
+      ? `${capture.exactQuote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n${link}`
+      : link;
+    if (!isCurrent()) return true;
+    await this.copyReaderText(output);
+    if (!isCurrent()) return true;
+    new Notice(capture.kind === "selection" ? "已复制带稳定 Selection Anchor 的 PDF 链接。" : "已复制 PDF 链接。", 4000);
+    this.sessionLog?.record("readerAnchor", { event: "link-copied", kind: capture.kind,
+      pageIndex, anchorCreated: capture.kind === "selection" });
+    respondOccurrence(true);
+    return true;
+  }
+
+  async copyReaderText(value) {
+    const clipboard = globalThis.navigator?.clipboard;
+    if (clipboard?.writeText) {
+      await clipboard.writeText(value);
+      return;
+    }
+    const doc = globalThis.document;
+    const field = doc?.createElement?.("textarea");
+    if (!field) throw new Error("当前环境不允许访问剪贴板。");
+    field.value = value;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    doc.body.appendChild(field);
+    field.select();
+    const copied = doc.execCommand?.("copy") === true;
+    field.remove();
+    if (!copied) throw new Error("复制链接失败，请检查 Obsidian 剪贴板权限。");
+  }
+
+  async showReaderBacklinks(view, capture, identity) {
+    if (!this.readerBacklinkIndexReady) await this.rebuildReaderBacklinkIndex();
+    if (!view.isCurrentReaderAnchorIdentity(identity)) return;
+    const document = view.annotationDocument;
+    const pageIndex = capture.pageIndex;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const pageIdentity = pageIdentities?.[pageIndex];
+    if (!document?.docKey || !pageIdentity || capture.pageIdentity !== pageIdentity ||
+        capture.sourceHash !== view.annotationSourceHash) {
+      new Notice("当前 PDF 页面身份尚未确认。", 5000);
+      return;
+    }
+    const isCurrent = () => view.isCurrentReaderAnchorIdentity(identity) &&
+      view.annotationDocument === document && view.annotationPageIdentity?.orderedPageIdentities === pageIdentities;
+    const cached = await this.getReaderBacklinkPageIndex(view, identity);
+    if (!cached || !isCurrent()) return;
+    const rows = cached.value.forPage(pageIdentity).rows;
+    if (!isCurrent()) return;
+    new ReaderBacklinksModal(this.app, rows, (row) => this.app.workspace.openLinkText(row.sourcePath, "", true)).open();
+    this.sessionLog?.record("readerBacklinks", { event: "page-query", pageIndex, resultCount: rows.length });
   }
 
   async reviewPdfAnnotationDevices() {
@@ -4549,7 +5396,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.verifiedAssetTexts.get(relativePath);
   }
 
-  async openPdf(file) {
+  async openPdf(file, readerTarget = null) {
     if (!isPdfFile(file)) {
       new Notice("请选择一个 PDF 文件。");
       return;
@@ -4566,7 +5413,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       await existingLeaf.setViewState({
         type: VIEW_TYPE,
         active: true,
-        state: existingLeaf.view.getState(),
+        state: { ...existingLeaf.view.getState(), readerTarget: normalizeReaderTarget(readerTarget) },
       });
       return;
     }
@@ -4574,7 +5421,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     await leaf.setViewState({
       type: VIEW_TYPE,
       active: true,
-      state: { path: file.path },
+      state: { path: file.path, ...(readerTarget ? { readerTarget: normalizeReaderTarget(readerTarget) } : {}) },
     });
   }
 };

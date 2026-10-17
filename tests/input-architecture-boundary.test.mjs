@@ -45,6 +45,17 @@ test("InputRouter owns event subscriptions without reaching into PDF or persiste
   );
 });
 
+test("TextSelectionController is the sole owner of DOM Selection and Range operations", async () => {
+  const controller = await source("text-selection-controller.js");
+  const bridge = await readFile(path.join(root, "viewer-adapter", "obsidian-bridge.js"), "utf8");
+  for (const owned of ["getSelection()", "createRange()", "rangeForAnchor(", "selectRange(", "setBaseAndExtent("]) {
+    assert.ok(controller.includes(owned), `TextSelectionController must own ${owned}`);
+  }
+  for (const forbidden of ["document.getSelection", "document.createRange", "selection.getRangeAt", "setBaseAndExtent"]) {
+    assert.ok(!bridge.includes(forbidden), `the Reader bridge must delegate ${forbidden}`);
+  }
+});
+
 test("InputRouter owns pointer sessions and releases capture during teardown", async () => {
   const listeners = new Map();
   const targetWindow = {

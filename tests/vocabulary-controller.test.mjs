@@ -732,14 +732,21 @@ test("eligible collapsed single-word click opens a local pill and durable status
     createRange() {
       return {
         setStart(node, start) { this.node = node; this.start = start; },
-        setEnd(node, end) { this.end = end; },
+        setEnd(node, end) { this.end = end; this.endContainer = node; this.endOffset = end; this.startContainer = this.node; this.startOffset = this.start; },
         getClientRects() { return this.node === textNode ? [{ left: 10, right: 80, top: 20, bottom: 40 }] : []; },
         detach() {},
       };
     },
   };
-  const textNode = { data: "Alpha", length: 5, parentNode: null };
-  const textLayer = { contains: (node) => node === textNode };
+  const textNode = { data: "Alpha", nodeValue: "Alpha", length: 5, nodeType: 3, parentNode: null };
+  const textLayer = {
+    contains: (node) => node === textNode,
+    ownerDocument: documentRef,
+  };
+  documentRef.createTreeWalker = () => {
+    let consumed = false;
+    return { nextNode: () => consumed ? null : (consumed = true, textNode) };
+  };
   const pageRoot = {
     children: [],
     querySelector: (selector) => selector === ".textLayer" ? textLayer : null,
@@ -779,6 +786,13 @@ test("eligible collapsed single-word click opens a local pill and durable status
   assert.equal(controller.handleTap({ type: "click", targetRole: "text-layer", button: 0, detail: 1,
     pageIndex: 0, clientPoint: { x: 30, y: 30 } }), true);
   const tap = posted.filter((message) => message.type === "vocab-token-tap").at(-1);
+  const backlinkQuery = posted.filter((message) => message.type === "reader-backlink-occurrence-query").at(-1);
+  assert.equal(backlinkQuery.startIndex, 0);
+  assert.equal(backlinkQuery.endIndex, 5);
+  assert.equal(controller.handleOccurrenceBacklinks({ documentId: "doc-1", openRequest: 7,
+    requestId: backlinkQuery.requestId, ok: true, count: 2, anchorIds: ["anchor-0001"] }), true);
+  assert.equal(controller.entryPill.backlinks.textContent, "反向链接：2");
+  assert.equal(controller.entryPill.openBacklinks.hidden, false);
   assert.equal(tap.key, "alpha");
   assert.equal(tap.entryType, "word");
   assert.equal(body.children.length, 1);
@@ -830,17 +844,18 @@ test("LingQ lookup accepts unhighlighted words, while an enabled multiword phras
     { key: "beta gamma", type: "phrase", status: 2 },
   ];
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
-    type: "word", surfaceKey: "alpha", rawSurface: "Alpha",
+    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha",
   }, "words remain available for lookup even when their stored level is not highlighted");
   const phrase = runtime.controller.entryForTappedToken(page, page.tokens[1]);
-  assert.deepEqual(phrase, { type: "phrase", surfaceKey: "beta gamma", rawSurface: "beta gamma" });
+  assert.deepEqual(phrase, { type: "phrase", startIndex: 1, endIndex: 3,
+    surfaceKey: "beta gamma", rawSurface: "beta gamma" });
   runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] });
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[2]), {
-    type: "word", surfaceKey: "gamma", rawSurface: "gamma",
+    type: "word", startIndex: 2, endIndex: 3, surfaceKey: "gamma", rawSurface: "gamma",
   }, "a phrase outside configured highlight levels falls back to the tapped word");
   runtime.controller.setHighlightLevels({ words: [5], phrases: [2] });
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
-    type: "word", surfaceKey: "alpha", rawSurface: "Alpha",
+    type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha",
   });
   runtime.controller.dispose();
 });

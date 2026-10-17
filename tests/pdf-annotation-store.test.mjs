@@ -768,6 +768,33 @@ test("rename preserves identity and updates source mapping; a later path copy ge
     fromPath: "A/Book.pdf", toPath: "B/Renamed.pdf" }), { code: "PDF_ANNOTATION_IDENTITY_MISSING" });
 });
 
+test("stable identity lookup resolves a renamed PDF route without relying on the old path", async () => {
+  const { adapter } = makeAdapter();
+  const writer = store({ adapter, deviceId: "identity-route-writer" });
+  const created = await writer.registerDocument({ sourcePath: "Books/Original.pdf",
+    source: { sourceHash: hash("identity-route-pdf"), size: 18, pageCount: 1,
+      orderedPageIdentities: ["ref:12 0 R"] } });
+  await writer.appendOperations({ document: created, batchId: "route-op",
+    operations: [live("route-annotation", "Underline", "identity-route-writer", 1)] });
+  await writer.renameDocument({ documentId: created.documentId,
+    fromPath: "Books/Original.pdf", toPath: "Archive/Renamed.pdf" });
+
+  const reader = store({ adapter, deviceId: "identity-route-reader" });
+  let writesDuringLookup = 0;
+  const write = adapter.write.bind(adapter);
+  const mkdir = adapter.mkdir.bind(adapter);
+  adapter.write = async (...args) => { writesDuringLookup += 1; return write(...args); };
+  adapter.mkdir = async (...args) => { writesDuringLookup += 1; return mkdir(...args); };
+  const routed = await reader.documentForIdentity({ docKey: created.docKey, documentId: created.documentId });
+  assert.equal(routed.sourcePath, "Archive/Renamed.pdf");
+  assert.equal(writesDuringLookup, 0, "identity route lookup must stay read-only for link navigation");
+  const snapshot = await reader.readDocument(routed);
+  assert.equal(snapshot.source.sourcePath, "Archive/Renamed.pdf");
+  assert.equal(snapshot.annotations.some((row) => row.uuid === "route-annotation"), true);
+  await assert.rejects(reader.documentForIdentity({ docKey: created.docKey, documentId: "another-document" }),
+    { code: "PDF_ANNOTATION_IDENTITY_MISSING" });
+});
+
 test("identity event replay follows causal parents when device clocks are skewed", async () => {
   const shared = makeAdapter();
   const writer = store({ adapter: makeAdapter(shared.shared).adapter, deviceId: "clock-a", clock: () => 9_000_000 });

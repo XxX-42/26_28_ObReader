@@ -778,7 +778,15 @@ function createPdfAnnotationHost({
 
   function broadcastSnapshot(document, snapshot, excludedView = null) {
     for (const view of documentViews.get(document.documentId) || []) {
-      if (view === excludedView || view.teardownStarted || view.documentId !== document.documentId) continue;
+      if (view.teardownStarted || view.documentId !== document.documentId) continue;
+      // Keep the host-side snapshot in sync even for the writer view, which
+      // deliberately does not receive its own external-update message. Reader
+      // backlinks and annotation UUID links consult this snapshot directly.
+      view.annotationSnapshot = snapshot;
+      if (view === excludedView) {
+        void view.plugin?.refreshReaderBacklinksForView?.(view);
+        continue;
+      }
       updateSyncStatus(view, snapshot);
       post(view, {
         type: "external-annotations-update",
@@ -789,6 +797,7 @@ function createPdfAnnotationHost({
         readOnly: view.annotationLegacyIdentityUncertain === true ||
           view.annotationSyncPending === true || view.annotationStorageUnavailable === true,
       });
+      void view.plugin?.refreshReaderBacklinksForView?.(view);
     }
   }
 

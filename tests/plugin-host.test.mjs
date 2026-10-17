@@ -11,6 +11,7 @@ import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
+const { encodeReaderLinkFragment, parseReaderLinkFragment } = sourceRequire("./reader-anchor-store.cjs");
 
 function createHarness({
   storedFiles = new Map(),
@@ -1341,6 +1342,9 @@ test("host refuses wrong-session or externally changed annotation saves and dura
   assert.equal(saved.operationCount, 1);
   assert.equal(file.writes, 0);
   assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(view.annotationSnapshot.annotations.some((row) => row.uuid === "current-highlight"),
+    "the writer view's host-side annotation snapshot advances after its durable save");
 });
 
 test("two views of one PDF serialize durable sidecar batches without overwriting the PDF", async () => {
@@ -1377,6 +1381,184 @@ test("two views of one PDF serialize durable sidecar batches without overwriting
     "first-view-highlight",
     "second-view-highlight",
   ], "the checkpoint replay contains both independently serialized view batches");
+});
+
+test("Reader backlink pages use a document cache and invalidate it when Markdown or annotation state changes", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/backlink-cache.pdf", [1, 2, 3]);
+  const reader = await createSidecarReader(harness, file, { orderedPageIdentities: ["page-one"] });
+  const view = reader.view;
+  const rawIndex = harness.plugin.readerBacklinkIndex;
+  let documentLookups = 0;
+  const link = {
+    link: `Book.pdf#page=1&docKey=${view.annotationDocument.docKey}&obdoc=${encodeURIComponent(view.annotationDocument.documentId)}&obreader=page.page-one`,
+    displayText: "page reference",
+    position: { start: { offset: 10, line: 1 } },
+  };
+  rawIndex.replaceFile({ path: "Notes/Backlink.md" }, { links: [link] });
+  harness.plugin.readerBacklinkIndex = {
+    get size() { return rawIndex.size; },
+    get revision() { return rawIndex.revision; },
+    replaceFile: (...args) => rawIndex.replaceFile(...args),
+    removeFile: (...args) => rawIndex.removeFile(...args),
+    get: (...args) => rawIndex.get(...args),
+    getDocument: (...args) => { documentLookups += 1; return rawIndex.getDocument(...args); },
+  };
+  harness.plugin.readerBacklinkIndexReady = true;
+  const identity = { documentId: view.documentId, openRequest: view.openRequest,
+    rendererGeneration: view.rendererGeneration };
+  const first = await harness.plugin.collectReaderBacklinksForPage(view, 0, identity);
+  const repeated = await harness.plugin.collectReaderBacklinksForPage(view, 0, identity);
+  assert.equal(first.rows.length, 1);
+  assert.equal(repeated.rows.length, 1);
+  assert.equal(first.pageIndexCacheHit, false);
+  assert.equal(repeated.pageIndexCacheHit, true);
+  assert.equal(documentLookups, 1, "scrolling to the same document's next page does not rescan its Markdown rows");
+
+  harness.plugin.removeReaderBacklinkFile("Notes/Backlink.md", { notify: false });
+  const afterMarkdownChange = await harness.plugin.collectReaderBacklinksForPage(view, 0, identity);
+  assert.equal(afterMarkdownChange.rows.length, 0);
+  assert.equal(documentLookups, 2, "a Markdown change invalidates the derived per-document page map");
+
+  view.annotationSnapshot = { ...view.annotationSnapshot, revision: 2 };
+  await harness.plugin.collectReaderBacklinksForPage(view, 0, identity);
+  assert.equal(documentLookups, 3, "a new annotation snapshot rebuilds page-to-annotation mappings");
+  harness.plugin.onunload();
+});
+
+test("enhanced Reader links keep stable page, selection and annotation identity across PDF rename", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const originalBytes = Uint8Array.from([37, 80, 68, 70, 9, 8, 7]);
+  const file = new harness.TFile("Books/rename-link.pdf", originalBytes);
+  const reader = await createSidecarReader(harness, file, {
+    pageCount: 2,
+    orderedPageIdentities: ["page-one", "page-two"],
+  });
+  const { view } = reader;
+  const document = view.annotationDocument;
+  const selectionAnchor = await harness.plugin.readerAnchorStore.create({
+    anchorId: "anchor-rename-test",
+    docKey: document.docKey,
+    documentId: document.documentId,
+    sourceHash: view.annotationSourceHash,
+    pageIdentity: "page-two",
+    pageIndexHint: 1,
+    pageCount: 2,
+    orderedPageIdentityDigest: await harness.plugin.pdfHashRuntime.fingerprint(
+      new TextEncoder().encode(JSON.stringify(["page-one", "page-two"])),
+    ),
+    textPosition: { start: 10, end: 22 },
+    exactQuote: "stable selected text",
+    prefix: "before ",
+    suffix: " after",
+    geometry: { x: 0.1, y: 0.2, width: 0.4, height: 0.03 },
+    createdAt: 1792200000000,
+  });
+  const annotationId = "550e8400-e29b-41d4-a716-446655440000";
+  await saveSidecarOperations(reader, {
+    requestId: "rename-link-create-annotation",
+    operations: [{ uuid: annotationId, kind: "Highlight", pageIndex: 1, deleted: false,
+      payload: { editor: { type: "highlight", color: [1, 1, 0] } } }],
+  });
+
+  const link = (target, pageNumber) => encodeReaderLinkFragment({
+    pageNumber,
+    docKey: document.docKey,
+    documentId: document.documentId,
+    target,
+  });
+  const selection = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(link({ kind: "selection", id: selectionAnchor.anchorId }, 2)),
+    "rename-link.pdf",
+  );
+  assert.equal(selection.file, file);
+  assert.equal(selection.readerTarget.kind, "selection");
+  assert.equal(selection.readerTarget.pageNumber, 2);
+
+  const page = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(link({ kind: "page", id: "page-two" }, 2)),
+    "rename-link.pdf",
+  );
+  assert.equal(page.file, file);
+  assert.deepEqual(page.readerTarget, {
+    kind: "page", id: "page-two", docKey: document.docKey,
+    documentId: document.documentId, pageNumber: 2,
+  });
+
+  const oldPath = file.path;
+  harness.files.delete(oldPath);
+  file.path = "Archive/renamed-link.pdf";
+  file.basename = "renamed-link";
+  harness.files.set(file.path, file);
+  await harness.plugin.annotationHost.renamed(file, oldPath);
+
+  const annotation = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(link({ kind: "annotation", id: annotationId }, 2)),
+    "rename-link.pdf",
+  );
+  assert.equal(annotation.file, file, "the stable document route wins over a stale Markdown path");
+  assert.equal(annotation.readerTarget.pageNumber, 2);
+  assert.equal(view.annotationDocument.documentId, document.documentId);
+  assert.equal(view.annotationDocument.docKey, document.docKey);
+
+  await saveSidecarOperations(reader, {
+    requestId: "rename-link-delete-annotation",
+    operations: [{ uuid: annotationId, kind: "Highlight", pageIndex: 1, deleted: true,
+      payload: { editor: { type: "highlight", color: [1, 1, 0] } } }],
+  });
+  await assert.rejects(
+    harness.plugin.resolveReaderLinkDocument(
+      parseReaderLinkFragment(link({ kind: "annotation", id: annotationId }, 2)),
+      "rename-link.pdf",
+    ),
+    /已删除或不存在/,
+  );
+  assert.deepEqual(file.bytes, originalBytes, "link resolution and rename never write source PDF bytes");
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
+});
+
+test("WAL Reader links resolve a renamed document through a read-only effective-state adapter", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  const source = Uint8Array.from([37, 80, 68, 70, 4, 5, 6]);
+  const file = new harness.TFile("Books/wal-link.pdf", source);
+  const reader = await createSidecarReader(harness, file, {
+    pageCount: 1,
+    orderedPageIdentities: ["wal-page-one"],
+  });
+  const document = reader.view.annotationDocument;
+  const annotationId = "550e8400-e29b-41d4-a716-446655440010";
+  await saveSidecarOperations(reader, {
+    requestId: "wal-link-create",
+    operations: [{ uuid: annotationId, kind: "Underline", pageIndex: 0, deleted: false,
+      payload: { editor: { type: "underline", rect: [1, 2, 20, 8] } } }],
+  });
+  const oldPath = file.path;
+  harness.files.delete(oldPath);
+  file.path = "Archive/wal-link-renamed.pdf";
+  harness.files.set(file.path, file);
+  await harness.plugin.annotationHost.renamed(file, oldPath);
+
+  let storageWrites = 0;
+  const adapter = harness.app.vault.adapter;
+  const write = adapter.write.bind(adapter);
+  const append = adapter.append.bind(adapter);
+  adapter.write = async (...args) => { storageWrites += 1; return write(...args); };
+  adapter.append = async (...args) => { storageWrites += 1; return append(...args); };
+  const fragment = encodeReaderLinkFragment({ pageNumber: 1, docKey: document.docKey,
+    documentId: document.documentId,
+    target: { kind: "annotation", id: annotationId } });
+  const result = await harness.plugin.resolveReaderLinkDocument(parseReaderLinkFragment(fragment), "wal-link.pdf");
+  assert.equal(result.file, file);
+  assert.equal(result.readerTarget.kind, "annotation");
+  assert.equal(result.readerTarget.pageNumber, 1);
+  assert.equal(storageWrites, 0, "annotation link lookup cannot write, compact, or acknowledge WAL state");
+  assert.deepEqual(file.bytes, source);
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
 });
 
 test("a queued annotation save stays with its source PDF when the Reader switches documents", async () => {
@@ -1515,6 +1697,14 @@ test("open uses a stable session ID and sends current path, filename, and defaul
   assert.equal(frame.sent[0].autoSave, true);
   assert.equal(frame.sent[0].vocabularyDisplayMode, "all");
   assert.equal(frame.sent[0].preferredAnnotationToolMode, 0);
+  assert.equal(frame.sent[0].initialPageNumber, null);
+  view.pendingReaderTarget = { kind: "page-number", pageNumber: 12 };
+  view.openRequest += 1;
+  view.pendingBytes = Uint8Array.from([1, 2, 3]).buffer;
+  view.lastOpenSentRequest = null;
+  view.sendPendingDocument();
+  assert.equal(frame.sent.at(-1).initialPageNumber, 12,
+    "the standard page= fallback is carried into the Viewer even before source identity confirmation");
 });
 
 test("sidecar saves require the matching opened ACK and exact Viewer page-identity handshake", async () => {

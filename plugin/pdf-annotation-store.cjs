@@ -11,6 +11,7 @@
 //   updateSourceIdentity({ document, sourceHash, pageCount, orderedPageIdentities, ... })
 //   appendOperations({ document, operations, batchId }) -> durable write acknowledgement
 //   readDocument(document) -> checkpoint-backed Viewer snapshot
+//   documentForIdentity({ docKey, documentId }) -> current verified route
 //   materializeSnapshot(document) -> verified checkpoint/pointer write
 //   renameDocument({ documentId, fromPath, toPath }) -> updated path association
 // `source.sourceHash` is the full hash (`xxh64-v1:` or `sha256-v1:`); a tail
@@ -181,6 +182,23 @@ function createPdfAnnotationStore({
     const index = await readIndex();
     const document = index.documents[normalizedPath];
     return document ? normalizeDocument({ ...document, sourcePath: normalizedPath }) : null;
+  }
+
+  async function documentForIdentity({ docKey, documentId } = {}) {
+    if (typeof docKey !== "string" || !/^[a-f0-9]{12}$/i.test(docKey) ||
+        typeof documentId !== "string" || !documentId || documentId.length > 512) {
+      throw codedError("PDF_ANNOTATION_IDENTITY_INVALID", "A complete document identity is required.");
+    }
+    const index = await readIndex({ readOnly: true });
+    const matches = Object.values(index.documents).filter((document) =>
+      document.docKey.toLowerCase() === docKey.toLowerCase() && document.documentId === documentId);
+    if (matches.length === 0) {
+      throw codedError("PDF_ANNOTATION_IDENTITY_MISSING", "No current route matches the requested document identity.");
+    }
+    if (matches.length !== 1) {
+      throw codedError("PDF_ANNOTATION_IDENTITY_AMBIGUOUS", "More than one current route matches the requested document identity.");
+    }
+    return normalizeDocument(matches[0]);
   }
 
   // Export the effective Format 3 state for a one-shot store migration. Unlike
@@ -1766,6 +1784,7 @@ function createPdfAnnotationStore({
     registerDocument,
     renameDocument,
     documentForPath,
+    documentForIdentity,
     appendOperations,
     readDocument,
     listOperationBatches,

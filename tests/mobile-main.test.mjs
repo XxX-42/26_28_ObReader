@@ -339,7 +339,8 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
         return { createPdfHashRuntime: async () => pdfHashRuntime };
       }
       if (["./pdf-merge-client.cjs", "./pdf-sync-host.cjs", "./heavy-work.cjs", "./pdf-recovery.cjs",
-        "./pdf-recovery-read.cjs", "./pdf-annotation-host.cjs", "./vocabulary/service.cjs",
+        "./pdf-recovery-read.cjs", "./pdf-annotation-host.cjs", "./reader-anchor-store.cjs",
+        "./reader-backlink-index.cjs", "./vocabulary/service.cjs",
         "./vocabulary/modals.cjs", "./session-log.cjs"].includes(name)) return sourceRequire(name);
       if (name.startsWith("node:")) nodeRuntimeRequires.push(name);
       throw new Error(`Unexpected plugin require: ${name}`);

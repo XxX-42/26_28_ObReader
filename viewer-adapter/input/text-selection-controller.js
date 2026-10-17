@@ -1,6 +1,82 @@
 (() => {
   "use strict";
 
+  function flattenTextLayer(textLayer) {
+    if (!textLayer || !textLayer.ownerDocument?.createTreeWalker) return null;
+    const walker = textLayer.ownerDocument.createTreeWalker(textLayer, 4);
+    const nodes = [];
+    let text = "";
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!node.nodeValue) continue;
+      const start = text.length;
+      text += node.nodeValue;
+      nodes.push({ node, start, end: text.length });
+    }
+    return { text, nodes, root: textLayer };
+  }
+
+  function anchorRange(documentRef, flattened, anchor) {
+    const quote = anchor?.exactQuote;
+    if (typeof quote !== "string" || !quote) return null;
+    let start = anchor.textPosition?.start;
+    let end = anchor.textPosition?.end;
+    const prefix = typeof anchor.prefix === "string" ? anchor.prefix : "";
+    const suffix = typeof anchor.suffix === "string" ? anchor.suffix : "";
+    const atPosition = Number.isSafeInteger(start) && Number.isSafeInteger(end) && end > start &&
+      flattened.text.slice(start, end) === quote &&
+      flattened.text.slice(Math.max(0, start - prefix.length), start) === prefix &&
+      flattened.text.slice(end, end + suffix.length) === suffix;
+    if (!atPosition) {
+      const candidates = [];
+      let offset = flattened.text.indexOf(quote);
+      while (offset >= 0 && candidates.length < 16) {
+        const before = flattened.text.slice(Math.max(0, offset - prefix.length), offset);
+        const after = flattened.text.slice(offset + quote.length, offset + quote.length + suffix.length);
+        if (before === prefix && after === suffix) candidates.push(offset);
+        offset = flattened.text.indexOf(quote, offset + 1);
+      }
+      if (candidates.length !== 1) return null;
+      start = candidates[0];
+      end = start + quote.length;
+    }
+    const boundary = (position) => {
+      for (const item of flattened.nodes) {
+        if (position >= item.start && position < item.end) return [item.node, position - item.start];
+      }
+      const last = flattened.nodes.at(-1);
+      return position === flattened.text.length && last ? [last.node, last.node.nodeValue.length] : null;
+    };
+    const first = boundary(start);
+    const last = boundary(end);
+    if (!first || !last) return null;
+    try {
+      const range = documentRef.createRange();
+      range.setStart(first[0], first[1]);
+      range.setEnd(last[0], last[1]);
+      return range;
+    } catch { return null; }
+  }
+
+  function spanPointForNode(textLayer, node, offset) {
+    if (node?.nodeType !== 3) return null;
+    const span = node.parentElement?.closest?.("span");
+    if (!span) return null;
+    const spans = textLayer.querySelectorAll("span");
+    const index = Array.prototype.indexOf.call(spans, span);
+    if (index < 0) return null;
+    return [index, Math.max(0, Math.min(4096, Number.isFinite(offset) ? offset : 0))];
+  }
+
+  function normalizedRect(rect, pageRect) {
+    if (!rect || !pageRect?.width || !pageRect?.height) return null;
+    const left = Math.max(0, Math.min(1, (rect.left - pageRect.left) / pageRect.width));
+    const top = Math.max(0, Math.min(1, (rect.top - pageRect.top) / pageRect.height));
+    const right = Math.max(left, Math.min(1, (rect.right - pageRect.left) / pageRect.width));
+    const bottom = Math.max(top, Math.min(1, (rect.bottom - pageRect.top) / pageRect.height));
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
   class TextSelectionController {
     constructor({
       documentRef = document,
@@ -52,6 +128,120 @@
         rangeCount: selection.rangeCount,
         text: selection.toString(),
       };
+    }
+
+    rangeSnapshot() {
+      const selection = this.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
+      try {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect?.();
+        return {
+          startContainer: range.startContainer,
+          startOffset: range.startOffset,
+          endContainer: range.endContainer,
+          endOffset: range.endOffset,
+          text: range.toString(),
+          rect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom,
+            width: rect.width, height: rect.height } : null,
+        };
+      } catch { return null; }
+    }
+
+    captureRangeAnchor(textLayer, snapshot, pageRoot = null) {
+      if (!textLayer || !snapshot?.text || !snapshot.startContainer || !snapshot.endContainer ||
+          !textLayer.contains?.(snapshot.startContainer) || !textLayer.contains?.(snapshot.endContainer)) return null;
+      const flattened = flattenTextLayer(textLayer);
+      if (!flattened) return null;
+      const start = this.textOffsetForPoint(flattened, snapshot.startContainer, snapshot.startOffset);
+      const end = this.textOffsetForPoint(flattened, snapshot.endContainer, snapshot.endOffset);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) return null;
+      const exactQuote = flattened.text.slice(start, end);
+      if (!exactQuote.trim() || exactQuote.length > 4096 || exactQuote !== snapshot.text) return null;
+      const startPoint = spanPointForNode(textLayer, snapshot.startContainer, snapshot.startOffset);
+      const endPoint = spanPointForNode(textLayer, snapshot.endContainer, snapshot.endOffset);
+      return {
+        textPosition: { start, end },
+        exactQuote,
+        prefix: flattened.text.slice(Math.max(0, start - 96), start),
+        suffix: flattened.text.slice(end, Math.min(flattened.text.length, end + 96)),
+        geometry: normalizedRect(snapshot.rect, pageRoot?.getBoundingClientRect?.()),
+        nativeSelection: startPoint && endPoint ? [...startPoint, ...endPoint].join(",") : null,
+      };
+    }
+
+    rangeForNativeSelection(textLayer, value) {
+      if (!textLayer || !this.document?.createRange || typeof value !== "string") return null;
+      const match = /^(\d{1,6}),(\d{1,6}),(\d{1,6}),(\d{1,6})$/.exec(value);
+      if (!match) return null;
+      const [startIndex, startOffset, endIndex, endOffset] = match.slice(1).map(Number);
+      const spans = textLayer.querySelectorAll?.("span");
+      if (!spans || startIndex >= spans.length || endIndex >= spans.length) return null;
+      const point = (span, offset) => {
+        const walker = this.document.createTreeWalker?.(span, 4);
+        if (!walker) return null;
+        let remaining = offset;
+        let last = null;
+        let node;
+        while ((node = walker.nextNode())) {
+          last = node;
+          const length = node.nodeValue?.length || 0;
+          if (remaining <= length) return [node, remaining];
+          remaining -= length;
+        }
+        return last ? [last, last.nodeValue?.length || 0] : null;
+      };
+      const first = point(spans[startIndex], startOffset);
+      const last = point(spans[endIndex], endOffset);
+      if (!first || !last) return null;
+      try {
+        const range = this.document.createRange();
+        range.setStart(first[0], first[1]);
+        range.setEnd(last[0], last[1]);
+        return range;
+      } catch { return null; }
+    }
+
+    textOffsetForPoint(flattened, node, offset) {
+      if (!flattened || !node) return null;
+      for (const entry of flattened.nodes) {
+        if (entry.node === node) {
+          return entry.start + Math.max(0, Math.min(entry.node.nodeValue.length, offset));
+        }
+      }
+      if (node.nodeType !== 1 || !flattened.root?.contains?.(node)) return null;
+      try {
+        const prefix = this.document.createRange();
+        prefix.setStart(flattened.root, 0);
+        prefix.setEnd(node, Math.max(0, Math.min(node.childNodes?.length || 0, offset)));
+        return prefix.toString().length;
+      } catch { return null; }
+    }
+
+    rangeForAnchor(textLayer, anchor, flattenedOverride = null) {
+      if (!textLayer || !this.document?.createRange) return null;
+      const flattened = flattenedOverride || flattenTextLayer(textLayer);
+      if (!flattened) return null;
+      return anchorRange(this.document, flattened, anchor);
+    }
+
+    rangesForAnchors(textLayer, anchors) {
+      const flattened = flattenTextLayer(textLayer);
+      if (!flattened) return [];
+      return (Array.isArray(anchors) ? anchors : [])
+        .map((anchor) => this.rangeForAnchor(textLayer, anchor, flattened))
+        .filter(Boolean);
+    }
+
+    selectRange(textLayer, range) {
+      if (!textLayer || !range || !textLayer.contains(range.commonAncestorContainer)) return false;
+      const selection = this.getSelection();
+      if (!selection) return false;
+      try {
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
+      } catch { return false; }
     }
 
     matchesSnapshot(selection, snapshot) {

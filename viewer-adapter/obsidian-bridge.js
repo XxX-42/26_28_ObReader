@@ -204,6 +204,10 @@
     vocabularyEnabled: vocabularyEnabledAtBoot,
     vocabularyHighlightLevels: vocabularyHighlightLevelsAtBoot,
     vocabularyDisplayMode: normalizeVocabularyDisplayMode(bridgeScript.dataset.vocabularyDisplayMode),
+    readerBacklinkHighlights: null,
+    readerBacklinkPageKey: null,
+    readerBacklinkPageResults: null,
+    readerBacklinkRetryTimer: null,
     preferredAnnotationToolMode: 0,
     restoredAnnotationToolIdentity: null,
     vocabularyController: null,
@@ -312,6 +316,354 @@
       console.error("PDF Reader bridge could not report renderer lifecycle:", error);
       return false;
     }
+  }
+
+  function pageElementForIndex(pageIndex) {
+    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) return null;
+    return state.app?.pdfViewer?.getPageView?.(pageIndex)?.div || null;
+  }
+
+  function textLayerForPage(pageRoot) {
+    return pageRoot?.querySelector?.(".textLayer") || null;
+  }
+
+  function captureReaderSelection() {
+    const selected = state.textSelectionController?.rangeSnapshot?.();
+    if (!selected?.text) return null;
+    const textLayer = selected.startContainer?.nodeType === 1
+      ? selected.startContainer.closest?.(".textLayer")
+      : selected.startContainer?.parentElement?.closest?.(".textLayer");
+    const endTextLayer = selected.endContainer?.nodeType === 1
+      ? selected.endContainer.closest?.(".textLayer")
+      : selected.endContainer?.parentElement?.closest?.(".textLayer");
+    if (!textLayer || textLayer !== endTextLayer) return null;
+    const pageRoot = textLayer.closest?.(".page");
+    const pageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const actual = state.actualSourceIdentity;
+    const pageIndex = pageNumber - 1;
+    const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];
+    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || typeof pageIdentity !== "string") return null;
+    const stableRange = state.textSelectionController?.captureRangeAnchor?.(textLayer, selected, pageRoot);
+    if (!stableRange) return null;
+    return {
+      kind: "selection",
+      pageNumber,
+      pageIndex,
+      pageIdentity,
+      sourceHash: actual.sourceHash,
+      ...stableRange,
+    };
+  }
+
+  function captureReaderOccurrence(pageNumber, startIndex, endIndex) {
+    const controller = state.vocabularyController;
+    const range = controller?.rangeForOccurrence?.(pageNumber, startIndex, endIndex);
+    if (!range) return null;
+    const textLayer = range.startContainer?.nodeType === 1
+      ? range.startContainer.closest?.(".textLayer")
+      : range.startContainer?.parentElement?.closest?.(".textLayer");
+    const endTextLayer = range.endContainer?.nodeType === 1
+      ? range.endContainer.closest?.(".textLayer")
+      : range.endContainer?.parentElement?.closest?.(".textLayer");
+    if (!textLayer || textLayer !== endTextLayer) return null;
+    const pageRoot = textLayer.closest?.(".page");
+    const parsedPageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const actual = state.actualSourceIdentity;
+    const pageIndex = parsedPageNumber - 1;
+    const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];
+    if (parsedPageNumber !== pageNumber || !Number.isSafeInteger(pageIndex) || pageIndex < 0 ||
+        typeof pageIdentity !== "string") return null;
+    const stableRange = state.textSelectionController?.captureRangeAnchor?.(textLayer, {
+      startContainer: range.startContainer,
+      startOffset: range.startOffset,
+      endContainer: range.endContainer,
+      endOffset: range.endOffset,
+      text: range.toString?.() || "",
+      rect: range.getBoundingClientRect?.() || null,
+    }, pageRoot);
+    if (!stableRange) return null;
+    return {
+      kind: "selection", pageNumber, pageIndex, pageIdentity,
+      sourceHash: actual.sourceHash,
+      ...stableRange,
+    };
+  }
+
+  function captureReaderAnchor(mode, occurrence = null) {
+    const app = state.app;
+    const actual = state.actualSourceIdentity;
+    if (!app?.pdfViewer || !actual || actual.identityStatus !== "KNOWN") return { error: "PDF 页面身份尚未确认。" };
+    if (mode === "annotation") {
+      const selected = Array.from(document.querySelectorAll(".annotationEditorLayer .selectedEditor, .annotationEditorLayer [aria-selected='true']"));
+      if (selected.length !== 1) return { error: "请先选中一个批注，再复制批注链接。" };
+      const runtimeId = selected[0].id;
+      const uuid = state.annotationUuidByRuntimeId.get(String(runtimeId));
+      const editor = app.pdfViewer?._layerProperties?.annotationEditorUIManager?.getEditor?.(runtimeId);
+      const pageIndex = editor?.pageIndex;
+      const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
+      if (!uuid || !Number.isSafeInteger(pageIndex) || !pageIdentity) return { error: "无法确认所选批注的稳定 UUID。" };
+      return { capture: { kind: "annotation", annotationUuid: uuid, pageIndex,
+        pageNumber: pageIndex + 1, pageIdentity, sourceHash: actual.sourceHash } };
+    }
+    if (mode === "quote" || mode === "reader") {
+      const selected = captureReaderSelection();
+      if (selected) return { capture: selected };
+      if (mode === "quote") return { error: "请先在同一 PDF 页面选择一段文本。" };
+    }
+    if (mode === "occurrence") {
+      const capture = captureReaderOccurrence(occurrence?.pageNumber, occurrence?.startIndex, occurrence?.endIndex);
+      if (!capture) return { error: "无法稳定读取当前 LingQ 词汇位置，请重新打开词条后重试。" };
+      return { capture };
+    }
+    const pageNumber = app.pdfViewer.currentPageNumber;
+    const pageIndex = Number.isSafeInteger(pageNumber) ? pageNumber - 1 : -1;
+    const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
+    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || !pageIdentity) return { error: "当前页身份无法确认。" };
+    return { capture: { kind: "page", pageNumber, pageIndex, pageIdentity, sourceHash: actual.sourceHash } };
+  }
+
+  function sendReaderAnchorCapture(requestId, mode, occurrence = null) {
+    const result = captureReaderAnchor(mode, occurrence);
+    postToHost("reader-anchor-capture", {
+      requestId,
+      mode,
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+      ...(result.capture ? { capture: result.capture } : { error: result.error || "目标不可用。" }),
+    });
+  }
+
+  async function navigateReaderAnchor(message) {
+    const startedAt = performanceNow();
+    const target = message?.target;
+    let result = { ok: false, reason: "invalid-target" };
+    const current = state.actualSourceIdentity;
+    const isCurrent = () => message.documentId === state.activeDocumentId &&
+      message.openRequest === state.activeOpenRequest &&
+      message.rendererGeneration === rendererGeneration && state.actualSourceIdentity === current;
+    if (!isCurrent() || !target || !current) {
+      result.reason = "stale-session";
+    } else {
+      const pageIndex = current.orderedPageIdentities.indexOf(target.pageIdentity);
+      if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex !== target.pageIndex) {
+        result.reason = "page-identity-unresolved";
+      } else {
+        let pageRoot = pageElementForIndex(pageIndex);
+        pageRoot?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+        if (!isCurrent()) {
+          result.reason = "stale-session";
+        } else
+        if (target.kind === "selection") {
+          if (!target.anchor || target.anchor.sourceHash !== current.sourceHash || target.anchor.pageIdentity !== target.pageIdentity) {
+            result.reason = "source-or-page-mismatch";
+          } else {
+            let textLayer = textLayerForPage(pageRoot);
+            for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+              if (!isCurrent()) {
+                result.reason = "stale-session";
+                break;
+              }
+              pageRoot = pageElementForIndex(pageIndex);
+              textLayer = textLayerForPage(pageRoot);
+            }
+            const range = isCurrent()
+              ? state.textSelectionController?.rangeForAnchor?.(textLayer, target.anchor)
+              : null;
+            if (!isCurrent()) result.reason = "stale-session";
+            else if (!range) result.reason = "selection-not-unique";
+            else {
+              const startNode = range.startContainer?.nodeType === 1
+                ? range.startContainer
+                : range.startContainer?.parentElement;
+              startNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+              if (!isCurrent()) {
+                result.reason = "stale-session";
+              } else {
+                const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
+                range.getBoundingClientRect?.();
+                range.detach?.();
+                result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+              }
+            }
+          }
+        } else if (target.kind === "annotation") {
+          const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+          let editorNode = null;
+          for (let attempt = 0; attempt < 40 && !editorNode; attempt += 1) {
+            if (!isCurrent()) {
+              result.reason = "stale-session";
+              break;
+            }
+            for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
+              if (uuid !== target.id) continue;
+              const editor = manager?.getEditor?.(runtimeId);
+              if (editor && editor.pageIndex === pageIndex) {
+                editorNode = editor.div || document.getElementById?.(String(runtimeId)) || null;
+                break;
+              }
+            }
+            if (!editorNode && attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          if (isCurrent()) {
+            editorNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+            result = editorNode
+              ? { ok: true, reason: null }
+              : { ok: false, reason: "annotation-rendered-target-unresolved" };
+          }
+        } else if (target.kind === "page-number" && typeof target.selection === "string") {
+          let textLayer = textLayerForPage(pageRoot);
+          for (let attempt = 0; !textLayer && attempt < 40; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (!isCurrent()) {
+              result.reason = "stale-session";
+              break;
+            }
+            pageRoot = pageElementForIndex(pageIndex);
+            textLayer = textLayerForPage(pageRoot);
+          }
+          const range = isCurrent()
+            ? state.textSelectionController?.rangeForNativeSelection?.(textLayer, target.selection)
+            : null;
+          if (!isCurrent()) result.reason = "stale-session";
+          else if (!range) result = { ok: false, reason: "native-selection-unresolved" };
+          else {
+            range.startContainer?.parentElement?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+            const selected = state.textSelectionController?.selectRange?.(textLayer, range) === true;
+            range.detach?.();
+            result = selected ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
+          }
+        } else {
+          result = { ok: true, reason: null };
+        }
+      }
+    }
+    postToHost("reader-anchor-navigation-result", {
+      documentId: message.documentId,
+      openRequest: message.openRequest,
+      rendererGeneration: message.rendererGeneration,
+      kind: target?.kind || null,
+      ok: result.ok,
+      reason: result.reason,
+      message: result.ok ? undefined : "无法可靠解析此目标；请使用链接中的原生页码回退。",
+      resolveMs: Math.max(0, performanceNow() - startedAt),
+    });
+  }
+
+  const READER_BACKLINK_HIGHLIGHT_NAME = "pdfReaderMarkdownBacklinks";
+
+  function clearReaderBacklinkPresentation() {
+    try { window.CSS?.highlights?.delete?.(READER_BACKLINK_HIGHLIGHT_NAME); } catch {}
+    document.querySelectorAll?.(".pdfReaderBacklinkPageBadge").forEach((node) => node.remove());
+    document.querySelectorAll?.(".pdfReaderAnnotationBacklinkBadge").forEach((node) => node.remove());
+    state.readerBacklinkHighlights = null;
+    state.readerBacklinkPageKey = null;
+    state.readerBacklinkPageResults = null;
+    if (state.readerBacklinkRetryTimer) clearTimeout(state.readerBacklinkRetryTimer);
+    state.readerBacklinkRetryTimer = null;
+  }
+
+  function requestReaderBacklinksForPage(pageNumber = state.app?.pdfViewer?.currentPageNumber) {
+    const actual = state.actualSourceIdentity;
+    if (!state.activeDocumentId || !Number.isSafeInteger(state.activeOpenRequest) ||
+        actual?.identityStatus !== "KNOWN" || !Number.isSafeInteger(pageNumber) || pageNumber < 1) return false;
+    const pageIndex = pageNumber - 1;
+    const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
+    if (typeof pageIdentity !== "string") return false;
+    const key = `${state.activeDocumentId}:${state.activeOpenRequest}:${pageIndex}:${pageIdentity}`;
+    if (state.readerBacklinkPageKey === key) return false;
+    clearReaderBacklinkPresentation();
+    state.readerBacklinkPageKey = key;
+    const sent = postToHost("reader-backlink-page-request", {
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+      pageNumber,
+      pageIndex,
+      pageIdentity,
+      sourceHash: actual.sourceHash,
+    });
+    if (!sent && state.readerBacklinkPageKey === key) state.readerBacklinkPageKey = null;
+    return sent;
+  }
+
+  async function applyReaderBacklinkPageResults(message, attempt = 0) {
+    const startedAt = performanceNow();
+    const actual = state.actualSourceIdentity;
+    const isCurrent = () => !state.disposed &&
+      message?.rendererGeneration === rendererGeneration &&
+      message?.documentId === state.activeDocumentId &&
+      message?.openRequest === state.activeOpenRequest &&
+      actual === state.actualSourceIdentity &&
+      state.app?.pdfViewer?.currentPageNumber === message.pageNumber &&
+      actual?.orderedPageIdentities?.[message.pageIndex] === message.pageIdentity;
+    if (!isCurrent() || !Array.isArray(message.markers)) return false;
+    const pageRoot = pageElementForIndex(message.pageIndex);
+    const textLayer = textLayerForPage(pageRoot);
+    if ((!pageRoot || !textLayer) && attempt < 12) {
+      state.readerBacklinkRetryTimer = setTimeout(() => {
+        state.readerBacklinkRetryTimer = null;
+        void applyReaderBacklinkPageResults(message, attempt + 1);
+      }, 180);
+      return false;
+    }
+    if (!isCurrent() || !pageRoot) return false;
+    try { window.CSS?.highlights?.delete?.(READER_BACKLINK_HIGHLIGHT_NAME); } catch {}
+    const priorBadge = pageRoot.querySelector?.(":scope > .pdfReaderBacklinkPageBadge");
+    priorBadge?.remove?.();
+    const markers = message.markers.slice(0, 256);
+    pageRoot.querySelectorAll?.(".pdfReaderAnnotationBacklinkBadge").forEach((node) => node.remove());
+    const ranges = [];
+    if (textLayer && markers.some((marker) => marker?.kind === "selection")) {
+      const anchors = markers.filter((marker) => marker?.kind === "selection" && marker.anchor)
+        .map((marker) => marker.anchor);
+      ranges.push(...(state.textSelectionController?.rangesForAnchors?.(textLayer, anchors) || []));
+    }
+    const HighlightCtor = window.Highlight || globalThis.Highlight;
+    let paintedRanges = 0;
+    if (ranges.length && typeof HighlightCtor === "function" && window.CSS?.highlights?.set) {
+      try {
+        window.CSS.highlights.set(READER_BACKLINK_HIGHLIGHT_NAME, new HighlightCtor(...ranges));
+        state.readerBacklinkHighlights = ranges;
+        paintedRanges = ranges.length;
+      } catch { /* The page badge remains a safe visual fallback. */ }
+    }
+    const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    for (const marker of markers) {
+      if (marker?.kind !== "annotation" || typeof marker.id !== "string") continue;
+      for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
+        if (uuid !== marker.id) continue;
+        const editor = manager?.getEditor?.(runtimeId);
+        const editorNode = editor?.div || document.getElementById?.(String(runtimeId));
+        if (!editorNode || !pageRoot.contains?.(editorNode)) continue;
+        const badge = document.createElement?.("span");
+        if (!badge) continue;
+        badge.className = "pdfReaderAnnotationBacklinkBadge";
+        badge.setAttribute("aria-hidden", "true");
+      const count = Number.isSafeInteger(marker.backlinkCount) ? marker.backlinkCount : 1;
+        badge.textContent = count > 1 ? `↗${count}` : "↗";
+        badge.title = count === 1 ? "1 条 Markdown 反向链接" : `${count} 条 Markdown 反向链接`;
+        editorNode.appendChild(badge);
+      }
+    }
+    const badge = Number(message.backlinkCount) > 0 ? document.createElement?.("div") : null;
+    if (badge) {
+      badge.className = "pdfReaderBacklinkPageBadge";
+      badge.setAttribute("aria-hidden", "true");
+      const count = Number.isSafeInteger(message.backlinkCount) ? message.backlinkCount : markers.length;
+      badge.textContent = count === 1 ? "1 条 Markdown 引用" : `${count} 条 Markdown 引用`;
+      pageRoot.appendChild(badge);
+    }
+    runtimeLogRecord("reader-backlinks.paint", {
+      pageIndex: message.pageIndex,
+      markerCount: markers.length,
+      rangeCount: paintedRanges,
+      lookupMs: Number.isFinite(message.backlinkLookupMs) ? message.backlinkLookupMs : null,
+      anchorResolveMs: Number.isFinite(message.anchorResolveMs) ? message.anchorResolveMs : null,
+      pageIndexCacheHit: message.pageIndexCacheHit === true,
+      paintMs: Math.max(0, performanceNow() - startedAt),
+    });
+    state.readerBacklinkPageResults = message;
+    return true;
   }
 
   function ensureVocabularyController() {
@@ -2766,6 +3118,7 @@
       orderedPageIdentities: identities,
       identityStatus,
     });
+    if (identityStatus === "KNOWN") requestReaderBacklinksForPage();
     return actualIdentity;
   }
 
@@ -8884,6 +9237,7 @@
       }
       state.activeDocumentId = null;
       updatePageNumberWidth(0);
+      clearReaderBacklinkPresentation();
       clearExternalHydration({ clearRows: true, restoreEmbedded: true });
       state.externalSourceConfirmed = false;
       state.actualSourceIdentity = null;
@@ -8942,6 +9296,9 @@
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
       updatePageNumberWidth(pdfDocument.numPages);
+      if (Number.isSafeInteger(message.initialPageNumber) && message.initialPageNumber > 0) {
+        app.pdfViewer.currentPageNumber = Math.min(message.initialPageNumber, pdfDocument.numPages);
+      }
       state.activeDocumentPath = documentPath;
       state.activeFilename = filename;
       state.activeOpenRequest = Number.isInteger(message.openRequest)
@@ -9045,6 +9402,7 @@
       cleanupStorageObserver();
       state.activeDocumentId = null;
       updatePageNumberWidth(0);
+      clearReaderBacklinkPresentation();
       clearExternalHydration({ clearRows: true, restoreEmbedded: true });
       state.externalSourceConfirmed = false;
       state.actualSourceIdentity = null;
@@ -9227,6 +9585,52 @@
         state.app._contentDispositionFilename = message.filename;
         state.app.setTitle(message.filename);
       }
+      return;
+    }
+
+    if (message.type === "reader-anchor-capture-request") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest ||
+          typeof message.requestId !== "string" || message.requestId.length > 128 ||
+          !["reader", "quote", "annotation", "backlinks", "occurrence"].includes(message.mode)) return;
+      sendReaderAnchorCapture(message.requestId, message.mode, {
+        pageNumber: message.pageNumber,
+        startIndex: message.startIndex,
+        endIndex: message.endIndex,
+      });
+      return;
+    }
+
+    if (message.type === "reader-anchor-occurrence-result") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      state.vocabularyController?.handleOccurrenceLinkResult?.(message);
+      return;
+    }
+
+    if (message.type === "reader-anchor-navigate") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      void navigateReaderAnchor(message);
+      return;
+    }
+
+    if (message.type === "reader-backlink-page-results") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      void applyReaderBacklinkPageResults(message);
+      return;
+    }
+
+    if (message.type === "reader-backlink-occurrence-result") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      state.vocabularyController?.handleOccurrenceBacklinks?.(message);
       return;
     }
 
@@ -9660,6 +10064,14 @@
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
+          "textlayerrendered",
+          ({ pageNumber }) => {
+            const results = state.readerBacklinkPageResults;
+            if (results?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(results);
+          },
+          { signal: state.eventAbortController.signal },
+        );
+        app.eventBus?._on(
           "pagesloaded",
           ({ pagesCount } = {}) => {
             updatePageNumberWidth(pagesCount);
@@ -9674,7 +10086,10 @@
         );
         app.eventBus?._on(
           "pagechanging",
-          () => syncBridgeControls(),
+          () => {
+            syncBridgeControls();
+            requestReaderBacklinksForPage();
+          },
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
@@ -9707,6 +10122,8 @@
                   error: runtimeLogError(error),
                 });
               });
+              const backlinks = state.readerBacklinkPageResults;
+              if (backlinks?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(backlinks);
             }
           },
           { signal: state.eventAbortController.signal },
@@ -9941,6 +10358,7 @@
       return;
     }
     state.bulkDeleteDialog?.close?.();
+    clearReaderBacklinkPresentation();
     updatePageNumberWidth(0);
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
