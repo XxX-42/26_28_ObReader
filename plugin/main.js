@@ -30,6 +30,8 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
 /* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
 /* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH } = require('./vocabulary/service.cjs');
+/* BUILD:VOCABULARY_WORKSPACE_REQUIRE */ const { createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer } = require('./vocabulary/workspace.cjs');
+/* BUILD:VOCABULARY_WORKBENCH_REQUIRE */ const { createVocabularyWorkbench } = require('./vocabulary/workbench.cjs');
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
@@ -690,6 +692,7 @@ class AnnotationDeviceReviewModal extends Modal {
 
 /* BUILD:VOCABULARY_MODALS_REQUIRE */ const { createVocabularyModals } = require("./vocabulary/modals.cjs");
 const { VocabularyEntryModal, VocabularyTransferModal } = createVocabularyModals({ Modal, Notice });
+const VocabularyWorkbenchModal = createVocabularyWorkbench({ Modal, Notice });
 
 function toArrayBuffer(value) {
   // The viewer may be hosted in another Electron window/realm, where
@@ -1101,11 +1104,11 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
       this.vocabularyLevelButtons.set(type, buttons);
     }
     new Setting(containerEl)
-      .setName("词库导入 / 导出")
-      .setDesc("查看并迁移已有 JSON/CSV 词汇；导入默认保留已有记录。")
+      .setName("词汇学习工作台")
+      .setDesc("个人词库、语境生词本、今日复习与可逆历史；JSON 完整备份，CSV 仅词条。")
       .addButton((button) => button
         .setButtonText("打开")
-        .onClick(() => new VocabularyTransferModal(this.app, this.plugin).open()));
+        .onClick(() => this.plugin.openVocabularyWorkbench()));
 
     heading("批注与数据");
     new Setting(containerEl)
@@ -2967,7 +2970,9 @@ class PdfReaderView extends EditableFileView {
         await this.plugin.initializeVocabulary();
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         const service = this.plugin.getVocabularyService();
-        const record = await service.upsertTerm(logicalSurface, { type: message.entryType, status: message.status });
+        const runtime = await this.plugin.getVocabularyRuntime();
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        const record = await runtime.mutatePersonal(() => service.upsertTerm(logicalSurface, { type: message.entryType, status: message.status }));
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-status-ack", durable: true,
@@ -3037,7 +3042,9 @@ class PdfReaderView extends EditableFileView {
           if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
           await this.plugin.initializeVocabulary();
           if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
-          const record = await service.upsertTerm(surfaceKey, { ...fields, type: expectedType });
+          const runtime = await this.plugin.getVocabularyRuntime();
+          if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
+          const record = await runtime.mutatePersonal(() => service.upsertTerm(surfaceKey, { ...fields, type: expectedType }));
           if (!this.isCurrentVocabularyIdentity(pending)) return;
           this.postToViewer({
             channel: CHANNEL, token: this.token, type: "vocab-selection-ack",
@@ -3709,6 +3716,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.views = new Set();
     this.vocabularyInitialization = null;
     this.vocabularyUnsubscribe = null;
+    this.vocabularyRuntime = null;
+    this.vocabularyWorkbench = null;
     this.isUnloading = false;
     // Startup migration is confined to the personal vocabulary snapshot.
     // An absent store stays absent; PDF startup does not wait for this work.
@@ -3859,8 +3868,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
     this.addCommand({
       id: "manage-local-english-vocabulary",
-      name: "管理本地英语词汇（导入 / 导出）",
-      callback: () => new VocabularyTransferModal(this.app, this).open(),
+      name: "打开词汇学习工作台",
+      callback: () => this.openVocabularyWorkbench(),
     });
     this.addCommand({
       id: "export-mobile-pdf-diagnostics",
@@ -4537,7 +4546,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.isUnloading = true;
     this.vocabularyUnsubscribe?.();
     this.vocabularyUnsubscribe = null;
-    void this.vocabularyService?.dispose?.().catch(() => undefined);
+    this.vocabularyWorkbench?.close?.();
+    void (async () => {
+      try { await this.vocabularyRuntime?.close?.(); }
+      catch (error) { this.sessionLog?.record("vocabulary", { event: "controlled-close-pending", code: error?.code || "vocabulary-close-failed" }); }
+      finally { await this.vocabularyService?.dispose?.(); }
+    })().catch(() => undefined);
     this.vocabularyDictionary?.clearCache?.();
     if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
@@ -5127,13 +5141,124 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.vocabularyDictionary;
   }
 
-  async importVocabulary(text, format, policy = {}) {
+  async getVocabularyRuntime() {
     await this.initializeVocabulary();
-    const service = this.getVocabularyService();
-    const stats = format === "csv"
-      ? await service.importCsv(text, policy)
-      : await service.importJson(text, policy);
-    return stats;
+    if (this.isUnloading) throw new Error("词汇工作台正在关闭。");
+    if (!this.vocabularyRuntime) {
+      const verify = createContextSourceVerifier({
+        anchorStore: this.readerAnchorStore,
+        documentStore: this.annotationHost.store,
+        getFileByPath: (path) => this.app.vault.getAbstractFileByPath(path),
+        hashOrderedPages: (pages) => this.pdfHashRuntime.fingerprint(new TextEncoder().encode(JSON.stringify(pages))),
+        getVerifiedSource: (documentId, docKey, sourcePath) => {
+          const view = [...this.views].find((entry) => entry.teardownStarted !== true &&
+            entry.annotationHydrationAllowed === true && entry.annotationSourceMismatch !== true &&
+            entry.annotationDocument?.documentId === documentId && entry.annotationDocument?.docKey === docKey &&
+            (entry.documentFile?.path || entry.file?.path) === sourcePath);
+          if (!view) return null;
+          return { verified: true, documentId, docKey, sourcePath, sourceHash: view.annotationSourceHash,
+            orderedPageIdentities: view.annotationPageIdentity?.orderedPageIdentities };
+        },
+      });
+      this.vocabularyRuntime = createVocabularyRuntime({ adapter: this.app.vault.adapter,
+        personalService: this.getVocabularyService(),
+        deviceId: localVocabularyDeviceId({ storage: globalThis.localStorage, crypto: globalThis.crypto }),
+        sessionId: makeToken(), verifySource: ({ anchor }) => verify(anchor) });
+    }
+    await this.vocabularyRuntime.ready();
+    return this.vocabularyRuntime;
+  }
+
+  async importVocabulary(text, format, policy = {}) {
+    if (typeof text === "string" && new TextEncoder().encode(text).byteLength > 64 * 1024 * 1024) {
+      throw new RangeError("词汇导入超过 64 MiB 上限，未截断或写入数据。");
+    }
+    const runtime = await this.getVocabularyRuntime();
+    if (format === "csv") return runtime.mutatePersonal((service) => service.importCsv(text, policy));
+    return runtime.exclusive(async () => {
+      const parsed = typeof text === "string" ? JSON.parse(text) : text;
+      if (parsed?.kind === "pdf-reader-vocabulary-bundle") {
+        await runtime.recoverReviewSessions();
+        if (runtime.review.getStatus() && !runtime.review.getStatus().closed) await runtime.review.close();
+        const result = await createVocabularyTransfer({ runtime }).importBundle(parsed, {
+          overwriteExisting: policy.overwriteExisting === true, overwriteKnown: policy.overwriteKnown === true });
+        if (result.status === "conflict" || result.reloadError) {
+          throw Object.assign(new Error("导入遇到外部修改或重载校验失败；请重载并检查冲突，未确认导入完成。"), { code: "vocabulary-import-conflict" });
+        }
+        return result;
+      }
+      return runtime.personalService.importJson(text, policy);
+    });
+  }
+
+  createVocabularyWorkbenchApi() {
+    const get = () => this.getVocabularyRuntime();
+    return {
+      listFamilies: async (options) => this.getVocabularyService().listFamilies(options),
+      getFamilyDetails: async (familyKey) => {
+        const family = await this.getVocabularyService().getFamilyByKey(familyKey);
+        if (!family) throw new Error("词条不存在，请刷新列表。");
+        let dictionary = null, dictionaryUnavailable = false;
+        try { dictionary = await this.getVocabularyDictionary().lookup(family.records?.[0]?.surface || family.surface || family.storageKey); }
+        catch { dictionaryUnavailable = true; }
+        return { family, dictionary, dictionaryUnavailable };
+      },
+      updateFamily: async ({ familyKey, surface, fields }) => {
+        const runtime = await get();
+        return runtime.mutatePersonal(async (service) => {
+          const family = await service.getFamily(surface);
+          if (!family || family.familyKey !== familyKey) throw new Error("词族身份已变化，请刷新后重试。");
+          return service.upsertTerm(surface, fields);
+        });
+      },
+      setReviewEnrollment: async (familyKeys, { enrolled }) => {
+        if (!Array.isArray(familyKeys) || familyKeys.length < 1 || familyKeys.length > 100 ||
+            familyKeys.some((key) => typeof key !== "string" || key.length > 4096) || typeof enrolled !== "boolean") {
+          throw new RangeError("每次请选择 1 到 100 个有效词族。");
+        }
+        const runtime = await get();
+        return runtime.exclusive(async () => {
+          const review = await runtime.ensureReviewSession();
+          const results = [];
+          for (const familyKey of [...new Set(familyKeys)]) {
+            const family = await runtime.personalService.getFamilyByKey(familyKey, { includeRecords: false });
+            if (!family) { results.push({ familyKey, status: "missing" }); continue; }
+            if (enrolled && family.status === 5) { results.push({ familyKey, status: "skipped-known" }); continue; }
+            try { results.push({ familyKey, ...await review[enrolled ? "enroll" : "unenroll"](familyKey) }); }
+            catch (error) { results.push({ familyKey, status: "error", error: error.message }); break; }
+          }
+          await review.flush();
+          return { results };
+        });
+      },
+      listContexts: async (familyKey, options) => (await get()).contexts.listFamily(familyKey, options),
+      listDueReview: async (options) => {
+        const runtime = await get();
+        return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
+      },
+      listHistory: async () => ({ batches: await (await get()).history.listBatches() }),
+      previewHistory: async (batchId, options) => (await get()).history.previewRestore(batchId, options),
+      restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => (await get()).restore(batchId, { selected: selectedCleanIds, deviceId }),
+      importJson: (text, policy) => this.importVocabulary(text, "json", policy),
+      importCsv: (text, policy) => this.importVocabulary(text, "csv", policy),
+      exportCsv: () => this.getVocabularyService().exportCsv(),
+      exportJson: async () => {
+        const runtime = await get();
+        return runtime.exclusive(async () => {
+          await runtime.recoverReviewSessions();
+          if (runtime.review.getStatus() && !runtime.review.getStatus().closed) await runtime.review.flush();
+          return createVocabularyTransfer({ runtime }).exportBundle();
+        });
+      },
+      close: async () => { if (this.vocabularyRuntime) await this.vocabularyRuntime.close(); },
+    };
+  }
+
+  openVocabularyWorkbench() {
+    if (this.isUnloading) return;
+    if (this.vocabularyWorkbench) { this.vocabularyWorkbench.close(); this.vocabularyWorkbench = null; }
+    this.vocabularyWorkbench = new VocabularyWorkbenchModal(this.app, this.createVocabularyWorkbenchApi());
+    this.vocabularyWorkbench.open();
   }
 
   async setVocabularyEnabled(enabled) {

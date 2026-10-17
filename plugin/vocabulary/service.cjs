@@ -34,6 +34,7 @@ const PRIVATE = new WeakMap();
 // obsolete indexes be collected without explicit cache invalidation.
 const MATCH_INDEX_CACHE = new WeakMap();
 const FAMILY_INDEX_CACHE = new WeakMap();
+const HISTORY_SNAPSHOT_INDEX_CACHE = new WeakMap();
 const { createFamilyResolver } = require("./family.cjs");
 
 class VocabularyStoreError extends Error {
@@ -745,6 +746,12 @@ function serializeVocabularySnapshotV2(value) {
 
 function historyFieldPath(change) {
   const entityId = change?.entityId;
+  const lifecycle = change?.kind === "entityCreate" || change?.kind === "entityDelete";
+  if (typeof entityId === "string" && normalizeTermKey(entityId) === entityId && lifecycle &&
+      Array.isArray(change.fieldPath) && change.fieldPath.length === 2 &&
+      canonicalStringify(change.fieldPath) === canonicalStringify(["records", entityId])) {
+    return { entityId, wholeRecord: true };
+  }
   const field = change?.field || change?.fieldPath?.at?.(-1);
   const expected = ["records", entityId, field];
   if (typeof entityId !== "string" || normalizeTermKey(entityId) !== entityId ||
@@ -768,28 +775,55 @@ function prepareVocabularyRestoreFields(snapshotValue, changes, { entities = [] 
   if (!Array.isArray(changes) || !changes.length) throw new TypeError("Vocabulary restore requires selected field changes.");
   const records = new Map(source.records.map((record) => [record.key, { ...record }]));
   const grouped = new Map();
+  const entityMetadata = new Map();
+  const entityPair = (storeId, entityId) => `${storeId}\u0000${entityId}`;
+  for (const entity of entities) {
+    const entityId = entity?.entityId;
+    if (typeof entityId !== "string" || typeof entity?.storeId !== "string") continue;
+    entityMetadata.set(entityPair(entity.storeId, entityId), entity);
+  }
   for (const change of changes) {
-    const { entityId, field } = historyFieldPath(change);
+    const { entityId, field, wholeRecord = false } = historyFieldPath(change);
     if (typeof change.beforeExists !== "boolean" || typeof change.afterExists !== "boolean" ||
         (change.beforeExists && !Object.hasOwn(change, "before")) ||
         (change.afterExists && !Object.hasOwn(change, "after"))) {
       throw new VocabularyStoreError("Vocabulary history field presence is invalid.", "vocabulary-history-field-invalid");
     }
     const list = grouped.get(entityId) || [];
-    if (list.some((entry) => entry.field === field)) throw new VocabularyStoreError("Vocabulary history repeats a record field.", "vocabulary-history-field-duplicate");
-    list.push({ change, field });
+    if (list.some((entry) => entry.wholeRecord || wholeRecord || entry.field === field)) throw new VocabularyStoreError("Vocabulary history repeats a record field.", "vocabulary-history-field-duplicate");
+    list.push({ change, field, wholeRecord });
     grouped.set(entityId, list);
   }
 
   for (const [entityId, entries] of grouped) {
     const current = records.get(entityId);
-    const entityMeta = entities.find((entity) => entity?.entityId === entityId);
+    const entityMeta = entityMetadata.get(entityPair(entries[0].change.storeId, entityId));
     const explicitLifecycle = entries.some(({ change }) => change.kind === "entityCreate" || change.kind === "entityDelete") ||
       entityMeta?.kind === "entityCreate" || entityMeta?.kind === "entityDelete";
     const fieldSet = new Set(entries.map(({ field }) => field));
     const fullRecordFields = V2_REQUIRED_RECORD_FIELDS.every((field) => fieldSet.has(field));
     const lifecycle = explicitLifecycle || (fullRecordFields && entries.every(({ change }) =>
       change.beforeExists === entries[0].change.beforeExists && change.afterExists === entries[0].change.afterExists));
+
+    if (entries.some((entry) => entry.wholeRecord)) {
+      if (entries.length !== 1 || !lifecycle) {
+        throw new VocabularyStoreError("A complete record lifecycle change cannot be combined with field-level changes.", "vocabulary-history-entity-group");
+      }
+      const { change } = entries[0];
+      if ((change.kind === "entityCreate" && (change.beforeExists || !change.afterExists)) ||
+          (change.kind === "entityDelete" && (!change.beforeExists || change.afterExists))) {
+        throw new VocabularyStoreError("A complete record lifecycle change has invalid before/after presence.", "vocabulary-history-entity-group");
+      }
+      if (change.beforeExists) {
+        if (!change.before || typeof change.before !== "object" || Array.isArray(change.before) || change.before.key !== entityId) {
+          throw new VocabularyStoreError("A complete record lifecycle change cannot change record identity.", "vocabulary-history-identity");
+        }
+        records.set(entityId, { ...change.before });
+      } else {
+        records.delete(entityId);
+      }
+      continue;
+    }
 
     if (lifecycle) {
       if (!fullRecordFields || entries.some(({ field }) => !V2_RECORD_FIELDS.has(field)) ||
@@ -846,9 +880,15 @@ function prepareVocabularyRestoreFields(snapshotValue, changes, { entities = [] 
 }
 
 function resolveVocabularyHistoryField(snapshot, change) {
-  const value = snapshotValueFromHistory(snapshot);
-  const { entityId, field } = historyFieldPath(change);
-  const record = value.records.find((item) => item.key === entityId);
+  let indexed = snapshot && typeof snapshot === "object" ? HISTORY_SNAPSHOT_INDEX_CACHE.get(snapshot) : null;
+  if (!indexed) {
+    const value = snapshotValueFromHistory(snapshot);
+    indexed = { records: new Map(value.records.map((record) => [record.key, record])) };
+    if (snapshot && typeof snapshot === "object") HISTORY_SNAPSHOT_INDEX_CACHE.set(snapshot, indexed);
+  }
+  const { entityId, field, wholeRecord = false } = historyFieldPath(change);
+  const record = indexed.records.get(entityId);
+  if (wholeRecord) return { exists: Boolean(record), entityExists: Boolean(record), ...(record ? { value: record } : {}) };
   const exists = Boolean(record && Object.hasOwn(record, field));
   return {
     exists,
@@ -1159,13 +1199,8 @@ function historyChangesForRecords(beforeRecords, afterRecords, storeId, path) {
     const before = beforeRecords.get(entityId);
     if (!before) {
       entities.push({ storeId, entityId, kind: "entityCreate" });
-      for (const field of fields) {
-        if (!Object.hasOwn(after, field)) continue;
-        changes.push({
-          storeId, path, entityId, field, fieldPath: ["records", entityId, field],
-          beforeExists: false, afterExists: true, after: after[field], kind: "entityCreate",
-        });
-      }
+      changes.push({ storeId, path, entityId, fieldPath: ["records", entityId],
+        beforeExists: false, afterExists: true, after: { ...after }, kind: "entityCreate" });
       continue;
     }
     for (const field of V2_RESTORABLE_FIELDS) {
@@ -1427,6 +1462,27 @@ async function applyImport(service, inputs, policy = {}) {
 
   await enqueue(state, async () => {
     assertWritable(state);
+    // Refuse an import that would cross the store limit as a whole. Checking
+    // capacity while applying rows used to silently accept a prefix and drop
+    // the remaining new records, which made large bundle imports look valid.
+    // This preflight runs inside the same serialized queue as the eventual
+    // write, so another local mutation cannot invalidate its capacity view.
+    const candidateRecords = new Map(state.records);
+    const candidateStatusByFamily = new Map();
+    for (const record of state.records.values()) {
+      candidateStatusByFamily.set(record.familyKey, Math.max(candidateStatusByFamily.get(record.familyKey) || 0, record.status));
+    }
+    for (const incoming of valid) {
+      const existing = candidateRecords.get(incoming.key);
+      if (candidateStatusByFamily.get(incoming.familyKey) === 5 && !overwriteKnown) continue;
+      if (existing && !overwriteExisting && !(existing.status === 5 && overwriteKnown)) continue;
+      candidateRecords.set(incoming.key, incoming);
+      candidateStatusByFamily.set(incoming.familyKey, Math.max(candidateStatusByFamily.get(incoming.familyKey) || 0, incoming.status));
+    }
+    if (candidateRecords.size > MAX_STORE_RECORDS) {
+      throw new RangeError("Vocabulary import would exceed the supported record limit; no records were imported.");
+    }
+
     const next = new Map(state.records);
     let changed = false;
     const changedFamilyKeys = new Set();
@@ -2164,11 +2220,36 @@ class VocabularyService {
       stats.invalid = 1;
       return stats;
     }
-    const records = Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === "object" && Array.isArray(parsed.records)
-        ? parsed.records
-        : [];
+    let records;
+    if (Array.isArray(parsed)) {
+      records = parsed;
+    } else if (parsed && typeof parsed === "object") {
+      const hasSnapshotMarker = Object.hasOwn(parsed, "schema") || Object.hasOwn(parsed, "schemaVersion");
+      if (hasSnapshotMarker) {
+        if (parsed.schema !== SCHEMA || ![LEGACY_SCHEMA_VERSION, SCHEMA_VERSION].includes(parsed.schemaVersion)) {
+          throw new VocabularyStoreError("JSON import uses an unsupported vocabulary snapshot schema.", "vocabulary-corrupt-schema");
+        }
+        if (parsed.schemaVersion === SCHEMA_VERSION) {
+          // A versioned v2 snapshot is a closed contract. Validate the complete
+          // envelope and every record before allowing the permissive row
+          // importer to normalize personal fields.
+          records = strictV2Snapshot(parsed).records;
+        } else {
+          // Keep the known historical v1 snapshot cleanup path. It accepts the
+          // legacy pronunciation alias and drops undeclared v1 fields exactly
+          // as the storage migration has always done.
+          records = [...decodeSnapshot(JSON.stringify(parsed), stateOf(this).now()).records.values()];
+        }
+      } else if (Array.isArray(parsed.records)) {
+        // Older unversioned object exports remain supported; a version marker
+        // is required before an object can claim to be a complete snapshot.
+        records = parsed.records;
+      } else {
+        records = [];
+      }
+    } else {
+      records = [];
+    }
     if (records.length > MAX_IMPORT_RECORDS) throw new RangeError("JSON import exceeds the supported record count.");
     const defaultStatus = policy.defaultStatus == null ? 1 : Number(policy.defaultStatus);
     if (!STATUSES.has(defaultStatus)) throw new RangeError("defaultStatus must be an integer from 1 to 5.");

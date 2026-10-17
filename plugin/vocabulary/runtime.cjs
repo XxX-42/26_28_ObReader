@@ -52,9 +52,12 @@ function createVocabularyRuntime({ adapter, personalService, deviceId, sessionId
   async function ready() {
     if (initialization) return initialization;
     const pending = (async () => {
-      await personalService.ready();
-      await personalService.migrate();
       const recovery = await coordinator.recoverLocal();
+      await personalService.ready();
+      // PDF startup can have loaded the base snapshot before local recovery
+      // installed the result. Attach only to the now-verified disk identity.
+      await personalService.reload();
+      await personalService.migrate();
       // Conflicts retain their own store scope. The corresponding operation
       // checks them before writing; an unrelated pending cannot lock all data.
       await personalService.attachCoordinator(coordinator, { validateReferences });
