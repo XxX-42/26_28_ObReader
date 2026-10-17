@@ -2170,6 +2170,7 @@ class PdfReaderView extends EditableFileView {
       `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
       `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
       `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
+      `data-vocabulary-word-display-mode="${this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole"}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -2360,6 +2361,7 @@ class PdfReaderView extends EditableFileView {
         `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
         `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
         `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
+        `data-vocabulary-word-display-mode="${this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole"}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2539,6 +2541,15 @@ class PdfReaderView extends EditableFileView {
       documentId: this.documentId,
       openRequest: this.openRequest,
       mode: normalizeVocabularyDisplayMode(mode),
+    });
+  }
+
+  setVocabularyWordDisplayMode(mode) {
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL, token: this.token, type: "vocab-set-word-mode",
+      documentId: this.documentId, openRequest: this.openRequest,
+      mode: mode === "roots" ? "roots" : "whole",
     });
   }
 
@@ -2755,6 +2766,11 @@ class PdfReaderView extends EditableFileView {
     if (message.type === "vocab-display-mode-request") {
       if (!VOCABULARY_DISPLAY_MODES.includes(message.mode) || this.teardownStarted === true) return true;
       await this.plugin.setVocabularyDisplayMode(message.mode);
+      return true;
+    }
+    if (message.type === "vocab-word-mode-request") {
+      if (!["whole", "roots"].includes(message.mode) || this.teardownStarted === true) return true;
+      await this.plugin.setVocabularyWordDisplayMode(message.mode);
       return true;
     }
     if (!this.plugin.settings.vocabularyEnabled) return true;
@@ -3280,6 +3296,7 @@ class PdfReaderView extends EditableFileView {
       vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
       vocabularyHighlightLevels: this.plugin.settings.vocabularyHighlightLevels,
       vocabularyDisplayMode: normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode),
+      vocabularyWordDisplayMode: this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
       preferredAnnotationToolMode: normalizeAnnotationToolMode(this.plugin.settings.lastAnnotationToolMode),
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
@@ -3605,6 +3622,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       vocabularyEnabled: false,
       vocabularyHighlightLevels: normalizeVocabularyHighlightLevels(null),
       vocabularyDisplayMode: "all",
+      vocabularyWordDisplayMode: "whole",
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
@@ -3612,6 +3630,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings.vocabularyEnabled = this.settings.vocabularyEnabled === true;
     this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
     this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
+    this.settings.vocabularyWordDisplayMode = this.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole";
     this.vocabularyService = null;
     this.vocabularyDictionary = null;
     this.views = new Set();
@@ -5010,6 +5029,26 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       for (const view of this.views) view.setVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
       this.readerSettingsTab?.syncVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
     }
+  }
+
+  async setVocabularyWordDisplayMode(mode) {
+    if (!["whole", "roots"].includes(mode)) return false;
+    // One plugin host serves multiple Reader windows. Serialize preference
+    // writes so a late failure cannot roll back a newer confirmed choice.
+    const update = async () => {
+      const previous = this.settings.vocabularyWordDisplayMode;
+      this.settings.vocabularyWordDisplayMode = mode;
+      try {
+        await this.saveData({ ...this.settings });
+      } catch (error) {
+        this.settings.vocabularyWordDisplayMode = previous;
+        new Notice(`构词显示模式无法保存：${error.message || error}`, 8000);
+      }
+      for (const view of this.views) view.setVocabularyWordDisplayMode(this.settings.vocabularyWordDisplayMode);
+      return this.settings.vocabularyWordDisplayMode === mode;
+    };
+    this.vocabularyWordModeQueue = (this.vocabularyWordModeQueue || Promise.resolve()).then(update, update);
+    return this.vocabularyWordModeQueue;
   }
 
   async setLastAnnotationToolMode(mode) {

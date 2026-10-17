@@ -207,6 +207,7 @@
     vocabularyEnabled: vocabularyEnabledAtBoot,
     vocabularyHighlightLevels: vocabularyHighlightLevelsAtBoot,
     vocabularyDisplayMode: normalizeVocabularyDisplayMode(bridgeScript.dataset.vocabularyDisplayMode),
+    vocabularyWordDisplayMode: bridgeScript.dataset.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
     readerBacklinkHighlights: null,
     readerBacklinkPageKey: null,
     readerBacklinkPageResults: null,
@@ -778,6 +779,7 @@
       isEnabled: true,
       highlightLevels: state.vocabularyHighlightLevels,
       displayMode: state.vocabularyDisplayMode,
+      wordDisplayMode: state.vocabularyWordDisplayMode,
     });
     return state.vocabularyController;
   }
@@ -932,6 +934,19 @@
     return true;
   }
 
+  function handleVocabularyWordDisplayModeMessage(message) {
+    if (message?.rendererGeneration !== rendererGeneration || !["whole", "roots"].includes(message.mode)) return false;
+    const matchesActive = message.documentId === state.activeDocumentId && message.openRequest === state.activeOpenRequest;
+    const pending = state.pendingVocabularySettings;
+    const matchesPending = message.documentId === state.requestedDocumentId && message.openRequest === state.requestedOpenRequest &&
+      pending?.documentId === message.documentId && pending?.openRequest === message.openRequest;
+    if (!matchesActive && !matchesPending) return false;
+    if (matchesPending) pending.wordDisplayMode = message.mode;
+    state.vocabularyWordDisplayMode = message.mode;
+    state.vocabularyController?.setWordDisplayMode?.(message.mode);
+    return true;
+  }
+
   function handleVocabularyEnabledMessage(message) {
     if (message?.rendererGeneration !== rendererGeneration || typeof message.enabled !== "boolean") return false;
     const matchesActive = message.documentId === state.activeDocumentId &&
@@ -967,6 +982,8 @@
       ? pending.levels
       : message.vocabularyHighlightLevels);
     setVocabularyDisplayMode(matchesPending ? pending.displayMode : message.vocabularyDisplayMode);
+    state.vocabularyWordDisplayMode = (matchesPending ? pending.wordDisplayMode : message.vocabularyWordDisplayMode) === "roots" ? "roots" : "whole";
+    state.vocabularyController?.setWordDisplayMode?.(state.vocabularyWordDisplayMode);
     state.preferredAnnotationToolMode = normalizeAnnotationToolMode(message.preferredAnnotationToolMode);
     state.restoredAnnotationToolIdentity = null;
     syncVocabularyMenuButton();
@@ -9029,6 +9046,7 @@
       enabled: message.vocabularyEnabled === true,
       levels: normalizeVocabularyHighlightLevels(message.vocabularyHighlightLevels),
       displayMode: normalizeVocabularyDisplayMode(message.vocabularyDisplayMode),
+      wordDisplayMode: message.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
     };
     state.vocabularyEnabled = state.pendingVocabularySettings.enabled;
     setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
@@ -9768,6 +9786,11 @@
 
     if (message.type === "vocab-set-display-mode") {
       handleVocabularyDisplayModeMessage(message);
+      return;
+    }
+
+    if (message.type === "vocab-set-word-mode") {
+      handleVocabularyWordDisplayModeMessage(message);
       return;
     }
 

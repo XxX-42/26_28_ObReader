@@ -1,3 +1,4 @@
+import { analyzeEnglishWord, normalizeWordDisplayMode } from "./word-morphology.js";
 import { scanPageTextLayer } from "./page-scanner.js";
 import { getSelectedPageTokens, matchPhrases } from "./phrase-matcher.js";
 import {
@@ -164,6 +165,7 @@ export class VocabularyController {
     isEnabled = false,
     highlightLevels,
     displayMode = "all",
+    wordDisplayMode = "whole",
     makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     scan = scanPageTextLayer,
     selectTokens = getSelectedPageTokens,
@@ -187,6 +189,7 @@ export class VocabularyController {
     this.enabled = isEnabled === true;
     this.highlightLevels = normalizeHighlightLevels(highlightLevels);
     this.displayMode = normalizeVocabularyDisplayMode(displayMode);
+    this.wordDisplayMode = normalizeWordDisplayMode(wordDisplayMode);
     this.identity = null;
     this.pages = new Map();
     this.pageResultCache = new Map();
@@ -742,7 +745,10 @@ export class VocabularyController {
     popup.dataset.type = entry.type;
     popup.dataset.pageNumber = String(page.pageNumber);
 
-    const heading = this.document.createElement("div");
+    const heading = this.document.createElement("button");
+    heading.type = "button";
+    heading.setAttribute("aria-expanded", "false");
+    heading.setAttribute("aria-label", `${entry.rawSurface}：展开构词与显示模式`);
     heading.className = "pdfReaderVocabularyPillHeading";
     heading.textContent = entry.rawSurface;
     const status = this.document.createElement("span");
@@ -833,16 +839,50 @@ export class VocabularyController {
     });
     const body = this.document.createElement("div");
     body.className = "pdfReaderVocabularyPillBody";
-    body.append(pronunciation, meanings, backlinkActions);
+    const morphology = this.document.createElement("section");
+    morphology.className = "pdfReaderVocabularyMorphology";
+    const modeControls = this.document.createElement("div");
+    modeControls.className = "pdfReaderVocabularyWordModes";
+    modeControls.setAttribute("role", "group");
+    modeControls.setAttribute("aria-label", "所有词条卡的构词显示模式");
+    const modeButtons = ["whole", "roots"].map((mode) => {
+      const button = this.document.createElement("button");
+      button.type = "button";
+      button.textContent = mode === "roots" ? "词根模式" : "全词模式";
+      button.addEventListener("click", (event) => {
+        event.stopPropagation?.();
+        if (!this.identityIsCurrent()) return;
+        this.postToHost("vocab-word-mode-request", { mode,
+          documentId: this.identity.documentId, openRequest: this.identity.openRequest });
+      });
+      modeControls.appendChild(button);
+      return { mode, button };
+    });
+    const morphologyParts = this.document.createElement("div");
+    morphologyParts.className = "pdfReaderVocabularyMorphologyParts";
+    const morphologyNote = this.document.createElement("div");
+    morphologyNote.className = "pdfReaderVocabularyMorphologyNote";
+    morphology.append(modeControls, morphologyParts, morphologyNote);
+    heading.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      const pill = this.entryPill;
+      if (!pill) return;
+      pill.morphologyExpanded = !pill.morphologyExpanded;
+      this.syncWordMorphology();
+    });
+    body.append(morphology, pronunciation, meanings, backlinkActions);
     popup.append(heading, status, occurrenceActions, close, body, actions);
     this.document.body.appendChild(popup);
     this.entryPill = {
       popup, page, entry, requestId, heading, statusElement: status,
       anchorPoint: { x, y }, body,
+      morphology, morphologyParts, morphologyNote, modeButtons,
+      morphologyExpanded: this.wordDisplayMode === "roots",
       pronunciation, meanings, buttons, record: null, status: null, pendingStatus: null,
       occurrenceRequestId: null, occurrenceButton: copyOccurrence,
       backlinks, openBacklinks, backlinkRequestId: null, anchorIds: [],
     };
+    this.syncWordMorphology();
     this.positionEntryPill(popup, x, y);
     const ResizeObserverImpl = this.window?.ResizeObserver || globalThis.ResizeObserver;
     if (typeof ResizeObserverImpl === "function") {
@@ -1003,6 +1043,32 @@ export class VocabularyController {
     pill.openBacklinks.disabled = pill.openBacklinks.hidden;
     this.scheduleEntryPillLayout();
     return true;
+  }
+
+  setWordDisplayMode(mode) {
+    if (this.disposed) return false;
+    this.wordDisplayMode = normalizeWordDisplayMode(mode);
+    if (this.entryPill) this.entryPill.morphologyExpanded = true;
+    this.syncWordMorphology();
+    return true;
+  }
+
+  syncWordMorphology() {
+    const pill = this.entryPill;
+    if (!pill?.morphology) return;
+    const expanded = pill.morphologyExpanded === true;
+    pill.heading.setAttribute("aria-expanded", String(expanded));
+    pill.morphology.hidden = !expanded;
+    for (const { mode, button } of pill.modeButtons) {
+      button.setAttribute("aria-pressed", String(mode === this.wordDisplayMode));
+    }
+    const analysis = analyzeEnglishWord(pill.entry.rawSurface);
+    const roots = this.wordDisplayMode === "roots";
+    pill.morphologyParts.textContent = roots && analysis.supported
+      ? analysis.parts.map((part) => `${part.form}（${part.meaning}）`).join(" + ")
+      : pill.entry.rawSurface;
+    pill.morphologyNote.textContent = roots ? analysis.note : "全词显示。此设置应用于所有词条卡。";
+    this.scheduleEntryPillLayout();
   }
 
   updatePillRecord(record) {
