@@ -160,9 +160,12 @@ test("keeps ligature text and its physical UTF-16 offsets unchanged", () => {
 });
 
 test("a word can cross spans while each segment retains its original TextNode offsets", () => {
-  const document = makeDocument();
+  const rects = new Map();
+  const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
   const first = makeText("inter", document, "first");
   const second = makeText("national", document, "second");
+  rects.set("first:4", { top: 10, left: 16, width: 4, height: 12 });
+  rects.set("second:0", { top: 10, left: 20, width: 4, height: 12 });
   const layer = makeLayer([
     makeElement([first], document),
     makeElement([second], document),
@@ -175,6 +178,136 @@ test("a word can cross spans while each segment retains its original TextNode of
     { textNode: first, startOffset: 0, endOffset: 5 },
     { textNode: second, startOffset: 0, endOffset: 8 },
   ]);
+});
+
+test("infers a word boundary between adjacent TextNodes from rendered glyph spacing", () => {
+  const rects = new Map();
+  const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
+  const first = makeText("of", document, "before-space");
+  const second = makeText("that", document, "after-space");
+  rects.set("before-space:1", { top: 10, left: 18, width: 4, height: 12 });
+  rects.set("after-space:0", { top: 10, left: 24, width: 4, height: 12 });
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([second], document),
+  ], document);
+
+  const tokens = scanPageTextLayer(layer);
+  assert.deepEqual(tokens.map((token) => token.surfaceKey), ["of", "that"]);
+  assert.deepEqual(tokens.map((token) => token.rawSurface), ["of", "that"]);
+});
+
+test("keeps an explicit whitespace boundary when PDF.js splits the space into its own TextNode", () => {
+  const document = makeDocument();
+  const first = makeText("of", document, "word");
+  const whitespace = makeText(" ", document, "space");
+  const second = makeText("that", document, "next-word");
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([whitespace], document),
+    makeElement([second], document),
+  ], document);
+
+  assert.deepEqual(scanPageTextLayer(layer).map((token) => token.surfaceKey), ["of", "that"]);
+});
+
+test("keeps a word split across adjacent TextNodes when glyph geometry is continuous", () => {
+  const rects = new Map();
+  const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
+  const first = makeText("eco", document, "style-a");
+  const second = makeText("nomy", document, "style-b");
+  rects.set("style-a:2", { top: 10, left: 18, width: 4, height: 12 });
+  rects.set("style-b:0", { top: 10, left: 22, width: 4, height: 12 });
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([second], document),
+  ], document);
+
+  const [token] = scanPageTextLayer(layer);
+  assert.equal(token.surfaceKey, "economy");
+  assert.deepEqual(token.segments, [
+    { textNode: first, startOffset: 0, endOffset: 3 },
+    { textNode: second, startOffset: 0, endOffset: 4 },
+  ]);
+});
+
+test("does not join adjacent TextNodes across a visual line boundary", () => {
+  const rects = new Map();
+  const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
+  const first = makeText("goods", document, "left-column");
+  const second = makeText("exports", document, "next-line");
+  rects.set("left-column:4", { top: 10, left: 50, width: 5, height: 12 });
+  rects.set("next-line:0", { top: 24, left: 4, width: 4, height: 12 });
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([second], document),
+  ], document);
+
+  assert.deepEqual(scanPageTextLayer(layer).map((token) => token.surfaceKey), ["goods", "exports"]);
+});
+
+test("does not join adjacent TextNodes across a wide same-line column gap", () => {
+  const rects = new Map();
+  const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
+  const first = makeText("goods", document, "left-column");
+  const second = makeText("exports", document, "right-column");
+  rects.set("left-column:4", { top: 10, left: 50, width: 5, height: 12 });
+  rects.set("right-column:0", { top: 10, left: 500, width: 4, height: 12 });
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([second], document),
+  ], document);
+
+  assert.deepEqual(scanPageTextLayer(layer).map((token) => token.surfaceKey), ["goods", "exports"]);
+});
+
+test("keeps punctuation between TextNodes as a token separator", () => {
+  const document = makeDocument();
+  const first = makeText("goods", document, "word");
+  const punctuation = makeText(",", document, "punctuation");
+  const second = makeText("exports", document, "next-word");
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([punctuation], document),
+    makeElement([second], document),
+  ], document);
+
+  assert.deepEqual(scanPageTextLayer(layer).map((token) => token.surfaceKey), ["goods", "exports"]);
+});
+
+test("TextNode boundary tokenization is invariant under uniform page zoom", () => {
+  const tokenizeAtScale = (scale) => {
+    const rects = new Map();
+    const document = makeDocument((node, offset) => rects.get(`${node.id}:${offset}`) || null);
+    const first = makeText("of", document, "of");
+    const second = makeText("that", document, "that");
+    rects.set("of:1", { top: 10 * scale, left: 18 * scale, width: 4 * scale, height: 12 * scale });
+    rects.set("that:0", { top: 10 * scale, left: 24 * scale, width: 4 * scale, height: 12 * scale });
+    const layer = makeLayer([
+      makeElement([first], document),
+      makeElement([second], document),
+    ], document);
+    return scanPageTextLayer(layer).map((token) => token.surfaceKey);
+  };
+
+  assert.deepEqual(tokenizeAtScale(0.25), ["of", "that"]);
+  assert.deepEqual(tokenizeAtScale(0.5), ["of", "that"]);
+  assert.deepEqual(tokenizeAtScale(1), ["of", "that"]);
+  assert.deepEqual(tokenizeAtScale(1.25), ["of", "that"]);
+  assert.deepEqual(tokenizeAtScale(2), ["of", "that"]);
+  assert.deepEqual(tokenizeAtScale(4), ["of", "that"]);
+});
+
+test("fails closed at an ambiguous TextNode boundary whose geometry is unavailable", () => {
+  const document = makeDocument();
+  const first = makeText("of", document, "unknown-a");
+  const second = makeText("that", document, "unknown-b");
+  const layer = makeLayer([
+    makeElement([first], document),
+    makeElement([second], document),
+  ], document);
+
+  assert.deepEqual(scanPageTextLayer(layer).map((token) => token.surfaceKey), ["of", "that"]);
 });
 
 test("stitches only a geometrically confirmed line-end hyphen and keeps both physical segments", () => {

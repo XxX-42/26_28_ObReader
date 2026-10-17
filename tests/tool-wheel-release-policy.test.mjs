@@ -86,3 +86,103 @@ test("tool wheel closes on outside release while center and sector behavior stay
   assert.deepEqual(selected, [4], "Valid sector release still selects its existing tool.");
   assert.equal(closeCount, 0, "A valid sector release does not take the outside-close branch.");
 });
+
+test("LingQ sector stays open while previewing and toggles only on middle-button release", async () => {
+  const source = await readFile(viewerPath, "utf8");
+  const sectorSource = extractFunction(
+    source,
+    "function toolWheelSector(wheel, evt) {",
+    "function selectToolWheel(index) {",
+  );
+  const moveSource = extractFunction(
+    source,
+    "function onToolWheelMove(evt) {",
+    "function onToolWheelUp(evt) {",
+  );
+  const upSource = extractFunction(
+    source,
+    "function onToolWheelUp(evt) {",
+    "function onClick(evt) {",
+  );
+  const toolWheelSector = new Function(`return (${sectorSource});`)();
+  const selected = [];
+  let closeCount = 0;
+  const closeToolWheel = function () {
+    closeCount += 1;
+    this._toolWheel = null;
+  };
+  const selectToolWheel = function (index) {
+    selected.push(index);
+    closeToolWheel.call(this);
+  };
+  const onToolWheelMove = new Function(
+    "toolWheelSector",
+    "selectToolWheel",
+    "closeToolWheel",
+    `return (${moveSource});`,
+  )(toolWheelSector, selectToolWheel, closeToolWheel);
+  const onToolWheelUp = new Function(
+    "toolWheelSector",
+    "selectToolWheel",
+    "closeToolWheel",
+    `return (${upSource});`,
+  )(toolWheelSector, selectToolWheel, closeToolWheel);
+  const makeReader = () => ({
+    _toolWheelPointer: 7,
+    _toolWheel: {
+      x: 100,
+      y: 100,
+      radius: 96,
+      pointerId: 7,
+      sectors: Array.from({ length: 6 }, () => {
+        const active = new Set();
+        return { classList: { toggle(name, enabled) {
+          if (enabled) active.add(name);
+          else active.delete(name);
+        }, contains: (name) => active.has(name) } };
+      }),
+    },
+  });
+  const event = (x, y, extra = {}) => ({
+    button: 1,
+    pointerId: 7,
+    clientX: x,
+    clientY: y,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    ...extra,
+  });
+
+  closeCount = 0;
+  selected.length = 0;
+  const reader = makeReader();
+  const topPoint = { x: 100, y: 100 - 70 };
+  onToolWheelMove.call(reader, event(topPoint.x, topPoint.y));
+  assert.ok(reader._toolWheel, "Hovering over LingQ previews without dismissing the wheel.");
+  assert.deepEqual(selected, [], "Hovering must not toggle LingQ before the gesture commits.");
+  assert.equal(reader._toolWheel.sectors[0].classList.contains("active"), true,
+    "The LingQ sector receives the same active preview as tool sectors.");
+
+  onToolWheelUp.call(reader, event(topPoint.x, topPoint.y));
+  assert.deepEqual(selected, [0], "Releasing on LingQ selects the LingQ action.");
+  assert.equal(reader._toolWheel, null, "The wheel closes after the user releases on LingQ.");
+  assert.equal(closeCount, 1);
+});
+
+test("the tool-wheel LingQ action toggles both on and off", async () => {
+  const bridge = await readFile(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
+  const handlerSource = extractFunction(
+    bridge,
+    "function toggleVocabularyFromToolWheel() {",
+    "function toggleVocabularyFromMenu(event) {",
+  );
+  const calls = [];
+  const toggleVocabularyFromMenu = () => calls.push("toggle");
+  const handler = new Function("toggleVocabularyFromMenu", `return (${handlerSource});`)(toggleVocabularyFromMenu);
+  handler();
+  handler();
+  assert.deepEqual(calls, ["toggle", "toggle"],
+    "The LingQ wheel action must toggle the single persisted state in either direction.");
+  assert.match(bridge, /pdf-reader-toggle-lingq/,
+    "The Viewer action and the authenticated bridge must use the explicit toggle event.");
+});

@@ -5083,6 +5083,7 @@ async function testNativeToolWheel() {
   report.checks.nativeToolWheel = evidence;
   await persistReport();
   const view = await openReader(primaryPage, relativePath);
+  let initialLingQEnabled = null;
   try {
     await pageGeometry(view, 0);
     const center = await evaluateJson(view.page, `JSON.stringify((() => {
@@ -5110,6 +5111,8 @@ async function testNativeToolWheel() {
         .find(candidate => candidate.id === ${JSON.stringify(view.leafId)});
       return leaf?.view?.iframe?.contentWindow?.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null;
     })())`);
+    const vocabularyEnabled = () => evaluateJson(view.page,
+      `JSON.stringify(app.plugins.plugins[${JSON.stringify(pluginId)}]?.settings?.vocabularyEnabled === true)`);
     const wheelState = () => evaluateJson(view.page, `JSON.stringify((() => {
       const leaf = app.workspace.getLeavesOfType(${JSON.stringify(viewType)})
         .find(candidate => candidate.id === ${JSON.stringify(view.leafId)});
@@ -5218,20 +5221,59 @@ async function testNativeToolWheel() {
     }
 
     const modeBeforeExit = await modeForView();
+    initialLingQEnabled = await vocabularyEnabled();
     let exitHeld = false;
     try {
       const opened = await openWheel();
       exitHeld = true;
       const point = { x: opened.center.x, y: opened.center.y - 80 };
       await view.page.mouse.move(point.x, point.y);
-      await waitFor("top tool-wheel hover to close the wheel", wheelState, (state) => !state.open, 8_000);
+      const hoverPreview = await wheelState();
+      assert.equal(hoverPreview.open, true,
+        "Hovering the LingQ sector must preview it without dismissing the wheel.");
+      assert.equal(await vocabularyEnabled(), initialLingQEnabled,
+        "Hovering the LingQ sector must not toggle the persisted mode before release.");
       await view.page.mouse.up({ button: "middle" });
       exitHeld = false;
+      const enabledAfterFirstRelease = await waitFor(
+        "LingQ mode to toggle after release on the top sector",
+        vocabularyEnabled,
+        (enabled) => enabled !== initialLingQEnabled,
+        8_000,
+      );
+      await waitFor("LingQ wheel to close after release", wheelState, (state) => !state.open, 8_000);
       assert.equal(await modeForView(), modeBeforeExit,
-        "Entering LingQ from the wheel must preserve the active annotation tool.");
-      evidence.lingQSector = { point, mode: await modeForView() };
+        "Toggling LingQ from the wheel must preserve the active annotation tool.");
+      const secondWheel = await openWheel();
+      exitHeld = true;
+      const secondPoint = { x: secondWheel.center.x, y: secondWheel.center.y - 80 };
+      await view.page.mouse.move(secondPoint.x, secondPoint.y);
+      assert.equal((await wheelState()).open, true,
+        "The LingQ sector remains available when previewing the reverse toggle.");
+      await view.page.mouse.up({ button: "middle" });
+      exitHeld = false;
+      const restoredLingQEnabled = await waitFor(
+        "LingQ mode to toggle back after release",
+        vocabularyEnabled,
+        (enabled) => enabled === initialLingQEnabled,
+        8_000,
+      );
+      evidence.lingQSector = {
+        point,
+        hoverPreviewOpen: hoverPreview.open,
+        initialEnabled: initialLingQEnabled,
+        enabledAfterFirstRelease,
+        restoredLingQEnabled,
+        mode: await modeForView(),
+      };
     } finally {
       if (exitHeld) await view.page.mouse.up({ button: "middle" }).catch(() => {});
+      if (initialLingQEnabled !== null &&
+          await vocabularyEnabled().catch(() => initialLingQEnabled) !== initialLingQEnabled) {
+        await view.page.evaluate(async ({ enabled, pluginId: id }) =>
+          app.plugins.plugins[id].setVocabularyEnabled(enabled),
+        { enabled: initialLingQEnabled, pluginId });
+      }
     }
 
     let escapeHeld = false;

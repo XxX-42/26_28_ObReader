@@ -394,8 +394,8 @@
     if (!requestVocabularyDisplayMode(next)) showStatus("LingQ 显示模式尚未同步到 Obsidian。");
   }
 
-  function enterVocabularyFromToolWheel() {
-    if (!state.vocabularyEnabled) toggleVocabularyFromMenu();
+  function toggleVocabularyFromToolWheel() {
+    toggleVocabularyFromMenu();
   }
 
   function toggleVocabularyFromMenu(event) {
@@ -9981,7 +9981,7 @@
     }
     window.removeEventListener("keydown", onReadOnlyHotkey, true);
     window.removeEventListener("beforeunload", onViewerBeforeUnload, true);
-    window.removeEventListener("pdf-reader-enter-lingq", enterVocabularyFromToolWheel);
+    window.removeEventListener("pdf-reader-toggle-lingq", toggleVocabularyFromToolWheel);
     window.removeEventListener("pagehide", dispose);
     window.removeEventListener("unload", dispose);
     clearTimeout(state.statusTimer);
@@ -10030,7 +10030,7 @@
   window.addEventListener("message", onHostMessage);
   window.addEventListener("keydown", onReadOnlyHotkey, true);
   window.addEventListener("beforeunload", onViewerBeforeUnload, true);
-  window.addEventListener("pdf-reader-enter-lingq", enterVocabularyFromToolWheel);
+  window.addEventListener("pdf-reader-toggle-lingq", toggleVocabularyFromToolWheel);
   window.addEventListener("pagehide", dispose, { once: true });
   window.addEventListener("unload", dispose, { once: true });
   document.addEventListener("webviewerloaded", onViewerLoaded, true);

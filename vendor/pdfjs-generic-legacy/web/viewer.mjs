@@ -26512,10 +26512,10 @@ function onBeforeUnload(evt) {
   }
   return true;
 }
-// Clockwise screen coordinates, starting at the top. The top action enters
-// LingQ on hover; labels follow 1–5 counterclockwise.
+// Clockwise screen coordinates, starting at the top. LingQ toggles on release
+// like the other sectors; labels follow 1–5 counterclockwise.
 const TOOL_WHEEL_ITEMS = [
-  { label: "LingQ 模式", icon: "L", action: "enter-lingq", mode: null },
+  { label: "LingQ 模式", icon: "L", action: "toggle-lingq", mode: null },
   { label: "5 文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
   { label: "4 自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
   { label: "3 荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
@@ -26542,8 +26542,8 @@ function toolWheelSector(wheel, evt) {
 function selectToolWheel(index) {
   const item = TOOL_WHEEL_ITEMS[index];
   closeToolWheel.call(this);
-  if (item.action === "enter-lingq") {
-    window.dispatchEvent(new Event("pdf-reader-enter-lingq"));
+  if (item.action === "toggle-lingq") {
+    window.dispatchEvent(new Event("pdf-reader-toggle-lingq"));
     return;
   }
   if (
@@ -26657,7 +26657,6 @@ function onToolWheelDown(evt) {
     radius,
     pointerId: evt.pointerId,
     held: true,
-    lingQRequested: false,
   };
 }
 function onToolWheelMove(evt) {
@@ -26669,10 +26668,6 @@ function onToolWheelMove(evt) {
   wheel.sectors.forEach((sector, i) =>
     sector.classList.toggle("active", i === index),
   );
-  if (index === 0 && !wheel.lingQRequested) {
-    wheel.lingQRequested = true;
-    selectToolWheel.call(this, 0);
-  }
   evt.preventDefault();
   evt.stopImmediatePropagation();
 }

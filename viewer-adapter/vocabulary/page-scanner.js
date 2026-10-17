@@ -70,13 +70,22 @@ function collectUnits(root) {
   return units;
 }
 
-function readWordEnd(units, start) {
+function readWordEnd(units, start, root) {
   let index = start;
   let hasLetter = false;
 
   while (index < units.length) {
     const character = units[index].character;
     if (isWordChar(character)) {
+      const previous = units[index - 1];
+      if (
+        index > start &&
+        previous &&
+        isWordChar(previous.character) &&
+        isGeometricWordBoundary(previous, units[index], root)
+      ) {
+        break;
+      }
       hasLetter ||= isLetter(character);
       index += 1;
       continue;
@@ -91,6 +100,7 @@ function readWordEnd(units, start) {
       index + 1 < units.length &&
       isLetter(units[index + 1].character)
     ) {
+      if (isGeometricWordBoundary(units[index], units[index + 1], root)) break;
       index += 1;
       continue;
     }
@@ -124,6 +134,31 @@ function rangeForUnit(unit, root) {
   } finally {
     range?.detach?.();
   }
+}
+
+function isGeometricWordBoundary(previous, next, root) {
+  if (!previous || !next || previous.node === next.node) return false;
+
+  const previousRect = rangeForUnit(previous, root);
+  const nextRect = rangeForUnit(next, root);
+  // If a DOM boundary cannot be measured, split conservatively. Joining would
+  // manufacture a surface that is not present in the text layer.
+  if (!previousRect || !nextRect) return true;
+
+  const lineHeight = Math.max(previousRect.height, nextRect.height);
+  const previousCenterY = previousRect.top + previousRect.height / 2;
+  const nextCenterY = nextRect.top + nextRect.height / 2;
+  const sameLineTolerance = Math.min(previousRect.height, nextRect.height) * 0.4;
+  if (Math.abs(nextCenterY - previousCenterY) > sameLineTolerance) return true;
+
+  const horizontalGap = nextRect.left - (previousRect.left + previousRect.width);
+  const referenceGlyphWidth = Math.max(0, Math.min(previousRect.width, nextRect.width));
+  const wordGapThreshold = Math.max(
+    Number.EPSILON,
+    lineHeight * 0.12,
+    referenceGlyphWidth * 0.3,
+  );
+  return horizontalGap > wordGapThreshold;
 }
 
 function isConfirmedLineEndHyphen(hyphen, continuation, root) {
@@ -198,7 +233,7 @@ export function scanPageTextLayer(textLayer) {
     const start = index;
     const consumedUnits = [];
     const logicalParts = [];
-    let word = readWordEnd(units, index);
+    let word = readWordEnd(units, index, textLayer);
     if (!word.hasLetter) {
       index = word.end > index ? word.end : index + 1;
       continue;
@@ -228,7 +263,7 @@ export function scanPageTextLayer(textLayer) {
 
       appendUnit(units, consumedUnits, index);
       index += 1;
-      word = readWordEnd(units, index);
+      word = readWordEnd(units, index, textLayer);
       if (!word.hasLetter || word.end === index) break;
     }
 
