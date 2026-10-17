@@ -678,13 +678,13 @@ export class VocabularyController {
     heading.textContent = entry.rawSurface;
     const status = this.document.createElement("span");
     status.className = "pdfReaderVocabularyPillStatus";
-    status.textContent = "未收录";
+    status.textContent = "正在读取学习状态…";
     const pronunciation = this.document.createElement("div");
     pronunciation.className = "pdfReaderVocabularyPillPronunciation";
     pronunciation.hidden = true;
     const meanings = this.document.createElement("div");
     meanings.className = "pdfReaderVocabularyPillMeanings";
-    meanings.textContent = "正在查询…";
+    meanings.textContent = "正在读取个人词汇数据…";
     const actions = this.document.createElement("div");
     actions.className = "pdfReaderVocabularyPillActions";
     const occurrenceActions = this.document.createElement("div");
@@ -813,7 +813,8 @@ export class VocabularyController {
     if (message.record && (message.record.key !== pill.entry.surfaceKey ||
         message.record.storageKey != null && (typeof message.record.storageKey !== "string" || !message.record.storageKey))) return false;
     if (message.error) {
-      pill.meanings.textContent = "词库暂时无法读取。";
+      pill.statusElement.textContent = "学习状态不可用";
+      pill.meanings.textContent = "个人词汇数据读取失败。";
       return true;
     }
     this.updatePillRecord(message.record || null);
@@ -867,9 +868,12 @@ export class VocabularyController {
       : "正在保存…";
     pill.pronunciation.textContent = presentation.pronunciation;
     pill.pronunciation.hidden = presentation.pronunciation.length === 0;
-    // Keep dictionary senses on separate readable lines. The presentation
-    // layer already splits real and escaped source line breaks into entries.
-    pill.meanings.textContent = presentation.meanings.length ? presentation.meanings.join("\n") : "未录入释义";
+    // This lookup reads only the user's personal vocabulary store. An absent
+    // row must not be presented as a dictionary miss: no external dictionary
+    // query occurs in this flow.
+    pill.meanings.textContent = presentation.meanings.length
+      ? presentation.meanings.join("\n")
+      : presentation.meaningFallbackLabel;
     return true;
   }
 

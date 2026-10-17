@@ -1226,6 +1226,8 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   assert.equal(entry.requestId, "entry-1");
   assert.equal(entry.record, null);
   assert.equal(entry.documentId, "word-click-doc");
+  assert.deepEqual([...harness.storedFiles], [...beforeVocabularyMutation],
+    "looking up a missing personal vocabulary record is read-only");
 
   const service = harness.plugin.getVocabularyService();
   await service.upsertTerm("run", { type: "word", status: 3, translation: "跑" });

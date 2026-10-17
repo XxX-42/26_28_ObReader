@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { vocabularyEntryPresentation } from "../viewer-adapter/vocabulary/presentation.js";
+import { vocabularyEntryPresentation, vocabularyStatusLabel } from "../viewer-adapter/vocabulary/presentation.js";
 
 test("entry card presentation exposes only pronunciation, up to three short meanings, and learning status", () => {
   const view = vocabularyEntryPresentation({
@@ -29,7 +29,22 @@ test("unavailable pronunciation and meaning stay compact and malformed statuses 
   assert.equal(view.meanings.length, 1);
   assert.ok(view.meanings[0].length <= 180);
   assert.equal(view.status, null);
-  assert.equal(view.statusLabel, "未收录");
+  assert.equal(view.statusLabel, "学习状态未设置");
+  assert.equal(vocabularyStatusLabel(99), "学习状态未设置");
+});
+
+test("missing personal learning state is distinct from an unqueried dictionary", () => {
+  const absentRecord = vocabularyEntryPresentation(null);
+  assert.equal(absentRecord.hasPersonalRecord, false);
+  assert.equal(absentRecord.statusLabel, "无个人学习状态");
+  assert.equal(absentRecord.meaningState, "external-dictionary-not-queried");
+  assert.equal(absentRecord.meaningFallbackLabel, "未查询外部词典");
+
+  const emptyPersonalRecord = vocabularyEntryPresentation({ key: "on", type: "word" });
+  assert.equal(emptyPersonalRecord.hasPersonalRecord, true);
+  assert.equal(emptyPersonalRecord.statusLabel, "学习状态未设置");
+  assert.equal(emptyPersonalRecord.meaningState, "not-saved-in-personal-record");
+  assert.equal(emptyPersonalRecord.meaningFallbackLabel, "个人词条未保存释义");
 });
 
 test("escaped dictionary line breaks are rendered as separate meanings", () => {

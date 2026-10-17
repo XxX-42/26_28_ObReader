@@ -35,6 +35,9 @@ function splitMeanings(value) {
 
 /** Return only display-safe vocabulary fields; persistence metadata never reaches the pill. */
 export function vocabularyEntryPresentation(record) {
+  const hasPersonalRecord = Boolean(
+    record && typeof record === "object" && !Array.isArray(record),
+  );
   const pronunciation = cleanText(
     record?.phonetic || record?.ipa || record?.pronunciation,
     160,
@@ -45,14 +48,30 @@ export function vocabularyEntryPresentation(record) {
   const status = Number.isInteger(record?.status) && record.status >= 1 && record.status <= 5
     ? record.status
     : null;
+  const meaningState = meanings.length > 0
+    ? "available"
+    : hasPersonalRecord
+      ? "not-saved-in-personal-record"
+      : "external-dictionary-not-queried";
   return Object.freeze({
+    hasPersonalRecord,
     pronunciation,
     meanings: Object.freeze(meanings),
+    meaningState,
+    meaningFallbackLabel: meaningState === "external-dictionary-not-queried"
+      ? "未查询外部词典"
+      : meaningState === "not-saved-in-personal-record"
+        ? "个人词条未保存释义"
+        : "",
     status,
-    statusLabel: status === null ? "未收录" : STATUS_LABELS[status],
+    statusLabel: status !== null
+      ? STATUS_LABELS[status]
+      : hasPersonalRecord
+        ? "学习状态未设置"
+        : "无个人学习状态",
   });
 }
 
 export function vocabularyStatusLabel(status) {
-  return STATUS_LABELS[status] || "未收录";
+  return STATUS_LABELS[status] || "学习状态未设置";
 }

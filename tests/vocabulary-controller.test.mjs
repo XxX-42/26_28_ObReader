@@ -824,8 +824,11 @@ test("eligible collapsed single-word click opens a local pill and durable status
   assert.ok(unrecordedTap);
   assert.equal(controller.handleEntryResult({ requestId: unrecordedTap.requestId, key: "alpha", pageNumber: 1,
     documentId: "doc-1", openRequest: 7, record: null }), true);
-  assert.equal(controller.entryPill.statusElement.textContent, "未收录");
-  assert.equal(controller.entryPill.meanings.textContent, "未录入释义");
+  assert.equal(controller.entryPill.statusElement.textContent, "无个人学习状态");
+  assert.equal(controller.entryPill.meanings.textContent, "未查询外部词典");
+  controller.updatePillRecord({ key: "alpha", type: "word" });
+  assert.equal(controller.entryPill.statusElement.textContent, "学习状态未设置");
+  assert.equal(controller.entryPill.meanings.textContent, "个人词条未保存释义");
   controller.dismissEntryPill();
   controller.pages.get("1").records = [
     { key: "alpha", storageKey: "alpha", type: "word", status: 2 },
