@@ -2,6 +2,8 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
+**0.11.3 版**修复阅读模式中已有外置绘图和文字框的鼠标命中，保留空白区域文本选择及创建工具优先级；补齐旧批注的撤销身份缓存，避免删除后撤销再次保存为墓碑。交互回归使用来源身份确认、外置操作持久确认和平台对应的文字提交快捷键；原生 WebKit 手指滚动、Pencil 和 WAL 存储未改动。
+
 **0.11.2 版**将个人学习状态与离线词典查询接通：没有个人学习记录的单词仍可显示 ECDICT 释义和音标，保存学习等级后保留当前释义。词典查询只在打开词条卡时发生，不进入页面匹配和缩放重绘链路。复制的 Reader 链接采用 `[[PDF路径#page=N&obreader=sel.ID|显示文字]]`，不再输出 `docKey`、`obdoc` 或额外的 selection 参数；旧链接仍可读取。
 
 ECDICT 原始数据与可重建查询索引均位于 `00_Archive/21_VocabularyData/dictionaries/ECDICT/`。已有 `ecdict.csv.gz` 时，可运行 `node scripts/build-ecdict-index.mjs --input <ecdict.csv.gz路径> --output <Vault路径>/00_Archive/21_VocabularyData/dictionaries/ECDICT/index-v1` 生成确定性分片。插件通过跨平台 Vault DataAdapter 按需读取分片；个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。

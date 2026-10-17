@@ -2881,37 +2881,41 @@ test(
       }
       app.pdfViewer.update();
     }, pausedFreeText.pageIndex);
-    await viewer.waitForFunction((state) => {
-      const app = window.PDFViewerApplication;
-      const pageView = app?.pdfViewer?.getPageView(state.pageIndex);
-      const completedBuilderRenders = window.__mousePdfEditorLifecycleTrace
-        ?.filter((entry) => entry.method === "builder.render.return").length ?? 0;
-      return pageView?.renderingState === 3 &&
-        completedBuilderRenders > state.renderCountBeforeRedraw;
-    }, { timeout:20_000 }, pausedFreeText);
-    const redrawState = await viewer.evaluate((state) => {
+    const redrawStateHandle = await viewer.waitForFunction((state) => {
       const app = window.PDFViewerApplication;
       const pageView = app?.pdfViewer?.getPageView(state.pageIndex);
       const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
       if (!pageView || !manager) {
-        throw new Error("The current page and editor manager must remain available after redraw");
+        return false;
       }
+      const completedBuilderRenders = window.__mousePdfEditorLifecycleTrace
+        ?.filter((entry) => entry.method === "builder.render.return").length ?? 0;
+      if (pageView.renderingState !== 3 ||
+          completedBuilderRenders <= state.renderCountBeforeRedraw) return false;
       const afterRedrawEditor = manager.getEditor(state.editorId);
       const afterRedrawInternal = afterRedrawEditor?.div?.querySelector(".internal");
       const afterRedrawRect = afterRedrawEditor?.div?.getBoundingClientRect();
-      state.editingAfterRedraw = Boolean(afterRedrawInternal?.isContentEditable);
-      state.focusPreservedAfterRedraw = document.activeElement === afterRedrawInternal;
-      state.editorBoundsAfterRedraw = afterRedrawRect
-        ? { width:afterRedrawRect.width, height:afterRedrawRect.height }
-        : null;
-      state.pageRenderingStateAfterRedraw = pageView.renderingState;
-      // Separate legitimate pause(false) calls made by the queued PDF.js draw from
-      // the explicit toolbar pause/resume callbacks checked below.
-      state.pauseCountBeforeResumeProbe = window.__mousePdfEditorLifecycleTrace
-        ?.filter((entry) => entry.method === "layer.pause.begin").length ?? 0;
+      // Capture the rendered state and focus in the same browser turn. A
+      // separate evaluate can observe a new queued render (state 1) after the
+      // readiness wait already observed this completed render (state 3).
+      return {
+        ...state,
+        editingAfterRedraw:Boolean(afterRedrawInternal?.isContentEditable),
+        focusPreservedAfterRedraw:document.activeElement === afterRedrawInternal,
+        editorBoundsAfterRedraw:afterRedrawRect
+          ? { width:afterRedrawRect.width, height:afterRedrawRect.height }
+          : null,
+        pageRenderingStateAfterRedraw:pageView.renderingState,
+        // Separate legitimate pause(false) calls made by the queued PDF.js draw from
+        // the explicit toolbar pause/resume callbacks checked below.
+        pauseCountBeforeResumeProbe:window.__mousePdfEditorLifecycleTrace
+          ?.filter((entry) => entry.method === "layer.pause.begin").length ?? 0,
+      };
+    }, { timeout:20_000 }, pausedFreeText);
+    const redrawState = await redrawStateHandle.jsonValue();
+    await viewer.evaluate((state) => {
       window.__mouseTestMilestones.samePresentationHide = state;
-      return state;
-    }, pausedFreeText);
+    }, redrawState);
     Object.assign(pausedFreeText, redrawState);
     assert.equal(pausedFreeText.pageRenderingStateAfterRedraw, 3, JSON.stringify(pausedFreeText));
     assert.equal(pausedFreeText.editingAfterRedraw, true, JSON.stringify(pausedFreeText));
@@ -3356,7 +3360,10 @@ test(
     assert.ok(selectedReopenedFreeText, "A single click must select the persisted FreeText without losing its identity");
     // PDF.js enters text-edit mode for a committed FreeText editor on a
     // double-click; this second trusted click completes the first click's pair.
-    await page.mouse.click(reopenedTextPoint.x, reopenedTextPoint.y, { delay:80 });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await page.mouse.move(reopenedTextPoint.x, reopenedTextPoint.y);
+    await page.mouse.down({ button:"left", clickCount:2 });
+    await page.mouse.up({ button:"left", clickCount:2 });
     await viewer.waitForFunction((annotationId) => {
       const editor = window.__getSidecarFreeTextEditor(annotationId);
       const internal = editor?.querySelector(".internal");
@@ -3988,11 +3995,10 @@ test(
     }, { timeout:10_000 }, savedFreeText.id);
     // The second trusted click must reopen the same persisted editor in edit
     // mode before the cross-page viewport update is exercised.
-    await page.mouse.click(
-      reopenEditScreenPoint.x,
-      reopenEditScreenPoint.y,
-      { delay:80 },
-    );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await page.mouse.move(reopenEditScreenPoint.x, reopenEditScreenPoint.y);
+    await page.mouse.down({ button:"left", clickCount:2 });
+    await page.mouse.up({ button:"left", clickCount:2 });
     await viewer.waitForFunction((annotationId) => {
       const app = window.PDFViewerApplication;
       const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;

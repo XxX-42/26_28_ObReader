@@ -19,6 +19,21 @@ body {
   visibility: hidden !important;
 }
 
+/* PDF.js makes the whole editor layer click-through in NONE mode. Keep the
+   layer itself transparent to input, but let existing editors receive clicks
+   so they can be selected and re-enter their native edit mode. */
+#viewerContainer .annotationEditorLayer.disabled:not(.creationPriority) > .inkEditor.disabled,
+#viewerContainer .annotationEditorLayer.disabled:not(.creationPriority) > .freeTextEditor:not(.empty) {
+  pointer-events: auto;
+}
+
+/* Selecting a saved FreeText editor from NONE mode can activate PDF.js's
+   FreeText creation-priority layer. Keep that selected object hittable for
+   the follow-up double-click, while empty-area clicks still create editors. */
+#viewerContainer .annotationEditorLayer.creationPriority:not(.drawing) > .freeTextEditor.selectedEditor {
+  pointer-events: auto !important;
+}
+
 /* Let WebKit own page scrolling. PDF.js sets touch-action:none on its ink
    canvas and active highlight layer; override those page surfaces too so a
    finger can scroll while the bridge suppresses touch annotation input. */

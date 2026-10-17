@@ -415,15 +415,32 @@ test("legacy UUIDs bind by exact annotation object reference before dirty diffs"
       const match = /^(\\d+)R(\\d*)$/.exec(value || "");
       return match ? match[1] + ":" + (match[2] || "0") : null;
     }
+    ${functionSource("normalizeSyncKind")}
+    ${functionSource("exactSavedIdentityForOperation")}
     ${functionSource("applyLegacyAnnotationIdentities")}
-    return { state, applyLegacyAnnotationIdentities };
+    return { state, applyLegacyAnnotationIdentities, exactSavedIdentityForOperation };
   })()`);
   scope.applyLegacyAnnotationIdentities([
-    { uuid: "legacy-uuid", ref: "42 0 R", pageIndex: 1 },
-    { uuid: "out-of-range", ref: "43 0 R", pageIndex: 2 },
+    { uuid: "legacy-uuid", ref: "42 0 R", pageIndex: 1, kind: "freetext" },
+    { uuid: "out-of-range", ref: "43 0 R", pageIndex: 2, kind: "freetext" },
   ]);
   assert.equal(scope.state.annotationUuidByPdfRef.get("42:0"), "legacy-uuid");
   assert.equal(scope.state.annotationUuidByPdfRef.size, 1);
+  assert.deepEqual(scope.state.syncState.identities, [
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText" },
+  ], "Sidecar-confirmed identities must be eligible for unchanged native-editor Undo capture");
+  assert.deepEqual(scope.exactSavedIdentityForOperation({
+    uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText",
+  }), { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText", runtimeId: null });
+  scope.applyLegacyAnnotationIdentities([
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 1, kind: "FreeText" },
+  ]);
+  assert.equal(scope.state.syncState.identities.length, 1, "Repeated confirmations are idempotent");
+  assert.throws(() => scope.applyLegacyAnnotationIdentities([
+    { uuid: "legacy-uuid", ref: "42R", pageIndex: 0, kind: "FreeText" },
+  ]), /conflicting page\/type identity/);
+  assert.equal(scope.state.syncState.identities[0].pageIndex, 1,
+    "A conflicting confirmation cannot replace the verified binding");
   assert.match(functionSource("validateExternalAnnotations"), /legacyIdentityRefs/);
   assert.match(functionSource("openDocument"), /applyLegacyAnnotationIdentities\(provisionalExternal\.legacyIdentities\)/);
 });

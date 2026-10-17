@@ -2512,6 +2512,25 @@
       if (prior && prior !== identity.uuid) {
         throw new Error(`Legacy annotation reference ${ref} maps to more than one UUID.`);
       }
+      const kind = normalizeSyncKind(identity.kind);
+      const cached = state.syncState?.identities || [];
+      const priorIdentity = cached.find((row) => row.uuid === identity.uuid ||
+        pdfAnnotationRefKey(row.ref) === key);
+      if (priorIdentity && (priorIdentity.uuid !== identity.uuid ||
+          pdfAnnotationRefKey(priorIdentity.ref) !== key ||
+          priorIdentity.pageIndex !== identity.pageIndex ||
+          normalizeSyncKind(priorIdentity.kind) !== kind)) {
+        throw new Error(`Legacy annotation reference ${ref} has conflicting page/type identity.`);
+      }
+      // The sidecar handshake replaces the old binary syncState handshake.
+      // Keep its verified identity metadata in the existing runtime cache too:
+      // unchanged native editors serialize to null after Undo, and history
+      // reconciliation must still recover their exact UUID/ref/page/type.
+      if (!priorIdentity) {
+        state.syncState ||= { version: 1, actorId: state.syncActorId || null, identities: [], ledger: null };
+        state.syncState.identities.push({ uuid: identity.uuid, ref,
+          pageIndex: identity.pageIndex, kind });
+      }
       state.annotationUuidByPdfRef.set(key, identity.uuid);
     }
   }

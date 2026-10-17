@@ -253,11 +253,17 @@ test("real FreeText sidecar hydration preserves geometry at every rotation and s
     const editorSelector = '.page[data-page-number="1"] .annotationEditorLayer .freeTextEditor.selectedEditor .internal';
     await viewer.waitForSelector(editorSelector, { timeout: 5_000 });
     await page.keyboard.type(expectedText);
-    await page.keyboard.down("Control");
+    // PDF.js binds FreeText commit to Meta+Enter on macOS and Control+Enter
+    // elsewhere. Match its FeatureTest.platform check so the test exercises
+    // the actual supported commit path on the host running Chrome.
+    const commitModifier = await viewer.evaluate(() =>
+      navigator.platform.includes("Mac") ? "Meta" : "Control",
+    );
+    await page.keyboard.down(commitModifier);
     try {
       await page.keyboard.press("Enter");
     } finally {
-      await page.keyboard.up("Control");
+      await page.keyboard.up(commitModifier);
     }
     await viewer.waitForFunction((value) => {
       const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;

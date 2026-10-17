@@ -20,6 +20,7 @@ import {
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
+import mergeCore from "../plugin/pdf-merge-core.cjs";
 
 const browserPath = resolveBrowserPath();
 const fixturePath = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
@@ -228,7 +229,14 @@ test(
     const viewerPath = path.join(root, "vendor", "pdfjs-generic-legacy", "web", "viewer.html");
     const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
     const viewerHtml = await readFile(viewerPath, "utf8");
-    const bridgeSource = await readBridgeRuntimeSource(bridgePath);
+    const rawBridgeSource = await readBridgeRuntimeSource(bridgePath);
+    const bridgeSource = rawBridgeSource.replace(
+      "  if (iosInputPolicy) {",
+      "  window.__freeTextUndoBridgeState = state;\n  if (iosInputPolicy) {",
+    );
+    assert.notEqual(bridgeSource, rawBridgeSource,
+      "The browser harness should expose bridge state only for this regression");
+    const fixtureSourceHash = `sha256:${createHash("sha256").update(await readFile(fixturePath)).digest("hex")}`;
     const bridgeCss = await readFile(
       path.join(root, "viewer-adapter", "bridge.css"),
       "utf8",
@@ -397,28 +405,38 @@ test(
             JSON.stringify(token) +
             ',documentId=' +
             JSON.stringify(documentId) +
+            ';let sourceHash=' +
+            JSON.stringify(fixtureSourceHash) +
             ';' +
             'const iframe=document.querySelector("iframe");' +
+            'let activeDocumentId=documentId;' +
             'const state=window.__hostState={teardownDiagnosticToken:' +
             JSON.stringify(token) +
             ',documentId:' +
             JSON.stringify(documentId) +
-            ',ready:false,opened:0,openRequest:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],errors:[],opens:[]};' +
+            ',ready:false,opened:0,openRequest:0,sourceIdentityConfirmed:false,sourceHash,identity:null,legacyIdentities:[],operations:new Map(),revision:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],exports:[],errors:[],opens:[]};' +
             'let fixtureBytes=null;' +
+            'const sidecarSnapshot=(source=state.identity)=>({schemaVersion:2,kind:"pdf-annotation-snapshot",documentId:activeDocumentId,docKey:"freetext-undo-appearance",revision:state.revision,source:{sourcePath:activeDocumentId,sourceHash,...(source||{pageCount:0,orderedPageIdentities:[]})},legacyIdentities:state.legacyIdentities,annotations:[...state.operations.values()].filter(row=>row.deleted!==true),tombstones:[...state.operations.values()].filter(row=>row.deleted===true).map(({deleted,...row})=>row)});' +
+            'const persistOperations=message=>{for(const operation of Array.isArray(message.operations)?message.operations:[]){if(!operation||typeof operation.uuid!=="string")continue;state.operations.set(operation.uuid,structuredClone(operation));}state.revision=Math.max(state.revision,Number(message.revision)||0);};' +
+            'const ackFor=(type,message)=>({channel,type,token,documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,ok:true,external:true,operationCount:Array.isArray(message.operations)?message.operations.length:0,batchId:message.operations?.length?"test-batch-"+message.requestId:null,externalAnnotations:sidecarSnapshot()});' +
             'const sendOpen=(data,label)=>{' +
-            'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
-            'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,openRequest:state.openRequest,data},"*",[data]);};' +
-            'window.__sendOpenSaved=()=>sendOpen(state.savedData.slice(0),"saved-data");' +
+            'state.openRequest+=1;state.sourceIdentityConfirmed=false;state.identity=null;state.opens.push({label,documentId:activeDocumentId,sourceHash,openRequest:state.openRequest,byteLength:data.byteLength});' +
+            'state.documentId=activeDocumentId;iframe.contentWindow.postMessage({channel,type:"open",token,documentId:activeDocumentId,documentPath:activeDocumentId,filename:activeDocumentId,autoSave:true,rendererGeneration:"freetext-undo-renderer",openRequest:state.openRequest,data,externalAnnotations:sidecarSnapshot()},"*",[data]);};' +
+            'window.__sendOpenSaved=()=>sendOpen(state.savedData.slice(0),"explicit-export-reopen");' +
+            'window.__installExportedCopy=(bytes,hash,legacyIdentities)=>{state.savedData=Uint8Array.from(bytes).buffer;sourceHash=hash;state.sourceHash=hash;activeDocumentId=documentId+"-explicit-export";state.documentId=activeDocumentId;state.operations.clear();state.revision=0;state.identity=null;state.legacyIdentities=legacyIdentities;state.sourceIdentityConfirmed=false;};' +
             'window.__holdNextSaveAck=()=>{state.holdNextSaveAck=true;};' +
-            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0)){iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:save.documentId,requestId:save.requestId,revision:save.revision},"*");}};' +
+            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0)){iframe.contentWindow.postMessage(save.ack,"*");}};' +
             'window.__sendFlush=(id)=>iframe.contentWindow.postMessage({channel,type:"flush",token,id},"*");' +
+            'window.__requestExport=()=>{const requestId="export-"+(state.exports.length+1);iframe.contentWindow.postMessage({channel,type:"export-copy",token,documentId:activeDocumentId,openRequest:state.openRequest,requestId},"*");return requestId;};' +
             'window.addEventListener("message",event=>{' +
             'if(event.source!==iframe.contentWindow)return;const message=event.data;' +
             'if(!message||message.channel!==channel||message.token!==token)return;' +
             'if(message.type==="ready"){state.ready=true;if(fixtureBytes)sendOpen(fixtureBytes.slice(0),"fixture");}' +
             'else if(message.type==="opened"){state.opened+=1;state.openedMessages ||= [];state.openedMessages.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,dirty:message.dirty});}' +
-            'else if(message.type==="save"){const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,origin:message.origin,byteLength:message.data?.byteLength||0,data:message.data?.slice(0),receivedAt:performance.now()};state.saves.push(save);state.savedData=save.data.slice(0);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}}' +
-            'else if(message.type==="recover"){const recovery={documentId:message.documentId,requestId:message.requestId,revision:message.revision,reason:message.reason,data:message.data?.slice(0)};state.recoveries.push(recovery);iframe.contentWindow.postMessage({channel,type:"recovered",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}' +
+            'else if(message.type==="annotation-source-identity"){if(message.identityStatus!=="KNOWN"||!Number.isSafeInteger(message.pageCount)||!Array.isArray(message.orderedPageIdentities)||message.orderedPageIdentities.length!==message.pageCount||message.orderedPageIdentities.some(identity=>typeof identity!=="string")||message.sourceHash!==sourceHash){iframe.contentWindow.postMessage({channel,type:"annotation-source-mismatch",token,documentId:message.documentId,openRequest:message.openRequest,reason:"PAGE_IDENTITY_UNAVAILABLE"},"*");return;}state.sourceIdentityConfirmed=true;state.identity={pageCount:message.pageCount,orderedPageIdentities:[...message.orderedPageIdentities]};iframe.contentWindow.postMessage({channel,type:"external-annotations-update",token,documentId:message.documentId,openRequest:message.openRequest,identityConfirmed:true,sourceMatch:state.operations.size?"MATCH":"BASELINE_ESTABLISHED",externalAnnotations:sidecarSnapshot()},"*");}' +
+            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
+            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,hasBinaryPayload:Object.hasOwn(message,"data"),operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
+            'else if(message.type==="export-ready"){state.exports.push({documentId:message.documentId,openRequest:message.openRequest,requestId:message.requestId,revision:message.revision,byteLength:message.data?.byteLength||0,data:new Uint8Array(message.data).slice().buffer});}' +
             'else if(message.type==="error"){state.errors.push({code:message.code,message:message.message,documentId:message.documentId,requestId:message.requestId});}' +
             'else if(message.type==="flushed"){state.flushes ||= [];state.flushes.push({id:message.id,ok:message.ok,dirty:message.dirty,revision:message.revision,recovered:message.recovered||false});}' +
             '});' +
@@ -595,6 +613,14 @@ test(
           !pageView.div.classList.contains("loading") &&
           !pageView.div.classList.contains("loadingIcon");
       }, { timeout: 30_000 });
+      await page.waitForFunction(
+        () => window.__hostState?.sourceIdentityConfirmed === true,
+        { timeout: 15_000 },
+      );
+      await viewer.waitForFunction(
+        () => document.getElementById("editorFreeTextButton")?.disabled === false,
+        { timeout: 15_000 },
+      );
 
       const waitForSaveCount = async (count) =>
         page.waitForFunction((expected) => window.__hostState?.saves?.length >= expected, { timeout: 30_000 }, count);
@@ -855,11 +881,20 @@ test(
           };
         }, { label, canvasRoi });
         const host = await page.evaluate(() => ({
-          saves: (window.__hostState?.saves || []).map(({ documentId, revision, origin, byteLength }) => ({ documentId, revision, origin, byteLength })),
+          saves: (window.__hostState?.saves || []).map(({ documentId, openRequest, revision, origin, operationCount, operations }) => ({
+            documentId,
+            openRequest,
+            revision,
+            origin,
+            operationCount,
+            operations: (operations || []).map(({ uuid, kind, pageIndex, deleted, embeddedRef }) => ({ uuid, kind, pageIndex, deleted, embeddedRef })),
+          })),
           opened: window.__hostState?.opened,
           opens: window.__hostState?.opens,
+          operationState: [...(window.__hostState?.operations?.values?.() || [])].map(({ uuid, kind, pageIndex, deleted, embeddedRef }) => ({ uuid, kind, pageIndex, deleted, embeddedRef })),
           errors: window.__hostState?.errors,
-          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, revision, reason, data }) => ({ documentId, revision, reason, byteLength: data?.byteLength || 0 })),
+          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, openRequest, revision, reason, operationCount }) => ({ documentId, openRequest, revision, reason, operationCount })),
+          exports: (window.__hostState?.exports || []).map(({ documentId, openRequest, revision, requestId, byteLength }) => ({ documentId, openRequest, revision, requestId, byteLength })),
         }));
         const result = { ...state, host };
         evidence.push(result);
@@ -932,16 +967,49 @@ test(
           document.activeElement === internal;
       }, { timeout: 15_000 }, editorSelector);
       evidence.push({ stage: "typed", point: createPoint, editor: await snapshot("typed") });
-      const noneButtonRect = await viewer.$eval("#editorFreeTextButton", (button) => {
+      const noneButtonTarget = await viewer.$eval("#editorFreeTextButton", (button) => {
         const rect = button.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        const candidates = [
+          [0.5, 0.5], [0.25, 0.5], [0.75, 0.5],
+          [0.5, 0.25], [0.5, 0.75], [0.25, 0.25], [0.75, 0.75],
+        ];
+        for (const [xRatio, yRatio] of candidates) {
+          const x = rect.left + rect.width * xRatio;
+          const y = rect.top + rect.height * yRatio;
+          const hit = document.elementFromPoint(x, y);
+          if (hit === button || button.contains(hit)) {
+            return {
+              enabled: !button.disabled,
+              hitsButton: true,
+              x,
+              y,
+              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+              hit: { tag: hit?.tagName, id: hit?.id || null, className: typeof hit?.className === "string" ? hit.className : "" },
+            };
+          }
+        }
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          enabled: !button.disabled,
+          hitsButton: false,
+          x,
+          y,
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          hit: { tag: hit?.tagName, id: hit?.id || null, className: typeof hit?.className === "string" ? hit.className : "" },
+        };
       });
+      assert.ok(noneButtonTarget.enabled,
+        "The fixture must confirm source identity before clicking a FreeText tool");
+      assert.ok(noneButtonTarget.hitsButton,
+        "The chosen mouse coordinate must hit the actual FreeText button: " + JSON.stringify(noneButtonTarget));
       const modeEventCountBeforeNoneClick = await viewer.evaluate(
         () => window.__modeEvents.length,
       );
       await page.mouse.click(
-        iframeRect.x + noneButtonRect.x + noneButtonRect.width / 2,
-        iframeRect.y + noneButtonRect.y + noneButtonRect.height / 2,
+        iframeRect.x + noneButtonTarget.x,
+        iframeRect.y + noneButtonTarget.y,
         { button: "left" },
       );
       await viewer.waitForFunction(
@@ -957,6 +1025,11 @@ test(
       );
       await snapshot("created-committed");
       await waitForSaveCount(1);
+      const firstDurableSave = await page.evaluate(() => window.__hostState.saves[0]);
+      assert.ok(firstDurableSave.operationCount > 0,
+        "Ordinary annotation save must persist a structured sidecar operation");
+      assert.equal(firstDurableSave.hasBinaryPayload, false,
+        "Ordinary annotation save must not serialize or send a PDF binary");
       await viewer.waitForFunction(() => {
         const manager = PDFViewerApplication.pdfViewer?._layerProperties?.annotationEditorUIManager;
         const editors = [...(manager?.getEditors(0) || [])];
@@ -983,9 +1056,90 @@ test(
       evidence.push({ stage: "saved-original", originalFreeText });
       await persistEvidence();
 
+      const exportRequestId = await page.evaluate(() => window.__requestExport());
+      await page.waitForFunction(
+        (requestId) => window.__hostState?.exports?.some((entry) => entry.requestId === requestId),
+        { timeout: 30_000 },
+        exportRequestId,
+      );
+      const exportedPdfBytes = await page.evaluate(
+        (requestId) => Array.from(new Uint8Array(
+          window.__hostState.exports.find((entry) => entry.requestId === requestId).data,
+        )),
+        exportRequestId,
+      );
+      const exportedPdfBuffer = Buffer.from(exportedPdfBytes);
+      const exportedPdfSourceHash = `sha256:${createHash("sha256").update(exportedPdfBuffer).digest("hex")}`;
+      const exportedAppearance = await viewer.evaluate(async (bytes) => {
+        const task = pdfjsLib.getDocument({ data: Uint8Array.from(bytes) });
+        const pdfDocument = await task.promise;
+        try {
+          const page = await pdfDocument.getPage(1);
+          const annotation = (await page.getAnnotations()).find((entry) =>
+            entry.subtype === "FreeText" &&
+            (entry.contents?.includes("UndoVisibilityProof") || entry.contentsObj?.str?.includes("UndoVisibilityProof")),
+          );
+          if (!annotation) return { annotation: null, renderedPixels: 0 };
+          const viewport = page.getViewport({ scale: 1.25 });
+          const canvas = globalThis.document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(annotation.rect);
+          const left = Math.max(0, Math.floor(Math.min(x1, x2)));
+          const top = Math.max(0, Math.floor(Math.min(y1, y2)));
+          const width = Math.max(1, Math.min(canvas.width - left, Math.ceil(Math.abs(x2 - x1))));
+          const height = Math.max(1, Math.min(canvas.height - top, Math.ceil(Math.abs(y2 - y1))));
+          const pixels = canvas.getContext("2d", { willReadFrequently: true }).getImageData(left, top, width, height).data;
+          let renderedPixels = 0;
+          for (let index = 0; index < pixels.length; index += 4) {
+            if (pixels[index] < 245 || pixels[index + 1] < 245 || pixels[index + 2] < 245) renderedPixels += 1;
+          }
+          return {
+            annotation: { id: annotation.id, hasAppearance: annotation.hasAppearance, rect: annotation.rect },
+            renderedPixels,
+            viewportRect: { x: left, y: top, width, height },
+          };
+        } finally {
+          await task.destroy();
+        }
+      }, exportedPdfBytes);
+      const exportedInspection = await mergeCore.inspect({ bytes: exportedPdfBuffer });
+      const exactExportedIdentity = exportedInspection.identities.filter((identity) =>
+        identity.ref === exportedAppearance.annotation?.id &&
+        identity.pageIndex === 0 &&
+        identity.kind === "freetext" &&
+        identity.deleted !== true,
+      );
+      assert.equal(exactExportedIdentity.length, 1,
+        "The exported AP must have one exact UUID/type/page identity for its PDF.js annotation reference");
+      const exportedLegacyIdentities = exactExportedIdentity.map(({ uuid, ref, pageIndex, kind }) => ({
+        uuid,
+        ref,
+        pageIndex,
+        kind,
+      }));
+      evidence.push({
+        stage: "explicit-export-appearance",
+        requestId: exportRequestId,
+        sourceHash: exportedPdfSourceHash,
+        byteLength: exportedPdfBuffer.byteLength,
+        exportedAppearance,
+        inspectedIdentity: exportedLegacyIdentities[0],
+      });
+      await persistEvidence();
+      assert.equal(exportedAppearance.annotation?.hasAppearance, true,
+        "The explicit annotated-copy export must contain a FreeText appearance stream");
+      assert.ok(exportedAppearance.renderedPixels > 0,
+        "The explicit annotated-copy export must render visible FreeText pixels");
+      await page.evaluate(({ bytes, sourceHash, legacyIdentities }) => {
+        window.__installExportedCopy(bytes, sourceHash, legacyIdentities);
+      }, { bytes: exportedPdfBytes, sourceHash: exportedPdfSourceHash, legacyIdentities: exportedLegacyIdentities });
+
       const expectedOpen = 2;
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(expectedOpen);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
       const afterReopen = await snapshot("reopened-original");
       const originalCanvasRoi = afterReopen.canvasRoi;
@@ -1107,27 +1261,26 @@ test(
       await page.evaluate(() => window.__releaseHeldSaveAcks());
       await waitForSaveCount(eraseSaveCount + 1);
       await viewer.waitForFunction(() => !PDFViewerApplication._hasChanges(), { timeout: 30_000 });
-      await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect.width > 0 && rect.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
+      const afterEraseAck = await snapshot("after-delete-ack-before-undo-visibility", originalCanvasRoi.targetRect);
+      evidence.push({ stage: "after-delete-ack-before-undo-visibility", ...afterEraseAck });
+      await persistEvidence();
       await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
       const afterUndo = await snapshot(
         "after-trusted-meta-z-and-ack",
         originalCanvasRoi.targetRect,
       );
       assert.ok(
-        afterUndo.annotation?.rect?.width > 0 && afterUndo.annotation?.rect?.height > 0,
-        "Undo must restore a visible saved FreeText AP in NONE mode",
+        afterUndo.annotation?.hidden || afterUndo.annotation?.display === "none" || afterUndo.annotation?.rect?.width === 0,
+        "The PDF.js annotation DOM must remain suppressed while the external identity owns this embedded AP",
       );
       assert.equal(afterUndo.mode, 0, "Undo must keep the viewer in NONE mode after deferred repair");
       assert.equal(afterUndo.annotation?.annotationId, reopenedAnnotation.id, "Undo must show the same saved AP");
       assert.equal(afterUndo.editor?.annotationElementId, reopenedAnnotation.id, "Undo must retain the same saved editor identity");
       assert.equal(afterUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Page repaint must preserve the exact undo-restored editor instance");
+      const undoUpsert = afterUndo.host.saves.at(-1)?.operations?.find((operation) => operation.uuid === exportedLegacyIdentities[0].uuid);
+      assert.ok(undoUpsert, "Undo must persist the exact inspected legacy UUID");
+      assert.equal(undoUpsert.deleted, false, "Undo must persist a live operation, not repeat the held tombstone");
+      assert.equal(undoUpsert.embeddedRef, reopenedAnnotation.id, "Undo must retain the exact embedded PDF object reference");
       assert.equal(
         afterUndo.host.saves.length,
         eraseSaveCount + 1,
@@ -1181,17 +1334,10 @@ test(
       await page.keyboard.down("Meta");
       await page.keyboard.press("z");
       await page.keyboard.up("Meta");
-      await viewer.waitForFunction((targetRect) => {
-        const page = document.querySelector('.page[data-page-number="1"]');
-        const section = [...(page?.querySelectorAll(".annotationLayer .freeTextAnnotation") || [])]
-          .find((node) => node.textContent.includes("UndoVisibilityProof"));
-        const rect = section?.getBoundingClientRect();
-        return !!section && !section.hidden && getComputedStyle(section).display !== "none" &&
-          rect?.width > 0 && rect?.height > 0;
-      }, { timeout: 15_000 }, originalCanvasRoi.targetRect);
       await waitForCanvasRestoreBaseline(originalCanvasRoi.targetRect);
       const afterSecondUndo = await snapshot("after-second-meta-z", originalCanvasRoi.targetRect);
-      assert.ok(afterSecondUndo.annotation?.rect?.width > 0, "A second undo must remain usable after redo");
+      assert.ok(afterSecondUndo.annotation?.hidden || afterSecondUndo.annotation?.display === "none" || afterSecondUndo.annotation?.rect?.width === 0,
+        "The second undo must retain the single external owner instead of exposing a duplicate native annotation layer");
       assert.equal(afterSecondUndo.mode, 0, "A second undo must remain in NONE mode");
       assert.equal(afterSecondUndo.annotation?.annotationId, reopenedAnnotation.id, "A second undo must restore the same saved AP");
       assert.equal(afterSecondUndo.editor?.uid, undoWhileSaveHeld.editor?.uid, "Redo and second undo must preserve the same editor history identity");
@@ -1208,7 +1354,14 @@ test(
       const reopenedCount = await page.evaluate(() => window.__hostState.opened + 1);
       await page.evaluate(() => window.__sendOpenSaved());
       await waitForOpenCount(reopenedCount);
+      await page.waitForFunction(() => window.__hostState?.sourceIdentityConfirmed === true, { timeout: 15_000 });
       await waitForPageReady();
+      await viewer.waitForFunction((uuid) => {
+        const state = window.__freeTextUndoBridgeState;
+        const row = state?.externalAnnotationRows?.get(uuid);
+        const binding = state?.externalAnnotationHydration?.get(uuid);
+        return row?.deleted === false && binding?.row?.deleted === false;
+      }, { timeout: 15_000 }, exportedLegacyIdentities[0].uuid);
       const afterFinalReopen = await snapshot(
         "reopened-restored-free-text",
         originalCanvasRoi.targetRect,
@@ -1229,10 +1382,16 @@ test(
           : null;
       });
       assert.ok(
-        afterFinalReopen.annotation?.rect?.width > 0 &&
-          afterFinalReopen.annotation?.text?.includes("UndoVisibilityProof"),
-        "Saved/restored FreeText AP must remain visible with its text after a full save/reopen",
+        afterFinalReopen.annotation?.hidden || afterFinalReopen.annotation?.display === "none" || afterFinalReopen.annotation?.rect?.width === 0,
+        "The PDF.js annotation DOM must remain suppressed while the external identity owns this embedded AP",
       );
+      assert.equal(afterFinalReopen.annotation?.annotationId, reopenedAnnotation.id,
+        "The reopened external annotation must remain bound to the same PDF object reference");
+      const reopenedUpsert = afterFinalReopen.host.operationState.find((operation) => operation.uuid === exportedLegacyIdentities[0].uuid);
+      assert.ok(reopenedUpsert, "The reopened sidecar must retain the exact inspected legacy UUID");
+      assert.equal(reopenedUpsert.deleted, false, "The final effective operation must remain live after reopen");
+      assert.equal(reopenedUpsert.embeddedRef, reopenedAnnotation.id,
+        "The final operation must retain the exact embedded object reference");
       assert.equal(
         finalAnnotation?.hasAppearance,
         true,
@@ -1243,6 +1402,13 @@ test(
         originalCanvasRoi.fingerprint,
         "The restored FreeText AP must retain the same page-canvas pixels after save/reopen",
       );
+      assert.equal(afterFinalReopen.canvasRoi.differentPixels, 0,
+        "The reopened saved AP must reproduce the original page-canvas pixels exactly");
+      const finalSourceBytes = await viewer.evaluate(async () =>
+        Array.from(new Uint8Array(await PDFViewerApplication.pdfDocument.getData())));
+      assert.equal(`sha256:${createHash("sha256").update(Buffer.from(finalSourceBytes)).digest("hex")}`,
+        exportedPdfSourceHash,
+        "Ordinary save, undo/redo, and reopen must not mutate the immutable PDF source");
       evidence.push({
         stage: "pass",
         afterUndo,
