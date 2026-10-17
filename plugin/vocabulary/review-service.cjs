@@ -337,6 +337,7 @@ function createVocabularyReviewService({
       }
       session = {
         sessionId, closing: false, closed: false, timer: null, lastError: null,
+        skippedFamilyKeys: new Set(),
         journal, summarySnapshot, summary: clone(summary), aggregate: entities,
         loaded: loaded.loaded, canonicalRecords: currentRecords, workingRecords,
       };
@@ -493,9 +494,16 @@ function createVocabularyReviewService({
     return enqueue(async () => {
       const active = requireOpen();
       validateFamilyKey(familyKey);
-      if (kind === "skip") return { status: "skipped", writes: 0, journalActions: active.journal.actions.length };
-      if (!["enroll", "unenroll", "remember", "forget"].includes(kind)) {
+      if (!["enroll", "unenroll", "remember", "forget", "skip"].includes(kind)) {
         throw codedError("VOCAB_REVIEW_ACTION_INVALID", "Unsupported Review action.");
+      }
+      const family = await familyFor(familyKey);
+      if (family.status === 5 && kind !== "unenroll") {
+        return { status: "known-filtered", familyKey, writes: 0 };
+      }
+      if (kind === "skip") {
+        active.skippedFamilyKeys.add(familyKey);
+        return { status: "skipped", familyKey, writes: 0, journalActions: active.journal.actions.length };
       }
       const actionId = validateActionId(options.actionId || "review-action-" + makeId());
       const existing = active.journal.actions.find((item) => item.actionId === actionId);
@@ -506,10 +514,6 @@ function createVocabularyReviewService({
         const after = { ...clone(existing.payload.afterState), lastActionSessionId: active.sessionId,
           lastActionSequence: existing.sequence, lastActionId: existing.actionId };
         return { status: "duplicate", actionId, sequence: existing.sequence, state: clone(after), writes: 0 };
-      }
-      const family = await familyFor(familyKey);
-      if (family.status === 5 && kind !== "unenroll") {
-        return { status: "known-filtered", actionId, familyKey, writes: 0 };
       }
       const current = active.workingRecords.get(familyKey) || null;
       const time = readUtcNow(now);
@@ -587,17 +591,32 @@ function createVocabularyReviewService({
     }
     const cursor = decodeCursor(options.cursor);
     const time = readUtcNow(now);
-    const candidates = [...active.workingRecords.values()].filter((record) => record.enrolled && record.dueAt <= time)
+    const candidates = [...active.workingRecords.values()].filter((record) => record.enrolled && record.dueAt <= time &&
+      !active.skippedFamilyKeys.has(record.familyKey))
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.familyKey.localeCompare(right.familyKey));
-    const eligible = [];
-    for (const state of candidates) {
-      const family = await familyFor(state.familyKey);
-      if (family.status !== 5) eligible.push({ familyKey: state.familyKey, dueAt: state.dueAt, state: clone(state), family });
+    const eligiblePage = [];
+    let eligibleCount = 0;
+    const isAfterCursor = (state) => !cursor || state.dueAt > cursor.dueAt ||
+      (state.dueAt === cursor.dueAt && state.familyKey > cursor.familyKey);
+    // Bound concurrent lookups for mobile runtimes while avoiding one awaited
+    // Vault/service round trip per row in large review queues.
+    const lookupBatchSize = 256;
+    for (let offset = 0; offset < candidates.length; offset += lookupBatchSize) {
+      const batch = candidates.slice(offset, offset + lookupBatchSize);
+      const families = await Promise.all(batch.map((state) => familyFor(state.familyKey)));
+      for (let index = 0; index < batch.length; index += 1) {
+        const state = batch[index];
+        const family = families[index];
+        if (family.status === 5) continue;
+        eligibleCount += 1;
+        if (isAfterCursor(state) && eligiblePage.length <= limit) {
+          eligiblePage.push({ familyKey: state.familyKey, dueAt: state.dueAt, state: clone(state), family });
+        }
+      }
     }
-    const after = cursor ? eligible.filter((item) => item.dueAt > cursor.dueAt ||
-      (item.dueAt === cursor.dueAt && item.familyKey > cursor.familyKey)) : eligible;
-    const items = after.slice(0, limit);
-    return { items, total: eligible.length, nextCursor: after.length > limit ? encodeCursor(items.at(-1)) : null };
+    const hasNext = eligiblePage.length > limit;
+    const items = eligiblePage.slice(0, limit);
+    return { items, total: eligibleCount, nextCursor: hasNext ? encodeCursor(items.at(-1)) : null };
   }
 
   async function currentPreconditions(storeEntries) {
@@ -614,6 +633,10 @@ function createVocabularyReviewService({
   }
 
   async function closeUnlocked() {
+    if (session?.closed) {
+      return { status: "closed", sessionId: session.sessionId, actions: session.journal.actions.length,
+        historyBatchId: null, checkpoint: { status: "unchanged" } };
+    }
     const active = requireOpen({ allowClosing: true });
     active.closing = true;
     cancelIdleFlush();

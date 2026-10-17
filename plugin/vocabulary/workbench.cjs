@@ -19,6 +19,13 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
   if (typeof Modal !== "function") throw new TypeError("Obsidian Modal is required.");
   const showNotice = typeof Notice === "function" ? (message) => new Notice(message) : () => {};
   const utf8ByteLength = (value) => new TextEncoder().encode(String(value)).byteLength;
+  let reviewActionFallbackSequence = 0;
+  const formatLocalReviewTime = (value) => {
+    const time = Date.parse(String(value || ""));
+    if (!Number.isFinite(time)) return "时间待确认";
+    try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(time)); }
+    catch { return new Date(time).toLocaleString(); }
+  };
 
   class VocabularyWorkbenchModal extends Modal {
     constructor(app, api) {
@@ -44,6 +51,8 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
       this.preview = null;
       this.contextPageState = { familyKey: null, cursors: [null], index: 0, nextCursor: null, generation: 0 };
       this.reviewPageState = { cursors: [null], index: 0, nextCursor: null, generation: 0 };
+      this.reviewSkippedFamilyKeys = new Set();
+      this.reviewActionIds = new Map();
       this.historyPageIndex = 0;
       this.historyBatches = [];
       this.historyPreviewPages = new Map();
@@ -599,7 +608,7 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
 
     _renderReview(epoch) {
       this.panel.createEl("h3", { text: "今日复习" });
-      this.panel.createEl("p", { text: "这里只显示已到期且未被“已知”状态过滤的词族。本阶段提供查看与批量维护；评分操作将在后续阶段接入。" });
+      this.panel.createEl("p", { text: "选择“记住”或“忘记”更新复习进度；“跳过”只在本次打开的复习会话中隐藏该词，不写入复习记录。" });
       const list = this.panel.createDiv({ cls: "vocabulary-workbench__list", attr: { "data-role": "review-list", "aria-busy": "true" } });
       const pagination = this.panel.createDiv({ cls: "vocabulary-workbench__pagination", attr: { "data-role": "review-pagination" } });
       this._button(pagination, "上一页", "review-previous", () => {
@@ -634,12 +643,13 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
         const items = Array.isArray(page?.items) ? page.items : [];
         if (items.length > PAGE_SIZE) throw new Error(`Review 服务返回了 ${items.length} 条记录，超过每页 ${PAGE_SIZE} 条上限；未显示截断数据。`);
         state.nextCursor = page?.nextCursor || null;
-        for (const item of items) {
+        const visibleItems = items.filter((item) => !this.reviewSkippedFamilyKeys.has(item.familyKey));
+        for (const item of visibleItems) {
           const row = list.createDiv({ cls: "vocabulary-workbench__row vocabulary-workbench__review-row", attr: { "data-role": "review-row" } });
           const record = item.family?.records?.[0] || {};
           const main = row.createDiv({ cls: "vocabulary-workbench__row-main" });
           main.createEl("strong", { text: record.surface || item.familyKey || "词族" });
-          main.createEl("span", { text: `到期：${item.dueAt || item.state?.dueAt || "今天"}` });
+          main.createEl("span", { text: `第 ${item.state?.box || 1} 箱 · 到期：${formatLocalReviewTime(item.dueAt || item.state?.dueAt)}` });
           if (record.translation) main.createEl("span", { text: record.translation });
           const open = this._button(row, "词库详情", `review-details-${this._safeActionKey(item.familyKey)}`, () => {
             this.selectedFamilyKey = item.familyKey;
@@ -649,19 +659,53 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
             this._openDetails(item.familyKey);
           }, { cls: "vocabulary-workbench__secondary" });
           open.setAttribute?.("aria-label", `在词库中查看 ${record.surface || "词族"}`);
+          const actions = row.createDiv({ cls: "vocabulary-workbench__review-actions", attr: { role: "group", "aria-label": `复习 ${record.surface || "词族"}` } });
+          for (const [kind, label] of [["remember", "记住"], ["forget", "忘记"], ["skip", "跳过"]]) {
+            const button = this._button(actions, label, `review-${kind}-${this._safeActionKey(item.familyKey)}`,
+              () => this._runReviewAction(kind, item.familyKey, epoch, list, pagination),
+              { cls: kind === "skip" ? "vocabulary-workbench__secondary" : "" });
+            button.setAttribute?.("aria-label", `${label}：${record.surface || "词族"}`);
+          }
         }
-        if (!items.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: "今天没有到期的复习词族。" });
+        if (!visibleItems.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: items.length
+          ? "本页到期词族已在本次会话中跳过；可继续翻页。"
+          : "今天没有到期的复习词族。" });
         pagination.setAttribute?.("data-page", String(state.index + 1));
         const previous = pagination.querySelector?.('[data-action="review-previous"]');
         const next = pagination.querySelector?.('[data-action="review-next"]');
         if (previous) previous.disabled = state.index === 0;
         if (next) next.disabled = !state.nextCursor;
-        this._setStatus(`今日复习第 ${state.index + 1} 页 · 共 ${Number(page?.total || items.length)} 个词族`);
+        this._setStatus(`今日复习第 ${state.index + 1} 页 · 共 ${Number(page?.total ?? items.length)} 个词族`);
       } catch (error) {
         if (this._isCurrent(epoch) && generation === state.generation) this._showError(error);
       } finally {
         if (this._isCurrent(epoch) && generation === state.generation) list.setAttribute?.("aria-busy", "false");
       }
+    }
+
+    async _runReviewAction(kind, familyKey, epoch, list, pagination) {
+      if (typeof this.api.applyReviewAction !== "function") throw new Error("复习评分服务尚未连接。");
+      const actionKey = `${kind}\u0000${familyKey}`;
+      let actionId = this.reviewActionIds.get(actionKey);
+      if (!actionId) {
+        const randomId = globalThis.crypto?.randomUUID?.();
+        actionId = `workbench-review-${randomId || `${Date.now().toString(36)}-${++reviewActionFallbackSequence}`}`;
+        this.reviewActionIds.set(actionKey, actionId);
+      }
+      const label = ({ remember: "记住", forget: "忘记", skip: "跳过" })[kind] || "复习";
+      this._setStatus(`正在${label}…`);
+      const result = await this.api.applyReviewAction({ kind, familyKey, actionId });
+      if (!this._isCurrent(epoch)) return;
+      this.reviewActionIds.delete(actionKey);
+      if (kind === "skip" && result?.status === "skipped") this.reviewSkippedFamilyKeys.add(familyKey);
+      if (result?.status === "known-filtered") this.reviewSkippedFamilyKeys.add(familyKey);
+      if (result?.status === "known-filtered") this._setStatus("该词族已标为已知，未写入复习状态。");
+      else if (result?.status === "not-due") this._setStatus("该词族已不在到期队列中；列表已刷新。");
+      else this._setStatus(kind === "skip" ? "已在本次复习会话中跳过；未写入持久数据。" : `${label}已确认。`);
+      this.reviewPageState.cursors = [null];
+      this.reviewPageState.index = 0;
+      this.reviewPageState.nextCursor = null;
+      return this._loadReviewPage(epoch, list, pagination);
     }
 
     _renderHistory(epoch) {

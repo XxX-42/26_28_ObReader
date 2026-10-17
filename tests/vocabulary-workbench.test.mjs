@@ -336,6 +336,51 @@ test("Context and Review use service cursors and reject oversized page payloads"
   modal.onClose();
 });
 
+test("Today Review offers ratings and session-only skip with stable retry ID and local due-time display", async () => {
+  const actionCalls = [];
+  const dueCalls = [];
+  let attempt = 0;
+  const { api, families } = makeApi({
+    async listDueReview(options) {
+      dueCalls.push(options);
+      return { items: [{ familyKey: families[0].familyKey, dueAt: "2026-10-18T00:00:00.000Z",
+        state: { box: 3 }, family: families[0] }], total: 1, nextCursor: null };
+    },
+    async applyReviewAction(input) {
+      actionCalls.push(input);
+      attempt += 1;
+      if (attempt === 1) throw new Error("temporary acknowledgement loss");
+      return { status: input.kind === "skip" ? "skipped" : "duplicate" };
+    },
+  });
+  const modal = createModal(api);
+  await settle(modal);
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+  const row = modal.panel.querySelector('[data-role="review-row"]');
+  assert.match(row.textContent, /第 3 箱/);
+  assert.doesNotMatch(row.textContent, /2026-10-18T00:00:00\.000Z/, "UTC remains in storage; the user sees local date formatting");
+  assert.ok(modal.panel.querySelector('[data-action^="review-remember-"]'));
+  assert.ok(modal.panel.querySelector('[data-action^="review-forget-"]'));
+  assert.ok(modal.panel.querySelector('[data-action^="review-skip-"]'));
+
+  const remember = modal.panel.querySelector('[data-action^="review-remember-"]');
+  remember.click();
+  await settle(modal);
+  remember.click();
+  await settle(modal);
+  assert.equal(actionCalls[0].kind, "remember");
+  assert.equal(actionCalls[0].actionId, actionCalls[1].actionId, "retry reuses the same durable action ID");
+
+  modal.panel.querySelector('[data-action^="review-skip-"]').click();
+  await settle(modal);
+  assert.equal(actionCalls[2].kind, "skip");
+  assert.equal(modal.panel.querySelectorAll('[data-role="review-row"]').length, 0);
+  assert.match(modal.panel.textContent, /本页到期词族已在本次会话中跳过/);
+  assert.equal(dueCalls.length, 3);
+  modal.onClose();
+});
+
 test("History batches and field previews paginate at 100 without losing later pages", async () => {
   const batches = Array.from({ length: 101 }, (_, index) => ({ batchId: `batch-${index + 1}`, deviceId: "device-1", kind: "review-final", changes: [] }));
   const { api } = makeApi({

@@ -4199,6 +4199,33 @@ test("Vocabulary workbench host keeps list/dictionary/hot-path stores separate a
   harness.plugin.onunload();
 });
 
+test("Review host applies stable acknowledged ratings without rewriting personal vocabulary and coalesces close", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  const service = harness.plugin.getVocabularyService();
+  await service.upsertTerm("reviewable", { status: 2, translation: "待复习" });
+  const family = await service.getFamily("reviewable");
+  const corePath = "00_Archive/21_VocabularyData/en.vocab.json";
+  const coreBefore = harness.storedFiles.get(corePath);
+  const api = harness.plugin.createVocabularyWorkbenchApi();
+  await assert.rejects(api.applyReviewAction({ kind: "remember", familyKey: family.familyKey }), /稳定.*action ID/);
+  await api.setReviewEnrollment([family.familyKey], { enrolled: true });
+
+  const first = await api.applyReviewAction({ kind: "remember", familyKey: family.familyKey, actionId: "host-review-action-1" });
+  const retry = await api.applyReviewAction({ kind: "remember", familyKey: family.familyKey, actionId: "host-review-action-1" });
+  assert.equal(first.state.box, 2);
+  assert.equal(retry.status, "duplicate");
+  assert.equal(retry.state.box, 2, "retrying the acknowledged action does not advance twice");
+  assert.equal(harness.storedFiles.get(corePath), coreBefore, "Review ratings never rewrite en.vocab.json");
+  assert.equal((await api.listDueReview({ limit: 100 })).total, 0, "remembering moves the card to its next UTC interval");
+
+  const runtime = harness.plugin.vocabularyRuntime;
+  await Promise.all([api.close(), api.close(), runtime.close()]);
+  const history = await runtime.history.listBatches();
+  assert.equal(history.filter((batch) => batch.batchId.startsWith("review-final:")).length, 1);
+  harness.plugin.onunload();
+});
+
 
 test("Workbench command opens the shared factory class with a narrow lazy host facade", async () => {
   const harness = createHarness();

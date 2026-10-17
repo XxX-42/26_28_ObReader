@@ -5463,6 +5463,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         const runtime = await get();
         return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
       },
+      applyReviewAction: async ({ kind, familyKey, actionId } = {}) => {
+        if (!["remember", "forget", "skip"].includes(kind)) throw new TypeError("复习操作必须是 remember、forget 或 skip。");
+        if (typeof familyKey !== "string" || !familyKey || familyKey.length > 4096) throw new TypeError("复习词族身份无效。");
+        if (typeof actionId !== "string" || !actionId || actionId.length > 256 || /[\\/\u0000-\u001f\u007f]/.test(actionId)) {
+          throw new TypeError("复习操作需要稳定且安全的 action ID。");
+        }
+        const runtime = await get();
+        return runtime.exclusive(async () => {
+          const review = await runtime.ensureReviewSession();
+          return review[kind](familyKey, { actionId });
+        });
+      },
       listHistory: async () => ({ batches: await (await get()).history.listBatches() }),
       previewHistory: async (batchId, options) => (await get()).history.previewRestore(batchId, options),
       restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => (await get()).restore(batchId, { selected: selectedCleanIds, deviceId }),

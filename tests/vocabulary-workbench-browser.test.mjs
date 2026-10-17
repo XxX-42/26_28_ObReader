@@ -34,7 +34,8 @@ try {
     HTMLElement.prototype.removeClass = function(name) { this.classList.remove(name); };
     class Modal { constructor() { this.modalEl = document.querySelector('.modal'); this.contentEl = document.querySelector('#content'); } }
     const families = Array.from({length:100},(_,i)=>({familyKey:`en-family:v1:word:["word${i+1}"]`,type:'word',status:i%5+1,records:[{surface:`word${i+1}`,status:i%5+1,translation:i%3===0?'词义翻译':''}]}));
-    const api = { async listFamilies(){ return {families,total:100,nextCursor:null}; }, async getFamilyDetails(key){ return {family:families.find(f=>f.familyKey===key),dictionary:{translation:'Dictionary reference',phonetic:'/wɜːd/'}}; }, async updateFamily(){return families[0];}, async setReviewEnrollment(keys){return{results:keys.map(familyKey=>({familyKey,status:'committed'}))};}, async listContexts(){return{contexts:[],total:0};}, async listDueReview(){return{items:[],total:0};}, async listHistory(){return{batches:[]};}, async previewHistory(){return{items:[]};}, async restoreHistory(){return{status:'committed'};}, async exportJson(){return'{}';}, async importJson(){return{};}, async exportCsv(){return'term,status';}, async importCsv(){return{};}, async close(){} };
+    window.reviewActions=[];
+    const api = { async listFamilies(){ return {families,total:100,nextCursor:null}; }, async getFamilyDetails(key){ return {family:families.find(f=>f.familyKey===key),dictionary:{translation:'Dictionary reference',phonetic:'/wɜːd/'}}; }, async updateFamily(){return families[0];}, async setReviewEnrollment(keys){return{results:keys.map(familyKey=>({familyKey,status:'committed'}))};}, async listContexts(){return{contexts:[],total:0};}, async listDueReview(){return{items:[{familyKey:families[0].familyKey,dueAt:'2026-10-18T00:00:00.000Z',state:{box:2},family:families[0]}],total:1};}, async applyReviewAction(input){window.reviewActions.push(input);return{status:input.kind==='skip'?'skipped':'committed'};}, async listHistory(){return{batches:[]};}, async previewHistory(){return{items:[]};}, async restoreHistory(){return{status:'committed'};}, async exportJson(){return'{}';}, async importJson(){return{};}, async exportCsv(){return'term,status';}, async importCsv(){return{};}, async close(){} };
     const Workbench = WorkbenchBundle.createVocabularyWorkbench({Modal,Notice:class{}});
     window.workbench = new Workbench({},api);
     window.workbench.onOpen();
@@ -57,6 +58,20 @@ try {
     await page.locator('[data-action="tab-vocabulary"]').click();
     await page.waitForSelector('[data-action^="details-"]');
   }
+  await page.setViewport({width:768,height:1024,deviceScaleFactor:1});
+  await page.evaluate(()=>{document.body.dataset.theme='light';});
+  await page.locator('[data-action="tab-review"]').click();
+  await page.waitForSelector('[data-action^="review-remember-"]');
+  const reviewMetrics=await page.evaluate(()=>({rows:document.querySelectorAll('[data-role="review-row"]').length,buttonHeights:[...document.querySelectorAll('.vocabulary-workbench__review-actions button')].map(button=>Math.round(button.getBoundingClientRect().height)),dueText:document.querySelector('[data-role="review-row"]')?.textContent||''}));
+  assert.equal(reviewMetrics.rows,1);
+  assert.equal(reviewMetrics.buttonHeights.length,3);
+  assert.ok(reviewMetrics.buttonHeights.every(height=>height>=44),`Review controls must remain touch-sized: ${JSON.stringify(reviewMetrics.buttonHeights)}`);
+  assert.doesNotMatch(reviewMetrics.dueText,/2026-10-18T00:00:00\.000Z/);
+  await page.screenshot({path:path.join(out,'ipad768-review-light.png'),fullPage:false});
+  await page.locator('[data-action^="review-skip-"]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-role="review-row"]').length===0);
+  assert.equal(await page.evaluate(()=>window.reviewActions[0]?.kind),'skip');
+  await writeFile(path.join(out,'review-controls.json'),`${JSON.stringify(reviewMetrics,null,2)}\n`);
   await writeFile(path.join(out,'matrix.json'),`${JSON.stringify({executablePath,matrix},null,2)}\n`);
   console.log(JSON.stringify({executablePath,matrix},null,2));
 } catch (error) {
