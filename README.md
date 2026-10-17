@@ -2,9 +2,9 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
-**0.10.4 版**将**WAL-Sidecar v3.2 JSONL 测试候选版**与可选的英语词汇学习功能结合起来。它保留 0.9.0 的存储和界面行为，并整合提交 `2b5d7ad` 中的每设备 JSONL WAL、持久追加确认、冷启动重放、快照物化和迁移屏障。它还会在确认外置身份和删除墓碑之前阻止显示 PDF 内嵌批注，并在 iPad 上屏蔽 WebKit 对 PDF 文本的长按菜单。词汇记录保存在独立的 Vault JSON 存储中，可供查看、编辑、导入和导出，持久数据目录为 `00_Archive/21_VocabularyData/`。源 PDF 保持不可变。Windows、macOS 和 iPadOS 使用相同的三文件包。本候选版新增紧凑的 LingQ 查词卡片、短语状态编辑、可同步的阅读器菜单开关，以及由 Vault 存储支持的分组词汇设置。
+**0.10.5 版**在 0.10.4 的 WAL-Sidecar v3.2 和词汇学习功能上，修复 PDF 文本层跨节点空格推断、行尾断词（如 `compa-` 换行 `rable`）的选词与高亮映射、紧邻行高亮几何错位，并改进 `low/lower/lowest` 等比较级和最高级的已学状态共享。原 PDF 仍保持不可变；Windows、macOS 和 iPadOS 共用同一三文件包。
 
-当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.4 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。
+当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.5 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。
 
 之前的[0.6.0 三文件候选包](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)使用不可变的逐设备批注操作批次，并据此重建 JSON 快照缓存。0.7.0 版新增无损 Float32 编码和经过验证、可重放的存储检查点；文件大小和尾部样本仍可用于快速排除明显的 PDF 变化，但要水合外置批注，必须先确认带算法标识的完整 `xxh64-v1` 哈希相同，并且有序页面身份也匹配。旧版 SHA-256 哈希仍可读取；资源完整性、构建产物、供应来源和稳定文档标识继续使用 SHA-256。
 

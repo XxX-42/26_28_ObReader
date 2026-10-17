@@ -6,91 +6,75 @@ const STATUS_COLORS = Object.freeze({
   5: "rgba(124, 58, 237, 0.18)",
 });
 
-const SAME_TEXT_LINE_CENTER_TOLERANCE_PX = 2.5;
-const SAME_TEXT_LINE_HEIGHT_RATIO = 0.32;
-const INTER_LINE_GAP_PX = 1;
-
-function median(values) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
-/**
- * Keep fallback rectangles for compact neighboring text rows from painting
- * over each other. The classifier only sees ranges already selected for
- * vocabulary marks; it never scans the page. It groups fragments by their
- * vertical centers (which tolerates mixed font sizes better than comparing
- * their top edges), then fits overlapping rows into the measured center-to-
- * center pitch. Centering the clipped boxes on the text row keeps them from
- * drifting toward the top edge when the line pitch is tight.
- */
-export function separateOverlappingHighlightRows(rectangles) {
-  if (!Array.isArray(rectangles) || rectangles.length < 2) return rectangles || [];
-  const ordered = rectangles
-    .filter((rect) => [rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite) && rect.height > 0)
-    .sort((left, right) =>
-      (left.y + left.height / 2) - (right.y + right.height / 2) || left.x - right.x);
-  const rows = [];
-  for (const rect of ordered) {
-    const rectCenter = rect.y + rect.height / 2;
-    let row = rows.at(-1);
-    const rowHeight = row?.naturalHeight || rect.height;
-    const sameLineTolerance = Math.max(
-      SAME_TEXT_LINE_CENTER_TOLERANCE_PX,
-      Math.min(rect.height, rowHeight) * SAME_TEXT_LINE_HEIGHT_RATIO,
-    );
-    if (!row || Math.abs(rectCenter - row.center) > sameLineTolerance) {
-      row = { top: rect.y, bottom: rect.y + rect.height, center: rectCenter, rects: [] };
-      rows.push(row);
-    } else {
-      row.top = Math.min(row.top, rect.y);
-      row.bottom = Math.max(row.bottom, rect.y + rect.height);
-      row.center = median([...row.rects.map((item) => item.y + item.height / 2), rectCenter]);
-    }
-    row.rects.push(rect);
-  }
-
-  for (const row of rows) {
-    const heights = row.rects.map((rect) => rect.height).sort((left, right) => left - right);
-    row.naturalHeight = heights[Math.floor(heights.length / 2)];
-    row.center = median(row.rects.map((rect) => rect.y + rect.height / 2));
-  }
-
-  for (let index = 0; index + 1 < rows.length; index += 1) {
-    const row = rows[index];
-    const next = rows[index + 1];
-    const centerPitch = next.center - row.center;
-    if (!(centerPitch > 0) || row.bottom <= next.top) continue;
-    row.overlapPitch = Math.min(row.overlapPitch ?? Infinity, centerPitch);
-    next.overlapPitch = Math.min(next.overlapPitch ?? Infinity, centerPitch);
-  }
-
-  for (const row of rows) {
-    if (!Number.isFinite(row.overlapPitch)) continue;
-    // Fit the mark to the actual line-center pitch. A full CSS-pixel gap avoids
-    // translucent edge blending at fractional canvas coordinates. If the
-    // source PDF uses very tight leading, geometry wins over a minimum height.
-    const availableHeight = Math.max(1, row.overlapPitch - INTER_LINE_GAP_PX);
-    const targetHeight = Math.min(row.naturalHeight, availableHeight);
-    const centeredTop = row.center - targetHeight / 2;
-    for (const rect of row.rects) {
-      rect.y = centeredTop;
-      rect.height = targetHeight;
-    }
-  }
-  return ordered;
-}
+const SAME_LINE_CENTER_RATIO = 0.55;
+const HIGHLIGHT_ROW_GAP_PX = 1;
+const MIN_HORIZONTAL_OVERLAP_PX = 0.5;
 
 let nextRendererId = 0;
+
+/**
+ * Keep overlapping marks inside the actual selected text bands. Only ranges
+ * that overlap both vertically and horizontally can constrain one another;
+ * this avoids mixing independent PDF columns. When two distinct line boxes
+ * collide, shrink around each range's measured center instead of moving the
+ * highlight to a page-wide guessed row. The input is rebuilt from live Ranges
+ * on every draw, so the same calculation follows PDF.js zoom and reflow.
+ */
+function separateOverlappingRangeRects(rectangles) {
+  const ordered = rectangles
+    .filter((rect) => [rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite) &&
+      rect.width > 0 && rect.height > 0)
+    .map((rect) => ({ ...rect, centerY: rect.y + rect.height / 2, paintHeight: rect.height }))
+    .sort((left, right) => left.y - right.y || left.x - right.x);
+  let changed = false;
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const upper = ordered[index];
+    const upperBottom = upper.y + upper.height;
+    for (let nextIndex = index + 1; nextIndex < ordered.length; nextIndex += 1) {
+      const lower = ordered[nextIndex];
+      if (lower.y >= upperBottom) break;
+
+      const centerDistance = Math.abs(lower.centerY - upper.centerY);
+      const rowTolerance = Math.min(upper.height, lower.height) * SAME_LINE_CENTER_RATIO;
+      if (centerDistance <= rowTolerance) continue;
+
+      const horizontalOverlap = Math.min(upper.x + upper.width, lower.x + lower.width) -
+        Math.max(upper.x, lower.x);
+      if (horizontalOverlap < MIN_HORIZONTAL_OVERLAP_PX) continue;
+
+      const upperTop = upper.centerY - upper.paintHeight / 2;
+      const upperPaintBottom = upper.centerY + upper.paintHeight / 2;
+      const lowerTop = lower.centerY - lower.paintHeight / 2;
+      const lowerPaintBottom = lower.centerY + lower.paintHeight / 2;
+      if (upperPaintBottom <= lowerTop || lowerPaintBottom <= upperTop) continue;
+
+      const availableHeight = Math.max(1, centerDistance - HIGHLIGHT_ROW_GAP_PX);
+      if (upper.paintHeight > availableHeight || lower.paintHeight > availableHeight) {
+        upper.paintHeight = Math.min(upper.paintHeight, availableHeight);
+        lower.paintHeight = Math.min(lower.paintHeight, availableHeight);
+        changed = true;
+      }
+    }
+  }
+
+  return {
+    changed,
+    rectangles: ordered.map(({ centerY, paintHeight, ...rect }) => ({
+      ...rect,
+      y: centerY - paintHeight / 2,
+      height: paintHeight,
+    })),
+  };
+}
 
 /**
  * Paint vocabulary marks through the browser's text-rendering highlight layer.
  * CSS Custom Highlights keep ranges attached to PDF.js text nodes, so zoom,
  * scrolling, selection and PDF.js page transforms don't depend on cached pixel
- * coordinates. A page-local canvas is used for older WebViews and only for
- * already-matched ranges whose compact line boxes overlap geometrically.
+ * coordinates. A page-local canvas is also used when measured line boxes
+ * overlap, so those boxes can be fitted around their own text centers. Both
+ * paths start from live PDF.js text ranges and never infer a page-wide row.
  */
 export class VocabularyHighlightRenderer {
   constructor(pageRoot, {
@@ -186,9 +170,9 @@ export class VocabularyHighlightRenderer {
             for (const rect of Array.from(range.getClientRects?.() || [])) {
               const x = rect.left - pageRect.left;
               const y = rect.top - pageRect.top;
-              const width = Math.max(1, rect.width);
-              const height = Math.max(1, rect.height);
-              if ([x, y, width, height].every(Number.isFinite)) {
+              const width = Number(rect.width);
+              const height = Number(rect.height);
+              if ([x, y, width, height].every(Number.isFinite) && width > 0 && height > 0) {
                 rectangles.push({ x, y, width, height, color });
               }
             }
@@ -200,12 +184,10 @@ export class VocabularyHighlightRenderer {
     }
 
     if (canMeasurePageRects && rectangles.length > 1) {
-      const originalHeights = new Map(rectangles.map((rect) => [rect, rect.height]));
-      const adjusted = separateOverlappingHighlightRows(rectangles);
-      const hasCompactOverlap = adjusted.some((rect) => rect.height < originalHeights.get(rect));
-      if (hasCompactOverlap) {
+      const separated = separateOverlappingRangeRects(rectangles);
+      if (separated.changed) {
         this.clearTextHighlights();
-        return this.paintCanvasRectangles(adjusted, pageRect);
+        return this.paintCanvasRectangles(separated.rectangles, pageRect);
       }
     }
     this.clearCanvas();
@@ -234,7 +216,8 @@ export class VocabularyHighlightRenderer {
       this.clear();
       return false;
     }
-    return this.paintCanvasRectangles(this.collectRangeRectangles(tokenHighlights, pageRect), pageRect);
+    const separated = separateOverlappingRangeRects(this.collectRangeRectangles(tokenHighlights, pageRect));
+    return this.paintCanvasRectangles(separated.rectangles, pageRect);
   }
 
   collectRangeRectangles(tokenHighlights, pageRect) {
@@ -294,7 +277,7 @@ export class VocabularyHighlightRenderer {
     if (!context) return false;
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, width, height);
-    for (const rect of separateOverlappingHighlightRows(rectangles)) {
+    for (const rect of rectangles) {
       context.fillStyle = rect.color;
       context.fillRect(rect.x, rect.y, rect.width, rect.height);
     }

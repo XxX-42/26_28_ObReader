@@ -163,6 +163,43 @@ test("query and upsert share status across inflections without creating another 
   assert.equal(persisted[0].phonetic, "/wɔːk/");
 });
 
+test("comparative/superlative aliases reuse the learned base word without stemming ordinary -er/-est words", async () => {
+  const adapter = new MemoryAdapter();
+  const service = makeService(adapter);
+  await service.upsertTerm("low", { status: 5, translation: "低的" });
+  // These valid, common entries make accidental suffix chopping observable.
+  await service.upsertTerm("for", { status: 5 });
+  await service.upsertTerm("hon", { status: 5 });
+  await service.upsertTerm("inter", { status: 5 });
+  await service.upsertTerm("mod", { status: 5 });
+
+  for (const surface of ["lower", "lowest"]) {
+    const record = await service.getTerm(surface);
+    assert.equal(record?.key, "low", `${surface} should resolve to the learned low entry`);
+    assert.equal(record?.status, 5);
+  }
+  assert.equal((await service.queryTerms(["lowest"])).lowest?.key, "low");
+
+  const page = await service.matchPageTokens(["lower", "lowest", "forest", "honest", "interest", "modest"]);
+  assert.deepEqual(page.wordMatches.map(({ index, key, storageKey, status }) => ({ index, key, storageKey, status })), [
+    { index: 0, key: "lower", storageKey: "low", status: 5 },
+    { index: 1, key: "lowest", storageKey: "low", status: 5 },
+  ], "only explicitly supported degree forms share the base entry");
+
+  await service.upsertTerm("low rate", { type: "phrase", status: 4 });
+  const phrasePage = await service.matchPageTokens(["lowest", "rate"]);
+  assert.deepEqual(phrasePage.phraseMatches.map(({ startIndex, endIndex, storageKey }) =>
+    ({ startIndex, endIndex, storageKey })), [
+    { startIndex: 0, endIndex: 2, storageKey: "low rate" },
+  ], "phrase trie uses the same degree-family matching as single-word lookup");
+
+  const updated = await service.upsertTerm("lowest", { status: 3 });
+  assert.equal(updated.key, "low", "editing a degree form updates its existing base record");
+  const persisted = snapshot(adapter).records;
+  assert.ok(persisted.some((record) => record.key === "low" && record.status === 3));
+  assert.ok(!persisted.some((record) => record.key === "lowest"), "matching aliases do not create duplicate stored keys");
+});
+
 test("legacy duplicate inflection records keep their own definitions but receive one family status", async () => {
   const adapter = new MemoryAdapter();
   adapter.files.set(VOCABULARY_PATH, JSON.stringify({

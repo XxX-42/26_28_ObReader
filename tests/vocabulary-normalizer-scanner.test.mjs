@@ -92,6 +92,11 @@ test("English lemma matching conforms to shared inflection vectors without chang
     assert.notEqual(normalizeEnglishLemmaKey(left), normalizeEnglishLemmaKey(right), `${left} must remain distinct from ${right}`);
   }
   assert.equal(normalizeTermKey("Walked"), "walked", "the persistent surface key is not rewritten to a lemma");
+  assert.equal(normalizeTermKey("Lowest"), "lowest", "comparative matching never rewrites the stored surface key");
+  assert.equal(normalizeEnglishLemmaKey("lowest"), "low");
+  assert.equal(normalizeEnglishLemmaKey("forest"), "forest", "ordinary -est endings are not stemmed");
+  assert.equal(normalizeEnglishLemmaKey("honest"), "honest", "ordinary -est endings are not stemmed");
+  assert.equal(normalizeEnglishLemmaKey("interest"), "interest", "ordinary -est endings are not stemmed");
   assert.equal(normalizeEnglishLemmaKey("WALKING"), normalizeEnglishLemmaKey("walk"), "capitalization is ignored for matching");
   assert.equal(isAmbiguousEnglishSurface("lay"), true);
   assert.equal(isAmbiguousEnglishSurface("lie"), false);

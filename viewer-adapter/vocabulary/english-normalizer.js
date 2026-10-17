@@ -138,6 +138,63 @@ for (const [lemma, forms] of IRREGULAR_LEMMA_ENTRIES) {
   for (const form of forms) IRREGULAR_LEMMA_MAP.set(form, lemma);
 }
 
+// Comparative/superlative families are intentionally explicit. Blindly
+// stripping -er/-est would conflate ordinary words such as forest, honest,
+// and interest with unrelated short spellings. These are matching aliases
+// only; persisted vocabulary keys remain the user's original surface forms.
+const DEGREE_LEMMA_ENTRIES = [
+  ["low", ["lower", "lowest"]],
+  ["high", ["higher", "highest"]],
+  ["fast", ["faster", "fastest"]],
+  ["slow", ["slower", "slowest"]],
+  ["long", ["longer", "longest"]],
+  ["short", ["shorter", "shortest"]],
+  ["small", ["smaller", "smallest"]],
+  ["large", ["larger", "largest"]],
+  ["wide", ["wider", "widest"]],
+  ["old", ["older", "oldest"]],
+  ["young", ["younger", "youngest"]],
+  ["hard", ["harder", "hardest"]],
+  ["soft", ["softer", "softest"]],
+  ["deep", ["deeper", "deepest"]],
+  ["cheap", ["cheaper", "cheapest"]],
+  ["rich", ["richer", "richest"]],
+  ["poor", ["poorer", "poorest"]],
+  ["bright", ["brighter", "brightest"]],
+  ["dark", ["darker", "darkest"]],
+  ["clear", ["clearer", "clearest"]],
+  ["clean", ["cleaner", "cleanest"]],
+  ["quick", ["quicker", "quickest"]],
+  ["strong", ["stronger", "strongest"]],
+  ["weak", ["weaker", "weakest"]],
+  ["cold", ["colder", "coldest"]],
+  ["warm", ["warmer", "warmest"]],
+  ["happy", ["happier", "happiest"]],
+  ["easy", ["easier", "easiest"]],
+  ["busy", ["busier", "busiest"]],
+  ["early", ["earlier", "earliest"]],
+  ["heavy", ["heavier", "heaviest"]],
+  ["pretty", ["prettier", "prettiest"]],
+  ["funny", ["funnier", "funniest"]],
+  ["big", ["bigger", "biggest"]],
+  ["hot", ["hotter", "hottest"]],
+  ["thin", ["thinner", "thinnest"]],
+  ["sad", ["sadder", "saddest"]],
+  ["wet", ["wetter", "wettest"]],
+  ["red", ["redder", "reddest"]],
+  ["nice", ["nicer", "nicest"]],
+  ["safe", ["safer", "safest"]],
+  ["late", ["later", "latest"]],
+  ["close", ["closer", "closest"]],
+  ["brave", ["braver", "bravest"]],
+  ["simple", ["simpler", "simplest"]],
+];
+
+const DEGREE_LEMMA_MAP = new Map();
+for (const [lemma, forms] of DEGREE_LEMMA_ENTRIES) {
+  for (const form of forms) DEGREE_LEMMA_MAP.set(form, lemma);
+}
+
 // English verbs commonly restore a silent e before -ing/-ed. These stems are
 // explicit because a spelling-only suffix rule cannot distinguish, for
 // example, "hoped" (hope) from "hopped" (hop), or "changed" from "hanged".
@@ -180,6 +237,8 @@ function normalizeEnglishWordLemma(word) {
   if (UNCHANGING_FINAL_S.has(word)) return word;
   const irregular = IRREGULAR_LEMMA_MAP.get(word);
   if (irregular) return irregular;
+  const degreeForm = DEGREE_LEMMA_MAP.get(word);
+  if (degreeForm) return degreeForm;
   const silentE = SILENT_E_FORMS.get(word);
   if (silentE) return silentE;
 

@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { VocabularyController } from "../viewer-adapter/vocabulary/controller.js";
 import {
-  separateOverlappingHighlightRows,
   VocabularyCanvasOverlay,
 } from "../viewer-adapter/vocabulary/canvas-overlay.js";
 
@@ -446,6 +445,7 @@ test("selection request returns physical surfaces and logical keys through the e
 
 test("legacy WebView fallback paints text-sized translucent rectangles and removes its canvas", () => {
   const drawn = [];
+  const rects = new Map();
   const context = {
     setTransform() {}, clearRect() {},
     fillStyle: "",
@@ -462,98 +462,57 @@ test("legacy WebView fallback paints text-sized translucent rectangles and remov
       };
     },
     createRange() {
+      let node;
       return {
-        setStart() {}, setEnd() {}, detach() {},
-        getClientRects() { return [{ left: 15, top: 25, right: 40, bottom: 36, width: 25, height: 11 }]; },
+        setStart(textNode) { node = textNode; }, setEnd() {}, detach() {},
+        getClientRects() { return rects.get(node) || []; },
       };
     },
   };
+  let pageRect = { left: 10, top: 20, width: 200, height: 300 };
   const pageRoot = {
     ownerDocument: documentRef,
     children: [],
     appendChild(node) { node.parentNode = this; this.children.push(node); },
     removeChild(node) { this.children = this.children.filter((child) => child !== node); node.parentNode = null; },
-    getBoundingClientRect() { return { left: 10, top: 20, width: 200, height: 300 }; },
+    getBoundingClientRect() { return pageRect; },
   };
   const overlay = new VocabularyCanvasOverlay(pageRoot, { documentRef });
   assert.equal(pageRoot.children.length, 1);
   assert.equal(overlay.canvas["aria-hidden"], "true");
   assert.equal(overlay.canvas.style.pointerEvents, "none");
+  const upper = {};
+  const lower = {};
+  rects.set(upper, [{ left: 15, top: 25, right: 40, bottom: 39, width: 25, height: 14 }]);
+  rects.set(lower, [{ left: 20, top: 48, right: 42, bottom: 62, width: 22, height: 14 }]);
   overlay.draw([
-    { token: { segments: [{ textNode: {}, startOffset: 0, endOffset: 3 }] }, status: 2 },
-    { token: { segments: [{ textNode: {}, startOffset: 0, endOffset: 3 }] }, status: 5 },
+    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 3 }] }, status: 2 },
+    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 3 }] }, status: 5 },
   ]);
   assert.deepEqual(drawn, [
-    { args: [5, 5, 25, 11], color: "rgba(202, 138, 4, 0.22)" },
-    { args: [5, 5, 25, 11], color: "rgba(124, 58, 237, 0.18)" },
+    { args: [5, 5, 25, 14], color: "rgba(202, 138, 4, 0.22)" },
+    { args: [10, 28, 22, 14], color: "rgba(124, 58, 237, 0.18)" },
   ]);
+
+  // PDF.js may change range geometry and the page frame after zoom. Drawing
+  // the same cached token ranges must measure the new viewport instead of
+  // reusing stale canvas pixels.
+  drawn.length = 0;
+  pageRect = { left: 20, top: 40, width: 400, height: 600 };
+  rects.set(upper, [{ left: 30, top: 50, right: 80, bottom: 78, width: 50, height: 28 }]);
+  rects.set(lower, [{ left: 40, top: 82, right: 84, bottom: 110, width: 44, height: 28 }]);
+  overlay.draw([
+    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 3 }] }, status: 2 },
+    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 3 }] }, status: 5 },
+  ]);
+  assert.deepEqual(drawn, [
+    { args: [10, 10, 50, 28], color: "rgba(202, 138, 4, 0.22)" },
+    { args: [20, 42, 44, 28], color: "rgba(124, 58, 237, 0.18)" },
+  ], "fallback repaint follows the new scale and page origin");
+  assert.equal(overlay.canvas.width, 400);
+  assert.equal(overlay.canvas.height, 600);
   overlay.dispose();
   assert.equal(pageRoot.children.length, 0);
-});
-
-test("canvas highlight geometry separates compact text rows without shrinking same-line marks", () => {
-  const rects = [
-    { x: 40, y: 10, width: 12, height: 14, color: "top" },
-    { x: 10, y: 11.5, width: 18, height: 14, color: "top" },
-    { x: 12, y: 22, width: 20, height: 14, color: "bottom" },
-  ];
-  const result = separateOverlappingHighlightRows(rects);
-  const topRow = result.filter(({ color }) => color === "top");
-  const bottom = result.find(({ color }) => color === "bottom");
-  assert.equal(topRow.length, 2, "fragments with nearby text-row centers stay grouped");
-  assert.ok(topRow.every(({ height }) => Math.abs(height - 10.25) < 0.01),
-    "the compact upper row fits inside the measured center-to-center pitch");
-  assert.ok(topRow.every(({ y }) => Math.abs(y - 12.625) < 0.01),
-    "same-line fragments remain centered on their measured text row");
-  assert.ok(Math.abs(bottom.height - 10.25) < 0.01,
-    "the lower compact row also fits its available line band");
-  assert.ok(Math.abs(bottom.y - 23.875) < 0.01,
-    "the lower mark stays centered on its own text row");
-  assert.ok(topRow.every(({ y, height }) => y + height <= bottom.y - 1),
-    "the upper row does not overlap the next row");
-
-  for (const pitch of [8, 10]) {
-    const tightRows = separateOverlappingHighlightRows([
-      { x: 0, y: 100, width: 24, height: 14, color: "upper" },
-      { x: 0, y: 100 + pitch, width: 24, height: 14, color: "lower" },
-    ]);
-    const [upper, lower] = tightRows;
-    const expectedHeight = pitch - 1;
-    assert.equal(upper.height, expectedHeight,
-      `${pitch}px line pitch uses the maximum available highlight height`);
-    assert.equal(upper.y, 107 - expectedHeight / 2,
-      `${pitch}px line pitch keeps the highlight centered on the glyph row`);
-    assert.equal(lower.height, expectedHeight,
-      `${pitch}px line pitch uses the same maximum height on both rows`);
-    assert.equal(lower.y, 107 + pitch - expectedHeight / 2,
-      "both lines are centered in their separated line bands");
-    assert.equal(upper.y + upper.height, lower.y - 1,
-      "adjacent compact marks keep a full CSS-pixel separation");
-    if (expectedHeight < 14 * 2 / 3) {
-      assert.ok(upper.height >= expectedHeight,
-        "when physical line pitch is the limit, paint the full usable height");
-    }
-  }
-
-  const ordinary = separateOverlappingHighlightRows([
-    { x: 0, y: 10, width: 10, height: 11 },
-    { x: 0, y: 23, width: 10, height: 11 },
-  ]);
-  assert.deepEqual(ordinary.map(({ height }) => height), [11, 11],
-    "non-overlapping rows are left untouched");
-
-  const mixedFontRows = separateOverlappingHighlightRows([
-    { x: 0, y: 50, width: 20, height: 14, color: "upper" },
-    { x: 24, y: 46, width: 18, height: 22, color: "upper" },
-    { x: 0, y: 61, width: 20, height: 14, color: "lower" },
-  ]);
-  const mixedUpper = mixedFontRows.filter(({ color }) => color === "upper");
-  const mixedLower = mixedFontRows.find(({ color }) => color === "lower");
-  assert.equal(mixedUpper.length, 2, "different font sizes sharing a baseline remain one visual row");
-  assert.ok(mixedUpper.every(({ y, height }) => Math.abs(y + height / 2 - 57) < 0.01),
-    "mixed-size fragments are centered on the actual upper text row, not its top edge");
-  assert.ok(mixedUpper.every(({ y, height }) => y + height <= mixedLower.y),
-    "mixed-size row clipping still prevents overlap with the next line");
 });
 
 test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges", () => {
@@ -594,11 +553,59 @@ test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges"
   assert.equal(styles[0].removed, true);
 });
 
-test("modern renderer switches only overlapping matched rows to page-local canvas geometry", () => {
-  class FakeHighlight { add() {} }
+test("overlap detection does not merge independent PDF columns", () => {
+  class FakeHighlight {
+    ranges = [];
+    add(range) { this.ranges.push(range); }
+  }
   const registry = new Map();
-  const fills = [];
   const rects = new Map();
+  const documentRef = {
+    head: { appendChild(node) { node.parentNode = this; } },
+    createElement(tag) {
+      assert.equal(tag, "style", "non-overlapping columns stay on CSS text ranges");
+      return { dataset: {}, textContent: "", remove() {} };
+    },
+    createRange() {
+      let node;
+      return {
+        setStart(textNode) { node = textNode; }, setEnd() {},
+        getClientRects() { return rects.get(node) || []; },
+      };
+    },
+  };
+  const pageRoot = {
+    ownerDocument: documentRef,
+    appendChild() {},
+    getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 900 }; },
+  };
+  const leftColumn = {};
+  const rightColumn = {};
+  rects.set(leftColumn, [{ left: 40, top: 50, width: 70, height: 18 }]);
+  rects.set(rightColumn, [{ left: 500, top: 60, width: 80, height: 18 }]);
+  const renderer = new VocabularyCanvasOverlay(pageRoot, {
+    documentRef, windowRef: { CSS: { highlights: registry }, Highlight: FakeHighlight },
+  });
+
+  renderer.draw([
+    { token: { segments: [{ textNode: leftColumn, startOffset: 0, endOffset: 1 }] }, status: 5 },
+    { token: { segments: [{ textNode: rightColumn, startOffset: 0, endOffset: 1 }] }, status: 5 },
+  ]);
+  assert.equal(registry.size, 1);
+  assert.equal([...registry.values()][0].ranges.length, 2);
+  assert.equal(renderer.canvas, null,
+    "vertical overlap between columns with disjoint x ranges must not trigger row clipping");
+  renderer.dispose();
+});
+
+test("modern renderer separates only colliding text rows around measured centers and recomputes after zoom", () => {
+  class FakeHighlight {
+    ranges = [];
+    add(range) { this.ranges.push(range); }
+  }
+  const registry = new Map();
+  const rects = new Map();
+  const fills = [];
   const context = {
     setTransform() {}, clearRect() {}, fillStyle: "",
     fillRect(x, y, width, height) { fills.push({ x, y, width, height, color: this.fillStyle }); },
@@ -607,29 +614,33 @@ test("modern renderer switches only overlapping matched rows to page-local canva
     head: { appendChild(node) { node.parentNode = this; } },
     createElement(tag) {
       if (tag === "style") return { dataset: {}, textContent: "", remove() {} };
+      assert.equal(tag, "canvas");
       return {
-        width: 0, height: 0, style: {}, setAttribute() {}, getContext: () => context,
+        width: 0, height: 0, style: {}, parentNode: null, setAttribute() {},
+        getContext: () => context,
         remove() { this.parentNode?.removeChild(this); },
       };
     },
     createRange() {
       let node;
       return {
-        setStart(textNode) { node = textNode; }, setEnd() {}, detach() {},
+        setStart(textNode, offset) { node = textNode; this.start = [textNode, offset]; },
+        setEnd(textNode, offset) { this.end = [textNode, offset]; }, detach() {},
         getClientRects() { return rects.get(node) || []; },
       };
     },
   };
+  let pageRect = { left: 10, top: 20, width: 200, height: 300 };
   const pageRoot = {
-    ownerDocument: documentRef, children: [], clientLeft: 9, clientTop: 7,
+    ownerDocument: documentRef, children: [], clientLeft: 0, clientTop: 0,
     appendChild(node) { node.parentNode = this; this.children.push(node); },
     removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; },
-    getBoundingClientRect() { return { left: 10, top: 20, width: 100, height: 100 }; },
+    getBoundingClientRect() { return pageRect; },
   };
   const upper = {};
   const lower = {};
-  rects.set(upper, [{ left: 12, top: 30, width: 20, height: 14 }]);
-  rects.set(lower, [{ left: 12, top: 42, width: 20, height: 14 }]);
+  rects.set(upper, [{ left: 30, top: 30, width: 50, height: 20 }]);
+  rects.set(lower, [{ left: 32, top: 47, width: 48, height: 20 }]);
   const renderer = new VocabularyCanvasOverlay(pageRoot, {
     documentRef, windowRef: { CSS: { highlights: registry }, Highlight: FakeHighlight },
   });
@@ -638,32 +649,34 @@ test("modern renderer switches only overlapping matched rows to page-local canva
     { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
     { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
   ]);
-  assert.equal(registry.size, 0, "unclipped CSS marks are removed when the adjusted local paint path is active");
-  assert.equal(pageRoot.children.length, 1, "the canvas is scoped to this rendered PDF page");
-  assert.equal(renderer.canvas.style.left, "-9px", "paint origin compensates the PDF page border");
-  assert.equal(renderer.canvas.style.top, "-7px", "paint origin compensates the PDF page top border");
-  assert.deepEqual(fills.map(({ y, height }) => [y, height]), [[11.5, 11], [23.5, 11]]);
+  assert.equal(registry.size, 0, "colliding lines use measured geometry rather than overlapping native marks");
+  assert.ok(renderer.canvas, "the page-local fallback is used only when ranges collide");
+  assert.deepEqual(fills.map(({ x, y, width, height }) => [x, y, width, height]), [
+    [20, 12, 50, 16],
+    [22, 29, 48, 16],
+  ]);
+  assert.equal(fills[0].y + fills[0].height / 2, 20,
+    "the upper highlight remains centered on its measured text range");
+  assert.equal(fills[1].y + fills[1].height / 2, 37,
+    "the lower highlight remains centered on its measured text range");
+  assert.equal(fills[0].y + fills[0].height, fills[1].y - 1,
+    "intersecting words on adjacent lines keep a one-pixel visual gap");
 
-  const pageCanvas = renderer.canvas;
-  pageRoot.removeChild(pageCanvas);
-  assert.equal(pageCanvas.parentNode, null, "PDF.js page-layer replacement can detach the overlay");
+  // New zoom geometry is measured from the same source ranges. There is no
+  // stale page-level row cache to restore the old overlap or shift the marks.
+  fills.length = 0;
+  pageRect = { left: 20, top: 40, width: 400, height: 600 };
+  rects.set(upper, [{ left: 44, top: 100, width: 100, height: 40 }]);
+  rects.set(lower, [{ left: 48, top: 134, width: 96, height: 40 }]);
   renderer.draw([
     { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
     { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
   ]);
-  assert.equal(renderer.canvas, pageCanvas, "the renderer reuses its page-local canvas");
-  assert.equal(pageCanvas.parentNode, pageRoot, "a geometry redraw reattaches the detached canvas");
-  assert.equal(pageRoot.children.length, 1);
-
-  rects.set(upper, [{ left: 12, top: 30, width: 20, height: 10 }]);
-  rects.set(lower, [{ left: 12, top: 43, width: 20, height: 10 }]);
-  renderer.draw([
-    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
-    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
-  ]);
-  assert.equal(registry.size, 2, "ordinary non-overlapping rows stay on the browser text-rendering path");
+  assert.deepEqual(fills.map(({ x, y, width, height }) => [x, y, width, height]), [
+    [24, 63.5, 100, 33],
+    [28, 97.5, 96, 33],
+  ], "zoom redraw scales the separation while preserving each new range center");
   renderer.dispose();
-  assert.equal(pageRoot.children.length, 0);
 });
 
 test("scrolling keeps visible highlights stable and reuses completed results when returning to a page", () => {

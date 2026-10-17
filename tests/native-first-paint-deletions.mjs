@@ -3,7 +3,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import puppeteer from 'puppeteer-core';
 const cfg=JSON.parse(await readFile('/tmp/obreader-native-local.json','utf8'));
 assert.equal(cfg.vault,'/Users/jiajia/Documents/ObReader-Apple-Test');
-const expected=process.env.NATIVE_VERSION||'0.10.4';
+const expected=process.env.NATIVE_VERSION||'0.10.5';
 const port=(await readFile(cfg.profile+'/DevToolsActivePort','utf8')).split('\n')[0];
 const browser=await puppeteer.connect({browserURL:`http://127.0.0.1:${port}`,defaultViewport:null});
 const page=(await browser.pages()).find(p=>p.url()==='app://obsidian.md/index.html');

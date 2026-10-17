@@ -121,6 +121,40 @@ for (const [lemma, forms] of IRREGULAR_LEMMA_ENTRIES) {
   for (const form of forms) IRREGULAR_LEMMA_MAP.set(form, lemma);
 }
 
+// Keep this table in sync with the viewer normalizer. Comparative and
+// superlative aliases are explicit so a generic -er/-est stemmer cannot
+// collapse ordinary words such as forest, honest, or interest.
+const DEGREE_LEMMA_ENTRIES = [
+  ["low", ["lower", "lowest"]], ["high", ["higher", "highest"]],
+  ["fast", ["faster", "fastest"]], ["slow", ["slower", "slowest"]],
+  ["long", ["longer", "longest"]], ["short", ["shorter", "shortest"]],
+  ["small", ["smaller", "smallest"]], ["large", ["larger", "largest"]],
+  ["wide", ["wider", "widest"]], ["old", ["older", "oldest"]],
+  ["young", ["younger", "youngest"]], ["hard", ["harder", "hardest"]],
+  ["soft", ["softer", "softest"]], ["deep", ["deeper", "deepest"]],
+  ["cheap", ["cheaper", "cheapest"]], ["rich", ["richer", "richest"]],
+  ["poor", ["poorer", "poorest"]], ["bright", ["brighter", "brightest"]],
+  ["dark", ["darker", "darkest"]], ["clear", ["clearer", "clearest"]],
+  ["clean", ["cleaner", "cleanest"]], ["quick", ["quicker", "quickest"]],
+  ["strong", ["stronger", "strongest"]], ["weak", ["weaker", "weakest"]],
+  ["cold", ["colder", "coldest"]], ["warm", ["warmer", "warmest"]],
+  ["happy", ["happier", "happiest"]], ["easy", ["easier", "easiest"]],
+  ["busy", ["busier", "busiest"]], ["early", ["earlier", "earliest"]],
+  ["heavy", ["heavier", "heaviest"]], ["pretty", ["prettier", "prettiest"]],
+  ["funny", ["funnier", "funniest"]], ["big", ["bigger", "biggest"]],
+  ["hot", ["hotter", "hottest"]], ["thin", ["thinner", "thinnest"]],
+  ["sad", ["sadder", "saddest"]], ["wet", ["wetter", "wettest"]],
+  ["red", ["redder", "reddest"]], ["nice", ["nicer", "nicest"]],
+  ["safe", ["safer", "safest"]], ["late", ["later", "latest"]],
+  ["close", ["closer", "closest"]], ["brave", ["braver", "bravest"]],
+  ["simple", ["simpler", "simplest"]],
+];
+
+const DEGREE_LEMMA_MAP = new Map();
+for (const [lemma, forms] of DEGREE_LEMMA_ENTRIES) {
+  for (const form of forms) DEGREE_LEMMA_MAP.set(form, lemma);
+}
+
 const SILENT_E_FORMS = new Map(Object.entries({
   baking: "bake", baked: "bake", closing: "close", closed: "close",
   dancing: "dance", danced: "dance", changing: "change", changed: "change",
@@ -146,6 +180,8 @@ function normalizeEnglishLemmaToken(word) {
   if (UNCHANGING_FINAL_S.has(word)) return word;
   const irregular = IRREGULAR_LEMMA_MAP.get(word);
   if (irregular) return irregular;
+  const degreeForm = DEGREE_LEMMA_MAP.get(word);
+  if (degreeForm) return degreeForm;
   const silentE = SILENT_E_FORMS.get(word);
   if (silentE) return silentE;
   if (word.length > 4 && word.endsWith("ied")) return `${word.slice(0, -3)}y`;
