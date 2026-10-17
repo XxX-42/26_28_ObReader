@@ -16,6 +16,16 @@ function makeRuntime() {
   let textNodes = [{}, {}, {}];
   let visiblePageIds = [1];
   let scanCalls = 0;
+  let nextFrameId = 0;
+  const frameCallbacks = new Map();
+  const resizeObservers = [];
+  class FakeResizeObserver {
+    constructor(callback) { this.callback = callback; this.targets = new Set(); resizeObservers.push(this); }
+    observe(target) { this.targets.add(target); }
+    unobserve(target) { this.targets.delete(target); }
+    disconnect() { this.disconnected = true; this.targets.clear(); }
+    trigger(target) { this.callback([{ target }]); }
+  }
   const eventBus = {
     _on(name, callback) { listeners.set(name, callback); },
     _off(name, callback) { if (listeners.get(name) === callback) listeners.delete(name); },
@@ -27,11 +37,23 @@ function makeRuntime() {
       getVisiblePages() { return { views: visiblePageIds.map((id) => ({ id })) }; },
     },
   };
+  const windowRef = {
+    getSelection: () => ({ rangeCount: 0 }),
+    ResizeObserver: FakeResizeObserver,
+    requestAnimationFrame(callback) {
+      const id = ++nextFrameId;
+      frameCallbacks.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id) { frameCallbacks.delete(id); },
+    addEventListener() {},
+    removeEventListener() {},
+  };
   const controller = new VocabularyController({
     app,
     eventBus,
     documentRef: {},
-    windowRef: { getSelection: () => ({ rangeCount: 0 }) },
+    windowRef,
     postToHost(type, fields) { posted.push({ type, ...fields }); return true; },
     getIdentity: () => ({ ...identity }),
     makeId: () => "id",
@@ -70,9 +92,17 @@ function makeRuntime() {
   pages.set(1, pageRoot);
   pages.set(2, pageRoot2);
   return {
-    controller, eventBus, listeners, pages, pageRoot, posted, overlays, identity,
+    controller, eventBus, listeners, pages, pageRoot, posted, overlays, identity, resizeObservers,
     replaceTextNodes: () => { textNodes = [{}, {}, {}]; },
     setVisiblePageIds: (ids) => { visiblePageIds = ids; },
+    flushAnimationFrames() {
+      const callbacks = [...frameCallbacks.values()];
+      frameCallbacks.clear();
+      for (const callback of callbacks) callback();
+    },
+    triggerPageResize(target) {
+      for (const observer of resizeObservers) if (observer.targets.has(target)) observer.trigger(target);
+    },
     getScanCalls: () => scanCalls,
   };
 }
@@ -130,6 +160,41 @@ test("updateviewarea restores page-scoped scanning when the reader returns to a 
   assert.equal(runtime.posted.at(-1).pageNumber, 1);
   assert.deepEqual([...runtime.controller.pages.keys()], ["1"]);
   runtime.controller.dispose();
+});
+
+test("PDF scale, page resize and text-layer relayout redraw cached highlights without re-querying", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const query = runtime.posted[0];
+  runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+    records: [{ key: "alpha", type: "word", status: 5 }],
+  });
+  const overlay = runtime.overlays[0];
+  assert.equal(overlay.draws.length, 1);
+  assert.equal(runtime.resizeObservers[0].targets.size, 2,
+    "the visible page and its text layer are both observed for layout changes");
+
+  runtime.listeners.get("scalechanging")({ scale: 1.25 });
+  assert.equal(overlay.draws.length, 1, "redraws are coalesced to the next animation frame");
+  runtime.flushAnimationFrames();
+  assert.equal(overlay.draws.length, 2, "zoom remeasures the current PDF.js text ranges");
+
+  runtime.triggerPageResize(runtime.pageRoot);
+  runtime.flushAnimationFrames();
+  assert.equal(overlay.draws.length, 3, "page-size changes redraw the cached marks");
+
+  runtime.listeners.get("textlayerrendered")({ pageNumber: 1 });
+  runtime.flushAnimationFrames();
+  assert.equal(overlay.draws.length, 4,
+    "same-node text-layer reflow updates geometry instead of retaining stale canvas pixels");
+  assert.equal(runtime.getScanCalls(), 2, "only the text-layer event scans its visible page");
+  assert.equal(runtime.posted.length, 1, "layout redraws do not query the vocabulary host again");
+
+  runtime.controller.dispose();
+  assert.equal(runtime.resizeObservers[0].disconnected, true);
+  assert.equal(runtime.listeners.has("scalechanging"), false);
 });
 
 test("host refresh re-queries unchanged visible pages after an import or durable selection", () => {
@@ -367,16 +432,16 @@ test("canvas highlight geometry separates compact text rows without shrinking sa
   const result = separateOverlappingHighlightRows(rects);
   const topRow = result.filter(({ color }) => color === "top");
   const bottom = result.find(({ color }) => color === "bottom");
-  assert.equal(topRow.length, 2, "rectangles within 2 CSS px of a row top stay grouped");
-  assert.ok(topRow.every(({ height }) => height > 11 && height < 12),
-    "the compact upper row uses one shared height and leaves the configured 0.5 px gap");
-  assert.ok(topRow.every(({ y }) => Math.abs(y - 10.25) < 0.01),
-    "same-line fragments are aligned within the available line pitch");
-  assert.ok(bottom.height > 11 && bottom.height < 12,
+  assert.equal(topRow.length, 2, "fragments with nearby text-row centers stay grouped");
+  assert.ok(topRow.every(({ height }) => Math.abs(height - 10.25) < 0.01),
+    "the compact upper row fits inside the measured center-to-center pitch");
+  assert.ok(topRow.every(({ y }) => Math.abs(y - 12.625) < 0.01),
+    "same-line fragments remain centered on their measured text row");
+  assert.ok(Math.abs(bottom.height - 10.25) < 0.01,
     "the lower compact row also fits its available line band");
-  assert.ok(Math.abs(bottom.y - 22.25) < 0.01,
-    "both compact rows keep the configured half-pixel edge gap");
-  assert.ok(topRow.every(({ y, height }) => y + height <= 21.75),
+  assert.ok(Math.abs(bottom.y - 23.875) < 0.01,
+    "the lower mark stays centered on its own text row");
+  assert.ok(topRow.every(({ y, height }) => y + height <= bottom.y - 1),
     "the upper row does not overlap the next row");
 
   for (const pitch of [8, 10]) {
@@ -385,17 +450,17 @@ test("canvas highlight geometry separates compact text rows without shrinking sa
       { x: 0, y: 100 + pitch, width: 24, height: 14, color: "lower" },
     ]);
     const [upper, lower] = tightRows;
-    const expectedHeight = pitch - 0.5;
+    const expectedHeight = pitch - 1;
     assert.equal(upper.height, expectedHeight,
       `${pitch}px line pitch uses the maximum available highlight height`);
-    assert.equal(upper.y, 100 + 0.25,
-      `${pitch}px line pitch centers the mark in its available interval`);
+    assert.equal(upper.y, 107 - expectedHeight / 2,
+      `${pitch}px line pitch keeps the highlight centered on the glyph row`);
     assert.equal(lower.height, expectedHeight,
       `${pitch}px line pitch uses the same maximum height on both rows`);
-    assert.equal(lower.y, 100 + pitch + 0.25,
+    assert.equal(lower.y, 107 + pitch - expectedHeight / 2,
       "both lines are centered in their separated line bands");
-    assert.equal(upper.y + upper.height, lower.y - 0.5,
-      "adjacent compact marks keep a half-pixel separation");
+    assert.equal(upper.y + upper.height, lower.y - 1,
+      "adjacent compact marks keep a full CSS-pixel separation");
     if (expectedHeight < 14 * 2 / 3) {
       assert.ok(upper.height >= expectedHeight,
         "when physical line pitch is the limit, paint the full usable height");
@@ -408,6 +473,19 @@ test("canvas highlight geometry separates compact text rows without shrinking sa
   ]);
   assert.deepEqual(ordinary.map(({ height }) => height), [11, 11],
     "non-overlapping rows are left untouched");
+
+  const mixedFontRows = separateOverlappingHighlightRows([
+    { x: 0, y: 50, width: 20, height: 14, color: "upper" },
+    { x: 24, y: 46, width: 18, height: 22, color: "upper" },
+    { x: 0, y: 61, width: 20, height: 14, color: "lower" },
+  ]);
+  const mixedUpper = mixedFontRows.filter(({ color }) => color === "upper");
+  const mixedLower = mixedFontRows.find(({ color }) => color === "lower");
+  assert.equal(mixedUpper.length, 2, "different font sizes sharing a baseline remain one visual row");
+  assert.ok(mixedUpper.every(({ y, height }) => Math.abs(y + height / 2 - 57) < 0.01),
+    "mixed-size fragments are centered on the actual upper text row, not its top edge");
+  assert.ok(mixedUpper.every(({ y, height }) => y + height <= mixedLower.y),
+    "mixed-size row clipping still prevents overlap with the next line");
 });
 
 test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges", () => {
@@ -475,7 +553,7 @@ test("modern renderer switches only overlapping matched rows to page-local canva
     },
   };
   const pageRoot = {
-    ownerDocument: documentRef, children: [],
+    ownerDocument: documentRef, children: [], clientLeft: 9, clientTop: 7,
     appendChild(node) { node.parentNode = this; this.children.push(node); },
     removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; },
     getBoundingClientRect() { return { left: 10, top: 20, width: 100, height: 100 }; },
@@ -494,7 +572,20 @@ test("modern renderer switches only overlapping matched rows to page-local canva
   ]);
   assert.equal(registry.size, 0, "unclipped CSS marks are removed when the adjusted local paint path is active");
   assert.equal(pageRoot.children.length, 1, "the canvas is scoped to this rendered PDF page");
-  assert.deepEqual(fills.map(({ y, height }) => [y, height]), [[10.25, 11.5], [22.25, 11.5]]);
+  assert.equal(renderer.canvas.style.left, "-9px", "paint origin compensates the PDF page border");
+  assert.equal(renderer.canvas.style.top, "-7px", "paint origin compensates the PDF page top border");
+  assert.deepEqual(fills.map(({ y, height }) => [y, height]), [[11.5, 11], [23.5, 11]]);
+
+  const pageCanvas = renderer.canvas;
+  pageRoot.removeChild(pageCanvas);
+  assert.equal(pageCanvas.parentNode, null, "PDF.js page-layer replacement can detach the overlay");
+  renderer.draw([
+    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
+    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
+  ]);
+  assert.equal(renderer.canvas, pageCanvas, "the renderer reuses its page-local canvas");
+  assert.equal(pageCanvas.parentNode, pageRoot, "a geometry redraw reattaches the detached canvas");
+  assert.equal(pageRoot.children.length, 1);
 
   rects.set(upper, [{ left: 12, top: 30, width: 20, height: 10 }]);
   rects.set(lower, [{ left: 12, top: 43, width: 20, height: 10 }]);

@@ -6,30 +6,48 @@ const STATUS_COLORS = Object.freeze({
   5: "rgba(124, 58, 237, 0.18)",
 });
 
-const SAME_TEXT_LINE_TOP_TOLERANCE_PX = 2;
-const INTER_LINE_GAP_PX = 0.5;
+const SAME_TEXT_LINE_CENTER_TOLERANCE_PX = 2.5;
+const SAME_TEXT_LINE_HEIGHT_RATIO = 0.32;
+const INTER_LINE_GAP_PX = 1;
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
 
 /**
  * Keep fallback rectangles for compact neighboring text rows from painting
  * over each other. The classifier only sees ranges already selected for
- * vocabulary marks; it never scans the page. Rects whose tops differ by at
- * most 2 CSS px are treated as one line. For distinct lines, a row is clipped
- * only when its measured boxes overlap the next row, leaving a 0.5 CSS px gap.
+ * vocabulary marks; it never scans the page. It groups fragments by their
+ * vertical centers (which tolerates mixed font sizes better than comparing
+ * their top edges), then fits overlapping rows into the measured center-to-
+ * center pitch. Centering the clipped boxes on the text row keeps them from
+ * drifting toward the top edge when the line pitch is tight.
  */
 export function separateOverlappingHighlightRows(rectangles) {
   if (!Array.isArray(rectangles) || rectangles.length < 2) return rectangles || [];
   const ordered = rectangles
     .filter((rect) => [rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite) && rect.height > 0)
-    .sort((left, right) => left.y - right.y || left.x - right.x);
+    .sort((left, right) =>
+      (left.y + left.height / 2) - (right.y + right.height / 2) || left.x - right.x);
   const rows = [];
   for (const rect of ordered) {
+    const rectCenter = rect.y + rect.height / 2;
     let row = rows.at(-1);
-    if (!row || rect.y - row.top > SAME_TEXT_LINE_TOP_TOLERANCE_PX) {
-      row = { top: rect.y, bottom: rect.y + rect.height, rects: [] };
+    const rowHeight = row?.naturalHeight || rect.height;
+    const sameLineTolerance = Math.max(
+      SAME_TEXT_LINE_CENTER_TOLERANCE_PX,
+      Math.min(rect.height, rowHeight) * SAME_TEXT_LINE_HEIGHT_RATIO,
+    );
+    if (!row || Math.abs(rectCenter - row.center) > sameLineTolerance) {
+      row = { top: rect.y, bottom: rect.y + rect.height, center: rectCenter, rects: [] };
       rows.push(row);
     } else {
       row.top = Math.min(row.top, rect.y);
       row.bottom = Math.max(row.bottom, rect.y + rect.height);
+      row.center = median([...row.rects.map((item) => item.y + item.height / 2), rectCenter]);
     }
     row.rects.push(rect);
   }
@@ -37,26 +55,26 @@ export function separateOverlappingHighlightRows(rectangles) {
   for (const row of rows) {
     const heights = row.rects.map((rect) => rect.height).sort((left, right) => left - right);
     row.naturalHeight = heights[Math.floor(heights.length / 2)];
+    row.center = median(row.rects.map((rect) => rect.y + rect.height / 2));
   }
 
   for (let index = 0; index + 1 < rows.length; index += 1) {
     const row = rows[index];
     const next = rows[index + 1];
-    const pitch = next.top - row.top;
-    if (!(pitch > 0) || row.bottom <= next.top) continue;
-    row.overlapPitch = Math.min(row.overlapPitch ?? Infinity, pitch);
-    next.overlapPitch = Math.min(next.overlapPitch ?? Infinity, pitch);
+    const centerPitch = next.center - row.center;
+    if (!(centerPitch > 0) || row.bottom <= next.top) continue;
+    row.overlapPitch = Math.min(row.overlapPitch ?? Infinity, centerPitch);
+    next.overlapPitch = Math.min(next.overlapPitch ?? Infinity, centerPitch);
   }
 
   for (const row of rows) {
     if (!Number.isFinite(row.overlapPitch)) continue;
-    // Fit the row into its actual inter-line band, centered when there is
-    // spare room and keeping a half-pixel gap at both edges. At very tight
-    // line spacing this can be under 2/3 of the glyph box; that is a geometric
-    // limit, so use the full available height.
+    // Fit the mark to the actual line-center pitch. A full CSS-pixel gap avoids
+    // translucent edge blending at fractional canvas coordinates. If the
+    // source PDF uses very tight leading, geometry wins over a minimum height.
     const availableHeight = Math.max(1, row.overlapPitch - INTER_LINE_GAP_PX);
     const targetHeight = Math.min(row.naturalHeight, availableHeight);
-    const centeredTop = row.top + INTER_LINE_GAP_PX / 2 + (availableHeight - targetHeight) / 2;
+    const centeredTop = row.center - targetHeight / 2;
     for (const rect of row.rects) {
       rect.y = centeredTop;
       rect.height = targetHeight;
@@ -119,7 +137,13 @@ export class VocabularyHighlightRenderer {
   }
 
   createCanvasFallback() {
-    if (this.canvas) return this.canvas;
+    if (this.canvas) {
+      // PDF.js can replace the page's child layers during zoom or page-size
+      // changes. The page root survives, but a plugin canvas may be detached
+      // with the old layer subtree; reattach the same page-local surface.
+      if (this.canvas.parentNode !== this.pageRoot) this.pageRoot.appendChild(this.canvas);
+      return this.canvas;
+    }
     this.canvas = this.document.createElement("canvas");
     this.canvas.className = "pdfReaderVocabularyOverlay";
     this.canvas.setAttribute("aria-hidden", "true");
@@ -257,6 +281,13 @@ export class VocabularyHighlightRenderer {
       this.canvas.width = backingWidth;
       this.canvas.height = backingHeight;
     }
+    // Range rectangles are measured from the page border box. An absolutely
+    // positioned child starts at the page's padding edge, inside its border;
+    // compensate so the canvas origin and measured coordinates share a frame.
+    const borderLeft = Math.max(0, Number(this.pageRoot.clientLeft) || 0);
+    const borderTop = Math.max(0, Number(this.pageRoot.clientTop) || 0);
+    this.canvas.style.left = `${-borderLeft}px`;
+    this.canvas.style.top = `${-borderTop}px`;
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
     const context = this.canvas.getContext?.("2d");

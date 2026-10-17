@@ -136,7 +136,22 @@ export class VocabularyController {
     this.pageResultCache = new Map();
     this.disposed = false;
     this.querySequence = 0;
-    this.onTextLayerRendered = ({ pageNumber } = {}) => this.refreshPage(pageNumber, { refreshTokens: true });
+    this.geometryRedrawHandle = null;
+    this.geometryRedrawCancel = null;
+    this.pendingGeometryPageNumbers = new Set();
+    this.pendingAllGeometryPages = false;
+    this.pageByResizeTarget = new WeakMap();
+    const ResizeObserverImpl = windowRef?.ResizeObserver || globalThis.ResizeObserver;
+    this.pageResizeObserver = typeof ResizeObserverImpl === "function"
+      ? new ResizeObserverImpl((entries) => this.handlePageLayoutResize(entries))
+      : null;
+    this.onTextLayerRendered = ({ pageNumber } = {}) => {
+      this.refreshPage(pageNumber, { refreshTokens: true });
+      // PDF.js can retain the same Text nodes while changing page scale or
+      // line wrapping. Re-measure their client rects even when token segments
+      // are unchanged.
+      this.scheduleGeometryRedraw(pageNumber);
+    };
     this.onPageRendered = ({ pageNumber } = {}) => {
       // PDF.js may render the text layer just after its page canvas event.
       Promise.resolve().then(() => {
@@ -146,9 +161,13 @@ export class VocabularyController {
       });
     };
     this.onViewAreaChanged = () => this.scanRenderedPages();
+    this.onScaleChanging = () => this.scheduleGeometryRedraw();
+    this.onWindowResize = () => this.scheduleGeometryRedraw();
     this.eventBus?._on?.("textlayerrendered", this.onTextLayerRendered);
     this.eventBus?._on?.("pagerendered", this.onPageRendered);
     this.eventBus?._on?.("updateviewarea", this.onViewAreaChanged);
+    this.eventBus?._on?.("scalechanging", this.onScaleChanging);
+    this.window?.addEventListener?.("resize", this.onWindowResize, { passive: true });
   }
 
   setDocument(documentId, openRequest, enabled = this.enabled) {
@@ -234,6 +253,7 @@ export class VocabularyController {
       : new Set(Array.isArray(current) ? current.map((page) => page?.id).filter(isPositivePageNumber) : []);
     for (const [key, page] of this.pages) {
       if (visible.has(page.pageNumber)) continue;
+      this.unobservePageLayout(page);
       page.overlay?.dispose?.();
       this.pages.delete(key);
     }
@@ -245,6 +265,73 @@ export class VocabularyController {
     return visiblePages.some((page) => page?.id === pageNumber);
   }
 
+  observePageLayout(page) {
+    if (!this.pageResizeObserver || !page) return;
+    const targets = [...new Set([page.pageRoot, page.textLayer])].filter((target) =>
+      target && (typeof target === "object" || typeof target === "function"));
+    page.observedLayoutTargets = targets;
+    for (const target of targets) {
+      this.pageByResizeTarget.set(target, page.pageNumber);
+      try { this.pageResizeObserver.observe(target); } catch {}
+    }
+  }
+
+  unobservePageLayout(page) {
+    for (const target of page?.observedLayoutTargets || []) {
+      this.pageByResizeTarget.delete(target);
+      try { this.pageResizeObserver?.unobserve?.(target); } catch {}
+    }
+    if (page) page.observedLayoutTargets = [];
+  }
+
+  handlePageLayoutResize(entries) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const pageNumber = this.pageByResizeTarget.get(entry?.target);
+      const page = this.pages.get(pageKey(pageNumber));
+      if (!page || !this.isPageVisible(pageNumber)) continue;
+      this.scheduleGeometryRedraw(pageNumber);
+    }
+  }
+
+  scheduleGeometryRedraw(pageNumber = null) {
+    if (this.disposed) return false;
+    if (isPositivePageNumber(pageNumber)) this.pendingGeometryPageNumbers.add(pageNumber);
+    else this.pendingAllGeometryPages = true;
+    if (this.geometryRedrawHandle !== null) return true;
+    const redraw = () => {
+      this.geometryRedrawHandle = null;
+      this.geometryRedrawCancel = null;
+      const pageNumbers = this.pendingAllGeometryPages
+        ? [...this.pages.values()].map((page) => page.pageNumber)
+        : [...this.pendingGeometryPageNumbers];
+      this.pendingAllGeometryPages = false;
+      this.pendingGeometryPageNumbers.clear();
+      for (const number of pageNumbers) {
+        const page = this.pages.get(pageKey(number));
+        if (!page || !this.isPageVisible(number) || page.query?.pending?.size > 0) continue;
+        this.renderPageResults(page, page.records);
+      }
+    };
+    if (typeof this.window?.requestAnimationFrame === "function") {
+      this.geometryRedrawCancel = (handle) => this.window?.cancelAnimationFrame?.(handle);
+      this.geometryRedrawHandle = this.window.requestAnimationFrame(redraw);
+    } else {
+      this.geometryRedrawCancel = (handle) => clearTimeout(handle);
+      this.geometryRedrawHandle = setTimeout(redraw, 0);
+    }
+    return true;
+  }
+
+  cancelGeometryRedraw() {
+    if (this.geometryRedrawHandle !== null) {
+      try { this.geometryRedrawCancel?.(this.geometryRedrawHandle); } catch {}
+    }
+    this.geometryRedrawHandle = null;
+    this.geometryRedrawCancel = null;
+    this.pendingGeometryPageNumbers.clear();
+    this.pendingAllGeometryPages = false;
+  }
+
   refreshPage(pageNumber, { refreshTokens = false } = {}) {
     if (!this.enabled || !this.identityIsCurrent() || !isPositivePageNumber(pageNumber) || !this.isPageVisible(pageNumber)) return false;
     const pageRoot = this.getPageRoot(pageNumber);
@@ -254,14 +341,19 @@ export class VocabularyController {
     let page = this.pages.get(key);
     const pageReplaced = !page || page.pageRoot !== pageRoot || page.textLayer !== textLayer;
     if (!pageReplaced && !refreshTokens) return false;
-    if (pageReplaced) page?.overlay?.dispose?.();
+    if (pageReplaced && page) {
+      this.unobservePageLayout(page);
+      page.overlay?.dispose?.();
+    }
     let tokens;
     try { tokens = this.scan(textLayer); } catch {
+      this.unobservePageLayout(page);
       page?.overlay?.dispose?.();
       this.pages.delete(key);
       return false;
     }
     if (!Array.isArray(tokens)) {
+      this.unobservePageLayout(page);
       page?.overlay?.dispose?.();
       this.pages.delete(key);
       return false;
@@ -275,6 +367,7 @@ export class VocabularyController {
       ? { pageNumber, pageRoot, textLayer, tokens, signature: pageTokenSignature(tokens), overlay, query: null, records: [] }
       : { ...page, tokens, signature: pageTokenSignature(tokens), query: null, records: [] };
     this.pages.set(key, page);
+    if (pageReplaced) this.observePageLayout(page);
     return this.queryPage(page);
   }
 
@@ -753,8 +846,12 @@ export class VocabularyController {
   }
 
   clearPages() {
+    this.cancelGeometryRedraw();
     this.dismissEntryPill();
-    for (const page of this.pages.values()) page.overlay?.dispose?.();
+    for (const page of this.pages.values()) {
+      this.unobservePageLayout(page);
+      page.overlay?.dispose?.();
+    }
     this.pages.clear();
   }
 
@@ -764,9 +861,12 @@ export class VocabularyController {
     this.clearPages();
     this.pageResultCache.clear();
     this.identity = null;
+    this.pageResizeObserver?.disconnect?.();
     this.eventBus?._off?.("textlayerrendered", this.onTextLayerRendered);
     this.eventBus?._off?.("pagerendered", this.onPageRendered);
     this.eventBus?._off?.("updateviewarea", this.onViewAreaChanged);
+    this.eventBus?._off?.("scalechanging", this.onScaleChanging);
+    this.window?.removeEventListener?.("resize", this.onWindowResize);
   }
 }
 
