@@ -29,35 +29,35 @@ GC is authorized by this task.
 - [x] Preserve raw child exits, logs, cleanup failures and skipped assertion
   counts; no skip or timeout relaxation closes a failure. Historical exits and
   current passing evidence are retained in the reports linked above.
-- [ ] Commit Phase A and merge it into the local integration branch.
+- [x] Commit Phase A (`319912931b2c5bd6a9da924f8b65619c460b1498`) and merge it into the local integration branch (`f877e16cf0d00ee9984dfa76d4f2ecfe086f8b09`).
 
 ## Phase B — storage contracts, before UI
 
-- [ ] Personal vocabulary v2: explicit atomic/idempotent v1 migration, no empty
+- [x] Personal vocabulary v2: explicit atomic/idempotent v1 migration, no empty
   snapshot on startup, unknown/newer schema fail closed, original metadata kept.
-- [ ] Versioned deterministic persisted family identity reuses the existing
+- [x] Versioned deterministic persisted family identity reuses the existing
   matcher and ambiguity rules, independent of mutable surface/storageKey.
-- [ ] Family status reads/writes share one resolution; migration preserves the
+- [x] Family status reads/writes share one resolution; migration preserves the
   highest effective status and Known protection without merging personal text.
-- [ ] Context contract and adaptive deterministic hash-prefix shards (512
+- [x] Context contract and adaptive deterministic hash-prefix shards (512
   records / 256 KiB), full identity tuple validation, oversize rejection.
-- [ ] Review contract and independent canonical shards keyed by family; exact
+- [x] Review contract and independent canonical shards keyed by family; exact
   Leitner transitions, UTC instants, Known suspension without state deletion.
-- [ ] Local-device transaction coordinator, sorted affected-file queues,
+- [x] Local-device transaction coordinator, sorted affected-file queues,
   base/result revision and hash checks, verified pending intent and scoped
   conflicts; foreign pending remains untouched and cannot block local work.
-- [ ] Interrupted multi-store commits recover per store; ACK only after all
+- [x] Interrupted multi-store commits recover per store; ACK only after all
   results are verified; partial remote references cannot become empty state.
-- [ ] Bounded durable review journal, stable action IDs, idempotent replay;
+- [x] Bounded durable review journal, stable action IDs, idempotent replay;
   20 actions / 5-second idle / session close / controlled close flush policy.
-- [ ] One final history batch per review session/bulk edit/restore, including
+- [x] One final history batch per review session/bulk edit/restore, including
   across flush/recovery; no-op writes none; cleanup only after verified finalize.
-- [ ] Restore preview classifies each field clean/already-restored/conflict;
+- [x] Restore preview classifies each field clean/already-restored/conflict;
   restore is a new increasing-revision transaction with its own inverse diff.
-- [ ] Two-level vocabulary invalidation: at most 64 keys or invalidateAll;
+- [x] Two-level vocabulary invalidation: at most 64 keys or invalidateAll;
   family surfaces included; Context/Review/History never invalidate PDF lexing.
-- [ ] Old v1 reader demonstrably refuses to overwrite a v2 snapshot.
-- [ ] Contract tests pass before Phase B commit and local integration merge.
+- [x] Old v1 reader demonstrably refuses to overwrite a v2 snapshot.
+- [x] Contract tests pass before Phase B commit and local integration merge.
 
 ## Phase C — Workbench
 
@@ -65,6 +65,7 @@ GC is authorized by this task.
   pages, edit translation/note, enroll/unenroll, bulk review, Context/History.
 - [ ] List never queries ECDICT or renders all 25,000 rows; dictionary access is
   restricted to explicit entry details.
+- [ ] Explicit JSON import validates known snapshot/bundle schemas before applying records; a newer vocabulary envelope is rejected rather than flattened into a legacy records array. Preserve raw-array legacy import compatibility.
 - [ ] JSON is a consistent logical vocabulary/review/context backup behind a
   read barrier including acknowledged journals; failed export cannot claim full
   backup. CSV retains legacy fields and explains its omissions.

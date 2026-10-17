@@ -2629,7 +2629,7 @@ class PdfReaderView extends EditableFileView {
     });
   }
 
-  refreshVocabularyPages() {
+  refreshVocabularyPages(change = null) {
     if (!this.plugin.settings.vocabularyEnabled || !this.ready || !this.iframe ||
         !this.documentId || !Number.isInteger(this.openRequest)) return false;
     return this.postToViewer({
@@ -2638,6 +2638,9 @@ class PdfReaderView extends EditableFileView {
       type: "vocab-page-refresh",
       documentId: this.documentId,
       openRequest: this.openRequest,
+      ...(change?.invalidateAll === true ? { invalidateAll: true } :
+        Array.isArray(change?.changedKeys) && change.changedKeys.length <= 64
+          ? { changedKeys: [...change.changedKeys] } : {}),
     });
   }
 
@@ -2961,6 +2964,8 @@ class PdfReaderView extends EditableFileView {
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
       try {
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        await this.plugin.initializeVocabulary();
+        if (!this.isCurrentVocabularyIdentity(identity)) return true;
         const service = this.plugin.getVocabularyService();
         const record = await service.upsertTerm(logicalSurface, { type: message.entryType, status: message.status });
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
@@ -3029,6 +3034,8 @@ class PdfReaderView extends EditableFileView {
         existing,
         onClose: () => { if (this.vocabularyEntryModal === modal) this.vocabularyEntryModal = null; },
         onSave: async (fields) => {
+          if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
+          await this.plugin.initializeVocabulary();
           if (!this.isCurrentVocabularyIdentity(pending)) throw new Error("PDF 页面已切换或词汇学习已关闭。");
           const record = await service.upsertTerm(surfaceKey, { ...fields, type: expectedType });
           if (!this.isCurrentVocabularyIdentity(pending)) return;
@@ -3700,6 +3707,26 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.vocabularyService = null;
     this.vocabularyDictionary = null;
     this.views = new Set();
+    this.vocabularyInitialization = null;
+    this.vocabularyUnsubscribe = null;
+    this.isUnloading = false;
+    // Startup migration is confined to the personal vocabulary snapshot.
+    // An absent store stays absent; PDF startup does not wait for this work.
+    void this.initializeVocabulary().catch((error) => {
+      this.sessionLog?.record("vocabulary", { event: "migration-failed", code: error?.code || "vocabulary-migration-failed" });
+      new Notice(`词汇数据迁移未完成，原记录已保留：${error.message || error}`, 8000);
+    });
+    if (typeof this.app.vault.on === "function") {
+      for (const event of ["create", "modify", "delete", "rename"]) {
+        this.registerEvent(this.app.vault.on(event, (file, previousPath) => {
+          if (file?.path !== VOCABULARY_PATH && previousPath !== VOCABULARY_PATH) return;
+          void this.reloadVocabularyFromVault().catch((error) => {
+            this.sessionLog?.record("vocabulary", { event: "external-reload-failed", code: error?.code || "vocabulary-reload-failed" });
+            new Notice(`词汇文件发生变化，尚未完成校验：${error.message || error}`, 8000);
+          });
+        }));
+      }
+    }
     this.popoutCloseGates = new Map();
     this.popoutProtectionWarnings = new WeakSet();
     this.isQuitting = false;
@@ -4508,6 +4535,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    this.vocabularyUnsubscribe?.();
+    this.vocabularyUnsubscribe = null;
     void this.vocabularyService?.dispose?.().catch(() => undefined);
     this.vocabularyDictionary?.clearCache?.();
     if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
@@ -5048,8 +5077,47 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   getVocabularyService() {
     if (!this.vocabularyService) {
       this.vocabularyService = new VocabularyService({ adapter: this.app.vault.adapter });
+      this.vocabularyUnsubscribe = this.vocabularyService.subscribe((change) => {
+        for (const view of this.views || []) view.refreshVocabularyPages?.(change);
+      });
     }
     return this.vocabularyService;
+  }
+
+  async initializeVocabulary() {
+    if (this.vocabularyInitialization) return this.vocabularyInitialization;
+    const pending = (async () => {
+      // Preserve the disabled-feature baseline: checking for a migration is
+      // not permission to initialize an empty vocabulary/index/dictionary.
+      const adapter = this.app.vault.adapter;
+      if (!this.vocabularyService && !(await adapter.exists(VOCABULARY_PATH)) &&
+          !(await adapter.exists(`${VOCABULARY_PATH}.previous`))) {
+        return { migrated: false, schemaVersion: 2, revision: 0 };
+      }
+      if (this.isUnloading) return { cancelled: true };
+      const service = this.getVocabularyService();
+      await service.ready();
+      if (this.isUnloading) return { cancelled: true };
+      return service.migrate();
+    })();
+    this.vocabularyInitialization = pending;
+    try { return await pending; }
+    catch (error) {
+      if (this.vocabularyInitialization === pending) this.vocabularyInitialization = null;
+      throw error;
+    }
+  }
+
+  async reloadVocabularyFromVault() {
+    if (this.isUnloading) return false;
+    this.vocabularyInitialization = null;
+    const pending = (async () => {
+      if (this.vocabularyService) await this.vocabularyService.reload();
+      if (this.isUnloading) return false;
+      return this.initializeVocabulary();
+    })();
+    this.vocabularyExternalReload = pending;
+    return pending;
   }
 
   getVocabularyDictionary() {
@@ -5060,13 +5128,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   async importVocabulary(text, format, policy = {}) {
+    await this.initializeVocabulary();
     const service = this.getVocabularyService();
     const stats = format === "csv"
       ? await service.importCsv(text, policy)
       : await service.importJson(text, policy);
-    if (stats.imported > 0 || stats.updated > 0) {
-      for (const view of this.views) view.refreshVocabularyPages?.();
-    }
     return stats;
   }
 

@@ -208,6 +208,46 @@ test("host refresh re-queries unchanged visible pages after an import or durable
   runtime.controller.dispose();
 });
 
+test("bounded changed-key invalidation reuses visible tokens and preserves unrelated lexical cache", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const identity = { documentId: "doc-1", openRequest: 7 };
+  runtime.controller.pageResultCache.set(1, { signature: "alpha\u001fbeta\u001fgamma" });
+  runtime.controller.pageResultCache.set(2, { signature: "walking\u001fthe\u001fdog" });
+  runtime.controller.pageResultCache.set(3, { signature: "unrelated\u001fpage" });
+  const before = runtime.posted.length;
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, changedKeys: ["beta"] }), true);
+  assert.equal(runtime.posted.length, before + 1);
+  assert.equal(runtime.controller.pageResultCache.has(1), false);
+  assert.equal(runtime.controller.pageResultCache.has(2), true);
+  assert.equal(runtime.controller.pageResultCache.has(3), true);
+  assert.equal(runtime.getScanCalls(), 1, "mutation invalidation never rescans physical text");
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, changedKeys: ["walk the dog"] }), true);
+  assert.equal(runtime.controller.pageResultCache.has(2), false, "phrase family invalidates an offscreen lexical result");
+  assert.equal(runtime.posted.length, before + 1, "offscreen mutation does not query or render the page");
+  assert.equal(runtime.controller.pageResultCache.has(3), true);
+  runtime.controller.dispose();
+});
+
+test("invalidation rejects oversized or stale key lists and all-invalidation queries only visible pages", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const identity = { documentId: "doc-1", openRequest: 7 };
+  const before = runtime.posted.length;
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, changedKeys: Array(65).fill("alpha") }), false);
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, changedKeys: ["Alpha"] }), false);
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, openRequest: 6, changedKeys: ["alpha"] }), false);
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, changedKeys: [] }), true);
+  assert.equal(runtime.posted.length, before);
+  runtime.controller.pageResultCache.set(99, { signature: "alpha" });
+  assert.equal(runtime.controller.refreshPageFromHost({ ...identity, invalidateAll: true }), true);
+  assert.equal(runtime.controller.pageResultCache.size, 0);
+  assert.equal(runtime.posted.length, before + 1);
+  assert.equal(runtime.posted.at(-1).pageNumber, 1);
+  assert.equal(runtime.getScanCalls(), 1);
+  runtime.controller.dispose();
+});
+
 test("enabled controller queries only visible/rendered pages and phrase results draw on the existing page overlay", () => {
   const runtime = makeRuntime();
   runtime.controller.setDocument("doc-1", 7, true);

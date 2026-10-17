@@ -1571,6 +1571,84 @@ test("successful vocabulary imports refresh live Readers without refreshing on a
   assert.deepEqual(refreshed, [], "unchanged imports do not generate redundant page scans");
 });
 
+test("plugin startup migrates an existing personal vocabulary and leaves absent data absent", async () => {
+  const absent = createHarness();
+  await absent.plugin.onload();
+  await absent.plugin.initializeVocabulary();
+  assert.equal([...absent.storedFiles.keys()].some((key) => key.startsWith("00_Archive/21_VocabularyData/")), false);
+  absent.plugin.onunload();
+
+  const vocabularyPath = "00_Archive/21_VocabularyData/en.vocab.json";
+  const storedFiles = new Map([[vocabularyPath, JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 7,
+    records: [{ key: "walked", surface: "Walked", type: "word", status: 5,
+      translation: "走过", note: "保留笔记", phonetic: "wɔːkt", source: "user", createdAt: 1000, updatedAt: 2000 }],
+  })]]);
+  const migrated = createHarness({ storedFiles });
+  await migrated.plugin.onload();
+  await migrated.plugin.initializeVocabulary();
+  const snapshot = JSON.parse(storedFiles.get(vocabularyPath));
+  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.records.length, 1);
+  assert.ok(snapshot.records[0].familyKey.startsWith("en-family:v1:word:"));
+  assert.equal(snapshot.records[0].translation, "走过");
+  assert.equal(snapshot.records[0].note, "保留笔记");
+  assert.equal((await migrated.plugin.getVocabularyService().getTerm("walking")).status, 5);
+  const firstBytes = storedFiles.get(vocabularyPath);
+  await migrated.plugin.initializeVocabulary();
+  assert.equal(storedFiles.get(vocabularyPath), firstBytes, "startup migration is idempotent");
+  migrated.plugin.onunload();
+});
+
+test("Vocabulary subscription sends bounded authenticated invalidation to each Reader", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  await harness.plugin.initializeVocabulary();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const outgoing = [];
+  for (let index = 0; index < 2; index += 1) {
+    const view = harness.createView();
+    view.ready = true;
+    view.documentId = `v2-doc-${index}`;
+    view.openRequest = index + 1;
+    view.rendererGeneration = `v2-generation-${index}`;
+    view.iframe = { contentWindow: { postMessage: (message) => outgoing.push({ view, message }) } };
+  }
+  await harness.plugin.getVocabularyService().upsertTerm("walk", { status: 4 });
+  const changes = outgoing.filter(({ message }) => message.type === "vocab-page-refresh");
+  assert.equal(changes.length, 2);
+  for (const { view, message } of changes) {
+    assert.equal(message.channel, "pdf-web-reader");
+    assert.equal(message.token, view.token);
+    assert.equal(message.rendererGeneration, view.rendererGeneration);
+    assert.equal(message.documentId, view.documentId);
+    assert.equal(message.openRequest, view.openRequest);
+    assert.deepEqual([...message.changedKeys], ["walk"]);
+  }
+  harness.plugin.onunload();
+});
+
+test("external Vocabulary replacement reloads through the Vault event without touching PDF state", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const service = harness.plugin.getVocabularyService();
+  await service.upsertTerm("walk", { status: 2, translation: "步行" });
+  const vocabularyPath = "00_Archive/21_VocabularyData/en.vocab.json";
+  const raw = harness.storedFiles.get(vocabularyPath);
+  const external = JSON.parse(raw);
+  external.revision += 1;
+  external.records[0].status = 5;
+  harness.storedFiles.set(vocabularyPath, JSON.stringify(external));
+  harness.emitVault("modify", { path: vocabularyPath });
+  await harness.plugin.vocabularyExternalReload;
+  assert.equal((await service.getTerm("walking")).status, 5);
+  assert.equal(service.getRevision(), external.revision);
+  await service.setNote("walk", "可继续编辑");
+  assert.equal(JSON.parse(harness.storedFiles.get(vocabularyPath)).records[0].note, "可继续编辑");
+  assert.equal([...harness.storedFiles.keys()].some((path) => path.startsWith("00_Archive/20_PDFData/")), false);
+  harness.plugin.onunload();
+});
+
 test("host refuses wrong-session or externally changed annotation saves and durably ACKs a valid sidecar batch", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

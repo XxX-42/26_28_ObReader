@@ -1,0 +1,10 @@
+Read-only historical fixture provenance
+
+Source: plugin/vocabulary/service.cjs
+Source commit: f877e16cf0d00ee9984dfa76d4f2ecfe086f8b09
+Source SHA-256: a6a93a6f2e3665a0f7b13cd53328dac1bfed5a1dfda6f4ad2db6a5d582b8be10
+Fixture: tests/fixtures/legacy-vocabulary-v1-reader.cjs
+Fixture SHA-256: a6a93a6f2e3665a0f7b13cd53328dac1bfed5a1dfda6f4ad2db6a5d582b8be10
+
+The fixture is byte-for-byte output from `git show <source commit>:<source path>`.
+Keep it unchanged so the compatibility test exercises the actual v1 reader.

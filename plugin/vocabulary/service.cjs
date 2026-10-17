@@ -3,7 +3,8 @@
  * annotation persistence. All I/O goes through Obsidian's Vault DataAdapter.
  */
 const SCHEMA = "pdf-web-reader-vocabulary";
-const SCHEMA_VERSION = 1;
+const LEGACY_SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DIRECTORY = "00_Archive/21_VocabularyData";
 const SNAPSHOT_PATH = `${DIRECTORY}/en.vocab.json`;
 const BACKUP_PATH = `${SNAPSHOT_PATH}.previous`;
@@ -15,6 +16,14 @@ const MAX_IMPORT_RECORDS = 25000;
 const MAX_STORE_RECORDS = 25000;
 const MAX_RECORD_FIELD_CHARS = 4096;
 const MAX_TOTAL_TEXT_CHARS = 1024 * 1024;
+const V2_ENVELOPE_FIELDS = new Set(["schema", "schemaVersion", "language", "revision", "records"]);
+const V2_RECORD_FIELDS = new Set([
+  "key", "type", "surface", "status", "createdAt", "updatedAt", "source", "familyKey",
+  "translation", "note", "phonetic",
+]);
+const V2_REQUIRED_RECORD_FIELDS = ["key", "type", "surface", "status", "createdAt", "updatedAt", "source", "familyKey"];
+const V2_RESTORABLE_FIELDS = new Set(["status", "surface", "source", "updatedAt", "translation", "note", "phonetic"]);
+const { canonicalStringify, hashText } = require("./canonical.cjs");
 
 const PRIVATE = new WeakMap();
 // Vocabulary lookups are page-batched: one visible page can ask for several
@@ -24,6 +33,8 @@ const PRIVATE = new WeakMap();
 // by the immutable map gives each snapshot one reusable lemma index and lets
 // obsolete indexes be collected without explicit cache invalidation.
 const MATCH_INDEX_CACHE = new WeakMap();
+const FAMILY_INDEX_CACHE = new WeakMap();
+const { createFamilyResolver } = require("./family.cjs");
 
 class VocabularyStoreError extends Error {
   constructor(message, code, options) {
@@ -228,6 +239,83 @@ function isLayVerbInflectionSurface(value) {
   return LAY_VERB_INFLECTIONS.has(key);
 }
 
+const FAMILY_RESOLVER = createFamilyResolver({
+  normalizeTermKey,
+  normalizeEnglishMatchKey,
+  isAmbiguousEnglishSurface,
+  isLayVerbInflectionSurface,
+});
+
+function familyIndexFor(records) {
+  const cached = FAMILY_INDEX_CACHE.get(records);
+  if (cached) return cached;
+  const groups = FAMILY_RESOLVER.groupRecords(records.values());
+  for (const group of groups.values()) {
+    group.status = Math.max(...group.records.map((record) => record.status));
+  }
+  FAMILY_INDEX_CACHE.set(records, groups);
+  return groups;
+}
+
+function familyByKey(records, familyKey, { includeRecords = true } = {}) {
+  const group = familyIndexFor(records).get(familyKey);
+  if (!group) return undefined;
+  return {
+    familyKey: group.familyKey,
+    type: group.type,
+    matchPath: [...group.matchPath],
+    ambiguousPositions: [...group.ambiguousPositions],
+    layVerbInflectionPositions: [...group.layVerbInflectionPositions],
+    status: group.status,
+    ...(includeRecords ? {
+      records: group.records.map((record) => ({ ...record, status: group.status })),
+    } : {}),
+  };
+}
+
+function recordsWithFamilyStatus(records) {
+  const normalized = new Map();
+  for (const group of familyIndexFor(records).values()) {
+    for (const record of group.records) {
+      normalized.set(record.key, { ...record, status: group.status, familyKey: group.familyKey });
+    }
+  }
+  return normalized;
+}
+
+function isFamilyKey(value) {
+  if (typeof value !== "string" || value.length > 4096) return false;
+  const match = /^en-family:v1:(word|phrase):(\[.*\])$/u.exec(value);
+  if (!match) return false;
+  let path;
+  try { path = JSON.parse(match[2]); } catch { return false; }
+  if (!Array.isArray(path) || path.length < (match[1] === "phrase" ? 2 : 1) ||
+      path.length > (match[1] === "phrase" ? TOKEN_LIMIT : 1) ||
+      path.some((token) => typeof token !== "string" || !token || normalizeTermKey(token) !== token || token.includes(" "))) {
+    return false;
+  }
+  const descriptor = FAMILY_RESOLVER.describeKey(path.join(" "));
+  return descriptor?.type === match[1] && descriptor.familyKey === value &&
+    JSON.stringify(descriptor.matchPath) === JSON.stringify(path);
+}
+
+function encodeFamilyCursor(familyKey) {
+  return `family-v1:${encodeURIComponent(familyKey)}`;
+}
+
+function decodeFamilyCursor(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !value.startsWith("family-v1:")) {
+    throw new TypeError("Vocabulary family cursor is invalid.");
+  }
+  let familyKey;
+  try { familyKey = decodeURIComponent(value.slice("family-v1:".length)); } catch {
+    throw new TypeError("Vocabulary family cursor is invalid.");
+  }
+  if (!isFamilyKey(familyKey)) throw new TypeError("Vocabulary family cursor is invalid.");
+  return familyKey;
+}
+
 function recordTypeForKey(key) {
   return key.includes(" ") ? "phrase" : "word";
 }
@@ -246,7 +334,7 @@ function matchIndexFor(records) {
     ["word", []],
     ["phrase", []],
   ]);
-  const matchKeyByRecordKey = new Map();
+  const layFamilyPathByRecordKey = new Map();
   const bareLayKeys = new Set();
   const phraseRoot = { children: new Map(), records: [] };
   let phraseRecordCount = 0;
@@ -284,15 +372,16 @@ function matchIndexFor(records) {
       if (!candidates.includes(record)) candidates.push(record);
       typeIndex.set(candidateKey, candidates);
     }
-    matchKeyByRecordKey.set(record.key, matchKey);
     if (record.key.split(" ").includes("lay")) {
       bareLayKeys.add(record.key);
       bareLayByType.get(record.type)?.push(record);
+      layFamilyPathByRecordKey.set(record.key,
+        surfaceTokens.map((surface) => surface === "lay" ? "lay" : normalizeEnglishLemmaToken(surface)).join(" "));
     }
   }
 
   const index = {
-    byType, bareLayByType, matchKeyByRecordKey, bareLayKeys, phraseRoot,
+    byType, bareLayByType, layFamilyPathByRecordKey, bareLayKeys, phraseRoot,
     phraseRecordCount,
     recordCount: records.size,
     buildMs: Math.max(0, (globalThis.performance?.now?.() ?? Date.now()) - buildStartedAt),
@@ -327,7 +416,7 @@ function recordsForMatch(records, key, precomputed = null) {
   // forms, even though the general lemma table resolves it to `lie`.
   if (requestedLayFamily) {
     for (const record of index.bareLayByType.get(type) || []) {
-      if (index.matchKeyByRecordKey.get(record.key) !== familyMatchKey && !matches.includes(record)) {
+      if (index.layFamilyPathByRecordKey.get(record.key) === familyMatchKey && !matches.includes(record)) {
         matches.push(record);
       }
     }
@@ -364,6 +453,73 @@ function stateOf(service) {
   return state;
 }
 
+function snapshotIdentityForState(state) {
+  const exists = state.diskRaw !== null;
+  return Object.freeze({
+    storeId: state.storeId,
+    path: state.path,
+    exists,
+    revision: exists ? state.revision : 0,
+    hash: exists ? hashText(state.diskRaw) : null,
+  });
+}
+
+function familyForSurface(records, surface) {
+  const key = normalizeTermKey(surface);
+  if (!key) return undefined;
+  const matched = recordsForMatch(records, key);
+  const selected = selectMatchRecord(matched, key);
+  const familyKey = selected?.familyKey || FAMILY_RESOLVER.familyKeyForKey(key);
+  return familyKey ? familyByKey(records, familyKey) : undefined;
+}
+
+function normalizeReferencePreconditions(result) {
+  // `true` remains supported for existing injected validators. Production
+  // validators return explicit evidence so deletion can be guarded by the
+  // same transaction which removes the last family member.
+  if (result === true) return [];
+  if (result === false || result?.ok === false) {
+    throw new VocabularyStoreError("Vocabulary family removal was rejected by reference validation.", "vocabulary-history-reference-blocked");
+  }
+  if (!result || typeof result !== "object" || result.ok !== true || !Array.isArray(result.preconditions)) {
+    throw new VocabularyStoreError("Reference validation must return verified store preconditions.", "vocabulary-history-reference-evidence-invalid");
+  }
+  const roots = new Map([
+    ["vocabulary-contexts-v1", "00_Archive/21_VocabularyData/contexts"],
+    ["vocabulary-review-v1", "00_Archive/21_VocabularyData/review/states"],
+  ]);
+  const normalized = new Map();
+  for (const item of result.preconditions) {
+    const root = roots.get(item?.storeId);
+    const path = item?.path;
+    if (!root || typeof path !== "string" || !path.startsWith(`${root}/`) ||
+        path.includes("\\") || /[\u0000-\u001f\u007f]/.test(path) ||
+        path.split("/").some((part) => !part || part === "." || part === "..") ||
+        !(path === `${root}/manifest.json` || new RegExp(`^${root}/[a-f0-9]{1,64}\\.json$`).test(path)) ||
+        !Number.isSafeInteger(item.expectedRevision) || item.expectedRevision < 0 ||
+        (item.expectedRevision === 0 ? item.expectedHash !== null : !/^sha256-v1:[a-f0-9]{64}$/.test(item.expectedHash || ""))) {
+      throw new VocabularyStoreError("Reference validation returned an invalid store precondition.", "vocabulary-history-reference-evidence-invalid");
+    }
+    const precondition = {
+      storeId: item.storeId,
+      path,
+      expectedRevision: item.expectedRevision,
+      expectedHash: item.expectedHash,
+    };
+    const previous = normalized.get(path);
+    if (previous && canonicalStringify(previous) !== canonicalStringify(precondition)) {
+      throw new VocabularyStoreError("Reference validation returned conflicting identities for one store path.", "vocabulary-history-reference-evidence-invalid");
+    }
+    normalized.set(path, precondition);
+  }
+  for (const [storeId, root] of roots) {
+    if (normalized.get(`${root}/manifest.json`)?.storeId !== storeId) {
+      throw new VocabularyStoreError("Reference validation must include both Context and Review manifest identities.", "vocabulary-history-reference-evidence-invalid");
+    }
+  }
+  return [...normalized.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
 function recordCopy(record) {
   return record ? { ...record } : undefined;
 }
@@ -384,6 +540,20 @@ function validateStatus(status) {
     throw new RangeError("Vocabulary status must be an integer from 1 to 5.");
   }
   return status;
+}
+
+function hasUnknownFields(value, allowed) {
+  return Object.keys(value).some((field) => !allowed.has(field));
+}
+
+function assertNoHiddenOwnFields(value, seen = new Set()) {
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  const names = Object.getOwnPropertyNames(value).filter((name) => !(Array.isArray(value) && name === "length"));
+  if (names.some((name) => !Object.prototype.propertyIsEnumerable.call(value, name))) {
+    throw new VocabularyStoreError("Vocabulary snapshots cannot contain hidden object fields.", "vocabulary-corrupt-schema");
+  }
+  for (const name of names) assertNoHiddenOwnFields(value[name], seen);
 }
 
 function cleanRecord(raw, now, defaultSource = "user") {
@@ -410,7 +580,9 @@ function cleanRecord(raw, now, defaultSource = "user") {
     createdAt,
     updatedAt,
     source,
+    familyKey: FAMILY_RESOLVER.familyKeyForKey(key),
   };
+  if (!result.familyKey) return null;
   if (typeof raw.translation === "string") result.translation = raw.translation;
   if (typeof raw.note === "string") result.note = raw.note;
   const phonetic = raw.phonetic ?? raw.ipa ?? raw.pronunciation;
@@ -432,7 +604,8 @@ function decodeSnapshot(text, now) {
   }
   if (
     !parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
-    parsed.schema !== SCHEMA || parsed.schemaVersion !== SCHEMA_VERSION ||
+    parsed.schema !== SCHEMA ||
+    ![LEGACY_SCHEMA_VERSION, SCHEMA_VERSION].includes(parsed.schemaVersion) ||
     parsed.language !== "en" || !Number.isSafeInteger(parsed.revision) ||
     parsed.revision < 0 || !Array.isArray(parsed.records)
   ) {
@@ -440,6 +613,20 @@ function decodeSnapshot(text, now) {
       "Vocabulary data has an unsupported or invalid schema; the original file was left untouched.",
       "vocabulary-corrupt-schema",
     );
+  }
+  if (parsed.schemaVersion === SCHEMA_VERSION && hasUnknownFields(parsed, V2_ENVELOPE_FIELDS)) {
+    throw new VocabularyStoreError(
+      "Vocabulary data contains fields that are not declared by schema v2; the original file was left untouched.",
+      "vocabulary-corrupt-schema",
+    );
+  }
+  if (parsed.schemaVersion === SCHEMA_VERSION) {
+    const validated = strictV2Snapshot(parsed);
+    return {
+      records: new Map(validated.records.map((record) => [record.key, record])),
+      revision: validated.revision,
+      schemaVersion: SCHEMA_VERSION,
+    };
   }
   const records = new Map();
   for (const raw of parsed.records) {
@@ -461,7 +648,7 @@ function decodeSnapshot(text, now) {
     }
     records.set(record.key, record);
   }
-  return { records, revision: parsed.revision };
+  return { records, revision: parsed.revision, schemaVersion: parsed.schemaVersion };
 }
 
 function snapshotText(records, revision) {
@@ -472,7 +659,8 @@ function snapshotText(records, revision) {
       (record.note?.length || 0) + (record.phonetic?.length || 0);
     if (textChars > MAX_TOTAL_TEXT_CHARS) throw new RangeError("Vocabulary text exceeds the supported store size.");
   }
-  const ordered = [...records.values()]
+  const familyNormalized = recordsWithFamilyStatus(records);
+  const ordered = [...familyNormalized.values()]
     .sort((left, right) => left.key.localeCompare(right.key, "en"))
     .map((record) => ({ ...record }));
   const text = `${JSON.stringify({
@@ -480,10 +668,193 @@ function snapshotText(records, revision) {
     schemaVersion: SCHEMA_VERSION,
     language: "en",
     revision,
-    records: ordered,
+    records: ordered.map((record) => ({
+      ...record,
+      familyKey: FAMILY_RESOLVER.familyKeyForKey(record.key),
+    })),
   }, null, 2)}\n`;
   if (text.length > MAX_IMPORT_CHARS) throw new RangeError("Vocabulary snapshot exceeds the supported file size.");
   return text;
+}
+
+function strictV2Snapshot(value) {
+  if (typeof value !== "string") assertNoHiddenOwnFields(value);
+  const parsed = typeof value === "string" ? JSON.parse(value) : JSON.parse(canonicalStringify(value));
+  const fail = (message, code = "vocabulary-corrupt-schema") => {
+    throw new VocabularyStoreError(message, code);
+  };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      parsed.schema !== SCHEMA || parsed.schemaVersion !== SCHEMA_VERSION || parsed.language !== "en" ||
+      !Number.isSafeInteger(parsed.revision) || parsed.revision < 0 || !Array.isArray(parsed.records) ||
+      hasUnknownFields(parsed, V2_ENVELOPE_FIELDS)) {
+    fail("A complete schema v2 vocabulary snapshot is required.");
+  }
+  if (parsed.records.length > MAX_STORE_RECORDS) fail("Vocabulary data exceeds the supported record limit.", "vocabulary-corrupt-record");
+  const records = [];
+  const keys = new Set();
+  const familyStatuses = new Map();
+  let textChars = 0;
+  for (const raw of parsed.records) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw) || hasUnknownFields(raw, V2_RECORD_FIELDS) ||
+        V2_REQUIRED_RECORD_FIELDS.some((field) => !Object.hasOwn(raw, field))) {
+      fail("Vocabulary data contains an undeclared or incomplete schema v2 record.", "vocabulary-corrupt-record");
+    }
+    const key = normalizeTermKey(raw.key);
+    if (!key || key !== raw.key || typeof raw.surface !== "string" || normalizeTermKey(raw.surface) !== key ||
+        (raw.type !== "word" && raw.type !== "phrase") || ((raw.type === "word") === key.includes(" ")) ||
+        (raw.type === "phrase" && (key.split(" ").length < 2 || key.split(" ").length > TOKEN_LIMIT)) ||
+        !STATUSES.has(raw.status) || !Number.isFinite(raw.createdAt) || raw.createdAt < 0 ||
+        !Number.isFinite(raw.updatedAt) || raw.updatedAt < 0 || !SOURCES.has(raw.source) ||
+        raw.familyKey !== FAMILY_RESOLVER.familyKeyForKey(key) ||
+        ["translation", "note", "phonetic"].some((field) =>
+          Object.hasOwn(raw, field) && (typeof raw[field] !== "string" || raw[field].length > MAX_RECORD_FIELD_CHARS))) {
+      fail("Vocabulary data contains an invalid schema v2 record.", "vocabulary-corrupt-record");
+    }
+    if (keys.has(key)) fail("Vocabulary data contains duplicate keys.", "vocabulary-duplicate-key");
+    keys.add(key);
+    const familyStatus = familyStatuses.get(raw.familyKey);
+    if (familyStatus != null && familyStatus !== raw.status) {
+      fail("Vocabulary data contains inconsistent family statuses.", "vocabulary-corrupt-family-status");
+    }
+    familyStatuses.set(raw.familyKey, raw.status);
+    textChars += key.length + raw.surface.length + (raw.translation?.length || 0) +
+      (raw.note?.length || 0) + (raw.phonetic?.length || 0);
+    if (textChars > MAX_TOTAL_TEXT_CHARS) fail("Vocabulary text exceeds the supported store size.", "vocabulary-corrupt-record");
+    records.push({ ...raw });
+  }
+  return {
+    schema: SCHEMA,
+    schemaVersion: SCHEMA_VERSION,
+    language: "en",
+    revision: parsed.revision,
+    records,
+  };
+}
+
+function validateVocabularySnapshotV2(value) {
+  return strictV2Snapshot(value);
+}
+
+function serializeVocabularySnapshotV2(value) {
+  const snapshot = strictV2Snapshot(value);
+  snapshot.records.sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  const text = canonicalStringify(snapshot);
+  if (text.length > MAX_IMPORT_CHARS) throw new RangeError("Vocabulary snapshot exceeds the supported file size.");
+  return text;
+}
+
+function historyFieldPath(change) {
+  const entityId = change?.entityId;
+  const field = change?.field || change?.fieldPath?.at?.(-1);
+  const expected = ["records", entityId, field];
+  if (typeof entityId !== "string" || normalizeTermKey(entityId) !== entityId ||
+      !Array.isArray(change.fieldPath) || canonicalStringify(change.fieldPath) !== canonicalStringify(expected) ||
+      !V2_RECORD_FIELDS.has(field)) {
+    throw new VocabularyStoreError("Vocabulary history must address a record field by canonical record key.", "vocabulary-history-field-path");
+  }
+  return { entityId, field };
+}
+
+function snapshotValueFromHistory(snapshot) {
+  if (snapshot && typeof snapshot === "object" && Object.hasOwn(snapshot, "exists")) {
+    if (!snapshot.exists) throw new VocabularyStoreError("The vocabulary snapshot needed for restore is missing.", "vocabulary-history-snapshot-missing");
+    return strictV2Snapshot(snapshot.value);
+  }
+  return strictV2Snapshot(snapshot);
+}
+
+function prepareVocabularyRestoreFields(snapshotValue, changes, { entities = [] } = {}) {
+  const source = snapshotValueFromHistory(snapshotValue);
+  if (!Array.isArray(changes) || !changes.length) throw new TypeError("Vocabulary restore requires selected field changes.");
+  const records = new Map(source.records.map((record) => [record.key, { ...record }]));
+  const grouped = new Map();
+  for (const change of changes) {
+    const { entityId, field } = historyFieldPath(change);
+    if (typeof change.beforeExists !== "boolean" || typeof change.afterExists !== "boolean" ||
+        (change.beforeExists && !Object.hasOwn(change, "before")) ||
+        (change.afterExists && !Object.hasOwn(change, "after"))) {
+      throw new VocabularyStoreError("Vocabulary history field presence is invalid.", "vocabulary-history-field-invalid");
+    }
+    const list = grouped.get(entityId) || [];
+    if (list.some((entry) => entry.field === field)) throw new VocabularyStoreError("Vocabulary history repeats a record field.", "vocabulary-history-field-duplicate");
+    list.push({ change, field });
+    grouped.set(entityId, list);
+  }
+
+  for (const [entityId, entries] of grouped) {
+    const current = records.get(entityId);
+    const entityMeta = entities.find((entity) => entity?.entityId === entityId);
+    const explicitLifecycle = entries.some(({ change }) => change.kind === "entityCreate" || change.kind === "entityDelete") ||
+      entityMeta?.kind === "entityCreate" || entityMeta?.kind === "entityDelete";
+    const fieldSet = new Set(entries.map(({ field }) => field));
+    const fullRecordFields = V2_REQUIRED_RECORD_FIELDS.every((field) => fieldSet.has(field));
+    const lifecycle = explicitLifecycle || (fullRecordFields && entries.every(({ change }) =>
+      change.beforeExists === entries[0].change.beforeExists && change.afterExists === entries[0].change.afterExists));
+
+    if (lifecycle) {
+      if (!fullRecordFields || entries.some(({ field }) => !V2_RECORD_FIELDS.has(field)) ||
+          entries.some(({ change }) => change.beforeExists !== entries[0].change.beforeExists ||
+            change.afterExists !== entries[0].change.afterExists)) {
+        throw new VocabularyStoreError("Vocabulary entity lifecycle restore must include one complete record field group.", "vocabulary-history-entity-group");
+      }
+      const targetExists = entries[0].change.beforeExists;
+      const targetRecord = Object.create(null);
+      for (const { change, field } of entries) {
+        if (change.beforeExists) targetRecord[field] = change.before;
+      }
+      if (targetExists) {
+        if (targetRecord.key !== entityId) throw new VocabularyStoreError("Vocabulary lifecycle identity fields cannot change.", "vocabulary-history-identity");
+        records.set(entityId, targetRecord);
+      } else {
+        const currentFields = current ? Object.keys(current).sort() : [];
+        const selectedFields = [...fieldSet].sort();
+        if (current && canonicalStringify(currentFields) !== canonicalStringify(selectedFields)) {
+          throw new VocabularyStoreError("Vocabulary entity deletion cannot remove fields outside the selected lifecycle group.", "vocabulary-history-entity-group");
+        }
+        records.delete(entityId);
+      }
+      continue;
+    }
+
+    if (!current) throw new VocabularyStoreError("Vocabulary history cannot edit a missing record.", "vocabulary-history-entity-missing");
+    for (const { change, field } of entries) {
+      if (!V2_RESTORABLE_FIELDS.has(field)) {
+        throw new VocabularyStoreError(`Vocabulary history cannot restore protected field ${field}.`, "vocabulary-history-identity");
+      }
+      if (change.beforeExists) current[field] = change.before;
+      else delete current[field];
+    }
+  }
+
+  const candidate = {
+    schema: SCHEMA,
+    schemaVersion: SCHEMA_VERSION,
+    language: "en",
+    revision: source.revision + 1,
+    records: [...records.values()],
+  };
+  const validated = strictV2Snapshot(candidate);
+  const beforeFamilies = new Set(source.records.map((record) => record.familyKey));
+  const afterFamilies = new Set(validated.records.map((record) => record.familyKey));
+  const removedFamilyKeys = [...beforeFamilies].filter((familyKey) => !afterFamilies.has(familyKey)).sort();
+  return {
+    snapshot: validated,
+    text: serializeVocabularySnapshotV2(validated),
+    revision: validated.revision,
+    removedFamilyKeys,
+  };
+}
+
+function resolveVocabularyHistoryField(snapshot, change) {
+  const value = snapshotValueFromHistory(snapshot);
+  const { entityId, field } = historyFieldPath(change);
+  const record = value.records.find((item) => item.key === entityId);
+  const exists = Boolean(record && Object.hasOwn(record, field));
+  return {
+    exists,
+    entityExists: Boolean(record),
+    ...(exists ? { value: record[field] } : {}),
+  };
 }
 
 async function adapterExists(adapter, path) {
@@ -531,12 +902,16 @@ async function loadState(service) {
         const decoded = decodeSnapshot(text, state.now());
         state.records = decoded.records;
         state.revision = decoded.revision;
+        state.schemaVersion = decoded.schemaVersion;
         state.diskRaw = null;
+        state.backupRaw = text;
         state.recoveredBackup = true;
       } else {
         state.records = new Map();
         state.revision = 0;
+        state.schemaVersion = SCHEMA_VERSION;
         state.diskRaw = null;
+        state.backupRaw = null;
       }
       state.loaded = true;
       return service;
@@ -545,7 +920,9 @@ async function loadState(service) {
     const decoded = decodeSnapshot(text, state.now());
     state.records = decoded.records;
     state.revision = decoded.revision;
+    state.schemaVersion = decoded.schemaVersion;
     state.diskRaw = text;
+    state.backupRaw = null;
     state.loaded = true;
     return service;
   })().catch((error) => {
@@ -553,6 +930,81 @@ async function loadState(service) {
     throw error;
   });
   return state.loadPromise;
+}
+
+async function reloadState(service) {
+  const initialState = stateOf(service);
+  if (!initialState.loaded && initialState.loadError) {
+    initialState.loadError = null;
+    initialState.loadPromise = null;
+  }
+  await loadState(service);
+  const state = stateOf(service);
+  return enqueue(state, async () => {
+    if (state.disposed) {
+      throw new VocabularyStoreError("Vocabulary service has been disposed.", "vocabulary-disposed");
+    }
+    const clearBlockedState = () => {
+      state.poisoned = null;
+      state.reloadError = null;
+      state.reloadReadFallback = false;
+      state.migrationError = null;
+      state.migrationReadFallback = false;
+    };
+    try {
+      if (await adapterExists(state.adapter, state.path)) {
+        const text = await state.adapter.read(state.path);
+        if (text === state.diskRaw) {
+          clearBlockedState();
+          return { reloaded: false, schemaVersion: state.schemaVersion, revision: state.revision };
+        }
+        const decoded = decodeSnapshot(text, state.now());
+        state.records = decoded.records;
+        state.revision = decoded.revision;
+        state.schemaVersion = decoded.schemaVersion;
+        state.diskRaw = text;
+        state.backupRaw = null;
+        state.recoveredBackup = false;
+      } else if (await adapterExists(state.adapter, state.backupPath)) {
+        const text = await state.adapter.read(state.backupPath);
+        if (state.diskRaw == null && text === state.backupRaw) {
+          clearBlockedState();
+          return { reloaded: false, schemaVersion: state.schemaVersion, revision: state.revision };
+        }
+        const decoded = decodeSnapshot(text, state.now());
+        state.records = decoded.records;
+        state.revision = decoded.revision;
+        state.schemaVersion = decoded.schemaVersion;
+        state.diskRaw = null;
+        state.backupRaw = text;
+        state.recoveredBackup = true;
+      } else if (state.diskRaw !== null || state.backupRaw !== null) {
+        // A previously validated store disappeared without a verified
+        // snapshot to restore. Keep its read view and pause writes until a
+        // later reload finds valid bytes; never turn an external deletion
+        // into a successful empty-store reload.
+        throw new VocabularyStoreError(
+          "Vocabulary data disappeared without a verified backup; the last validated snapshot remains readable and writes are paused.",
+          "vocabulary-missing-store",
+        );
+      } else {
+        clearBlockedState();
+        return { reloaded: false, schemaVersion: state.schemaVersion, revision: state.revision };
+      }
+      clearBlockedState();
+      notifySubscribers(state, { revision: state.revision, type: "reload", invalidateAll: true });
+      return { reloaded: true, schemaVersion: state.schemaVersion, revision: state.revision };
+    } catch (cause) {
+      const error = cause instanceof VocabularyStoreError ? cause : new VocabularyStoreError(
+        "Vocabulary reload failed; the last validated in-memory snapshot remains available and writes are paused.",
+        "vocabulary-reload-failed",
+        { cause },
+      );
+      state.reloadError = error;
+      state.reloadReadFallback = true;
+      throw error;
+    }
+  });
 }
 
 async function writeSnapshot(state, text, expectedRaw) {
@@ -646,6 +1098,7 @@ async function writeSnapshot(state, text, expectedRaw) {
     // The newly installed snapshot is now verified. The backup is only needed
     // across the replacement window, so cleanup failure does not revoke ACK.
     await removeIfExists(adapter, state.backupPath).catch(() => undefined);
+    state.backupRaw = null;
     return;
   } catch (error) {
     let recovered = !movedCanonical;
@@ -668,6 +1121,7 @@ async function writeSnapshot(state, text, expectedRaw) {
           await adapter.remove(state.path);
         }
         await adapter.rename(state.backupPath, state.path);
+        state.backupRaw = null;
         recovered = true;
       } catch (restoreError) {
         if (restoreError?.code === "vocabulary-external-change") throw restoreError;
@@ -687,16 +1141,266 @@ async function writeSnapshot(state, text, expectedRaw) {
   }
 }
 
-function assertWritable(state) {
-  if (state.loadError) throw state.loadError;
-  if (state.poisoned) throw state.poisoned;
-  if (state.disposed) {
-    throw new VocabularyStoreError("Vocabulary service has been disposed.", "vocabulary-disposed");
+function vocabularySnapshotValue(records, revision) {
+  return {
+    schema: SCHEMA,
+    schemaVersion: SCHEMA_VERSION,
+    language: "en",
+    revision,
+    records: [...records.values()].map((record) => ({ ...record })),
+  };
+}
+
+function historyChangesForRecords(beforeRecords, afterRecords, storeId, path) {
+  const entities = [];
+  const changes = [];
+  const fields = [...V2_RECORD_FIELDS];
+  for (const [entityId, after] of afterRecords) {
+    const before = beforeRecords.get(entityId);
+    if (!before) {
+      entities.push({ storeId, entityId, kind: "entityCreate" });
+      for (const field of fields) {
+        if (!Object.hasOwn(after, field)) continue;
+        changes.push({
+          storeId, path, entityId, field, fieldPath: ["records", entityId, field],
+          beforeExists: false, afterExists: true, after: after[field], kind: "entityCreate",
+        });
+      }
+      continue;
+    }
+    for (const field of V2_RESTORABLE_FIELDS) {
+      const beforeExists = Object.hasOwn(before, field);
+      const afterExists = Object.hasOwn(after, field);
+      if (beforeExists === afterExists && (!beforeExists || canonicalStringify(before[field]) === canonicalStringify(after[field]))) continue;
+      changes.push({
+        storeId, path, entityId, field, fieldPath: ["records", entityId, field],
+        beforeExists, afterExists,
+        ...(beforeExists ? { before: before[field] } : {}),
+        ...(afterExists ? { after: after[field] } : {}),
+      });
+    }
+  }
+  return { entities, changes };
+}
+
+function createVocabularyHistoryHandler({ path, storeId, validateReferences = null } = {}) {
+  if (typeof path !== "string" || !path || typeof storeId !== "string" || !storeId) {
+    throw new TypeError("Vocabulary history handler requires its canonical path and store ID.");
+  }
+  return {
+    resolveField({ snapshot, change }) {
+      return resolveVocabularyHistoryField(snapshot, change);
+    },
+    async planRestore({ batch, selectedChanges, snapshots }) {
+      if (!Array.isArray(selectedChanges) || !selectedChanges.length || !(snapshots instanceof Map)) {
+        throw new VocabularyStoreError("Vocabulary restore did not provide selected changes and current snapshots.", "vocabulary-history-plan-invalid");
+      }
+      if (selectedChanges.some((change) => change.storeId !== storeId || change.path !== path)) {
+        throw new VocabularyStoreError("Vocabulary history refers to a different store path.", "vocabulary-history-store-mismatch");
+      }
+      const current = snapshots.get(path);
+      if (!current?.exists) throw new VocabularyStoreError("The vocabulary snapshot needed for restore is missing.", "vocabulary-history-snapshot-missing");
+      const prepared = prepareVocabularyRestoreFields(current, selectedChanges, { entities: batch?.entities || [] });
+      let referencePreconditions = [];
+      if (prepared.removedFamilyKeys.length) {
+        if (typeof validateReferences !== "function") {
+          throw new VocabularyStoreError("Removing the last vocabulary record in a referenced family requires reference validation.", "vocabulary-history-reference-validator-required");
+        }
+        const candidate = JSON.parse(canonicalStringify(prepared.snapshot));
+        const freeze = (value) => {
+          if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+          for (const child of Object.values(value)) freeze(child);
+          return Object.freeze(value);
+        };
+        const approved = await validateReferences(freeze(candidate), {
+          removedFamilyKeys: Object.freeze([...prepared.removedFamilyKeys]),
+        });
+        referencePreconditions = normalizeReferencePreconditions(approved);
+      }
+      return {
+        preconditions: referencePreconditions,
+        writes: [{
+          path,
+          storeId,
+          expectedRevision: current.revision,
+          expectedHash: current.hash,
+          text: prepared.text,
+        }],
+        removedFamilyKeys: prepared.removedFamilyKeys,
+      };
+    },
+  };
+}
+
+function validateCoordinatorOptions(state, coordinator, storeId = state.storeId) {
+  if (!coordinator || typeof coordinator.readSnapshot !== "function" || typeof coordinator.commit !== "function") {
+    throw new TypeError("Vocabulary transaction coordinator must expose readSnapshot() and commit().");
+  }
+  if (coordinator.adapter !== state.adapter) {
+    throw new TypeError("Vocabulary service and transaction coordinator must share one Vault DataAdapter.");
+  }
+  if (typeof coordinator.root !== "string" || !state.path.startsWith(`${coordinator.root}/`)) {
+    throw new TypeError("A coordinated vocabulary store must stay beneath the transaction root.");
+  }
+  if (typeof storeId !== "string" || !storeId || storeId.length > 128 || /[\u0000-\u001f\u007f]/.test(storeId)) {
+    throw new TypeError("Vocabulary store ID is invalid.");
   }
 }
 
+async function promoteRecoveredSnapshotForTransactions(state) {
+  if (state.diskRaw !== null || state.backupRaw === null) return;
+  const verifiedBackup = state.backupRaw;
+  await writeSnapshot(state, verifiedBackup, null);
+  state.diskRaw = verifiedBackup;
+  state.backupRaw = null;
+  state.recoveredBackup = false;
+}
+
+async function persistRecords(state, records, revision, kind) {
+  if (!state.coordinator) {
+    const text = snapshotText(records, revision);
+    await writeSnapshot(state, text, state.diskRaw);
+    return { text, records, revision };
+  }
+
+  const normalizedRecords = recordsWithFamilyStatus(records);
+  const value = vocabularySnapshotValue(normalizedRecords, revision);
+  const text = serializeVocabularySnapshotV2(value);
+  await promoteRecoveredSnapshotForTransactions(state);
+  const disk = await state.coordinator.readSnapshot(state.path);
+  const expectedHash = state.diskRaw === null ? null : hashText(state.diskRaw);
+  if (disk.revision !== state.revision || disk.hash !== expectedHash) {
+    state.poisoned = new VocabularyStoreError(
+      "Vocabulary data changed outside this Reader session; refusing to overwrite it.",
+      "vocabulary-external-change",
+    );
+    throw state.poisoned;
+  }
+  const history = historyChangesForRecords(state.records, normalizedRecords, state.storeId, state.path);
+  const historySummary = history.changes.length ? {
+    batchId: `vocabulary-${state.makeToken()}`,
+    sessionId: state.coordinator.sessionId,
+    kind,
+    entities: history.entities,
+    stores: [{
+      storeId: state.storeId,
+      path: state.path,
+      baseRevision: state.revision,
+      resultRevision: revision,
+      baseHash: expectedHash,
+      resultHash: hashText(text),
+    }],
+    changes: history.changes,
+  } : null;
+  if (historySummary && !state.coordinator.history) {
+    throw new VocabularyStoreError("Vocabulary edits require an attached history store.", "vocabulary-history-unavailable");
+  }
+  const result = await state.coordinator.commit({
+    actionId: `vocabulary-${state.makeToken()}`,
+    writes: [{
+      path: state.path,
+      storeId: state.storeId,
+      expectedRevision: state.revision,
+      expectedHash,
+      text,
+      entities: history.entities,
+    }],
+    historySummary,
+    entities: history.entities,
+  });
+  if (result.status !== "committed") {
+    state.poisoned = new VocabularyStoreError(
+      "Vocabulary transaction could not be committed because the current store changed.",
+      "vocabulary-external-change",
+      { cause: result },
+    );
+    throw state.poisoned;
+  }
+  return { text, records: normalizedRecords, revision };
+}
+
+function assertReadable(state) {
+  if (state.loadError) throw state.loadError;
+  if (state.disposed) {
+    throw new VocabularyStoreError("Vocabulary service has been disposed.", "vocabulary-disposed");
+  }
+  if (state.poisoned && !state.migrationReadFallback && !state.reloadReadFallback) throw state.poisoned;
+}
+
+function assertWritable(state) {
+  assertReadable(state);
+  if (state.reloadError) throw state.reloadError;
+  if (state.schemaVersion === LEGACY_SCHEMA_VERSION) {
+    throw new VocabularyStoreError(
+      state.migrationError
+        ? "Vocabulary writes are paused because the v1 migration did not complete. Retry migrate() before writing."
+        : "Vocabulary v1 data is readable but must be migrated before writing.",
+      state.migrationError ? "vocabulary-migration-failed" : "vocabulary-migration-required",
+      state.migrationError ? { cause: state.migrationError } : undefined,
+    );
+  }
+  if (state.poisoned) throw state.poisoned;
+}
+
+async function migrateState(service) {
+  await loadState(service);
+  const state = stateOf(service);
+  return enqueue(state, async () => {
+    if (state.schemaVersion === SCHEMA_VERSION) {
+      return { migrated: false, schemaVersion: SCHEMA_VERSION, revision: state.revision };
+    }
+    if (state.schemaVersion !== LEGACY_SCHEMA_VERSION) {
+      throw new VocabularyStoreError("Vocabulary migration encountered an unsupported schema.", "vocabulary-corrupt-schema");
+    }
+    if (state.reloadError) throw state.reloadError;
+    if (state.disposed) {
+      throw new VocabularyStoreError("Vocabulary service has been disposed.", "vocabulary-disposed");
+    }
+    if (state.poisoned && !state.migrationReadFallback) throw state.poisoned;
+
+    state.migrationError = null;
+    const next = new Map();
+    const groups = FAMILY_RESOLVER.groupRecords(state.records.values());
+    for (const group of groups.values()) {
+      const status = Math.max(...group.records.map((record) => record.status));
+      for (const record of group.records) {
+        next.set(record.key, { ...record, status, familyKey: group.familyKey });
+      }
+    }
+    const nextRevision = state.revision + 1;
+    const text = snapshotText(next, nextRevision);
+    try {
+      await writeSnapshot(state, text, state.diskRaw);
+    } catch (error) {
+      // The validated v1 map remains available to read paths even when the
+      // verified atomic replacement fails. Writes stay blocked until an
+      // explicit retry succeeds.
+      state.migrationError = error;
+      state.migrationReadFallback = true;
+      throw error;
+    }
+
+    state.records = next;
+    state.revision = nextRevision;
+    state.schemaVersion = SCHEMA_VERSION;
+    state.diskRaw = text;
+    state.migrationError = null;
+    state.migrationReadFallback = false;
+    state.recoveredBackup = false;
+    notifySubscribers(state, {
+      revision: nextRevision,
+      type: "migration",
+      changedKeys: [...next.keys()],
+    });
+    return { migrated: true, schemaVersion: SCHEMA_VERSION, revision: nextRevision };
+  });
+}
+
 function makeRecord({ key, type, surface, status, translation, note, phonetic, source, createdAt, updatedAt }) {
-  const record = { key, type, surface, status, createdAt, updatedAt, source };
+  const record = {
+    key, type, surface, status, createdAt, updatedAt, source,
+    familyKey: FAMILY_RESOLVER.familyKeyForKey(key),
+  };
   if (typeof translation === "string") record.translation = translation;
   if (typeof note === "string") record.note = note;
   if (typeof phonetic === "string") record.phonetic = phonetic;
@@ -725,9 +1429,15 @@ async function applyImport(service, inputs, policy = {}) {
     assertWritable(state);
     const next = new Map(state.records);
     let changed = false;
+    const changedFamilyKeys = new Set();
+    const changedKeys = new Set();
+    const statusByFamily = new Map();
+    for (const record of next.values()) {
+      statusByFamily.set(record.familyKey, Math.max(statusByFamily.get(record.familyKey) || 0, record.status));
+    }
     for (const incoming of valid) {
       const existing = next.get(incoming.key);
-      if (existing?.status === 5 && !overwriteKnown) {
+      if (statusByFamily.get(incoming.familyKey) === 5 && !overwriteKnown) {
         stats.skippedKnown += 1;
         continue;
       }
@@ -758,23 +1468,73 @@ async function applyImport(service, inputs, policy = {}) {
         stats.imported += 1;
       }
       changed = true;
+      changedKeys.add(incoming.key);
+      changedFamilyKeys.add(incoming.familyKey);
+      statusByFamily.set(incoming.familyKey, Math.max(statusByFamily.get(incoming.familyKey) || 0, incoming.status));
     }
     if (!changed) return;
+    const recordsByFamily = new Map();
+    for (const record of next.values()) {
+      if (!changedFamilyKeys.has(record.familyKey)) continue;
+      if (!recordsByFamily.has(record.familyKey)) recordsByFamily.set(record.familyKey, []);
+      recordsByFamily.get(record.familyKey).push(record);
+    }
+    for (const [familyKey, familyRows] of recordsByFamily) {
+      const status = Math.max(...familyRows.map((record) => record.status));
+      for (const record of familyRows) {
+        changedKeys.add(record.key);
+        if (record.status !== status) next.set(record.key, { ...record, status });
+      }
+    }
     const nextRevision = state.revision + 1;
-    const text = snapshotText(next, nextRevision);
-    await writeSnapshot(state, text, state.diskRaw);
-    state.records = next;
+    const persisted = await persistRecords(state, next, nextRevision, "import");
+    state.records = persisted.records;
     state.revision = nextRevision;
-    state.diskRaw = text;
+    state.diskRaw = persisted.text;
     state.recoveredBackup = false;
-    notifySubscribers(state, { revision: nextRevision, type: "import", changedKeys: valid.map((record) => record.key) });
+    notifySubscribers(state, {
+      revision: nextRevision,
+      type: "import",
+      changedKeys: [...changedKeys],
+      changedFamilyKeys: [...changedFamilyKeys],
+    });
   });
   return stats;
 }
 
 function notifySubscribers(state, event) {
+  const changedKeys = new Set((event.changedKeys || []).filter((key) => typeof key === "string"));
+  const changedFamilyKeys = new Set((event.changedFamilyKeys || []).filter((key) => typeof key === "string"));
+  for (const key of changedKeys) {
+    const canonicalKey = normalizeTermKey(key);
+    const record = state.records.get(canonicalKey);
+    const familyKey = record?.familyKey || FAMILY_RESOLVER.familyKeyForKey(canonicalKey);
+    if (familyKey) changedFamilyKeys.add(familyKey);
+  }
+  for (const familyKey of changedFamilyKeys) {
+    const group = familyIndexFor(state.records).get(familyKey);
+    for (const record of group?.records || []) changedKeys.add(record.key);
+  }
+  const invalidateAll = event.invalidateAll === true || changedKeys.size > 64 || changedFamilyKeys.size > 64;
+  const payload = invalidateAll
+    ? { ...event, invalidateAll: true }
+    : {
+      ...event,
+      changedKeys: [...changedKeys],
+      changedFamilyKeys: [...changedFamilyKeys],
+    };
+  if (invalidateAll) {
+    delete payload.changedKeys;
+    delete payload.changedFamilyKeys;
+  }
   for (const listener of [...state.listeners]) {
-    try { listener({ ...event, changedKeys: [...(event.changedKeys || [])] }); } catch { /* A subscriber cannot break persistence. */ }
+    try {
+      listener({
+        ...payload,
+        ...(Array.isArray(payload.changedKeys) ? { changedKeys: [...payload.changedKeys] } : {}),
+        ...(Array.isArray(payload.changedFamilyKeys) ? { changedFamilyKeys: [...payload.changedFamilyKeys] } : {}),
+      });
+    } catch { /* A subscriber cannot break persistence. */ }
   }
 }
 
@@ -895,11 +1655,22 @@ function csvInput(row, columns, defaultStatus) {
 }
 
 class VocabularyService {
-  constructor({ adapter, path = SNAPSHOT_PATH, makeId = makeToken, now = () => Date.now() } = {}) {
+  constructor({
+    adapter,
+    path = SNAPSHOT_PATH,
+    makeId = makeToken,
+    now = () => Date.now(),
+    coordinator = null,
+    storeId = "vocabulary-core",
+    validateReferences = null,
+  } = {}) {
     if (!adapter || typeof adapter !== "object") throw new TypeError("VocabularyService requires a Vault DataAdapter.");
     const normalizedPath = String(path).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
     if (!normalizedPath || normalizedPath.split("/").includes("..")) {
       throw new TypeError("Vocabulary path must stay within the Vault.");
+    }
+    if (validateReferences != null && typeof validateReferences !== "function") {
+      throw new TypeError("Vocabulary reference validation must be a function.");
     }
     PRIVATE.set(this, {
       adapter,
@@ -907,22 +1678,101 @@ class VocabularyService {
       backupPath: `${normalizedPath}.previous`,
       makeToken: makeId,
       now,
+      coordinator,
+      storeId,
+      validateReferences,
       records: new Map(),
       revision: 0,
+      schemaVersion: SCHEMA_VERSION,
       diskRaw: null,
+      backupRaw: null,
       recoveredBackup: false,
       loaded: false,
       loadPromise: null,
       loadError: null,
+      migrationError: null,
+      migrationReadFallback: false,
+      reloadError: null,
+      reloadReadFallback: false,
       poisoned: null,
       disposed: false,
       serial: Promise.resolve(),
       listeners: new Set(),
     });
+    if (coordinator) validateCoordinatorOptions(stateOf(this), coordinator, storeId);
+    if (coordinator?.history) this.registerHistoryHandler();
   }
 
   load() {
     return loadState(this);
+  }
+
+  async ready() {
+    await loadState(this);
+    const state = stateOf(this);
+    assertReadable(state);
+    return {
+      schemaVersion: state.schemaVersion,
+      revision: state.revision,
+      needsMigration: state.schemaVersion === LEGACY_SCHEMA_VERSION,
+    };
+  }
+
+  migrate() {
+    return migrateState(this);
+  }
+
+  reload() {
+    return reloadState(this);
+  }
+
+  async attachCoordinator(coordinator, { storeId, validateReferences } = {}) {
+    await loadState(this);
+    const state = stateOf(this);
+    return enqueue(state, async () => {
+      if (state.disposed) throw new VocabularyStoreError("Vocabulary service has been disposed.", "vocabulary-disposed");
+      const nextStoreId = storeId ?? state.storeId;
+      validateCoordinatorOptions(state, coordinator, nextStoreId);
+      if (state.coordinator && state.coordinator !== coordinator) {
+        throw new VocabularyStoreError("A vocabulary service cannot switch transaction coordinators after attachment.", "vocabulary-coordinator-already-attached");
+      }
+      if (validateReferences != null && typeof validateReferences !== "function") {
+        throw new TypeError("Vocabulary reference validation must be a function.");
+      }
+      if (state.coordinator && nextStoreId !== state.storeId) {
+        throw new VocabularyStoreError("A vocabulary service cannot change its store identity after coordinator attachment.", "vocabulary-store-id-already-attached");
+      }
+      const disk = await coordinator.readSnapshot(state.path);
+      const expectedHash = state.diskRaw === null ? null : hashText(state.diskRaw);
+      const recoveredSnapshot = state.diskRaw === null && state.backupRaw !== null && !disk.exists;
+      if (!recoveredSnapshot && (disk.revision !== state.revision || disk.hash !== expectedHash)) {
+        throw new VocabularyStoreError("Vocabulary coordinator does not match the last validated store snapshot; reload before attaching.", "vocabulary-external-change");
+      }
+      state.coordinator = coordinator;
+      state.storeId = nextStoreId;
+      if (validateReferences !== undefined) state.validateReferences = validateReferences;
+      if (coordinator.history) this.registerHistoryHandler();
+      return this;
+    });
+  }
+
+  createHistoryHandler({ validateReferences = stateOf(this).validateReferences } = {}) {
+    const state = stateOf(this);
+    return createVocabularyHistoryHandler({
+      path: state.path,
+      storeId: state.storeId,
+      validateReferences,
+    });
+  }
+
+  registerHistoryHandler(options = {}) {
+    const state = stateOf(this);
+    if (!state.coordinator?.history || typeof state.coordinator.history.registerStoreHandler !== "function") {
+      throw new VocabularyStoreError("Attach VocabularyHistory before registering the core store handler.", "vocabulary-history-unavailable");
+    }
+    const handler = this.createHistoryHandler(options);
+    state.coordinator.history.registerStoreHandler(state.storeId, handler);
+    return handler;
   }
 
   async flush() {
@@ -936,7 +1786,7 @@ class VocabularyService {
   async queryTerms(keys) {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     const result = Object.create(null);
     for (const value of Array.isArray(keys) ? keys : []) {
       const key = normalizeTermKey(value);
@@ -950,7 +1800,7 @@ class VocabularyService {
   async matchPageTokens(tokens) {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     if (!Array.isArray(tokens) || tokens.length > 6000) {
       throw new RangeError("PDF vocabulary token batch exceeds the supported limit.");
     }
@@ -1052,9 +1902,82 @@ class VocabularyService {
   async getTerm(keyValue) {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     const key = normalizeTermKey(keyValue);
     return key ? recordCopy(effectiveMatchRecord(recordsForMatch(state.records, key), key)) : undefined;
+  }
+
+  async getFamily(surface) {
+    await loadState(this);
+    const state = stateOf(this);
+    assertReadable(state);
+    const key = normalizeTermKey(surface);
+    if (!key) return undefined;
+    const matched = recordsForMatch(state.records, key);
+    const selected = selectMatchRecord(matched, key);
+    const familyKey = selected?.familyKey || FAMILY_RESOLVER.familyKeyForKey(key);
+    return familyKey ? familyByKey(state.records, familyKey) : undefined;
+  }
+
+  async getSnapshotIdentity() {
+    await loadState(this);
+    const state = stateOf(this);
+    return enqueue(state, async () => {
+      assertReadable(state);
+      return snapshotIdentityForState(state);
+    });
+  }
+
+  async getFamilyEvidence(surface) {
+    await loadState(this);
+    const state = stateOf(this);
+    return enqueue(state, async () => {
+      assertReadable(state);
+      return {
+        family: familyForSurface(state.records, surface),
+        identity: snapshotIdentityForState(state),
+      };
+    });
+  }
+
+  async getFamilyByKey(familyKey, options = {}) {
+    await loadState(this);
+    const state = stateOf(this);
+    assertReadable(state);
+    if (!isFamilyKey(familyKey)) throw new TypeError("Vocabulary family key is invalid.");
+    return familyByKey(state.records, familyKey, { includeRecords: options.includeRecords !== false });
+  }
+
+  async listFamilies(options = {}) {
+    await loadState(this);
+    const state = stateOf(this);
+    assertReadable(state);
+    const type = options.type;
+    if (type != null && type !== "word" && type !== "phrase") {
+      throw new TypeError("Vocabulary family type must be word or phrase.");
+    }
+    const status = options.status;
+    if (status != null) validateStatus(status);
+    const limit = options.limit == null ? 100 : options.limit;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("Vocabulary family page size must be from 1 to 100.");
+    }
+    const cursor = decodeFamilyCursor(options.cursor);
+    const query = options.query == null ? "" : String(options.query).trim().toLowerCase();
+    if (query.length > 160) throw new RangeError("Vocabulary family query exceeds the supported size.");
+
+    const filtered = [...familyIndexFor(state.records).values()]
+      .sort((left, right) => left.familyKey < right.familyKey ? -1 : left.familyKey > right.familyKey ? 1 : 0)
+      .filter((group) => (!type || group.type === type) && (status == null || group.status === status) &&
+        (!query || group.records.some((record) =>
+          record.key.toLowerCase().includes(query) || record.surface.toLowerCase().includes(query))));
+    const groups = filtered.filter((group) => !cursor || group.familyKey > cursor);
+    const page = groups.slice(0, limit);
+    return {
+      families: page.map((group) => familyByKey(state.records, group.familyKey)),
+      nextCursor: groups.length > limit ? encodeFamilyCursor(page.at(-1).familyKey) : null,
+      total: filtered.length,
+    };
   }
 
   async _mutate(keyValue, update, typeHint = null, { propagateStatus = false } = {}) {
@@ -1105,14 +2028,13 @@ class VocabularyService {
         changedKeys.push(targetKey);
       }
       const nextRevision = state.revision + 1;
-      const text = snapshotText(next, nextRevision);
-      await writeSnapshot(state, text, state.diskRaw);
-      state.records = next;
+      const persisted = await persistRecords(state, next, nextRevision, "edit");
+      state.records = persisted.records;
       state.revision = nextRevision;
-      state.diskRaw = text;
+      state.diskRaw = persisted.text;
       state.recoveredBackup = false;
       notifySubscribers(state, { revision: nextRevision, type: "mutation", changedKeys });
-      return recordCopy(next.get(targetKey));
+      return recordCopy(persisted.records.get(targetKey));
     });
   }
 
@@ -1197,11 +2119,12 @@ class VocabularyService {
   async queryLearningTerms(options = {}) {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     const requestedStatuses = Array.isArray(options.statuses)
       ? new Set(options.statuses.filter((status) => STATUSES.has(status)))
       : new Set([1, 2, 3, 4]);
-    let records = [...state.records.values()].filter((record) => requestedStatuses.has(record.status));
+    let records = [...recordsWithFamilyStatus(state.records).values()]
+      .filter((record) => requestedStatuses.has(record.status));
     if (options.type === "word" || options.type === "phrase") {
       records = records.filter((record) => record.type === options.type);
     }
@@ -1259,16 +2182,17 @@ class VocabularyService {
   async exportJson() {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     return snapshotText(state.records, state.revision);
   }
 
   async exportCsv() {
     await loadState(this);
     const state = stateOf(this);
-    assertWritable(state);
+    assertReadable(state);
     const rows = [["term", "type", "status", "translation", "note", "phonetic"]];
-    for (const record of [...state.records.values()].sort((left, right) => left.key.localeCompare(right.key, "en"))) {
+    for (const record of [...recordsWithFamilyStatus(state.records).values()]
+      .sort((left, right) => left.key.localeCompare(right.key, "en"))) {
       rows.push([record.surface, record.type, record.status, record.translation || "", record.note || "", record.phonetic || ""]);
     }
     return `${rows.map((row) => row.map(csvField).join(",")).join("\r\n")}\r\n`;
@@ -1287,19 +2211,30 @@ class VocabularyService {
 
   async dispose() {
     const state = stateOf(this);
-    await this.flush();
-    state.disposed = true;
-    state.listeners.clear();
+    try {
+      await this.flush();
+    } finally {
+      state.disposed = true;
+      state.listeners.clear();
+    }
   }
 }
 
 module.exports = {
   VocabularyService,
   VocabularyStoreError,
+  VOCABULARY_SCHEMA_VERSION: SCHEMA_VERSION,
+  vocabularyFamilyKeyForKey: FAMILY_RESOLVER.familyKeyForKey,
+  describeVocabularyFamilyKey: FAMILY_RESOLVER.describeKey,
   normalizeTermKey,
   normalizeEnglishMatchKey,
   isAmbiguousEnglishSurface,
   isLayVerbInflectionSurface,
+  validateVocabularySnapshotV2,
+  serializeVocabularySnapshotV2,
+  prepareVocabularyRestoreFields,
+  resolveVocabularyHistoryField,
+  createVocabularyHistoryHandler,
   parseCsvRows,
   VOCABULARY_DIRECTORY: DIRECTORY,
   VOCABULARY_PATH: SNAPSHOT_PATH,
