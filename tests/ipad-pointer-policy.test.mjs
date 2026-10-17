@@ -1,6 +1,7 @@
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -68,6 +69,8 @@ function createPointerPolicyPdf(pageCount = 14) {
 }
 
 const pointerPolicyPdfFixture = createPointerPolicyPdf();
+const pointerPolicyPdfSourceHash = `sha256:${createHash("sha256")
+  .update(pointerPolicyPdfFixture).digest("hex")}`;
 
 function hostHtml() {
   return `<!doctype html>
@@ -75,10 +78,17 @@ function hostHtml() {
     <title>iPad pointer policy regression</title>
     <iframe id="pdf-reader" name="pdf-reader"
       style="display:block;width:100vw;height:100vh;border:0"></iframe>
-    ${browserSidecarHarnessScript({ channel: "pdf-web-reader", token: "ipad-pointer-policy-test" })}
+    ${browserSidecarHarnessScript({
+      channel: "pdf-web-reader",
+      token: "ipad-pointer-policy-test",
+      sourceHash: pointerPolicyPdfSourceHash,
+      sourcePath: "fixtures/ipad-pointer-policy.pdf",
+    })}
     <script>
       const channel = "pdf-web-reader";
       const token = "ipad-pointer-policy-test";
+      const sourceHash = ${JSON.stringify(pointerPolicyPdfSourceHash)};
+      const sourcePath = "fixtures/ipad-pointer-policy.pdf";
       const frame = document.getElementById("pdf-reader");
       let sequence = 0;
       let initialOpenSent = false;
@@ -89,10 +99,23 @@ function hostHtml() {
           return response.arrayBuffer();
         });
         const openRequest = ++sequence;
+        const documentId = "ipad-pointer-policy-" + openRequest;
         frame.contentWindow.postMessage({
           channel, token, type: "open", data,
-          documentId: "ipad-pointer-policy-" + openRequest,
+          documentId,
           openRequest, filename: "ipad-pointer-policy.pdf", autoSave: false,
+          externalAnnotations: {
+            schemaVersion: 2,
+            kind: "pdf-annotation-snapshot",
+            documentId,
+            docKey: "ipad-pointer-policy-test",
+            revision: 0,
+            updatedAt: Date.now(),
+            source: { sourcePath, sourceHash },
+            legacyIdentities: [],
+            annotations: [],
+            tombstones: [],
+          },
         }, "*", [data]);
       };
       window.addEventListener("message", (event) => {
@@ -166,6 +189,58 @@ async function localPointInHost(viewer, page, selector, fraction = [0.5, 0.5]) {
   const frameBounds = await frameElement.boundingBox();
   assert.ok(frameBounds, "Viewer iframe must be visible to input dispatch");
   return { x: frameBounds.x + local.x, y: frameBounds.y + local.y };
+}
+
+async function visiblePointInHost(viewer, page, selector, fraction = [0.5, 0.5]) {
+  const [frameElement, local] = await Promise.all([
+    viewer.frameElement(),
+    viewer.evaluate((selector, ratios) => {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error(`Input target is missing: ${selector}`);
+      const clip = document.getElementById("viewerContainer")?.getBoundingClientRect();
+      if (!clip) throw new Error("The PDF viewer scroll viewport is missing");
+      const rect = element.getBoundingClientRect();
+      const visibleRect = {
+        left: Math.max(rect.left, clip.left, 0),
+        top: Math.max(rect.top, clip.top, 0),
+        right: Math.min(rect.right, clip.right, window.innerWidth),
+        bottom: Math.min(rect.bottom, clip.bottom, window.innerHeight),
+      };
+      visibleRect.width = visibleRect.right - visibleRect.left;
+      visibleRect.height = visibleRect.bottom - visibleRect.top;
+      if (visibleRect.width <= 0 || visibleRect.height <= 0) {
+        throw new Error(`Input target has no visible viewport intersection: ${selector}`);
+      }
+      const x = visibleRect.left + visibleRect.width * ratios[0];
+      const y = visibleRect.top + visibleRect.height * ratios[1];
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        targetRect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        visibleRect,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        hit: {
+          tag: hit?.tagName || null,
+          id: hit?.id || null,
+          className: typeof hit?.className === "string" ? hit.className : null,
+          insideTarget: !!hit?.closest?.(selector),
+          pageNumber: hit?.closest?.(".page")?.dataset.pageNumber || null,
+        },
+      };
+    }, selector, fraction),
+  ]);
+  const frameBounds = await frameElement.boundingBox();
+  assert.ok(frameBounds, "Viewer iframe must be visible to input dispatch");
+  const hostPoint = { x: frameBounds.x + local.x, y: frameBounds.y + local.y };
+  assert.ok(hostPoint.x >= 0 && hostPoint.x < page.viewport().width &&
+    hostPoint.y >= 0 && hostPoint.y < page.viewport().height,
+  "Input point must fall inside the host viewport");
+  return {
+    ...hostPoint,
+    local,
+    frameBounds,
+  };
 }
 
 async function dispatchTouch(cdp, type, point = null, id = 1) {
@@ -450,6 +525,12 @@ test(
     const vendorSource = await readFile(path.join(vendorWeb, "viewer.html"), "utf8");
     const html = viewerHtml(vendorSource);
     const bridgeSource = await readBridgeRuntimeSource(bridgeJsPath);
+    const instrumentedBridgeSource = bridgeSource.replace(
+      "  if (document.documentElement?.dataset) {",
+      "  window.__ipadPointerPolicyTestState = state;\n  if (document.documentElement?.dataset) {",
+    );
+    assert.notEqual(instrumentedBridgeSource, bridgeSource,
+      "The iPad harness should expose bridge state only for lifecycle diagnostics");
     const missingRequests = [];
     const server = createServer(async (request, response) => {
       const url = new URL(request.url, "http://127.0.0.1");
@@ -478,7 +559,7 @@ test(
       }
       if (url.pathname === "/bridge.js") {
         response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-        response.end(bridgeSource);
+        response.end(instrumentedBridgeSource);
         return;
       }
       const target = getTarget(url.pathname);
@@ -1704,6 +1785,78 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
+      await viewer.evaluate(() => {
+        const container = document.getElementById("viewerContainer");
+        let scrollTopDescriptor = null;
+        for (let prototype = Object.getPrototypeOf(container); prototype;
+          prototype = Object.getPrototypeOf(prototype)) {
+          scrollTopDescriptor = Object.getOwnPropertyDescriptor(prototype, "scrollTop");
+          if (scrollTopDescriptor?.get && scrollTopDescriptor?.set) break;
+        }
+        if (!scrollTopDescriptor?.get || !scrollTopDescriptor?.set) {
+          throw new Error("Could not instrument native scrollTop access");
+        }
+        window.__ipadJsScrollWriteLog = [];
+        const recordScrollWrite = (kind, value) => {
+          window.__ipadJsScrollWriteLog.push({
+            kind,
+            value,
+            at: performance.now(),
+            stack: new Error().stack || "",
+          });
+        };
+        Object.defineProperty(container, "scrollTop", {
+          configurable: true,
+          get() { return scrollTopDescriptor.get.call(this); },
+          set(value) {
+            recordScrollWrite("scrollTop", value);
+            scrollTopDescriptor.set.call(this, value);
+          },
+        });
+        const nativeScrollTo = container.scrollTo.bind(container);
+        Object.defineProperty(container, "scrollTo", {
+          configurable: true,
+          value(...args) {
+            recordScrollWrite("scrollTo", args[0] ?? null);
+            return nativeScrollTo(...args);
+          },
+        });
+        window.__ipadHiddenScrollSample = null;
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") {
+            const bridgeState = window.__ipadPointerPolicyTestState;
+            const router = bridgeState?.inputRouter;
+            const directManipulation = bridgeState?.iosDirectManipulationController;
+            const viewport = bridgeState?.viewportController;
+            const jsScrollWrites = window.__ipadJsScrollWriteLog || [];
+            const bridgeScrollWrites = jsScrollWrites.filter(({ stack }) =>
+              /(?:^|\/)bridge\.js(?::|$)/.test(stack),
+            );
+            window.__ipadHiddenScrollSample = {
+              scrollTop: document.getElementById("viewerContainer")?.scrollTop ?? null,
+              pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+              visibilityState: document.visibilityState,
+              bridgeOwnedState: {
+                customMomentumActive: viewport?.momentum != null,
+                customMomentumFrame: viewport?.momentum?.frame ?? null,
+                manualTouchPointerCount: router?.manualPointerValues()
+                  .filter((pointer) => pointer.pointerType === "touch").length ?? null,
+                nativeTouchPointerCount: directManipulation?._nativeTouchPointers?.size ?? null,
+                activeTouchPointerCount: router?.activePointerValues()
+                  .filter((pointer) => pointer.pointerType === "touch").length ?? null,
+                fingerTextSelectionSuppressed: document.documentElement.classList.contains(
+                  "pdfReaderFingerTextSelectionSuppressed",
+                ),
+                readPenTextSelectionSuppressed: document.documentElement.classList.contains(
+                  "pdfReaderReadPenTextSelectionSuppressed",
+                ),
+                bridgeScrollWrites,
+                allJsScrollWrites: jsScrollWrites,
+              },
+            };
+          }
+        }, { once: true });
+      });
       const backgroundFlickReleaseTiming = await beginFastTouchDrag(
         cdp, viewer, backgroundFlickPoint, 260, 31, report,
       );
@@ -1712,18 +1865,6 @@ test(
       const beforeBackgrounding = await inputSnapshot();
       assert.ok(beforeBackgrounding.scrollTop > backgroundFlickAtRelease.scrollTop + 5,
         "The trusted finger flick must still be in motion before this page is backgrounded");
-      await viewer.evaluate(() => {
-        window.__ipadHiddenScrollSample = null;
-        document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") {
-            window.__ipadHiddenScrollSample = {
-              scrollTop: document.getElementById("viewerContainer")?.scrollTop ?? null,
-              pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
-              visibilityState: document.visibilityState,
-            };
-          }
-        }, { once: true });
-      });
 
       let backgroundPage = null;
       let backgroundPhaseError = null;
@@ -1757,6 +1898,24 @@ test(
         assert.ok(hiddenAt && hiddenAt.visibilityState === "hidden" &&
           Number.isFinite(hiddenAt.scrollTop),
         "The viewer must record scroll position synchronously at its hidden visibility boundary");
+        // Native WebKit scrolling owns finger momentum. The bridge cancels its
+        // sessions at hide, while the browser compositor may finish or pause
+        // its own scroll animation independently of foregrounding.
+        assert.equal(hiddenAt.bridgeOwnedState.customMomentumActive, false,
+          "The bridge must not own custom momentum at the hidden boundary");
+        assert.equal(hiddenAt.bridgeOwnedState.customMomentumFrame, null);
+        assert.equal(hiddenAt.bridgeOwnedState.manualTouchPointerCount, 0,
+          "The hidden boundary must clear bridge-owned manual touch sessions");
+        assert.equal(hiddenAt.bridgeOwnedState.nativeTouchPointerCount, 0,
+          "The trusted flick contact must end before the page is hidden");
+        assert.equal(hiddenAt.bridgeOwnedState.activeTouchPointerCount, 0,
+          "The hidden boundary must not retain an active touch pointer");
+        assert.equal(hiddenAt.bridgeOwnedState.fingerTextSelectionSuppressed, false,
+          "The hidden boundary must clear finger text-selection suppression");
+        assert.equal(hiddenAt.bridgeOwnedState.readPenTextSelectionSuppressed, false,
+          "The hidden boundary must clear read-mode Pencil selection suppression");
+        assert.deepEqual(hiddenAt.bridgeOwnedState.bridgeScrollWrites, [],
+          `The bridge must not write viewer scroll position during the native flick: ${JSON.stringify(hiddenAt.bridgeOwnedState.allJsScrollWrites)}`);
         const afterForegrounding = await inputSnapshot();
         await waitMs(120);
         const afterForegrounding120ms = await inputSnapshot();
@@ -1770,14 +1929,19 @@ test(
           afterForegrounding,
           afterForegrounding120ms,
           afterForegrounding250ms,
+          hiddenBoundaryOwnership: hiddenAt.bridgeOwnedState,
         };
-        assert.ok(Math.abs(afterForegrounding.scrollTop - hiddenAt.scrollTop) <= 1,
-          "Restoring the viewer must not apply hidden-time inertia as a catch-up jump");
-        assert.ok(Math.abs(afterForegrounding120ms.scrollTop - afterForegrounding.scrollTop) <= 1);
-        assert.ok(Math.abs(afterForegrounding250ms.scrollTop - afterForegrounding.scrollTop) <= 1,
-          "Scroll position must remain stable after returning to the viewer");
+        const bridgeScrollWritesAfterRestore = await viewer.evaluate(() =>
+          (window.__ipadJsScrollWriteLog || []).filter(({ stack }) =>
+            /(?:^|\/)bridge\.js(?::|$)/.test(stack),
+          ),
+        );
+        assert.deepEqual(bridgeScrollWritesAfterRestore, [],
+          "Foregrounding must not apply bridge-owned hidden-time scroll updates");
         report.backgroundTabInertiaCancellation = {
-          method: "new Chrome about:blank tab brought to front",
+          method: "native touch release followed by a new Chrome about:blank tab",
+          scrollOwnership: "browser compositor owns native touch momentum",
+          bridgeHiddenBoundary: "custom momentum, touch sessions, suppression and scroll writes are cleared",
           originalVisibilityWhenBackgrounded: "hidden",
           iframeVisibilityWhenBackgrounded: "hidden",
           originalVisibilityWhenRestored: "visible",
@@ -1790,6 +1954,8 @@ test(
           afterForegrounding,
           afterForegrounding120ms,
           afterForegrounding250ms,
+          hiddenBoundaryOwnership: hiddenAt.bridgeOwnedState,
+          bridgeScrollWritesAfterRestore,
         };
       } catch (error) {
         backgroundPhaseError = error;
@@ -2369,6 +2535,12 @@ test(
       );
       assert.ok(mouseObservation.some((event) => event.type === "pointerdown" && event.trusted));
 
+      // Keep the background-scroll check ahead of the second viewer page. In
+      // Chromium mobile emulation, returning to an already-open viewer after
+      // another viewer has been foregrounded dispatches touch events but does
+      // not reliably restart its native scrolling compositor.
+      await runBackgroundInertiaScenario();
+
       penPage = await browser.newPage();
       await penPage.setViewport({
         width: 1180,
@@ -2377,6 +2549,9 @@ test(
         isMobile: true,
         hasTouch: true,
       });
+      // A new page can be visible without being the active input target after
+      // the temporary background tab closes.
+      await penPage.bringToFront();
       await penPage.evaluateOnNewDocument(() => {
         window.__ipadPointerEvents = [];
         for (const type of [
@@ -2404,6 +2579,10 @@ test(
       await penPage.waitForFunction(() => window.__host?.opened?.length === 1, {
         timeout: 35_000,
       });
+      await penPage.waitForFunction(
+        () => document.visibilityState === "visible" && document.hasFocus(),
+        { timeout: 8_000 },
+      );
       penViewer = penPage.frames().find((frame) => frame.name() === "pdf-reader");
       assert.ok(penViewer, "Expected the second PDF.js viewer iframe");
       await penViewer.waitForFunction(() => {
@@ -2416,6 +2595,42 @@ test(
         const button = document.getElementById("editorSquareButton");
         return button?.isConnected && !button.disabled;
       }, { timeout: 8_000 });
+      const penInputReadiness = await penViewer.evaluate(() => {
+        const state = window.__ipadPointerPolicyTestState;
+        const host = window.parent.__browserSidecarHost;
+        const actualIdentity = state?.actualSourceIdentity;
+        const externalSource = state?.externalSource;
+        return {
+          readOnly: state?.readOnly ?? null,
+          externalSourceConfirmed: state?.externalSourceConfirmed ?? null,
+          externalSourceMismatch: state?.externalSourceMismatch ?? null,
+          actualIdentityStatus: actualIdentity?.identityStatus ?? null,
+          actualPageCount: actualIdentity?.pageCount ?? null,
+          externalPageCount: externalSource?.pageCount ?? null,
+          identityRequest: host?.identityRequests?.at(-1) ? {
+            sourceHash: host.identityRequests.at(-1).sourceHash,
+            pageCount: host.identityRequests.at(-1).pageCount,
+            identityStatus: host.identityRequests.at(-1).identityStatus,
+          } : null,
+          hostErrors: host?.errors || [],
+        };
+      });
+      report.penInputReadiness = penInputReadiness;
+      assert.equal(penInputReadiness.readOnly, false,
+        "The Pencil fixture must wait for the host-confirmed source identity before editing");
+      assert.equal(penInputReadiness.externalSourceConfirmed, true,
+        "The Pencil fixture must have a confirmed external source before editing");
+      const penPageNumberPoint = await localPointInHost(
+        penViewer,
+        penPage,
+        "#pageNumber",
+      );
+      await penPage.mouse.click(penPageNumberPoint.x, penPageNumberPoint.y);
+      await penViewer.waitForFunction(() => document.hasFocus(), { timeout: 8_000 });
+      report.penViewerFocusedByTrustedToolbarClick = await penViewer.evaluate(() => ({
+        hasFocus: document.hasFocus(),
+        activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+      }));
       const penCdp = await penPage.target().createCDPSession();
       const penSquareTool = await localPointInHost(
         penViewer,
@@ -2465,6 +2680,20 @@ test(
         event.type === "click" && event.trusted &&
         event.targetToolButton === "editorSquareButton",
       ), "A trusted touchscreen tap must switch from an active editor tool to Square in an isolated Reader");
+      // Tool-button activation can move focus back to the host in Chromium's
+      // mobile emulation. Re-focus the actual iframe immediately before
+      // dispatching simulated Pencil input so it targets the active viewer.
+      const penDrawFocusPoint = await localPointInHost(
+        penViewer,
+        penPage,
+        "#pageNumber",
+      );
+      await penPage.mouse.click(penDrawFocusPoint.x, penDrawFocusPoint.y);
+      await penViewer.waitForFunction(() => document.hasFocus(), { timeout: 8_000 });
+      report.penViewerFocusedBeforeDraw = await penViewer.evaluate(() => ({
+        hasFocus: document.hasFocus(),
+        activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+      }));
       const beforePenDraw = await inputSnapshot(penViewer);
       const penDrawStart = await localPointInHost(
         penViewer,
@@ -2557,7 +2786,6 @@ test(
         ),
         observedPointerEvents: penObservation,
       };
-      await runBackgroundInertiaScenario();
       assert.deepEqual(report.pageErrors, []);
       assert.deepEqual(missingRequests, []);
     } catch (error) {

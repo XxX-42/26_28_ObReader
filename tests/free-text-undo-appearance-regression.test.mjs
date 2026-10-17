@@ -229,6 +229,7 @@ test(
     const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
     const viewerHtml = await readFile(viewerPath, "utf8");
     const bridgeSource = await readBridgeRuntimeSource(bridgePath);
+    const fixtureSourceHash = `sha256:${createHash("sha256").update(await readFile(fixturePath)).digest("hex")}`;
     const bridgeCss = await readFile(
       path.join(root, "viewer-adapter", "bridge.css"),
       "utf8",
@@ -397,28 +398,36 @@ test(
             JSON.stringify(token) +
             ',documentId=' +
             JSON.stringify(documentId) +
+            ',sourceHash=' +
+            JSON.stringify(fixtureSourceHash) +
             ';' +
             'const iframe=document.querySelector("iframe");' +
             'const state=window.__hostState={teardownDiagnosticToken:' +
             JSON.stringify(token) +
             ',documentId:' +
             JSON.stringify(documentId) +
-            ',ready:false,opened:0,openRequest:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],errors:[],opens:[]};' +
+            ',ready:false,opened:0,openRequest:0,sourceIdentityConfirmed:false,identity:null,operations:new Map(),revision:0,saves:[],heldSaves:[],holdNextSaveAck:false,recoveries:[],exports:[],errors:[],opens:[]};' +
             'let fixtureBytes=null;' +
+            'const sidecarSnapshot=(source=state.identity)=>({schemaVersion:2,kind:"pdf-annotation-snapshot",documentId,docKey:"freetext-undo-appearance",revision:state.revision,source:{sourcePath:documentId,sourceHash,...(source||{pageCount:0,orderedPageIdentities:[]})},legacyIdentities:[],annotations:[...state.operations.values()].filter(row=>row.deleted!==true),tombstones:[...state.operations.values()].filter(row=>row.deleted===true).map(({deleted,...row})=>row)});' +
+            'const persistOperations=message=>{for(const operation of Array.isArray(message.operations)?message.operations:[]){if(!operation||typeof operation.uuid!=="string")continue;state.operations.set(operation.uuid,structuredClone(operation));}state.revision=Math.max(state.revision,Number(message.revision)||0);};' +
+            'const ackFor=(type,message)=>({channel,type,token,documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,ok:true,external:true,operationCount:Array.isArray(message.operations)?message.operations.length:0,batchId:message.operations?.length?"test-batch-"+message.requestId:null,externalAnnotations:sidecarSnapshot()});' +
             'const sendOpen=(data,label)=>{' +
             'state.openRequest+=1;state.opens.push({label,openRequest:state.openRequest,byteLength:data.byteLength});' +
-            'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,openRequest:state.openRequest,data},"*",[data]);};' +
-            'window.__sendOpenSaved=()=>sendOpen(state.savedData.slice(0),"saved-data");' +
+            'iframe.contentWindow.postMessage({channel,type:"open",token,documentId,documentPath:documentId,filename:documentId,autoSave:true,rendererGeneration:"freetext-undo-renderer",openRequest:state.openRequest,data,externalAnnotations:sidecarSnapshot()},"*",[data]);};' +
+            'window.__sendOpenSaved=()=>sendOpen(fixtureBytes.slice(0),"sidecar-reopen");' +
             'window.__holdNextSaveAck=()=>{state.holdNextSaveAck=true;};' +
-            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0)){iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:save.documentId,requestId:save.requestId,revision:save.revision},"*");}};' +
+            'window.__releaseHeldSaveAcks=()=>{for(const save of state.heldSaves.splice(0)){iframe.contentWindow.postMessage(save.ack,"*");}};' +
             'window.__sendFlush=(id)=>iframe.contentWindow.postMessage({channel,type:"flush",token,id},"*");' +
+            'window.__requestExport=()=>{const requestId="export-"+(state.exports.length+1);iframe.contentWindow.postMessage({channel,type:"export-copy",token,documentId,openRequest:state.openRequest,requestId},"*");return requestId;};' +
             'window.addEventListener("message",event=>{' +
             'if(event.source!==iframe.contentWindow)return;const message=event.data;' +
             'if(!message||message.channel!==channel||message.token!==token)return;' +
             'if(message.type==="ready"){state.ready=true;if(fixtureBytes)sendOpen(fixtureBytes.slice(0),"fixture");}' +
             'else if(message.type==="opened"){state.opened+=1;state.openedMessages ||= [];state.openedMessages.push({documentId:message.documentId,openRequest:message.openRequest,revision:message.revision,dirty:message.dirty});}' +
-            'else if(message.type==="save"){const save={documentId:message.documentId,requestId:message.requestId,revision:message.revision,origin:message.origin,byteLength:message.data?.byteLength||0,data:message.data?.slice(0),receivedAt:performance.now()};state.saves.push(save);state.savedData=save.data.slice(0);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage({channel,type:"saved",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}}' +
-            'else if(message.type==="recover"){const recovery={documentId:message.documentId,requestId:message.requestId,revision:message.revision,reason:message.reason,data:message.data?.slice(0)};state.recoveries.push(recovery);iframe.contentWindow.postMessage({channel,type:"recovered",token,documentId:message.documentId,requestId:message.requestId,revision:message.revision},"*");}' +
+            'else if(message.type==="annotation-source-identity"){if(message.identityStatus!=="KNOWN"||!Number.isSafeInteger(message.pageCount)||!Array.isArray(message.orderedPageIdentities)||message.orderedPageIdentities.length!==message.pageCount||message.orderedPageIdentities.some(identity=>typeof identity!=="string")||message.sourceHash!==sourceHash){iframe.contentWindow.postMessage({channel,type:"annotation-source-mismatch",token,documentId:message.documentId,openRequest:message.openRequest,reason:"PAGE_IDENTITY_UNAVAILABLE"},"*");return;}state.sourceIdentityConfirmed=true;state.identity={pageCount:message.pageCount,orderedPageIdentities:[...message.orderedPageIdentities]};iframe.contentWindow.postMessage({channel,type:"external-annotations-update",token,documentId:message.documentId,openRequest:message.openRequest,identityConfirmed:true,sourceMatch:state.operations.size?"MATCH":"BASELINE_ESTABLISHED",externalAnnotations:sidecarSnapshot()},"*");}' +
+            'else if(message.type==="save"){persistOperations(message);const save={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,origin:message.origin,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[]),receivedAt:performance.now()};state.saves.push(save);save.ack=ackFor("saved",message);if(state.holdNextSaveAck){state.holdNextSaveAck=false;state.heldSaves.push(save);}else{iframe.contentWindow.postMessage(save.ack,"*");}}' +
+            'else if(message.type==="recover"){persistOperations(message);const recovery={documentId:message.documentId,openRequest:message.openRequest,rendererGeneration:message.rendererGeneration,requestId:message.requestId,revision:message.revision,reason:message.reason,operationCount:message.operations?.length||0,operations:structuredClone(message.operations||[])};state.recoveries.push(recovery);iframe.contentWindow.postMessage(ackFor("recovered",message),"*");}' +
+            'else if(message.type==="export-ready"){state.exports.push({documentId:message.documentId,openRequest:message.openRequest,requestId:message.requestId,revision:message.revision,byteLength:message.data?.byteLength||0,data:new Uint8Array(message.data).slice().buffer});}' +
             'else if(message.type==="error"){state.errors.push({code:message.code,message:message.message,documentId:message.documentId,requestId:message.requestId});}' +
             'else if(message.type==="flushed"){state.flushes ||= [];state.flushes.push({id:message.id,ok:message.ok,dirty:message.dirty,revision:message.revision,recovered:message.recovered||false});}' +
             '});' +
@@ -595,6 +604,14 @@ test(
           !pageView.div.classList.contains("loading") &&
           !pageView.div.classList.contains("loadingIcon");
       }, { timeout: 30_000 });
+      await page.waitForFunction(
+        () => window.__hostState?.sourceIdentityConfirmed === true,
+        { timeout: 15_000 },
+      );
+      await viewer.waitForFunction(
+        () => document.getElementById("editorFreeTextButton")?.disabled === false,
+        { timeout: 15_000 },
+      );
 
       const waitForSaveCount = async (count) =>
         page.waitForFunction((expected) => window.__hostState?.saves?.length >= expected, { timeout: 30_000 }, count);
@@ -855,11 +872,12 @@ test(
           };
         }, { label, canvasRoi });
         const host = await page.evaluate(() => ({
-          saves: (window.__hostState?.saves || []).map(({ documentId, revision, origin, byteLength }) => ({ documentId, revision, origin, byteLength })),
+          saves: (window.__hostState?.saves || []).map(({ documentId, openRequest, revision, origin, operationCount }) => ({ documentId, openRequest, revision, origin, operationCount })),
           opened: window.__hostState?.opened,
           opens: window.__hostState?.opens,
           errors: window.__hostState?.errors,
-          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, revision, reason, data }) => ({ documentId, revision, reason, byteLength: data?.byteLength || 0 })),
+          recoveries: (window.__hostState?.recoveries || []).map(({ documentId, openRequest, revision, reason, operationCount }) => ({ documentId, openRequest, revision, reason, operationCount })),
+          exports: (window.__hostState?.exports || []).map(({ documentId, openRequest, revision, requestId, byteLength }) => ({ documentId, openRequest, revision, requestId, byteLength })),
         }));
         const result = { ...state, host };
         evidence.push(result);
@@ -932,16 +950,49 @@ test(
           document.activeElement === internal;
       }, { timeout: 15_000 }, editorSelector);
       evidence.push({ stage: "typed", point: createPoint, editor: await snapshot("typed") });
-      const noneButtonRect = await viewer.$eval("#editorFreeTextButton", (button) => {
+      const noneButtonTarget = await viewer.$eval("#editorFreeTextButton", (button) => {
         const rect = button.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        const candidates = [
+          [0.5, 0.5], [0.25, 0.5], [0.75, 0.5],
+          [0.5, 0.25], [0.5, 0.75], [0.25, 0.25], [0.75, 0.75],
+        ];
+        for (const [xRatio, yRatio] of candidates) {
+          const x = rect.left + rect.width * xRatio;
+          const y = rect.top + rect.height * yRatio;
+          const hit = document.elementFromPoint(x, y);
+          if (hit === button || button.contains(hit)) {
+            return {
+              enabled: !button.disabled,
+              hitsButton: true,
+              x,
+              y,
+              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+              hit: { tag: hit?.tagName, id: hit?.id || null, className: typeof hit?.className === "string" ? hit.className : "" },
+            };
+          }
+        }
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          enabled: !button.disabled,
+          hitsButton: false,
+          x,
+          y,
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          hit: { tag: hit?.tagName, id: hit?.id || null, className: typeof hit?.className === "string" ? hit.className : "" },
+        };
       });
+      assert.ok(noneButtonTarget.enabled,
+        "The fixture must confirm source identity before clicking a FreeText tool");
+      assert.ok(noneButtonTarget.hitsButton,
+        "The chosen mouse coordinate must hit the actual FreeText button: " + JSON.stringify(noneButtonTarget));
       const modeEventCountBeforeNoneClick = await viewer.evaluate(
         () => window.__modeEvents.length,
       );
       await page.mouse.click(
-        iframeRect.x + noneButtonRect.x + noneButtonRect.width / 2,
-        iframeRect.y + noneButtonRect.y + noneButtonRect.height / 2,
+        iframeRect.x + noneButtonTarget.x,
+        iframeRect.y + noneButtonTarget.y,
         { button: "left" },
       );
       await viewer.waitForFunction(

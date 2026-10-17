@@ -1,0 +1,27 @@
+{
+  "source": "/private/tmp/obreader-vocab-state-semantics",
+  "head": "d2ce228b6de9f7a5030c3c5534ba2e1b5a33d6b1",
+  "branch": "codex/vocab-state-empty-result",
+  "main": "07effedb925a81d5c581ad2d6578ecbcafc4b852",
+  "remoteBranch": "d2ce228b6de9f7a5030c3c5534ba2e1b5a33d6b1",
+  "aheadBehind": "0\t3",
+  "status": " M README.md\n M dist/pdf-web-reader/main.js\n M dist/pdf-web-reader/manifest.json\n M manifest.json\n M plugin/manifest.json\n M tests/free-text-undo-appearance-regression.test.mjs\n M tests/ipad-pointer-policy.test.mjs\n M tests/mouse-input-regression.test.mjs\n M tests/packaging.test.mjs\n M tests/sidecar-freetext-geometry.test.mjs\n M tests/sync-bridge-regression.test.mjs\n M versions.json\n M viewer-adapter/bridge.css\n?? tests/diagnostic-free-text-undo.mjs\n?? tests/diagnostic-sidecar-freetext-geometry.mjs\n",
+  "untracked": [
+    "tests/diagnostic-free-text-undo.mjs",
+    "tests/diagnostic-sidecar-freetext-geometry.mjs"
+  ],
+  "manifest": {
+    "id": "pdf-web-reader",
+    "name": "PDF Web Reader",
+    "version": "0.11.3",
+    "minAppVersion": "1.14.4",
+    "description": "Read vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
+    "author": "XxX-42",
+    "isDesktopOnly": false
+  },
+  "sha256": {
+    "working-tree.patch": "dd0b44f7e8b9d09fd4dfd3ddc867629846cf39af5a9f8a7182b107c1683ded1b",
+    "untracked/tests/diagnostic-sidecar-freetext-geometry.mjs": "8af721f8a4c26a7c9eaaf4b3ba8fda5da79f67460d60fe29df4675975c004e72",
+    "untracked/tests/diagnostic-free-text-undo.mjs": "01c67377eedb5e6cd340ca39512b43d290c32eaa1378061c638edcb5489af972"
+  }
+}
