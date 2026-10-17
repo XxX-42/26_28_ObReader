@@ -6,17 +6,19 @@ operation log. The original PDF stays byte-for-byte unchanged during ordinary
 editing. No local web server, external browser, Python, separately installed
 Node.js, or network service is needed at runtime.
 
-Version **0.9.0** is the integrated **WAL-Sidecar v3.2 JSONL test candidate**.
-It combines the local 0.8.9 interface/input/close behavior with commit
+Version **0.9.1** is a maintenance update to the **WAL-Sidecar v3.2 JSONL test candidate**.
+It combines the 0.9.0 storage and interface behavior with commit
 `2b5d7ad`'s per-device JSONL WAL, durable append acknowledgement, cold replay,
-snapshot materialization, and migration barrier. The source PDF remains
+snapshot materialization, and migration barrier. It also gates embedded PDF
+annotations until external identity and tombstones are confirmed, and suppresses
+WebKit long-press callouts on PDF text on iPad. The source PDF remains
 immutable. Windows, macOS, and iPadOS use the same three-file package.
 
 JSONL is the current write format. Existing v3.1 and Format 3 files remain
 read-only migration/recovery inputs; the candidate does not clean or garbage
 collect old data. The sidecar snapshot is a rebuildable cache, and device WAL
 anchors, archives, and tails provide recovery. Upgrade all devices that edit a
-document before continuing with the 0.9.0 writer. Real cross-device Obsidian
+document before continuing with the 0.9.1 writer. Real cross-device Obsidian
 Sync and iPad hardware acceptance remain separate from local automation; see
 [the protocol](ANNOTATION_STORE.md), [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md),
 and [acceptance record](GENERAL_ACCEPTANCE.md).

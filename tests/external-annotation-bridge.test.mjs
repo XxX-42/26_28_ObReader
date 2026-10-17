@@ -236,7 +236,7 @@ test("schema 2 snapshots synthesize deletion operations from a compact tombstone
   }), /must not contain deleted operation rows/);
 });
 
-test("hydration waits for host source confirmation and touches only exact embedded references", () => {
+test("hydration waits for host source confirmation and touches only exact embedded references", async () => {
   assert.match(functionSource("handleExternalAnnotationsUpdate"), /\["MATCH", "BASELINE_ESTABLISHED"\]/);
   assert.match(functionSource("applyExternalAnnotationsSnapshot"), /externalSourceIdentityMatchesViewer\(normalized\.source\)/);
   assert.match(functionSource("externalSourceIdentityMatchesViewer"), /identityStatus !== "KNOWN"/);
@@ -252,12 +252,22 @@ test("hydration waits for host source confirmation and touches only exact embedd
   assert.doesNotMatch(functionSource("reportAnnotationSourceIdentity"), /getPageFingerprint|\.getData\(|\.getOperatorList\(/);
   const open = functionSource("openDocument");
   assert.match(open, /const provisionalExternal = validateExternalAnnotations\(message\.externalAnnotations\)/);
+  assert.ok(
+    open.indexOf("setNativeAnnotationLayersPending(true, gateToken)") <
+      open.indexOf("state.pdfJsOpen.call(app"),
+    "native PDF annotations must be gated before PDF.js starts rendering the replacement document",
+  );
   assert.doesNotMatch(open, /applyExternalAnnotationsSnapshot\(message\.externalAnnotations/);
   assert.match(open, /state\.readOnly\s*=\s*true/);
   const pendingUpdate = functionSource("schedulePendingExternalAnnotationUpdate");
   assert.match(pendingUpdate, /pending\.identityConfirmed\s*===\s*true\s*\|\|\s*state\.externalSourceConfirmed/);
   assert.match(pendingUpdate, /setReadOnlyState\(state\.readOnly\)/);
   assert.match(functionSource("handleExternalAnnotationsUpdate"), /message\.identityConfirmed\s*!==\s*true/);
+  assert.match(functionSource("applyConfirmedNativeAnnotationLayerState"), /setEmbeddedDeletionMask/);
+  assert.match(functionSource("applyConfirmedNativeAnnotationLayerState"), /suppressEmbeddedAnnotation/);
+  assert.match(functionSource("schedulePendingExternalAnnotationUpdate"), /applyConfirmedNativeAnnotationLayerState\(/);
+  assert.match(await readFile(new URL("../viewer-adapter/bridge.css", import.meta.url), "utf8"),
+    /pdfReaderNativeAnnotationLayersPending[^\{]*#viewerContainer \.annotationLayer/);
 });
 
 test("legacy UUIDs bind by exact annotation object reference before dirty diffs", () => {
@@ -551,6 +561,7 @@ test("hydration teardown retains exact runtime binding while a native deletion r
     function captureDirtySyncState(){return {dirtyAnnotationIds:[]};}
     function getAnnotationEditorManager(){return {getEditor:()=>({remove(){}})};}
     function restoreSuppressedEmbeddedAnnotations(){}
+    function stopExternalAnnotationLayerObserver(){}
     function pdfAnnotationRefKey(value){return value;}
     function bind(){state.externalAnnotationHydration.set("old-uuid",{runtimeId:"old-editor",embeddedRef:"2189R",adoptedEmbedded:false});}
     ${helper}
@@ -590,4 +601,60 @@ test("confirmed deletion masks are installed before PDF.js receives the document
   scope.calls.length=0;scope.session.signal.aborted=false;
   const wrongPageCount=scope.installInitialDeletionMask(scope.app,scope.session,snapshot,true);
   scope.app.pdfViewer.setDocument({...doc,numPages:2});assert.equal(scope.calls[0][0],"setDocument");wrongPageCount();
+});
+
+test("native annotation layers remain gated until exact tombstones are masked and embedded rows are hidden", () => {
+  const helpers = [
+    functionSource("setNativeAnnotationLayersPending"),
+    functionSource("applyConfirmedNativeAnnotationLayerState"),
+  ].join("\n");
+  const scope = vm.runInThisContext(`(() => {
+    const events = [];
+    const classes = new Set();
+    const document = { documentElement: { classList: {
+      add(name) { classes.add(name); events.push("gate:add"); },
+      remove(name) { classes.delete(name); events.push("gate:remove"); },
+    } } };
+    const nativeNodes = new Map([["11R", { hidden: false }], ["22R", { hidden: false }]]);
+    const state = {
+      externalSourceConfirmed: true,
+      externalAnnotationRows: new Map([
+        ["deleted", { uuid: "deleted", pageIndex: 0, embeddedRef: "11R", deleted: true }],
+        ["live", { uuid: "live", pageIndex: 0, embeddedRef: "22R", deleted: false }],
+        ["unmanaged", { uuid: "unmanaged", pageIndex: 0, embeddedRef: null, deleted: false }],
+      ]),
+      nativeAnnotationGateToken: { documentId: "doc-a", openRequest: 7, sessionId: 3 },
+      annotationController: { setEmbeddedDeletionMask(storage, refs) {
+        events.push("mask:" + refs.join(","));
+      } },
+      app: { pdfDocument: { annotationStorage: {} } },
+    };
+    function canonicalPdfAnnotationRef(value) { return value; }
+    function observeExternalAnnotationLayerMutations() { events.push("observe"); }
+    function suppressEmbeddedAnnotation(pageIndex, ref) {
+      const node = nativeNodes.get(ref);
+      if (!node) return false;
+      node.hidden = true;
+      events.push("hide:" + ref);
+      return true;
+    }
+    function runtimeLogRecord() {}
+    ${helpers}
+    return { state, classes, events, nativeNodes, setNativeAnnotationLayersPending,
+      applyConfirmedNativeAnnotationLayerState };
+  })()`);
+
+  const token = scope.state.nativeAnnotationGateToken;
+  scope.setNativeAnnotationLayersPending(true, token);
+  assert.equal(scope.classes.has("pdfReaderNativeAnnotationLayersPending"), true);
+  assert.equal(scope.applyConfirmedNativeAnnotationLayerState("other-doc", 7), false);
+  assert.equal(scope.classes.has("pdfReaderNativeAnnotationLayersPending"), true,
+    "a stale document update must not reveal the active PDF layer");
+  assert.equal(scope.applyConfirmedNativeAnnotationLayerState("doc-a", 7), true);
+  assert.deepEqual(scope.events, ["gate:add", "mask:11R", "observe", "hide:11R", "hide:22R", "gate:remove"]);
+  assert.equal(scope.classes.has("pdfReaderNativeAnnotationLayersPending"), false);
+  assert.equal(scope.nativeNodes.get("11R").hidden, true);
+  assert.equal(scope.nativeNodes.get("22R").hidden, true);
+  assert.equal(scope.nativeNodes.has("unmanaged"), false,
+    "unmanaged native annotations are not suppressed by the external ledger");
 });

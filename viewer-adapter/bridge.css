@@ -11,6 +11,14 @@ body {
   min-width: 0;
 }
 
+/* Do not paint source-PDF annotations until the host has verified the
+   document identity and the exact sidecar tombstones have been applied.
+   The page canvas and the external annotation-editor layer remain visible. */
+:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer,
+:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer * {
+  visibility: hidden !important;
+}
+
 /* Let WebKit own page scrolling. PDF.js sets touch-action:none on its ink
    canvas and active highlight layer; override those page surfaces too so a
    finger can scroll while the bridge suppresses touch annotation input. */
@@ -27,6 +35,13 @@ body {
 
 :root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .annotationEditorLayer .freeTextEditor .internal[contenteditable="true"]:focus {
   touch-action: none;
+}
+
+/* Suppress WebKit's long-press Share/Copy callout on PDF text without
+   disabling text selection or affecting the surrounding Obsidian UI. */
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .textLayer,
+:root[data-pdf-reader-ios-input-policy="true"] #viewerContainer .textLayer * {
+  -webkit-touch-callout: none !important;
 }
 
 /* Text inputs remain interactive. During a Pencil/editor gesture, make new

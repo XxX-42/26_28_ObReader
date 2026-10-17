@@ -116,6 +116,9 @@
     externalAnnotationRows: new Map(),
     externalAnnotationHydration: new Map(),
     externalAnnotationRefs: new Set(),
+    externalAnnotationLayerObserver: null,
+    nativeAnnotationLayersPending: false,
+    nativeAnnotationGateToken: null,
     externalSource: null,
     externalSourceConfirmed: false,
     actualSourceIdentity: null,
@@ -2537,6 +2540,111 @@
     return true;
   }
 
+  function setNativeAnnotationLayersPending(pending, token = null) {
+    if (pending) {
+      state.nativeAnnotationLayersPending = true;
+      state.nativeAnnotationGateToken = token;
+      document.documentElement?.classList?.add("pdfReaderNativeAnnotationLayersPending");
+      return true;
+    }
+    if (token && state.nativeAnnotationGateToken !== token) return false;
+    state.nativeAnnotationLayersPending = false;
+    state.nativeAnnotationGateToken = null;
+    document.documentElement?.classList?.remove("pdfReaderNativeAnnotationLayersPending");
+    return true;
+  }
+
+  function stopExternalAnnotationLayerObserver() {
+    state.externalAnnotationLayerObserver?.disconnect?.();
+    state.externalAnnotationLayerObserver = null;
+  }
+
+  function observeExternalAnnotationLayerMutations() {
+    stopExternalAnnotationLayerObserver();
+    const rows = [...state.externalAnnotationRows.values()]
+      .filter((row) => row.embeddedRef);
+    if (!rows.length || typeof MutationObserver !== "function") return false;
+    const pageIndices = new Set(rows.map((row) => row.pageIndex));
+    const viewer = state.app?.pdfViewer;
+    const pageTargets = [...pageIndices]
+      .map((pageIndex) => viewer?.getPageView?.(pageIndex)?.div)
+      .filter(Boolean);
+    const root = viewer?.viewer || document.querySelector("#viewer");
+    const targets = pageTargets.length === pageIndices.size ? pageTargets : [root].filter(Boolean);
+    if (!targets.length) return false;
+    const observer = new MutationObserver((records) => {
+      const touchedPages = new Set();
+      for (const record of records) {
+        const target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+        const layer = target?.closest?.(".annotationLayer");
+        const pageNumber = Number(layer?.closest?.(".page")?.dataset?.pageNumber);
+        if (Number.isSafeInteger(pageNumber) && pageNumber > 0) {
+          touchedPages.add(pageNumber - 1);
+        }
+        for (const node of record.addedNodes || []) {
+          if (node?.nodeType !== 1) continue;
+          const layers = [];
+          if (node.matches?.(".annotationLayer")) layers.push(node);
+          node.querySelectorAll?.(".annotationLayer").forEach((item) => layers.push(item));
+          for (const addedLayer of layers) {
+            const addedPageNumber = Number(addedLayer.closest?.(".page")?.dataset?.pageNumber);
+            if (Number.isSafeInteger(addedPageNumber) && addedPageNumber > 0) {
+              touchedPages.add(addedPageNumber - 1);
+            }
+          }
+        }
+      }
+      for (const pageIndex of touchedPages) {
+        if (!pageIndices.has(pageIndex)) continue;
+        for (const row of rows) {
+          if (row.pageIndex === pageIndex && row.embeddedRef) {
+            suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
+          }
+        }
+      }
+    });
+    for (const target of targets) {
+      observer.observe(target, { childList: true, subtree: true });
+    }
+    state.externalAnnotationLayerObserver = observer;
+    return true;
+  }
+
+  function applyConfirmedNativeAnnotationLayerState(documentId, openRequest) {
+    if (!state.externalSourceConfirmed) return false;
+    const token = state.nativeAnnotationGateToken;
+    if (token && (token.documentId !== documentId || token.openRequest !== openRequest)) {
+      return false;
+    }
+    const rows = [...state.externalAnnotationRows.values()];
+    const deletedRefs = [...new Set(rows
+      .filter((row) => row.deleted === true && row.embeddedRef)
+      .map((row) => canonicalPdfAnnotationRef(row.embeddedRef))
+      .filter(Boolean))];
+    state.annotationController?.setEmbeddedDeletionMask?.(
+      state.app?.pdfDocument?.annotationStorage,
+      deletedRefs,
+    );
+    observeExternalAnnotationLayerMutations();
+    let hiddenCount = 0;
+    for (const row of rows) {
+      if (row.embeddedRef && suppressEmbeddedAnnotation(row.pageIndex, row.embeddedRef)) {
+        hiddenCount += 1;
+      }
+    }
+    const isCurrentGate = token && token.documentId === documentId &&
+      token.openRequest === openRequest;
+    if (isCurrentGate) setNativeAnnotationLayersPending(false, token);
+    runtimeLogRecord("external-annotation.native-layer-confirmed", {
+      documentId,
+      openRequest,
+      deletedReferences: deletedRefs.length,
+      hiddenEmbeddedReferences: hiddenCount,
+      gateReleased: Boolean(isCurrentGate),
+    });
+    return true;
+  }
+
   function restoreSuppressedEmbeddedAnnotations(excludedReferences = new Set()) {
     for (const element of document.querySelectorAll(
       '[data-pdf-reader-external-hidden="1"]',
@@ -2600,6 +2708,7 @@
       state.externalAnnotationRefs.clear();
       state.externalSource = null;
       state.pendingExternalAnnotationsUpdate = null;
+      stopExternalAnnotationLayerObserver();
     }
   }
 
@@ -3140,6 +3249,10 @@
           if (state.pendingExternalAnnotationsUpdate !== pending) return;
           state.pendingExternalAnnotationsUpdate = null;
           const result = applyExternalAnnotationsSnapshot(pending.externalAnnotations);
+          applyConfirmedNativeAnnotationLayerState(
+            pending.documentId,
+            pending.openRequest,
+          );
           for (const pageIndex of new Set(result.pages)) {
           const hydrated = await hydrateExternalAnnotationsForPage(pageIndex);
           if (!hydrated) scheduleExternalAnnotationHydrationRetry(pageIndex);
@@ -7876,6 +7989,11 @@
       restoreEmbedded: true,
       preserveDirty: true,
     });
+    const gateToken = state.nativeAnnotationGateToken;
+    if (gateToken?.documentId === message.documentId &&
+        gateToken?.openRequest === message.openRequest) {
+      setNativeAnnotationLayersPending(false, gateToken);
+    }
     state.externalSource = loadedSource;
     setReadOnlyState(true);
     showStatus(
@@ -8430,6 +8548,13 @@
       if (session.signal.aborted || state.disposed) {
         return false;
       }
+      const gateToken = {
+        documentId,
+        openRequest: Number.isInteger(message.openRequest) ? message.openRequest : null,
+        sessionId: session.id,
+      };
+      session.nativeAnnotationGateToken = gateToken;
+      setNativeAnnotationLayersPending(true, gateToken);
       clearScheduledWork();
       cleanupStorageObserver();
       if (typeof message.heavyLeaseRequired === "boolean") {
@@ -8590,6 +8715,9 @@
     } catch (error) {
       if (session.signal.aborted || state.disposed) {
         return false;
+      }
+      if (session.nativeAnnotationGateToken) {
+        setNativeAnnotationLayersPending(false, session.nativeAnnotationGateToken);
       }
       cleanupStorageObserver();
       state.activeDocumentId = null;
@@ -9428,6 +9556,8 @@
       state.toolbarLayoutFrame = 0;
     }
     document.documentElement.classList.remove("pdfReaderBridgeTwoRow");
+    stopExternalAnnotationLayerObserver();
+    setNativeAnnotationLayersPending(false);
     clearFingerTextSelectionSuppression();
     stopOpenStartupObserver();
     state.openSession?.controller.abort();

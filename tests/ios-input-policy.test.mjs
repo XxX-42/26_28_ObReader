@@ -66,6 +66,34 @@ test("iOS policy owns finger selection suppression until explicit handoff", () =
   assert.deepEqual(toggled.at(-1), ["pdfReaderFingerTextSelectionSuppressed", false]);
 });
 
+test("iOS read mode blocks PDF text long-press callouts without blocking selection", async () => {
+  const { policy } = createPolicy({ annotationToolActive: false });
+  const callout = controls();
+  assert.equal(policy.handleTextSelectionGuard({
+    type: "contextmenu",
+    pointerType: "touch",
+    targetRole: "text-layer",
+  }, callout.value), true);
+  assert.equal(callout.prevented, true);
+
+  const selection = controls();
+  assert.equal(policy.handleTextSelectionGuard({
+    type: "selectstart",
+    targetRole: "text-layer",
+  }, selection.value), false);
+  assert.equal(selection.prevented, false);
+
+  const unrelatedMenu = controls();
+  assert.equal(policy.handleTextSelectionGuard({
+    type: "contextmenu",
+    targetRole: "viewer",
+  }, unrelatedMenu.value), false);
+  assert.equal(unrelatedMenu.prevented, false);
+
+  const css = await readFile(new URL("../viewer-adapter/bridge.css", import.meta.url), "utf8");
+  assert.match(css, /:root\[data-pdf-reader-ios-input-policy="true"\]\s+#viewerContainer\s+\.textLayer[\s\S]*?-webkit-touch-callout:\s*none\s*!important;/);
+});
+
 test("pan click suppression preserves native activation and double-click targets", () => {
   const { policy } = createPolicy();
   const click = (pageIndex, overrides = {}, { doubleClick = false } = {}) => {

@@ -157,6 +157,14 @@
     }
 
     handleTextSelectionGuard(intent, controls) {
+      // The native iOS long-press menu is separate from selection ownership:
+      // keep read-mode selection intact, but prevent Share/Copy callouts on
+      // PDF text. The persistent -webkit-touch-callout rule is the primary
+      // WebKit path; this event guard covers WKWebView contextmenu dispatch.
+      if (intent?.type === "contextmenu" && intent?.targetRole === "text-layer") {
+        controls?.preventDefault?.();
+        return true;
+      }
       if (
         !this.isFingerTextSelectionSuppressionActive() ||
         intent?.targetRole !== "text-layer"
