@@ -162,4 +162,3 @@ test("a corrupt file at the computed content address is never overwritten", asyn
   assert.equal(await readFile(path.join(output, "manifest.json"), "utf8"), originalManifest);
   assert.deepEqual(await readFile(conflictPath), corrupt);
 });
-

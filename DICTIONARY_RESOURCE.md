@@ -51,3 +51,5 @@ node tests/dictionary-resource-benchmark.mjs /path/to/ECDICT/resource-v2
 ```
 
 首次建库与之后的查词是不同指标。770,611 条词典在本轮 Chromium 测试中首次建库约 89 秒，重载后首次查询约 21 毫秒，热查询中位数约 0.6 毫秒；这是测试环境实测，不是 iPad 性能承诺。移动端视口测试不等于真实 WKWebView 验收。
+
+0.11.8 在 Mac 正式库完成部署后，`on`、`mostly`、`subscription` 均返回释义，单词查询约 2.2–2.8 毫秒且压缩资源读取为 0 次。ECDICT 同步目录由 1,040 个文件／39,700,469 字节变为 3 个文件／16,736,295 字节；旧目录和原 CSV 已移至库外备份，个人词汇与源 PDF 哈希保持不变。
