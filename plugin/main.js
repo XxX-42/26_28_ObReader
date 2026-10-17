@@ -2527,24 +2527,37 @@ class PdfReaderView extends EditableFileView {
 
     if (message.type === "vocab-page-query") {
       const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
+      const validTokens = Array.isArray(message.tokens) && message.tokens.length <= 6000 &&
+        message.tokens.every((token) => typeof token === "string" && token.length > 0 && token.length <= 160 && !token.includes(" ")) &&
+        message.tokens.reduce((total, token) => total + token.length + 1, 0) <= MAX_VOCABULARY_QUERY_TEXT_CHARS;
       const validKeys = Array.isArray(message.keys) && message.keys.length <= 2048 &&
         message.keys.every((key) => typeof key === "string" && key.length <= 1600 &&
           key.split(" ").length <= 12 && normalizeVocabularyTermKey(key) === key) &&
         message.keys.reduce((total, key) => total + key.length + 1, 0) <= MAX_VOCABULARY_QUERY_TEXT_CHARS;
       if (!validRequest || typeof message.queryId !== "string" || message.queryId.length > 128 ||
-          !Number.isInteger(message.partIndex) || message.partIndex < 0 || !validKeys ||
+          !Number.isInteger(message.partIndex) || message.partIndex < 0 || !(validTokens || validKeys) ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
       try {
-        const matches = await this.plugin.getVocabularyService().queryTerms([...new Set(message.keys)]);
+        const service = this.plugin.getVocabularyService();
+        const pageMatches = validTokens
+          ? await service.matchPageTokens(message.tokens)
+          : null;
+        const matches = pageMatches ? null : await service.queryTerms([...new Set(message.keys)]);
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-page-results",
           requestId: message.requestId, queryId: message.queryId, partIndex: message.partIndex, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
-          records: Object.entries(matches).map(([key, record]) => ({
-            key, storageKey: record.key, type: record.type, status: record.status,
-          })),
+          ...(pageMatches ? {
+            wordMatches: pageMatches.wordMatches,
+            phraseMatches: pageMatches.phraseMatches,
+            metrics: pageMatches.metrics,
+          } : {
+            records: Object.entries(matches).map(([key, record]) => ({
+              key, storageKey: record.key, type: record.type, status: record.status,
+            })),
+          }),
         });
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) {
@@ -2552,7 +2565,8 @@ class PdfReaderView extends EditableFileView {
             channel: CHANNEL, token: this.token, type: "vocab-page-results",
             requestId: message.requestId, queryId: message.queryId, partIndex: message.partIndex, pageNumber: message.pageNumber,
             documentId: identity.documentId, openRequest: identity.openRequest,
-            records: [], error: error.code || "vocabulary-query-failed",
+            ...(validTokens ? { wordMatches: [], phraseMatches: [], metrics: null } : { records: [] }),
+            error: error.code || "vocabulary-query-failed",
           });
         }
       }

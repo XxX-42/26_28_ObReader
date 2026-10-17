@@ -17,6 +17,13 @@ const MAX_RECORD_FIELD_CHARS = 4096;
 const MAX_TOTAL_TEXT_CHARS = 1024 * 1024;
 
 const PRIVATE = new WeakMap();
+// Vocabulary lookups are page-batched: one visible page can ask for several
+// thousand word and phrase keys. Scanning every persisted record for every
+// requested surface made initial LingQ hydration O(pageKeys * vocabulary).
+// Records maps are replaced atomically on mutation/import, so a WeakMap keyed
+// by the immutable map gives each snapshot one reusable lemma index and lets
+// obsolete indexes be collected without explicit cache invalidation.
+const MATCH_INDEX_CACHE = new WeakMap();
 
 class VocabularyStoreError extends Error {
   constructor(message, code, options) {
@@ -189,30 +196,107 @@ function recordTypeForKey(key) {
   return key.includes(" ") ? "phrase" : "word";
 }
 
-function recordsForMatch(records, key) {
+function matchIndexFor(records) {
+  const cached = MATCH_INDEX_CACHE.get(records);
+  if (cached) return cached;
+
+  const buildStartedAt = globalThis.performance?.now?.() ?? Date.now();
+
+  const byType = new Map([
+    ["word", new Map()],
+    ["phrase", new Map()],
+  ]);
+  const bareLayByType = new Map([
+    ["word", []],
+    ["phrase", []],
+  ]);
+  const matchKeyByRecordKey = new Map();
+  const bareLayKeys = new Set();
+  const phraseRoot = { children: new Map(), records: [] };
+  let phraseRecordCount = 0;
+
+  const addPhrasePath = (record, path) => {
+    let node = phraseRoot;
+    for (const token of path) {
+      if (!node.children.has(token)) node.children.set(token, { children: new Map(), records: [] });
+      node = node.children.get(token);
+    }
+    if (!node.records.includes(record)) node.records.push(record);
+  };
+
+  for (const record of records.values()) {
+    const typeIndex = byType.get(record.type);
+    if (!typeIndex) continue;
+    const matchKey = normalizeEnglishMatchKey(record.key);
+    const surfaceTokens = record.key.split(" ");
+    const paths = [surfaceTokens.map(normalizeEnglishLemmaToken)];
+    if (record.type === "phrase") {
+      phraseRecordCount += 1;
+      // `lay` is ambiguous: keep its ordinary `lie` lemma path and an
+      // alternate `lay` path so lays/laid/laying phrases remain matchable.
+      surfaceTokens.forEach((surface, index) => {
+        if (surface !== "lay") return;
+        const alternate = [...paths[0]];
+        alternate[index] = "lay";
+        paths.push(alternate);
+      });
+      for (const path of paths) addPhrasePath(record, path);
+    }
+    for (const path of paths) {
+      const candidateKey = path.join(" ");
+      const candidates = typeIndex.get(candidateKey) || [];
+      if (!candidates.includes(record)) candidates.push(record);
+      typeIndex.set(candidateKey, candidates);
+    }
+    matchKeyByRecordKey.set(record.key, matchKey);
+    if (record.key.split(" ").includes("lay")) {
+      bareLayKeys.add(record.key);
+      bareLayByType.get(record.type)?.push(record);
+    }
+  }
+
+  const index = {
+    byType, bareLayByType, matchKeyByRecordKey, bareLayKeys, phraseRoot,
+    phraseRecordCount,
+    recordCount: records.size,
+    buildMs: Math.max(0, (globalThis.performance?.now?.() ?? Date.now()) - buildStartedAt),
+  };
+  MATCH_INDEX_CACHE.set(records, index);
+  return index;
+}
+
+function recordsForMatch(records, key, precomputed = null) {
   const exact = records.get(key);
-  const type = recordTypeForKey(key);
-  const matchKey = normalizeEnglishMatchKey(key);
+  const type = precomputed?.type || recordTypeForKey(key);
+  const matchKey = precomputed?.matchKey || normalizeEnglishMatchKey(key);
   if (!matchKey) return exact ? [exact] : [];
   const exactLayRequested = Boolean(exact) && key.split(" ").includes("lay");
   const requestedLayFamily = exactLayRequested || matchKey.split(" ").includes("lay") ||
-    key.split(" ").some(isLayVerbInflectionSurface);
+    (precomputed?.layInflection ?? key.split(" ").some(isLayVerbInflectionSurface));
   const familyMatchKey = exactLayRequested
     ? key.split(" ").map((token) => token === "lay" ? "lay" : normalizeEnglishLemmaToken(token)).join(" ")
     : matchKey;
-  return [...records.values()].filter((record) => {
-    if (record.type !== type) return false;
-    const recordMatchKey = normalizeEnglishMatchKey(record.key);
-    if (recordMatchKey === familyMatchKey) {
-      // A stored bare `lay` row belongs to the `lay` family only when the
-      // request resolves to that family; it must not leak into `lie` aliases.
-      if (record.key.split(" ").some((token) => token === "lay")) return requestedLayFamily;
-      return true;
+
+  const index = matchIndexFor(records);
+  const familyRecords = index.byType.get(type)?.get(familyMatchKey) || [];
+  const matches = [];
+  for (const record of familyRecords) {
+    // A stored bare `lay` row belongs to the `lay` family only when the
+    // request resolves to that family; it must not leak into `lie` aliases.
+    if (!requestedLayFamily && index.bareLayKeys.has(record.key)) continue;
+    matches.push(record);
+  }
+
+  // The standalone `lay` surface is the base spelling for its unambiguous
+  // forms, even though the general lemma table resolves it to `lie`.
+  if (requestedLayFamily) {
+    for (const record of index.bareLayByType.get(type) || []) {
+      if (index.matchKeyByRecordKey.get(record.key) !== familyMatchKey && !matches.includes(record)) {
+        matches.push(record);
+      }
     }
-    // The standalone `lay` surface is ambiguous, but is the base spelling
-    // for its unambiguous forms (`lays`, `laid`, `laying`).
-    return requestedLayFamily && record.key.split(" ").some((token) => token === "lay");
-  });
+  }
+  return matches;
 }
 
 function selectMatchRecord(records, requestedKey) {
@@ -230,6 +314,12 @@ function effectiveMatchRecord(records, requestedKey) {
   const selected = selectMatchRecord(records, requestedKey);
   if (!selected) return undefined;
   return { ...selected, status: Math.max(...records.map((record) => record.status)) };
+}
+
+function phraseRecordEligible(record, matchedSurfaces) {
+  const canonicalTokens = record.key.split(" ");
+  return !canonicalTokens.some((key, index) => isAmbiguousEnglishSurface(key) &&
+    key !== matchedSurfaces[index] && !LAY_VERB_INFLECTIONS.has(matchedSurfaces[index]));
 }
 
 function stateOf(service) {
@@ -819,6 +909,108 @@ class VocabularyService {
       if (record) result[key] = recordCopy(record);
     }
     return result;
+  }
+
+  async matchPageTokens(tokens) {
+    await loadState(this);
+    const state = stateOf(this);
+    assertWritable(state);
+    if (!Array.isArray(tokens) || tokens.length > 6000) {
+      throw new RangeError("PDF vocabulary token batch exceeds the supported limit.");
+    }
+    let totalChars = 0;
+    const tokenNormalizeStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    const surfaces = tokens.map((value) => {
+      if (typeof value !== "string" || value.length > 160 || value.includes(" ")) {
+        throw new TypeError("PDF vocabulary tokens must be single normalized surfaces.");
+      }
+      totalChars += value.length + 1;
+      if (totalChars > 131072) throw new RangeError("PDF vocabulary token text exceeds the supported limit.");
+      const surface = normalizeTermKey(value);
+      if (!surface || surface !== value || surface.includes(" ")) {
+        throw new TypeError("PDF vocabulary tokens must be canonical English surfaces.");
+      }
+      return surface;
+    });
+    const tokenNormalizeMs = Math.max(0,
+      (globalThis.performance?.now?.() ?? Date.now()) - tokenNormalizeStartedAt);
+
+    const startedAt = globalThis.performance?.now?.() ?? Date.now();
+    const previousIndex = MATCH_INDEX_CACHE.get(state.records);
+    const index = matchIndexFor(state.records);
+    const tokenLemmaKeys = surfaces.map(normalizeEnglishLemmaToken);
+    const wordMatches = [];
+    for (let indexInPage = 0; indexInPage < surfaces.length; indexInPage += 1) {
+      const surface = surfaces[indexInPage];
+      const record = effectiveMatchRecord(recordsForMatch(state.records, surface, {
+        type: "word",
+        matchKey: tokenLemmaKeys[indexInPage],
+        layInflection: LAY_VERB_INFLECTIONS.has(surface),
+      }), surface);
+      if (!record) continue;
+      wordMatches.push({
+        index: indexInPage,
+        key: surface,
+        storageKey: record.key,
+        type: "word",
+        status: record.status,
+      });
+    }
+
+    const phraseMatches = [];
+    let trieSteps = 0;
+    let startIndex = 0;
+    while (startIndex < surfaces.length) {
+      let node = index.phraseRoot;
+      let best = null;
+      for (let offset = 0; offset < 12 && startIndex + offset < surfaces.length; offset += 1) {
+        const tokenIndex = startIndex + offset;
+        const lemmaKey = tokenLemmaKeys[tokenIndex];
+        if (!lemmaKey) break;
+        trieSteps += 1;
+        node = node.children.get(lemmaKey);
+        if (!node) break;
+        if (!node.records.length) continue;
+        const matchedSurfaces = surfaces.slice(startIndex, tokenIndex + 1);
+        const eligible = node.records.filter((record) => phraseRecordEligible(record, matchedSurfaces));
+        const record = effectiveMatchRecord(eligible, matchedSurfaces.join(" "));
+        if (record) best = { record, endIndex: tokenIndex + 1 };
+      }
+      if (best) {
+        const matchedSurface = surfaces.slice(startIndex, best.endIndex).join(" ");
+        phraseMatches.push({
+          startIndex,
+          endIndex: best.endIndex,
+          key: matchedSurface,
+          storageKey: best.record.key,
+          type: "phrase",
+          status: best.record.status,
+        });
+        startIndex = best.endIndex;
+      } else {
+        startIndex += 1;
+      }
+    }
+
+    const endedAt = globalThis.performance?.now?.() ?? Date.now();
+    return {
+      wordMatches,
+      phraseMatches,
+      metrics: {
+        indexCacheHit: Boolean(previousIndex),
+        indexBuildMs: previousIndex ? 0 : index.buildMs,
+        vocabularyRecordCount: index.recordCount,
+        phraseRecordCount: index.phraseRecordCount,
+        pageTokenCount: surfaces.length,
+        pageTokenNormalizeCount: surfaces.length,
+        pageTokenNormalizeMs: tokenNormalizeMs,
+        trieSteps,
+        hitCount: wordMatches.length + phraseMatches.length,
+        matchMs: Math.max(0, endedAt - startedAt - (previousIndex ? 0 : index.buildMs)),
+        vocabularyFullScanCount: 0,
+        perTokenVocabularyNormalizeCount: 0,
+      },
+    };
   }
 
   async getTerm(keyValue) {

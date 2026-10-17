@@ -226,6 +226,65 @@ test("ambiguous lay prefers its exact record and keeps lie and lay families sepa
   assert.deepEqual(snapshot(adapter).records.map((record) => record.key).sort(), ["laid", "lay", "lie"]);
 });
 
+test("page token matching uses a cached word index and phrase trie without n-gram requests", async () => {
+  const adapter = new MemoryAdapter();
+  adapter.files.set(VOCABULARY_PATH, JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 4,
+    records: [
+      { key: "walk", type: "word", surface: "walk", status: 4, createdAt: 1, updatedAt: 1,
+        source: "user", translation: "走" },
+      { key: "take care of", type: "phrase", surface: "take care of", status: 3, createdAt: 1, updatedAt: 1,
+        source: "user" },
+      { key: "lie down", type: "phrase", surface: "lie down", status: 2, createdAt: 1, updatedAt: 1,
+        source: "user" },
+      { key: "lay down", type: "phrase", surface: "lay down", status: 5, createdAt: 1, updatedAt: 1,
+        source: "user" },
+      { key: "walk home", type: "phrase", surface: "walk home", status: 1, createdAt: 1, updatedAt: 1,
+        source: "user" },
+      { key: "walked home", type: "phrase", surface: "walked home", status: 5, createdAt: 1, updatedAt: 1,
+        source: "user", translation: "回家" },
+    ],
+  }));
+  const service = makeService(adapter);
+
+  const tokens = ["they", "were", "walking", "to", "take", "care", "of", "laid", "down", "lay", "down"];
+  const first = await service.matchPageTokens(tokens);
+  assert.deepEqual(first.wordMatches.map(({ index, key, storageKey, status }) => ({ index, key, storageKey, status })), [
+    { index: 2, key: "walking", storageKey: "walk", status: 4 },
+  ]);
+  assert.deepEqual(first.phraseMatches.map(({ startIndex, endIndex, key, storageKey, status }) =>
+    ({ startIndex, endIndex, key, storageKey, status })), [
+    { startIndex: 4, endIndex: 7, key: "take care of", storageKey: "take care of", status: 3 },
+    { startIndex: 7, endIndex: 9, key: "laid down", storageKey: "lay down", status: 5 },
+    { startIndex: 9, endIndex: 11, key: "lay down", storageKey: "lay down", status: 5 },
+  ]);
+  assert.equal(first.metrics.indexCacheHit, false);
+  assert.equal(first.metrics.vocabularyRecordCount, 6);
+  assert.equal(first.metrics.pageTokenNormalizeCount, tokens.length);
+  assert.ok(first.metrics.pageTokenNormalizeMs >= 0);
+  assert.equal(first.metrics.vocabularyFullScanCount, 0);
+  assert.equal(first.metrics.perTokenVocabularyNormalizeCount, 0);
+  assert.ok(first.metrics.trieSteps < tokens.length * 4, "phrase matching stops at the first missing trie edge");
+
+  const second = await service.matchPageTokens(tokens);
+  assert.equal(second.metrics.indexCacheHit, true);
+  assert.equal(second.metrics.indexBuildMs, 0);
+  assert.deepEqual(second.wordMatches, first.wordMatches);
+  assert.deepEqual(second.phraseMatches, first.phraseMatches);
+
+  await service.setStatus("walk", 2);
+  const afterMutation = await service.matchPageTokens(tokens);
+  assert.equal(afterMutation.metrics.indexCacheHit, false, "a new immutable record Map rebuilds the lexical index");
+  assert.equal(afterMutation.wordMatches[0].status, 2);
+  const exactPhrase = await service.matchPageTokens(["walk", "home"]);
+  assert.equal(exactPhrase.phraseMatches[0].storageKey, "walk home",
+    "an exact saved phrase takes precedence over an inflection-family sibling");
+  const inflectedPhrase = await service.matchPageTokens(["walking", "home"]);
+  assert.equal(inflectedPhrase.phraseMatches[0].storageKey, "walked home",
+    "an inflected phrase uses the same deterministic family tie-break as a term query");
+  await assert.rejects(service.matchPageTokens(["not canonical"]), /single normalized surfaces/);
+});
+
 test("undefined differs from KNOWN and statuses 1 through 5 persist", async () => {
   const adapter = new MemoryAdapter();
   const service = makeService(adapter);

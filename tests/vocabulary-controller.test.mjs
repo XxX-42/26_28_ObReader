@@ -80,7 +80,7 @@ function makeRuntime() {
       return overlay;
     },
   });
-  const textLayer = {};
+  const textLayer = { contains(node) { return textNodes.includes(node); } };
   const pageRoot = {
     querySelector(selector) { return selector === ".textLayer" ? textLayer : null; },
     contains(node) { return node === pageRoot || node?.parent === pageRoot; },
@@ -189,7 +189,7 @@ test("PDF scale, page resize and text-layer relayout redraw cached highlights wi
   runtime.flushAnimationFrames();
   assert.equal(overlay.draws.length, 4,
     "same-node text-layer reflow updates geometry instead of retaining stale canvas pixels");
-  assert.equal(runtime.getScanCalls(), 2, "only the text-layer event scans its visible page");
+  assert.equal(runtime.getScanCalls(), 1, "scale and same-node text-layer reflow do not rescan lexical tokens");
   assert.equal(runtime.posted.length, 1, "layout redraws do not query the vocabulary host again");
 
   runtime.controller.dispose();
@@ -213,7 +213,8 @@ test("enabled controller queries only visible/rendered pages and phrase results 
   const runtime = makeRuntime();
   runtime.controller.setDocument("doc-1", 7, true);
   assert.equal(runtime.posted.length, 1);
-  assert.deepEqual(runtime.posted[0].keys, ["alpha", "beta", "gamma", "alpha beta", "alpha beta gamma", "beta gamma"]);
+  assert.deepEqual(runtime.posted[0].tokens, ["alpha", "beta", "gamma"]);
+  assert.equal(runtime.posted[0].keys, undefined, "the reader no longer materializes page n-gram query strings");
   assert.equal(runtime.posted[0].pageNumber, 1);
   assert.equal(runtime.controller.pages.size, 1, "a 50-page document did not trigger whole-document scanning");
   assert.equal(runtime.overlays.length, 1);
@@ -238,6 +239,7 @@ test("enabled controller queries only visible/rendered pages and phrase results 
     assert.equal(runtime.posted.length, 1, "canvas rerenders reuse page-local results without querying again");
     runtime.replaceTextNodes();
     runtime.listeners.get("textlayerrendered")({ pageNumber: 1 });
+    assert.equal(runtime.getScanCalls(), 2, "a true PDF.js TextNode replacement refreshes the physical token map");
     assert.equal(runtime.posted.length, 1, "same vocabulary keys reuse results after PDF.js replaces physical TextNodes");
     assert.ok(runtime.overlays[0].draws.length >= 2, "cached records are rebound to the replacement text layer");
     assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
@@ -251,6 +253,72 @@ test("enabled controller queries only visible/rendered pages and phrase results 
     assert.equal(runtime.overlays[0].disposeCount, 1);
     assert.equal(runtime.listeners.size, 0);
   });
+});
+
+test("page token response caches lexical ranges so zoom only redraws geometry", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const query = runtime.posted[0];
+  assert.deepEqual(query.tokens, ["alpha", "beta", "gamma"]);
+  assert.equal(query.keys, undefined);
+  let phraseMatchCalls = 0;
+  runtime.controller.phraseMatcher = () => { phraseMatchCalls += 1; return []; };
+  assert.equal(runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+    wordMatches: [
+      { index: 0, key: "alpha", storageKey: "alpha", type: "word", status: 4 },
+    ],
+    phraseMatches: [
+      { startIndex: 1, endIndex: 3, key: "beta gamma", storageKey: "beta gamma", type: "phrase", status: 3 },
+    ],
+    metrics: { indexBuildMs: 4, matchMs: 2, trieSteps: 3 },
+  }), true);
+  const page = runtime.controller.pages.get("1");
+  assert.equal(page.queryMetrics.viewerTokenCount, 3);
+  assert.ok(page.queryMetrics.textLayerScanMs >= 0);
+  assert.ok(page.queryMetrics.hostRoundTripMs >= 0);
+  const overlay = runtime.overlays[0];
+  assert.deepEqual(overlay.draws[0].map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 4], ["beta", 3], ["gamma", 3],
+  ]);
+  assert.equal(phraseMatchCalls, 0, "host-provided token ranges avoid rebuilding a phrase matcher in the viewer");
+
+  runtime.listeners.get("scalechanging")({ scale: 1.25 });
+  runtime.flushAnimationFrames();
+  assert.equal(overlay.draws.length, 2);
+  assert.equal(phraseMatchCalls, 0, "zoom uses cached lexical ranges and only remeasures/draws geometry");
+  assert.equal(runtime.posted.length, 1, "zoom does not re-query the host");
+  assert.equal(page.renderMetrics.highlightedTokenCount, 3);
+  assert.ok(page.renderMetrics.overlayGeometryAndPaintMs >= 0);
+  runtime.controller.dispose();
+});
+
+test("compact lexical result cache is bounded to nine recently visited pages", () => {
+  const runtime = makeRuntime();
+  const textLayer = runtime.pageRoot.querySelector(".textLayer");
+  for (let pageNumber = 3; pageNumber <= 10; pageNumber += 1) {
+    runtime.pages.set(pageNumber, {
+      querySelector(selector) { return selector === ".textLayer" ? textLayer : null; },
+      contains(node) { return node === this || node?.parent === this; },
+    });
+  }
+  runtime.controller.setDocument("doc-1", 7, true);
+  for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
+    runtime.setVisiblePageIds([pageNumber]);
+    if (pageNumber > 1) runtime.listeners.get("updateviewarea")();
+    const query = runtime.posted.at(-1);
+    assert.equal(query.pageNumber, pageNumber);
+    assert.equal(runtime.controller.handlePageResults({
+      documentId: "doc-1", openRequest: 7, pageNumber,
+      requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+      wordMatches: [], phraseMatches: [], metrics: {},
+    }), true);
+  }
+  assert.equal(runtime.controller.pageResultCache.size, 9);
+  assert.equal(runtime.controller.pageResultCache.has(1), false, "the least recently visited page was evicted");
+  assert.deepEqual([...runtime.controller.pages.keys()], ["10"], "live geometry remains limited to visible pages");
+  runtime.controller.dispose();
 });
 
 test("known words and phrases (status 5) are included in the vocabulary highlight overlay", () => {
