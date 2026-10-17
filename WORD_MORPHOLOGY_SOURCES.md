@@ -21,6 +21,6 @@ WordDecoder 的 [Sources & License](https://github.com/RichardoZhao/WordDecoder#
 - `node --test tests/vocabulary-word-morphology.test.mjs tests/vocabulary-controller.test.mjs tests/vocabulary-bridge-open-state.test.mjs tests/vocabulary-presentation.test.mjs`：37 项通过，覆盖候选构词、保守拒绝、全局持久化失败回退、同宿主写入串行、多 Reader 广播、旧 renderer/open 拒绝及现有词汇语义。
 - `node --test tests/vocabulary-word-morphology-browser.test.mjs`：桌面 1280px、触控 390px 与 220px 窄视口通过；模式等待宿主确认、卡片重开保留选择、模式与等级控件可达，未新增页面查询。
 - 现有完整 `vocabulary-pill-layout-browser` 桌面/窄触控布局回归通过；另在同一真实 PDF.js 测试宿主捕获 subscription 构词展开的桌面/触控截图，人工检查了布局与暗色可读性。
-- 构建继续验证 402 个冻结 vendor 文件；三文件离线 smoke 覆盖原有 5 种批注的保存重开及批量删除不复活。此支线不变更版本、不部署、不修改源 PDF/批注存储。
+- 构建继续验证 402 个冻结 vendor 文件；三文件离线 smoke 覆盖原有 5 种批注的保存重开及批量删除不复活。构词逻辑不修改源 PDF/批注存储；最终集成发布记录见 `LINGQ_WORD_ROOTS_0.11.7.md`。
 
 iPad 证据为 Chromium 触控模拟，尚无本轮 iPadOS/WKWebView 实机验收；53 条人工关系和有限词基不能保证所有英语词均可拆分。

@@ -1062,9 +1062,13 @@ export class VocabularyController {
     for (const { mode, button } of pill.modeButtons) {
       button.setAttribute("aria-pressed", String(mode === this.wordDisplayMode));
     }
-    const analysis = analyzeEnglishWord(pill.entry.rawSurface);
+    if (!expanded) {
+      this.scheduleEntryPillLayout();
+      return;
+    }
     const roots = this.wordDisplayMode === "roots";
-    pill.morphologyParts.textContent = roots && analysis.supported
+    const analysis = roots ? (pill.wordAnalysis ||= analyzeEnglishWord(pill.entry.rawSurface)) : null;
+    pill.morphologyParts.textContent = analysis?.supported
       ? analysis.parts.map((part) => `${part.form}（${part.meaning}）`).join(" + ")
       : pill.entry.rawSurface;
     pill.morphologyNote.textContent = roots ? analysis.note : "全词显示。此设置应用于所有词条卡。";
