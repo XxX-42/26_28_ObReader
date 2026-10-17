@@ -222,6 +222,7 @@
     constructor({
       getManager = () => null,
       getPdfViewer = () => null,
+      getEventBus = () => null,
       getEraser = () => null,
       getEditorMode = () => 0,
       getPdfViewerMode = () => 0,
@@ -236,6 +237,7 @@
     } = {}) {
       this.getManager = getManager;
       this.getPdfViewer = getPdfViewer;
+      this.getEventBus = getEventBus;
       this.getEraser = getEraser;
       this.getEditorMode = getEditorMode;
       this.getPdfViewerMode = getPdfViewerMode;
@@ -247,6 +249,57 @@
       this.clearPendingHighlight = clearPendingHighlight;
       this.clearToolWheel = clearToolWheel;
       this.onTransformCancel = onTransformCancel;
+      this.pendingReadModeRequest = null;
+    }
+
+    requestReadMode({ isSafe = () => true, isCurrent = () => true } = {}) {
+      if (typeof isSafe !== "function" || typeof isCurrent !== "function") return false;
+      this.cancelPendingReadMode();
+      if (!isCurrent()) return false;
+      const request = { isSafe, isCurrent };
+      this.pendingReadModeRequest = request;
+      try {
+        // This reports that a request was dispatched or queued. It is not an
+        // acknowledgment that PDF.js applied the requested mode.
+        return this.notifyInputBoundary() || this.pendingReadModeRequest === request;
+      } catch (error) {
+        if (this.pendingReadModeRequest === request) this.pendingReadModeRequest = null;
+        throw error;
+      }
+    }
+
+    notifyInputBoundary() {
+      const request = this.pendingReadModeRequest;
+      if (!request) return false;
+      try {
+        if (!request.isCurrent()) {
+          this.pendingReadModeRequest = null;
+          return false;
+        }
+        if (!request.isSafe()) return false;
+        const eventBus = this.getEventBus();
+        if (typeof eventBus?.dispatch !== "function") return false;
+        // Clear before dispatch: event listeners can synchronously reenter the
+        // bridge, and a dispatch failure must not leave an automatic retry
+        // that could later override an explicitly selected tool.
+        this.pendingReadModeRequest = null;
+        eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 0,
+          isFromKeyboard: false,
+          createNewEditor: false,
+        });
+        return true;
+      } catch (error) {
+        if (this.pendingReadModeRequest === request) this.pendingReadModeRequest = null;
+        throw error;
+      }
+    }
+
+    cancelPendingReadMode() {
+      if (!this.pendingReadModeRequest) return false;
+      this.pendingReadModeRequest = null;
+      return true;
     }
 
     pointerInteractionKind(intent, {

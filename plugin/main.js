@@ -751,6 +751,20 @@ function sanitizeInputDiagnostics(value) {
     pointerEventsDropped: clampDiagnosticInteger(value.pointerEventsDropped, 0, Number.MAX_SAFE_INTEGER) ?? 0,
     activePointers: clampDiagnosticInteger(value.activePointers, 0, 64) ?? 0,
     pointers,
+    ...(Number.isSafeInteger(value.editorMode) ? {
+      editorMode: clampDiagnosticInteger(value.editorMode, 0, 1024),
+    } : {}),
+    ...(typeof value.vocabularyEnabled === "boolean" ? {
+      vocabularyEnabled: value.vocabularyEnabled,
+    } : {}),
+    ...(value.annotationTrackingFailure && typeof value.annotationTrackingFailure === "object" ? {
+      annotationTrackingFailure: {
+        phase: String(value.annotationTrackingFailure.phase || "").slice(0, 100),
+        code: String(value.annotationTrackingFailure.code || "").slice(0, 100),
+        revision: clampDiagnosticInteger(value.annotationTrackingFailure.revision, 0, Number.MAX_SAFE_INTEGER),
+        count: clampDiagnosticInteger(value.annotationTrackingFailure.count, 0, Number.MAX_SAFE_INTEGER),
+      },
+    } : {}),
   };
 }
 

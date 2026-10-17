@@ -583,6 +583,7 @@ test("empty undo/redo does not mark the PDF dirty, while an editor change still 
     function reconcileSavedEditorHistory() {}
     function queueFreeTextAppearanceRepair() {}
     function discardDeferredAccessibilityMove() {}
+    function runAnnotationObserver(_phase, observe) { return observe(); }
     ${helpers}
     observeEditorManager(app);
     return { state, app, manager, nextUndoChange() { changeOnUndo = true; } };
