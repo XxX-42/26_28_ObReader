@@ -27,6 +27,7 @@ function createVocabularyRuntime({ adapter, personalService, deviceId, sessionId
   let serial = Promise.resolve();
   let recoveryPromise = null;
   let reviewOpening = null;
+  let closeOperation = null;
 
   async function validateReferences(_candidate, { removedFamilyKeys = [] } = {}) {
     if (!removedFamilyKeys.length) return true;
@@ -127,15 +128,21 @@ function createVocabularyRuntime({ adapter, personalService, deviceId, sessionId
   }
 
   async function close() {
+    if (closeOperation) return closeOperation;
     // A workspace which was never opened has no state to flush and must not
     // create files merely because the plugin is unloading.
     if (!initialization) return { status: "noop" };
-    await serial;
-    if (reviewOpening) await reviewOpening;
-    await ready();
-    if (review.getStatus() && !review.getStatus().closed) await review.close();
-    await personalService.flush();
-    return { status: "closed" };
+    const pending = (async () => {
+      await serial;
+      if (reviewOpening) await reviewOpening;
+      await ready();
+      if (review.getStatus() && !review.getStatus().closed) await review.close();
+      await personalService.flush();
+      return { status: "closed" };
+    })();
+    closeOperation = pending;
+    try { return await pending; }
+    finally { if (closeOperation === pending) closeOperation = null; }
   }
 
   return Object.freeze({ coordinator, history, contexts, review, personalService, ready, ensureReviewSession, recoverReviewSessions,

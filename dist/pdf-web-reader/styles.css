@@ -207,6 +207,18 @@
   overflow-wrap: anywhere;
 }
 
+.vocabulary-workbench__review-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.vocabulary-workbench__review-actions > button {
+  min-width: 4.2rem;
+  min-height: 2.75rem;
+}
+
 .vocabulary-workbench__list {
   display: flex;
   flex-direction: column;
@@ -321,6 +333,14 @@
 
   .vocabulary-workbench__row > button {
     flex: 1 1 100%;
+  }
+
+  .vocabulary-workbench__review-actions {
+    flex: 1 1 100%;
+  }
+
+  .vocabulary-workbench__review-actions > button {
+    flex: 1 1 5rem;
   }
 
   .vocabulary-workbench__filters > .vocabulary-workbench__field,

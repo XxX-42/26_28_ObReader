@@ -61,34 +61,44 @@ GC is authorized by this task.
 
 ## Phase C — Workbench
 
-- [ ] Shared desktop/mobile view: personal search, status/type filters, 100-row
+- [x] Shared desktop/mobile view: personal search, status/type filters, 100-row
   pages, edit translation/note, enroll/unenroll, bulk review, Context/History.
-- [ ] List never queries ECDICT or renders all 25,000 rows; dictionary access is
+- [x] List never queries ECDICT or renders all 25,000 rows; dictionary access is
   restricted to explicit entry details.
-- [ ] Explicit JSON import validates known snapshot/bundle schemas before applying records; a newer vocabulary envelope is rejected rather than flattened into a legacy records array. Preserve raw-array legacy import compatibility.
-- [ ] JSON is a consistent logical vocabulary/review/context backup behind a
+- [x] Explicit JSON import validates known snapshot/bundle schemas before applying records; a newer vocabulary envelope is rejected rather than flattened into a legacy records array. Preserve raw-array legacy import compatibility.
+- [x] JSON is a consistent logical vocabulary/review/context backup behind a
   read barrier including acknowledged journals; failed export cannot claim full
   backup. CSV retains legacy fields and explains its omissions.
-- [ ] Functional/UI tests pass, with a separate commit and integration merge.
+- [x] Functional/UI tests pass, with a separate commit and integration merge
+  (`85a02e2` / `5f8fa3a`).
 
 ## Phase D — Context Notebook
 
-- [ ] Word card captures only existing current-page text/selection, previews a
+- [x] Word card captures only existing current-page text/selection, previews a
   sentence, then saves a verified existing Anchor and vocabulary Context.
-- [ ] Stable tuple dedupe, multiple sources, document rename/move navigation;
+- [x] Stable tuple dedupe, multiple sources, document rename/move navigation;
   invalid source/Anchor identity is explicit and never guesses coordinates or
   scans the entire PDF.
-- [ ] Tests pass, with a separate commit and integration merge.
+- [x] Tests pass, with a separate commit and integration merge (`f5a258b` /
+  `35a8f91`).
 
 ## Phase E — Today Review
 
-- [ ] Opt-in queue excludes Known by default; remember/forget follow the exact
+- [x] Opt-in queue excludes Known by default; remember/forget follow the exact
   box intervals; skip writes nothing; time zones affect display only.
-- [ ] A rating waits only for its small verified durable journal; it does not
+- [x] A rating waits only for its small verified durable journal; it does not
   rewrite `en.vocab.json`, query the dictionary, scan PDF, or rebuild the Trie.
-- [ ] Session resume, batch flush and Known demotion restore the preserved due
+- [x] Session resume, batch flush and Known demotion restore the preserved due
   state. Review never changes LingQ status.
-- [ ] Tests pass, with a separate commit and integration merge.
+- [x] Review behavior tests, Fast Gate, ten-round Race Gate, and final
+  Functional Browser Gate pass; phase report and evidence are in
+  [phase-e-review.md](phase-e-review.md). The first Browser run's one
+  non-reproducible frozen iPad lifecycle failure remains recorded.
+
+Implementation and the targeted Review/UI tests are recorded in
+[phase-e-review.md](phase-e-review.md). Phase E remains unaccepted until the
+full Browser Gate's frozen iPad pointer lifecycle failure is characterized;
+that unchanged boundary is outside the Review change set.
 
 ## Phase F — hardening and candidate delivery
 

@@ -17955,6 +17955,7 @@ var __PDFReaderVocabularyWorkspace = (() => {
               closed: false,
               timer: null,
               lastError: null,
+              skippedFamilyKeys: /* @__PURE__ */ new Set(),
               journal,
               summarySnapshot,
               summary: clone(summary),
@@ -18130,9 +18131,16 @@ var __PDFReaderVocabularyWorkspace = (() => {
           return enqueue(async () => {
             const active = requireOpen();
             validateFamilyKey(familyKey);
-            if (kind === "skip") return { status: "skipped", writes: 0, journalActions: active.journal.actions.length };
-            if (!["enroll", "unenroll", "remember", "forget"].includes(kind)) {
+            if (!["enroll", "unenroll", "remember", "forget", "skip"].includes(kind)) {
               throw codedError("VOCAB_REVIEW_ACTION_INVALID", "Unsupported Review action.");
+            }
+            const family = await familyFor(familyKey);
+            if (family.status === 5 && kind !== "unenroll") {
+              return { status: "known-filtered", familyKey, writes: 0 };
+            }
+            if (kind === "skip") {
+              active.skippedFamilyKeys.add(familyKey);
+              return { status: "skipped", familyKey, writes: 0, journalActions: active.journal.actions.length };
             }
             const actionId = validateActionId(options.actionId || "review-action-" + makeId());
             const existing = active.journal.actions.find((item) => item.actionId === actionId);
@@ -18147,10 +18155,6 @@ var __PDFReaderVocabularyWorkspace = (() => {
                 lastActionId: existing.actionId
               };
               return { status: "duplicate", actionId, sequence: existing.sequence, state: clone(after), writes: 0 };
-            }
-            const family = await familyFor(familyKey);
-            if (family.status === 5 && kind !== "unenroll") {
-              return { status: "known-filtered", actionId, familyKey, writes: 0 };
             }
             const current = active.workingRecords.get(familyKey) || null;
             const time = readUtcNow(now);
@@ -18248,15 +18252,27 @@ var __PDFReaderVocabularyWorkspace = (() => {
           }
           const cursor = decodeCursor(options.cursor);
           const time = readUtcNow(now);
-          const candidates = [...active.workingRecords.values()].filter((record) => record.enrolled && record.dueAt <= time).sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.familyKey.localeCompare(right.familyKey));
-          const eligible = [];
-          for (const state of candidates) {
-            const family = await familyFor(state.familyKey);
-            if (family.status !== 5) eligible.push({ familyKey: state.familyKey, dueAt: state.dueAt, state: clone(state), family });
+          const candidates = [...active.workingRecords.values()].filter((record) => record.enrolled && record.dueAt <= time && !active.skippedFamilyKeys.has(record.familyKey)).sort((left, right) => left.dueAt.localeCompare(right.dueAt) || left.familyKey.localeCompare(right.familyKey));
+          const eligiblePage = [];
+          let eligibleCount = 0;
+          const isAfterCursor = (state) => !cursor || state.dueAt > cursor.dueAt || state.dueAt === cursor.dueAt && state.familyKey > cursor.familyKey;
+          const lookupBatchSize = 256;
+          for (let offset = 0; offset < candidates.length; offset += lookupBatchSize) {
+            const batch = candidates.slice(offset, offset + lookupBatchSize);
+            const families = await Promise.all(batch.map((state) => familyFor(state.familyKey)));
+            for (let index = 0; index < batch.length; index += 1) {
+              const state = batch[index];
+              const family = families[index];
+              if (family.status === 5) continue;
+              eligibleCount += 1;
+              if (isAfterCursor(state) && eligiblePage.length <= limit) {
+                eligiblePage.push({ familyKey: state.familyKey, dueAt: state.dueAt, state: clone(state), family });
+              }
+            }
           }
-          const after = cursor ? eligible.filter((item) => item.dueAt > cursor.dueAt || item.dueAt === cursor.dueAt && item.familyKey > cursor.familyKey) : eligible;
-          const items = after.slice(0, limit);
-          return { items, total: eligible.length, nextCursor: after.length > limit ? encodeCursor(items.at(-1)) : null };
+          const hasNext = eligiblePage.length > limit;
+          const items = eligiblePage.slice(0, limit);
+          return { items, total: eligibleCount, nextCursor: hasNext ? encodeCursor(items.at(-1)) : null };
         }
         async function currentPreconditions(storeEntries) {
           const preconditions = [];
@@ -18275,6 +18291,15 @@ var __PDFReaderVocabularyWorkspace = (() => {
           return preconditions;
         }
         async function closeUnlocked() {
+          if (session?.closed) {
+            return {
+              status: "closed",
+              sessionId: session.sessionId,
+              actions: session.journal.actions.length,
+              historyBatchId: null,
+              checkpoint: { status: "unchanged" }
+            };
+          }
           const active = requireOpen({ allowClosing: true });
           active.closing = true;
           cancelIdleFlush();
@@ -18634,6 +18659,7 @@ var __PDFReaderVocabularyWorkspace = (() => {
         let serial = Promise.resolve();
         let recoveryPromise = null;
         let reviewOpening = null;
+        let closeOperation = null;
         async function validateReferences(_candidate, { removedFamilyKeys = [] } = {}) {
           if (!removedFamilyKeys.length) return true;
           const removed = new Set(removedFamilyKeys);
@@ -18739,13 +18765,22 @@ var __PDFReaderVocabularyWorkspace = (() => {
           });
         }
         async function close() {
+          if (closeOperation) return closeOperation;
           if (!initialization) return { status: "noop" };
-          await serial;
-          if (reviewOpening) await reviewOpening;
-          await ready();
-          if (review.getStatus() && !review.getStatus().closed) await review.close();
-          await personalService.flush();
-          return { status: "closed" };
+          const pending = (async () => {
+            await serial;
+            if (reviewOpening) await reviewOpening;
+            await ready();
+            if (review.getStatus() && !review.getStatus().closed) await review.close();
+            await personalService.flush();
+            return { status: "closed" };
+          })();
+          closeOperation = pending;
+          try {
+            return await pending;
+          } finally {
+            if (closeOperation === pending) closeOperation = null;
+          }
         }
         return Object.freeze({
           coordinator,
@@ -22016,6 +22051,16 @@ var __PDFReaderVocabularyWorkbench = (() => {
         const showNotice = typeof Notice === "function" ? (message) => new Notice(message) : () => {
         };
         const utf8ByteLength = (value) => new TextEncoder().encode(String(value)).byteLength;
+        let reviewActionFallbackSequence = 0;
+        const formatLocalReviewTime = (value) => {
+          const time = Date.parse(String(value || ""));
+          if (!Number.isFinite(time)) return "\u65F6\u95F4\u5F85\u786E\u8BA4";
+          try {
+            return new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "short" }).format(new Date(time));
+          } catch {
+            return new Date(time).toLocaleString();
+          }
+        };
         class VocabularyWorkbenchModal extends Modal {
           constructor(app, api) {
             super(app);
@@ -22040,6 +22085,8 @@ var __PDFReaderVocabularyWorkbench = (() => {
             this.preview = null;
             this.contextPageState = { familyKey: null, cursors: [null], index: 0, nextCursor: null, generation: 0 };
             this.reviewPageState = { cursors: [null], index: 0, nextCursor: null, generation: 0 };
+            this.reviewSkippedFamilyKeys = /* @__PURE__ */ new Set();
+            this.reviewActionIds = /* @__PURE__ */ new Map();
             this.historyPageIndex = 0;
             this.historyBatches = [];
             this.historyPreviewPages = /* @__PURE__ */ new Map();
@@ -22574,7 +22621,7 @@ var __PDFReaderVocabularyWorkbench = (() => {
           }
           _renderReview(epoch) {
             this.panel.createEl("h3", { text: "\u4ECA\u65E5\u590D\u4E60" });
-            this.panel.createEl("p", { text: "\u8FD9\u91CC\u53EA\u663E\u793A\u5DF2\u5230\u671F\u4E14\u672A\u88AB\u201C\u5DF2\u77E5\u201D\u72B6\u6001\u8FC7\u6EE4\u7684\u8BCD\u65CF\u3002\u672C\u9636\u6BB5\u63D0\u4F9B\u67E5\u770B\u4E0E\u6279\u91CF\u7EF4\u62A4\uFF1B\u8BC4\u5206\u64CD\u4F5C\u5C06\u5728\u540E\u7EED\u9636\u6BB5\u63A5\u5165\u3002" });
+            this.panel.createEl("p", { text: "\u9009\u62E9\u201C\u8BB0\u4F4F\u201D\u6216\u201C\u5FD8\u8BB0\u201D\u66F4\u65B0\u590D\u4E60\u8FDB\u5EA6\uFF1B\u201C\u8DF3\u8FC7\u201D\u53EA\u5728\u672C\u6B21\u6253\u5F00\u7684\u590D\u4E60\u4F1A\u8BDD\u4E2D\u9690\u85CF\u8BE5\u8BCD\uFF0C\u4E0D\u5199\u5165\u590D\u4E60\u8BB0\u5F55\u3002" });
             const list = this.panel.createDiv({ cls: "vocabulary-workbench__list", attr: { "data-role": "review-list", "aria-busy": "true" } });
             const pagination = this.panel.createDiv({ cls: "vocabulary-workbench__pagination", attr: { "data-role": "review-pagination" } });
             this._button(pagination, "\u4E0A\u4E00\u9875", "review-previous", () => {
@@ -22608,12 +22655,13 @@ var __PDFReaderVocabularyWorkbench = (() => {
               const items = Array.isArray(page?.items) ? page.items : [];
               if (items.length > PAGE_SIZE) throw new Error(`Review \u670D\u52A1\u8FD4\u56DE\u4E86 ${items.length} \u6761\u8BB0\u5F55\uFF0C\u8D85\u8FC7\u6BCF\u9875 ${PAGE_SIZE} \u6761\u4E0A\u9650\uFF1B\u672A\u663E\u793A\u622A\u65AD\u6570\u636E\u3002`);
               state.nextCursor = page?.nextCursor || null;
-              for (const item of items) {
+              const visibleItems = items.filter((item) => !this.reviewSkippedFamilyKeys.has(item.familyKey));
+              for (const item of visibleItems) {
                 const row = list.createDiv({ cls: "vocabulary-workbench__row vocabulary-workbench__review-row", attr: { "data-role": "review-row" } });
                 const record = item.family?.records?.[0] || {};
                 const main = row.createDiv({ cls: "vocabulary-workbench__row-main" });
                 main.createEl("strong", { text: record.surface || item.familyKey || "\u8BCD\u65CF" });
-                main.createEl("span", { text: `\u5230\u671F\uFF1A${item.dueAt || item.state?.dueAt || "\u4ECA\u5929"}` });
+                main.createEl("span", { text: `\u7B2C ${item.state?.box || 1} \u7BB1 \xB7 \u5230\u671F\uFF1A${formatLocalReviewTime(item.dueAt || item.state?.dueAt)}` });
                 if (record.translation) main.createEl("span", { text: record.translation });
                 const open = this._button(row, "\u8BCD\u5E93\u8BE6\u60C5", `review-details-${this._safeActionKey(item.familyKey)}`, () => {
                   this.selectedFamilyKey = item.familyKey;
@@ -22623,19 +22671,54 @@ var __PDFReaderVocabularyWorkbench = (() => {
                   this._openDetails(item.familyKey);
                 }, { cls: "vocabulary-workbench__secondary" });
                 open.setAttribute?.("aria-label", `\u5728\u8BCD\u5E93\u4E2D\u67E5\u770B ${record.surface || "\u8BCD\u65CF"}`);
+                const actions = row.createDiv({ cls: "vocabulary-workbench__review-actions", attr: { role: "group", "aria-label": `\u590D\u4E60 ${record.surface || "\u8BCD\u65CF"}` } });
+                for (const [kind, label] of [["remember", "\u8BB0\u4F4F"], ["forget", "\u5FD8\u8BB0"], ["skip", "\u8DF3\u8FC7"]]) {
+                  const button = this._button(
+                    actions,
+                    label,
+                    `review-${kind}-${this._safeActionKey(item.familyKey)}`,
+                    () => this._runReviewAction(kind, item.familyKey, epoch, list, pagination),
+                    { cls: kind === "skip" ? "vocabulary-workbench__secondary" : "" }
+                  );
+                  button.setAttribute?.("aria-label", `${label}\uFF1A${record.surface || "\u8BCD\u65CF"}`);
+                }
               }
-              if (!items.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: "\u4ECA\u5929\u6CA1\u6709\u5230\u671F\u7684\u590D\u4E60\u8BCD\u65CF\u3002" });
+              if (!visibleItems.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: items.length ? "\u672C\u9875\u5230\u671F\u8BCD\u65CF\u5DF2\u5728\u672C\u6B21\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u53EF\u7EE7\u7EED\u7FFB\u9875\u3002" : "\u4ECA\u5929\u6CA1\u6709\u5230\u671F\u7684\u590D\u4E60\u8BCD\u65CF\u3002" });
               pagination.setAttribute?.("data-page", String(state.index + 1));
               const previous = pagination.querySelector?.('[data-action="review-previous"]');
               const next = pagination.querySelector?.('[data-action="review-next"]');
               if (previous) previous.disabled = state.index === 0;
               if (next) next.disabled = !state.nextCursor;
-              this._setStatus(`\u4ECA\u65E5\u590D\u4E60\u7B2C ${state.index + 1} \u9875 \xB7 \u5171 ${Number(page?.total || items.length)} \u4E2A\u8BCD\u65CF`);
+              this._setStatus(`\u4ECA\u65E5\u590D\u4E60\u7B2C ${state.index + 1} \u9875 \xB7 \u5171 ${Number(page?.total ?? items.length)} \u4E2A\u8BCD\u65CF`);
             } catch (error) {
               if (this._isCurrent(epoch) && generation === state.generation) this._showError(error);
             } finally {
               if (this._isCurrent(epoch) && generation === state.generation) list.setAttribute?.("aria-busy", "false");
             }
+          }
+          async _runReviewAction(kind, familyKey, epoch, list, pagination) {
+            if (typeof this.api.applyReviewAction !== "function") throw new Error("\u590D\u4E60\u8BC4\u5206\u670D\u52A1\u5C1A\u672A\u8FDE\u63A5\u3002");
+            const actionKey = `${kind}\0${familyKey}`;
+            let actionId = this.reviewActionIds.get(actionKey);
+            if (!actionId) {
+              const randomId = globalThis.crypto?.randomUUID?.();
+              actionId = `workbench-review-${randomId || `${Date.now().toString(36)}-${++reviewActionFallbackSequence}`}`;
+              this.reviewActionIds.set(actionKey, actionId);
+            }
+            const label = { remember: "\u8BB0\u4F4F", forget: "\u5FD8\u8BB0", skip: "\u8DF3\u8FC7" }[kind] || "\u590D\u4E60";
+            this._setStatus(`\u6B63\u5728${label}\u2026`);
+            const result = await this.api.applyReviewAction({ kind, familyKey, actionId });
+            if (!this._isCurrent(epoch)) return;
+            this.reviewActionIds.delete(actionKey);
+            if (kind === "skip" && result?.status === "skipped") this.reviewSkippedFamilyKeys.add(familyKey);
+            if (result?.status === "known-filtered") this.reviewSkippedFamilyKeys.add(familyKey);
+            if (result?.status === "known-filtered") this._setStatus("\u8BE5\u8BCD\u65CF\u5DF2\u6807\u4E3A\u5DF2\u77E5\uFF0C\u672A\u5199\u5165\u590D\u4E60\u72B6\u6001\u3002");
+            else if (result?.status === "not-due") this._setStatus("\u8BE5\u8BCD\u65CF\u5DF2\u4E0D\u5728\u5230\u671F\u961F\u5217\u4E2D\uFF1B\u5217\u8868\u5DF2\u5237\u65B0\u3002");
+            else this._setStatus(kind === "skip" ? "\u5DF2\u5728\u672C\u6B21\u590D\u4E60\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u672A\u5199\u5165\u6301\u4E45\u6570\u636E\u3002" : `${label}\u5DF2\u786E\u8BA4\u3002`);
+            this.reviewPageState.cursors = [null];
+            this.reviewPageState.index = 0;
+            this.reviewPageState.nextCursor = null;
+            return this._loadReviewPage(epoch, list, pagination);
           }
           _renderHistory(epoch) {
             this.panel.createEl("h3", { text: "\u5386\u53F2" });
@@ -30678,6 +30761,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       listDueReview: async (options) => {
         const runtime = await get();
         return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
+      },
+      applyReviewAction: async ({ kind, familyKey, actionId } = {}) => {
+        if (!["remember", "forget", "skip"].includes(kind)) throw new TypeError("复习操作必须是 remember、forget 或 skip。");
+        if (typeof familyKey !== "string" || !familyKey || familyKey.length > 4096) throw new TypeError("复习词族身份无效。");
+        if (typeof actionId !== "string" || !actionId || actionId.length > 256 || /[\\/\u0000-\u001f\u007f]/.test(actionId)) {
+          throw new TypeError("复习操作需要稳定且安全的 action ID。");
+        }
+        const runtime = await get();
+        return runtime.exclusive(async () => {
+          const review = await runtime.ensureReviewSession();
+          return review[kind](familyKey, { actionId });
+        });
       },
       listHistory: async () => ({ batches: await (await get()).history.listBatches() }),
       previewHistory: async (batchId, options) => (await get()).history.previewRestore(batchId, options),

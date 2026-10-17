@@ -123,6 +123,22 @@ test("acknowledged review actions recover before a new session and never rewrite
   await second.runtime.close();
 });
 
+test("concurrent and repeated controlled close share one Review finalization", async () => {
+  const current = fixture();
+  await current.runtime.mutatePersonal((service) => service.upsertTerm("walk", { status: 2 }));
+  const family = await current.service.getFamily("walk");
+  const review = await current.runtime.ensureReviewSession();
+  await review.enroll(family.familyKey, { actionId: "close-race-enroll" });
+  await review.remember(family.familyKey, { actionId: "close-race-remember" });
+
+  const results = await Promise.all([current.runtime.close(), current.runtime.close(), current.runtime.close()]);
+  assert.deepEqual(results.map((result) => result.status), ["closed", "closed", "closed"]);
+  const batches = await current.runtime.history.listBatches();
+  assert.equal(batches.filter((batch) => batch.batchId === `review-final:${review.getStatus().sessionId}`).length, 1);
+  assert.equal(review.getStatus().closed, true);
+  assert.equal((await current.runtime.close()).status, "closed", "a later close is idempotent too");
+});
+
 test("a torn native Review append can retry, finalize, and stay closed when a new runtime ensures its session", async () => {
   class TornAppendAdapter extends VocabularyMemoryAdapter {
     constructor() {

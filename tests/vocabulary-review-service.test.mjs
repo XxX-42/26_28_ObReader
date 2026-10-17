@@ -195,12 +195,6 @@ test("Review uses exact UTC Leitner transitions, filters Known without writes, a
   const vocabularyService = mockVocabularyService();
   const { service, setTime } = makeService(transaction, { vocabularyService });
   await service.openSession({ sessionId: "review-transitions" });
-  const skippedBefore = transaction.writeCount;
-  const skipped = await service.skip(WALK, { actionId: "skip-1" });
-  assert.equal(skipped.status, "skipped");
-  assert.equal(transaction.writeCount, skippedBefore);
-  assert.equal((await transaction.readJournalActions("review-transitions")).actions.length, 0);
-
   const enrolled = await service.enroll(WALK, { actionId: "enroll-1" });
   assert.equal(enrolled.status, "committed");
   assert.equal(enrolled.state.box, 1);
@@ -236,6 +230,27 @@ test("Review uses exact UTC Leitner transitions, filters Known without writes, a
   assert.equal((await service.getState(WALK)).enrolled, false);
   assert.equal((await service.getState(WALK)).box, 1);
   assert.equal(transaction.writeCount, before, "rating acknowledgements only append to the session journal before a checkpoint");
+  await service.close();
+});
+
+test("skip hides an enrolled due family only for this Review session and writes no persistent state", async () => {
+  const transaction = new FakeReviewTransactions();
+  const { service } = makeService(transaction);
+  await service.openSession({ sessionId: "review-skip-session" });
+  await service.enroll(WALK, { actionId: "skip-session-enroll" });
+  await service.flush();
+  assert.equal((await service.listDue()).total, 1);
+  const beforeWrites = transaction.writeCount;
+  const beforeActions = (await transaction.readJournalActions("review-skip-session")).actions.length;
+  const skipped = await service.skip(WALK, { actionId: "ignored-no-persistent-action-id" });
+  assert.equal(skipped.status, "skipped");
+  assert.equal(skipped.writes, 0);
+  assert.equal((await service.listDue()).total, 0);
+  assert.equal(transaction.writeCount, beforeWrites);
+  assert.equal((await transaction.readJournalActions("review-skip-session")).actions.length, beforeActions);
+  await service.close();
+  await service.openSession({ sessionId: "review-skip-next-session" });
+  assert.equal((await service.listDue()).total, 1, "a new session sees the unchanged due state again");
   await service.close();
 });
 
