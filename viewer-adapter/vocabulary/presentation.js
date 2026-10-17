@@ -49,29 +49,47 @@ export function vocabularyEntryPresentation(record) {
     ? record.status
     : null;
   const dictionaryLookupState = record?.dictionaryLookupState;
+  const dictionaryLookupCount = Number.isFinite(record?.dictionaryLookupCount)
+    ? Math.max(0, Math.floor(record.dictionaryLookupCount))
+    : 0;
+  const dictionaryLookupTotal = Number.isFinite(record?.dictionaryLookupTotal)
+    ? Math.max(0, Math.floor(record.dictionaryLookupTotal))
+    : 0;
+  const dictionaryLookupPercent = Number.isFinite(record?.dictionaryLookupPercent)
+    ? Math.min(100, Math.max(0, Math.floor(record.dictionaryLookupPercent)))
+    : dictionaryLookupTotal > 0
+      ? Math.min(100, Math.floor((dictionaryLookupCount / dictionaryLookupTotal) * 100))
+      : 0;
   const meaningState = meanings.length > 0
     ? "available"
-    : hasPersonalRecord
-      ? "not-saved-in-personal-record"
-      : dictionaryLookupState === "not-found"
-        ? "dictionary-not-found"
-        : dictionaryLookupState === "unavailable"
-          ? "dictionary-unavailable"
-          : "external-dictionary-not-queried";
+    : dictionaryLookupState === "preparing"
+      ? "dictionary-preparing"
+      : hasPersonalRecord
+        ? "not-saved-in-personal-record"
+        : dictionaryLookupState === "not-found"
+          ? "dictionary-not-found"
+          : dictionaryLookupState === "unavailable"
+            ? "dictionary-unavailable"
+            : "external-dictionary-not-queried";
   return Object.freeze({
     hasPersonalRecord,
     pronunciation,
     meanings: Object.freeze(meanings),
     meaningState,
-    meaningFallbackLabel: meaningState === "external-dictionary-not-queried"
-      ? "未查询外部词典"
-      : meaningState === "not-saved-in-personal-record"
-        ? "个人词条未保存释义"
-        : meaningState === "dictionary-not-found"
-          ? "词典中未找到释义"
-          : meaningState === "dictionary-unavailable"
-            ? "离线词典暂不可用"
-            : "",
+    dictionaryLookupCount,
+    dictionaryLookupTotal,
+    dictionaryLookupPercent,
+    meaningFallbackLabel: meaningState === "dictionary-preparing"
+      ? `词典准备中 ${dictionaryLookupPercent}%`
+      : meaningState === "external-dictionary-not-queried"
+        ? "未查询外部词典"
+        : meaningState === "not-saved-in-personal-record"
+          ? "个人词条未保存释义"
+          : meaningState === "dictionary-not-found"
+            ? "词典中未找到释义"
+            : meaningState === "dictionary-unavailable"
+              ? "离线词典暂不可用"
+              : "",
     status,
     statusLabel: status !== null
       ? STATUS_LABELS[status]

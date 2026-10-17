@@ -2232,7 +2232,8 @@ test("auto-save preference persists and is sent to open views", async () => {
 
   assert.equal(harness.plugin.settings.autoSave, false);
   assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all",
+    vocabularyWordDisplayMode: "whole" });
   assert.equal(sent.at(-1).type, "configure-auto-save");
   assert.equal(sent.at(-1).enabled, false);
 });
@@ -2249,12 +2250,14 @@ test("status bar preference defaults off and updates every live Reader immediate
   assert.ok(readers.every((view) => view.statusBarEnabled === true));
   await pending;
   assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all",
+    vocabularyWordDisplayMode: "whole" });
 
   await harness.plugin.setStatusBarEnabled(false);
   assert.ok(readers.every((view) => view.statusBarEnabled === false));
   assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all",
+    vocabularyWordDisplayMode: "whole" });
 });
 
 test("LingQ-style vocabulary setting renders off, persists across reload, and toggles the authenticated view", async () => {

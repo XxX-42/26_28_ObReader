@@ -2,6 +2,8 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
+**0.11.8 版**改用单个压缩词典资源＋本机 Dexie 4 / IndexedDB 查询缓存。Vault 的 `00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2/` 只保存 `manifest.json` 和 `entries.<SHA-256>.jsonl.gz`，ECDICT 许可证保留在上级目录。各设备首次使用时校验资源、在后台建立缓存并显示进度，后续查词按 key 读取 IndexedDB；缓存可删除重建，不参与 Sync。个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。资源构建、旧分片迁移与回滚说明见 [词典资源与缓存](DICTIONARY_RESOURCE.md)。
+
 **0.11.7 版**增加 LingQ 词条卡的全词／词根显示：点击英语标题展开构词提示和全局模式切换，确认落盘后同步所有 Reader，重新打开保留设置。构词使用原创纯 JS 候选剥离、拼写还原和有限词基验证；不引入 WordDecoder 受限词库，未覆盖词保留完整显示。详见[数据来源与覆盖限制](WORD_MORPHOLOGY_SOURCES.md)。
 
 **0.11.6 版**修复 LingQ `🔗 Link` 与普通选区链接的页面识别：读取 PDF.js 的 `data-page-number`，并验证页面根节点属于当前 Viewer，再绑定已确认的页面身份。链接创建测试覆盖真实捕获回包、190% 缩放和触控模拟。
@@ -13,8 +15,6 @@
 **0.11.3 版**修复阅读模式中已有外置绘图和文字框的鼠标命中，保留空白区域文本选择及创建工具优先级；补齐旧批注的撤销身份缓存，避免删除后撤销再次保存为墓碑。交互回归使用来源身份确认、外置操作持久确认和平台对应的文字提交快捷键；原生 WebKit 手指滚动、Pencil 和 WAL 存储未改动。
 
 **0.11.2 版**将个人学习状态与离线词典查询接通：没有个人学习记录的单词仍可显示 ECDICT 释义和音标，保存学习等级后保留当前释义。词典查询只在打开词条卡时发生，不进入页面匹配和缩放重绘链路。复制的 Reader 链接采用 `[[PDF路径#page=N&obreader=sel.ID|显示文字]]`，不再输出 `docKey`、`obdoc` 或额外的 selection 参数；旧链接仍可读取。
-
-ECDICT 原始数据与可重建查询索引均位于 `00_Archive/21_VocabularyData/dictionaries/ECDICT/`。已有 `ecdict.csv.gz` 时，可运行 `node scripts/build-ecdict-index.mjs --input <ecdict.csv.gz路径> --output <Vault路径>/00_Archive/21_VocabularyData/dictionaries/ECDICT/index-v1` 生成确定性分片。插件通过跨平台 Vault DataAdapter 按需读取分片；个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。
 
 **0.10.6 版**在 0.10.5 的词汇学习修复上，补齐 PDF 文本层同一节点中显式换行的断词处理（如 `compa-\nrable`）：只有换行几何确认续词位于下一行时才忽略断行连字符；选中跨行文字仍映射回完整逻辑单词。普通行内连字符仍按两个词处理。原 PDF 仍保持不可变；Windows、macOS 和 iPadOS 共用同一三文件包。
 
