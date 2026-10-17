@@ -35,6 +35,10 @@ function createVocabularyModals({ Modal, Notice }) {
         type: "text", placeholder: "翻译（可选）", value: this.existing?.translation || "",
       });
       translation.maxLength = MAX_VOCABULARY_TEXT_FIELD;
+      const phonetic = contentEl.createEl("input", {
+        type: "text", placeholder: "音标 / 发音（可选）", value: this.existing?.phonetic || "",
+      });
+      phonetic.maxLength = 256;
       const note = contentEl.createEl("textarea", {
         placeholder: "笔记（可选）", text: this.existing?.note || "",
       });
@@ -47,6 +51,7 @@ function createVocabularyModals({ Modal, Notice }) {
         void Promise.resolve(this.onSave?.({
           status: Number(status.value),
           translation: translation.value,
+          phonetic: phonetic.value,
           note: note.value,
         })).then(() => this.close()).catch((error) => {
           new Notice(`词汇保存失败：${error.message || error}`, 8000);

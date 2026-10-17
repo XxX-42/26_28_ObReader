@@ -309,7 +309,13 @@ function createHarness({
       this.plugin = plugin;
       this.containerEl = {
         settings: [],
-        empty() { this.settings.length = 0; },
+        headings: [],
+        empty() { this.settings.length = 0; this.headings.length = 0; },
+        createEl(tag, options = {}) {
+          const element = { tag, ...options };
+          if (tag === "h3") this.headings.push(element.text);
+          return element;
+        },
       };
     }
   }
@@ -318,6 +324,7 @@ function createHarness({
     constructor(containerEl) {
       this.containerEl = containerEl;
       containerEl.settings?.push(this);
+      this.settingEl = { classList: { add() {} } };
     }
     setName(value) { this.name = value; return this; }
     setDesc(value) { this.description = value; return this; }
@@ -331,6 +338,29 @@ function createHarness({
       };
       callback(toggle);
       this.toggle = toggle;
+      return this;
+    }
+    addButton(callback) {
+      const classes = new Set();
+      const button = {
+        text: "",
+        tooltip: "",
+        handler: null,
+        buttonEl: {
+          attributes: {},
+          setAttribute(name, value) { this.attributes[name] = value; },
+          classList: {
+            toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
+            contains(name) { return classes.has(name); },
+          },
+        },
+        setButtonText(value) { this.text = value; return this; },
+        setTooltip(value) { this.tooltip = value; return this; },
+        onClick(handler) { this.handler = handler; return this; },
+        click() { return this.handler?.(); },
+      };
+      callback(button);
+      (this.buttons ||= []).push(button);
       return this;
     }
   }
@@ -1181,11 +1211,11 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
     documentId: view.documentId, openRequest: view.openRequest, ...fields,
   } });
 
-  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha" }, "renderer-old");
+  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha", entryType: "word" }, "renderer-old");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sent.length, 0, "stale renderer cannot query the local store");
 
-  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha" });
+  send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha", entryType: "word" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   const entry = sent.find((message) => message.type === "vocab-entry-result");
   assert.equal(entry.requestId, "entry-1");
@@ -1200,6 +1230,12 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   assert.equal(ack.requestId, "status-1");
   assert.equal(ack.record.status, 5);
   assert.equal((await harness.plugin.getVocabularyService().getTerm("alpha")).status, 5);
+  send("vocab-set-status", { requestId: "phrase-status-1", entryRequestId: "phrase-entry-1", pageNumber: 1,
+    key: "rare word", rawSurface: "Rare word", status: 2, entryType: "phrase" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const phraseAck = sent.find((message) => message.type === "vocab-status-ack" && message.requestId === "phrase-status-1");
+  assert.equal(phraseAck?.record.type, "phrase");
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("rare word")).status, 2);
   assert.deepEqual(pdfFile.bytes, pdfBytes, "vocabulary changes never modify source PDF bytes");
   assert.equal(pdfFile.writes, 0, "vocabulary changes never call the source PDF write path");
   const changedPaths = [...new Set([...beforeVocabularyMutation.keys(), ...harness.storedFiles.keys()])]
@@ -1996,6 +2032,7 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   assert.ok(setting, "the Obsidian settings tab exposes the local LingQ-style vocabulary control");
   assert.match(setting.description, /默认关闭/);
   assert.match(setting.description, /不连接外部 LingQ 服务/);
+  assert.match(setting.description, /00_Archive\/21_VocabularyData\/en\.vocab\.json/);
   assert.equal(setting.toggle.value, false, "the UI starts unchecked for a fresh vault");
 
   const view = harness.createView();
@@ -2020,6 +2057,8 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   assert.equal(reloaded.plugin.settings.vocabularyEnabled, true,
     "an enabled setting is restored by the next plugin load");
   reloaded.plugin.settingTab.display();
+  assert.deepEqual(reloaded.plugin.settingTab.containerEl.headings,
+    ["阅读器", "LingQ / 词汇学习", "批注与数据", "诊断 / 高级"]);
   const restoredSetting = reloaded.plugin.settingTab.containerEl.settings.find((entry) =>
     entry.name === "启用 LingQ 式本地英语词汇学习");
   assert.equal(restoredSetting.toggle.value, true, "the Settings UI reflects the persisted enabled value");
@@ -2046,7 +2085,62 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   disabledReload.plugin.onunload();
 });
 
-test("word and phrase highlight levels have separate persistent controls and update every open Reader", async () => {
+test("authenticated Reader menu toggle persists the single setting and synchronizes Settings and open Readers", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settingTab.display();
+  const setting = harness.plugin.settingTab.containerEl.settings.find((entry) =>
+    entry.name === "启用 LingQ 式本地英语词汇学习");
+  const [source, peer] = [harness.createView(), harness.createView()];
+  const outgoing = [[], []];
+  for (const [index, view] of [source, peer].entries()) {
+    view.ready = true;
+    view.documentId = "lingq-shared-doc";
+    view.openRequest = 17;
+    view.rendererGeneration = `lingq-renderer-${index}`;
+    view.iframe = { contentWindow: { postMessage: (message) => outgoing[index].push(message) } };
+  }
+  const sourceFrame = source.iframe.contentWindow;
+  source.onMessage({ source: sourceFrame, data: {
+    channel: "pdf-web-reader", token: source.token, type: "vocab-toggle-request",
+    rendererGeneration: "stale-renderer", documentId: source.documentId,
+    openRequest: source.openRequest, enabled: true,
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.vocabularyEnabled, false, "a stale renderer cannot change the persisted switch");
+  source.onMessage({ source: sourceFrame, data: {
+    channel: "pdf-web-reader", token: source.token, type: "vocab-toggle-request",
+    rendererGeneration: source.rendererGeneration, documentId: source.documentId,
+    openRequest: source.openRequest, enabled: true,
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.vocabularyEnabled, true);
+  assert.equal(harness.plugin.persistedData.vocabularyEnabled, true);
+  assert.equal(setting.toggle.value, true, "Settings mirrors a change initiated from the Reader menu");
+  assert.ok(outgoing.every((messages) => messages.at(-1)?.type === "vocab-set-enabled"),
+    "the host broadcasts the new state to every open Reader");
+  assert.ok(outgoing.every((messages) => messages.at(-1)?.enabled === true));
+  await harness.plugin.getVocabularyService().upsertTerm("kept word", { status: 3, translation: "保留" });
+  source.onMessage({ source: sourceFrame, data: {
+    channel: "pdf-web-reader", token: source.token, type: "vocab-toggle-request",
+    rendererGeneration: source.rendererGeneration, documentId: source.documentId,
+    openRequest: source.openRequest, enabled: false,
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.vocabularyEnabled, false);
+  assert.equal(setting.toggle.value, false);
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("kept word")).translation, "保留",
+    "turning off the UI never deletes persistent vocabulary data");
+  assert.ok(outgoing.every((messages) => messages.at(-1)?.type === "vocab-set-enabled" && messages.at(-1)?.enabled === false));
+  const reload = createHarness();
+  reload.plugin.persistedData = structuredClone(harness.plugin.persistedData);
+  await reload.plugin.onload();
+  assert.equal(reload.plugin.settings.vocabularyEnabled, false, "the latest disabled state survives a plugin restart");
+  harness.plugin.onunload();
+  reload.plugin.onunload();
+});
+
+test("word and phrase highlight levels use compact selectors and update every open Reader", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
@@ -2054,11 +2148,13 @@ test("word and phrase highlight levels have separate persistent controls and upd
     "old settings without level preferences keep all levels visible by default");
   harness.plugin.settingTab.display();
   const settings = harness.plugin.settingTab.containerEl.settings;
-  const wordKnown = settings.find((entry) => entry.name === "单词 · 已学（等级 5）高亮");
-  const phraseLevelTwo = settings.find((entry) => entry.name === "短语 · 等级 2高亮");
-  assert.equal(wordKnown?.toggle.value, true);
-  assert.equal(phraseLevelTwo?.toggle.value, true);
-  assert.match(wordKnown.description, /不会修改或删除词库记录/);
+  const wordLevels = settings.find((entry) => entry.name === "单词高亮等级");
+  const phraseLevels = settings.find((entry) => entry.name === "短语高亮等级");
+  const wordKnown = wordLevels.buttons[4];
+  const phraseLevelTwo = phraseLevels.buttons[1];
+  assert.equal(wordKnown.buttonEl.attributes["aria-pressed"], "true");
+  assert.equal(phraseLevelTwo.buttonEl.attributes["aria-pressed"], "true");
+  assert.match(wordLevels.description, /不改动词库记录/);
 
   const readers = [harness.createView(), harness.createView()];
   const sent = readers.map((view) => {
@@ -2070,7 +2166,8 @@ test("word and phrase highlight levels have separate persistent controls and upd
     view.iframe = { contentWindow: { postMessage: (message) => messages.push(message) } };
     return messages;
   });
-  await wordKnown.toggle.change(false);
+  await wordKnown.click();
+  await Promise.resolve();
   assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
     { words: [1, 2, 3, 4], phrases: [1, 2, 3, 4, 5] });
   assert.deepEqual(harness.plugin.persistedData.vocabularyHighlightLevels,
@@ -2078,7 +2175,8 @@ test("word and phrase highlight levels have separate persistent controls and upd
   assert.ok(sent.every((messages) => messages.at(-1).type === "vocab-set-highlight-levels"));
   assert.ok(sent.every((messages) => messages.at(-1).levels.words.join(",") === "1,2,3,4"));
 
-  await phraseLevelTwo.toggle.change(false);
+  await phraseLevelTwo.click();
+  await Promise.resolve();
   assert.deepEqual(harness.plugin.settings.vocabularyHighlightLevels,
     { words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] }, "word and phrase levels do not affect each other");
 
@@ -2087,8 +2185,8 @@ test("word and phrase highlight levels have separate persistent controls and upd
   await reloaded.plugin.onload();
   reloaded.plugin.settingTab.display();
   const restoredSettings = reloaded.plugin.settingTab.containerEl.settings;
-  assert.equal(restoredSettings.find((entry) => entry.name === "单词 · 已学（等级 5）高亮").toggle.value, false);
-  assert.equal(restoredSettings.find((entry) => entry.name === "短语 · 等级 2高亮").toggle.value, false);
+  assert.equal(restoredSettings.find((entry) => entry.name === "单词高亮等级").buttons[4].buttonEl.attributes["aria-pressed"], "false");
+  assert.equal(restoredSettings.find((entry) => entry.name === "短语高亮等级").buttons[1].buttonEl.attributes["aria-pressed"], "false");
   reloaded.plugin.onunload();
   harness.plugin.onunload();
 });

@@ -345,7 +345,7 @@ const payloadMarker =
 const annotationHostMarker =
   /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
 const vocabularyServiceMarker =
-  /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
+  /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*,?\s*(?:VOCABULARY_PATH\s*,?\s*)?\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
 const vocabularyModalsMarker =
   /\/\* BUILD:VOCABULARY_MODALS_REQUIRE \*\/\s*const\s*\{\s*createVocabularyModals\s*\}\s*=\s*require\((['"])\.\/vocabulary\/modals\.cjs\1\);/s;
 const heavyWorkMarker =
@@ -434,7 +434,7 @@ const inlinedAnnotationHost = await inlineModule(
 const inlinedVocabularyService = await inlineModule(
   "vocabulary/service.cjs",
   "__PDFReaderVocabularyService",
-  "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey",
+  "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH",
 );
 const inlinedVocabularyModals = await inlineModule(
   "vocabulary/modals.cjs",

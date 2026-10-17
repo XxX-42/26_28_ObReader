@@ -118,7 +118,9 @@ function cleanRecord(raw, now, defaultSource = "user") {
   };
   if (typeof raw.translation === "string") result.translation = raw.translation;
   if (typeof raw.note === "string") result.note = raw.note;
-  if ([result.translation, result.note].some((field) => typeof field === "string" && field.length > MAX_RECORD_FIELD_CHARS)) return null;
+  const phonetic = raw.phonetic ?? raw.ipa ?? raw.pronunciation;
+  if (typeof phonetic === "string") result.phonetic = phonetic;
+  if ([result.translation, result.note, result.phonetic].some((field) => typeof field === "string" && field.length > MAX_RECORD_FIELD_CHARS)) return null;
   return result;
 }
 
@@ -171,7 +173,8 @@ function snapshotText(records, revision) {
   if (records.size > MAX_STORE_RECORDS) throw new RangeError("Vocabulary store exceeds the supported record limit.");
   let textChars = 0;
   for (const record of records.values()) {
-    textChars += record.key.length + record.surface.length + (record.translation?.length || 0) + (record.note?.length || 0);
+    textChars += record.key.length + record.surface.length + (record.translation?.length || 0) +
+      (record.note?.length || 0) + (record.phonetic?.length || 0);
     if (textChars > MAX_TOTAL_TEXT_CHARS) throw new RangeError("Vocabulary text exceeds the supported store size.");
   }
   const ordered = [...records.values()]
@@ -397,10 +400,11 @@ function assertWritable(state) {
   }
 }
 
-function makeRecord({ key, type, surface, status, translation, note, source, createdAt, updatedAt }) {
+function makeRecord({ key, type, surface, status, translation, note, phonetic, source, createdAt, updatedAt }) {
   const record = { key, type, surface, status, createdAt, updatedAt, source };
   if (typeof translation === "string") record.translation = translation;
   if (typeof note === "string") record.note = note;
+  if (typeof phonetic === "string") record.phonetic = phonetic;
   return record;
 }
 
@@ -559,7 +563,7 @@ function unescapeSpreadsheetCell(value) {
 
 function headerMap(row) {
   const values = row.map((value) => String(value).trim().toLowerCase());
-  const hasMetadata = values.some((value) => ["type", "status", "translation", "note"].includes(value));
+  const hasMetadata = values.some((value) => ["type", "status", "translation", "note", "phonetic", "ipa", "pronunciation"].includes(value));
   // Any first-column spelling can also be a real English term (including
   // "term", "key", and "word"), so require a second recognized column
   // before dropping the first row as a header.
@@ -572,6 +576,7 @@ function headerMap(row) {
     status: values.indexOf("status"),
     translation: values.indexOf("translation"),
     note: values.indexOf("note"),
+    phonetic: values.findIndex((value) => ["phonetic", "ipa", "pronunciation"].includes(value)),
   };
 }
 
@@ -582,6 +587,7 @@ function csvInput(row, columns, defaultStatus) {
   const statusValue = columns ? read(columns.status) : row[1];
   const translation = unescapeSpreadsheetCell(columns ? read(columns.translation) : row[2]);
   const note = unescapeSpreadsheetCell(columns ? read(columns.note) : row[3]);
+  const phonetic = unescapeSpreadsheetCell(columns ? read(columns.phonetic) : row[4]);
   const key = normalizeTermKey(surface);
   if (!key) return null;
   const parsedStatus = statusValue == null || String(statusValue).trim() === ""
@@ -590,7 +596,7 @@ function csvInput(row, columns, defaultStatus) {
   if (!STATUSES.has(parsedStatus)) return null;
   const type = String(typeValue || (key.includes(" ") ? "phrase" : "word")).trim().toLowerCase();
   if (type !== "word" && type !== "phrase") return null;
-  return { key, surface: String(surface).trim(), type, status: parsedStatus, translation, note, source: "import" };
+  return { key, surface: String(surface).trim(), type, status: parsedStatus, translation, note, phonetic, source: "import" };
 }
 
 class VocabularyService {
@@ -709,6 +715,12 @@ class VocabularyService {
     return this._mutate(key, (record) => ({ ...record, note }));
   }
 
+  setPhonetic(key, phonetic) {
+    if (typeof phonetic !== "string") throw new TypeError("Pronunciation must be text.");
+    if (phonetic.length > MAX_RECORD_FIELD_CHARS) throw new RangeError("Pronunciation exceeds the supported field size.");
+    return this._mutate(key, (record) => ({ ...record, phonetic }));
+  }
+
   async upsertTerm(surface, fields = {}) {
     const key = normalizeTermKey(surface);
     if (!key) throw new TypeError("Vocabulary term is not a valid English surface form.");
@@ -719,7 +731,7 @@ class VocabularyService {
       throw new RangeError("A phrase must contain 2 to 12 tokens from one page.");
     }
     if (fields.status != null) validateStatus(fields.status);
-    for (const name of ["translation", "note"]) {
+    for (const name of ["translation", "note", "phonetic"]) {
       if (fields[name] != null && typeof fields[name] !== "string") {
         throw new TypeError(`${name} must be text.`);
       }
@@ -734,6 +746,7 @@ class VocabularyService {
       status: fields.status == null ? record.status : fields.status,
       ...(fields.translation == null ? {} : { translation: fields.translation }),
       ...(fields.note == null ? {} : { note: fields.note }),
+      ...(fields.phonetic == null ? {} : { phonetic: fields.phonetic }),
     }), type);
   }
 
@@ -833,9 +846,9 @@ class VocabularyService {
     await loadState(this);
     const state = stateOf(this);
     assertWritable(state);
-    const rows = [["term", "type", "status", "translation", "note"]];
+    const rows = [["term", "type", "status", "translation", "note", "phonetic"]];
     for (const record of [...state.records.values()].sort((left, right) => left.key.localeCompare(right.key, "en"))) {
-      rows.push([record.surface, record.type, record.status, record.translation || "", record.note || ""]);
+      rows.push([record.surface, record.type, record.status, record.translation || "", record.note || "", record.phonetic || ""]);
     }
     return `${rows.map((row) => row.map(csvField).join(",")).join("\r\n")}\r\n`;
   }

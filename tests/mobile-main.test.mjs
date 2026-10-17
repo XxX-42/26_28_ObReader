@@ -185,7 +185,8 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     constructor(app, plugin) {
       this.app = app;
       this.plugin = plugin;
-      this.containerEl = { empty() {} };
+      this.containerEl = makeElement("div");
+      this.containerEl.settings = settings;
     }
   }
   class Setting {

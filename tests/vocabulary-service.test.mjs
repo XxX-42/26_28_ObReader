@@ -120,6 +120,39 @@ test("undefined differs from KNOWN and statuses 1 through 5 persist", async () =
   assert.equal((await service.queryLearningTerms()).length, 0);
 });
 
+test("the canonical Vault vocabulary path is created on first write and keeps optional pronunciation", async () => {
+  assert.equal(VOCABULARY_PATH, "00_Archive/21_VocabularyData/en.vocab.json");
+  const adapter = new MemoryAdapter();
+  const service = makeService(adapter);
+  await service.upsertTerm("resilient", { status: 2, translation: "有韧性的", phonetic: "/rɪˈzɪliənt/" });
+  assert.ok(adapter.directories.has("00_Archive"));
+  assert.ok(adapter.directories.has("00_Archive/21_VocabularyData"));
+  assert.equal((await service.getTerm("resilient")).phonetic, "/rɪˈzɪliənt/");
+  assert.equal(snapshot(adapter).records[0].phonetic, "/rɪˈzɪliənt/");
+  const csv = await service.exportCsv();
+  const restored = makeService(new MemoryAdapter());
+  await restored.importCsv(csv);
+  assert.equal((await restored.getTerm("resilient")).phonetic, "/rɪˈzɪliənt/");
+});
+
+test("older schema-v1 vocabulary records remain readable and are preserved when adding pronunciation", async () => {
+  const adapter = new MemoryAdapter();
+  const oldSnapshot = JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 4,
+    records: [{ key: "familiar", type: "word", surface: "Familiar", status: 4,
+      createdAt: 1, updatedAt: 2, source: "user", translation: "熟悉的", note: "keep this" }],
+  });
+  adapter.files.set(VOCABULARY_PATH, oldSnapshot);
+  const service = makeService(adapter);
+  assert.equal((await service.getTerm("familiar")).note, "keep this");
+  await service.upsertTerm("familiar", { phonetic: "/fəˈmɪliər/" });
+  const saved = await service.getTerm("familiar");
+  assert.equal(saved.status, 4);
+  assert.equal(saved.translation, "熟悉的");
+  assert.equal(saved.note, "keep this");
+  assert.equal(saved.phonetic, "/fəˈmɪliər/");
+});
+
 test("KNOWN remains a durable tombstone and ordinary imports cannot resurrect it", async () => {
   const adapter = new MemoryAdapter();
   const service = makeService(adapter);

@@ -1,6 +1,7 @@
 import { scanPageTextLayer } from "./page-scanner.js";
 import { getSelectedPageTokens, matchPhrases } from "./phrase-matcher.js";
 import { VocabularyHighlightRenderer } from "./canvas-overlay.js";
+import { vocabularyEntryPresentation, vocabularyStatusLabel } from "./presentation.js";
 
 function isPositivePageNumber(value) {
   return Number.isInteger(value) && value > 0;
@@ -331,39 +332,73 @@ export class VocabularyController {
     // InteractionIntent intentionally carries no raw target. Use only page
     // identity plus the already scanned physical TextNode segments.
     if (!page) return false;
-    const token = tokenAtPoint(page, intent.clientPoint.x, intent.clientPoint.y, this.document);
-    if (!token || token.surfaceKey.split(" ").length !== 1) return false;
+    const tappedToken = tokenAtPoint(page, intent.clientPoint.x, intent.clientPoint.y, this.document);
+    if (!tappedToken) return false;
+    const entry = this.entryForTappedToken(page, tappedToken);
+    if (!entry) return false;
     const requestId = `vocab-entry-${++this.querySequence}-${this.makeId()}`;
-    if (!this.showEntryPill({ page, token, requestId, x: intent.clientPoint.x, y: intent.clientPoint.y })) return false;
-    return this.postToHost("vocab-token-tap", {
+    if (!this.showEntryPill({ page, entry, requestId, x: intent.clientPoint.x, y: intent.clientPoint.y })) return false;
+    const posted = this.postToHost("vocab-token-tap", {
       requestId,
       pageNumber,
-      key: token.surfaceKey,
-      rawSurface: token.rawSurface,
+      key: entry.surfaceKey,
+      rawSurface: entry.rawSurface,
+      entryType: entry.type,
       documentId: this.identity.documentId,
       openRequest: this.identity.openRequest,
     });
+    if (!posted) this.dismissEntryPill();
+    return posted;
   }
 
-  showEntryPill({ page, token, requestId, x, y }) {
+  entryForTappedToken(page, tappedToken) {
+    const tokenIndex = page.tokens.indexOf(tappedToken);
+    if (tokenIndex < 0) return null;
+    const phraseRecords = page.records
+      .filter((record) => record?.type === "phrase" && this.highlightLevels.phrases.has(record.status))
+      .map((record) => ({ ...record, surfaceKeys: record.key.split(" ") }));
+    const phrase = this.phraseMatcher(page.tokens, phraseRecords)
+      .find((match) => tokenIndex >= match.startIndex && tokenIndex < match.endIndex);
+    if (phrase) {
+      const tokens = page.tokens.slice(phrase.startIndex, phrase.endIndex);
+      return {
+        type: "phrase",
+        surfaceKey: phrase.record.key,
+        rawSurface: tokens.map((token) => token.rawSurface).join(" "),
+      };
+    }
+    const word = page.records.find((record) => record?.type === "word" &&
+      record.key === tappedToken.surfaceKey && this.highlightLevels.words.has(record.status));
+    // Only highlighted entries open the lookup card; ordinary PDF text keeps
+    // its normal click/selection behavior.
+    if (!word) return null;
+    return { type: "word", surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
+  }
+
+  showEntryPill({ page, entry, requestId, x, y }) {
     this.dismissEntryPill();
     if (!this.document?.createElement || !this.document.body) return false;
     const popup = this.document.createElement("section");
     popup.className = "pdfReaderVocabularyPill";
     popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-label", `Vocabulary entry: ${token.rawSurface}`);
+    popup.setAttribute("aria-label", `LingQ 词条：${entry.rawSurface}`);
     popup.dataset.requestId = requestId;
-    popup.dataset.key = token.surfaceKey;
+    popup.dataset.key = entry.surfaceKey;
+    popup.dataset.type = entry.type;
     popup.dataset.pageNumber = String(page.pageNumber);
-    popup.style.left = `${Math.max(8, Math.min(x, (this.window?.innerWidth || x + 8) - 320))}px`;
-    popup.style.top = `${Math.max(8, Math.min(y + 12, (this.window?.innerHeight || y + 12) - 180))}px`;
 
     const heading = this.document.createElement("div");
     heading.className = "pdfReaderVocabularyPillHeading";
-    heading.textContent = token.rawSurface;
-    const summary = this.document.createElement("div");
-    summary.className = "pdfReaderVocabularyPillSummary";
-    summary.textContent = "Loading local entry…";
+    heading.textContent = entry.rawSurface;
+    const status = this.document.createElement("span");
+    status.className = "pdfReaderVocabularyPillStatus";
+    status.textContent = "未收录";
+    const pronunciation = this.document.createElement("div");
+    pronunciation.className = "pdfReaderVocabularyPillPronunciation";
+    pronunciation.hidden = true;
+    const meanings = this.document.createElement("div");
+    meanings.className = "pdfReaderVocabularyPillMeanings";
+    meanings.textContent = "正在查询…";
     const actions = this.document.createElement("div");
     actions.className = "pdfReaderVocabularyPillActions";
     const buttons = [];
@@ -371,8 +406,9 @@ export class VocabularyController {
       const button = this.document.createElement("button");
       button.type = "button";
       button.dataset.status = String(status);
-      button.textContent = status === 5 ? "✓ Known" : String(status);
-      button.setAttribute("aria-label", status === 5 ? "Mark known" : `Set vocabulary status ${status}`);
+      button.textContent = status === 5 ? "✓" : String(status);
+      button.title = vocabularyStatusLabel(status);
+      button.setAttribute("aria-label", `设置 LingQ 状态：${vocabularyStatusLabel(status)}`);
       button.addEventListener("click", (event) => {
         event.stopPropagation?.();
         this.requestStatusChange(status);
@@ -384,24 +420,45 @@ export class VocabularyController {
     close.type = "button";
     close.className = "pdfReaderVocabularyPillClose";
     close.textContent = "×";
-    close.setAttribute("aria-label", "Close vocabulary entry");
+    close.setAttribute("aria-label", "关闭词条卡片");
     close.addEventListener("click", (event) => {
       event.stopPropagation?.();
       this.dismissEntryPill();
     });
-    popup.append(heading, summary, actions, close);
+    popup.append(heading, status, pronunciation, meanings, actions, close);
     this.document.body.appendChild(popup);
-    this.entryPill = { popup, page, token, requestId, heading, summary, buttons, status: null, pendingStatus: null };
+    this.positionEntryPill(popup, x, y);
+    this.entryPill = {
+      popup, page, entry, requestId, heading, statusElement: status,
+      pronunciation, meanings, buttons, record: null, status: null, pendingStatus: null,
+    };
     return true;
+  }
+
+  positionEntryPill(popup, x, y) {
+    const width = Math.max(0, Number(this.window?.innerWidth) || 0);
+    const height = Math.max(0, Number(this.window?.innerHeight) || 0);
+    popup.style.left = "8px";
+    popup.style.top = "8px";
+    const rect = popup.getBoundingClientRect?.();
+    const popupWidth = Number(rect?.width) || Number(popup.offsetWidth) || 320;
+    const popupHeight = Number(rect?.height) || Number(popup.offsetHeight) || 180;
+    const left = Math.max(8, Math.min(x + 12, Math.max(8, width - popupWidth - 8)));
+    const below = y + 14;
+    const top = below + popupHeight <= height - 8
+      ? below
+      : Math.max(8, y - popupHeight - 14);
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
   }
 
   handleEntryResult(message) {
     const pill = this.entryPill;
     if (!pill || !this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
         message?.openRequest !== this.identity.openRequest || message?.requestId !== pill.requestId ||
-        message?.key !== pill.token.surfaceKey || message?.pageNumber !== pill.page.pageNumber) return false;
+        message?.key !== pill.entry.surfaceKey || message?.pageNumber !== pill.page.pageNumber) return false;
     if (message.error) {
-      pill.summary.textContent = "Local vocabulary data is unavailable.";
+      pill.meanings.textContent = "词库暂时无法读取。";
       return true;
     }
     this.updatePillRecord(message.record || null);
@@ -411,16 +468,21 @@ export class VocabularyController {
   updatePillRecord(record) {
     const pill = this.entryPill;
     if (!pill) return false;
-    pill.status = Number.isInteger(record?.status) && record.status >= 1 && record.status <= 5 ? record.status : null;
+    pill.record = record && typeof record === "object" ? record : null;
+    const presentation = vocabularyEntryPresentation(record);
+    pill.status = presentation.status;
     for (const button of pill.buttons) {
       const status = Number(button.dataset.status);
       button.setAttribute("aria-pressed", String(pill.status === status));
       button.disabled = pill.pendingStatus !== null;
       button.classList.toggle("is-active", pill.status === status);
     }
-    const details = [record?.translation, record?.note].filter((value) => typeof value === "string" && value.trim());
-    const statusText = pill.status === null ? "Not saved" : pill.status === 5 ? "Known" : `Status ${pill.status}`;
-    pill.summary.textContent = [statusText, ...details].join(" · ");
+    pill.statusElement.textContent = pill.pendingStatus === null
+      ? presentation.statusLabel
+      : "正在保存…";
+    pill.pronunciation.textContent = presentation.pronunciation;
+    pill.pronunciation.hidden = presentation.pronunciation.length === 0;
+    pill.meanings.textContent = presentation.meanings.length ? presentation.meanings.join("；") : "暂无释义";
     return true;
   }
 
@@ -430,13 +492,13 @@ export class VocabularyController {
         !Number.isInteger(status) || status < 1 || status > 5 || pill.pendingStatus !== null) return false;
     const requestId = `vocab-status-${++this.querySequence}-${this.makeId()}`;
     pill.pendingStatus = status;
-    this.updatePillRecord({ status: pill.status });
+    this.syncPillStatus(pill);
     const sent = this.postToHost("vocab-set-status", {
       requestId,
-      key: pill.token.surfaceKey,
-      rawSurface: pill.token.rawSurface,
+      key: pill.entry.surfaceKey,
+      rawSurface: pill.entry.rawSurface,
       status,
-      entryType: "word",
+      entryType: pill.entry.type,
       pageNumber: pill.page.pageNumber,
       entryRequestId: pill.requestId,
       documentId: this.identity.documentId,
@@ -445,16 +507,30 @@ export class VocabularyController {
     pill.statusRequestId = requestId;
     if (!sent) {
       pill.pendingStatus = null;
-      this.updatePillRecord({ status: pill.status });
+      this.syncPillStatus(pill);
     }
     return sent;
+  }
+
+  syncPillStatus(pill = this.entryPill) {
+    if (!pill) return false;
+    for (const button of pill.buttons) {
+      const status = Number(button.dataset.status);
+      button.setAttribute("aria-pressed", String(pill.status === status));
+      button.disabled = pill.pendingStatus !== null;
+      button.classList.toggle("is-active", pill.status === status);
+    }
+    pill.statusElement.textContent = pill.pendingStatus === null
+      ? vocabularyEntryPresentation(pill.record).statusLabel
+      : "正在保存…";
+    return true;
   }
 
   handleStatusAck(message) {
     const pill = this.entryPill;
     if (!pill || !this.identityIsCurrent() || message?.durable !== true ||
         message?.documentId !== this.identity.documentId || message?.openRequest !== this.identity.openRequest ||
-        message?.requestId !== pill.statusRequestId || message?.key !== pill.token.surfaceKey ||
+        message?.requestId !== pill.statusRequestId || message?.key !== pill.entry.surfaceKey ||
         message?.pageNumber !== pill.page.pageNumber || !Number.isInteger(message?.record?.status) ||
         message.record.status < 1 || message.record.status > 5) return false;
     pill.pendingStatus = null;
@@ -472,8 +548,8 @@ export class VocabularyController {
     if (!pill || message?.documentId !== this.identity?.documentId ||
         message?.openRequest !== this.identity?.openRequest || message?.requestId !== pill.statusRequestId) return false;
     pill.pendingStatus = null;
-    this.updatePillRecord({ status: pill.status });
-    pill.summary.textContent = "Could not save; local data was not acknowledged.";
+    this.syncPillStatus(pill);
+    pill.meanings.textContent = "状态保存未确认；词库数据未确认更改。";
     return true;
   }
 

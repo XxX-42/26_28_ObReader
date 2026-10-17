@@ -28,3 +28,29 @@
   border: 0;
   background: var(--background-primary);
 }
+
+.pdfWebReaderSettingHeading {
+  margin-block: 1.7em 0.4em;
+  padding-block-end: 0.35em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+}
+
+.pdfWebReaderVocabularyLevels .setting-item-control {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35em;
+}
+
+.pdfWebReaderVocabularyLevels .setting-item-control button {
+  min-width: 2.7em;
+  min-height: 2.7em;
+  border-radius: 999px;
+}
+
+.pdfWebReaderVocabularyLevels .setting-item-control button.is-active {
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent, white);
+  background: var(--interactive-accent);
+}

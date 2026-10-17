@@ -417,16 +417,20 @@ test("eligible collapsed single-word click opens a local pill and durable status
     makeOverlay: () => overlay,
   });
   controller.setDocument("doc-1", 7, true);
+  controller.pages.get("1").records = [{ key: "alpha", type: "word", status: 2 }];
   assert.equal(controller.handleTap({ type: "click", targetRole: "text-layer", button: 0, detail: 1,
     pageIndex: 0, clientPoint: { x: 30, y: 30 } }), true);
   const tap = posted.find((message) => message.type === "vocab-token-tap");
   assert.equal(tap.key, "alpha");
+  assert.equal(tap.entryType, "word");
   assert.equal(body.children.length, 1);
-  assert.deepEqual(controller.entryPill.buttons.map((button) => button.textContent), ["1", "2", "3", "4", "✓ Known"]);
+  assert.deepEqual(controller.entryPill.buttons.map((button) => button.textContent), ["1", "2", "3", "4", "✓"]);
   assert.equal(controller.handleEntryResult({ requestId: tap.requestId, key: "alpha", pageNumber: 1,
     documentId: "doc-1", openRequest: 7,
-    record: { key: "alpha", type: "word", status: 2, translation: "局部释义", note: "local note" } }), true);
-  assert.match(controller.entryPill.summary.textContent, /局部释义/);
+    record: { key: "alpha", type: "word", status: 2, translation: "局部释义", note: "local note", phonetic: "/ˈælfə/" } }), true);
+  assert.match(controller.entryPill.meanings.textContent, /局部释义/);
+  assert.equal(controller.entryPill.pronunciation.textContent, "/ˈælfə/");
+  assert.equal(controller.entryPill.meanings.textContent.includes("local note"), false);
   assert.equal(controller.requestStatusChange(3), true);
   const update = posted.find((message) => message.type === "vocab-set-status");
   assert.equal(update.status, 3);
@@ -442,4 +446,27 @@ test("eligible collapsed single-word click opens a local pill and durable status
     pageIndex: 0, clientPoint: { x: 30, y: 30 } }), false, "existing text selection keeps priority over the popup");
   controller.dispose();
   assert.equal(body.children.length, 0, "session teardown removes the viewer popup");
+});
+
+test("only highlighted words open the card, while an enabled multiword phrase wins over its component words", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [2] });
+  runtime.controller.setDocument("doc-1", 7, true);
+  const page = runtime.controller.pages.get("1");
+  page.records = [
+    { key: "alpha", type: "word", status: 5 },
+    { key: "beta gamma", type: "phrase", status: 2 },
+  ];
+  assert.equal(runtime.controller.entryForTappedToken(page, page.tokens[0]), null,
+    "disabled level-5 word remains searchable in storage but does not open a highlight lookup");
+  const phrase = runtime.controller.entryForTappedToken(page, page.tokens[1]);
+  assert.deepEqual(phrase, { type: "phrase", surfaceKey: "beta gamma", rawSurface: "beta gamma" });
+  runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] });
+  assert.equal(runtime.controller.entryForTappedToken(page, page.tokens[2]), null,
+    "disabling the phrase's level removes its click priority");
+  runtime.controller.setHighlightLevels({ words: [5], phrases: [2] });
+  assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
+    type: "word", surfaceKey: "alpha", rawSurface: "Alpha",
+  });
+  runtime.controller.dispose();
 });

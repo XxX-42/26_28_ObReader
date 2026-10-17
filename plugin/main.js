@@ -29,7 +29,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_HASH_RUNTIME_REQUIRE */ const { createPdfHashRuntime } = require("./pdf-hash-runtime.cjs");
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
 /* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
-/* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey } = require('./vocabulary/service.cjs');
+/* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH } = require('./vocabulary/service.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
@@ -867,11 +867,19 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    this.vocabularyToggle = null;
+    this.vocabularyLevelButtons = new Map();
   }
 
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    this.vocabularyLevelButtons.clear();
+    const heading = (text) => containerEl.createEl("h3", {
+      cls: "pdfWebReaderSettingHeading",
+      text,
+    });
+    heading("阅读器");
     new Setting(containerEl)
       .setName("自动保存 PDF 注释")
       .setDesc("编辑后的 PDF 注释会自动写回原文件。关闭后可用 Ctrl/Cmd+S 或阅读器保存按钮手动保存。")
@@ -888,27 +896,69 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.showStatusBar)
           .onChange((enabled) => this.plugin.setStatusBarEnabled(enabled)),
       );
+    heading("LingQ / 词汇学习");
     new Setting(containerEl)
       .setName("启用 LingQ 式本地英语词汇学习")
-      .setDesc("开启后可在 PDF 页面查询、保存和标记本地英语词汇；默认关闭，只保存到当前 Vault，不连接外部 LingQ 服务。")
-      .addToggle((toggle) => toggle
-        .setValue(this.plugin.settings.vocabularyEnabled)
-        .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled)));
+      .setDesc(`默认关闭。开启后可查询、保存本地英语词汇；数据仅保存在当前 Vault 的 ${VOCABULARY_PATH}，不会随关闭 LingQ 模式而删除，不连接外部 LingQ 服务。`)
+      .addToggle((toggle) => {
+        this.vocabularyToggle = toggle
+          .setValue(this.plugin.settings.vocabularyEnabled)
+          .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled));
+      });
     for (const [type, label, key] of [
       ["word", "单词", "words"],
       ["phrase", "短语", "phrases"],
     ]) {
-      for (const status of [1, 2, 3, 4, 5]) {
-        const statusLabel = status === 5 ? "已学（等级 5）" : `等级 ${status}`;
-        const enabled = this.plugin.settings.vocabularyHighlightLevels[key].includes(status);
-        new Setting(containerEl)
-          .setName(`${label} · ${statusLabel}高亮`)
-          .setDesc(`控制 PDF 中${label}的此等级是否显示高亮；不会修改或删除词库记录。`)
-          .addToggle((toggle) => toggle
-            .setValue(enabled)
-            .onChange((value) => this.plugin.setVocabularyHighlightLevelEnabled(type, status, value)));
+      const setting = new Setting(containerEl)
+        .setName(`${label}高亮等级`)
+        .setDesc("选择要在 PDF 中显示的 LingQ 等级；仅控制显示，不改动词库记录。");
+      setting.settingEl?.classList?.add("pdfWebReaderVocabularyLevels");
+      const buttons = new Map();
+      setting.addButton((button) => {
+        button.setButtonText(String(1));
+        button.setTooltip?.("新词（等级 1）");
+        button.buttonEl?.setAttribute?.("aria-label", "新词（等级 1）");
+        const active = this.plugin.settings.vocabularyHighlightLevels[key].includes(1);
+        button.buttonEl?.setAttribute?.("aria-pressed", String(active));
+        button.buttonEl?.classList?.toggle("is-active", active);
+        button.onClick(() => {
+          const enabled = !this.plugin.settings.vocabularyHighlightLevels[key].includes(1);
+          return this.plugin.setVocabularyHighlightLevelEnabled(type, 1, enabled);
+        });
+        buttons.set(1, button);
+      });
+      for (const status of [2, 3, 4, 5]) {
+        setting.addButton((button) => {
+          const labelText = status === 5 ? "✓" : String(status);
+          const statusLabel = status === 5 ? "已知（等级 5）" : `等级 ${status}`;
+          button.setButtonText(labelText);
+          button.setTooltip?.(statusLabel);
+          button.buttonEl?.setAttribute?.("aria-label", statusLabel);
+          const active = this.plugin.settings.vocabularyHighlightLevels[key].includes(status);
+          button.buttonEl?.setAttribute?.("aria-pressed", String(active));
+          button.buttonEl?.classList?.toggle("is-active", active);
+          button.onClick(() => {
+            const enabled = !this.plugin.settings.vocabularyHighlightLevels[key].includes(status);
+            return this.plugin.setVocabularyHighlightLevelEnabled(type, status, enabled);
+          });
+          buttons.set(status, button);
+        });
       }
+      this.vocabularyLevelButtons.set(type, buttons);
     }
+    new Setting(containerEl)
+      .setName("词库导入 / 导出")
+      .setDesc("查看并迁移已有 JSON/CSV 词汇；导入默认保留已有记录。")
+      .addButton((button) => button
+        .setButtonText("打开")
+        .onClick(() => new VocabularyTransferModal(this.app, this.plugin).open()));
+
+    heading("批注与数据");
+    new Setting(containerEl)
+      .setName("PDF 批注")
+      .setDesc("批注与词汇数据分开处理。词汇学习开关不会更改 PDF 批注或删除词库内容。");
+
+    heading("诊断 / 高级");
     {
       const diagnosticSetting = new Setting(containerEl)
         .setName(this.plugin.isMobileRuntime ? "导出移动端诊断" : "导出阅读器诊断")
@@ -919,6 +969,21 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
             .setButtonText("导出 JSON")
             .onClick(() => void this.plugin.exportMobileDiagnostics().catch(error => new Notice(`诊断导出失败：${error.message || error}`))),
         );
+      }
+    }
+  }
+
+  syncVocabularyEnabled(enabled) {
+    this.vocabularyToggle?.setValue?.(enabled === true);
+  }
+
+  syncVocabularyLevels(levels) {
+    for (const [type, key] of [["word", "words"], ["phrase", "phrases"]]) {
+      const selected = new Set(levels?.[key] || []);
+      for (const [status, button] of this.vocabularyLevelButtons.get(type) || []) {
+        const active = selected.has(status);
+        button.buttonEl?.setAttribute?.("aria-pressed", String(active));
+        button.buttonEl?.classList?.toggle("is-active", active);
       }
     }
   }
@@ -1979,6 +2044,7 @@ class PdfReaderView extends EditableFileView {
     const injection = `${baseTag}${bridgeScript}`;
     const inlineViewerCss = `<style data-pdf-reader="viewer">${escapeStyleText(viewerCss)}</style>`;
     const inlineBridgeCss = `<style data-pdf-reader="bridge">${escapeStyleText(bridgeCss)}</style>`;
+    const inlineThemeCss = this.getObsidianThemeStyle();
     let viewerCssInserted = false;
     const htmlWithInlineStyles = viewerHtml.replace(
       /<link\b[^>]*>/gi,
@@ -1995,7 +2061,7 @@ class PdfReaderView extends EditableFileView {
           /(?:^|\/)viewer\.css(?:[?#].*)?$/i.test(href)
         ) {
           viewerCssInserted = true;
-          return `${inlineViewerCss}${inlineBridgeCss}`;
+          return `${inlineViewerCss}${inlineBridgeCss}${inlineThemeCss}`;
         }
         return tag;
       },
@@ -2009,6 +2075,34 @@ class PdfReaderView extends EditableFileView {
       return withBase.replace(/<head\b[^>]*>/i, `${headMatch[0]}${injection}`);
     }
     return `${injection}${htmlWithInlineStyles}`;
+  }
+
+  getObsidianThemeStyle() {
+    const hostWindow = this.ownerWindow || this.containerEl?.ownerDocument?.defaultView || globalThis;
+    const hostDocument = hostWindow.document || this.app?.workspace?.containerEl?.ownerDocument;
+    if (!hostDocument) return "";
+    const getStyle = hostWindow.getComputedStyle?.bind(hostWindow) || globalThis.getComputedStyle;
+    if (typeof getStyle !== "function") return "";
+    let rootStyle;
+    let bodyStyle;
+    try {
+      rootStyle = getStyle(hostDocument.documentElement);
+      bodyStyle = getStyle(hostDocument.body || hostDocument.documentElement);
+    } catch { return ""; }
+    const names = [
+      "background-primary", "background-secondary", "background-modifier-border",
+      "text-normal", "text-muted", "text-accent", "text-on-accent",
+      "interactive-accent", "interactive-accent-hover",
+    ];
+    const declarations = [];
+    for (const name of names) {
+      const value = rootStyle?.getPropertyValue?.(`--${name}`)?.trim() ||
+        bodyStyle?.getPropertyValue?.(`--${name}`)?.trim();
+      if (value && !/[;{}]/u.test(value)) declarations.push(`--${name}:${value}`);
+    }
+    return declarations.length
+      ? `<style data-pdf-reader="obsidian-theme">:root{${declarations.join(";")}}</style>`
+      : "";
   }
 
   async createMobileViewerDocument({
@@ -2111,6 +2205,7 @@ class PdfReaderView extends EditableFileView {
 
       const inlineViewerCss = `<style data-pdf-reader="viewer">${escapeStyleText(viewerCss)}</style>`;
       const inlineBridgeCss = `<style data-pdf-reader="bridge">${escapeStyleText(bridgeCss)}</style>`;
+      const inlineThemeCss = this.getObsidianThemeStyle();
       const bootConfig = JSON.stringify({
         channel: CHANNEL,
         token: this.token,
@@ -2164,6 +2259,7 @@ class PdfReaderView extends EditableFileView {
         `<base href="${escapeAttribute(webBase)}">` +
         inlineViewerCss +
         inlineBridgeCss +
+        inlineThemeCss +
         bridgeScript +
         bootScript;
       if (headMatch) {
@@ -2357,8 +2453,16 @@ class PdfReaderView extends EditableFileView {
     if (!String(message?.type || "").startsWith("vocab-")) return false;
     if (message.rendererGeneration !== this.rendererGeneration ||
         message.documentId !== this.documentId ||
-        message.openRequest !== this.openRequest ||
-        !this.plugin.settings.vocabularyEnabled) return true;
+        message.openRequest !== this.openRequest) return true;
+
+    // The Reader's secondary toolbar mirrors the existing persistent setting;
+    // it does not own a second copy of the enabled preference.
+    if (message.type === "vocab-toggle-request") {
+      if (typeof message.enabled !== "boolean" || this.teardownStarted === true) return true;
+      await this.plugin.setVocabularyEnabled(message.enabled);
+      return true;
+    }
+    if (!this.plugin.settings.vocabularyEnabled) return true;
 
     if (message.type === "vocab-page-query") {
       const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
@@ -2394,10 +2498,14 @@ class PdfReaderView extends EditableFileView {
 
     if (message.type === "vocab-token-tap") {
       const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
-      const validKey = typeof message.key === "string" && message.key.length <= 128 &&
-        normalizeVocabularyTermKey(message.key) === message.key && !message.key.includes(" ");
+      const validType = message.entryType === "word" || message.entryType === "phrase";
+      const validKey = validType && typeof message.key === "string" && message.key.length <= 1600 &&
+        normalizeVocabularyTermKey(message.key) === message.key &&
+        (message.entryType === "phrase"
+          ? message.key.split(" ").length >= 2 && message.key.split(" ").length <= 12
+          : !message.key.includes(" "));
       const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
-        message.rawSurface.length <= 128 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
+        message.rawSurface.length <= 1600 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
       if (!validRequest || !validKey || !validSurface ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
@@ -2408,8 +2516,10 @@ class PdfReaderView extends EditableFileView {
           channel: CHANNEL, token: this.token, type: "vocab-entry-result",
           requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
-          record: record ? { key: record.key, type: record.type, status: record.status,
-            translation: record.translation || "", note: record.note || "" } : null,
+          record: record && record.type === message.entryType ? {
+            key: record.key, type: record.type, status: record.status,
+            translation: record.translation || "", phonetic: record.phonetic || "",
+          } : null,
         });
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
@@ -2424,11 +2534,15 @@ class PdfReaderView extends EditableFileView {
 
     if (message.type === "vocab-set-status") {
       const validRequest = typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128;
-      const validKey = typeof message.key === "string" && message.key.length > 0 && message.key.length <= 128 &&
-        normalizeVocabularyTermKey(message.key) === message.key && !message.key.includes(" ");
+      const validType = message.entryType === "word" || message.entryType === "phrase";
+      const validKey = validType && typeof message.key === "string" && message.key.length > 0 && message.key.length <= 1600 &&
+        normalizeVocabularyTermKey(message.key) === message.key &&
+        (message.entryType === "phrase"
+          ? message.key.split(" ").length >= 2 && message.key.split(" ").length <= 12
+          : !message.key.includes(" "));
       const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
-        message.rawSurface.length <= 128 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
-      if (!validRequest || !validKey || !validSurface || message.entryType !== "word" ||
+        message.rawSurface.length <= 1600 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
+      if (!validRequest || !validKey || !validSurface ||
           !Number.isInteger(message.status) || message.status < 1 || message.status > 5 ||
           typeof message.entryRequestId !== "string" || message.entryRequestId.length > 128 ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
@@ -2436,7 +2550,7 @@ class PdfReaderView extends EditableFileView {
       try {
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         const service = this.plugin.getVocabularyService();
-        const record = await service.upsertTerm(message.rawSurface, { type: "word", status: message.status });
+        const record = await service.upsertTerm(message.rawSurface, { type: message.entryType, status: message.status });
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-status-ack", durable: true,
@@ -3126,7 +3240,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return view;
     });
     this.pdfOpenRouting = installPdfOpenRouting(this);
-    this.addSettingTab(new PdfWebReaderSettingTab(this.app, this));
+    this.readerSettingsTab = new PdfWebReaderSettingTab(this.app, this);
+    this.addSettingTab(this.readerSettingsTab);
     this.addCommand({
       id: "open-current-pdf",
       name: "在 PDF 阅读器中打开当前 PDF",
@@ -3887,6 +4002,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       new Notice(`词汇设置无法保存：${error.message || error}`, 8000);
     } finally {
       for (const view of this.views) view.setVocabularyEnabled(this.settings.vocabularyEnabled);
+      this.readerSettingsTab?.syncVocabularyEnabled(this.settings.vocabularyEnabled);
     }
   }
 
@@ -3905,6 +4021,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       new Notice(`词汇高亮设置无法保存：${error.message || error}`, 8000);
     } finally {
       for (const view of this.views) view.setVocabularyHighlightLevels?.(levels);
+      this.readerSettingsTab?.syncVocabularyLevels(levels);
     }
     return true;
   }

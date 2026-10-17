@@ -319,6 +319,7 @@
 
   function setVocabularyEnabled(enabled) {
     state.vocabularyEnabled = enabled === true;
+    syncVocabularyMenuButton();
     if (!state.vocabularyEnabled) {
       state.vocabularyController?.dispose?.();
       state.vocabularyController = null;
@@ -328,6 +329,29 @@
     if (controller && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       controller.setDocument(state.activeDocumentId, state.activeOpenRequest, true);
     }
+    syncVocabularyMenuButton();
+  }
+
+  function syncVocabularyMenuButton() {
+    const button = state.bridgeControls?.vocabularyToggleButton;
+    if (!button) return;
+    const enabled = state.vocabularyEnabled === true;
+    button.setAttribute("aria-pressed", String(enabled));
+    button.classList.toggle("is-active", enabled);
+    button.title = enabled ? "LingQ 模式：开启" : "LingQ 模式：关闭";
+  }
+
+  function toggleVocabularyFromMenu(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const enabled = !state.vocabularyEnabled;
+    setVocabularyEnabled(enabled);
+    if (!state.activeDocumentId || !Number.isInteger(state.activeOpenRequest)) return;
+    if (!postToHost("vocab-toggle-request", {
+      enabled,
+      documentId: state.activeDocumentId,
+      openRequest: state.activeOpenRequest,
+    })) showStatus("LingQ 设置尚未同步到 Obsidian。");
   }
 
   function setVocabularyHighlightLevels(levels) {
@@ -368,6 +392,7 @@
         state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
     state.pendingVocabularySettings.enabled = message.enabled;
     state.vocabularyEnabled = message.enabled;
+    syncVocabularyMenuButton();
     // A newer document is queued; clear old page overlays now and defer
     // scanning until that exact open request becomes active.
     state.vocabularyController?.setDocument?.(null, null, false);
@@ -630,6 +655,7 @@
       !canEdit || state.bulkDeleteInProgress;
     controls.saveButton.disabled =
       !canEdit || !hasUnsavedAnnotationChanges();
+    syncVocabularyMenuButton();
   }
 
   function toolbarContentWidth(element) {
@@ -1377,6 +1403,18 @@
     );
     secondaryContainer.insertBefore(deleteAllAnnotationsButton, saveButton);
 
+    const vocabularyToggleButton = document.createElement("button");
+    vocabularyToggleButton.id = "pdfReaderVocabularyToggleButton";
+    vocabularyToggleButton.type = "button";
+    vocabularyToggleButton.className = "toolbarButton labeled pdfReaderVocabularyToggleButton";
+    vocabularyToggleButton.textContent = "LingQ 模式";
+    vocabularyToggleButton.setAttribute("aria-label", "LingQ 模式");
+    vocabularyToggleButton.setAttribute("aria-pressed", String(state.vocabularyEnabled === true));
+    vocabularyToggleButton.addEventListener("click", toggleVocabularyFromMenu);
+    // Keep the existing delete-action group contiguous; the LingQ toggle is
+    // available in this menu without changing the bulk-delete toolbar order.
+    secondaryContainer.insertBefore(vocabularyToggleButton, deleteButton);
+
     const secondaryToolbar = document.getElementById("secondaryToolbarToggle");
     if (secondaryToolbar?.parentElement === toolbar) {
       toolbar.insertBefore(group, secondaryToolbar);
@@ -1389,6 +1427,7 @@
       deleteButton,
       deletePageAnnotationsButton,
       deleteAllAnnotationsButton,
+      vocabularyToggleButton,
       saveButton,
     };
     installAdaptiveToolbarLayout();
@@ -7217,6 +7256,10 @@
   }
 
   function onBridgeIosClick(intent, controls) {
+    if (intent?.targetRegion === "vocabulary-pill") return;
+    // Keep the lookup transient: an outside click closes it. A click on a
+    // different highlighted token can open the next card in this same event.
+    state.vocabularyController?.dismissEntryPill?.();
     const panClickSuppressed = state.inputPolicy?.handlePanClick?.(intent, controls) === true;
     const pageIndex = Number.isInteger(intent?.pageIndex) ? intent.pageIndex : null;
     const touchTap = state.iosDirectManipulationController
@@ -7234,10 +7277,7 @@
     if (panClickSuppressed && knownPanClick && !touchTap) return;
     if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
     if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
-    const opened = state.vocabularyController?.handleTap?.(intent) === true;
-    if (!opened && ["text-layer", "viewer"].includes(intent?.targetRole)) {
-      state.vocabularyController?.dismissEntryPill?.();
-    }
+    state.vocabularyController?.handleTap?.(intent);
   }
 
   function onBridgeIosDoubleClick(intent, controls) {

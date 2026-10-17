@@ -36,6 +36,7 @@ function extractFunction(name) {
 test("vocabulary enable changes during parsing follow the matching open and ignore stale opens", () => {
   const functions = [
     "normalizeVocabularyHighlightLevels", "queueOpen", "handleVocabularyEnabledMessage",
+    "syncVocabularyMenuButton",
     "setVocabularyHighlightLevels", "handleVocabularyHighlightLevelsMessage",
     "prepareVocabularyOpen", "bindVocabularyToOpenedDocument",
   ].map(extractFunction).join("\n");
@@ -46,6 +47,7 @@ test("vocabulary enable changes during parsing follow the matching open and igno
       requestedOpenRequest: null, requestedDocumentId: null, pendingVocabularySettings: null,
       activeOpenRequest: null, activeDocumentId: null, vocabularyEnabled: false,
       vocabularyHighlightLevels: null,
+      bridgeControls: null,
       vocabularyController: {
         setDocument(...args) { calls.push({ method: "setDocument", args }); },
         setHighlightLevels(levels) { calls.push({ method: "setHighlightLevels", levels }); },

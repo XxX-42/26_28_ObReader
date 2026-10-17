@@ -3,3 +3,4 @@ export { scanPageTextLayer } from "./page-scanner.js";
 export { getSelectedPageTokens, matchPhrases, VocabularySelectionError } from "./phrase-matcher.js";
 export { VocabularyCanvasOverlay } from "./canvas-overlay.js";
 export { VocabularyController } from "./controller.js";
+export { vocabularyEntryPresentation, vocabularyStatusLabel } from "./presentation.js";

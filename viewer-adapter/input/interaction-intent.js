@@ -36,7 +36,9 @@
           : element.closest("#viewerContainer")
             ? "viewer"
             : "outside-viewer";
-    const targetRegion = element.closest(".editorParamsToolbar")
+    const targetRegion = element.closest(".pdfReaderVocabularyPill")
+      ? "vocabulary-pill"
+      : element.closest(".editorParamsToolbar")
       ? "editor-params-toolbar"
       : element.closest("#editorModeButtons")
         ? "editor-mode-buttons"

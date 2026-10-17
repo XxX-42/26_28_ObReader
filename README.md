@@ -1,441 +1,130 @@
-# PDF Web Reader for Obsidian
+# Obsidian PDF Web Reader
 
-An offline Obsidian plugin containing the modified Mozilla PDF.js Viewer. It
-opens vault PDFs and keeps this plugin's annotations in a synced, external
-operation log. The original PDF stays byte-for-byte unchanged during ordinary
-editing. No local web server, external browser, Python, separately installed
-Node.js, or network service is needed at runtime.
+这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
-Version **0.10.3** combines the **WAL-Sidecar v3.2 JSONL test candidate** with
-opt-in English vocabulary learning. It combines the 0.9.0 storage and interface behavior with commit
-`2b5d7ad`'s per-device JSONL WAL, durable append acknowledgement, cold replay,
-snapshot materialization, and migration barrier. It also gates embedded PDF
-annotations until external identity and tombstones are confirmed, and suppresses
-WebKit long-press callouts on PDF text on iPad. Vocabulary records stay in a
-separate Vault JSON store and can be reviewed, edited, imported, and exported.
-The source PDF remains
-immutable. Windows, macOS, and iPadOS use the same three-file package.
+**0.10.4 版**将**WAL-Sidecar v3.2 JSONL 测试候选版**与可选的英语词汇学习功能结合起来。它保留 0.9.0 的存储和界面行为，并整合提交 `2b5d7ad` 中的每设备 JSONL WAL、持久追加确认、冷启动重放、快照物化和迁移屏障。它还会在确认外置身份和删除墓碑之前阻止显示 PDF 内嵌批注，并在 iPad 上屏蔽 WebKit 对 PDF 文本的长按菜单。词汇记录保存在独立的 Vault JSON 存储中，可供查看、编辑、导入和导出，持久数据目录为 `00_Archive/21_VocabularyData/`。源 PDF 保持不可变。Windows、macOS 和 iPadOS 使用相同的三文件包。本候选版新增紧凑的 LingQ 查词卡片、短语状态编辑、可同步的阅读器菜单开关，以及由 Vault 存储支持的分组词汇设置。
 
-JSONL is the current write format. Existing v3.1 and Format 3 files remain
-read-only migration/recovery inputs; the candidate does not clean or garbage
-collect old data. The sidecar snapshot is a rebuildable cache, and device WAL
-anchors, archives, and tails provide recovery. Upgrade all devices that edit a
-document before continuing with the 0.10.3 writer. Real cross-device Obsidian
-Sync and iPad hardware acceptance remain separate from local automation; see
-[the protocol](ANNOTATION_STORE.md), [implementation evidence](WAL_SIDECAR_IMPLEMENTATION.md),
-and [acceptance record](GENERAL_ACCEPTANCE.md).
+当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.4 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。
 
-The previous [0.6.0 three-file candidate](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)
-stores immutable per-device annotation operation batches and rebuilds a JSON
-snapshot cache from them. Version 0.7.0 adds lossless Float32 encoding and
-verified, replayable storage checkpoints; size and tail samples still reject
-obvious PDF changes, while full tagged `xxh64-v1` equality plus ordered page
-identity is required before external annotations are hydrated. Legacy SHA-256
-hashes remain readable; resource integrity, build artifacts, vendor provenance,
-and stable document identifiers continue to use SHA-256.
+之前的[0.6.0 三文件候选包](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)使用不可变的逐设备批注操作批次，并据此重建 JSON 快照缓存。0.7.0 版新增无损 Float32 编码和经过验证、可重放的存储检查点；文件大小和尾部样本仍可用于快速排除明显的 PDF 变化，但要水合外置批注，必须先确认带算法标识的完整 `xxh64-v1` 哈希相同，并且有序页面身份也匹配。旧版 SHA-256 哈希仍可读取；资源完整性、构建产物、供应来源和稳定文档标识继续使用 SHA-256。
 
-Historical candidate and evidence ZIPs have been moved out of Git and archived separately. Their test reports and checksum metadata remain in this repository; installable three-file outputs and source assets are retained.
+历史候选包和证据 ZIP 已从 Git 移出并单独归档。相应测试报告和校验和元数据仍保留在本仓库中；可安装的三文件产物和源资源也予以保留。
 
-The external store is under `00_Archive/20_PDFData`. A copied PDF at a new path
-gets a new document identity; Vault rename/move keeps the existing identity.
-Older plugin annotations are associated through exact PDF object references;
-their existing geometry stays in the immutable PDF until edited, after which
-the latest editor payload is recorded externally. If the legacy identity worker
-cannot verify those references, the PDF opens read-only. Unchanged source PDF
-annotations from other applications remain visible. External applications do
-not see plugin annotations in the original PDF; use **将当前 PDF 与外置批注合并导出为独立 PDF** to create a separate annotated copy.
+外置存储位于 `00_Archive/20_PDFData`。将 PDF 复制到新路径后会获得新的文档身份；通过 Vault 重命名／移动则保留原身份。旧版插件批注通过精确的 PDF 对象引用进行关联；在编辑之前，其原有几何数据仍保存在不可变 PDF 中，编辑后，最新编辑器载荷会记录到外置存储。如果旧版身份 Worker 无法验证这些引用，PDF 将以只读方式打开。其他应用写入且未改变的源 PDF 批注仍会显示。外部应用看不到原始 PDF 中的插件批注；请使用 **将当前 PDF 与外置批注合并导出为独立 PDF** 创建带批注的副本。
 
-### 0.7.0 annotation storage (historical)
+### 0.7.0 批注存储（历史说明）
 
-Ink `lines` and `/InkList` `points` remain separate, semantically required data.
-Float32 arrays are encoded as little-endian binary Base64 with an explicit item
-count, preserving Float32 values (including NaN separators) without lossy point
-sampling. Older `Float32Array` JSON wrappers remain readable. The current
-four-Ink sidecar fixture shrinks from 78,000 bytes to 25,056 bytes (67.9%) when
-converted; this is a measured fixture result, not a size guarantee for every PDF.
+Ink `lines` 与 `/InkList` `points` 是语义不同且都必需的数据，仍分别保存。Float32 数组使用小端二进制 Base64 编码，并附带明确的项目数；这种编码能保留 Float32 值（包括 NaN 分隔符），不会通过抽稀点来压缩而造成有损变化。旧版 `Float32Array` JSON 包装格式仍可读取。当前包含四个 Ink 的 Sidecar 测试样本从 78,000 字节缩小到 25,056 字节（减少 67.9%）；这是针对该测试样本的实测结果，不代表所有 PDF 都能达到相同压缩率。
 
-The checkpoint stores live annotations separately from a compact deletion ledger
-and records exact batch digests, operation digests, known devices, causal heads,
-and metadata identity. `.previous.json` holds the prior distinct verified
-checkpoint and is not rotated by unchanged reads. Format migration waits for all
-active devices to acknowledge the same checkpoint; missing causal references
-pause replay instead of replacing state. Covered operation batches are reclaimed
-only after a 30-day retention period and only when both current and previous
-checkpoints verify. The old snapshot and full legacy index remain readable during
-rollout. Missing or stale per-document metadata fails closed rather than minting
-a replacement identity. To review devices or explicitly retire one after
-confirming it has no unsynced edits, use **审查当前 PDF 的批注同步设备**. Late
-writes from a retired device are isolated and surfaced for recovery; they are not
-silently applied or collected. None of this storage migration rewrites PDF bytes.
+检查点将存活批注与精简删除账本分开保存，并记录精确的批次摘要、操作摘要、已知设备、因果头和元数据身份。`.previous.json` 保存上一份不同且已验证的检查点；状态未变化的读取不会导致它轮换。格式迁移会等待所有活动设备确认同一检查点；如果因果引用缺失，则暂停重放，而不会替换现有状态。只有经过 30 天保留期且当前与上一检查点都验证通过后，才会回收已覆盖的操作批次。迁移期间仍可读取旧快照和完整旧版索引。单文档元数据缺失或过期时采用失败关闭策略，不会擅自生成替代身份。确认设备没有未同步编辑后，如需查看设备或明确退役某台设备，请使用 **审查当前 PDF 的批注同步设备**。已退役设备的迟到写入会隔离并提示恢复，不会被静默应用或回收。这些存储迁移操作都不会改写 PDF 字节。
 
-The pinned `xxhash-wasm` 1.1.0 runtime is bundled for offline content-consistency
-checks and is not a tamper-detection primitive. See [HASH_BENCHMARK.md](HASH_BENCHMARK.md)
-for earlier hash timing samples; those samples are not 0.6.0 save benchmarks.
-The prior [0.5.20 three-file package](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)
-decodes large embedded merge ledgers in bounded chunks and hardens PDF.js Ink
-drawing-session cleanup against stale pointer listeners and missing in-flight
-stroke state. It addresses the `Maximum call stack size exceeded` failure and
-the reported pen-state errors; the iPad still needs a device-side recheck.
-The prior [0.5.18 three-file package](dist/pdf-web-reader-0.1general-0.5.18-candidate.zip)
-added stack-overflow context and the originating PDF merge Worker stack to
-diagnostic JSON. The prior [0.5.17 three-file package](dist/pdf-web-reader-0.1general-0.5.17-candidate.zip)
-removes full-page fingerprinting from ordinary opens and from later ordinary saves,
-including the checkpoint three-way merge. On a 120-page, 16.85 MB synthetic PDF,
-the first save fingerprints the legacy baseline once; each of the next nine saves
-uses zero baseline pages and one dirty draft page. `prepareLocal` P50/P90 measured
-855/1,132 ms on desktop and 727/942 ms in Obsidian mobile simulation. Total save
-P50 remained 6.21/5.30 seconds, so the remaining write and recovery work still
-dominates. See [the acceptance record](GENERAL_ACCEPTANCE.md) for test results,
-memory scope, failure evidence, and the limitation that mobile simulation is not
-physical iPad validation.
-The prior [0.5.16 three-file package](dist/pdf-web-reader-0.1general-0.5.16-candidate.zip)
-added page-count guards and persisted ordered page identities.
-The prior [0.5.15 three-file package](dist/pdf-web-reader-0.1general-0.5.15-candidate.zip)
-adds per-stage PDF save timing to diagnostic JSON. The prior
-[0.5.14 three-file package](dist/pdf-web-reader-0.1general-0.5.14-candidate.zip)
-handles a PDF.js draft that removes a saved annotation but still carries the
-previous live merge ledger. Only a newer, exact-identity delete operation can
-explain that missing annotation; the output persists its deletion tombstone.
-Undo/Redo tracks restored saved editors even when PDF.js serializes them to null.
-A same-content upsert with a newer operation clock participates in LWW.
-Unexplained missing annotations, corrupt base/checkpoint ledgers and uncertain
-writes still stop saving. Old recovery candidates remain untouched.
+固定版本 `xxhash-wasm` 1.1.0 运行时已打包，用于离线内容一致性检查；它不是防篡改算法。此前的哈希耗时样本见 [HASH_BENCHMARK.md](HASH_BENCHMARK.md)；这些数据不是 0.6.0 的保存基准。
 
-The prior [0.5.13 three-file package](dist/pdf-web-reader-0.1general-0.5.13-candidate.zip)
-closes an edited Reader after its latest frozen revision has a verified durable
-recovery copy, then completes PDF writeback in a plugin-owned background job.
-Saving progress remains visible after the Reader closes. Cross-device merge and
-phase-aware disk verification remain required; recovery is retained on failure.
-PDF.js serialization and recovery verification still precede closing. App
-suspension or termination can stop background work; a durable intent is required
-for safe resumption, and uncertain writes must not be blindly replayed.
+之前的 [0.5.20 三文件包](dist/pdf-web-reader-0.1general-0.5.20-candidate.zip)以有界分块方式解码较大的内嵌合并账本，并加强了 PDF.js Ink 绘图会话清理，以处理过期指针监听器和缺失的在途笔迹状态。它修复了 `Maximum call stack size exceeded` 故障及已报告的笔状态错误；iPad 仍需要设备端复验。
 
-The prior [0.5.12 three-file package](dist/pdf-web-reader-0.1general-0.5.12-candidate.zip)
-accepts verified prefix-delta recovery evidence as well as full recovery PDFs.
-The 0.5.11 physical iPad log still showed five blocked saves: its compatibility
-filter excluded the delta format emitted by the actual recovery writer.
+之前的 [0.5.18 三文件包](dist/pdf-web-reader-0.1general-0.5.18-candidate.zip)在诊断 JSON 中加入堆栈溢出上下文和发生问题的 PDF Merge Worker 调用栈。之前的 [0.5.17 三文件包](dist/pdf-web-reader-0.1general-0.5.17-candidate.zip)从普通打开以及后续普通保存中移除全页指纹计算，也包括检查点三方合并。在一份 120 页、16.85 MB 的合成 PDF 上，首次保存只对旧版基线计算一次指纹；随后九次保存的基线指纹页数均为 0，每次只计算 1 个脏草稿页。`prepareLocal` 的 P50/P90 在桌面端实测为 855/1,132 ms，在 Obsidian 移动端模拟中为 727/942 ms。总保存时间的 P50 仍为 6.21/5.30 秒，因此其余写入和恢复工作仍占主要耗时。测试结果、内存测量范围、失败证据，以及移动端模拟不等同于 iPad 实机验收的限制，见[验收记录](GENERAL_ACCEPTANCE.md)。
 
-The prior [0.5.11 three-file package](dist/pdf-web-reader-0.1general-0.5.11-candidate.zip)
-addresses the pending-checkpoint save block found in the exported iPad runtime
-JSON. Detailed failure evidence is retained locally; physical iPad verification
-of this candidate remains pending. Runtime records now export through the visible
-diagnostic JSON folder; see [LOCAL_RUNTIME_LOG.md](LOCAL_RUNTIME_LOG.md).
+之前的 [0.5.16 三文件包](dist/pdf-web-reader-0.1general-0.5.16-candidate.zip)新增页数保护，并持久化有序页面身份。之前的 [0.5.15 三文件包](dist/pdf-web-reader-0.1general-0.5.15-candidate.zip)在诊断 JSON 中加入 PDF 保存各阶段耗时。之前的 [0.5.14 三文件包](dist/pdf-web-reader-0.1general-0.5.14-candidate.zip)处理 PDF.js 草稿删除已保存批注、但仍带有上一版实时合并账本的情况。只有更新且身份精确匹配的删除操作，才能解释该批注为何消失；输出会持久化相应删除墓碑。即使 PDF.js 将已恢复的编辑器序列化为 null，撤销／重做仍会跟踪这些编辑器。同内容且操作时钟更新的 upsert 也会参与 LWW。对于无法解释的批注缺失、损坏的基线／检查点账本以及不确定写入，保存仍会停止。旧恢复候选保持原样，不作修改。
 
-The prior 0.5.10 three-file package（ZIP 已移出 Git）
-fixes retained live Ink serialization and commits strokes completed during an
-in-flight save before capturing the next revision. Host-confirmed clean flags
-do not mean the PDF.js loaded bytes already contain those editors. Save and
-recovery both serialize retained editor storage; exact UUID-to-ref binding
-remains strict. Recovery acknowledges only verified nonempty serialized bytes.
-See [validation and limitations](GENERAL_ACCEPTANCE.md). Physical iPad acceptance
-remains pending; the 0.5.9 package is retained for rollback.
+之前的 [0.5.13 三文件包](dist/pdf-web-reader-0.1general-0.5.13-candidate.zip)会在已编辑的 Reader 最新冻结版本拥有经过验证的持久恢复副本后关闭 Reader，随后由插件拥有的后台任务完成 PDF 写回。Reader 关闭后仍可查看保存进度。跨设备合并和按阶段进行的磁盘验证仍是必需的；写入失败时会保留恢复数据。关闭之前仍要完成 PDF.js 序列化和恢复验证。应用被挂起或终止会中断后台工作；要安全恢复，必须有持久化意图记录，不能盲目重放结果不确定的写入。
 
-The prior 0.5.9 three-file package（ZIP 已移出 Git）
-uses verified PDF incremental revisions and binary append where the host supports
-it. Shared recovery bases plus checksummed deltas retain complete local branches;
-old full-PDF recovery records remain readable. Cross-device UUIDs, clocks,
-tombstones, merge behavior and safe close acknowledgement remain shared across
-platforms. Unsupported append sources keep a verified full-save fallback.
-PDF.js still produces full save buffers, and exact disk validation still reads
-the file; this does not make total memory usage proportional only to edits.
+之前的 [0.5.12 三文件包](dist/pdf-web-reader-0.1general-0.5.12-candidate.zip)除完整恢复 PDF 外，也接受经过验证的前缀差异恢复证据。0.5.11 的 iPad 实机日志仍显示有五次保存被阻止：兼容性过滤器排除了实际恢复写入器生成的差异格式。
 
-The prior 0.5.8 three-file package（ZIP 已移出 Git）
-coordinates outstanding sync work before requesting a safe Reader close. It stops
-new refreshes, safely settles a running checkpoint/apply, then confirms saving or
-a current durable recovery copy before the native tab is detached. Failed
-cancellation or unconfirmed edits keep the Reader open; slow PDF serialization
-still needs to finish safely.
+之前的 [0.5.11 三文件包](dist/pdf-web-reader-0.1general-0.5.11-candidate.zip)修复了从导出的 iPad 运行时 JSON 中发现的待处理检查点保存阻塞。详细失败证据保留在本地；该候选版仍待 iPad 实机验证。运行时记录现在通过可见的诊断 JSON 文件夹导出，详情见 [LOCAL_RUNTIME_LOG.md](LOCAL_RUNTIME_LOG.md)。
 
-The prior 0.5.7 package（ZIP 已移出 Git）
-blocks finger text selection on iPad PDF pages while an annotation tool is active.
-Finger input remains navigation; Pencil text highlighting/drawing, mouse input,
-toolbar controls and editable text fields retain their existing behavior.
-It also targets continuous Pencil text highlighting across line breaks.
-The prior 0.5.6 package（ZIP 已移出 Git）
-uses an 80 ms weighted velocity regression, a 4,000 px/s total speed cap, and
-350 ms exponential deceleration. Inertia starts at 90 px/s and stops at 10 px/s.
-It integrates real animation time, including delayed frames, and cancels on
-backgrounding. Finger navigation and Pencil editing remain separate.
-Validation and the authorized target replacement are recorded in
-[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md); the 0.5.5 scroll-fix package remains
-available for rollback. Physical iPad feel still requires device confirmation.
+之前的 0.5.10 三文件包（ZIP 已移出 Git）修复了保留中的活动 Ink 序列化，并在捕获下一修订前提交保存进行期间完成的笔迹。宿主确认的 clean 标记不代表 PDF.js 已加载的字节中已包含这些编辑器。保存和恢复都会序列化保留的编辑器存储；UUID 与对象引用的精确绑定仍采用严格校验。恢复只会确认非空且已验证的序列化字节。详情见[验证结果和限制](GENERAL_ACCEPTANCE.md)。iPad 实机验收仍待完成；0.5.9 包保留用于回滚。
 
-Version 0.5.6 also fixes saving annotated PDFs with ordinary cross-page links.
-After validating page lineage, the merge copier maps existing leaf-page targets
-to the output's existing pages; it preserves Link/GoTo destinations and appearance
-resources without copying the page tree. Unknown pages and unsafe relationships
-remain rejected. The earlier “annotation appearance references a page” error could
-actually originate from an unchanged Link destination.
+之前的 0.5.9 三文件包（ZIP 已移出 Git）在宿主支持时使用经过验证的 PDF 增量修订和二进制追加。共享恢复基线与带校验和的差异文件可保留完整本地分支；旧的完整 PDF 恢复记录仍可读取。跨设备 UUID、时钟、墓碑、合并行为和安全关闭确认在各平台保持一致。不支持追加的来源仍采用经过验证的完整保存回退路径。PDF.js 仍会生成完整保存缓冲区，精确磁盘验证也仍需读取整个文件，因此总内存用量并不会因此只与编辑量成正比。
 
-Version 0.5.5 reduces repeated full-PDF work during continuous editing. On the
-iPad/iOS input entry, automatic saving waits for three idle seconds and at least
-ten seconds between automatic starts; the cooldown adapts to the previous save
-cost, up to thirty seconds. Edits during a save remain dirty and return to the
-idle scheduler. Manual saving and controlled close bypass the automatic cooldown
-while retaining input boundaries and revision acknowledgements. Desktop idle
-saving remains one second. Mobile serialization, merge and host write work share
-one save slot. Immutable baselines are shared, Worker messages transfer only
-owned temporary buffers, and the final Reader releases in-memory sync checkpoints
-after its pending work settles. Disk recovery/checkpoint files remain intact.
-Longer automatic delays increase the unsaved window during forced termination.
-The full frozen Viewer, incremental resource cache and offline three-file package
-remain unchanged. Real iPad memory/crash acceptance still requires device testing.
+之前的 0.5.8 三文件包（ZIP 已移出 Git）会先协调尚未完成的同步工作，再请求安全关闭 Reader。它会停止新的刷新，安全完成正在运行的检查点／应用操作，并在原生标签页分离前确认保存完成或已有当前的持久恢复副本。取消失败或编辑尚未确认时会让 Reader 保持打开；耗时较长的 PDF 序列化仍需安全完成。
 
-Version 0.5.4 chooses one or two toolbar rows from the available space and
-the actual visible controls, replacing the fixed 880-pixel two-row rule. Undo
-and redo use the same 16-pixel SVG/CSS-mask mechanism, theme colors and states
-as the native PDF.js annotation tools. Finger flicks continue scrolling smoothly
-after release and slow to a stop; fresh interaction or document replacement
-cancels momentum. Clicking outside a tool parameter popup closes it without
-deselecting the tool. Pencil text highlighting constructs a selection from actual
-text-layer caret hits and uses the native highlight editor; freehand highlights
-are bound to their actual saved InkHighlight objects. Saving, sync and incremental
-cache behavior remain shared. Current validation and
-delivery records are in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md).
+之前的 0.5.7 包（ZIP 已移出 Git）会在 iPad 上启用批注工具时阻止手指选择 PDF 页面文本。手指仍用于导航；Apple Pencil 文本高亮／绘图、鼠标输入、工具栏控件和可编辑文本字段保留各自原有行为。该版本也针对 Pencil 跨行连续高亮进行了优化。
 
-Version 0.5.3 keeps the persisted **显示阅读器状态栏** setting from 0.5.2
-(default off; changes apply to existing Readers and popouts without reload) and
-updates the toolbars. The primary toolbar uses 32-pixel **↶** and **↷** controls
-instead of **编辑**; delete is under **更多**, and the existing native Save
-control is reused without adding a duplicate. Insert Image and Print controls are
-hidden in both primary and secondary toolbars; their code and DOM nodes remain
-in the frozen Viewer. The zoom group is 64 pixels wide, and the page-number input
-is 36 pixels wide plus 8 pixels for each digit beyond four. The four existing
-zoom glyphs, percentage and custom zoom values remain. **↕** is described as
-**适合整页** (the existing page-fit value), not fit-height. The frozen PDF.js
-Viewer version is unchanged; this branch adds the pinned `xxhash-wasm` runtime
-dependency without adding a network or CDN requirement.
+之前的 0.5.6 包（ZIP 已移出 Git）采用 80 ms 加权速度回归、4,000 px/s 的合速度上限和 350 ms 指数减速。惯性在 90 px/s 时启动，在 10 px/s 时停止。计算使用真实动画时间（包括延迟帧），并在应用进入后台时取消。手指导航与 Pencil 编辑仍相互独立。验证及获准的目标替换记录见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)；0.5.5 滚动修复包仍可用于回滚。iPad 实机手感仍需设备端确认。
 
-The 0.5.1 background prewarm and incremental cache index are unchanged. The
-frozen 0.5.4 default suite passed 194/194 with natural Node exit 0; the final
-offline suite also exited 0. Mac-native UI, prewarm/sync and three-file target
-replacement records are summarized in [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md).
-That Mac sample does not establish iPad hardware acceptance. Versions 0.5.3, 0.5.2,
-0.5.1, 0.5.0 and 0.4.0 remain historical rollback references; preserve the full
-plugin backup, settings, recovery files and sync checkpoints when replacing or
-rolling back. Native testing uses only `/Users/jiajia/Documents/ObReader-Apple-Test`,
-after verifying the actual vault and plugin identity; discover the owned loopback
-CDP endpoint for each run rather than assuming a fixed port. The earlier approved
-`远程仓库1` replacement was 0.5.4 at the initial 0.5.5 delivery. The subsequent
-0.5.5 scroll-fix replacement was separately authorized. The current 0.5.9 delivery
-has the same explicit authorization to replace only that plugin's three files,
-preserving settings, cache and recovery, with no PDF operations. Save and
-close Reader tabs before installing the three matching 0.5.9 files, and preserve
-settings, cache, recovery and sync checkpoints. Git push status is tracked
-separately in Git history; no GitHub Release is created. Windows and iPad/Pencil
-physical-device acceptance remain pending.
+0.5.6 版还修复了包含普通跨页链接的已批注 PDF 保存问题。验证页面沿袭关系后，合并复制器会将现有叶页面目标映射到输出中已有的页面；它保留 Link/GoTo 目标和外观资源，但不复制页面树。无法识别的页面及不安全的关系仍会被拒绝。此前出现的“批注外观引用页面”错误，实际也可能来自未改变的 Link 目标。
 
-## Install: exactly three release files
+0.5.5 版减少了连续编辑时重复进行的整份 PDF 处理。在 iPad/iOS 输入入口中，自动保存会等待三秒空闲，并且两次自动保存启动之间至少间隔十秒；冷却时间会根据上次保存耗时调整，最长为三十秒。保存期间发生的编辑仍标记为 dirty，并重新交由空闲调度器处理。手动保存和受控关闭会绕过自动冷却时间，但仍保留输入边界及修订确认机制。桌面端空闲保存仍为一秒。移动端序列化、合并和宿主写入共享一个保存槽。不可变基线会共享；Worker 消息只传输当前操作拥有的临时缓冲区；最终 Reader 会在待处理任务完成后释放内存中的同步检查点。磁盘恢复／检查点文件保持不变。自动保存等待时间变长，会扩大被强制终止时可能尚未保存的时间窗口。完整冻结版 Viewer、增量资源缓存和离线三文件包均保持不变。iPad 实机内存／崩溃验收仍需设备测试。
 
-For the current candidate, use the package produced by the current
-build and follow the [general candidate installation guide](GENERAL_ACCEPTANCE.md).
-The 0.3.0 ZIP described in [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) is a historical package. Public
-releases use the same three matching files:
+0.5.4 版会根据可用空间和实际可见控件，选择一行或两行工具栏，取代固定的 880 像素两行规则。撤销和重做使用与 PDF.js 原生批注工具相同的 16 像素 SVG/CSS 遮罩机制、主题颜色和状态。手指快速滑动在抬起后会继续滚动并逐渐减速；新的交互或文档替换会取消惯性。点击工具参数弹窗外部可关闭弹窗，但不会取消工具选择。Pencil 文本高亮会根据实际文本层 caret 命中构造选区，并使用原生高亮编辑器；自由绘制的高亮会绑定到实际保存的 InkHighlight 对象。保存、同步和增量缓存行为保持一致。当前验证和交付记录见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)。
+
+0.5.3 版保留了 0.5.2 中持久化的 **显示阅读器状态栏** 设置（默认关闭；更改会即时应用到现有 Reader 和弹出窗口，无需重载），并更新工具栏。主工具栏使用 32 像素的 **↶** 和 **↷** 控件代替 **编辑**；删除操作放在 **更多** 下，并复用现有原生 Save 控件，不添加重复按钮。主、次工具栏都会隐藏 Insert Image 和 Print 控件，但它们的代码及 DOM 节点仍保留在冻结版 Viewer 中。缩放组宽 64 像素，页码输入框宽 36 像素，超过四位的每一位再增加 8 像素。四个既有缩放图标、百分比和自定义缩放值均保留。**↕** 的说明为 **适合整页**（现有页面适配值），而不是适合高度。冻结版 PDF.js Viewer 版本没有变化；本分支新增固定版本的 `xxhash-wasm` 运行时依赖，但不增加网络或 CDN 要求。
+
+0.5.1 版的后台预热和增量缓存索引保持不变。冻结版本 0.5.4 的默认测试套件以 Node 自然退出码 0 完成，194/194 项通过；最终离线测试套件也以退出码 0 完成。Mac 原生 UI、预热／同步和三文件目标替换记录汇总于 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)。这些 Mac 样本不能证明 iPad 硬件验收通过。0.5.3、0.5.2、0.5.1、0.5.0 和 0.4.0 仍作为历史回滚参考；替换或回滚时应保留完整插件备份、设置、恢复文件和同步检查点。原生测试只使用 `/Users/jiajia/Documents/ObReader-Apple-Test`，并在运行前验证实际 Vault 和插件身份；每次都应发现本次运行实际拥有的 loopback CDP 端点，不要假定固定端口。此前获准对 `远程仓库1` 的替换，是最初交付 0.5.5 时替换为 0.5.4。之后替换 0.5.5 滚动修复包另行获得授权。目前 0.5.9 交付也获得了相同的明确授权，仅替换该插件的三个文件，同时保留设置、缓存和恢复数据，不操作 PDF。安装对应的 0.5.9 三文件前，应保存并关闭 Reader 标签页，同时保留设置、缓存、恢复数据和同步检查点。Git 推送状态单独记录在 Git 历史中；不创建 GitHub Release。Windows 和 iPad/Pencil 实机验收仍待完成。
+
+## 安装：发布包仅含三个文件
+
+安装当前候选版时，请使用当前构建生成的包，并参考[通用候选版安装指南](GENERAL_ACCEPTANCE.md)。[IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md) 中描述的 0.3.0 ZIP 是历史包。公开发布仍使用以下三个版本匹配的文件：
 
 - `main.js`
 - `manifest.json`
 - `styles.css`
 
-Put only those three files into
-`<vault>/<configDir>/plugins/pdf-web-reader/` and enable **PDF Web Reader**.
-The default configuration directory is `.obsidian`, but the plugin uses
-Obsidian's actual `Vault.configDir` rather than assuming that name.
+只将这三个文件放入 `<vault>/<configDir>/plugins/pdf-web-reader/`，然后启用 **PDF Web Reader**。默认配置目录是 `.obsidian`，但插件会使用 Obsidian 实际的 `Vault.configDir`，而不会假定目录一定叫这个名字。
 
-The complete Viewer is compressed and embedded in `main.js`. After plugin enable,
-the plugin prepares its own resources without constructing background
-Reader views. Opening a PDF first joins the same task. Resources use a content-hash
-versioned directory under its plugin folder using Obsidian's Adapter API.
-Missing or corrupted resource files are restored from the shipped payload;
-no files are fetched from the network. Existing version directories are not
-deleted automatically. A completed extraction is marked only after all files
-have been verified. At most four resource operations run together. Valid disk
-files are checked before decompressing; only missing or damaged files are
-repaired. Successful preparation and verified HTML/CSS/mobile script bytes are
-reused for that plugin instance. The completion marker stores verified size,
-modification time and creation time for each file. On restart, matching metadata
-skips full binary reads; changed files are SHA-256 checked and repaired as needed.
-First installation, an older/malformed marker, or an adapter without useful stat
-metadata requires full verification to establish a trusted index. Startup
-prewarm retries are bounded and can resume on foreground; status, counters and
-failure codes are included in the existing diagnostics export. Restoring all
-metadata after modifying bytes cannot be detected by this shortcut; consumed
-HTML/CSS/module bytes are separately verified once per plugin instance.
+完整 Viewer 会压缩并嵌入 `main.js`。启用插件后，插件会准备自身资源，但不会因此创建后台 Reader 视图。打开 PDF 时会加入同一项准备任务。资源使用 Obsidian Adapter API，存放在插件目录下按内容哈希版本化的子目录中。缺失或损坏的资源文件会从随包提供的数据中恢复；运行时不会从网络获取文件。现有版本目录不会自动删除。只有所有文件都验证通过后，才会写入提取完成标记。最多并行执行四项资源操作。解压前会先检查磁盘上的有效文件，只修复缺失或损坏的文件。同一插件实例会复用成功的准备结果，以及已验证的 HTML/CSS/移动端脚本字节。完成标记会为每个文件记录已验证的大小、修改时间和创建时间。重启时，如果元数据匹配，就跳过完整二进制读取；文件改变时则使用 SHA-256 检查并按需修复。首次安装、完成标记较旧或格式错误、或 Adapter 缺少有效 stat 元数据时，需要完整验证并建立可信索引。启动预热的重试次数有限，应用回到前台后可以继续；状态、计数器和失败代码会包含在现有诊断导出中。如果修改了字节后又还原所有元数据，这个快捷检查无法发现；实际使用的 HTML/CSS/模块字节会在每个插件实例中另行验证一次。
 
-**Three files is the distribution constraint, not a permanent disk-file-count
-constraint.** Runtime extraction creates the local Viewer files and a
-completion marker. The full resource payload includes the Worker, CMaps,
-standard fonts, ICC profile, WASM decoders, all translations and images, the
-scripting sandbox, debug/sample assets, and their license texts. No Viewer
-resources are trimmed for this release.
+**发布包的限制是只分发三个文件，不代表磁盘上永久只能存在三个文件。**运行时提取会创建本地 Viewer 文件和完成标记。完整资源包包含 Worker、CMaps、标准字体、ICC 配置文件、WASM 解码器、所有翻译和图像、脚本沙箱、调试／样例资源以及相应许可证文本。本次发布没有裁剪 Viewer 资源。
 
-The application baseline is Obsidian **1.14.4**. The 0.1general / plugin
-0.8.0 candidate uses one source and one three-file package for Windows, macOS,
-and iPadOS, with `isDesktopOnly: false`. Installed runtime code uses browser
-APIs and bundled SHA-256; Node/npm are build and test dependencies only. At
-plugin `onload`, Obsidian selects the desktop or mobile entry once for that load.
-The desktop entry uses Obsidian resource URLs and popout coordination; the mobile
-entry uses blob-backed module and Worker paths without desktop popout
-coordination. Editing and annotation operation storage are shared. Daily save,
-recovery, checkpoint and close paths do not serialize or write PDF bytes. The
-explicit export command creates a new PDF file. XXH64 checks content consistency
-only; SHA-256 still protects resources and stable document identifiers. The
-frozen Viewer is unchanged, and the packaged runtime includes the legacy
-identity-inspection Worker and its third-party notices.
+应用基线为 Obsidian **1.14.4**。0.1general／插件 0.8.0 候选版为 Windows、macOS 和 iPadOS 共用同一源码及三文件包，`isDesktopOnly: false`。已安装的运行时代码使用浏览器 API 和内置 SHA-256；Node/npm 仅用于构建和测试。每次插件 `onload` 时，Obsidian 会针对该次加载选择桌面端或移动端入口。桌面端入口使用 Obsidian 资源 URL 并协调弹出窗口；移动端入口使用基于 Blob 的模块和 Worker 路径，不包含桌面弹出窗口协调。编辑和批注操作存储由各平台共享。日常保存、恢复、检查点和关闭路径不会序列化或写入 PDF 字节。显式导出命令会新建 PDF 文件。XXH64 只检查内容一致性；资源和稳定文档标识仍由 SHA-256 保护。冻结版 Viewer 未改变；安装包运行时包含旧版身份检查 Worker 及其第三方声明。
 
-These implementation details do not establish physical-device acceptance.
-Windows and iPad device acceptance remain pending, and desktop mobile emulation
-does not establish WKWebView or actual mouse-button delivery. See
-[GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md) for current validation status and
-the [historical iPad 0.3.0 installation and mouse matrix](IPAD_ACCEPTANCE.md).
-The macOS 0.2.0 rollback package and [historical Mac acceptance evidence](MACOS_ACCEPTANCE.md)
-remain available.
+这些实现细节并不能证明已通过实机验收。Windows 和 iPad 设备验收仍待完成；桌面端移动模式模拟也不能证明 WKWebView 或真实鼠标按键事件的投递情况。当前验证状态见 [GENERAL_ACCEPTANCE.md](GENERAL_ACCEPTANCE.md)，历史 iPad 0.3.0 安装说明及鼠标测试矩阵见 [IPAD_ACCEPTANCE.md](IPAD_ACCEPTANCE.md)。macOS 0.2.0 回滚包和[历史 Mac 验收证据](MACOS_ACCEPTANCE.md)仍然保留。
 
-## Open and edit PDFs
+## 打开和编辑 PDF
 
-While enabled, ordinary PDF file opens in Obsidian use this viewer. The command
-palette action **在 PDF 阅读器中打开当前 PDF** and PDF context-menu action
-**使用 PDF 阅读器打开** remain available. A built-in PDF tab already open before
-enabling is not forcibly replaced; close and reopen it. Markdown inline PDF
-embeds still use Obsidian's built-in rendering. This plugin does not change
-Windows' system-wide PDF file association.
+启用期间，在 Obsidian 中打开普通 PDF 文件会使用此阅读器。命令面板中的 **在 PDF 阅读器中打开当前 PDF** 操作和 PDF 右键菜单中的 **使用 PDF 阅读器打开** 操作仍然可用。启用插件前已经打开的内置 PDF 标签不会被强制替换；请关闭后重新打开。Markdown 内嵌的 PDF 仍由 Obsidian 内置渲染器处理。本插件不会改变 Windows 系统级的 PDF 文件关联。
 
-| Key | Tool               |
-| --- | ------------------ |
-| `1` | Underline / 下划线 |
-| `2` | Rectangle / 矩形框 |
-| `3` | Highlight / 荧光笔 |
-| `4` | Ink / 自由画笔     |
-| `5` | Text box / 文字框  |
+| 按键 | 工具                |
+| --- | ------------------- |
+| `1` | 下划线（Underline） |
+| `2` | 矩形框（Rectangle） |
+| `3` | 荧光笔（Highlight） |
+| `4` | 自由画笔（Ink）     |
+| `5` | 文字框（Text box）  |
 
-Both the number row and numeric keypad are supported. Press the active tool's
-key again or backquote to leave it. Typing digits inside an input or editable
-text does not switch tools.
+数字主键区和数字小键盘都受支持。再次按下当前工具的按键或反引号键可退出工具。在输入框或可编辑文本中输入数字不会切换工具。
 
-The desktop mouse controls incorporated from Windows `c52e522` are retained.
-Hold the middle mouse button to preview the six-sector tool wheel and release
-over a sector to select it. Releasing in the center leaves the wheel open for
-a left-click selection; the top sector, Escape, or an outside click closes it.
-Dragging the right mouse button temporarily erases annotations and restores
-the previous tool on release. A regular right-click retains the context menu
-and does not create annotations. On macOS use `Cmd+Z` and `Cmd+Shift+Z` for
-undo and redo.
+保留从 Windows `c52e522` 合入的桌面鼠标控制。按住鼠标中键可预览六分区工具轮，移到某个分区后松开即可选择。若在中心区域松开，工具轮会保持打开，可再用鼠标左键选择；点击顶部扇区、按 Escape 或点击外部区域都会关闭工具轮。按住鼠标右键拖动可临时擦除批注，松开后恢复此前工具。普通右键仍会打开上下文菜单，不会创建批注。在 macOS 上使用 `Cmd+Z` 和 `Cmd+Shift+Z` 撤销和重做。
 
-The unified candidate selects pointer behavior from the actual pointer type and
-button state. The zoom control is a 64-pixel group with **auto**, **1:1**, **↕**
-(**适合整页**), and **↔** (fit page width) choices; percentage and custom zoom
-values remain available. The page-number input is 36 pixels wide, growing by
-8 pixels per digit beyond four. The separate clickable **工具** wheel button is
-removed. The primary toolbar shows 32-pixel **↶** and **↷** undo/redo controls
-instead of **编辑**. Delete is in **更多**, and the existing native Save button
-is reused without a duplicate. Insert Image and Print controls are hidden in
-both primary and secondary toolbars while their frozen Viewer code and nodes
-remain. The five native annotation tools and middle-button wheel remain.
-The confirmed iPad input policy follows the active PDF.js tool: Apple Pencil
-input routed as actual `pen` pointer events draws, edits, or erases when an
-annotation tool is active; in **NONE** mode it pans the PDF. Finger contact with
-the PDF page is navigation pan only; page links, text selection, and annotation
-interactions are blocked for fingers. Reader toolbar and sidebar controls remain
-usable, as do native input/contenteditable editing exceptions. This preserves the
-existing tool and editor behavior. Physical iPad/Pencil event delivery remains
-unverified; native CDP touch and Pencil simulation cover automation only. No
-pressure, hover, palm-rejection/AI, or Scribble support is claimed.
-On mobile, use the plugin setting **导出移动端诊断 → 导出 JSON** or the command
-**导出 PDF 阅读器诊断 JSON**. Reports are saved under `PDF Reader Diagnostics/` and
-include startup stages, browser capabilities, resource verification, Worker mode,
-and pointer/button counters. They contain no PDF content or file paths.
+统一候选版根据实际指针类型和按键状态选择输入行为。缩放控件组宽 64 像素，提供 **auto**、**1:1**、**↕**（**适合整页**）和 **↔**（适合页面宽度）选项；百分比和自定义缩放值仍可使用。页码输入框宽 36 像素，超过四位后每增加一位宽 8 像素。独立、可点击的 **工具** 轮盘按钮已移除。主工具栏显示 32 像素的 **↶** 和 **↷** 撤销／重做控件，取代 **编辑**。删除操作位于 **更多** 下，并复用现有原生 Save 按钮，不增加重复按钮。主、次工具栏都隐藏 Insert Image 和 Print 控件，但冻结版 Viewer 中仍保留相关代码和节点。五种原生批注工具和中键工具轮均保留。
 
-Version 0.1.4 gives the active creation tool priority over existing annotation
-bodies: underline/highlight can select the PDF text beneath them, and drawing
-tools can start inside an existing annotation. Leave the tool, then double-click
-an annotation to explicitly edit its object. Toolbars, comments, the eraser,
-and an actively focused text-box input retain their own interactions.
+已确认的 iPad 输入策略会遵循当前 PDF.js 工具：实际作为 `pen` 指针事件路由的 Apple Pencil 输入，在激活批注工具时可绘制、编辑或擦除；在 **NONE** 模式下则平移 PDF。手指接触 PDF 页面仅用于导航平移；手指无法触发页面链接、文本选择或批注交互。Reader 工具栏和侧边栏控件仍可使用，原生 input/contenteditable 编辑例外也继续有效。由此保留既有工具和编辑器行为。iPad/Pencil 实际硬件事件投递仍未验证；原生 CDP 的触控和 Pencil 模拟仅覆盖自动化测试。目前不宣称支持压力感应、悬停、掌托拒绝／AI 或 Scribble。
 
-Automatic saving is **enabled by default** and can be disabled in the plugin
-settings. Desktop edits wait for one idle second; the iPad/iOS entry waits for
-three idle seconds and uses a ten-to-thirty-second automatic-start cooldown.
-After the applicable idle period, text is committed for saving without moving
-focus or the caret; active text composition and drawing are allowed to finish. Committing
-or blurring text also schedules saving. Right-button erasing waits until the
-gesture is released or cancelled before saving the changes.
-Press `Cmd+S` on macOS (`Ctrl+S` on Windows), or use **保存到仓库**,
-for an immediate manual save. Saves run in order, and only the host-confirmed
-revision becomes clean; edits made during a save remain pending. Disabling auto-save
-prevents new requests; host-accepted writes finish in order.
+在移动端，请使用插件设置 **导出移动端诊断 → 导出 JSON** 或命令 **导出 PDF 阅读器诊断 JSON**。报告保存在 `PDF Reader Diagnostics/`，包含启动阶段、浏览器能力、资源验证、Worker 模式和指针／按键计数器。报告不包含 PDF 内容或文件路径。
 
-The host checks the current disk bytes before overwriting and keeps a recovery
-candidate first. Open PDFs react to Vault modification notifications, with
-foreground and Reader-activation checks for missed notifications. Local edits
-and already-saved local contributions are reconciled against the incoming PDF;
-different annotation UUIDs are retained, while the newest completed operation
-wins a same-UUID conflict. Timestamps use UTC milliseconds plus logical,
-device and operation identifiers. UUIDs and durable deletion records are stored
-inside the PDF; existing standard `/NM` fields are preserved. Device clock skew
-can affect the winner, although the ordering is deterministic.
+0.1.4 版让当前创建工具优先于现有批注对象：下划线／高亮工具可选择其下方的 PDF 文本，绘图工具也可从已有批注内部开始绘制。退出工具后，双击批注可明确编辑该对象。工具栏、评论、橡皮擦和当前已获得焦点的文本框输入仍保留各自交互。
 
-Drawing, dragging, erasing and composition finish before a checkpoint is taken.
-A newer revision cannot be replaced by an older merge. Refresh stays in the
-same Viewer and preserves page, zoom, rotation, scroll position and tool choice;
-the previous PDF object's undo history ends at this refresh. No local edits
-means a direct refresh, without writing migration metadata just for opening.
-Unsupported page/content changes, unproven identities, encrypted or damaged
-PDFs, and unsafe tagged-annotation transfers pause automatic merging. Local
-checkpoints are retained; newer records can also preserve a replaced local
-version. Disk comparison and writing are separate operations and still have a
-sync race window. A conflict or failure pauses automatic overwrites. Use
-**恢复最近的 PDF 自动保存副本** to recover into a separate PDF under
-`PDF Recovery/`. Recovery requires a successful
-candidate write and cannot protect against process termination before that point.
-Renaming or moving an open PDF retains its document identity and updates its
-save target. A controlled close waits for automatic saves when enabled; disabled
-or paused saving persists a recovery draft without writing the original. The
-Reader stays open if that confirmation fails. Closing lets an active stroke or
-composition finish, then suspends new input until teardown or cancellation.
-On desktop, closing a verified Obsidian popout prepares all of its Readers before the
-window is destroyed; one failed confirmation keeps the window open. This
-requires the tested SDK window/split relationship. If that relationship cannot
-be verified, the plugin warns you to save or recover before closing the window.
-Moving a Reader through the verified `workspace.moveLeafToPopout` entry point
-also prepares it first. The new window reloads the confirmed PDF or exact durable
-draft, retaining its revision, dirty state and any conflict pause. An unguarded
-DOM reload can restore only the last durable checkpoint; additional edits may
-be lost. Returning a Reader to the main window through other SDK paths has not
-been verified. Save or recover before using those paths.
-Save and confirm success before
-closing, disabling or updating. A forced exit may bypass async close handling.
+自动保存**默认启用**，可在插件设置中关闭。桌面端编辑需空闲一秒；iPad/iOS 入口需空闲三秒，且自动保存启动之间有十至三十秒的冷却时间。达到对应空闲时长后，文本会提交保存，但不会移动焦点或光标；系统会等待正在进行的文本组合输入和绘图完成。提交文本或文本框失去焦点时也会安排保存。右键擦除会等到手势结束或取消后再保存更改。
 
-Disk comparison and the subsequent write are separate operations: another
-sync process can still race between them. Post-write verification detects some
-races, but the Vault API provides no atomic compare-and-swap guarantee.
-Standalone file picking and PDF replacement by drop remain intercepted.
+在 macOS 上按 `Cmd+S`，在 Windows 上按 `Ctrl+S`，或使用 **保存到仓库**，可立即手动保存。保存操作按顺序执行；只有宿主确认的修订才会标记为 clean，保存期间发生的编辑仍会等待写入。关闭自动保存后不会发起新的保存请求；已经被宿主接受的写入仍按顺序完成。
 
-Version 0.1.3 fixes parallel/double underline strokes when a selection spans
-complete text-layer spans. Underlines now use only selected text-node rectangles,
-not the additional inline container rectangles returned by browser ranges.
-Highlight selection is unchanged. Previously saved underline geometry is not
-rewritten automatically; delete and redraw an affected annotation if needed.
+宿主在覆盖文件前会检查当前磁盘字节，并先保留恢复候选副本。打开的 PDF 会响应 Vault 修改通知，并通过应用回到前台和 Reader 激活时的检查补漏。插件会将本地编辑及已保存的本地贡献与传入 PDF 协调：不同批注 UUID 会同时保留；同一 UUID 冲突时，最近完成的操作获胜。时间戳使用 UTC 毫秒值，并结合逻辑时钟、设备和操作标识。UUID 和持久删除记录存储在 PDF 内；已有标准 `/NM` 字段会被保留。设备时钟偏差可能影响胜出者，不过排序规则是确定性的。
 
-## Development
+系统会等绘图、拖动、擦除和文本组合输入结束后再创建检查点。较新修订不会被较旧的合并结果替换。刷新仍在同一个 Viewer 中进行，并保留页码、缩放、旋转、滚动位置和工具选择；此前 PDF 对象的撤销历史会在刷新时结束。如果没有本地编辑，就直接刷新，不会仅为打开文档而写入迁移元数据。遇到不支持的页面／内容变化、无法证明的身份、加密或损坏的 PDF，以及不安全的带标签批注转移时，会暂停自动合并。系统会保留本地检查点；较新的记录也可以保留被替换的本地版本。磁盘比较和写入是分开的操作，因此仍存在同步竞态窗口。发生冲突或失败后，会暂停自动覆盖。使用 **恢复最近的 PDF 自动保存副本**，可将恢复结果写为 `PDF Recovery/` 下的独立 PDF。恢复依赖候选文件成功写入；在此之前进程终止则无法得到保护。
 
-The current Mac development checkout is
-`/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`.
-The frozen PDF.js tree is retained and the installed runtime uses browser APIs.
-Each plugin load selects one platform entry from Obsidian's platform state;
-changing the Mac mobile-emulation state requires reloading the plugin. The mobile
-entry does not install desktop popout coordination.
+重命名或移动打开中的 PDF 会保留文档身份并更新保存目标。启用自动保存时，受控关闭会等待保存完成；保存被禁用或暂停时，会持久化恢复草稿，但不写入原文件。如果关闭确认失败，Reader 会保持打开。关闭时会先让当前笔迹或文本组合输入完成，然后暂停新输入，直到视图完成 teardown 或被取消。
 
-- `plugin/`: Obsidian host, resource cache, sync coordinator and lazy PDF merge Worker/client.
-- `viewer-adapter/`: host/Viewer message bridge and iframe styles.
-- `plugin/vocabulary/` and `viewer-adapter/vocabulary/`: isolated, optional Vault-local LingQ-style word/phrase study feature; disabled by default. Settings independently control highlighting for word and phrase statuses 1–5 (all enabled by default); known (status 5) terms use violet. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the PDF-core and vocabulary boundaries.
-- `vendor/pdfjs-generic-legacy/`: complete frozen PDF.js Viewer snapshot.
-- `scripts/`: deterministic packaging and safe deployment.
-- `tests/`: packaging, host, offline browser, and native Obsidian checks.
-- `dist/pdf-web-reader/`: generated three-file release package.
+在桌面端关闭已验证的 Obsidian 弹出窗口前，插件会先准备窗口中的所有 Reader；任一确认失败都会使窗口保持打开。这依赖已经测试过的 SDK 窗口／split 关系。如果无法验证该关系，插件会提示你在关闭窗口前保存或恢复。通过已验证的 `workspace.moveLeafToPopout` 入口移动 Reader 时，也会先准备视图。新窗口会重新载入已经确认的 PDF 或精确的持久草稿，并保留修订、dirty 状态及冲突暂停状态。未经保护的 DOM 重载只能恢复最后一个持久检查点；之后的编辑可能丢失。尚未验证通过其他 SDK 路径将 Reader 移回主窗口的行为；使用这些路径前请先保存或恢复。
 
-The frozen snapshot came from fork commit `c80e5a952` on branch `windows`;
-the fork retains underline and square editor/serialization support. Its
-SHA-256 inventory is verified before packaging. The upstream core/display
-runtime and Worker must remain matching versions; Obsidian's private internal
-PDF.js runtime is not used as a replacement.
+关闭、禁用或更新插件前，请保存并确认成功。强制退出可能绕过异步关闭处理。
+
+磁盘比较和后续写入是分开的操作：另一同步进程可能在两者之间造成竞态。写后验证可以发现一部分竞态，但 Vault API 不提供原子 compare-and-swap 保证。独立文件选择和拖放替换 PDF 的行为仍会被拦截。
+
+0.1.3 版修复了选区跨越完整文本层 span 时出现的平行／重复下划线。现在，下划线只使用被选中文本节点的矩形，不再使用浏览器 Range 额外返回的行内容器矩形。高亮选区行为不变。先前保存的下划线几何不会自动重写；如有需要，请删除受影响批注并重新绘制。
+
+## 开发
+
+当前 Mac 开发检出目录为 `/Users/jiajia/Documents/Documents/Codes/26_7_PdfRD_OB`。冻结版 PDF.js 树予以保留，已安装的运行时代码使用浏览器 API。每次加载插件时，Obsidian 会根据平台状态选择相应入口；在 Mac 上改变移动端模拟状态后，必须重新加载插件。移动端入口不会安装桌面弹出窗口协调功能。
+
+- `plugin/`：Obsidian 宿主、资源缓存、同步协调器和按需加载的 PDF Merge Worker／客户端。
+- `viewer-adapter/`：宿主与 Viewer 之间的消息桥接及 iframe 样式。
+- `plugin/vocabulary/` 和 `viewer-adapter/vocabulary/`：隔离、可选、存储在 Vault 中的 LingQ 风格单词／短语学习功能；默认关闭。设置可分别控制单词和短语 1–5 级状态的高亮（默认全开）；已掌握（状态 5）词条使用紫色。PDF 核心与词汇功能的边界见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+- `vendor/pdfjs-generic-legacy/`：完整、冻结的 PDF.js Viewer 快照。
+- `scripts/`：确定性打包和安全部署脚本。
+- `tests/`：打包、宿主、离线浏览器和 Obsidian 原生环境检查。
+- `dist/pdf-web-reader/`：生成的三文件发布包。
+
+冻结快照来自 `windows` 分支上的 fork 提交 `c80e5a952`；该 fork 保留了下划线和矩形编辑器／序列化支持。打包前会验证其 SHA-256 清单。上游 core/display 运行时与 Worker 必须保持同版本；不会使用 Obsidian 的私有内部 PDF.js 运行时替代。
 
 ```powershell
 npm ci
@@ -444,135 +133,122 @@ npm test
 npm run test:offline
 ```
 
-Node 22.12 or newer, npm and `puppeteer-core` are development/test dependencies
-only. The browser test driver is pinned to Puppeteer 25.12.0, whose supported
-Chrome line is 154. The native Obsidian connection is verified separately because
-it uses the application's embedded Chromium.
-The installed plugin uses Obsidian APIs and standard browser APIs. SHA-256 remains
-bundled for resource integrity and stable identities; XXH64 checks PDF, recovery,
-and sync content. Both are included in the offline package; it does not load Node
-or Electron modules.
-The desktop popout entry retains an optional host-provided Electron quit check;
-the mobile entry does not install that coordination.
-The offline browser harness may create a temporary local test server to serve
-the extracted artifacts; that server is not part of the installed plugin.
+Node 22.12 或更新版本、npm 和 `puppeteer-core` 仅为开发／测试依赖。浏览器测试驱动固定使用 Puppeteer 25.12.0，其支持的 Chrome 主版本为 154。Obsidian 原生连接会单独验证，因为它使用应用内嵌的 Chromium。
 
-## Test-vault deployment
+已安装的插件使用 Obsidian API 和标准浏览器 API。资源完整性及稳定身份校验仍使用随包提供的 SHA-256；PDF、恢复和同步内容一致性使用 XXH64。两者都包含在离线包中；运行时不会加载 Node 或 Electron 模块。桌面弹出窗口入口保留可选的、由宿主提供的 Electron 退出检查；移动端入口不安装该协调逻辑。离线浏览器测试框架可能会启动临时本地测试服务器，为提取后的产物提供服务；该服务器不是已安装插件的一部分。
 
-The Windows test-vault snapshot is included under
-[`test-vault/测试插件`](test-vault/README.md), with configuration, the 0.1.4
-plugin, saved test PDFs and a SHA-256 inventory. Copy it to a separate test
-location before opening it in Obsidian. Generated Viewer caches are excluded;
-the three-file plugin regenerates them locally. This snapshot preserves the
-historical Windows 0.1.4 test vault. For the current unified candidate, use the
-[general acceptance guide](GENERAL_ACCEPTANCE.md); the snapshot's age does not
-describe the current mobile implementation.
+## 测试 Vault 部署
 
-The Mac target is the independent test vault
-`/Users/jiajia/Documents/ObReader-Apple-Test`, copied from the complete outer
-snapshot and verified against all 60 inventory entries before opening.
-Save and close every Reader and disable the plugin before deployment.
-The deploy preflight verifies the exact vault path and configuration directory,
-and refuses active Reader tabs or an enabled plugin. It backs up the entire
-old plugin outside Obsidian's scan, then installs only the three release files.
+Windows 测试 Vault 快照位于 [`test-vault/测试插件`](test-vault/README.md)，其中包括配置、0.1.4 插件、保存的测试 PDF 和 SHA-256 清单。请先将其复制到独立测试位置，再用 Obsidian 打开。生成的 Viewer 缓存不在快照中；三文件插件会在本地重新生成缓存。该快照保留的是历史 Windows 0.1.4 测试 Vault。当前统一候选版请参考[通用验收指南](GENERAL_ACCEPTANCE.md)；该快照的年代并不代表当前移动端实现。
 
-`OBSIDIAN_VAULT_PATH`, `OBSIDIAN_VAULT_NAME`, `OBSIDIAN_CONFIG_DIR`,
-`PDF_READER_OBSIDIAN_CLI`, `PDF_READER_CDP_URL` and `PDF_READER_CHROME` configure
-test/deploy entry points. Every native action checks the target vault identity;
-the macOS path allowlist excludes user main vaults. For the isolated instance:
+Mac 测试目标是独立 Vault `/Users/jiajia/Documents/ObReader-Apple-Test`。它从完整外层快照复制而来，打开前需与全部 60 项清单逐一核验。部署前请保存并关闭所有 Reader，然后禁用插件。部署预检会验证 Vault 路径和配置目录，并拒绝在 Reader 标签页仍打开或插件仍启用时继续。它会先在 Obsidian 扫描范围之外备份整个旧插件，再只安装三个发布文件。
+
+`OBSIDIAN_VAULT_PATH`、`OBSIDIAN_VAULT_NAME`、`OBSIDIAN_CONFIG_DIR`、`PDF_READER_OBSIDIAN_CLI`、`PDF_READER_CDP_URL` 和 `PDF_READER_CHROME` 用于配置测试／部署入口。每项原生操作都会核验目标 Vault 身份；macOS 路径白名单排除用户主库。隔离实例的配置示例：
 
 ```sh
 export OBSIDIAN_VAULT_PATH=/Users/jiajia/Documents/ObReader-Apple-Test
 export OBSIDIAN_VAULT_NAME=ObReader-Apple-Test
 export OBSIDIAN_CONFIG_DIR=.obsidian
-# Set this to the loopback endpoint owned by the verified test instance.
-# The port is discovered for each run and may change.
+# 将此值设为已验证测试实例拥有的 loopback 端点。
+# 每次运行都会动态发现端口，因此端口号可能变化。
 export PDF_READER_CDP_URL="http://127.0.0.1:${PDF_READER_CDP_PORT:?set the verified instance port}"
 npm run deploy
 npm run test:native:background
 npm run test:native:lifecycle
 ```
 
-`PDF_READER_NATIVE_CASES=matrix,popout` runs selected lifecycle groups. The
-allowlist also includes `manual-save`, `autosave`, `inflight`, `rename`, `stale`,
-`external-conflict`, `failed-save`, `close-flush`, `close-recovery`,
-`close-recovery-write-failure`, `switch`, `eraser`, `popout-move` and
-`popout-close`. Omit it to run all groups. Reports
-list executed and completed groups; an interrupted group does not count as a
-pass. Keyboard chords use actual Puppeteer key events in the native renderer.
+`PDF_READER_NATIVE_CASES=matrix,popout` 用于选择要运行的生命周期测试组。白名单中还包括 `manual-save`、`autosave`、`inflight`、`rename`、`stale`、`external-conflict`、`failed-save`、`close-flush`、`close-recovery`、`close-recovery-write-failure`、`switch`、`eraser`、`popout-move` 和 `popout-close`。省略该变量即可运行所有测试组。报告会列出已执行和已完成的测试组；被中断的测试组不算通过。键盘组合键通过原生渲染器中的实际 Puppeteer 按键事件测试。
 
-Native tests use the user's enabled official Obsidian CLI/CDP. They create
-timestamped PDF and other fixture copies under `PDF迁移测试/` and retain them.
-JSON results and screenshots are under ignored `tests/artifacts/`. Tests
-must refuse to unload/replace views with unsaved user changes.
+原生测试使用用户已启用的官方 Obsidian CLI/CDP。在 `PDF迁移测试/` 下创建带时间戳的 PDF 和其他测试夹具副本，并保留这些文件。JSON 结果和截图位于 Git 忽略的 `tests/artifacts/`。若视图中有未保存的用户更改，测试必须拒绝卸载或替换该视图。
 
-For a clean-install release acceptance check, first save and close existing
-Reader tabs, disable the plugin and deploy the three-file output, then run:
+执行干净安装的发布验收时，请先保存并关闭现有 Reader 标签页，禁用插件并部署三文件产物，然后运行：
 
 ```sh
 npm run test:native:release
 npm run test:native
 ```
 
-Keep the Obsidian test window visible (not minimized or hidden in the tray):
-PDF.js intentionally defers rendering while its document is hidden. When hot
-deploying a different manifest version into an already-running Obsidian,
-refresh the plugin's cached manifest once with the official CLI
-`plugin:reload id=pdf-web-reader`, then disable it again before the clean-install
-test. The installed disk files, manifest map and running instance must agree.
+请让 Obsidian 测试窗口保持可见（不要最小化或隐藏到托盘）：PDF.js 会在文档不可见时有意推迟渲染。向已运行的 Obsidian 热部署不同 manifest 版本时，请使用官方 CLI `plugin:reload id=pdf-web-reader` 刷新一次插件缓存的 manifest，然后在干净安装测试前再次禁用插件。磁盘上的安装文件、manifest 映射和运行中的实例必须一致。
 
-To run the functional/native-routing tests without bringing Obsidian to the
-system foreground, use `npm run test:native:background`. The development-only
-wrapper temporarily enables CDP `Emulation.setFocusEmulationEnabled` in the
-explicit test-vault renderer, runs the real PDF.js tools and save/reopen tests,
-and disables focus emulation in `finally`. Its report identifies this as
-background focus-emulated testing, not an OS-foreground test. It does not
-change PDF permissions, browser security settings, or production plugin code.
+如需在不将 Obsidian 切到系统前台的情况下运行功能和原生路由测试，请使用 `npm run test:native:background`。仅供开发测试的包装器会在指定测试 Vault 的渲染器中临时启用 CDP `Emulation.setFocusEmulationEnabled`，运行真实 PDF.js 工具及保存／重开测试，并在 `finally` 中关闭焦点模拟。报告会将结果标记为“后台焦点模拟测试”，而不是操作系统前台测试。该包装器不会更改 PDF 权限、浏览器安全设置或生产插件代码。
 
-The historical 0.4.0 clean-install check refuses a pre-existing extracted cache. It verifies
-first-use extraction of its 404 assets, a real Worker, five enabled tools,
-offline operation with HTTP/WebSocket requests temporarily blocked, and
-recovery of a deliberately corrupted test-owned cache icon. It leaves the
-plugin enabled, the test PDF intact, and closes only its own saved test tab.
-The 0.5.0 cold/prewarmed/second-Reader and synchronization checks use the
-identity-guarded harness retained with the current evidence package; results
-and its 406-resource count are recorded in GENERAL_ACCEPTANCE.md.
+历史 0.4.0 干净安装检查会拒绝使用已有的资源提取缓存。它会验证首次提取 404 项资源、真实 Worker、五种已启用工具、临时屏蔽 HTTP/WebSocket 请求后的离线运行，以及恢复一个被故意损坏且由测试拥有的缓存图标。测试结束后保留启用状态的插件和完整测试 PDF，只关闭该测试自身已保存的标签页。0.5.0 的冷启动／预热后／第二个 Reader 及同步检查使用当前证据包中保留的身份校验测试框架；结果和 406 项资源计数记录在 GENERAL_ACCEPTANCE.md 中。
 
-## Release and compatibility notes
+## 发布与兼容性说明
 
-The complete pre-migration source and full-folder artifact are preserved by
-Git tag `full-viewer-0.1.1`. New releases contain exactly the three files
-listed above, while the repository retains the complete vendor resources and
-readable extraction/build code. See the official
-[release workflow](https://docs.obsidian.md/plugins/releasing/submit-plugin).
+迁移前的完整源代码和整文件夹产物由 Git 标签 `full-viewer-0.1.1` 保存。新版本只包含上文列出的三个文件；仓库仍保留完整 vendor 资源以及可阅读的提取／构建代码。请参阅官方[发布流程](https://docs.obsidian.md/plugins/releasing/submit-plugin)。
 
-Three-file delivery alone is **not a guarantee of admission to the Community
-Plugins directory**. Official developer policies prohibit self-installing or
-self-updating plugins/dependencies. This plugin never downloads, installs or
-updates code from the internet; it materializes resources already shipped in
-its own release. Community review still needs to assess that implementation
-and the other submission requirements. It has not been submitted or approved.
-See [developer policies](https://docs.obsidian.md/community-directory/developer-policies)
-and [manifest guidance](https://docs.obsidian.md/Reference/Manifest).
+仅使用三文件方式交付，**并不保证插件会被 Community Plugins 目录收录**。官方开发者政策禁止插件或依赖自行安装／更新。本插件不会从互联网下载、安装或更新代码；它只会提取已包含在自身发行包中的资源。Community Plugins 审核仍需评估该实现和其他提交要求。本插件尚未提交或获批。详情见[开发者政策](https://docs.obsidian.md/community-directory/developer-policies)和 [manifest 指南](https://docs.obsidian.md/Reference/Manifest)。
 
-The custom reader extends the public `EditableFileView`. Default PDF opens
-are routed by a reversible, app-scoped wrapper of
-`WorkspaceLeaf.setViewState()`. Reader transitions and `WorkspaceLeaf.detach()`
-wait for a document-specific save/recovery handshake before SDK teardown;
-the built-in PDF extension registration is
-not removed. This wrapper is a monkey patch, **not an official dedicated API
-for replacing core PDF behavior**. Other plugins wrapping the same method
-or later Obsidian versions can conflict. Revalidate after Obsidian upgrades.
-Disable restores the original method if it is still the active wrapper;
-otherwise the old wrapper becomes an inactive pass-through.
+自定义 Reader 扩展公开的 `EditableFileView`。默认 PDF 打开行为由 `WorkspaceLeaf.setViewState()` 上一个可撤销、限于应用实例的包装器路由。Reader 转换和 `WorkspaceLeaf.detach()` 会在 SDK teardown 前等待针对文档的保存／恢复握手；内置 PDF 扩展注册不会被移除。该包装器属于 monkey patch，**不是用于替换核心 PDF 行为的官方专用 API**。其他插件若包装同一方法，或 Obsidian 后续版本改变实现，都可能发生冲突。升级 Obsidian 后请重新验证。禁用插件时，如果原方法仍由本插件包装器接管，就会恢复原方法；否则旧包装器会变为不活动的透传包装器。
 
-PDF document scripting and remote AI/alt-text model downloads are disabled.
-The complete resource snapshot is nevertheless retained.
+PDF 文档脚本和远程 AI／替代文本模型下载均已禁用。完整资源快照仍会保留。
 
-## License
+## 命名哲学与系统定位：认知的四重审度
 
-New plugin code is Apache-2.0; see `LICENSE` and `NOTICE`.
-Bundled Mozilla PDF.js is Apache-2.0. Fonts, CMaps, colour libraries and image
-decoders also carry their original license texts in the vendor snapshot and
-embedded payload. Packaging preserves those notices; it does not relicense
-third-party assets.
+工具不仅是功能载体，更是认知范式的代码化。系统拒绝 `PDFReader`、`TimeTracker`、`VocabMaster` 等功能描述型命名，而以四位思想家确立模块的认知契约。以下内容阐述命名理念和系统定位；其中列出的规划目录与跨模块接口约定不表示这些模块和协议已经实现。
+
+### Gadamer（伽达默尔）｜PDF 批注系统
+
+> “理解从来就不是一种主观的行为，而是把自己置于一个传统过程之中，在这个过程中，过去和现在不断融合。”——汉斯-格奥尔格·伽达默尔
+
+**核心定位：** 原典只读的边注系统（Sidecar Annotations）与批判性研读工作台。
+
+**命名渊源：** 诠释学的核心是视域融合（Horizontverschmelzung）；读者带着前见与文本质询、碰撞和交融。
+
+**工程映照：** 源 PDF 零改写，批注作为独立 Sidecar 数据流，构成与原著对话的现场。
+
+### Wittgenstein（维特根斯坦）｜语境阅读系统
+
+> “一个词的意义就是它在语言中的用法。”——路德维希·维特根斯坦
+
+**核心定位：** 基于真实语料沉浸的可理解输入与语境阅读器。
+
+**命名渊源：** 后期维特根斯坦提出语言游戏和“意义即用法”，反对孤立的词典释义；语言在真实上下文和社会实践中显现所指。
+
+**工程映照：** 以长篇原版文献、新闻和真实语料为核心，通过高亮与共现频次，在语言游戏中习得词汇网络，并保留“语言的界限即世界的界限”这一观点。
+
+### Lyubishchev（柳比歇夫）｜时间记录系统
+
+> “我无权对自己的时间不负责任。”——亚历山大·柳比歇夫
+
+**核心定位：** 基于纯事实的生命时间核算与审计账本。
+
+**命名渊源：** 柳比歇夫坚持 56 年时间统计，强调客观记录、不自我感动、不内疚自责，以数据审计时间流向。
+
+**工程映照：** 拒绝番茄钟动效和成就勋章，使用轻量结构化日志还原时间开销与专注成本。
+
+### Leitner（莱特纳）｜间隔重复系统
+
+> “科学的学习不是堆叠时间，而是在遗忘的断裂处建立分流的箱体。”——塞巴斯蒂安·莱特纳
+
+**核心定位：** 由离散状态机调度的抽认卡与间隔重复引擎。
+
+**命名渊源：** 实体抽认卡分级箱把抗遗忘理论转为确定性的机械操作协议。
+
+**工程映照：** 采用状态迁移队列与时间调度，将 Gadamer 的思考碎片、Wittgenstein 的生词切片变成按提取难度调度的卡片。
+
+### 系统协同流
+
+```text
+Wittgenstein 语境输入 → Gadamer 深度审问 → Leitner 记忆固化
+                           ↑                       │
+                           └── Lyubishchev 审计反馈 ┘
+```
+
+Wittgenstein 提供真实语境中的文本输入；Gadamer 将阅读转化为深度审问；Leitner 将需要记住的内容固化为按难度调度的复习卡片。Lyubishchev 对整个过程的时间和专注成本进行审计，并形成反馈闭环。
+
+### 规划中的模块与跨模块接口约定
+
+以下目录、CLI 和协议是后续落地规划及接口约定，不代表当前仓库中已存在相应实现：
+
+- `packages/gadamer/`：命令行入口命名为 `gdm`。
+- `packages/wittgenstein/`：命令行入口命名为 `wit`。
+- `packages/lyubishchev/`：命令行入口命名为 `lyu`。
+- `packages/leitner/`：命令行入口命名为 `ltn`。
+- 固定 Wittgenstein 语境生词流转至 Leitner 卡片的 JSON Schema，作为两者之间的数据协议。
+- 定义桥接协议：Gadamer 的批注阅读会话和 Wittgenstein 的泛读会话可向 Lyubishchev 派发 `Audit Event`，供时间记录与审计使用。
+
+## 许可证
+
+新的插件代码采用 Apache-2.0 许可证，详情见 `LICENSE` 和 `NOTICE`。随包提供的 Mozilla PDF.js 也采用 Apache-2.0。字体、CMaps、色彩库和图像解码器同样保留了 vendor 快照及内嵌资源包中的原始许可证文本。打包过程会保留这些声明，不会对第三方资源重新授权。

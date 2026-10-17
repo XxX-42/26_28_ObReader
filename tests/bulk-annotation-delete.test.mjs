@@ -277,6 +277,8 @@ test("all-page confirmation is canceled on session change and renewed after targ
     ${extractFunction("isCurrentBulkDeleteSession")}
     ${extractFunction("prepareEmbeddedDeletionTargets")}
     ${extractFunction("showDeleteAllAnnotationsConfirmation")}
+    ${extractFunction("normalizeVocabularyHighlightLevels")}
+    ${extractFunction("setVocabularyHighlightLevels")}
     ${extractFunction("queueOpen")}
     globalThis.api = {
       state,
