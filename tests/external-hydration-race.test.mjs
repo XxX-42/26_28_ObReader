@@ -92,6 +92,8 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
     "applyExternalAnnotationsSnapshot",
     "externalSourceIdentityMatchesViewer",
     "schedulePendingExternalAnnotationUpdate",
+    "normalizeAnnotationToolMode",
+    "restorePreferredAnnotationTool",
   ].map(functionSource);
   const walValidatorSource = functionSource("validateExternalAnnotations")
     .replace("function validateExternalAnnotations(", "function validateWalExternalAnnotations(");
@@ -100,6 +102,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
 
   const context = vm.createContext({ onReadOnly, deserialize });
   return vm.runInContext(`(() => {
+    const PERSISTABLE_ANNOTATION_TOOL_MODES = new Set([3, 5, 9, 10, 15]);
     const timers = [];
     const editorById = new Map();
     const editorIdsByPage = new Map();

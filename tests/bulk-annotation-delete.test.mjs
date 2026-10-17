@@ -261,6 +261,7 @@ test("all-page confirmation is canceled on session change and renewed after targ
     function collectKnownAnnotationDeletionTargets() { return knownTargets; }
     function showStatus(message) { statuses.push(message); }
     const rendererGeneration = 7;
+    const VOCABULARY_DISPLAY_MODES = ["all", "learning", "focus"];
     function requestManagedAnnotationDeletion(pageIndex, session) {
       if (isCurrentBulkDeleteSession(session)) deleteCalls.push({ pageIndex, session });
     }
@@ -277,6 +278,9 @@ test("all-page confirmation is canceled on session change and renewed after targ
     ${extractFunction("isCurrentBulkDeleteSession")}
     ${extractFunction("prepareEmbeddedDeletionTargets")}
     ${extractFunction("showDeleteAllAnnotationsConfirmation")}
+    ${extractFunction("normalizeVocabularyDisplayMode")}
+    function syncVocabularyDisplayModeButton() {}
+    ${extractFunction("setVocabularyDisplayMode")}
     ${extractFunction("normalizeVocabularyHighlightLevels")}
     ${extractFunction("setVocabularyHighlightLevels")}
     ${extractFunction("queueOpen")}

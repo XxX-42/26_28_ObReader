@@ -5199,20 +5199,20 @@ async function testNativeToolWheel() {
       await view.page.mouse.up({ button: "middle" });
       middleHeld = false;
       const persistent = await wheelState();
-      assert.equal(persistent.open, true,
-        "Releasing in the wheel center must leave the wheel open for a left-click choice.");
+      assert.equal(persistent.open, false,
+        "Releasing in the enlarged center X closes the radial menu.");
       assert.equal(await modeForView(), previousMode,
-        "Releasing in the wheel center must keep the current tool.");
-      const angle = ((5 * 60 - 90) * Math.PI) / 180;
-      const point = {
-        x: opened.center.x + 80 * Math.cos(angle),
-        y: opened.center.y + 80 * Math.sin(angle),
-      };
-      await view.page.mouse.click(point.x, point.y, { button: "left" });
-      await waitFor("left-click to choose the active wheel sector", wheelState, (state) => !state.open, 8_000);
+        "Closing the radial menu must keep the current tool.");
+      const reopened = await openWheel();
+      middleHeld = true;
+      await view.page.mouse.move(reopened.center.x + 70, reopened.center.y + 70);
+      await view.page.mouse.up({ button: "middle" });
+      middleHeld = false;
+      assert.equal((await wheelState()).open, false,
+        "Releasing beyond the radial wheel closes it immediately.");
       assert.equal(await modeForView(), previousMode,
-        "Left-clicking the already selected wheel tool must not toggle it off.");
-      evidence.persistentLeftClick = { previousMode, selectedMode: await modeForView(), point };
+        "Releasing outside the radial wheel must keep the current tool.");
+      evidence.outsideRelease = { previousMode, openAfterRelease: false };
     } finally {
       if (middleHeld) await view.page.mouse.up({ button: "middle" }).catch(() => {});
     }
@@ -5224,12 +5224,12 @@ async function testNativeToolWheel() {
       exitHeld = true;
       const point = { x: opened.center.x, y: opened.center.y - 80 };
       await view.page.mouse.move(point.x, point.y);
+      await waitFor("top tool-wheel hover to close the wheel", wheelState, (state) => !state.open, 8_000);
       await view.page.mouse.up({ button: "middle" });
       exitHeld = false;
-      await waitFor("top tool-wheel sector to close the wheel", wheelState, (state) => !state.open, 8_000);
       assert.equal(await modeForView(), modeBeforeExit,
-        "Selecting the wheel exit sector must preserve the active tool.");
-      evidence.exitSector = { point, mode: await modeForView() };
+        "Entering LingQ from the wheel must preserve the active annotation tool.");
+      evidence.lingQSector = { point, mode: await modeForView() };
     } finally {
       if (exitHeld) await view.page.mouse.up({ button: "middle" }).catch(() => {});
     }

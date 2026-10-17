@@ -6,6 +6,8 @@ import {
   VocabularySelectionError,
 } from "../viewer-adapter/vocabulary/phrase-matcher.js";
 
+import { readFileSync } from "node:fs";
+
 function makePage() {
   return {
     children: [],
@@ -181,23 +183,56 @@ test("overlapping phrases resolve leftmost-longest with deterministic input-orde
   assert.equal(matchPhrases(tokens, [firstTie, secondTie])[0].record, firstTie);
 });
 
-test("phrase matches require exact surfaceKey sequences with no case-folding or lemmatization", () => {
+test("phrase matching conforms to shared token-by-token English inflection vectors", () => {
+  const vectors = JSON.parse(readFileSync(new URL("./fixtures/english-inflection-equivalence.json", import.meta.url), "utf8"));
+  for (const group of vectors.equivalentPhrases) {
+    const record = { key: group[0], storageKey: group[0], surfaceKeys: group[0].split(" ") };
+    for (const surface of group) {
+      const tokens = surface.split(" ").map((surfaceKey, index) => ({ surfaceKey, index }));
+      assert.deepEqual(matchPhrases(tokens, [record]), [
+        { startIndex: 0, endIndex: tokens.length, record },
+      ], `${surface} should match ${group[0]} token-by-token`);
+    }
+  }
+
+  for (const [recordPhrase, differentPhrase] of vectors.distinctPhrases) {
+    const record = { key: recordPhrase, storageKey: recordPhrase, surfaceKeys: recordPhrase.split(" ") };
+    const tokens = differentPhrase.split(" ").map((surfaceKey, index) => ({ surfaceKey, index }));
+    assert.deepEqual(matchPhrases(tokens, [record]), [], `${differentPhrase} must not match ${recordPhrase}`);
+  }
+});
+
+test("exact queried phrase wins over inflection aliases and ambiguous lie/lay fallback stays conservative", () => {
+  const exactInflected = {
+    key: "walked the dog", storageKey: "walk the dog", surfaceKeys: ["walked", "the", "dog"],
+  };
+  const canonicalPhrase = {
+    key: "walk the dog", storageKey: "walk the dog", surfaceKeys: ["walk", "the", "dog"],
+  };
+  const inflectedTokens = ["walked", "the", "dog"].map((surfaceKey, index) => ({ surfaceKey, index }));
+  assert.equal(matchPhrases(inflectedTokens, [canonicalPhrase, exactInflected])[0].record, exactInflected);
+
+  const lie = { key: "lie down", storageKey: "lie down", surfaceKeys: ["lie", "down"] };
+  const lay = { key: "lay down", storageKey: "lay down", surfaceKeys: ["lay", "down"] };
+  const layTokens = ["lay", "down"].map((surfaceKey, index) => ({ surfaceKey, index }));
+  assert.equal(matchPhrases(layTokens, [lie, lay])[0].record, lay, "an exact lay phrase wins over the lie past tense alias");
+
+  const lainTokens = ["lain", "down"].map((surfaceKey, index) => ({ surfaceKey, index }));
+  assert.equal(matchPhrases(lainTokens, [lie, lay])[0].record, lie, "the explicit lain form resolves to lie");
+  assert.equal(matchPhrases(layTokens, [lie])[0].record, lie, "when no exact lay record exists, the unique lie alias remains usable");
+  const laidTokens = ["laid", "down"].map((surfaceKey, index) => ({ surfaceKey, index }));
+  assert.equal(matchPhrases(laidTokens, [lie, lay])[0].record, lay, "laid follows the distinct lay verb family");
+});
+
+test("phrase matcher keeps case-insensitive exact records and deterministic ties", () => {
   const tokens = [
     { surfaceKey: "Run", index: 0 },
     { surfaceKey: "runs", index: 1 },
-    { surfaceKey: "fast", index: 2 },
-    { surfaceKey: "today", index: 3 },
   ];
-  const lowercase = { id: "lowercase", surfaceKeys: ["run", "runs"] };
-  const exactFirst = { id: "exact-first", surfaceKeys: ["Run", "runs"] };
-  const exactPair = { id: "exact-pair", surfaceKeys: ["runs", "fast"] };
-  const lemmaLike = { id: "lemma-like", surfaceKeys: ["run", "fast"] };
-  const exactLast = { id: "exact-last", surfaceKeys: ["fast", "today"] };
-
-  assert.deepEqual(matchPhrases(tokens, [lowercase, exactFirst, exactPair, lemmaLike, exactLast]), [
-    { startIndex: 0, endIndex: 2, record: exactFirst },
-    { startIndex: 2, endIndex: 4, record: exactLast },
-  ]);
+  const firstTie = { id: "first", surfaceKeys: ["RUN", "run"] };
+  const secondTie = { id: "second", surfaceKeys: ["run", "runs"] };
+  assert.equal(matchPhrases(tokens, [firstTie, secondTie])[0].record, secondTie,
+    "an exact normalized surface wins over an inflection alias even when it appears later");
 });
 
 test("phrase records require two through twelve surface keys", () => {

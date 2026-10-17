@@ -912,7 +912,7 @@ test(
         center: element.querySelector(".pdfToolWheelCenter").getBoundingClientRect().width,
       }));
       assert.equal(wheelSize.diameter, 192);
-      assert.ok(Math.abs(wheelSize.center - 38.4) < 0.1);
+      assert.ok(Math.abs(wheelSize.center - 49.92) < 0.1);
       await page.mouse.up({ button: "middle" });
       await page.keyboard.press("Escape");
       assert.equal(await viewer.$(".pdfToolWheel"), null);

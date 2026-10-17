@@ -1154,10 +1154,9 @@ test(
       { timeout: 8_000 },
     );
 
-    // Exercise PDF.js's trusted browser middle-button wheel and center-release
-    // state: release at the center leaves the wheel open for a subsequent
-    // real click on a sector. Start in None mode so selecting Square is a real
-    // completed PDF.js mode transition, not a no-op re-selection.
+    // Releasing in the center X or outside the wheel closes it. A sector is
+    // selected by releasing the held middle-button gesture on that sector.
+    // Start in None mode so selecting Square is a real mode transition.
     await setSquareMode(0);
     const viewerCenter = await viewer.evaluate(() => {
       const rect = document.getElementById("viewerContainer").getBoundingClientRect();
@@ -1168,11 +1167,33 @@ test(
     await viewer.waitForSelector(".pdfToolWheel");
     await page.mouse.up({ button:"middle" });
     await viewer.waitForFunction(
-      () => Boolean(document.querySelector(".pdfToolWheel")),
+      () => !document.querySelector(".pdfToolWheel"),
       { timeout: 5_000 },
     );
+    assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), 0,
+      "Center X closes only the radial menu and leaves PDF.js in None mode.");
+    await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y);
+    await page.mouse.down({ button:"middle" });
+    await viewer.waitForSelector(".pdfToolWheel");
+    await page.mouse.move(offset.x + viewerCenter.x + 70, offset.y + viewerCenter.y + 70);
+    await page.mouse.up({ button:"middle" });
+    await viewer.waitForFunction(
+      () => !document.querySelector(".pdfToolWheel"),
+      { timeout:5_000 },
+    );
+    assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), 0,
+      "Releasing beyond the radial wheel closes it without changing the active tool.");
+
+    await page.mouse.move(offset.x + viewerCenter.x, offset.y + viewerCenter.y);
+    await page.mouse.down({ button:"middle" });
+    await viewer.waitForSelector(".pdfToolWheel");
     const middleWheelModeRequest = await beginAnnotationModeChange(5);
-    await click('.pdfToolWheel button[aria-label="2 矩形框"]');
+    const squareSectorAngle = (4 * 60 - 90) * Math.PI / 180;
+    await page.mouse.move(
+      offset.x + viewerCenter.x + 80 * Math.cos(squareSectorAngle),
+      offset.y + viewerCenter.y + 80 * Math.sin(squareSectorAngle),
+    );
+    await page.mouse.up({ button:"middle" });
     await noteAnnotationModeClickReturned(middleWheelModeRequest.id);
     await waitForAnnotationModeChange(5, middleWheelModeRequest, 5_000);
 

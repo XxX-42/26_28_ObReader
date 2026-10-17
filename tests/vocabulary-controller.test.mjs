@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { VocabularyController } from "../viewer-adapter/vocabulary/controller.js";
-import { VocabularyCanvasOverlay } from "../viewer-adapter/vocabulary/canvas-overlay.js";
+import {
+  separateOverlappingHighlightRows,
+  VocabularyCanvasOverlay,
+} from "../viewer-adapter/vocabulary/canvas-overlay.js";
 
 function makeRuntime() {
   const listeners = new Map();
@@ -203,6 +206,65 @@ test("known words and phrases (status 5) are included in the vocabulary highligh
   runtime.controller.dispose();
 });
 
+test("word highlights share conservative lemma matches while preserving exact lay precedence", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const page = runtime.controller.pages.get("1");
+  page.tokens = ["run", "runs", "ran", "running", "lay", "lays", "laid", "laying", "lying"]
+    .map((surfaceKey, index) => ({
+      ...page.tokens[index % 3], index, surfaceKey,
+      rawSurface: surfaceKey,
+    }));
+  const records = [
+    { key: "run", storageKey: "run", type: "word", status: 2 },
+    { key: "lie", storageKey: "lie", type: "word", status: 3 },
+    { key: "lay", storageKey: "lay", type: "word", status: 1 },
+  ];
+  runtime.controller.renderPageResults(page, records);
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["run", 2], ["runs", 2], ["ran", 2], ["running", 2],
+    ["lay", 1], ["lays", 1], ["laid", 1], ["laying", 1], ["lying", 3],
+  ]);
+
+  runtime.controller.renderPageResults(page, records.slice(0, 2));
+  assert.deepEqual(runtime.overlays.at(0).draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]).slice(4), [
+    ["lay", 3], ["lying", 3],
+  ], "bare lay uses the sole lie candidate only when no exact lay row exists");
+  runtime.controller.dispose();
+});
+
+test("LingQ display modes redraw cached records without rescanning or requerying pages", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  const query = runtime.posted[0];
+  runtime.controller.handlePageResults({
+    documentId: "doc-1", openRequest: 7, pageNumber: 1,
+    requestId: query.requestId, queryId: query.queryId, partIndex: query.partIndex,
+    records: [
+      { key: "alpha", type: "word", status: 1 },
+      { key: "beta", type: "word", status: 4 },
+      { key: "gamma", type: "word", status: 5 },
+      { key: "alpha beta", type: "phrase", status: 4 },
+      { key: "beta gamma", type: "phrase", status: 5 },
+    ],
+  });
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 4], ["beta", 4], ["gamma", 5],
+  ]);
+  const scans = runtime.getScanCalls();
+  runtime.controller.setDisplayMode("learning");
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 4], ["beta", 4],
+  ], "learning mode hides level-5 entries and phrases while retaining levels 1–4");
+  runtime.controller.setDisplayMode("focus");
+  assert.deepEqual(runtime.overlays[0].draws.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [
+    ["alpha", 1],
+  ], "focus mode keeps only levels 1–3");
+  assert.equal(runtime.getScanCalls(), scans);
+  assert.equal(runtime.posted.length, 1, "mode changes reuse cached page records");
+  runtime.controller.dispose();
+});
+
 test("word and phrase highlight levels are independently configurable and update existing overlays immediately", () => {
   const runtime = makeRuntime();
   runtime.controller.setDocument("doc-1", 7, true);
@@ -296,6 +358,58 @@ test("legacy WebView fallback paints text-sized translucent rectangles and remov
   assert.equal(pageRoot.children.length, 0);
 });
 
+test("canvas highlight geometry separates compact text rows without shrinking same-line marks", () => {
+  const rects = [
+    { x: 40, y: 10, width: 12, height: 14, color: "top" },
+    { x: 10, y: 11.5, width: 18, height: 14, color: "top" },
+    { x: 12, y: 22, width: 20, height: 14, color: "bottom" },
+  ];
+  const result = separateOverlappingHighlightRows(rects);
+  const topRow = result.filter(({ color }) => color === "top");
+  const bottom = result.find(({ color }) => color === "bottom");
+  assert.equal(topRow.length, 2, "rectangles within 2 CSS px of a row top stay grouped");
+  assert.ok(topRow.every(({ height }) => height > 11 && height < 12),
+    "the compact upper row uses one shared height and leaves the configured 0.5 px gap");
+  assert.ok(topRow.every(({ y }) => Math.abs(y - 10.25) < 0.01),
+    "same-line fragments are aligned within the available line pitch");
+  assert.ok(bottom.height > 11 && bottom.height < 12,
+    "the lower compact row also fits its available line band");
+  assert.ok(Math.abs(bottom.y - 22.25) < 0.01,
+    "both compact rows keep the configured half-pixel edge gap");
+  assert.ok(topRow.every(({ y, height }) => y + height <= 21.75),
+    "the upper row does not overlap the next row");
+
+  for (const pitch of [8, 10]) {
+    const tightRows = separateOverlappingHighlightRows([
+      { x: 0, y: 100, width: 24, height: 14, color: "upper" },
+      { x: 0, y: 100 + pitch, width: 24, height: 14, color: "lower" },
+    ]);
+    const [upper, lower] = tightRows;
+    const expectedHeight = pitch - 0.5;
+    assert.equal(upper.height, expectedHeight,
+      `${pitch}px line pitch uses the maximum available highlight height`);
+    assert.equal(upper.y, 100 + 0.25,
+      `${pitch}px line pitch centers the mark in its available interval`);
+    assert.equal(lower.height, expectedHeight,
+      `${pitch}px line pitch uses the same maximum height on both rows`);
+    assert.equal(lower.y, 100 + pitch + 0.25,
+      "both lines are centered in their separated line bands");
+    assert.equal(upper.y + upper.height, lower.y - 0.5,
+      "adjacent compact marks keep a half-pixel separation");
+    if (expectedHeight < 14 * 2 / 3) {
+      assert.ok(upper.height >= expectedHeight,
+        "when physical line pitch is the limit, paint the full usable height");
+    }
+  }
+
+  const ordinary = separateOverlappingHighlightRows([
+    { x: 0, y: 10, width: 10, height: 11 },
+    { x: 0, y: 23, width: 10, height: 11 },
+  ]);
+  assert.deepEqual(ordinary.map(({ height }) => height), [11, 11],
+    "non-overlapping rows are left untouched");
+});
+
 test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges", () => {
   class FakeHighlight {
     ranges = [];
@@ -332,6 +446,65 @@ test("modern renderer uses CSS Custom Highlights attached to PDF.js text ranges"
   assert.equal(registry.size, 0);
   renderer.dispose();
   assert.equal(styles[0].removed, true);
+});
+
+test("modern renderer switches only overlapping matched rows to page-local canvas geometry", () => {
+  class FakeHighlight { add() {} }
+  const registry = new Map();
+  const fills = [];
+  const rects = new Map();
+  const context = {
+    setTransform() {}, clearRect() {}, fillStyle: "",
+    fillRect(x, y, width, height) { fills.push({ x, y, width, height, color: this.fillStyle }); },
+  };
+  const documentRef = {
+    head: { appendChild(node) { node.parentNode = this; } },
+    createElement(tag) {
+      if (tag === "style") return { dataset: {}, textContent: "", remove() {} };
+      return {
+        width: 0, height: 0, style: {}, setAttribute() {}, getContext: () => context,
+        remove() { this.parentNode?.removeChild(this); },
+      };
+    },
+    createRange() {
+      let node;
+      return {
+        setStart(textNode) { node = textNode; }, setEnd() {}, detach() {},
+        getClientRects() { return rects.get(node) || []; },
+      };
+    },
+  };
+  const pageRoot = {
+    ownerDocument: documentRef, children: [],
+    appendChild(node) { node.parentNode = this; this.children.push(node); },
+    removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; },
+    getBoundingClientRect() { return { left: 10, top: 20, width: 100, height: 100 }; },
+  };
+  const upper = {};
+  const lower = {};
+  rects.set(upper, [{ left: 12, top: 30, width: 20, height: 14 }]);
+  rects.set(lower, [{ left: 12, top: 42, width: 20, height: 14 }]);
+  const renderer = new VocabularyCanvasOverlay(pageRoot, {
+    documentRef, windowRef: { CSS: { highlights: registry }, Highlight: FakeHighlight },
+  });
+
+  renderer.draw([
+    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
+    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
+  ]);
+  assert.equal(registry.size, 0, "unclipped CSS marks are removed when the adjusted local paint path is active");
+  assert.equal(pageRoot.children.length, 1, "the canvas is scoped to this rendered PDF page");
+  assert.deepEqual(fills.map(({ y, height }) => [y, height]), [[10.25, 11.5], [22.25, 11.5]]);
+
+  rects.set(upper, [{ left: 12, top: 30, width: 20, height: 10 }]);
+  rects.set(lower, [{ left: 12, top: 43, width: 20, height: 10 }]);
+  renderer.draw([
+    { token: { segments: [{ textNode: upper, startOffset: 0, endOffset: 1 }] }, status: 1 },
+    { token: { segments: [{ textNode: lower, startOffset: 0, endOffset: 1 }] }, status: 2 },
+  ]);
+  assert.equal(registry.size, 2, "ordinary non-overlapping rows stay on the browser text-rendering path");
+  renderer.dispose();
+  assert.equal(pageRoot.children.length, 0);
 });
 
 test("scrolling keeps visible highlights stable and reuses completed results when returning to a page", () => {
@@ -417,30 +590,57 @@ test("eligible collapsed single-word click opens a local pill and durable status
     makeOverlay: () => overlay,
   });
   controller.setDocument("doc-1", 7, true);
-  controller.pages.get("1").records = [{ key: "alpha", type: "word", status: 2 }];
+  assert.equal(controller.handleTap({ type: "click", targetRole: "text-layer", button: 0, detail: 1,
+    pageIndex: 0, clientPoint: { x: 30, y: 30 } }), true,
+  "a collapsed click on an ordinary word can open lookup so it can be added to the local vocabulary");
+  const unrecordedTap = posted.find((message) => message.type === "vocab-token-tap");
+  assert.ok(unrecordedTap);
+  assert.equal(controller.handleEntryResult({ requestId: unrecordedTap.requestId, key: "alpha", pageNumber: 1,
+    documentId: "doc-1", openRequest: 7, record: null }), true);
+  assert.equal(controller.entryPill.statusElement.textContent, "未收录");
+  assert.equal(controller.entryPill.meanings.textContent, "未录入释义");
+  controller.dismissEntryPill();
+  controller.pages.get("1").records = [
+    { key: "alpha", storageKey: "alpha", type: "word", status: 2 },
+    { key: "alphas", storageKey: "alpha", type: "word", status: 2 },
+  ];
   assert.equal(controller.handleTap({ type: "click", targetRole: "text-layer", button: 0, detail: 1,
     pageIndex: 0, clientPoint: { x: 30, y: 30 } }), true);
-  const tap = posted.find((message) => message.type === "vocab-token-tap");
+  const tap = posted.filter((message) => message.type === "vocab-token-tap").at(-1);
   assert.equal(tap.key, "alpha");
   assert.equal(tap.entryType, "word");
   assert.equal(body.children.length, 1);
   assert.deepEqual(controller.entryPill.buttons.map((button) => button.textContent), ["1", "2", "3", "4", "✓"]);
   assert.equal(controller.handleEntryResult({ requestId: tap.requestId, key: "alpha", pageNumber: 1,
     documentId: "doc-1", openRequest: 7,
-    record: { key: "alpha", type: "word", status: 2, translation: "局部释义", note: "local note", phonetic: "/ˈælfə/" } }), true);
-  assert.match(controller.entryPill.meanings.textContent, /局部释义/);
+    record: {
+      key: "alpha", storageKey: "alpha", type: "word", status: 2,
+      translation: "n. 细节, 详情\nvt. 详述, 选派\nvi. 画详图\n[计] 详细数据",
+      note: "local note", phonetic: "/ˈælfə/",
+    } }), true);
+  assert.equal(controller.entryPill.meanings.textContent,
+    "n. 细节, 详情\nvt. 详述, 选派\nvi. 画详图\n[计] 详细数据",
+    "the lookup pill keeps each part-of-speech definition on its own line");
   assert.equal(controller.entryPill.pronunciation.textContent, "/ˈælfə/");
   assert.equal(controller.entryPill.meanings.textContent.includes("local note"), false);
   assert.equal(controller.requestStatusChange(3), true);
   const update = posted.find((message) => message.type === "vocab-set-status");
   assert.equal(update.status, 3);
+  assert.equal(update.key, "alpha", "the operation keeps the queried surface as its request key");
+  assert.equal(update.storageKey, "alpha", "the canonical key is separately supplied for the durable row");
   assert.equal(controller.handleStatusAck({ durable: false, requestId: update.requestId, key: "alpha", pageNumber: 1,
     documentId: "doc-1", openRequest: 7, record: { key: "alpha", type: "word", status: 3 } }), false,
   "viewer state never changes before the explicit durable ACK");
   assert.equal(controller.handleStatusAck({ durable: true, requestId: update.requestId, key: "alpha", pageNumber: 1,
-    documentId: "doc-1", openRequest: 7, record: { key: "alpha", type: "word", status: 3 } }), true);
+    documentId: "doc-1", openRequest: 7, record: { key: "run", storageKey: "run", type: "word", status: 3 } }), false,
+  "an ACK for a canonical key cannot be mistaken for the queried-surface request");
+  assert.equal(controller.handleStatusAck({ durable: true, requestId: update.requestId, key: "alpha", pageNumber: 1,
+    documentId: "doc-1", openRequest: 7, record: { key: "alpha", storageKey: "alpha", type: "word", status: 3 } }), true);
   assert.equal(controller.entryPill.status, 3);
   assert.deepEqual(overlay.drawn.at(-1).map(({ token, status }) => [token.surfaceKey, status]), [["alpha", 3]]);
+  assert.deepEqual(controller.pages.get("1").records.map(({ key, status, storageKey }) => [key, status, storageKey]), [
+    ["alpha", 3, "alpha"], ["alphas", 3, "alpha"],
+  ], "a durable status ACK updates every query alias of the same canonical vocabulary row");
   selection.isCollapsed = false;
   assert.equal(controller.handleTap({ type: "click", targetRole: "text-layer", button: 0, detail: 1,
     pageIndex: 0, clientPoint: { x: 30, y: 30 } }), false, "existing text selection keeps priority over the popup");
@@ -448,7 +648,7 @@ test("eligible collapsed single-word click opens a local pill and durable status
   assert.equal(body.children.length, 0, "session teardown removes the viewer popup");
 });
 
-test("only highlighted words open the card, while an enabled multiword phrase wins over its component words", () => {
+test("LingQ lookup accepts unhighlighted words, while an enabled multiword phrase keeps priority", () => {
   const runtime = makeRuntime();
   runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [2] });
   runtime.controller.setDocument("doc-1", 7, true);
@@ -457,13 +657,15 @@ test("only highlighted words open the card, while an enabled multiword phrase wi
     { key: "alpha", type: "word", status: 5 },
     { key: "beta gamma", type: "phrase", status: 2 },
   ];
-  assert.equal(runtime.controller.entryForTappedToken(page, page.tokens[0]), null,
-    "disabled level-5 word remains searchable in storage but does not open a highlight lookup");
+  assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
+    type: "word", surfaceKey: "alpha", rawSurface: "Alpha",
+  }, "words remain available for lookup even when their stored level is not highlighted");
   const phrase = runtime.controller.entryForTappedToken(page, page.tokens[1]);
   assert.deepEqual(phrase, { type: "phrase", surfaceKey: "beta gamma", rawSurface: "beta gamma" });
   runtime.controller.setHighlightLevels({ words: [1, 2, 3, 4], phrases: [1, 3, 4, 5] });
-  assert.equal(runtime.controller.entryForTappedToken(page, page.tokens[2]), null,
-    "disabling the phrase's level removes its click priority");
+  assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[2]), {
+    type: "word", surfaceKey: "gamma", rawSurface: "gamma",
+  }, "a phrase outside configured highlight levels falls back to the tapped word");
   runtime.controller.setHighlightLevels({ words: [5], phrases: [2] });
   assert.deepEqual(runtime.controller.entryForTappedToken(page, page.tokens[0]), {
     type: "word", surfaceKey: "alpha", rawSurface: "Alpha",

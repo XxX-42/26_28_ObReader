@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { normalizeTermKey } from "../viewer-adapter/vocabulary/english-normalizer.js";
+import {
+  isAmbiguousEnglishSurface,
+  normalizeEnglishLemmaKey,
+  normalizeTermKey,
+} from "../viewer-adapter/vocabulary/english-normalizer.js";
 import { scanPageTextLayer } from "../viewer-adapter/vocabulary/page-scanner.js";
 
 function makeDocument(rectForCharacter = () => null) {
@@ -75,6 +80,31 @@ test("normalizes lowercase, NFC, apostrophe variants, and the common ligatures w
   assert.equal(normalizeTermKey("bonjour 世界"), "");
   assert.equal(normalizeTermKey("'hello"), "");
   assert.equal(normalizeTermKey("well--being"), "");
+});
+
+test("English lemma matching conforms to shared inflection vectors without changing stored keys", () => {
+  const vectors = JSON.parse(readFileSync(new URL("./fixtures/english-inflection-equivalence.json", import.meta.url), "utf8"));
+  for (const group of [...vectors.equivalentWords, ...vectors.equivalentPhrases]) {
+    const lemmaKeys = group.map((surface) => normalizeEnglishLemmaKey(surface));
+    assert.ok(lemmaKeys.every((key) => key === lemmaKeys[0]), `${group.join(" / ")} should share one matching key`);
+  }
+  for (const [left, right] of [...vectors.distinctWords, ...vectors.distinctPhrases]) {
+    assert.notEqual(normalizeEnglishLemmaKey(left), normalizeEnglishLemmaKey(right), `${left} must remain distinct from ${right}`);
+  }
+  assert.equal(normalizeTermKey("Walked"), "walked", "the persistent surface key is not rewritten to a lemma");
+  assert.equal(normalizeEnglishLemmaKey("WALKING"), normalizeEnglishLemmaKey("walk"), "capitalization is ignored for matching");
+  assert.equal(isAmbiguousEnglishSurface("lay"), true);
+  assert.equal(isAmbiguousEnglishSurface("lie"), false);
+  assert.deepEqual(["lays", "laid", "laying"].map(normalizeEnglishLemmaKey), ["lay", "lay", "lay"]);
+  assert.equal(normalizeEnglishLemmaKey("series"), "series", "citation forms that only look inflected stay intact");
+  assert.equal(normalizeEnglishLemmaKey("business"), "business");
+  assert.equal(normalizeEnglishLemmaKey("buses"), "bus");
+  assert.equal(normalizeEnglishLemmaKey("cases"), "case");
+  assert.equal(normalizeEnglishLemmaKey("quizzes"), "quiz");
+  assert.equal(normalizeEnglishLemmaKey("potatoes"), "potato");
+  assert.equal(normalizeEnglishLemmaKey("sizes"), "size");
+  assert.equal(normalizeEnglishLemmaKey("freezes"), "freeze");
+  assert.equal(normalizeEnglishLemmaKey("universe"), "universe", "suffix handling does not stem an unrelated word");
 });
 
 test("accepts common imported dictionary notation without dropping the stored term", () => {

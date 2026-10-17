@@ -31,3 +31,26 @@ test("unavailable pronunciation and meaning stay compact and malformed statuses 
   assert.equal(view.status, null);
   assert.equal(view.statusLabel, "未收录");
 });
+
+test("escaped dictionary line breaks are rendered as separate meanings", () => {
+  const view = vocabularyEntryPresentation({
+    translation: "adv. 大概, 大部分, 主要\\n[经] 大部份",
+  });
+  assert.deepEqual(view.meanings, ["adv. 大概, 大部分, 主要", "[经] 大部份"]);
+});
+
+test("real dictionary line breaks preserve all four part-of-speech entries", () => {
+  const view = vocabularyEntryPresentation({
+    translation: "n. 细节, 详情\nvt. 详述, 选派\nvi. 画详图\n[计] 详细数据",
+  });
+  assert.deepEqual(view.meanings, [
+    "n. 细节, 详情",
+    "vt. 详述, 选派",
+    "vi. 画详图",
+    "[计] 详细数据",
+  ]);
+  assert.deepEqual(vocabularyEntryPresentation({
+    translation: "n. 细节, 详情\r\nvt. 详述, 选派\rvi. 画详图",
+  }).meanings, ["n. 细节, 详情", "vt. 详述, 选派", "vi. 画详图"],
+    "CRLF and CR-only dictionary exports normalize to the same display lines");
+});

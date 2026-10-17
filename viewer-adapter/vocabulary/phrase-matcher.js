@@ -1,3 +1,10 @@
+import {
+  isAmbiguousEnglishSurface,
+  isLayVerbInflectionSurface,
+  normalizeEnglishLemmaKey,
+  normalizeTermKey,
+} from "./english-normalizer.js";
+
 /**
  * Vocabulary matching helpers for page-scoped PDF text tokens.
  *
@@ -167,37 +174,54 @@ function surfaceKeysForTokens(tokens) {
   return tokens.map((token) => {
     const key = token?.surfaceKey;
     if (typeof key !== "string") throw new TypeError("Every token must provide a string surfaceKey");
-    return key;
+    return normalizeTermKey(key);
   });
 }
 
 /**
- * Find exact surfaceKey phrase matches. Records have the shape
+ * Find case-insensitive English-inflection phrase matches. Records have the shape
  * `{ surfaceKeys: string[], ...metadata }`. Overlaps are resolved in reading
  * order: at each start, the longest phrase wins, then record input order; after
  * a match, scanning advances past it. Accepted matches do not overlap.
- * No normalization, case folding, or lemmatization is performed.
+ * Each token is compared by the shared matching-only English lemma key. This
+ * does not modify stored keys or collapse the number/order of phrase tokens.
  *
  * Each result is `{ startIndex, endIndex, record }`, with endIndex exclusive.
  */
 export function matchPhrases(tokens, records) {
-  const tokenKeys = surfaceKeysForTokens(tokens);
+  const surfaceKeys = surfaceKeysForTokens(tokens);
+  const tokenKeys = surfaceKeys.map((key) => normalizeEnglishLemmaKey(key));
   if (!Array.isArray(records)) throw new TypeError("records must be an array");
 
-  const root = { children: new Map(), record: null, length: 0 };
+  const root = { children: new Map(), records: [], length: 0 };
   records.forEach((record) => {
     if (!record || !Array.isArray(record.surfaceKeys) || record.surfaceKeys.length < 2 || record.surfaceKeys.length > 12 ||
         record.surfaceKeys.some((key) => typeof key !== "string")) {
       throw new TypeError("Each phrase record must have 2–12 string surfaceKeys");
     }
-    let node = root;
-    for (const key of record.surfaceKeys) {
-      if (!node.children.has(key)) node.children.set(key, { children: new Map(), record: null, length: node.length + 1 });
-      node = node.children.get(key);
+    const recordSurfaceKeys = record.surfaceKeys.map((key) => normalizeTermKey(key));
+    const recordLemmaKeys = recordSurfaceKeys.map((key) => normalizeEnglishLemmaKey(key));
+    // Invalid/non-English stored keys remain readable, but do not participate
+    // in English surface matching.
+    if (recordLemmaKeys.some((key) => !key)) return;
+    const lemmaPaths = [recordLemmaKeys];
+    // `lay` is also the past tense of `lie`, so its normal lemma key follows
+    // the lie family. Keep an alternate path for the distinct lays/laid/laying
+    // forms without making the ambiguous surface itself prefer that family.
+    recordSurfaceKeys.forEach((surfaceKey, index) => {
+      if (surfaceKey !== "lay") return;
+      const alternate = [...recordLemmaKeys];
+      alternate[index] = "lay";
+      lemmaPaths.push(alternate);
+    });
+    for (const lemmaPath of lemmaPaths) {
+      let node = root;
+      for (const key of lemmaPath) {
+        if (!node.children.has(key)) node.children.set(key, { children: new Map(), records: [], length: node.length + 1 });
+        node = node.children.get(key);
+      }
+      node.records.push({ record, surfaceKeys: recordSurfaceKeys });
     }
-    // Keep the first record on exact duplicate phrases, matching the former
-    // input-order tie break without comparing every saved phrase per token.
-    if (!node.record) node.record = record;
   });
 
   const matches = [];
@@ -208,7 +232,11 @@ export function matchPhrases(tokens, records) {
     for (let offset = 0; offset < 12 && startIndex + offset < tokenKeys.length; offset += 1) {
       node = node.children.get(tokenKeys[startIndex + offset]);
       if (!node) break;
-      if (node.record) best = { record: node.record, length: node.length };
+      if (node.records.length) {
+        const matchedSurface = surfaceKeys.slice(startIndex, startIndex + node.length);
+        const record = selectPhraseRecord(node.records, matchedSurface);
+        if (record) best = { record, length: node.length };
+      }
     }
     if (best) {
       matches.push({
@@ -222,4 +250,32 @@ export function matchPhrases(tokens, records) {
     }
   }
   return matches;
+}
+
+function selectPhraseRecord(candidates, matchedSurface) {
+  const eligible = candidates.filter((candidate) => {
+    const canonicalKey = typeof candidate.record.storageKey === "string" && candidate.record.storageKey
+      ? candidate.record.storageKey
+      : typeof candidate.record.key === "string" && candidate.record.key
+        ? candidate.record.key
+        : candidate.surfaceKeys.join(" ");
+    const canonicalTokens = normalizeTermKey(canonicalKey).split(" ");
+    return !canonicalTokens.some((key, index) => isAmbiguousEnglishSurface(key) &&
+      key !== matchedSurface[index] && !isLayVerbInflectionSurface(matchedSurface[index]));
+  });
+  if (!eligible.length) return null;
+  const exact = eligible.filter((candidate) => candidate.surfaceKeys.length === matchedSurface.length &&
+    candidate.surfaceKeys.every((key, index) => key === matchedSurface[index]));
+  if (exact.length) return exact[0].record;
+
+  // When multiple saved phrases collapse to the same lemma sequence, do not
+  // guess which vocabulary record owns it. The host normally resolves an
+  // alias to one canonical storageKey; accept that one record only.
+  const canonicalKeys = new Set(eligible.map(({ record, surfaceKeys }) =>
+    typeof record.storageKey === "string" && record.storageKey
+      ? record.storageKey
+      : typeof record.key === "string" && record.key
+        ? record.key
+        : surfaceKeys.join(" ")));
+  return canonicalKeys.size === 1 ? eligible[0].record : null;
 }

@@ -1160,6 +1160,7 @@ test("vocabulary page query requires the current renderer and returns only reque
   const service = harness.plugin.getVocabularyService();
   await service.upsertTerm("rare word", { type: "phrase", status: 2, translation: "local only" });
   await service.upsertTerm("unrequested", { type: "word", status: 1 });
+  await service.upsertTerm("walk", { type: "word", status: 5 });
 
   const view = harness.createView();
   const sent = [];
@@ -1175,11 +1176,11 @@ test("vocabulary page query requires the current renderer and returns only reque
     partIndex: 0, pageNumber: 3, keys,
   } });
 
-  send("renderer-stale", ["rare", "word", "rare word"]);
+  send("renderer-stale", ["rare", "word", "rare word", "walked"]);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sent.length, 0, "stale generation cannot receive vocabulary data");
 
-  send("renderer-current", ["rare", "word", "rare word"]);
+  send("renderer-current", ["rare", "word", "rare word", "walked"]);
   await new Promise((resolve) => setTimeout(resolve, 0));
   const reply = sent.find((message) => message.type === "vocab-page-results");
   assert.equal(reply.requestId, "query-renderer-current");
@@ -1188,7 +1189,10 @@ test("vocabulary page query requires the current renderer and returns only reque
   assert.equal(reply.pageNumber, 3);
   assert.equal(reply.documentId, "vocab-doc-current");
   assert.equal(reply.openRequest, 8);
-  assert.deepEqual(reply.records, [{ key: "rare word", type: "phrase", status: 2 }]);
+  assert.deepEqual(reply.records, [
+    { key: "rare word", storageKey: "rare word", type: "phrase", status: 2 },
+    { key: "walked", storageKey: "walk", type: "word", status: 5 },
+  ]);
   assert.equal(JSON.stringify(reply).includes("local only"), false, "notes and translations stay in the host-side modal");
   assert.equal(JSON.stringify(reply).includes("unrequested"), false);
 });
@@ -1222,10 +1226,30 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   assert.equal(entry.record, null);
   assert.equal(entry.documentId, "word-click-doc");
 
+  const service = harness.plugin.getVocabularyService();
+  await service.upsertTerm("run", { type: "word", status: 3, translation: "跑" });
+  send("vocab-token-tap", { requestId: "entry-run", pageNumber: 2,
+    key: "ran", rawSurface: "Ran", entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const runEntry = sent.find((message) => message.type === "vocab-entry-result" && message.requestId === "entry-run");
+  assert.deepEqual(runEntry.record, {
+    key: "ran", storageKey: "run", type: "word", status: 3, translation: "跑", phonetic: "",
+  });
+
+  send("vocab-set-status", { requestId: "status-run", entryRequestId: "entry-run", pageNumber: 2,
+    key: "running", rawSurface: "Running", status: 5, entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const runAck = sent.find((message) => message.type === "vocab-status-ack" && message.requestId === "status-run");
+  assert.equal(runAck.record.key, "running", "ack keeps the request surface identity");
+  assert.equal(runAck.record.storageKey, "run", "ack exposes the actual persisted record key");
+  assert.equal(runAck.record.status, 5);
+  assert.equal((await service.getTerm("run")).status, 5);
+  assert.deepEqual(JSON.parse(await service.exportJson()).records.map((record) => record.key), ["run"]);
+
   send("vocab-set-status", { requestId: "status-1", entryRequestId: "entry-1", pageNumber: 1,
     key: "alpha", rawSurface: "Alpha", status: 5, entryType: "word" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const ack = sent.find((message) => message.type === "vocab-status-ack");
+  const ack = sent.find((message) => message.type === "vocab-status-ack" && message.requestId === "status-1");
   assert.equal(ack.durable, true);
   assert.equal(ack.requestId, "status-1");
   assert.equal(ack.record.status, 5);
@@ -1489,6 +1513,8 @@ test("open uses a stable session ID and sends current path, filename, and defaul
   assert.equal(frame.sent[0].filename, file.basename);
   assert.equal(frame.sent[0].openRequest, view.openRequest);
   assert.equal(frame.sent[0].autoSave, true);
+  assert.equal(frame.sent[0].vocabularyDisplayMode, "all");
+  assert.equal(frame.sent[0].preferredAnnotationToolMode, 0);
 });
 
 test("sidecar saves require the matching opened ACK and exact Viewer page-identity handshake", async () => {
@@ -1996,7 +2022,7 @@ test("auto-save preference persists and is sent to open views", async () => {
 
   assert.equal(harness.plugin.settings.autoSave, false);
   assert.deepEqual(harness.plugin.persistedData, { autoSave: false, showStatusBar: false, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
   assert.equal(sent.at(-1).type, "configure-auto-save");
   assert.equal(sent.at(-1).enabled, false);
 });
@@ -2013,12 +2039,12 @@ test("status bar preference defaults off and updates every live Reader immediate
   assert.ok(readers.every((view) => view.statusBarEnabled === true));
   await pending;
   assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: true, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
 
   await harness.plugin.setStatusBarEnabled(false);
   assert.ok(readers.every((view) => view.statusBarEnabled === false));
   assert.deepEqual(harness.plugin.persistedData, { autoSave: true, showStatusBar: false, vocabularyEnabled: false,
-    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] } });
+    vocabularyHighlightLevels: { words: [1, 2, 3, 4, 5], phrases: [1, 2, 3, 4, 5] }, vocabularyDisplayMode: "all" });
 });
 
 test("LingQ-style vocabulary setting renders off, persists across reload, and toggles the authenticated view", async () => {
@@ -2138,6 +2164,81 @@ test("authenticated Reader menu toggle persists the single setting and synchroni
   assert.equal(reload.plugin.settings.vocabularyEnabled, false, "the latest disabled state survives a plugin restart");
   harness.plugin.onunload();
   reload.plugin.onunload();
+});
+
+test("LingQ display modes persist, redraw all Readers, and survive reload", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settingTab.display();
+  const modeSetting = harness.plugin.settingTab.containerEl.settings.find((entry) => entry.name === "高亮显示模式");
+  assert.ok(modeSetting);
+  const readers = [harness.createView(), harness.createView()];
+  const outgoing = readers.map((view, index) => {
+    view.ready = true;
+    view.documentId = `mode-doc-${index}`;
+    view.openRequest = 5;
+    view.rendererGeneration = `mode-renderer-${index}`;
+    const messages = [];
+    view.iframe = { contentWindow: { postMessage: (message) => messages.push(message) } };
+    return messages;
+  });
+  const [source] = readers;
+  source.onMessage({ source: source.iframe.contentWindow, data: {
+    channel: "pdf-web-reader", token: source.token, type: "vocab-display-mode-request",
+    rendererGeneration: "stale", documentId: source.documentId, openRequest: source.openRequest,
+    mode: "focus",
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.vocabularyDisplayMode, "all", "stale frame cannot change the setting");
+  source.onMessage({ source: source.iframe.contentWindow, data: {
+    channel: "pdf-web-reader", token: source.token, type: "vocab-display-mode-request",
+    rendererGeneration: source.rendererGeneration, documentId: source.documentId, openRequest: source.openRequest,
+    mode: "focus",
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.vocabularyDisplayMode, "focus");
+  assert.equal(harness.plugin.persistedData.vocabularyDisplayMode, "focus");
+  assert.ok(outgoing.every((messages) => messages.at(-1)?.type === "vocab-set-display-mode" && messages.at(-1)?.mode === "focus"));
+  assert.equal(modeSetting.buttons[2].buttonEl.attributes["aria-pressed"], "true");
+  const reloaded = createHarness();
+  reloaded.plugin.persistedData = structuredClone(harness.plugin.persistedData);
+  await reloaded.plugin.onload();
+  assert.equal(reloaded.plugin.settings.vocabularyDisplayMode, "focus");
+  reloaded.plugin.onunload();
+  harness.plugin.onunload();
+});
+
+test("last annotation tool is saved from the authenticated active Reader and restored on open", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const view = harness.createView();
+  const frame = { sent: [], postMessage(message) { this.sent.push(message); } };
+  view.documentId = "tool-pref-doc";
+  view.openRequest = 8;
+  view.rendererGeneration = "tool-pref-renderer";
+  view.iframe = { contentWindow: frame };
+  view.onMessage({ source: frame, data: {
+    channel: "pdf-web-reader", token: view.token, type: "annotation-tool-preference-request",
+    rendererGeneration: "stale", documentId: view.documentId, openRequest: view.openRequest, mode: 15,
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.lastAnnotationToolMode, undefined, "stale renderer cannot update the tool preference");
+  view.onMessage({ source: frame, data: {
+    channel: "pdf-web-reader", token: view.token, type: "annotation-tool-preference-request",
+    rendererGeneration: view.rendererGeneration, documentId: view.documentId, openRequest: view.openRequest, mode: 15,
+  } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(harness.plugin.settings.lastAnnotationToolMode, 15);
+  assert.equal(harness.plugin.persistedData.lastAnnotationToolMode, 15);
+
+  const file = new harness.TFile("Books/tool-preference.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  view.file = file;
+  view.pendingBytes = Uint8Array.from([1, 2, 3]).buffer;
+  view.ready = true;
+  view.sendPendingDocument();
+  assert.equal(frame.sent.at(-1).preferredAnnotationToolMode, 15);
+  harness.plugin.onunload();
 });
 
 test("word and phrase highlight levels use compact selectors and update every open Reader", async () => {

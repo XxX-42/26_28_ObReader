@@ -63,6 +63,175 @@ function normalizeTermKey(value) {
   return words.some((word) => [...word].some((character) => /\p{Script=Latin}/u.test(character))) ? key : "";
 }
 
+// Matching identity is intentionally separate from the persisted surface key.
+// Keep this table and algorithm in lockstep with the viewer-side normalizer;
+// this is a matching key only and never rewrites stored vocabulary keys.
+const IRREGULAR_LEMMA_ENTRIES = [
+  ["be", ["am", "is", "are", "was", "were", "been", "being"]],
+  ["have", ["has", "had", "having"]], ["do", ["does", "did", "done", "doing"]],
+  ["go", ["goes", "went", "gone", "going"]], ["get", ["got", "gotten", "getting"]],
+  ["make", ["made", "making"]], ["take", ["took", "taken", "taking"]],
+  ["come", ["came", "coming"]], ["run", ["ran", "running"]],
+  ["write", ["wrote", "written", "writing"]], ["buy", ["bought", "buying"]],
+  ["give", ["gave", "given", "giving"]], ["lie", ["lies", "lain", "lying", "lay"]],
+  ["lay", ["lays", "laid", "laying"]], ["say", ["said", "saying"]],
+  ["tell", ["told", "telling"]], ["speak", ["spoke", "spoken", "speaking"]],
+  ["think", ["thought", "thinking"]], ["bring", ["brought", "bringing"]],
+  ["catch", ["caught", "catching"]], ["teach", ["taught", "teaching"]],
+  ["feel", ["felt", "feeling"]], ["keep", ["kept", "keeping"]],
+  ["leave", ["left", "leaving"]], ["meet", ["met", "meeting"]],
+  ["find", ["found", "finding"]], ["lose", ["lost", "losing"]],
+  ["pay", ["paid", "paying"]], ["sell", ["sold", "selling"]],
+  ["send", ["sent", "sending"]], ["sit", ["sat", "sitting"]],
+  ["stand", ["stood", "standing"]], ["understand", ["understood", "understanding"]],
+  ["win", ["won", "winning"]], ["sleep", ["slept", "sleeping"]],
+  ["spend", ["spent", "spending"]], ["build", ["built", "building"]],
+  ["hold", ["held", "holding"]], ["hear", ["heard", "hearing"]],
+  ["wear", ["wore", "worn", "wearing"]], ["break", ["broke", "broken", "breaking"]],
+  ["choose", ["chose", "chosen", "choosing"]], ["drive", ["drove", "driven", "driving"]],
+  ["eat", ["ate", "eaten", "eating"]], ["fall", ["fell", "fallen", "falling"]],
+  ["fly", ["flew", "flown", "flying"]], ["forget", ["forgot", "forgotten", "forgetting"]],
+  ["grow", ["grew", "grown", "growing"]], ["know", ["knew", "known", "knowing"]],
+  ["ride", ["rode", "ridden", "riding"]], ["rise", ["rose", "risen", "rising"]],
+  ["throw", ["threw", "thrown", "throwing"]], ["draw", ["drew", "drawn", "drawing"]],
+  ["show", ["showed", "shown", "showing"]], ["become", ["became", "becoming"]],
+  ["begin", ["began", "begun", "beginning"]], ["drink", ["drank", "drunk", "drinking"]],
+  ["sing", ["sang", "sung", "singing"]], ["swim", ["swam", "swum", "swimming"]],
+  ["ring", ["rang", "rung", "ringing"]], ["cost", ["costing"]], ["let", ["letting"]],
+  ["put", ["putting"]], ["cut", ["cutting"]], ["set", ["setting"]],
+  ["hit", ["hitting"]], ["hurt", ["hurting"]], ["shut", ["shutting"]],
+  ["carry", ["carried", "carrying"]], ["study", ["studies", "studied", "studying"]],
+  ["stop", ["stopped", "stopping"]], ["box", ["boxed", "boxes", "boxing"]],
+  ["bus", ["buses"]], ["gas", ["gases"]], ["quiz", ["quizzes"]],
+  ["hero", ["heroes"]], ["potato", ["potatoes"]], ["tomato", ["tomatoes"]],
+  ["echo", ["echoes"]], ["veto", ["vetoes"]], ["analysis", ["analyses"]],
+  ["crisis", ["crises"]], ["thesis", ["theses"]], ["diagnosis", ["diagnoses"]],
+  ["walk", ["walked", "walking"]],
+];
+
+const IRREGULAR_LEMMA_MAP = new Map();
+for (const [lemma, forms] of IRREGULAR_LEMMA_ENTRIES) {
+  for (const form of forms) IRREGULAR_LEMMA_MAP.set(form, lemma);
+}
+
+const SILENT_E_FORMS = new Map(Object.entries({
+  baking: "bake", baked: "bake", closing: "close", closed: "close",
+  dancing: "dance", danced: "dance", changing: "change", changed: "change",
+  charging: "charge", charged: "charge", managing: "manage", managed: "manage",
+  judging: "judge", judged: "judge", hoping: "hope", hoped: "hope",
+  liking: "like", liked: "like", joking: "joke", joked: "joke",
+  moving: "move", moved: "move", loving: "love", loved: "love",
+  living: "live", lived: "live", giving: "give", given: "give",
+  saving: "save", saved: "save", using: "use", used: "use",
+  sizing: "size", sized: "size", tying: "tie", tied: "tie",
+  dying: "die", died: "die", lying: "lie", lied: "lie", vied: "vie",
+}));
+const UNCHANGING_FINAL_S = new Set([
+  "alias", "always", "analysis", "atlas", "basis", "business", "canvas", "chaos",
+  "economics", "ethics", "gas", "bus", "his", "lens", "yes", "mathematics", "means",
+  "news", "physics", "politics", "series", "species", "status", "this", "thus",
+]);
+const AMBIGUOUS_ENGLISH_SURFACES = new Set(["lay"]);
+const LAY_VERB_INFLECTIONS = new Set(["lays", "laid", "laying"]);
+
+function normalizeEnglishLemmaToken(word) {
+  if (!/^[a-z]+$/.test(word)) return word;
+  if (UNCHANGING_FINAL_S.has(word)) return word;
+  const irregular = IRREGULAR_LEMMA_MAP.get(word);
+  if (irregular) return irregular;
+  const silentE = SILENT_E_FORMS.get(word);
+  if (silentE) return silentE;
+  if (word.length > 4 && word.endsWith("ied")) return `${word.slice(0, -3)}y`;
+  if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+  if (word.length > 4 && word.endsWith("ed")) {
+    let stem = word.slice(0, -2);
+    if (/([^aeiou])\1$/.test(stem)) stem = stem.slice(0, -1);
+    if (stem.endsWith("c") || stem.endsWith("v") || stem.endsWith("z")) return `${stem}e`;
+    if (/^[^aeiou][aeiou][kp]$/.test(stem)) return `${stem}e`;
+    return stem;
+  }
+  if (word.length > 5 && word.endsWith("ing")) {
+    let stem = word.slice(0, -3);
+    if (/([^aeiou])\1$/.test(stem)) stem = stem.slice(0, -1);
+    if (stem.endsWith("c") || stem.endsWith("v") || stem.endsWith("z")) return `${stem}e`;
+    if (/^[^aeiou][aeiou][kp]$/.test(stem)) return `${stem}e`;
+    return stem;
+  }
+  if (word.length > 4 && /(?:ch|sh|ss|x|z)es$/.test(word)) return word.slice(0, -2);
+  if (word.length > 3 && word.endsWith("es") && word.slice(0, -1).endsWith("e")) {
+    return word.slice(0, -1);
+  }
+  if (!UNCHANGING_FINAL_S.has(word) && word.length > 3 && word.endsWith("s")) {
+    if (word.endsWith("ss") || word.endsWith("us") || word.endsWith("is")) return word;
+    if (word.endsWith("ys")) return `${word.slice(0, -2)}y`;
+    return word.slice(0, -1);
+  }
+  return word;
+}
+
+function normalizeEnglishMatchKey(value) {
+  const key = normalizeTermKey(value);
+  if (!key) return "";
+  return key.split(" ").map(normalizeEnglishLemmaToken).join(" ");
+}
+
+function isAmbiguousEnglishSurface(value) {
+  const key = normalizeTermKey(value);
+  return AMBIGUOUS_ENGLISH_SURFACES.has(key);
+}
+
+function isLayVerbInflectionSurface(value) {
+  const key = normalizeTermKey(value);
+  return LAY_VERB_INFLECTIONS.has(key);
+}
+
+function recordTypeForKey(key) {
+  return key.includes(" ") ? "phrase" : "word";
+}
+
+function recordsForMatch(records, key) {
+  const exact = records.get(key);
+  const type = recordTypeForKey(key);
+  const matchKey = normalizeEnglishMatchKey(key);
+  if (!matchKey) return exact ? [exact] : [];
+  const exactLayRequested = Boolean(exact) && key.split(" ").includes("lay");
+  const requestedLayFamily = exactLayRequested || matchKey.split(" ").includes("lay") ||
+    key.split(" ").some(isLayVerbInflectionSurface);
+  const familyMatchKey = exactLayRequested
+    ? key.split(" ").map((token) => token === "lay" ? "lay" : normalizeEnglishLemmaToken(token)).join(" ")
+    : matchKey;
+  return [...records.values()].filter((record) => {
+    if (record.type !== type) return false;
+    const recordMatchKey = normalizeEnglishMatchKey(record.key);
+    if (recordMatchKey === familyMatchKey) {
+      // A stored bare `lay` row belongs to the `lay` family only when the
+      // request resolves to that family; it must not leak into `lie` aliases.
+      if (record.key.split(" ").some((token) => token === "lay")) return requestedLayFamily;
+      return true;
+    }
+    // The standalone `lay` surface is ambiguous, but is the base spelling
+    // for its unambiguous forms (`lays`, `laid`, `laying`).
+    return requestedLayFamily && record.key.split(" ").some((token) => token === "lay");
+  });
+}
+
+function selectMatchRecord(records, requestedKey) {
+  const exact = records.find((record) => record.key === requestedKey);
+  if (exact) return exact;
+  return [...records].sort((left, right) => {
+    const leftRichness = Number(Boolean(left.translation)) + Number(Boolean(left.phonetic));
+    const rightRichness = Number(Boolean(right.translation)) + Number(Boolean(right.phonetic));
+    return rightRichness - leftRichness || right.status - left.status ||
+      (left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  })[0];
+}
+
+function effectiveMatchRecord(records, requestedKey) {
+  const selected = selectMatchRecord(records, requestedKey);
+  if (!selected) return undefined;
+  return { ...selected, status: Math.max(...records.map((record) => record.status)) };
+}
+
 function stateOf(service) {
   const state = PRIVATE.get(service);
   if (!state) throw new TypeError("Invalid VocabularyService receiver");
@@ -646,7 +815,7 @@ class VocabularyService {
     for (const value of Array.isArray(keys) ? keys : []) {
       const key = normalizeTermKey(value);
       if (!key) continue;
-      const record = state.records.get(key);
+      const record = effectiveMatchRecord(recordsForMatch(state.records, key), key);
       if (record) result[key] = recordCopy(record);
     }
     return result;
@@ -657,17 +826,19 @@ class VocabularyService {
     const state = stateOf(this);
     assertWritable(state);
     const key = normalizeTermKey(keyValue);
-    return key ? recordCopy(state.records.get(key)) : undefined;
+    return key ? recordCopy(effectiveMatchRecord(recordsForMatch(state.records, key), key)) : undefined;
   }
 
-  async _mutate(keyValue, update, typeHint = null) {
+  async _mutate(keyValue, update, typeHint = null, { propagateStatus = false } = {}) {
     await loadState(this);
     const state = stateOf(this);
     const key = normalizeTermKey(keyValue);
     if (!key) throw new TypeError("Vocabulary term is not a valid English surface form.");
     return enqueue(state, async () => {
       assertWritable(state);
-      const previous = state.records.get(key);
+      const matchingRecords = recordsForMatch(state.records, key);
+      const previous = effectiveMatchRecord(matchingRecords, key);
+      const targetKey = previous?.key || key;
       if (!previous && state.records.size >= MAX_STORE_RECORDS) {
         throw new RangeError("Vocabulary store exceeds the supported record limit.");
       }
@@ -685,7 +856,26 @@ class VocabularyService {
       const clean = cleanRecord(nextRecord, now, "user");
       if (!clean) throw new TypeError("Vocabulary mutation produced an invalid record.");
       const next = new Map(state.records);
-      next.set(key, clean);
+      const changedKeys = [];
+      if (propagateStatus && matchingRecords.length > 0) {
+        // A status is shared by all stored inflection variants. Keep each
+        // variant's own surface and dictionary metadata, but prevent an older
+        // sibling status from making the family appear to move backwards.
+        for (const record of matchingRecords) {
+          const updated = cleanRecord({ ...record, status: clean.status, updatedAt: now, source: "user" }, now, "user");
+          if (!updated) throw new TypeError("Vocabulary family mutation produced an invalid record.");
+          next.set(record.key, updated);
+          changedKeys.push(record.key);
+        }
+        // Apply any requested fields to the selected record after synchronizing
+        // the family's status, without copying one variant's definition onto
+        // every other spelling.
+        next.set(targetKey, clean);
+        if (!changedKeys.includes(targetKey)) changedKeys.push(targetKey);
+      } else {
+        next.set(targetKey, clean);
+        changedKeys.push(targetKey);
+      }
       const nextRevision = state.revision + 1;
       const text = snapshotText(next, nextRevision);
       await writeSnapshot(state, text, state.diskRaw);
@@ -693,14 +883,14 @@ class VocabularyService {
       state.revision = nextRevision;
       state.diskRaw = text;
       state.recoveredBackup = false;
-      notifySubscribers(state, { revision: nextRevision, type: "mutation", changedKeys: [key] });
-      return recordCopy(clean);
+      notifySubscribers(state, { revision: nextRevision, type: "mutation", changedKeys });
+      return recordCopy(next.get(targetKey));
     });
   }
 
   setStatus(key, status) {
     validateStatus(status);
-    return this._mutate(key, (record) => ({ ...record, status }));
+    return this._mutate(key, (record) => ({ ...record, status }), null, { propagateStatus: true });
   }
 
   setTranslation(key, translation) {
@@ -742,12 +932,15 @@ class VocabularyService {
     return this._mutate(key, (record) => ({
       ...record,
       type,
-      surface: String(surface).trim(),
+      // If a different inflection already owns this family, edit that record
+      // in place instead of creating a parallel stored key for the clicked
+      // surface. Exact-key entries may still preserve the user's casing.
+      surface: record.key === key ? String(surface).trim() : record.surface,
       status: fields.status == null ? record.status : fields.status,
       ...(fields.translation == null ? {} : { translation: fields.translation }),
       ...(fields.note == null ? {} : { note: fields.note }),
       ...(fields.phonetic == null ? {} : { phonetic: fields.phonetic }),
-    }), type);
+    }), type, { propagateStatus: fields.status != null });
   }
 
   async savePhrase(tokens, options = {}) {
@@ -876,6 +1069,9 @@ module.exports = {
   VocabularyService,
   VocabularyStoreError,
   normalizeTermKey,
+  normalizeEnglishMatchKey,
+  isAmbiguousEnglishSurface,
+  isLayVerbInflectionSurface,
   parseCsvRows,
   VOCABULARY_DIRECTORY: DIRECTORY,
   VOCABULARY_PATH: SNAPSHOT_PATH,

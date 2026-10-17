@@ -101,7 +101,8 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px 10px;
-  width: min(320px, calc(100vw - 16px));
+  width: max-content;
+  max-width: min(380px, calc(100vw - 16px));
   max-height: min(250px, calc(100vh - 16px));
   overflow: auto;
   padding: 12px 42px 12px 14px;
@@ -146,11 +147,12 @@ body {
 
 .pdfReaderVocabularyPillMeanings {
   grid-column: 1 / -1;
-  max-height: 5.2em;
+  max-height: 6em;
   overflow: auto;
   color: var(--text-normal, var(--main-color, CanvasText));
   font-size: 0.92em;
   line-height: 1.45;
+  white-space: pre-line;
 }
 
 .pdfReaderVocabularyPillActions {
@@ -173,9 +175,48 @@ body {
   touch-action: manipulation;
 }
 
+.pdfReaderVocabularyPillActions button {
+  position: relative;
+  isolation: isolate;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.pdfReaderVocabularyPillActions button::before {
+  position: absolute;
+  z-index: -1;
+  /* Keep the 42px hit target, but draw a circle at 85% radius (36px diameter). */
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border, var(--toolbar-border-color, rgb(0 0 0 / 0.3)));
+  border-radius: 50%;
+  background: var(--background-primary, var(--button-bg-color, var(--doorhanger-bg-color, Canvas)));
+  content: "";
+  pointer-events: none;
+}
+
 .pdfReaderVocabularyPill button.is-active {
   border-color: var(--interactive-accent, var(--focus-outline-color, #1688d4));
   color: var(--text-on-accent, white);
+  background: var(--interactive-accent, #6957d5);
+}
+
+.pdfReaderVocabularyPillActions button.is-active {
+  border-color: transparent;
+  background: transparent;
+}
+
+.pdfReaderVocabularyPillActions button.is-active::before {
+  border-color: var(--interactive-accent, var(--focus-outline-color, #1688d4));
   background: var(--interactive-accent, #6957d5);
 }
 

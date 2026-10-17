@@ -26512,10 +26512,10 @@ function onBeforeUnload(evt) {
   }
   return true;
 }
-// Clockwise screen coordinates, starting at the top. Labels follow 1–5
-// counterclockwise; the center is deliberately not a selectable sector.
+// Clockwise screen coordinates, starting at the top. The top action enters
+// LingQ on hover; labels follow 1–5 counterclockwise.
 const TOOL_WHEEL_ITEMS = [
-  { label: "退出", icon: "×", mode: null },
+  { label: "LingQ 模式", icon: "L", action: "enter-lingq", mode: null },
   { label: "5 文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
   { label: "4 自由画笔", icon: "✎", mode: AnnotationEditorType.INK },
   { label: "3 荧光笔", icon: "▰", mode: AnnotationEditorType.HIGHLIGHT },
@@ -26530,7 +26530,7 @@ function toolWheelSector(wheel, evt) {
   const dx = evt.clientX - wheel.x,
     dy = evt.clientY - wheel.y;
   const distance = Math.hypot(dx, dy);
-  if (distance < wheel.radius / 5 || distance > wheel.radius) {
+  if (distance < (wheel.radius / 5) * 1.3 || distance > wheel.radius) {
     return -1;
   }
   return Math.floor(
@@ -26542,6 +26542,10 @@ function toolWheelSector(wheel, evt) {
 function selectToolWheel(index) {
   const item = TOOL_WHEEL_ITEMS[index];
   closeToolWheel.call(this);
+  if (item.action === "enter-lingq") {
+    window.dispatchEvent(new Event("pdf-reader-enter-lingq"));
+    return;
+  }
   if (
     item.mode === null ||
     this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
@@ -26639,6 +26643,9 @@ function onToolWheelDown(evt) {
   element.prepend(svg);
   const center = document.createElement("span");
   center.className = "pdfToolWheelCenter";
+  center.textContent = "×";
+  center.setAttribute("role", "button");
+  center.setAttribute("aria-label", "关闭工具圆盘");
   element.append(center);
   document.body.append(element);
   this.pdfViewer.focus();
@@ -26650,6 +26657,7 @@ function onToolWheelDown(evt) {
     radius,
     pointerId: evt.pointerId,
     held: true,
+    lingQRequested: false,
   };
 }
 function onToolWheelMove(evt) {
@@ -26661,6 +26669,10 @@ function onToolWheelMove(evt) {
   wheel.sectors.forEach((sector, i) =>
     sector.classList.toggle("active", i === index),
   );
+  if (index === 0 && !wheel.lingQRequested) {
+    wheel.lingQRequested = true;
+    selectToolWheel.call(this, 0);
+  }
   evt.preventDefault();
   evt.stopImmediatePropagation();
 }
@@ -26673,7 +26685,7 @@ function onToolWheelUp(evt) {
   if (this._toolWheel) {
     const index = toolWheelSector(this._toolWheel, evt);
     if (index >= 0) selectToolWheel.call(this, index);
-    else this._toolWheel.held = false;
+    else closeToolWheel.call(this);
   }
   evt.preventDefault();
   evt.stopImmediatePropagation();

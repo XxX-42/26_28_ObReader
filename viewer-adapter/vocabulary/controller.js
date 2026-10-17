@@ -1,5 +1,11 @@
 import { scanPageTextLayer } from "./page-scanner.js";
 import { getSelectedPageTokens, matchPhrases } from "./phrase-matcher.js";
+import {
+  isAmbiguousEnglishSurface,
+  isLayVerbInflectionSurface,
+  normalizeEnglishLemmaKey,
+  normalizeTermKey,
+} from "./english-normalizer.js";
 import { VocabularyHighlightRenderer } from "./canvas-overlay.js";
 import { vocabularyEntryPresentation, vocabularyStatusLabel } from "./presentation.js";
 
@@ -16,6 +22,17 @@ function normalizeHighlightLevels(value) {
     ? items.filter((status) => Number.isInteger(status) && status >= 1 && status <= 5)
     : [1, 2, 3, 4, 5]);
   return { words: normalize(value?.words), phrases: normalize(value?.phrases) };
+}
+
+export function normalizeVocabularyDisplayMode(value) {
+  return ["all", "learning", "focus"].includes(value) ? value : "all";
+}
+
+function statusVisibleInMode(status, mode) {
+  if (!Number.isInteger(status) || status < 1 || status > 5) return false;
+  if (mode === "learning") return status <= 4;
+  if (mode === "focus") return status <= 3;
+  return true;
 }
 
 function getVisiblePageViews(pdfViewer) {
@@ -35,6 +52,47 @@ function pageTokenSignature(tokens) {
   return Array.isArray(tokens) ? tokens.map((token) => token?.surfaceKey || "").join("\u001f") : "";
 }
 
+function wordRecordsByLemma(records) {
+  const grouped = new Map();
+  for (const record of records) {
+    if (record?.type !== "word" || typeof record.key !== "string") continue;
+    const lemma = normalizeEnglishLemmaKey(record.key);
+    if (!lemma) continue;
+    const lemmaKeys = new Set([lemma]);
+    const canonicalKey = typeof record.storageKey === "string" && record.storageKey
+      ? record.storageKey
+      : record.key;
+    if (normalizeTermKey(canonicalKey) === "lay") lemmaKeys.add("lay");
+    for (const lemmaKey of lemmaKeys) {
+      const candidates = grouped.get(lemmaKey) || [];
+      candidates.push(record);
+      grouped.set(lemmaKey, candidates);
+    }
+  }
+  return grouped;
+}
+
+function bestWordRecord(token, recordsByLemma) {
+  const lemma = normalizeEnglishLemmaKey(token?.surfaceKey);
+  if (!lemma) return null;
+  const candidates = (recordsByLemma.get(lemma) || []).filter((record) => {
+    const canonicalKey = typeof record.storageKey === "string" && record.storageKey
+      ? record.storageKey
+      : record.key;
+    const canonical = normalizeTermKey(canonicalKey);
+    return !isAmbiguousEnglishSurface(canonical) || canonical === token.surfaceKey ||
+      (canonical === "lay" && isLayVerbInflectionSurface(token.surfaceKey));
+  });
+  const exact = candidates.find((record) => record.key === token.surfaceKey);
+  if (exact) return exact;
+
+  // If two unrelated persisted keys happen to share a lemma, leave the word
+  // unhighlighted until the host can resolve the surface unambiguously.
+  const canonicalKeys = new Set(candidates.map((record) =>
+    typeof record.storageKey === "string" && record.storageKey ? record.storageKey : record.key));
+  return canonicalKeys.size === 1 ? candidates[0] : null;
+}
+
 /**
  * Render-generation-scoped page queries and selection requests for the
  * existing Obsidian PDF Reader bridge. It never owns global input listeners.
@@ -49,6 +107,7 @@ export class VocabularyController {
     getIdentity,
     isEnabled = false,
     highlightLevels,
+    displayMode = "all",
     makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
     scan = scanPageTextLayer,
     selectTokens = getSelectedPageTokens,
@@ -71,6 +130,7 @@ export class VocabularyController {
     this.makeOverlay = makeOverlay;
     this.enabled = isEnabled === true;
     this.highlightLevels = normalizeHighlightLevels(highlightLevels);
+    this.displayMode = normalizeVocabularyDisplayMode(displayMode);
     this.identity = null;
     this.pages = new Map();
     this.pageResultCache = new Map();
@@ -125,6 +185,24 @@ export class VocabularyController {
       for (const page of this.pages.values()) this.renderPageResults(page, page.records);
     }
     return true;
+  }
+
+  setDisplayMode(mode) {
+    if (this.disposed) return false;
+    const next = normalizeVocabularyDisplayMode(mode);
+    if (next === this.displayMode) return true;
+    this.displayMode = next;
+    // The page token scan and dictionary query are unchanged; only redraw the
+    // small set of already-cached visible-page records for this mode.
+    if (this.enabled) {
+      for (const page of this.pages.values()) this.renderPageResults(page, page.records);
+    }
+    return true;
+  }
+
+  isStatusVisible(type, status) {
+    const levels = type === "phrase" ? this.highlightLevels.phrases : this.highlightLevels.words;
+    return levels.has(status) && statusVisibleInMode(status, this.displayMode);
   }
 
   identityIsCurrent(identity = this.identity) {
@@ -307,7 +385,7 @@ export class VocabularyController {
     this.pageResultCache.delete(page.pageNumber);
     this.pageResultCache.set(page.pageNumber, {
       signature: page.signature,
-      records: records.map(({ key, type, status }) => ({ key, type, status })),
+      records: records.map(({ key, storageKey, type, status }) => ({ key, storageKey, type, status })),
     });
     while (this.pageResultCache.size > PAGE_RESULT_CACHE_LIMIT) {
       this.pageResultCache.delete(this.pageResultCache.keys().next().value);
@@ -355,7 +433,7 @@ export class VocabularyController {
     const tokenIndex = page.tokens.indexOf(tappedToken);
     if (tokenIndex < 0) return null;
     const phraseRecords = page.records
-      .filter((record) => record?.type === "phrase" && this.highlightLevels.phrases.has(record.status))
+      .filter((record) => record?.type === "phrase" && this.isStatusVisible("phrase", record.status))
       .map((record) => ({ ...record, surfaceKeys: record.key.split(" ") }));
     const phrase = this.phraseMatcher(page.tokens, phraseRecords)
       .find((match) => tokenIndex >= match.startIndex && tokenIndex < match.endIndex);
@@ -363,15 +441,16 @@ export class VocabularyController {
       const tokens = page.tokens.slice(phrase.startIndex, phrase.endIndex);
       return {
         type: "phrase",
-        surfaceKey: phrase.record.key,
+        // Keep the tapped phrase surface as the request identity; storageKey
+        // returned by the host identifies the durable vocabulary family.
+        surfaceKey: tokens.map((token) => token.surfaceKey).join(" "),
         rawSurface: tokens.map((token) => token.rawSurface).join(" "),
       };
     }
-    const word = page.records.find((record) => record?.type === "word" &&
-      record.key === tappedToken.surfaceKey && this.highlightLevels.words.has(record.status));
-    // Only highlighted entries open the lookup card; ordinary PDF text keeps
-    // its normal click/selection behavior.
-    if (!word) return null;
+    // A click in LingQ mode is also the lookup gesture for words that have
+    // not been added yet. Drag selection remains native because handleTap()
+    // only runs when the Selection is collapsed; the tap can then add a new
+    // status record through the same existing pill controls.
     return { type: "word", surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
   }
 
@@ -457,6 +536,8 @@ export class VocabularyController {
     if (!pill || !this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
         message?.openRequest !== this.identity.openRequest || message?.requestId !== pill.requestId ||
         message?.key !== pill.entry.surfaceKey || message?.pageNumber !== pill.page.pageNumber) return false;
+    if (message.record && (message.record.key !== pill.entry.surfaceKey ||
+        message.record.storageKey != null && (typeof message.record.storageKey !== "string" || !message.record.storageKey))) return false;
     if (message.error) {
       pill.meanings.textContent = "词库暂时无法读取。";
       return true;
@@ -482,7 +563,9 @@ export class VocabularyController {
       : "正在保存…";
     pill.pronunciation.textContent = presentation.pronunciation;
     pill.pronunciation.hidden = presentation.pronunciation.length === 0;
-    pill.meanings.textContent = presentation.meanings.length ? presentation.meanings.join("；") : "暂无释义";
+    // Keep dictionary senses on separate readable lines. The presentation
+    // layer already splits real and escaped source line breaks into entries.
+    pill.meanings.textContent = presentation.meanings.length ? presentation.meanings.join("\n") : "未录入释义";
     return true;
   }
 
@@ -496,6 +579,9 @@ export class VocabularyController {
     const sent = this.postToHost("vocab-set-status", {
       requestId,
       key: pill.entry.surfaceKey,
+      ...(typeof pill.record?.storageKey === "string" && pill.record.storageKey
+        ? { storageKey: pill.record.storageKey }
+        : {}),
       rawSurface: pill.entry.rawSurface,
       status,
       entryType: pill.entry.type,
@@ -531,13 +617,30 @@ export class VocabularyController {
     if (!pill || !this.identityIsCurrent() || message?.durable !== true ||
         message?.documentId !== this.identity.documentId || message?.openRequest !== this.identity.openRequest ||
         message?.requestId !== pill.statusRequestId || message?.key !== pill.entry.surfaceKey ||
+        message?.record?.key !== pill.entry.surfaceKey ||
         message?.pageNumber !== pill.page.pageNumber || !Number.isInteger(message?.record?.status) ||
         message.record.status < 1 || message.record.status > 5) return false;
+    const priorStorageKey = pill.record?.storageKey;
+    if (typeof priorStorageKey === "string" && priorStorageKey &&
+        message.record.storageKey !== priorStorageKey) return false;
     pill.pendingStatus = null;
     this.updatePillRecord(message.record);
-    const index = pill.page.records.findIndex((record) => record.key === message.record.key);
-    if (index >= 0) pill.page.records[index] = message.record;
-    else pill.page.records.push(message.record);
+    const acknowledged = message.record;
+    const canonicalKey = typeof acknowledged.storageKey === "string" && acknowledged.storageKey
+      ? acknowledged.storageKey
+      : acknowledged.key;
+    let updated = false;
+    pill.page.records = pill.page.records.map((record) => {
+      if (record.type !== acknowledged.type) return record;
+      const recordCanonicalKey = typeof record.storageKey === "string" && record.storageKey
+        ? record.storageKey
+        : record.key;
+      if (record.key !== acknowledged.key && recordCanonicalKey !== canonicalKey) return record;
+      updated = true;
+      // Keep each requested surface alias but update its shared persisted row.
+      return { ...record, status: acknowledged.status, storageKey: recordCanonicalKey };
+    });
+    if (!updated) pill.page.records.push(acknowledged);
     this.cachePageResults(pill.page, pill.page.records);
     this.renderPageResults(pill.page, pill.page.records);
     return true;
@@ -561,14 +664,13 @@ export class VocabularyController {
   renderPageResults(page, records) {
     page.records = records;
     const highlights = new Map();
-    for (const record of page.records) {
-      if (record.type !== "word" || !this.highlightLevels.words.has(record.status)) continue;
-      for (const [index, token] of page.tokens.entries()) {
-        if (token.surfaceKey === record.key && !highlights.has(index)) highlights.set(index, record.status);
-      }
+    const wordsByLemma = wordRecordsByLemma(page.records);
+    for (const [index, token] of page.tokens.entries()) {
+      const record = bestWordRecord(token, wordsByLemma);
+      if (record && this.isStatusVisible("word", record.status)) highlights.set(index, record.status);
     }
     const phraseRecords = page.records
-      .filter((record) => record.type === "phrase" && this.highlightLevels.phrases.has(record.status))
+      .filter((record) => record.type === "phrase" && this.isStatusVisible("phrase", record.status))
       .map((record) => ({ ...record, surfaceKeys: record.key.split(" ") }));
     const phraseMatches = this.phraseMatcher(page.tokens, phraseRecords);
     for (const match of phraseMatches) {

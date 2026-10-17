@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "description": "Shared viewer/host conformance vectors for case-insensitive English inflection matching. These vectors define matching, not storage-key rewriting.",
+  "equivalentWords": [
+    ["walk", "Walk", "WALKS", "walked", "walking"],
+    ["study", "studies", "studied", "studying"],
+    ["box", "boxes", "boxed", "boxing"],
+    ["stop", "stops", "stopped", "stopping"],
+    ["make", "makes", "made", "making"],
+    ["take", "takes", "took", "taken", "taking"],
+    ["go", "goes", "went", "gone", "going"],
+    ["be", "am", "is", "are", "was", "were", "been", "being"],
+    ["have", "has", "had", "having"],
+    ["do", "does", "did", "done", "doing"],
+    ["run", "runs", "ran", "running"],
+    ["write", "writes", "wrote", "written", "writing"],
+    ["buy", "buys", "bought", "buying"],
+    ["lie", "lies", "lay", "lain", "lying"],
+    ["carry", "carries", "carried", "carrying"]
+  ],
+  "equivalentPhrases": [
+    ["take care of", "takes care of", "took care of", "taking care of"],
+    ["walk the dog", "walks the dog", "walked the dog", "walking the dog"],
+    ["be aware of", "am aware of", "is aware of", "was aware of", "being aware of"]
+  ],
+  "distinctWords": [
+    ["universe", "university"],
+    ["business", "bus"],
+    ["form", "from"],
+    ["cat", "cattle"]
+  ],
+  "distinctPhrases": [
+    ["take care", "take car"],
+    ["walk the dog", "walk dog the"]
+  ]
+}

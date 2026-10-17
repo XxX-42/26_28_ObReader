@@ -23,6 +23,17 @@
       : null;
   const iosInputPolicy = bridgeScript.dataset.iosInputPolicy === "true";
   const vocabularyEnabledAtBoot = bridgeScript.dataset.vocabularyEnabled === "true";
+  const VOCABULARY_DISPLAY_MODES = ["all", "learning", "focus"];
+  const VOCABULARY_DISPLAY_LABELS = Object.freeze({
+    all: "全部等级", learning: "学习中（1–4）", focus: "重点（1–3）",
+  });
+  const PERSISTABLE_ANNOTATION_TOOL_MODES = new Set([3, 5, 9, 10, 15]);
+  function normalizeVocabularyDisplayMode(value) {
+    return VOCABULARY_DISPLAY_MODES.includes(value) ? value : "all";
+  }
+  function normalizeAnnotationToolMode(value) {
+    return Number.isInteger(value) && PERSISTABLE_ANNOTATION_TOOL_MODES.has(value) ? value : 0;
+  }
   function normalizeVocabularyHighlightLevels(value) {
     const normalize = (items) => Array.isArray(items)
       ? [...new Set(items.filter((item) => Number.isInteger(item) && item >= 1 && item <= 5))].sort((a, b) => a - b)
@@ -192,6 +203,9 @@
     startupFailed: false,
     vocabularyEnabled: vocabularyEnabledAtBoot,
     vocabularyHighlightLevels: vocabularyHighlightLevelsAtBoot,
+    vocabularyDisplayMode: normalizeVocabularyDisplayMode(bridgeScript.dataset.vocabularyDisplayMode),
+    preferredAnnotationToolMode: 0,
+    restoredAnnotationToolIdentity: null,
     vocabularyController: null,
   };
   if (iosInputPolicy) {
@@ -313,6 +327,7 @@
       getIdentity: () => ({ documentId: state.activeDocumentId, openRequest: state.activeOpenRequest }),
       isEnabled: true,
       highlightLevels: state.vocabularyHighlightLevels,
+      displayMode: state.vocabularyDisplayMode,
     });
     return state.vocabularyController;
   }
@@ -341,17 +356,85 @@
     button.title = enabled ? "LingQ 模式：开启" : "LingQ 模式：关闭";
   }
 
+  function syncVocabularyDisplayModeButton() {
+    const button = state.bridgeControls?.vocabularyDisplayModeButton;
+    if (!button) return;
+    const mode = normalizeVocabularyDisplayMode(state.vocabularyDisplayMode);
+    button.textContent = `LingQ：${VOCABULARY_DISPLAY_LABELS[mode]}`;
+    button.title = `LingQ 显示模式：${VOCABULARY_DISPLAY_LABELS[mode]}（点击切换）`;
+    button.setAttribute("aria-label", button.title);
+    button.dataset.mode = mode;
+  }
+
+  function setVocabularyDisplayMode(mode) {
+    state.vocabularyDisplayMode = normalizeVocabularyDisplayMode(mode);
+    state.vocabularyController?.setDisplayMode?.(state.vocabularyDisplayMode);
+    syncVocabularyDisplayModeButton();
+  }
+
+  function requestVocabularyDisplayMode(mode) {
+    const next = normalizeVocabularyDisplayMode(mode);
+    const hasActiveDocument = state.activeDocumentId && Number.isInteger(state.activeOpenRequest);
+    const hasPendingDocument = state.requestedDocumentId && Number.isInteger(state.requestedOpenRequest);
+    const target = hasActiveDocument
+      ? { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest }
+      : hasPendingDocument
+        ? { documentId: state.requestedDocumentId, openRequest: state.requestedOpenRequest }
+        : null;
+    return target && postToHost("vocab-display-mode-request", {
+      mode: next, documentId: target.documentId, openRequest: target.openRequest,
+    });
+  }
+
+  function cycleVocabularyDisplayMode(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const current = normalizeVocabularyDisplayMode(state.vocabularyDisplayMode);
+    const next = VOCABULARY_DISPLAY_MODES[(VOCABULARY_DISPLAY_MODES.indexOf(current) + 1) % VOCABULARY_DISPLAY_MODES.length];
+    if (!requestVocabularyDisplayMode(next)) showStatus("LingQ 显示模式尚未同步到 Obsidian。");
+  }
+
+  function enterVocabularyFromToolWheel() {
+    if (!state.vocabularyEnabled) toggleVocabularyFromMenu();
+  }
+
   function toggleVocabularyFromMenu(event) {
     event?.preventDefault?.();
     event?.stopPropagation?.();
     const enabled = !state.vocabularyEnabled;
-    setVocabularyEnabled(enabled);
-    if (!state.activeDocumentId || !Number.isInteger(state.activeOpenRequest)) return;
+    const previousEnabled = state.vocabularyEnabled === true;
+    const hasActiveDocument = state.activeDocumentId && Number.isInteger(state.activeOpenRequest);
+    const hasPendingDocument = state.requestedDocumentId && Number.isInteger(state.requestedOpenRequest);
+    const target = hasActiveDocument
+      ? { documentId: state.activeDocumentId, openRequest: state.activeOpenRequest }
+      : hasPendingDocument
+        ? { documentId: state.requestedDocumentId, openRequest: state.requestedOpenRequest }
+        : null;
+
+    if (!target) {
+      showStatus("PDF 尚未完成打开，LingQ 设置暂时无法同步。");
+      return;
+    }
+
+    // Enabling must be acknowledged by the host before the controller starts
+    // querying page terms. The host rejects vocab-page-query while its
+    // persisted setting is still false. Starting a query optimistically here
+    // leaves that page's pending request stuck forever, so the highlights do
+    // not return until a later page rerender or scroll. Disabling remains
+    // immediate so the visible overlays disappear as soon as the user asks.
+    // During a pending open the bridge cannot scan a page yet, so it may keep
+    // the requested state locally while still binding the setting update to
+    // the pending document identity. The matching host response is applied by
+    // handleVocabularyEnabledMessage before that document is hydrated.
+    if (!enabled || !hasActiveDocument) setVocabularyEnabled(enabled);
     if (!postToHost("vocab-toggle-request", {
       enabled,
-      documentId: state.activeDocumentId,
-      openRequest: state.activeOpenRequest,
-    })) showStatus("LingQ 设置尚未同步到 Obsidian。");
+      documentId: target.documentId,
+      openRequest: target.openRequest,
+    })) {
+      setVocabularyEnabled(previousEnabled);
+      showStatus("LingQ 设置尚未同步到 Obsidian。");
+    }
   }
 
   function setVocabularyHighlightLevels(levels) {
@@ -374,6 +457,24 @@
         state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
     state.pendingVocabularySettings.levels = normalizeVocabularyHighlightLevels(message.levels);
     setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
+    state.vocabularyController?.setDocument?.(null, null, false);
+    return true;
+  }
+
+  function handleVocabularyDisplayModeMessage(message) {
+    if (message?.rendererGeneration !== rendererGeneration || !VOCABULARY_DISPLAY_MODES.includes(message.mode)) return false;
+    const matchesActive = message.documentId === state.activeDocumentId &&
+      message.openRequest === state.activeOpenRequest;
+    if (matchesActive) {
+      setVocabularyDisplayMode(message.mode);
+      return true;
+    }
+    const matchesPending = message.documentId === state.requestedDocumentId &&
+      message.openRequest === state.requestedOpenRequest;
+    if (!matchesPending || state.pendingVocabularySettings?.documentId !== message.documentId ||
+        state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
+    state.pendingVocabularySettings.displayMode = normalizeVocabularyDisplayMode(message.mode);
+    setVocabularyDisplayMode(state.pendingVocabularySettings.displayMode);
     state.vocabularyController?.setDocument?.(null, null, false);
     return true;
   }
@@ -402,6 +503,8 @@
   function prepareVocabularyOpen(message) {
     state.vocabularyController?.setDocument?.(null, null, false);
     const pending = state.pendingVocabularySettings;
+    const matchesPending = pending?.documentId === message.documentId &&
+      pending?.openRequest === message.openRequest;
     state.vocabularyEnabled = pending?.documentId === message.documentId &&
       pending?.openRequest === message.openRequest
       ? pending.enabled === true
@@ -410,6 +513,25 @@
       pending?.openRequest === message.openRequest
       ? pending.levels
       : message.vocabularyHighlightLevels);
+    setVocabularyDisplayMode(matchesPending ? pending.displayMode : message.vocabularyDisplayMode);
+    state.preferredAnnotationToolMode = normalizeAnnotationToolMode(message.preferredAnnotationToolMode);
+    state.restoredAnnotationToolIdentity = null;
+  }
+
+  function restorePreferredAnnotationTool(documentId, openRequest) {
+    const mode = normalizeAnnotationToolMode(state.preferredAnnotationToolMode);
+    const identityKey = `${documentId}:${openRequest}`;
+    if (mode === 0 || state.readOnly || !state.externalSourceConfirmed ||
+        state.restoredAnnotationToolIdentity === identityKey ||
+        documentId !== state.activeDocumentId || openRequest !== state.activeOpenRequest) return false;
+    state.restoredAnnotationToolIdentity = identityKey;
+    state.app?.eventBus?.dispatch("switchannotationeditormode", {
+      source: window,
+      mode,
+      isFromKeyboard: false,
+      createNewEditor: false,
+    });
+    return true;
   }
 
   function bindVocabularyToOpenedDocument(documentId, openRequest) {
@@ -1415,6 +1537,13 @@
     // available in this menu without changing the bulk-delete toolbar order.
     secondaryContainer.insertBefore(vocabularyToggleButton, deleteButton);
 
+    const vocabularyDisplayModeButton = document.createElement("button");
+    vocabularyDisplayModeButton.id = "pdfReaderVocabularyDisplayModeButton";
+    vocabularyDisplayModeButton.type = "button";
+    vocabularyDisplayModeButton.className = "toolbarButton labeled pdfReaderVocabularyDisplayModeButton";
+    vocabularyDisplayModeButton.addEventListener("click", cycleVocabularyDisplayMode);
+    secondaryContainer.insertBefore(vocabularyDisplayModeButton, deleteButton);
+
     const secondaryToolbar = document.getElementById("secondaryToolbarToggle");
     if (secondaryToolbar?.parentElement === toolbar) {
       toolbar.insertBefore(group, secondaryToolbar);
@@ -1428,10 +1557,12 @@
       deletePageAnnotationsButton,
       deleteAllAnnotationsButton,
       vocabularyToggleButton,
+      vocabularyDisplayModeButton,
       saveButton,
     };
     installAdaptiveToolbarLayout();
     syncBridgeControls();
+    syncVocabularyDisplayModeButton();
   }
 
   function makeArrayBuffer(value) {
@@ -3419,6 +3550,7 @@
           // may enable editing for this document revision.
           state.readOnly = pending.readOnly === true || !identityConfirmed;
           setReadOnlyState(state.readOnly);
+          if (!state.readOnly) restorePreferredAnnotationTool(pending.documentId, pending.openRequest);
           if (result.deferredUuids.length) {
             if (!state.pendingExternalAnnotationsUpdate) {
               state.pendingExternalAnnotationsUpdate = pending;
@@ -8422,9 +8554,11 @@
       openRequest: state.requestedOpenRequest,
       enabled: message.vocabularyEnabled === true,
       levels: normalizeVocabularyHighlightLevels(message.vocabularyHighlightLevels),
+      displayMode: normalizeVocabularyDisplayMode(message.vocabularyDisplayMode),
     };
     state.vocabularyEnabled = state.pendingVocabularySettings.enabled;
     setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
+    setVocabularyDisplayMode(state.pendingVocabularySettings.displayMode);
     if (!state.ready) {
       state.queuedOpens.push(message);
       return;
@@ -9106,6 +9240,11 @@
       return;
     }
 
+    if (message.type === "vocab-set-display-mode") {
+      handleVocabularyDisplayModeMessage(message);
+      return;
+    }
+
     if (message.type === "vocab-page-results") {
       if (message.rendererGeneration !== rendererGeneration) return;
       state.vocabularyController?.handlePageResults?.(message);
@@ -9578,6 +9717,14 @@
             cancelManualMomentum();
             invalidatePendingPenHighlight();
             state.editorMode = mode;
+            if (PERSISTABLE_ANNOTATION_TOOL_MODES.has(mode) && !state.readOnly &&
+                state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
+              postToHost("annotation-tool-preference-request", {
+                mode,
+                documentId: state.activeDocumentId,
+                openRequest: state.activeOpenRequest,
+              });
+            }
             state.inputPolicy?.onToolChange?.();
             if (annotationToolIsActive()) {
               refreshFingerTextSelectionSuppression();
@@ -9834,6 +9981,7 @@
     }
     window.removeEventListener("keydown", onReadOnlyHotkey, true);
     window.removeEventListener("beforeunload", onViewerBeforeUnload, true);
+    window.removeEventListener("pdf-reader-enter-lingq", enterVocabularyFromToolWheel);
     window.removeEventListener("pagehide", dispose);
     window.removeEventListener("unload", dispose);
     clearTimeout(state.statusTimer);
@@ -9882,6 +10030,7 @@
   window.addEventListener("message", onHostMessage);
   window.addEventListener("keydown", onReadOnlyHotkey, true);
   window.addEventListener("beforeunload", onViewerBeforeUnload, true);
+  window.addEventListener("pdf-reader-enter-lingq", enterVocabularyFromToolWheel);
   window.addEventListener("pagehide", dispose, { once: true });
   window.addEventListener("unload", dispose, { once: true });
   document.addEventListener("webviewerloaded", onViewerLoaded, true);

@@ -8960,11 +8960,15 @@ dialog :link{
   position: absolute;
   left: 50%;
   top: 50%;
-  width: calc(48px * var(--tool-wheel-scale, 1));
-  height: calc(48px * var(--tool-wheel-scale, 1));
+  width: calc(62.4px * var(--tool-wheel-scale, 1));
+  height: calc(62.4px * var(--tool-wheel-scale, 1));
   transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
   border-radius: 50%;
   background: #20242c;
   border: 1px solid #aeb5c0;
   box-sizing: border-box;
+  font-size: calc(28px * var(--tool-wheel-scale, 1));
+  line-height: 1;
 }

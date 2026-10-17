@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { normalizeEnglishLemmaKey as normalizeViewerEnglishLemmaKey } from "../viewer-adapter/vocabulary/english-normalizer.js";
 
 const require = createRequire(import.meta.url);
 const {
   VocabularyService,
   VocabularyStoreError,
   normalizeTermKey,
+  normalizeEnglishMatchKey,
+  isAmbiguousEnglishSurface,
   VOCABULARY_PATH,
 } = require("../plugin/vocabulary/service.cjs");
+const inflectionFixture = require("./fixtures/english-inflection-equivalence.json");
 
 class MemoryAdapter {
   constructor({ delayMs = 0 } = {}) {
@@ -100,6 +104,126 @@ test("surface key normalization is conservative and does not lemmatize", () => {
   assert.equal(normalizeTermKey("bad,term"), "");
   assert.equal(normalizeTermKey("'hello"), "");
   assert.equal(normalizeTermKey("well--being"), "");
+});
+
+test("host inflection matcher conforms to shared viewer vectors without rewriting surface keys", () => {
+  const equivalentGroups = [...inflectionFixture.equivalentWords, ...inflectionFixture.equivalentPhrases];
+  for (const group of equivalentGroups) {
+    const expected = normalizeEnglishMatchKey(group[0]);
+    for (const surface of group) {
+      assert.equal(normalizeEnglishMatchKey(surface), expected, `${surface} should match ${group[0]}`);
+      assert.equal(normalizeEnglishMatchKey(surface), normalizeViewerEnglishLemmaKey(surface),
+        `host and viewer lemma rules should agree for ${surface}`);
+    }
+  }
+  for (const group of [...inflectionFixture.distinctWords, ...inflectionFixture.distinctPhrases]) {
+    assert.notEqual(normalizeEnglishMatchKey(group[0]), normalizeEnglishMatchKey(group[1]),
+      `${group[0]} and ${group[1]} must remain distinct`);
+  }
+  for (const surface of [
+    "buses", "gases", "quizzes", "heroes", "potatoes", "tomatoes", "echoes", "vetoes",
+    "analyses", "crises", "theses", "diagnoses", "canoes", "alias", "atlas", "canvas",
+    "gas", "bus", "his", "lens",
+  ]) {
+    assert.equal(normalizeEnglishMatchKey(surface), normalizeViewerEnglishLemmaKey(surface),
+      `host and viewer should share protected/plural handling for ${surface}`);
+  }
+  assert.equal(normalizeTermKey("WALKED"), "walked", "inflection matching never rewrites persisted surface keys");
+  assert.equal(isAmbiguousEnglishSurface("Lay"), true);
+  assert.equal(isAmbiguousEnglishSurface("laid"), false);
+});
+
+test("query and upsert share status across inflections without creating another persisted key", async () => {
+  const adapter = new MemoryAdapter();
+  const service = makeService(adapter);
+  const original = await service.upsertTerm("Walk", {
+    status: 5, translation: "步行", note: "keep definition", phonetic: "/wɔːk/",
+  });
+  assert.equal(original.key, "walk");
+
+  for (const surface of ["WALKS", "walked", "walking"]) {
+    const record = await service.getTerm(surface);
+    assert.equal(record?.key, "walk", `${surface} should resolve to the existing storage key`);
+    assert.equal(record?.status, 5);
+  }
+  const query = await service.queryTerms(["walked", "walking"]);
+  assert.equal(query.walked.key, "walk");
+  assert.equal(query.walking.status, 5);
+
+  const revisionBefore = service.getRevision();
+  const updated = await service.upsertTerm("walked", { status: 3 });
+  assert.equal(updated.key, "walk");
+  assert.equal(updated.status, 3);
+  assert.equal(service.getRevision(), revisionBefore + 1, "the family update writes one snapshot atomically");
+  const persisted = snapshot(adapter).records;
+  assert.deepEqual(persisted.map((record) => record.key), ["walk"]);
+  assert.equal(persisted[0].surface, "Walk", "an alias upsert preserves the original display surface");
+  assert.equal(persisted[0].translation, "步行");
+  assert.equal(persisted[0].note, "keep definition");
+  assert.equal(persisted[0].phonetic, "/wɔːk/");
+});
+
+test("legacy duplicate inflection records keep their own definitions but receive one family status", async () => {
+  const adapter = new MemoryAdapter();
+  adapter.files.set(VOCABULARY_PATH, JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 9,
+    records: [
+      { key: "walk", type: "word", surface: "walk", status: 2, createdAt: 1, updatedAt: 2,
+        source: "user", translation: "步行", note: "base note", phonetic: "/wɔːk/" },
+      { key: "walked", type: "word", surface: "walked", status: 5, createdAt: 3, updatedAt: 4,
+        source: "user", translation: "走过", note: "past note", phonetic: "/wɔːkt/" },
+    ],
+  }));
+  const service = makeService(adapter);
+  const exact = await service.getTerm("walk");
+  assert.equal(exact.key, "walk");
+  assert.equal(exact.translation, "步行", "an exact key keeps its own metadata");
+  assert.equal(exact.status, 5, "the family reports its highest stored level");
+
+  const changes = [];
+  service.subscribe((change) => changes.push(change));
+  const revisionBefore = service.getRevision();
+  const updated = await service.setStatus("walking", 3);
+  assert.equal(updated.key, "walked", "without an exact entry, richest/status/lexical tie-break is deterministic");
+  assert.equal(service.getRevision(), revisionBefore + 1);
+  assert.deepEqual(changes.at(-1).changedKeys.sort(), ["walk", "walked"]);
+
+  const records = snapshot(adapter).records;
+  assert.equal(records.length, 2);
+  assert.deepEqual(records.map((record) => record.status), [3, 3]);
+  assert.equal(records.find((record) => record.key === "walk").translation, "步行");
+  assert.equal(records.find((record) => record.key === "walk").phonetic, "/wɔːk/");
+  assert.equal(records.find((record) => record.key === "walked").translation, "走过");
+  assert.equal(records.find((record) => record.key === "walked").note, "past note");
+  assert.equal((await service.getTerm("walks")).status, 3);
+});
+
+test("ambiguous lay prefers its exact record and keeps lie and lay families separate", async () => {
+  const adapter = new MemoryAdapter();
+  adapter.files.set(VOCABULARY_PATH, JSON.stringify({
+    schema: "pdf-web-reader-vocabulary", schemaVersion: 1, language: "en", revision: 3,
+    records: [
+      { key: "lie", type: "word", surface: "lie", status: 2, createdAt: 1, updatedAt: 1,
+        source: "user", translation: "躺" },
+      { key: "lay", type: "word", surface: "lay", status: 4, createdAt: 1, updatedAt: 1,
+        source: "user", translation: "放置" },
+      { key: "laid", type: "word", surface: "laid", status: 3, createdAt: 1, updatedAt: 1,
+        source: "user", translation: "放置过去式" },
+    ],
+  }));
+  const service = makeService(adapter);
+
+  assert.equal((await service.getTerm("lay")).key, "lay");
+  assert.equal((await service.getTerm("lay")).translation, "放置");
+  assert.equal((await service.getTerm("lying")).key, "lie");
+  assert.equal((await service.getTerm("lying")).status, 2, "the ambiguous lay row is excluded from lie aliases");
+  assert.equal((await service.getTerm("lays")).key, "lay");
+  assert.equal((await service.getTerm("lays")).status, 4);
+  const updated = await service.setStatus("laying", 5);
+  assert.equal(updated.key, "lay", "status tie-break reuses the deterministic existing family record");
+  assert.equal((await service.getTerm("lay")).status, 5);
+  assert.equal((await service.getTerm("lain")).status, 2);
+  assert.deepEqual(snapshot(adapter).records.map((record) => record.key).sort(), ["laid", "lay", "lie"]);
 });
 
 test("undefined differs from KNOWN and statuses 1 through 5 persist", async () => {
@@ -292,7 +416,9 @@ test("CSV export neutralizes formula-leading text and preserves it on a local ro
     note: " @SUM(1,2)",
   });
   await source.upsertTerm("apostrophe", { note: "'=literal text" });
-  await source.upsertTerm("apostrophes", { note: "''=two literal marks" });
+  // Keep this distinct from `apostrophe`: the vocabulary store deliberately
+  // shares status for inflection families and does not create a duplicate key.
+  await source.upsertTerm("quotation", { note: "''=two literal marks" });
   const csv = await source.exportCsv();
   assert.ok(csv.includes("'=HYPERLINK"));
   assert.ok(csv.includes("' @SUM"));
@@ -303,7 +429,7 @@ test("CSV export neutralizes formula-leading text and preserves it on a local ro
   assert.equal(record.translation, '=HYPERLINK("https://example.invalid","click")');
   assert.equal(record.note, " @SUM(1,2)");
   assert.equal((await destination.getTerm("apostrophe")).note, "'=literal text");
-  assert.equal((await destination.getTerm("apostrophes")).note, "''=two literal marks");
+  assert.equal((await destination.getTerm("quotation")).note, "''=two literal marks");
 });
 
 test("imports and vocabulary fields have explicit size limits", async () => {

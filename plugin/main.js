@@ -41,6 +41,19 @@ const DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS = Object.freeze({
   words: Object.freeze([1, 2, 3, 4, 5]),
   phrases: Object.freeze([1, 2, 3, 4, 5]),
 });
+const VOCABULARY_DISPLAY_MODES = Object.freeze(["all", "learning", "focus"]);
+const VOCABULARY_DISPLAY_LABELS = Object.freeze({
+  all: "全部等级", learning: "学习中（1–4级）", focus: "重点（1–3级）",
+});
+const PERSISTABLE_ANNOTATION_TOOL_MODES = new Set([3, 5, 9, 10, 15]);
+
+function normalizeVocabularyDisplayMode(value) {
+  return VOCABULARY_DISPLAY_MODES.includes(value) ? value : "all";
+}
+
+function normalizeAnnotationToolMode(value) {
+  return Number.isInteger(value) && PERSISTABLE_ANNOTATION_TOOL_MODES.has(value) ? value : 0;
+}
 
 function normalizeVocabularyHighlightLevels(value) {
   const normalize = (items) => Array.isArray(items)
@@ -869,12 +882,14 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
     this.plugin = plugin;
     this.vocabularyToggle = null;
     this.vocabularyLevelButtons = new Map();
+    this.vocabularyDisplayModeButtons = new Map();
   }
 
   display() {
     const { containerEl } = this;
     containerEl.empty();
     this.vocabularyLevelButtons.clear();
+    this.vocabularyDisplayModeButtons.clear();
     const heading = (text) => containerEl.createEl("h3", {
       cls: "pdfWebReaderSettingHeading",
       text,
@@ -905,6 +920,24 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.vocabularyEnabled)
           .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled));
       });
+    {
+      const setting = new Setting(containerEl)
+        .setName("高亮显示模式")
+        .setDesc("全部等级、学习中（1–4级）或重点（1–3级）；只改变显示，不修改词库状态。");
+      const buttons = new Map();
+      for (const mode of VOCABULARY_DISPLAY_MODES) {
+        setting.addButton((button) => {
+          button.setButtonText(mode === "all" ? "全部" : mode === "learning" ? "学习中" : "重点");
+          button.setTooltip?.(VOCABULARY_DISPLAY_LABELS[mode]);
+          button.buttonEl?.setAttribute?.("aria-label", VOCABULARY_DISPLAY_LABELS[mode]);
+          button.buttonEl?.setAttribute?.("aria-pressed", String(normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode) === mode));
+          button.buttonEl?.classList?.toggle("is-active", normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode) === mode);
+          button.onClick(() => this.plugin.setVocabularyDisplayMode(mode));
+          buttons.set(mode, button);
+        });
+      }
+      this.vocabularyDisplayModeButtons = buttons;
+    }
     for (const [type, label, key] of [
       ["word", "单词", "words"],
       ["phrase", "短语", "phrases"],
@@ -975,6 +1008,15 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
 
   syncVocabularyEnabled(enabled) {
     this.vocabularyToggle?.setValue?.(enabled === true);
+  }
+
+  syncVocabularyDisplayMode(mode) {
+    const selectedMode = normalizeVocabularyDisplayMode(mode);
+    for (const [key, button] of this.vocabularyDisplayModeButtons) {
+      const active = key === selectedMode;
+      button.buttonEl?.setAttribute?.("aria-pressed", String(active));
+      button.buttonEl?.classList?.toggle("is-active", active);
+    }
   }
 
   syncVocabularyLevels(levels) {
@@ -2039,6 +2081,7 @@ class PdfReaderView extends EditableFileView {
       `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
       `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
       `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
+      `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -2228,6 +2271,7 @@ class PdfReaderView extends EditableFileView {
         `data-ios-input-policy="${this.plugin.iosInputPolicy}" ` +
         `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
         `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
+        `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2396,6 +2440,18 @@ class PdfReaderView extends EditableFileView {
     });
   }
 
+  setVocabularyDisplayMode(mode) {
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL,
+      token: this.token,
+      type: "vocab-set-display-mode",
+      documentId: this.documentId,
+      openRequest: this.openRequest,
+      mode: normalizeVocabularyDisplayMode(mode),
+    });
+  }
+
   refreshVocabularyPages() {
     if (!this.plugin.settings.vocabularyEnabled || !this.ready || !this.iframe ||
         !this.documentId || !Number.isInteger(this.openRequest)) return false;
@@ -2462,6 +2518,11 @@ class PdfReaderView extends EditableFileView {
       await this.plugin.setVocabularyEnabled(message.enabled);
       return true;
     }
+    if (message.type === "vocab-display-mode-request") {
+      if (!VOCABULARY_DISPLAY_MODES.includes(message.mode) || this.teardownStarted === true) return true;
+      await this.plugin.setVocabularyDisplayMode(message.mode);
+      return true;
+    }
     if (!this.plugin.settings.vocabularyEnabled) return true;
 
     if (message.type === "vocab-page-query") {
@@ -2481,7 +2542,9 @@ class PdfReaderView extends EditableFileView {
           channel: CHANNEL, token: this.token, type: "vocab-page-results",
           requestId: message.requestId, queryId: message.queryId, partIndex: message.partIndex, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
-          records: Object.values(matches).map(({ key, type, status }) => ({ key, type, status })),
+          records: Object.entries(matches).map(([key, record]) => ({
+            key, storageKey: record.key, type: record.type, status: record.status,
+          })),
         });
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) {
@@ -2517,7 +2580,7 @@ class PdfReaderView extends EditableFileView {
           requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
           record: record && record.type === message.entryType ? {
-            key: record.key, type: record.type, status: record.status,
+            key: message.key, storageKey: record.key, type: record.type, status: record.status,
             translation: record.translation || "", phonetic: record.phonetic || "",
           } : null,
         });
@@ -2557,7 +2620,9 @@ class PdfReaderView extends EditableFileView {
           requestId: message.requestId, entryRequestId: message.entryRequestId,
           key: message.key, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
-          revision: service.getRevision(), record,
+          revision: service.getRevision(), record: {
+            ...record, key: message.key, storageKey: record.key,
+          },
         });
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
@@ -2719,6 +2784,14 @@ class PdfReaderView extends EditableFileView {
       return;
     }
 
+    if (message.type === "annotation-tool-preference-request") {
+      if (message.rendererGeneration !== this.rendererGeneration ||
+          message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
+          !PERSISTABLE_ANNOTATION_TOOL_MODES.has(message.mode) || this.teardownStarted) return;
+      void this.plugin.setLastAnnotationToolMode(message.mode);
+      return;
+    }
+
     switch (message.type) {
       case "heavy-acquire": {
         if (message.rendererGeneration !== this.rendererGeneration || typeof message.id !== "string" || !message.id || message.documentId !== this.documentId) return;
@@ -2873,6 +2946,8 @@ class PdfReaderView extends EditableFileView {
       autoSave: this.plugin.settings.autoSave,
       vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
       vocabularyHighlightLevels: this.plugin.settings.vocabularyHighlightLevels,
+      vocabularyDisplayMode: normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode),
+      preferredAnnotationToolMode: normalizeAnnotationToolMode(this.plugin.settings.lastAnnotationToolMode),
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
       confirmedRevision:
@@ -3196,12 +3271,14 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       showStatusBar: false,
       vocabularyEnabled: false,
       vocabularyHighlightLevels: normalizeVocabularyHighlightLevels(null),
+      vocabularyDisplayMode: "all",
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
     this.settings.showStatusBar = this.settings.showStatusBar === true;
     this.settings.vocabularyEnabled = this.settings.vocabularyEnabled === true;
     this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
+    this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
     this.vocabularyService = null;
     this.views = new Set();
     this.popoutCloseGates = new Map();
@@ -4003,6 +4080,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } finally {
       for (const view of this.views) view.setVocabularyEnabled(this.settings.vocabularyEnabled);
       this.readerSettingsTab?.syncVocabularyEnabled(this.settings.vocabularyEnabled);
+    }
+  }
+
+  async setVocabularyDisplayMode(mode) {
+    this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(mode);
+    try {
+      await this.saveData(this.settings);
+    } catch (error) {
+      new Notice(`LingQ 显示模式无法保存：${error.message || error}`, 8000);
+    } finally {
+      for (const view of this.views) view.setVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
+      this.readerSettingsTab?.syncVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
+    }
+  }
+
+  async setLastAnnotationToolMode(mode) {
+    const normalized = normalizeAnnotationToolMode(mode);
+    if (!normalized) return false;
+    this.settings.lastAnnotationToolMode = normalized;
+    try {
+      await this.saveData(this.settings);
+      return true;
+    } catch (error) {
+      new Notice(`批注工具偏好无法保存：${error.message || error}`, 8000);
+      return false;
     }
   }
 
