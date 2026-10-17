@@ -1274,6 +1274,29 @@ export class VocabularyController {
   refreshPageFromHost(message) {
     if (!this.identityIsCurrent() || message?.documentId !== this.identity.documentId ||
         message?.openRequest !== this.identity.openRequest) return false;
+    if (message.changedKeys !== undefined && message.invalidateAll !== true) {
+      if (!Array.isArray(message.changedKeys) || message.changedKeys.length > 64 ||
+          message.changedKeys.some((key) => typeof key !== "string" || !key || normalizeTermKey(key) !== key)) return false;
+      if (!message.changedKeys.length) return true;
+      // Invalidation is a low-frequency mutation path, separate from page
+      // matching and zoom. Compare only bounded cached token signatures; a
+      // newly saved word has no old match row, so rows alone are insufficient.
+      const paths = message.changedKeys.map((key) => key.split(" ").map(normalizeEnglishLemmaKey));
+      const affected = (signature) => {
+        const tokens = String(signature || "").split("\u001f").map(normalizeEnglishLemmaKey);
+        return paths.some((path) => tokens.some((_, start) =>
+          start + path.length <= tokens.length && path.every((part, offset) => part === tokens[start + offset])));
+      };
+      for (const [number, cached] of this.pageResultCache) {
+        if (affected(cached.signature)) this.pageResultCache.delete(number);
+      }
+      // Reuse the physical token ranges of visible pages, including pages
+      // whose first query is still pending. No PDF/textLayer rescan occurs.
+      for (const page of this.pages.values()) {
+        if (this.isPageVisible(page.pageNumber) && affected(page.signature)) this.queryPage(page, { force: true });
+      }
+      return true;
+    }
     if (message.pageNumber == null) {
       this.pageResultCache.clear();
       const alreadyRendered = new Set(this.pages.values());
