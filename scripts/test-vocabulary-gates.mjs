@@ -193,6 +193,9 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/vocabulary-sharded-store.test.mjs",
     "tests/vocabulary-tap-priority.test.mjs",
     "tests/vocabulary-transactions.test.mjs",
+    "tests/vocabulary-transfer-v2.test.mjs",
+    "tests/vocabulary-transfer-large.test.mjs",
+    "tests/vocabulary-workbench.test.mjs",
     "tests/vocabulary-v2-boundaries.test.mjs",
     "tests/vocabulary-v2-context-source.test.mjs",
     "tests/vocabulary-v2-device-identity.test.mjs",
@@ -233,6 +236,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/tool-wheel-lingq-browser.test.mjs",
     "tests/underline-regression.test.mjs",
     "tests/vocabulary-pill-layout-browser.test.mjs",
+    "tests/vocabulary-workbench-browser.test.mjs",
   ]),
 });
 

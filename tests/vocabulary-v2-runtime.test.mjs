@@ -178,3 +178,25 @@ test("a torn native Review append can retry, finalize, and stay closed when a ne
   await first.runtime.close();
   await second.runtime.close();
 });
+
+test("runtime reloads personal state after recovering a core transaction before coordinator attachment", async () => {
+  const first = fixture();
+  await first.runtime.mutatePersonal((service) => service.upsertTerm("walk", { status: 2 }));
+  let crashed = false;
+  first.adapter.hook = async ({ phase, operation, to }) => {
+    if (!crashed && phase === "before" && operation === "rename" && to === VOCABULARY_PATH) {
+      crashed = true;
+      throw new Error("crash before canonical core install");
+    }
+  };
+  await assert.rejects(first.runtime.mutatePersonal((service) => service.setNote("walk", "durable recovered note")));
+  assert.equal(crashed, true);
+  first.adapter.hook = null;
+  const restarted = fixture(first.adapter, "restarted-core");
+  await restarted.service.ready(); // startup may already have read the pre-recovery snapshot
+  await restarted.runtime.ready();
+  assert.equal((await restarted.service.getTerm("walk")).note, "durable recovered note");
+  await restarted.runtime.mutatePersonal((service) => service.setTranslation("walk", "恢复后可继续写入"));
+  assert.equal((await restarted.service.getTerm("walk")).translation, "恢复后可继续写入");
+  await restarted.runtime.close();
+});

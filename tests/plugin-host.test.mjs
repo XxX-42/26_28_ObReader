@@ -400,6 +400,15 @@ function createHarness({
     (name) => {
       if (name === "obsidian") return obsidian;
       if (name === "./asset-runtime.cjs") return sourceRequire(name);
+      if (name === "./vocabulary/workbench.cjs") return { createVocabularyWorkbench: () => class {
+        constructor(app, api) { this.app = app; this.api = api; }
+        open() { this.opened = true; }
+        close() { this.closed = true; }
+      } }; // real DOM and factory behavior run in the Workbench browser gate
+      if (name === "./vocabulary/workspace.cjs") return { ...sourceRequire(name),
+        // This fixture represents one stable installation across restarts.
+        // Persistence/unavailability is independently tested by device-identity.
+        localVocabularyDeviceId: () => "host-test-device" };
       if (name === "./pdf-annotation-host.cjs" && storageProtocol === "format3") {
         // Preserve the exact Format 3 golden assertions and race barriers.
         // WAL-specific cases below exercise the new production default.
@@ -1414,8 +1423,12 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   assert.equal(pdfFile.writes, 0, "vocabulary changes never call the source PDF write path");
   const changedPaths = [...new Set([...beforeVocabularyMutation.keys(), ...harness.storedFiles.keys()])]
     .filter((path) => beforeVocabularyMutation.get(path) !== harness.storedFiles.get(path));
-  assert.deepEqual(changedPaths, ["00_Archive/21_VocabularyData/en.vocab.json"],
-    "durable vocabulary status changes only its independent canonical snapshot");
+  assert.ok(changedPaths.includes("00_Archive/21_VocabularyData/en.vocab.json"));
+  assert.ok(changedPaths.every((path) => path === "00_Archive/21_VocabularyData/en.vocab.json" ||
+    /^00_Archive\/21_VocabularyData\/history\/host-test-device\/[a-f0-9]{64}\.json$/.test(path)),
+    "status mutations change only personal vocabulary and verified reversible History, never PDF/annotation paths");
+  const workspaceHistory = await harness.plugin.vocabularyRuntime.history.listBatches();
+  assert.ok(workspaceHistory.length >= 3, "each committed status transaction retains its reversible field diff");
   const jsonlBefore = [...beforeVocabularyMutation].filter(([path]) => path.endsWith(".jsonl"));
   const jsonlAfter = [...harness.storedFiles].filter(([path]) => path.endsWith(".jsonl"));
   assert.deepEqual(jsonlAfter, jsonlBefore, "vocabulary status does not write or alter annotation WAL files");
@@ -4042,4 +4055,64 @@ test("recovery restore verifies bytes, falls back to an intact candidate, and re
   assert.equal(await adapter.exists(older.candidatePath), true,
     "successful restoration also preserves the source recovery candidate");
   assert.equal((await harness.plugin.listRecoveryCandidates()).length, 2);
+});
+
+
+test("Vocabulary workbench host keeps list/dictionary/hot-path stores separate and journals opt-in review", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  assert.equal(harness.plugin.vocabularyRuntime, null, "startup does not load learning stores");
+  const service = harness.plugin.getVocabularyService();
+  await service.upsertTerm("walk", { status: 2, translation: "走" });
+  await service.upsertTerm("known", { status: 5 });
+  let lookups = 0;
+  harness.plugin.getVocabularyDictionary = () => ({ lookup: async () => { lookups++; return { translation: "词典释义" }; } });
+  const api = harness.plugin.createVocabularyWorkbenchApi();
+  const page = await api.listFamilies({ limit: 100 });
+  assert.equal(page.families.length, 2);
+  assert.equal(lookups, 0);
+  assert.equal(harness.plugin.vocabularyRuntime, null, "listing remains personal-only");
+  const walk = await service.getFamily("walking"), known = await service.getFamily("known");
+  await api.getFamilyDetails(walk.familyKey);
+  assert.equal(lookups, 1, "only explicit details query the dictionary");
+  await api.updateFamily({ familyKey: walk.familyKey, surface: "walk", fields: { note: "工作台编辑" } });
+  assert.equal((await service.getTerm("walk")).note, "工作台编辑");
+  const result = await api.setReviewEnrollment([walk.familyKey, known.familyKey], { enrolled: true });
+  assert.equal(result.results[1].status, "skipped-known");
+  assert.equal((await api.listDueReview({ limit: 100 })).total, 1);
+  const beforeMatch = new Map(harness.storedFiles);
+  await service.matchPageTokens(["walking", "known"]);
+  assert.deepEqual([...harness.storedFiles], [...beforeMatch], "matching cannot mutate Review or history");
+  await api.close();
+  assert.equal((await harness.plugin.vocabularyRuntime.history.listBatches()).filter((batch) => batch.actionKind === "review-final").length, 1);
+  const bundle = JSON.parse(await api.exportJson());
+  assert.equal(bundle.kind, "pdf-reader-vocabulary-bundle");
+  assert.equal(bundle.stores.core.records.length, 2);
+  assert.equal(bundle.stores.review.records.length, 1, "JSON backup includes acknowledged Review state");
+  const restored = createHarness({ storageProtocol: "wal" });
+  await restored.plugin.onload();
+  const imported = await restored.plugin.importVocabulary(JSON.stringify(bundle), "json", { defaultStatus: 1 });
+  assert.equal(imported.status, "committed");
+  assert.equal((await restored.plugin.getVocabularyService().getTerm("walk")).note, "工作台编辑");
+  assert.equal((await restored.plugin.createVocabularyWorkbenchApi().listDueReview({ limit: 100 })).total, 1);
+  await restored.plugin.createVocabularyWorkbenchApi().close();
+  restored.plugin.onunload();
+  assert.ok([...harness.storedFiles.keys()].filter((path) => path.startsWith("00_Archive/")).every((path) => path.startsWith("00_Archive/21_VocabularyData/")));
+  harness.plugin.onunload();
+});
+
+
+test("Workbench command opens the shared factory class with a narrow lazy host facade", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.commands.get("manage-local-english-vocabulary").callback();
+  const modal = harness.plugin.vocabularyWorkbench;
+  assert.equal(modal.opened, true);
+  assert.equal(typeof modal.api.listFamilies, "function");
+  assert.equal(typeof modal.api.exportJson, "function");
+  assert.equal(harness.plugin.vocabularyRuntime, null, "opening the shell does not eagerly load Review/Context/History");
+  await assert.rejects(modal.api.setReviewEnrollment(Array(101).fill("family"), { enrolled: true }), RangeError);
+  assert.equal([...harness.storedFiles.keys()].some((path) => path.startsWith("00_Archive/21_VocabularyData/")), false,
+    "oversized bulk input is rejected before any vocabulary data writes");
+  harness.plugin.onunload();
 });

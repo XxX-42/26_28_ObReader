@@ -590,8 +590,12 @@ test("optional transaction injection writes canonical v2 and durable field/entit
   const batches = historyPaths.map((path) => JSON.parse(adapter.files.get(path)));
   const creation = batches.find((batch) => batch.entities.some((entity) => entity.kind === "entityCreate"));
   assert.ok(creation);
-  assert.ok(creation.changes.every((change) => change.kind === "entityCreate" &&
-    change.fieldPath[0] === "records" && change.fieldPath[1] === "walk"));
+  assert.equal(creation.schemaVersion, 2);
+  assert.equal(creation.changes.length, 1, "a new core record is stored as one compact lifecycle diff");
+  assert.equal(creation.changes[0].kind, "entityCreate");
+  assert.deepEqual(creation.changes[0].fieldPath, ["records", "walk"]);
+  assert.equal(creation.changes[0].after.key, "walk");
+  assert.equal(creation.changes[0].after.note, "first");
   const noteEdit = batches.find((batch) => batch.changes.some((change) => change.field === "note" && change.after === "edited"));
   assert.ok(noteEdit);
   assert.ok(noteEdit.changes.some((change) => change.fieldPath.join("/") === "records/walk/note"));
@@ -677,4 +681,84 @@ test("the historical v1 VocabularyService refuses a v2 file before attempting an
   assert.equal(adapter.files.get(VOCABULARY_PATH), v2Bytes);
   assert.equal(adapter.writeCount, writesBefore, "the historical service fails before its write path");
   assert.equal(VOCABULARY_SCHEMA_VERSION, 2);
+});
+
+test("JSON import validates known versioned snapshots and rejects unknown newer envelopes", async () => {
+  const adapter = new MemoryAdapter();
+  const source = makeService(adapter);
+  await source.upsertTerm("walk", { status: 2, note: "known v2 snapshot" });
+  const validV2 = JSON.parse(await source.exportJson());
+
+  const target = makeService(new MemoryAdapter());
+  const imported = await target.importJson(validV2);
+  assert.equal(imported.imported, 1);
+  assert.equal((await target.getTerm("walk")).note, "known v2 snapshot");
+
+  const invalidEnvelope = structuredClone(validV2);
+  invalidEnvelope.reviewIndex = { revision: 1 };
+  await assert.rejects(target.importJson(invalidEnvelope), (error) => error.code === "vocabulary-corrupt-schema");
+
+  const invalidRecord = structuredClone(validV2);
+  invalidRecord.records[0].contextState = { anchor: "undeclared" };
+  await assert.rejects(target.importJson(invalidRecord), (error) => error.code === "vocabulary-corrupt-record");
+
+  const unknownNewer = { ...structuredClone(validV2), schemaVersion: 3, records: validV2.records };
+  await assert.rejects(target.importJson(unknownNewer), (error) => error.code === "vocabulary-corrupt-schema");
+  assert.equal((await target.getTerm("walk")).note, "known v2 snapshot", "rejected imports leave the valid target unchanged");
+});
+
+test("JSON import retains raw-array and known historical v1 snapshot compatibility", async () => {
+  const service = makeService(new MemoryAdapter());
+  const raw = await service.importJson([{ surface: "walk", type: "word", status: 2 }]);
+  assert.equal(raw.imported, 1);
+
+  const historical = {
+    schema: "pdf-web-reader-vocabulary",
+    schemaVersion: 1,
+    language: "en",
+    revision: 7,
+    reviewIndex: { legacy: true },
+    records: [legacyRecord("run", { ipa: "/rʌn/", reviewState: { ignored: true } })],
+  };
+  const imported = await service.importJson(historical);
+  assert.equal(imported.imported, 1);
+  const record = await service.getTerm("run");
+  assert.equal(record.phonetic, "/rʌn/");
+  assert.equal("reviewState" in record, false);
+});
+
+test("a vocabulary import that would exceed store capacity fails atomically without truncating rows", async () => {
+  const adapter = new MemoryAdapter();
+  const service = makeService(adapter);
+  const base = Array.from({ length: 24999 }, (_, index) => ({
+    surface: `term${String(index).padStart(5, "0")}`,
+    type: "word",
+    status: 2,
+    translation: "existing",
+  }));
+  const seeded = await service.importJson(base);
+  assert.equal(seeded.imported, 24999);
+
+  const filesBefore = new Map(adapter.files);
+  const writesBefore = adapter.writeCount;
+  await assert.rejects(service.importJson([
+    { surface: "new-capacity-one", type: "word", status: 2 },
+    { surface: "new-capacity-two", type: "word", status: 2 },
+  ]), /would exceed the supported record limit/);
+  assert.deepEqual([...adapter.files], [...filesBefore], "the failed import leaves every canonical file byte-identical");
+  assert.equal(adapter.writeCount, writesBefore);
+  assert.equal((await service.queryLearningTerms({ limit: 30000 })).length, 24999);
+  assert.equal(await service.getTerm("new-capacity-one"), undefined);
+
+  const fits = await service.importJson([{ surface: "new-capacity-one", type: "word", status: 2 }]);
+  assert.equal(fits.imported, 1, "exactly the remaining capacity is accepted");
+  assert.equal((await service.queryLearningTerms({ limit: 30000 })).length, 25000);
+  const fullFiles = new Map(adapter.files);
+  const fullWrites = adapter.writeCount;
+  await assert.rejects(service.importJson([
+    { surface: "new-capacity-two", type: "word", status: 2 },
+    { surface: "new-capacity-three", type: "word", status: 2 },
+  ]), /would exceed the supported record limit/);
+  assert.deepEqual([...adapter.files], [...fullFiles]);
+  assert.equal(adapter.writeCount, fullWrites);
 });

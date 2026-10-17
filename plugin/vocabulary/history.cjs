@@ -4,7 +4,10 @@ const { canonicalHash, canonicalStringify, hashText } = require("./canonical.cjs
 const { VOCABULARY_DATA_ROOT, normalizePath } = require("./transactions.cjs");
 
 const HISTORY_KIND = "vocabulary-history-batch";
-const HISTORY_SCHEMA_VERSION = 1;
+const HISTORY_SCHEMA_VERSION = 2;
+const SUPPORTED_HISTORY_SCHEMA_VERSIONS = new Set([1, HISTORY_SCHEMA_VERSION]);
+const HISTORY_CHANGE_KINDS = new Set(["field", "record", "entityCreate", "entityDelete"]);
+const HISTORY_ENTITY_KINDS = new Set(["record", "entityCreate", "entityDelete"]);
 const RESERVED_FIELDS = new Set([
   "schema", "schemaVersion", "revision", "kind", "storeId", "storeKind",
   "id", "key", "familyKey", "entityId", "recordId", "identity",
@@ -47,7 +50,7 @@ function normalizeUserPath(path, root = VOCABULARY_DATA_ROOT) {
   return normalized;
 }
 
-function validateFieldPath(path, entityId, changeKind) {
+function validateFieldPath(path, entityId, changeKind, schemaVersion) {
   if (!Array.isArray(path) || path.length < 2 || path.length > 32) {
     throw codedError("VOCAB_HISTORY_FIELD_PATH_INVALID", "History records must identify an individual field, not a whole store or entity.");
   }
@@ -62,6 +65,10 @@ function validateFieldPath(path, entityId, changeKind) {
     if (index === path.length - 1 && typeof segment === "number") {
       throw codedError("VOCAB_HISTORY_FIELD_PATH_INVALID", "History cannot target an individual array index.");
     }
+  }
+  if (path.length === 2 && (schemaVersion < 2 || (changeKind !== "entityCreate" && changeKind !== "entityDelete") ||
+      path[0] !== "records" || path[1] !== entityId)) {
+    throw codedError("VOCAB_HISTORY_FIELD_PATH_INVALID", "A record-root history path is allowed only for a complete v2 entity lifecycle change.");
   }
   return path.slice();
 }
@@ -106,7 +113,10 @@ function classify(actual, change) {
   return "conflict";
 }
 
-function normalizeSummary(summary, root) {
+function normalizeSummary(summary, root, schemaVersion = HISTORY_SCHEMA_VERSION) {
+  if (!SUPPORTED_HISTORY_SCHEMA_VERSIONS.has(schemaVersion)) {
+    throw codedError("VOCAB_HISTORY_SCHEMA_UNKNOWN", `History schema ${schemaVersion} is unsupported.`);
+  }
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) throw new TypeError("A vocabulary history summary is required.");
   const batchId = assertText(summary.batchId, "history batch ID");
   const sessionId = assertText(summary.sessionId, "history session ID");
@@ -147,10 +157,10 @@ function normalizeSummary(summary, root) {
     const path = normalizeUserPath(change.path, root);
     const entityId = assertText(change?.entityId, "history entity ID");
     const changeKind = change.kind || "field";
-    if (!new Set(["field", "record", "entityCreate", "entityDelete"]).has(changeKind)) {
+    if (!HISTORY_CHANGE_KINDS.has(changeKind)) {
       throw codedError("VOCAB_HISTORY_CHANGE_KIND_INVALID", `History change kind ${changeKind} is unsupported.`);
     }
-    const fieldPath = validateFieldPath(change.fieldPath, entityId, changeKind);
+    const fieldPath = validateFieldPath(change.fieldPath, entityId, changeKind, schemaVersion);
     if (!storeByPair.has(`${storeId}\u0000${path}`)) {
       throw codedError("VOCAB_HISTORY_STORE_MISSING", `History change ${entityId} does not match a declared store path.`);
     }
@@ -175,27 +185,64 @@ function normalizeSummary(summary, root) {
     const storeId = assertText(entity?.storeId, "entity store ID", 128);
     const entityId = assertText(entity?.entityId, "entity ID");
     const kind = entity.kind || "record";
-    if (!new Set(["record", "entityCreate", "entityDelete"]).has(kind)) {
+    if (!HISTORY_ENTITY_KINDS.has(kind)) {
       throw codedError("VOCAB_HISTORY_ENTITY_KIND_INVALID", `History entity kind ${kind} is unsupported.`);
     }
     const normalized = { ...cloneJson(entity), storeId, entityId, kind };
     return normalized;
   });
-  for (const entity of entities.filter((entry) => entry.kind === "entityCreate" || entry.kind === "entityDelete")) {
-    const lifecycleChanges = normalizedChanges.filter((change) => change.storeId === entity.storeId && change.entityId === entity.entityId);
+  // Lifecycle validation must scale with the supplied diff size. Building the
+  // index once avoids filtering every field change for every created entity
+  // during large, but bounded, vocabulary bundle imports.
+  const entityPair = (storeId, entityId) => `${storeId}\u0000${entityId}`;
+  const lifecycleChangesByEntity = new Map();
+  for (const change of normalizedChanges) {
+    const key = entityPair(change.storeId, change.entityId);
+    const group = lifecycleChangesByEntity.get(key) || [];
+    group.push(change);
+    lifecycleChangesByEntity.set(key, group);
+  }
+  const entityLifecycleKinds = new Map();
+  for (const entity of entities) {
+    if (entity.kind === "entityCreate" || entity.kind === "entityDelete") {
+      const key = entityPair(entity.storeId, entity.entityId);
+      let kinds = entityLifecycleKinds.get(key);
+      if (!kinds) entityLifecycleKinds.set(key, kinds = new Set());
+      kinds.add(entity.kind);
+    }
+  }
+  const lifecyclePathLengths = new Map();
+  const entityChangeCounts = new Map();
+  for (const change of normalizedChanges) {
+    const entityKey = entityPair(change.storeId, change.entityId);
+    entityChangeCounts.set(entityKey, (entityChangeCounts.get(entityKey) || 0) + 1);
+    if (change.kind !== "entityCreate" && change.kind !== "entityDelete") continue;
+    const lengths = lifecyclePathLengths.get(entityKey) || new Set();
+    lengths.add(change.fieldPath.length);
+    lifecyclePathLengths.set(entityKey, lengths);
+  }
+  for (const [entityKey, lengths] of lifecyclePathLengths) {
+    if (lengths.has(2) && (lengths.size !== 1 || entityChangeCounts.get(entityKey) !== 1)) {
+      throw codedError("VOCAB_HISTORY_ENTITY_LIFECYCLE_INVALID", "A record-root lifecycle change cannot be mixed with field-level lifecycle changes for the same entity.");
+    }
+  }
+  for (const entity of entities) {
+    if (entity.kind !== "entityCreate" && entity.kind !== "entityDelete") continue;
+    const lifecycleChanges = lifecycleChangesByEntity.get(entityPair(entity.storeId, entity.entityId)) || [];
     if (!lifecycleChanges.length || lifecycleChanges.some((change) => change.kind !== entity.kind ||
         (entity.kind === "entityCreate" && (change.beforeExists || !change.afterExists)) ||
         (entity.kind === "entityDelete" && (!change.beforeExists || change.afterExists)))) {
       throw codedError("VOCAB_HISTORY_ENTITY_LIFECYCLE_INVALID", `Entity lifecycle ${entity.kind} must be recorded as a complete set of field changes for ${entity.entityId}.`);
     }
   }
-  for (const change of normalizedChanges.filter((entry) => entry.kind === "entityCreate" || entry.kind === "entityDelete")) {
-    if (!entities.some((entity) => entity.storeId === change.storeId && entity.entityId === change.entityId && entity.kind === change.kind)) {
+  for (const change of normalizedChanges) {
+    if (change.kind !== "entityCreate" && change.kind !== "entityDelete") continue;
+    if (!entityLifecycleKinds.get(entityPair(change.storeId, change.entityId))?.has(change.kind)) {
       throw codedError("VOCAB_HISTORY_ENTITY_LIFECYCLE_INVALID", `Lifecycle field ${change.entityId} requires matching entity metadata.`);
     }
   }
   if (!normalizedChanges.length) throw codedError("VOCAB_HISTORY_EMPTY", "A no-op transaction does not create a permanent history batch.");
-  return { batchId, sessionId, deviceId, transactionId, kind: actionKind, entities: cloneJson(entities), stores: normalizedStores, changes: normalizedChanges };
+  return { schemaVersion, batchId, sessionId, deviceId, transactionId, kind: actionKind, entities: cloneJson(entities), stores: normalizedStores, changes: normalizedChanges };
 }
 
 function changeIdFor(batchId, change) {
@@ -264,7 +311,7 @@ class VocabularyHistory {
 
   _batchValue(summary) {
     return {
-      schemaVersion: HISTORY_SCHEMA_VERSION,
+      schemaVersion: summary.schemaVersion || HISTORY_SCHEMA_VERSION,
       kind: HISTORY_KIND,
       revision: 1,
       batchId: summary.batchId,
@@ -301,7 +348,7 @@ class VocabularyHistory {
 
   _decodeBatch(snapshot, expectedBatchId) {
     if (!snapshot?.exists || !snapshot.value || canonicalStringify(snapshot.value) !== snapshot.text ||
-        snapshot.value.schemaVersion !== HISTORY_SCHEMA_VERSION || snapshot.value.kind !== HISTORY_KIND ||
+        !SUPPORTED_HISTORY_SCHEMA_VERSIONS.has(snapshot.value.schemaVersion) || snapshot.value.kind !== HISTORY_KIND ||
         snapshot.value.revision !== 1 || snapshot.value.batchId !== expectedBatchId ||
         !Array.isArray(snapshot.value.changes) || !Array.isArray(snapshot.value.stores)) {
       throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} failed verification.`);
@@ -315,7 +362,7 @@ class VocabularyHistory {
       entities: snapshot.value.entities,
       stores: snapshot.value.stores,
       changes: snapshot.value.changes.map(({ changeId, ...change }) => change),
-    }, this.root);
+    }, this.root, snapshot.value.schemaVersion);
     const expected = this._batchValue(summary);
     if (!deeplyEqual(expected, snapshot.value)) {
       throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} contains unsupported fields.`);

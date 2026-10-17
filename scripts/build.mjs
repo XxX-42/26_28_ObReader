@@ -349,6 +349,8 @@ const annotationHostMarker =
   /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
 const vocabularyServiceMarker =
   /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*,?\s*(?:VOCABULARY_PATH\s*,?\s*)?\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
+const vocabularyWorkspaceMarker = /\/\* BUILD:VOCABULARY_WORKSPACE_REQUIRE \*\/\s*const\s*\{[^}]+\}\s*=\s*require\((['"])\.\/vocabulary\/workspace\.cjs\1\);/s;
+const vocabularyWorkbenchMarker = /\/\* BUILD:VOCABULARY_WORKBENCH_REQUIRE \*\/\s*const\s*\{\s*createVocabularyWorkbench\s*\}\s*=\s*require\((['"])\.\/vocabulary\/workbench\.cjs\1\);/s;
 const vocabularyDictionaryMarker =
   /\/\* BUILD:VOCABULARY_DICTIONARY_REQUIRE \*\/\s*const\s*\{\s*VocabularyDictionary\s*\}\s*=\s*require\((['"])\.\/vocabulary\/dictionary\.cjs\1\);/s;
 const vocabularyModalsMarker =
@@ -448,6 +450,10 @@ const inlinedVocabularyService = await inlineModule(
   "__PDFReaderVocabularyService",
   "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH",
 );
+assert.equal([...sourceMain.matchAll(new RegExp(vocabularyWorkspaceMarker.source, "gs"))].length, 1);
+assert.equal([...sourceMain.matchAll(new RegExp(vocabularyWorkbenchMarker.source, "gs"))].length, 1);
+const inlinedVocabularyWorkspace = await inlineModule("vocabulary/workspace.cjs", "__PDFReaderVocabularyWorkspace", "createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer");
+const inlinedVocabularyWorkbench = await inlineModule("vocabulary/workbench.cjs", "__PDFReaderVocabularyWorkbench", "createVocabularyWorkbench");
 const inlinedVocabularyDictionary = await inlineModule(
   "vocabulary/dictionary.cjs",
   "__PDFReaderVocabularyDictionary",
@@ -485,6 +491,8 @@ const bundledMain = sourceMain
   .replace(mergeClientMarker, () => inlinedMergeClient)
   .replace(annotationHostMarker, () => inlinedAnnotationHost)
   .replace(vocabularyServiceMarker, () => inlinedVocabularyService)
+  .replace(vocabularyWorkspaceMarker, () => inlinedVocabularyWorkspace)
+  .replace(vocabularyWorkbenchMarker, () => inlinedVocabularyWorkbench)
   .replace(vocabularyDictionaryMarker, () => inlinedVocabularyDictionary)
   .replace(vocabularyModalsMarker, () => inlinedVocabularyModals)
   .replace(heavyWorkMarker, () => inlinedHeavyWork)

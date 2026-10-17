@@ -273,7 +273,10 @@ test("entityCreate History is grouped atomically, permits identity fields only f
     changes: createdFields,
   } });
   assert.equal(committed.status, "committed");
+  const storedCreateBatch = await history.readBatch("create-batch");
+  await adapter.write(history.pathFor("create-batch"), text({ ...storedCreateBatch, schemaVersion: 1 }));
   const preview = await history.previewRestore("create-batch");
+  assert.equal(preview.batch.schemaVersion, 1, "schema-v1 field-granular lifecycle batches remain readable");
   assert.ok(preview.items.every((item) => item.status === "clean"));
   const partial = [preview.items[0].changeId];
   await assert.rejects(history.restore("create-batch", { selected: partial }), { code: "VOCAB_HISTORY_LIFECYCLE_SELECTION" });

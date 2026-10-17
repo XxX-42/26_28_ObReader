@@ -769,7 +769,7 @@ function createReviewHistoryRestoreHandler({ transaction, vocabularyService, max
     },
     async planRestore({ batch, selectedChanges, snapshots, overwriteConflictIds = [] } = {}) {
       if (!batch || batch.kind !== "vocabulary-history-batch" ||
-          !["review-final", "restore"].includes(batch.actionKind) ||
+          !["review-final", "restore", "bundle-import"].includes(batch.actionKind) ||
           !Array.isArray(selectedChanges) || !(snapshots instanceof Map)) {
         throw codedError("VOCAB_REVIEW_RESTORE_BATCH_INVALID", "A Review History batch and its verified snapshots are required.");
       }
