@@ -2678,6 +2678,104 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   disabledReload.plugin.onunload();
 });
 
+test("Context capture stays bound to the confirmed Reader and saves one verified Anchor-backed citation", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  await harness.plugin.getVocabularyService().upsertTerm("walk", { status: 2 });
+  const sourceBytes = Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55, 10, 9, 8, 7]);
+  const file = new harness.TFile("Books/context-capture.pdf", sourceBytes);
+  harness.files.set(file.path, file);
+  const reader = await createSidecarReader(harness, file);
+  const { view, frame, sent } = reader;
+  const requestId = "context-capture-1";
+  const send = (type, fields) => view.onMessage({ source: frame, data: {
+    channel: "pdf-web-reader", token: view.token, type,
+    rendererGeneration: view.rendererGeneration, documentId: view.documentId,
+    openRequest: view.openRequest, ...fields,
+  } });
+
+  send("reader-vocabulary-context-capture-request", {
+    requestId, pageNumber: 1, expectedSurface: "walk",
+  });
+  const captureRequest = sent.find((message) => message.type === "reader-anchor-capture-request");
+  assert.ok(captureRequest, "the authenticated Reader receives a quote-capture request");
+  assert.equal(captureRequest.mode, "quote");
+  send("reader-anchor-capture", {
+    requestId: captureRequest.requestId,
+    capture: {
+      kind: "selection", pageIndex: 0, pageNumber: 1,
+      pageIdentity: view.annotationPageIdentity.orderedPageIdentities[0],
+      sourceHash: view.annotationSourceHash,
+      exactQuote: "I walk home.", prefix: "", suffix: "",
+      textPosition: { start: 0, end: 12 }, geometry: null,
+    },
+  });
+  const preview = await waitForSentMessage(reader, (message) =>
+    message.type === "reader-vocabulary-context-preview" && message.requestId === requestId);
+  assert.equal(preview.ok, true);
+  assert.equal(preview.surface, "walk");
+  assert.equal(preview.sentence, "I walk home.");
+  assert.ok(preview.captureId);
+
+  send("reader-vocabulary-context-save-request", { requestId, captureId: preview.captureId });
+  const saved = await waitForSentMessage(reader, (message) =>
+    message.type === "reader-vocabulary-context-save-result" && message.requestId === requestId);
+  assert.equal(saved.ok, true, saved.message);
+  assert.equal(saved.captureId, preview.captureId);
+  assert.equal(saved.documentId, view.documentId);
+  assert.equal(saved.openRequest, view.openRequest);
+  const contextPaths = [...harness.storedFiles.keys()].filter((item) =>
+    item.startsWith("00_Archive/21_VocabularyData/contexts/"));
+  assert.ok(contextPaths.some((item) => item.endsWith("/manifest.json")));
+  assert.equal(file.writes, 0, "context capture and save never write the source PDF");
+  assert.deepEqual(file.bytes, sourceBytes);
+  harness.plugin.onunload();
+});
+
+test("simultaneous Context save retries share one in-flight operation and cancel preview expiry", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const view = harness.createView();
+  view.documentId = "context-race-doc";
+  view.openRequest = 7;
+  view.rendererGeneration = "context-race-renderer";
+  const sent = [];
+  view.iframe = { contentWindow: { postMessage: (message) => sent.push(message) } };
+  view.pendingVocabularyContextCaptures = new Map();
+  const pending = { captureId: "context-race-capture", requestId: "context-race-request",
+    documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration,
+    timer: setTimeout(() => {}, 120000), saving: false, savePromise: null };
+  view.pendingVocabularyContextCaptures.set(pending.captureId, pending);
+  let resolveStarted;
+  const started = new Promise((resolve) => { resolveStarted = resolve; });
+  let release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  let commitCount = 0;
+  harness.plugin.commitReaderVocabularyContextSave = async (targetView, target) => {
+    commitCount += 1;
+    resolveStarted();
+    await barrier;
+    targetView.pendingVocabularyContextCaptures.delete(target.captureId);
+    targetView.postToViewer({ channel: "pdf-web-reader", token: targetView.token,
+      type: "reader-vocabulary-context-save-result", requestId: target.requestId,
+      captureId: target.captureId, documentId: target.documentId, openRequest: target.openRequest, ok: true });
+    return true;
+  };
+  const message = { requestId: pending.requestId, captureId: pending.captureId,
+    documentId: pending.documentId, openRequest: pending.openRequest };
+  const first = harness.plugin.handleReaderVocabularyContextSave(view, message);
+  await started;
+  assert.equal(pending.timer, null, "confirmed saves are not discarded by the preview expiry timer");
+  const duplicate = harness.plugin.handleReaderVocabularyContextSave(view, message);
+  release();
+  assert.deepEqual(await Promise.all([first, duplicate]), [true, true]);
+  assert.equal(commitCount, 1);
+  assert.equal(sent.filter((entry) => entry.type === "reader-vocabulary-context-save-result").length, 1);
+  harness.plugin.onunload();
+});
+
 test("authenticated Reader menu toggle persists the single setting and synchronizes Settings and open Readers", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

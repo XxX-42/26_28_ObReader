@@ -825,6 +825,44 @@ export class VocabularyController {
     const backlinkActions = this.document.createElement("div");
     backlinkActions.className = "pdfReaderVocabularyPillBacklinkActions";
     backlinkActions.append(backlinks, openBacklinks);
+    const contextActions = this.document.createElement("div");
+    contextActions.className = "pdfReaderVocabularyContextActions";
+    contextActions.style.display = "grid";
+    contextActions.style.gap = "6px";
+    const contextCapture = this.document.createElement("button");
+    contextCapture.type = "button";
+    contextCapture.className = "pdfReaderVocabularyContextCapture";
+    contextCapture.textContent = "保存语境";
+    contextCapture.setAttribute("aria-label", "保存语境：请先选择当前页中的一句文本");
+    contextCapture.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      this.requestVocabularyContextCapture();
+    });
+    const contextStatus = this.document.createElement("div");
+    contextStatus.className = "pdfReaderVocabularyContextStatus";
+    contextStatus.hidden = true;
+    const contextPreview = this.document.createElement("textarea");
+    contextPreview.className = "pdfReaderVocabularyContextPreview";
+    contextPreview.readOnly = true;
+    contextPreview.rows = 3;
+    contextPreview.setAttribute("aria-label", "Host 捕获的语境句子预览");
+    contextPreview.hidden = true;
+    // The preview always shows the original sentence that the host captured
+    // and will verify against its private anchor. It is selectable for review
+    // but cannot drift away from the text associated with captureId.
+    contextPreview.style.width = "100%";
+    contextPreview.style.maxWidth = "100%";
+    contextPreview.style.boxSizing = "border-box";
+    const contextConfirm = this.document.createElement("button");
+    contextConfirm.type = "button";
+    contextConfirm.className = "pdfReaderVocabularyContextConfirm";
+    contextConfirm.textContent = "确认保存语境";
+    contextConfirm.hidden = true;
+    contextConfirm.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      this.confirmVocabularyContextSave();
+    });
+    contextActions.append(contextCapture, contextPreview, contextConfirm, contextStatus);
     const buttons = [];
     for (const status of [1, 2, 3, 4, 5]) {
       const button = this.document.createElement("button");
@@ -851,7 +889,7 @@ export class VocabularyController {
     });
     const body = this.document.createElement("div");
     body.className = "pdfReaderVocabularyPillBody";
-    body.append(pronunciation, meanings, backlinkActions);
+    body.append(pronunciation, meanings, backlinkActions, contextActions);
     popup.append(heading, status, occurrenceActions, close, body, actions);
     this.document.body.appendChild(popup);
     this.entryPill = {
@@ -860,6 +898,9 @@ export class VocabularyController {
       pronunciation, meanings, buttons, record: null, status: null, pendingStatus: null,
       occurrenceRequestId: null, occurrenceButton: copyOccurrence,
       backlinks, openBacklinks, backlinkRequestId: null, anchorIds: [],
+      documentId: this.identity.documentId, openRequest: this.identity.openRequest,
+      contextCapture, contextPreview, contextConfirm, contextStatus,
+      contextRequestId: null, contextCaptureId: null, contextState: null,
     };
     this.positionEntryPill(popup, x, y);
     const ResizeObserverImpl = this.window?.ResizeObserver || globalThis.ResizeObserver;
@@ -886,6 +927,139 @@ export class VocabularyController {
     } else {
       backlinks.textContent = "反向链接：位置未确认";
     }
+    return true;
+  }
+
+  requestVocabularyContextCapture() {
+    const pill = this.entryPill;
+    if (!pill || !this.enabled || !this.identityIsCurrent(pill) ||
+        ["capturing", "saving", "saved"].includes(pill.contextState)) return false;
+    const requestId = `reader-vocabulary-context-${++this.querySequence}-${this.makeId()}`;
+    pill.contextRequestId = requestId;
+    pill.contextCaptureId = null;
+    pill.contextState = "capturing";
+    pill.contextPreview.value = "";
+    pill.contextPreview.hidden = true;
+    pill.contextConfirm.hidden = true;
+    pill.contextConfirm.disabled = false;
+    pill.contextCapture.hidden = false;
+    pill.contextCapture.disabled = true;
+    pill.contextCapture.textContent = "等待选句…";
+    pill.contextStatus.textContent = "请先在当前 PDF 页选择一句文本。";
+    pill.contextStatus.hidden = false;
+    this.scheduleEntryPillLayout();
+    const sent = this.postToHost("reader-vocabulary-context-capture-request", {
+      requestId,
+      pageNumber: pill.page.pageNumber,
+      expectedSurface: pill.entry.logicalSurface ?? pill.entry.rawSurface,
+      documentId: pill.documentId,
+      openRequest: pill.openRequest,
+    });
+    if (!sent && this.entryPill === pill && pill.contextRequestId === requestId) {
+      this.resetVocabularyContextPreview(pill, "语境捕获请求未发送，请重试。", "保存语境");
+    }
+    return sent;
+  }
+
+  handleVocabularyContextPreview(message) {
+    const pill = this.entryPill;
+    if (!pill || (message?.type != null && message.type !== "reader-vocabulary-context-preview") ||
+        !this.identityIsCurrent(pill) || message?.documentId !== pill.documentId ||
+        message?.openRequest !== pill.openRequest || message?.requestId !== pill.contextRequestId ||
+        pill.contextState !== "capturing") return false;
+    if (message.ok !== true) {
+      this.resetVocabularyContextPreview(pill,
+        message.message || message.error || "未能捕获当前页的选句，请重试。", "保存语境");
+      this.scheduleEntryPillLayout();
+      return true;
+    }
+    const expectedSurface = pill.entry.logicalSurface ?? pill.entry.rawSurface;
+    if (typeof expectedSurface !== "string" || message.surface !== expectedSurface ||
+        typeof message.sentence !== "string" || !message.sentence.trim() || message.sentence.length > 12000 ||
+        typeof message.captureId !== "string" || !message.captureId || message.captureId.length > 128) {
+      this.resetVocabularyContextPreview(pill, "无法确认 Host 捕获的句子，请重新选择。", "保存语境");
+      this.scheduleEntryPillLayout();
+      return true;
+    }
+    pill.contextCaptureId = message.captureId;
+    pill.contextState = "preview";
+    pill.contextPreview.value = message.sentence;
+    pill.contextPreview.hidden = false;
+    pill.contextConfirm.hidden = false;
+    pill.contextConfirm.disabled = false;
+    pill.contextCapture.disabled = false;
+    pill.contextCapture.textContent = "重新选择语境";
+    pill.contextStatus.textContent = "请核对 Host 捕获的原句，再确认保存。";
+    pill.contextStatus.hidden = false;
+    this.scheduleEntryPillLayout();
+    return true;
+  }
+
+  confirmVocabularyContextSave() {
+    const pill = this.entryPill;
+    if (!pill || pill.contextState !== "preview" || !pill.contextRequestId || !pill.contextCaptureId ||
+        !this.enabled || !this.identityIsCurrent(pill)) return false;
+    pill.contextState = "saving";
+    pill.contextConfirm.disabled = true;
+    pill.contextCapture.disabled = true;
+    pill.contextStatus.textContent = "正在保存语境…";
+    pill.contextStatus.hidden = false;
+    this.scheduleEntryPillLayout();
+    const sent = this.postToHost("reader-vocabulary-context-save-request", {
+      requestId: pill.contextRequestId,
+      captureId: pill.contextCaptureId,
+      documentId: pill.documentId,
+      openRequest: pill.openRequest,
+    });
+    if (!sent && this.entryPill === pill && pill.contextState === "saving") {
+      pill.contextState = "preview";
+      pill.contextConfirm.disabled = false;
+      pill.contextCapture.disabled = false;
+      pill.contextStatus.textContent = "保存请求未发送，请重试。";
+      this.scheduleEntryPillLayout();
+    }
+    return sent;
+  }
+
+  handleVocabularyContextSaveResult(message) {
+    const pill = this.entryPill;
+    if (!pill || (message?.type != null && message.type !== "reader-vocabulary-context-save-result") ||
+        !this.identityIsCurrent(pill) || message?.documentId !== pill.documentId ||
+        message?.openRequest !== pill.openRequest || message?.requestId !== pill.contextRequestId ||
+        message?.captureId !== pill.contextCaptureId ||
+        pill.contextState !== "saving") return false;
+    if (message.ok === true) {
+      pill.contextRequestId = null;
+      pill.contextCaptureId = null;
+      pill.contextState = "saved";
+      pill.contextCapture.hidden = true;
+      pill.contextConfirm.hidden = true;
+      pill.contextPreview.disabled = true;
+      pill.contextStatus.textContent = message.message || "语境已保存。";
+      pill.contextStatus.hidden = false;
+    } else {
+      this.resetVocabularyContextPreview(pill,
+        message.message || message.status || "语境保存失败，请重新选择句子。", "保存语境");
+    }
+    this.scheduleEntryPillLayout();
+    return true;
+  }
+
+  resetVocabularyContextPreview(pill, message = "", captureLabel = "保存语境") {
+    if (!pill) return false;
+    pill.contextRequestId = null;
+    pill.contextCaptureId = null;
+    pill.contextState = null;
+    pill.contextPreview.value = "";
+    pill.contextPreview.disabled = false;
+    pill.contextPreview.hidden = true;
+    pill.contextConfirm.disabled = false;
+    pill.contextConfirm.hidden = true;
+    pill.contextCapture.disabled = false;
+    pill.contextCapture.hidden = false;
+    pill.contextCapture.textContent = captureLabel;
+    pill.contextStatus.textContent = message;
+    pill.contextStatus.hidden = !message;
     return true;
   }
 
@@ -1156,8 +1330,14 @@ export class VocabularyController {
     this.entryPillLayoutCancel?.();
     this.entryPillLayoutHandle = null;
     this.entryPillLayoutCancel = null;
-    this.entryPill?.resizeObserver?.disconnect?.();
-    this.entryPill?.popup?.remove?.();
+    const pill = this.entryPill;
+    if (pill) {
+      pill.contextRequestId = null;
+      pill.contextCaptureId = null;
+      pill.contextState = null;
+      pill.resizeObserver?.disconnect?.();
+      pill.popup?.remove?.();
+    }
     this.entryPill = null;
   }
 

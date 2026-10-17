@@ -30,6 +30,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
 /* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
 /* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH } = require('./vocabulary/service.cjs');
+/* BUILD:VOCABULARY_CANONICAL_REQUIRE */ const { canonicalHash } = require('./vocabulary/canonical.cjs');
 /* BUILD:VOCABULARY_WORKSPACE_REQUIRE */ const { createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer } = require('./vocabulary/workspace.cjs');
 /* BUILD:VOCABULARY_WORKBENCH_REQUIRE */ const { createVocabularyWorkbench } = require('./vocabulary/workbench.cjs');
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
@@ -1256,6 +1257,7 @@ class PdfReaderView extends EditableFileView {
     this.pendingVocabularySelections = new Map();
     this.vocabularyEntryModal = null;
     this.pendingReaderAnchorCaptures = new Map();
+    this.pendingVocabularyContextCaptures = new Map();
     this.pendingReaderTarget = null;
     this.currentPageNumber = 1;
     this.readerTargetApplySequence = 0;
@@ -1349,6 +1351,7 @@ class PdfReaderView extends EditableFileView {
     if (wasCurrent) {
       for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
       this.pendingReaderAnchorCaptures.clear();
+      this.clearPendingVocabularyContextCaptures();
       this.pendingReaderTarget = null;
       this.readerTargetApplySequence += 1;
     }
@@ -1451,6 +1454,7 @@ class PdfReaderView extends EditableFileView {
     this.readerTargetApplySequence += 1;
     for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
     this.pendingReaderAnchorCaptures.clear();
+    this.clearPendingVocabularyContextCaptures();
     this.pendingReaderTarget = null;
     const closingFile = this.documentFile || this.file;
     const closeWasPrepared = this.isPreparedCloseForCurrent();
@@ -2594,6 +2598,11 @@ class PdfReaderView extends EditableFileView {
     this.vocabularyEntryModal = null;
   }
 
+  clearPendingVocabularyContextCaptures() {
+    for (const pending of this.pendingVocabularyContextCaptures.values()) globalThis.clearTimeout(pending.timer);
+    this.pendingVocabularyContextCaptures.clear();
+  }
+
   setVocabularyEnabled(enabled) {
     const isEnabled = enabled === true;
     if (!isEnabled) this.cancelVocabularyWork();
@@ -2685,10 +2694,10 @@ class PdfReaderView extends EditableFileView {
       identity?.rendererGeneration === this.rendererGeneration && !this.teardownStarted;
   }
 
-  requestReaderAnchorCapture(mode = "reader", details = null, suppliedRequestId = null) {
+  requestReaderAnchorCapture(mode = "reader", details = null, suppliedRequestId = null, options = {}) {
     if (!this.ready || !this.openAcknowledged || !this.iframe || !this.annotationDocument ||
         this.annotationHydrationAllowed !== true) {
-      new Notice("PDF 身份尚未确认，暂不能建立链接。", 6000);
+      if (!options.contextRequest) new Notice("PDF 身份尚未确认，暂不能建立链接。", 6000);
       return false;
     }
     const requestId = typeof suppliedRequestId === "string" && suppliedRequestId.length <= 128
@@ -2696,15 +2705,21 @@ class PdfReaderView extends EditableFileView {
     if (this.pendingReaderAnchorCaptures.has(requestId)) return false;
     const identity = { documentId: this.documentId, openRequest: this.openRequest,
       rendererGeneration: this.rendererGeneration };
+    const responseType = typeof options.clientResponseType === "string" &&
+      /^reader-[a-z0-9-]{1,96}$/u.test(options.clientResponseType)
+      ? options.clientResponseType : "reader-anchor-occurrence-result";
     const pending = { ...identity, mode, timer: null,
-      clientRequestId: suppliedRequestId ? requestId : null };
+      clientRequestId: suppliedRequestId ? requestId : null,
+      clientResponseType: responseType,
+      contextRequest: options.contextRequest && typeof options.contextRequest === "object"
+        ? { ...options.contextRequest } : null };
     pending.timer = globalThis.setTimeout(() => {
       if (this.pendingReaderAnchorCaptures.get(requestId) !== pending) return;
       this.pendingReaderAnchorCaptures.delete(requestId);
       if (pending.clientRequestId) this.postToViewer({ channel: CHANNEL, token: this.token,
-        type: "reader-anchor-occurrence-result", requestId: pending.clientRequestId,
+        type: pending.clientResponseType, requestId: pending.clientRequestId,
         documentId: pending.documentId, openRequest: pending.openRequest,
-        ok: false, message: "创建链接超时，请重试。" });
+        ok: false, message: pending.contextRequest ? "语境捕获超时，请重新选择句子。" : "创建链接超时，请重试。" });
     }, 15000);
     this.pendingReaderAnchorCaptures.set(requestId, pending);
     const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
@@ -3108,10 +3123,41 @@ class PdfReaderView extends EditableFileView {
       const pendingCapture = this.pendingReaderAnchorCaptures.get(message.requestId);
       void this.plugin.handleReaderAnchorCapture(this, message).catch((error) => {
         if (pendingCapture?.clientRequestId) this.postToViewer({ channel: CHANNEL, token: this.token,
-          type: "reader-anchor-occurrence-result", requestId: pendingCapture.clientRequestId,
+          type: pendingCapture.clientResponseType || "reader-anchor-occurrence-result",
+          requestId: pendingCapture.clientRequestId,
           documentId: pendingCapture.documentId, openRequest: pendingCapture.openRequest,
           ok: false, message: error.message || "创建链接失败。" });
-        new Notice(`创建 PDF 链接失败：${error.message || error}`, 7000);
+        if (!pendingCapture?.contextRequest) new Notice(`创建 PDF 链接失败：${error.message || error}`, 7000);
+      });
+      return;
+    }
+    if (message.type === "reader-vocabulary-context-capture-request") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
+          message.requestId.length > 128 || !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+          typeof message.expectedSurface !== "string" || !message.expectedSurface.trim() ||
+          message.expectedSurface.length > MAX_VOCABULARY_SURFACE_CHARS ||
+          this.plugin.settings.vocabularyEnabled !== true) return;
+      const accepted = this.requestReaderAnchorCapture("quote", null, message.requestId, {
+        clientResponseType: "reader-vocabulary-context-preview",
+        contextRequest: { surface: message.expectedSurface, pageNumber: message.pageNumber },
+      });
+      if (!accepted) this.postToViewer({ channel: CHANNEL, token: this.token,
+        type: "reader-vocabulary-context-preview", requestId: message.requestId,
+        documentId: message.documentId, openRequest: message.openRequest, ok: false,
+        message: "当前 PDF 尚未准备好，不能捕获语境。" });
+      return;
+    }
+    if (message.type === "reader-vocabulary-context-save-request") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
+          message.requestId.length > 128 || typeof message.captureId !== "string" ||
+          message.captureId.length > 128) return;
+      void this.plugin.handleReaderVocabularyContextSave(this, message).catch((error) => {
+        this.postToViewer({ channel: CHANNEL, token: this.token,
+          type: "reader-vocabulary-context-save-result", requestId: message.requestId,
+          captureId: message.captureId, documentId: this.documentId, openRequest: this.openRequest,
+          ok: false, status: error.code || "error", message: error.message || "语境保存失败。" });
       });
       return;
     }
@@ -4364,21 +4410,34 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   async handleReaderAnchorCapture(view, message) {
     const pending = view.pendingReaderAnchorCaptures.get(message.requestId);
-    if (!pending || message.rendererGeneration !== view.rendererGeneration ||
+    if (!pending) return true;
+    if (message.rendererGeneration !== view.rendererGeneration ||
         message.documentId !== pending.documentId || message.openRequest !== pending.openRequest ||
-        !view.isCurrentReaderAnchorIdentity(pending)) return true;
-    const respondOccurrence = (ok, messageText = null) => {
+        !view.isCurrentReaderAnchorIdentity(pending)) {
+      globalThis.clearTimeout(pending.timer);
+      view.pendingReaderAnchorCaptures.delete(message.requestId);
+      if (pending.contextRequest && pending.clientRequestId && view.isCurrentReaderAnchorIdentity(pending)) {
+        view.postToViewer({ channel: CHANNEL, token: view.token,
+          type: pending.clientResponseType, requestId: pending.clientRequestId,
+          documentId: pending.documentId, openRequest: pending.openRequest,
+          ok: false, message: "Reader 身份已变化；请重新捕获语境。" });
+      }
+      return true;
+    }
+    const respondClient = (ok, messageText = null, extra = {}) => {
       if (!pending.clientRequestId) return;
       view.postToViewer({ channel: CHANNEL, token: view.token,
-        type: "reader-anchor-occurrence-result", requestId: pending.clientRequestId,
+        type: pending.clientResponseType || "reader-anchor-occurrence-result",
+        requestId: pending.clientRequestId,
         documentId: pending.documentId, openRequest: pending.openRequest,
-        ok, ...(messageText ? { message: messageText } : {}) });
+        ok, ...(messageText ? { message: messageText } : {}), ...extra });
     };
     globalThis.clearTimeout(pending.timer);
     view.pendingReaderAnchorCaptures.delete(message.requestId);
     if (message.error || !message.capture) {
-      respondOccurrence(false, message.error || "当前没有可链接的 PDF 目标。");
-      new Notice(message.error || "当前没有可链接的 PDF 目标。", 6000);
+      respondClient(false, message.error || (pending.contextRequest
+        ? "请先在当前 PDF 页选择一句文本。" : "当前没有可链接的 PDF 目标。"));
+      if (!pending.contextRequest) new Notice(message.error || "当前没有可链接的 PDF 目标。", 6000);
       return true;
     }
     const capture = message.capture;
@@ -4386,20 +4445,20 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
     if (!document || !Array.isArray(pageIdentities) || pageIdentities.length !== view.annotationPageIdentity.pageCount ||
         view.annotationHydrationAllowed !== true || view.annotationSourceMismatch === true) {
-      respondOccurrence(false, "PDF 身份或页面身份尚未确认。");
-      new Notice("PDF 身份或页面身份尚未确认，暂不能创建增强链接。", 7000);
+      respondClient(false, "PDF 身份或页面身份尚未确认。");
+      if (!pending.contextRequest) new Notice("PDF 身份或页面身份尚未确认，暂不能创建增强链接。", 7000);
       return true;
     }
     const pageIndex = capture.pageIndex;
     const pageIdentity = Number.isSafeInteger(pageIndex) ? pageIdentities[pageIndex] : null;
     if (!pageIdentity || capture.pageIdentity !== pageIdentity || capture.pageNumber !== pageIndex + 1) {
-      respondOccurrence(false, "当前页面身份与已验证 PDF 不一致。");
-      new Notice("当前页面身份与已验证 PDF 不一致，未创建链接。", 7000);
+      respondClient(false, "当前页面身份与已验证 PDF 不一致。");
+      if (!pending.contextRequest) new Notice("当前页面身份与已验证 PDF 不一致，未创建链接。", 7000);
       return true;
     }
     if (capture.sourceHash !== view.annotationSourceHash) {
-      respondOccurrence(false, "PDF 来源版本与 Reader 确认状态不一致。");
-      new Notice("PDF 来源版本与 Reader 确认状态不一致，未创建链接。", 7000);
+      respondClient(false, "PDF 来源版本与 Reader 确认状态不一致。");
+      if (!pending.contextRequest) new Notice("PDF 来源版本与 Reader 确认状态不一致，未创建链接。", 7000);
       return true;
     }
     const identity = { documentId: pending.documentId, openRequest: pending.openRequest,
@@ -4407,6 +4466,50 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const isCurrent = () => view.isCurrentReaderAnchorIdentity(identity) &&
       view.annotationDocument === document && view.annotationPageIdentity?.orderedPageIdentities === pageIdentities &&
       view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true;
+    if (pending.contextRequest) {
+      const surface = pending.contextRequest.surface;
+      const requestedPage = pending.contextRequest.pageNumber;
+      if (capture.kind !== "selection" || typeof capture.exactQuote !== "string" || !capture.exactQuote.trim() ||
+          capture.exactQuote.length > 4096 || capture.pageNumber !== requestedPage) {
+        respondClient(false, "请在词条所在的当前 PDF 页先选中一句文本，再重新捕获语境。");
+        return true;
+      }
+      let family;
+      try { family = await this.getVocabularyService().getFamily(surface); }
+      catch (error) {
+        respondClient(false, `无法确认该词条的个人词库身份：${error.message || error}`);
+        return true;
+      }
+      if (!isCurrent()) {
+        respondClient(false, "PDF 来源或页面身份已变化；请重新捕获语境。");
+        return true;
+      }
+      if (!family) {
+        respondClient(false, "请先把这个词加入个人词库，再保存语境。");
+        return true;
+      }
+      while (view.pendingVocabularyContextCaptures.size >= 4) {
+        const oldestId = view.pendingVocabularyContextCaptures.keys().next().value;
+        const oldest = view.pendingVocabularyContextCaptures.get(oldestId);
+        globalThis.clearTimeout(oldest?.timer);
+        view.pendingVocabularyContextCaptures.delete(oldestId);
+      }
+      const captureId = makeToken();
+      const contextPending = { captureId, requestId: pending.clientRequestId, ...identity,
+        surface, familyKey: family.familyKey, pageNumber: requestedPage,
+        docKey: document.docKey, sourceHash: view.annotationSourceHash,
+        pageIdentity, pageCount: pageIdentities.length,
+        capture: { ...capture }, timer: null, saving: false, savePromise: null, anchor: null };
+      contextPending.timer = globalThis.setTimeout(() => {
+        if (view.pendingVocabularyContextCaptures.get(captureId) === contextPending) {
+          view.pendingVocabularyContextCaptures.delete(captureId);
+        }
+      }, 120000);
+      view.pendingVocabularyContextCaptures.set(captureId, contextPending);
+      respondClient(true, null, { surface, sentence: capture.exactQuote, captureId });
+      this.sessionLog?.record("vocabularyContext", { event: "preview-ready", pageIndex, chars: capture.exactQuote.length });
+      return true;
+    }
     if (pending.mode === "backlinks") {
       await this.showReaderBacklinks(view, capture, identity);
       return true;
@@ -4441,7 +4544,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         ? view.annotationSnapshot.annotations : Object.values(view.annotationSnapshot?.annotations || {});
       const row = rows.find((entry) => entry?.uuid === capture.annotationUuid && entry.deleted !== true);
       if (!row || row.pageIndex !== pageIndex) {
-        respondOccurrence(false, "所选批注不存在或已删除。");
+        respondClient(false, "所选批注不存在或已删除。");
         new Notice("所选批注不存在或已删除；没有创建链接。", 6000);
         return true;
       }
@@ -4449,7 +4552,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } else if (capture.kind === "page") {
       target = { kind: "page", id: pageIdentity };
     } else {
-      respondOccurrence(false, "Reader 返回了不支持的链接目标。");
+      respondClient(false, "Reader 返回了不支持的链接目标。");
       return true;
     }
     const fragment = encodeReaderLinkFragment({ pageNumber: pageIndex + 1, selection,
@@ -4468,7 +4571,130 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     new Notice(capture.kind === "selection" ? "已复制带稳定 Selection Anchor 的 PDF 链接。" : "已复制 PDF 链接。", 4000);
     this.sessionLog?.record("readerAnchor", { event: "link-copied", kind: capture.kind,
       pageIndex, anchorCreated: capture.kind === "selection" });
-    respondOccurrence(true);
+    respondClient(true);
+    return true;
+  }
+
+  async handleReaderVocabularyContextSave(view, message) {
+    const pending = view.pendingVocabularyContextCaptures.get(message.captureId);
+    if (!pending || pending.captureId !== message.captureId ||
+        pending.requestId !== message.requestId || message.documentId !== pending.documentId ||
+        message.openRequest !== pending.openRequest || !view.isCurrentReaderAnchorIdentity(pending) ||
+        this.settings.vocabularyEnabled !== true) {
+      throw Object.assign(new Error("语境预览已过期；请重新选择句子。"), { code: "VOCAB_CONTEXT_CAPTURE_EXPIRED" });
+    }
+    if (pending.savePromise) return pending.savePromise;
+    pending.saving = true;
+    globalThis.clearTimeout(pending.timer);
+    pending.timer = null;
+    const savePromise = this.commitReaderVocabularyContextSave(view, pending);
+    pending.savePromise = savePromise;
+    try {
+      return await savePromise;
+    } catch (error) {
+      if (view.pendingVocabularyContextCaptures.get(pending.captureId) === pending) {
+        pending.saving = false;
+        pending.savePromise = null;
+        pending.timer = globalThis.setTimeout(() => {
+          if (view.pendingVocabularyContextCaptures.get(pending.captureId) === pending) {
+            view.pendingVocabularyContextCaptures.delete(pending.captureId);
+          }
+        }, 120000);
+      }
+      throw error;
+    }
+  }
+
+  async commitReaderVocabularyContextSave(view, pending) {
+    const document = view.annotationDocument;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const isCurrent = () => view.pendingVocabularyContextCaptures.get(pending.captureId) === pending &&
+      view.isCurrentReaderAnchorIdentity(pending) && view.annotationDocument === document &&
+      view.annotationPageIdentity?.orderedPageIdentities === pageIdentities &&
+      view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true &&
+      document?.documentId === pending.documentId && document?.docKey === pending.docKey &&
+      view.annotationSourceHash === pending.sourceHash &&
+      pageIdentities?.[pending.pageNumber - 1] === pending.pageIdentity &&
+      pageIdentities?.length === pending.pageCount;
+    if (!document || document.documentId !== pending.documentId || document.docKey !== pending.docKey ||
+        view.annotationSourceHash !== pending.sourceHash || !Array.isArray(pageIdentities) ||
+        pageIdentities.length !== view.annotationPageIdentity.pageCount || pageIdentities.length !== pending.pageCount ||
+        pageIdentities[pending.pageNumber - 1] !== pending.pageIdentity ||
+        pending.capture.kind !== "selection" || pending.capture.pageNumber !== pending.pageNumber ||
+        pending.capture.pageIdentity !== pending.pageIdentity || pending.capture.sourceHash !== pending.sourceHash) {
+      throw Object.assign(new Error("当前 PDF 来源或选区身份已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+    }
+    if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+
+    const runtime = await this.getVocabularyRuntime();
+    await runtime.contexts.validateSentence({ familyKey: pending.familyKey,
+      surface: pending.surface, sentence: pending.capture.exactQuote });
+    if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+
+    if (!pending.anchor) {
+      const orderedPageIdentityDigest = await this.pdfHashRuntime.fingerprint(
+        new TextEncoder().encode(JSON.stringify(pageIdentities)),
+      );
+      if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+      const stableAnchorIdentity = { version: 1, docKey: pending.docKey, documentId: pending.documentId,
+        sourceHash: pending.sourceHash, pageIdentity: pending.pageIdentity,
+        textPosition: pending.capture.textPosition, exactQuote: pending.capture.exactQuote };
+      const anchorId = `context-${canonicalHash(stableAnchorIdentity).slice("sha256-v1:".length)}`;
+      let anchor = await this.readerAnchorStore.get(pending.docKey, anchorId, pending.documentId);
+      if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+      if (!anchor) {
+        try {
+          await this.readerAnchorStore.create({
+            anchorId, docKey: pending.docKey, documentId: pending.documentId,
+            sourceHash: pending.sourceHash, pageIdentity: pending.pageIdentity,
+            pageIndexHint: pending.capture.pageIndex, pageCount: pending.pageCount,
+            orderedPageIdentityDigest, textPosition: pending.capture.textPosition,
+            exactQuote: pending.capture.exactQuote, prefix: pending.capture.prefix,
+            suffix: pending.capture.suffix, geometry: pending.capture.geometry,
+          });
+        } catch (error) {
+          // A concurrent request for this same stable selection may have won.
+          // Read and verify its immutable result instead of generating a new ID.
+          if (error?.code !== "READER_ANCHOR_ID_COLLISION") throw error;
+        }
+        if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+        anchor = await this.readerAnchorStore.get(pending.docKey, anchorId, pending.documentId);
+      }
+      if (!anchor || anchor.docKey !== pending.docKey || anchor.documentId !== pending.documentId ||
+          anchor.sourceHash !== pending.sourceHash || anchor.pageIdentity !== pending.pageIdentity ||
+          anchor.textPosition?.start !== pending.capture.textPosition?.start ||
+          anchor.textPosition?.end !== pending.capture.textPosition?.end ||
+          anchor.exactQuote !== pending.capture.exactQuote ||
+          anchor.orderedPageIdentityDigest !== orderedPageIdentityDigest || anchor.pageCount !== pending.pageCount) {
+        throw Object.assign(new Error("相同语境身份对应的 Selection Anchor 内容不同，已停止保存。"), { code: "VOCAB_CONTEXT_ANCHOR_ID_COLLISION" });
+      }
+      if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+      pending.anchor = anchor;
+    }
+    if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+    const result = await runtime.saveContext({ familyKey: pending.familyKey,
+      surface: pending.surface, sentence: pending.capture.exactQuote, anchor: pending.anchor });
+    if (result?.status === "conflict" || result?.reloadError) {
+      throw Object.assign(new Error("语境文件发生外部变化；请重载后重新保存。"), { code: "VOCAB_CONTEXT_COMMIT_CONFLICT" });
+    }
+    if (!isCurrent()) {
+      // The write may have committed while the view was closing. The data
+      // remains durable, but the detached Reader must not receive a stale ack.
+      globalThis.clearTimeout(pending.timer);
+      view.pendingVocabularyContextCaptures.delete(pending.captureId);
+      this.sessionLog?.record("vocabularyContext", { event: "save-finished-after-reader-change",
+        status: result?.status || "committed" });
+      return false;
+    }
+    globalThis.clearTimeout(pending.timer);
+    view.pendingVocabularyContextCaptures.delete(pending.captureId);
+    view.postToViewer({ channel: CHANNEL, token: view.token,
+      type: "reader-vocabulary-context-save-result", requestId: pending.requestId,
+      captureId: pending.captureId, documentId: pending.documentId, openRequest: pending.openRequest,
+      ok: true, status: result?.status || "committed",
+      message: result?.status === "existing" ? "这个出处已保存过，未重复写入。" : "语境已保存并验证。" });
+    this.sessionLog?.record("vocabularyContext", { event: "saved", status: result?.status || "committed",
+      pageIndex: pending.capture.pageIndex, sentenceChars: pending.capture.exactQuote.length });
     return true;
   }
 
@@ -5232,6 +5458,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         });
       },
       listContexts: async (familyKey, options) => (await get()).contexts.listFamily(familyKey, options),
+      openContext: async (contextId) => this.openVocabularyContext(contextId),
       listDueReview: async (options) => {
         const runtime = await get();
         return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
@@ -5252,6 +5479,30 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       },
       close: async () => { if (this.vocabularyRuntime) await this.vocabularyRuntime.close(); },
     };
+  }
+
+  async openVocabularyContext(contextId) {
+    const runtime = await this.getVocabularyRuntime();
+    const context = await runtime.contexts.getContext(contextId);
+    if (!context) throw new Error("语境记录不存在或已失效。" );
+    const anchor = await this.readerAnchorStore.get(context.docKey, context.anchorId, context.documentId);
+    if (!anchor || anchor.exactQuote !== context.anchor.exactQuote ||
+        anchor.sourceHash !== context.sourceFingerprint || anchor.pageIdentity !== context.pageIdentity) {
+      throw new Error("Selection Anchor 缺失或身份不一致；没有按旧坐标或页码跳转。");
+    }
+    const route = await this.annotationHost.store.documentForIdentity({
+      documentId: context.documentId, docKey: context.docKey,
+    });
+    if (!route || route.documentId !== context.documentId || route.docKey !== context.docKey ||
+        route.source?.sourceHash !== anchor.sourceHash ||
+        (Number.isSafeInteger(route.source?.pageCount) && route.source.pageCount !== anchor.pageCount)) {
+      throw new Error("当前 PDF 路由与语境保存时的来源身份不一致；没有回退到旧路径。");
+    }
+    const file = route.sourcePath ? this.app.vault.getAbstractFileByPath(route.sourcePath) : null;
+    if (!isPdfFile(file)) throw new Error("语境对应的 PDF 当前不存在；没有按旧路径猜测文件。");
+    await this.openPdf(file, { kind: "selection", id: anchor.anchorId,
+      docKey: anchor.docKey, documentId: anchor.documentId });
+    return { status: "opening", message: "已打开当前文档路由；Reader 会再次验证 PDF 指纹和页面身份。" };
   }
 
   openVocabularyWorkbench() {

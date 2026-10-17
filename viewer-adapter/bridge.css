@@ -294,6 +294,44 @@ body {
   overflow-wrap: anywhere;
 }
 
+.pdfReaderVocabularyContextActions {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--background-modifier-border, rgb(0 0 0 / 0.14));
+}
+
+.pdfReaderVocabularyContextActions button {
+  justify-self: start;
+  min-height: 40px;
+  border-radius: 999px;
+  color: var(--text-accent, var(--interactive-accent, #6957d5));
+}
+
+.pdfReaderVocabularyContextPreview {
+  min-height: 4.5em;
+  max-height: 8em;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border, rgb(0 0 0 / 0.2));
+  border-radius: 12px;
+  color: var(--text-normal, var(--main-color, CanvasText));
+  background: var(--background-primary, Canvas);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.pdfReaderVocabularyContextStatus {
+  color: var(--text-muted, #777);
+  font-size: 0.82em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.pdfReaderVocabularyContextStatus[hidden] {
+  display: none;
+}
+
 .pdfReaderVocabularyPillActions {
   grid-area: actions;
   display: flex;

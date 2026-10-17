@@ -115,7 +115,7 @@ function findAction(root, action) {
 }
 
 function makeApi(overrides = {}) {
-  const calls = { listFamilies: [], details: [], enrollment: [], contexts: [], due: [], history: [], preview: [], restore: [], imports: [], exports: [] };
+  const calls = { listFamilies: [], details: [], enrollment: [], contexts: [], openContext: [], due: [], history: [], preview: [], restore: [], imports: [], exports: [] };
   const families = Array.from({ length: 105 }, (_, index) => makeFamily(index + 1));
   const api = {
     async listFamilies(options) {
@@ -142,6 +142,7 @@ function makeApi(overrides = {}) {
       calls.contexts.push({ familyKey, options });
       return { total: 1, contexts: [{ contextId: "context:v1:1", surface: "term-1", sentence: "A sentence with term-1.", documentId: "vault://book.pdf", pageNumberHint: 2, createdAt: "2026-10-18T00:00:00.000Z" }] };
     },
+    async openContext(contextId) { calls.openContext.push(contextId); return { status: "opening", message: "Reader will verify the source." }; },
     async listDueReview(options) {
       calls.due.push(options);
       return { total: 1, items: [{ familyKey: families[0].familyKey, dueAt: "2026-10-18T00:00:00.000Z", family: families[0] }] };
@@ -273,6 +274,11 @@ test("bulk enrollment is bounded and Context, Review, and History use read/clean
   await settle(modal);
   assert.equal(calls.contexts[0].familyKey, families[0].familyKey);
   assert.match(modal.panel.textContent, /A sentence with term-1/);
+  modal.panel.querySelector('[data-action^="context-open-"]').click();
+  await settle(modal);
+  assert.deepEqual(calls.openContext, ["context:v1:1"],
+    "the UI sends only the opaque context ID; path and page hints never become navigation authority");
+  assert.match(modal.statusEl.textContent, /Reader will verify the source/);
 
   modal.contentEl.querySelector('[data-action="tab-review"]').click();
   await settle(modal);

@@ -174,18 +174,30 @@ function makeAnchor(overrides = {}) {
 
 function makeService({ transaction = new MemoryTransactions(), anchors = new Map(), maxBytes, verifySource, now = () => "2026-10-18T10:00:00Z" } = {}) {
   const verifierCalls = [];
+  const families = new Map([
+    [FAMILY, { familyKey: FAMILY, type: "word", status: 2, records: [
+      { key: "walk", surface: "walk" }, { key: "walks", surface: "walks" },
+      { key: "walked", surface: "walked" }, { key: "walking", surface: "walking" },
+    ] }],
+    [FAMILY_2, { familyKey: FAMILY_2, type: "word", status: 2, records: [
+      { key: "run", surface: "run" }, { key: "runs", surface: "runs" }, { key: "running", surface: "running" },
+    ] }],
+  ]);
   const vocabularyService = {
     async getFamilyByKey(familyKey, options) {
       assert.deepEqual(options, { includeRecords: false });
-      return [FAMILY, FAMILY_2].includes(familyKey) ? { familyKey, type: "word", status: 2 } : undefined;
+      const family = families.get(familyKey);
+      if (!family) return undefined;
+      const { records: _records, ...summary } = family;
+      return summary;
     },
     async getFamily(surface) {
-      return surface === "walk" ? { familyKey: FAMILY, type: "word", status: 2 } :
-        surface === "run" ? { familyKey: FAMILY_2, type: "word", status: 2 } : undefined;
+      return surface === "walk" || surface === "walks" || surface === "walked" || surface === "walking"
+        ? families.get(FAMILY) : surface === "run" || surface === "runs" || surface === "running" ? families.get(FAMILY_2) : undefined;
     },
     async getFamilyEvidence(surface) {
-      const family = surface === "walk" ? { familyKey: FAMILY, type: "word", status: 2 } :
-        surface === "run" ? { familyKey: FAMILY_2, type: "word", status: 2 } : undefined;
+      const family = surface === "walk" || surface === "walks" || surface === "walked" || surface === "walking"
+        ? families.get(FAMILY) : surface === "run" || surface === "runs" || surface === "running" ? families.get(FAMILY_2) : undefined;
       const snapshot = await transaction.readSnapshot(VOCABULARY_PATH);
       return {
         family,
@@ -286,7 +298,7 @@ test("Context IDs hash only family, document, and Anchor IDs; full source tuple 
   const a = await service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor });
   const b = await service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor: differentAnchor });
   const c = await service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor: differentDocument });
-  const d = await service.saveContext({ familyKey: FAMILY_2, surface: "run", sentence: "She walks home.", anchor });
+  const d = await service.saveContext({ familyKey: FAMILY_2, surface: "run", sentence: "I run home.", anchor });
   assert.equal(new Set([a.context.contextId, b.context.contextId, c.context.contextId, d.context.contextId]).size, 4);
   await assert.rejects(service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor: changedSource }),
     { code: "VOCAB_CONTEXT_ID_COLLISION" });
@@ -305,7 +317,7 @@ test("family Context list is stable and paginated; get and verifySource use the 
   const { service, verifierCalls } = makeService({ anchors: new Map(anchors.map((anchor) => [anchor.anchorId, anchor])) });
   const saved = [];
   for (const [index, anchor] of anchors.entries()) {
-    saved.push(await service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: `Sentence ${index}.`, anchor }));
+    saved.push(await service.saveContext({ familyKey: FAMILY, surface: "walk", sentence: `Sentence with walk ${index}.`, anchor }));
   }
   const first = await service.listFamily(FAMILY, { limit: 2 });
   assert.equal(first.total, 3);
@@ -340,7 +352,7 @@ test("missing or changed source identity is explicit, and an overlarge sentence 
 
   const validService = makeService({ anchors: new Map([[anchor.anchorId, anchor]]), maxBytes: 1024 });
   await assert.rejects(validService.service.saveContext({
-    familyKey: FAMILY, surface: "walk", sentence: "x".repeat(4096), anchor,
+    familyKey: FAMILY, surface: "walk", sentence: `walk ${"x".repeat(4096)}`, anchor,
   }), { code: "VOCAB_SHARD_RECORD_TOO_LARGE" });
   assert.equal(validService.transaction.writeCount, 0);
   assert.equal((await validService.service.listFamily(FAMILY)).total, 0);
@@ -403,13 +415,13 @@ test("Context save, reopen, dedupe, and partial-manifest failure use the real tr
   });
 
   const firstService = makeRealService();
-  const first = await firstService.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor });
+  const first = await firstService.saveContext({ familyKey: FAMILY, surface: "walk", sentence: "I walk home.", anchor });
   assert.equal(first.status, "committed");
   const writesAfterFirstSave = adapter.writeCount;
   const reopenedService = makeRealService();
   assert.equal((await reopenedService.getContext(first.context.contextId)).contextId, first.context.contextId);
   const duplicate = await reopenedService.saveContext({
-    familyKey: FAMILY, surface: "walk", sentence: "A changed preview sentence.", anchor,
+    familyKey: FAMILY, surface: "walk", sentence: "A changed walk preview sentence.", anchor,
   });
   assert.equal(duplicate.status, "existing");
   assert.equal(duplicate.requiresUserEdit, true);
@@ -463,7 +475,7 @@ test("real core snapshot preconditions reject a Context save when the family is 
       });
 
       const result = await contextService.saveContext({
-        familyKey: FAMILY, surface: "walk", sentence: "She walks home.", anchor,
+        familyKey: FAMILY, surface: "walk", sentence: "I walk home.", anchor,
       });
       assert.equal(result.status, "conflict");
       assert.ok(result.conflicts.some((conflict) => conflict.storeId === "vocabulary-core" && conflict.path === VOCABULARY_PATH));
