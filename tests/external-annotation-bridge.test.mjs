@@ -71,6 +71,57 @@ function evaluateHelpers(names, body, exposed = []) {
   return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
 
+test("selection and LingQ link capture use viewer-owned data-page-number roots with no DOM id", () => {
+  const runtime = evaluateHelpers(
+    ["pageElementForIndex", "readerPageNumberForRoot", "captureReaderSelection", "captureReaderOccurrence"],
+    `
+      const pageRoot = { id: "", dataset: { pageNumber: "2" } };
+      const textLayer = { closest: () => pageRoot };
+      const node = { nodeType: 3, parentElement: { closest: () => textLayer } };
+      const snapshot = { startContainer: node, startOffset: 3, endContainer: node, endOffset: 15,
+        text: "subscription" };
+      const range = { ...snapshot, toString: () => snapshot.text, getBoundingClientRect: () => null };
+      let viewerRoot = pageRoot;
+      const state = {
+        app: { pdfViewer: { getPageView: index => index === 1 ? { div: viewerRoot } : null } },
+        actualSourceIdentity: { sourceHash: "xxh64-v1:source", orderedPageIdentities: ["ref:1R", "ref:2R"] },
+        vocabularyController: { rangeForOccurrence: (page, start, end, surface) =>
+          page === 2 && start === 4 && end === 5 && surface === "subscription" ? range : null },
+        textSelectionController: {
+          rangeSnapshot: () => snapshot,
+          captureRangeAnchor: (layer, selected, root) => layer === textLayer && root === pageRoot
+            ? { exactQuote: selected.text, textPosition: { start: 3, end: 15 } } : null,
+        },
+      };
+      function replaceViewerRoot() { viewerRoot = { ...pageRoot }; }
+    `,
+    ["pageRoot", "replaceViewerRoot"],
+  );
+  for (const capture of [runtime.captureReaderSelection(), runtime.captureReaderOccurrence(2, 4, 5, "subscription")]) {
+    assert.equal(capture?.pageNumber, 2);
+    assert.equal(capture?.pageIndex, 1);
+    assert.equal(capture?.pageIdentity, "ref:2R");
+    assert.equal(capture?.sourceHash, "xxh64-v1:source");
+    assert.equal(capture?.exactQuote, "subscription");
+  }
+  assert.equal(runtime.captureReaderOccurrence(1, 4, 5, "subscription"), null);
+  assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "different"), null);
+  for (const invalid of ["", "0", "2junk", "2.0", "9007199254740992", "3"]) {
+    runtime.pageRoot.dataset.pageNumber = invalid;
+    assert.equal(runtime.captureReaderSelection(), null, `invalid or foreign page label ${invalid} must fail closed`);
+    assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "subscription"), null);
+  }
+  runtime.pageRoot.dataset.pageNumber = "2";
+  runtime.pageRoot.id = "page1";
+  assert.equal(runtime.captureReaderSelection(), null, "conflicting page labels must not be guessed");
+  runtime.pageRoot.id = "page2";
+  delete runtime.pageRoot.dataset.pageNumber;
+  assert.equal(runtime.captureReaderSelection()?.pageNumber, 2, "legacy page ids still require the current viewer root");
+  runtime.replaceViewerRoot();
+  assert.equal(runtime.captureReaderSelection(), null, "a detached root cannot capture against a new viewer page");
+  assert.equal(runtime.captureReaderOccurrence(2, 4, 5, "subscription"), null);
+});
+
 test("stable page anchors navigate through the PDF.js viewer scroll container", async () => {
   const { navigateReaderAnchor, state, messages, pageScrollCalls, pageFocus, getPageLookups } = evaluateHelpers(
     ["performanceNow", "clearTemporaryReaderAnchorFocus", "showTemporaryReaderAnchorFocus", "navigateReaderAnchor"],

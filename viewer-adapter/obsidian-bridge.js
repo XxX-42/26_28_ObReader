@@ -333,6 +333,23 @@
     return pageRoot?.querySelector?.(".textLayer") || null;
   }
 
+  function readerPageNumberForRoot(pageRoot) {
+    if (!pageRoot) return null;
+    // PDF.js page divs normally have no id; data-page-number is their page
+    // label. Confirm the DOM root against the current viewer before using it
+    // to select a verified page identity. Preserve legacy ids only when they
+    // agree with that same viewer-owned root.
+    const dataNumber = pageRoot.dataset?.pageNumber ?? pageRoot.getAttribute?.("data-page-number");
+    const legacy = /^page([1-9]\d*)$/i.exec(pageRoot.id || "");
+    const value = dataNumber ?? legacy?.[1];
+    if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;
+    const pageNumber = Number(value);
+    if (!Number.isSafeInteger(pageNumber) ||
+        (legacy && Number(legacy[1]) !== pageNumber) ||
+        pageElementForIndex(pageNumber - 1) !== pageRoot) return null;
+    return pageNumber;
+  }
+
   function captureReaderSelection() {
     const selected = state.textSelectionController?.rangeSnapshot?.();
     if (!selected?.text) return null;
@@ -344,7 +361,7 @@
       : selected.endContainer?.parentElement?.closest?.(".textLayer");
     if (!textLayer || textLayer !== endTextLayer) return null;
     const pageRoot = textLayer.closest?.(".page");
-    const pageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const pageNumber = readerPageNumberForRoot(pageRoot);
     const actual = state.actualSourceIdentity;
     const pageIndex = pageNumber - 1;
     const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];
@@ -373,7 +390,7 @@
       : range.endContainer?.parentElement?.closest?.(".textLayer");
     if (!textLayer || textLayer !== endTextLayer) return null;
     const pageRoot = textLayer.closest?.(".page");
-    const parsedPageNumber = Number(String(pageRoot?.id || "").replace(/^page/i, ""));
+    const parsedPageNumber = readerPageNumberForRoot(pageRoot);
     const actual = state.actualSourceIdentity;
     const pageIndex = parsedPageNumber - 1;
     const pageIdentity = actual?.orderedPageIdentities?.[pageIndex];

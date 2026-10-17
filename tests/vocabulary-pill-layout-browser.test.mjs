@@ -116,7 +116,7 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
             const channel=${JSON.stringify(channel)},token=${JSON.stringify(token)},documentId=${JSON.stringify(documentId)};
             const rendererGeneration=${JSON.stringify(rendererGeneration)},iframe=document.querySelector('iframe');
             const host=window.__vocabularyPillHost={opened:0,pageQueries:[],lookupRequests:[],entryResults:[],statusRequests:[],
-              backlinkQueries:[],backlinkOpenRequests:[],occurrenceRequests:[],errors:[],responseMode:'long'};
+              backlinkQueries:[],backlinkOpenRequests:[],occurrenceRequests:[],anchorCaptures:[],sourceIdentity:null,errors:[],responseMode:'long'};
             let sourceBytes=null,openRequest=1;
             const post=(message)=>iframe.contentWindow.postMessage({channel,token,rendererGeneration,...message},'*');
             const sendOpen=()=>{
@@ -132,6 +132,7 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
                 fetch('/tests/fixtures/tracemonkey.pdf').then(response=>response.arrayBuffer()).then(bytes=>{sourceBytes=bytes;sendOpen();})
                   .catch(error=>host.errors.push(String(error?.message||error)));
               }else if(message.type==='opened') host.opened++;
+              else if(message.type==='annotation-source-identity') host.sourceIdentity=message;
               else if(message.type==='vocab-page-query'){
                 host.pageQueries.push({requestId:message.requestId,queryId:message.queryId,pageNumber:message.pageNumber,openRequest:message.openRequest});
                 post({type:'vocab-page-results',documentId,openRequest:message.openRequest,requestId:message.requestId,
@@ -160,8 +161,13 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
                   requestId:message.requestId,ok:true,count:1,anchorIds:['layout-test-anchor']}),0);
               }else if(message.type==='reader-anchor-occurrence-link-request'){
                 host.occurrenceRequests.push(message);
-                setTimeout(()=>post({type:'reader-anchor-occurrence-result',documentId,openRequest:message.openRequest,
-                  requestId:message.requestId,ok:true}),0);
+                post({type:'reader-anchor-capture-request',documentId,openRequest:message.openRequest,
+                  requestId:message.requestId,mode:'occurrence',pageNumber:message.pageNumber,
+                  startIndex:message.startIndex,endIndex:message.endIndex,expectedSurface:message.expectedSurface});
+              }else if(message.type==='reader-anchor-capture'){
+                host.anchorCaptures.push(message);
+                post({type:'reader-anchor-occurrence-result',documentId,openRequest:message.openRequest,
+                  requestId:message.requestId,ok:!message.error&&message.capture?.kind==='selection',message:message.error});
               }else if(message.type==='reader-backlink-occurrence-open'){
                 host.backlinkOpenRequests.push(message);
               }else if(message.type==='error') host.errors.push(message.message||message.code||'viewer error');
@@ -302,8 +308,8 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
         { timeout: 5_000 });
     }
   };
-  const tapPointAtEdge = async (edge) => {
-    await viewer.evaluate(()=>{window.PDFViewerApplication.pdfViewer.currentScale=1.12;});
+  const tapPointAtEdge = async (edge, scale=1.12) => {
+    await viewer.evaluate(value=>{window.PDFViewerApplication.pdfViewer.currentScale=value;},scale);
     await viewer.waitForFunction(()=>document.querySelectorAll('.page[data-page-number="1"] .textLayer span').length>0,
       {timeout:15_000});
     await settleViewer();
@@ -341,12 +347,12 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
       `The trusted lookup tap must land on visible text: ${JSON.stringify({point,finalPoint})}`);
     return finalPoint;
   };
-  const openCardAt = async (edge, mode, theme, screenshotName) => {
+  const openCardAt = async (edge, mode, theme, screenshotName, scale=1.12) => {
     await page.evaluate((value)=>{window.__vocabularyPillHost.responseMode=value;},mode);
     await setTheme(theme);
     const before=await page.evaluate(()=>window.__vocabularyPillHost.lookupRequests.length);
     const entriesBefore=await page.evaluate(()=>window.__vocabularyPillHost.entryResults.length);
-    const point=await tapPointAtEdge(edge);
+    const point=await tapPointAtEdge(edge,scale);
     const iframeRect=await page.$eval('iframe',frame=>{const r=frame.getBoundingClientRect();return {x:r.x,y:r.y};});
     if (await page.evaluate(() => window.__vocabularyPillHost.lookupRequests.length) === before) {
       if (await page.evaluate(() => window.__vocabularyPillHost.opened) !== 1) throw new Error('PDF viewer host handshake did not finish');
@@ -439,6 +445,31 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
       `${label}: no grade should appear active when the dictionary record has status:null: ${JSON.stringify(state.buttons)}`);
     return state;
   };
+  const clickOccurrenceAndVerify = async (touch) => {
+    const beforeOccurrence=await page.evaluate(()=>window.__vocabularyPillHost.occurrenceRequests.length);
+    const box=(await geometry()).occurrence;
+    const frameOffset=await page.$eval('iframe',frame=>{const r=frame.getBoundingClientRect();return {x:r.x,y:r.y};});
+    const x=frameOffset.x+(box.left+box.right)/2,y=frameOffset.y+(box.top+box.bottom)/2;
+    const beforeCaptures=await page.evaluate(()=>window.__vocabularyPillHost.anchorCaptures.length);
+    if(touch)await page.touchscreen.tap(x,y);else await page.mouse.click(x,y);
+    await page.waitForFunction((count)=>window.__vocabularyPillHost.occurrenceRequests.length===count+1,{timeout:5_000},beforeOccurrence);
+    await page.waitForFunction(count=>window.__vocabularyPillHost.anchorCaptures.length===count+1,{timeout:5_000},beforeCaptures);
+    const captureResult=await page.evaluate(()=>window.__vocabularyPillHost.anchorCaptures.at(-1));
+    assert.ok(!captureResult.error&&captureResult.capture?.kind==='selection',
+      `The real Viewer must capture the occurrence instead of a mock success: ${JSON.stringify(captureResult)}`);
+    const identity=await page.evaluate(()=>window.__vocabularyPillHost.sourceIdentity);
+    assert.equal(captureResult.capture.pageIdentity,identity.orderedPageIdentities[captureResult.capture.pageIndex]);
+    assert.equal(captureResult.capture.pageNumber,captureResult.capture.pageIndex+1);
+    const request=await page.evaluate(()=>window.__vocabularyPillHost.occurrenceRequests.at(-1));
+    assert.equal(captureResult.capture.exactQuote,request.expectedSurface,'Capture must preserve the tapped token quote');
+    assert.match(captureResult.capture.nativeSelection,/^\d+,\d+,\d+,\d+$/);
+    assert.ok(captureResult.capture.textPosition.end>captureResult.capture.textPosition.start);
+    await viewer.waitForFunction(()=>document.querySelector('.pdfReaderVocabularyPillOccurrenceLink')?.getAttribute('aria-label')==='已复制链接',
+      {timeout:5_000});
+    const copyCapture=await viewer.evaluate(()=>window.__vocabularyPillHitEvents?.at(-1)||null);
+    assert.ok(copyCapture?.targetIsOccurrence,`Copy control should receive the trusted click: ${JSON.stringify(copyCapture)}`);
+    assert.equal(copyCapture.targetInsidePdf,false,'The PDF page must not receive the occurrence-link click');
+  };
   const scrollBodyAndVerifySecondaryControls = async (touch) => {
     const before=await geometry();
     const bodyState=await viewer.evaluate(()=>{
@@ -481,14 +512,7 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
     await screenshot('touch-portrait-body-scrolled');
     const frameOffset=await page.$eval('iframe',frame=>{const r=frame.getBoundingClientRect();return {x:r.x,y:r.y};});
     const tap=async(point)=>touch?page.touchscreen.tap(frameOffset.x+point.x,frameOffset.y+point.y):page.mouse.click(frameOffset.x+point.x,frameOffset.y+point.y);
-    const beforeOccurrence=await page.evaluate(()=>window.__vocabularyPillHost.occurrenceRequests.length);
-    await tap({x:(controls.copy.left+controls.copy.right)/2,y:(controls.copy.top+controls.copy.bottom)/2});
-    await page.waitForFunction((count)=>window.__vocabularyPillHost.occurrenceRequests.length===count+1,{timeout:5_000},beforeOccurrence);
-    await viewer.waitForFunction(()=>document.querySelector('.pdfReaderVocabularyPillOccurrenceLink')?.getAttribute('aria-label')==='已复制链接',
-      {timeout:5_000});
-    const copyCapture=await viewer.evaluate(()=>window.__vocabularyPillHitEvents?.at(-1)||null);
-    assert.ok(copyCapture?.targetIsOccurrence,`Copy control should receive the trusted click: ${JSON.stringify(copyCapture)}`);
-    assert.equal(copyCapture.targetInsidePdf,false,'The PDF page must not receive the occurrence-link click');
+    await clickOccurrenceAndVerify(touch);
     const beforeBacklink=await page.evaluate(()=>window.__vocabularyPillHost.backlinkOpenRequests.length);
     await tap({x:(controls.backlinks.left+controls.backlinks.right)/2,y:(controls.backlinks.top+controls.backlinks.bottom)/2});
     await page.waitForFunction((count)=>window.__vocabularyPillHost.backlinkOpenRequests.length===count+1,{timeout:5_000},beforeBacklink);
@@ -526,6 +550,11 @@ test("LingQ lookup card keeps definitions, all five status controls, and close r
 
     const desktopUnlearned=await openCardAt('bottom','unlearned','dark','desktop-bottom-unlearned');
     await assertUnlearnedCard(desktopUnlearned.geometry,'desktop bottom with dictionary result and no personal status');
+    await clickOccurrenceAndVerify(false);
+    await clickCloseAtCenter(false);
+    const zoomed=await openCardAt('bottom','unlearned','dark','desktop-link-zoom-190',1.9);
+    boundsAssertion(zoomed.geometry,'desktop link capture after zoom to 190%');
+    await clickOccurrenceAndVerify(false);
     await clickCloseAtCenter(false);
 
     // Check the preferred-above placement at the opposite desktop edge and a
