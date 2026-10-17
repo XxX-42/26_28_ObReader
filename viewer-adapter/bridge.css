@@ -113,14 +113,22 @@ body {
   position: fixed;
   z-index: 100005;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto 42px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "heading status close"
+    "body body body"
+    "actions actions actions";
   align-items: center;
-  gap: 7px 10px;
+  gap: 8px 8px;
   width: max-content;
-  max-width: min(380px, calc(100vw - 16px));
-  max-height: min(250px, calc(100vh - 16px));
-  overflow: auto;
-  padding: 12px 42px 12px 14px;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  max-height: min(420px, calc(100dvh - 16px));
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  box-sizing: border-box;
   border: 1px solid var(--background-modifier-border, var(--toolbar-border-color, rgb(0 0 0 / 0.22)));
   border-radius: 18px;
   color: var(--text-normal, var(--main-color, CanvasText));
@@ -130,7 +138,6 @@ body {
   font: message-box;
   overflow-wrap: anywhere;
   pointer-events: auto;
-  box-sizing: border-box;
 }
 
 /* Markdown backlinks use a dotted underline so they stay visually distinct
@@ -221,20 +228,50 @@ body {
 }
 
 .pdfReaderVocabularyPillHeading {
+  grid-area: heading;
   min-width: 0;
+  overflow: hidden;
   font-size: 1.04em;
   font-weight: 700;
   line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pdfReaderVocabularyPillStatus {
-  max-width: 100%;
-  padding: 3px 8px;
+  grid-area: status;
+  /* The visual viewport may be much narrower than the layout viewport during
+     iPad pinch zoom. The controller supplies its width so the status chip
+     cannot crowd the close button outside the capped card. */
+  min-width: 0;
+  max-width: max(0px, min(8rem, calc(var(--pill-visual-width, 100vw) - 150px)));
+  overflow: hidden;
+  padding: 3px 7px;
   border-radius: 999px;
   color: var(--text-on-accent, white);
   background: var(--interactive-accent, #6957d5);
-  font-size: 0.78em;
+  font-size: 0.72em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pdfReaderVocabularyPillBody {
+  grid-area: body;
+  display: grid;
+  /* Stack secondary rows so a narrow VisualViewport cannot force the card
+     wider or clip the backlink controls. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  align-items: start;
+  gap: 6px 8px;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .pdfReaderVocabularyPillPronunciation {
@@ -249,29 +286,33 @@ body {
 
 .pdfReaderVocabularyPillMeanings {
   grid-column: 1 / -1;
-  max-height: 6em;
-  overflow: auto;
+  min-width: 0;
   color: var(--text-normal, var(--main-color, CanvasText));
   font-size: 0.92em;
   line-height: 1.45;
   white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .pdfReaderVocabularyPillActions {
-  grid-column: 1 / -1;
+  grid-area: actions;
   display: flex;
-  justify-content: space-between;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .pdfReaderVocabularyPillOccurrenceActions {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: flex;
   justify-content: flex-start;
+  min-width: 0;
 }
 
 .pdfReaderVocabularyPillBacklinkActions {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -299,7 +340,7 @@ body {
 }
 
 .pdfReaderVocabularyPill button {
-  min-width: 42px;
+  min-width: 40px;
   min-height: 42px;
   padding: 6px 10px;
   border: 1px solid var(--background-modifier-border, var(--toolbar-border-color, rgb(0 0 0 / 0.3)));
@@ -315,7 +356,9 @@ body {
   position: relative;
   isolation: isolate;
   width: 42px;
-  min-width: 42px;
+  min-width: 40px;
+  max-width: 42px;
+  flex: 1 1 42px;
   height: 42px;
   min-height: 42px;
   padding: 0;
@@ -326,11 +369,11 @@ body {
 .pdfReaderVocabularyPillActions button::before {
   position: absolute;
   z-index: -1;
-  /* Keep the 42px hit target, but draw a circle at 85% radius (36px diameter). */
+  /* Keep a >=40px hit target and draw the status circle at 85% of its size. */
   top: 50%;
   left: 50%;
-  width: 36px;
-  height: 36px;
+  width: 85%;
+  height: 85%;
   transform: translate(-50%, -50%);
   box-sizing: border-box;
   border: 1px solid var(--background-modifier-border, var(--toolbar-border-color, rgb(0 0 0 / 0.3)));
@@ -362,15 +405,22 @@ body {
 }
 
 .pdfReaderVocabularyPill .pdfReaderVocabularyPillClose {
-  position: absolute;
-  inset-block-start: 4px;
-  inset-inline-end: 4px;
-  min-width: 38px;
-  min-height: 38px;
+  grid-area: close;
+  min-width: 42px;
+  min-height: 42px;
+  justify-self: end;
   padding: 0;
-  border: 0;
+  border-color: transparent;
   background: transparent;
   font-size: 1.35em;
+}
+
+.pdfReaderVocabularyPill[data-placement="below"] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "heading status close"
+    "actions actions actions"
+    "body body body";
 }
 
 .pdfReaderBulkDeleteOverlay {
