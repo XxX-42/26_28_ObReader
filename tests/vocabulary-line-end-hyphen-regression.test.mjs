@@ -181,6 +181,42 @@ test("PDF line-end compa-/rable keeps comparable lookup identity and both physic
   controller.dispose();
 });
 
+test("an explicit newline after a PDF line-end hyphen stitches identity and selects the full physical word", () => {
+  const unitRects = new Map();
+  const segmentRects = new Map();
+  const document = makeRangeDocument(unitRects, segmentRects);
+  const text = makeText("compa-\nrable", "single-node-wrap", document);
+  unitRects.set("single-node-wrap:5", { top: 10, left: 70, width: 5, height: 12 });
+  unitRects.set("single-node-wrap:7", { top: 24, left: 4, width: 7, height: 12 });
+  segmentRects.set(text, [
+    { left: 10, top: 10, right: 74, bottom: 22, width: 64, height: 12 },
+    { left: 4, top: 24, right: 38, bottom: 36, width: 34, height: 12 },
+  ]);
+  const textLayer = makeElement([text], document, "textLayer");
+  const pageRoot = makeElement([textLayer], document, "page");
+  const [token] = scanPageTextLayer(textLayer);
+
+  assert.equal(token.rawSurface, "compa-rable", "layout newline is not exposed as part of the word");
+  assert.equal(token.surfaceKey, "comparable", "lookup joins only after geometry confirms a line break");
+  assert.deepEqual(token.segments, [
+    { textNode: text, startOffset: 0, endOffset: 12 },
+  ], "the physical range still spans the visible hyphen and line separator");
+
+  const selection = {
+    startContainer: text,
+    startOffset: 2,
+    endContainer: text,
+    endOffset: 10,
+    commonAncestorContainer: textLayer,
+    collapsed: false,
+  };
+  assert.deepEqual(getSelectedPageTokens(selection, [token], {
+    pageRoot,
+    minTokens: 1,
+    maxTokens: 1,
+  }), [token], "selection across the explicit line break resolves to one logical word");
+});
+
 test("same-line ordinary hyphens stay separate and are not treated as wrapped words", () => {
   const unitRects = new Map();
   const document = makeRangeDocument(unitRects);

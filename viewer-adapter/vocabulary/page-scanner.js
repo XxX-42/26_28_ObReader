@@ -5,6 +5,8 @@ const MARK = /\p{M}/u;
 const WORD_CHAR = /[\p{L}\p{M}\p{N}]/u;
 const APOSTROPHE = /['\u2018\u2019\u02BC\uFF07]/u;
 const LINE_HYPHEN = /[-\u2010]/u;
+const LINE_BREAK = /^[\r\n\u2028\u2029]$/u;
+const HORIZONTAL_WHITESPACE = /^[\t \f\v\u00a0]$/u;
 const ASCII_DIGIT = /^[0-9]$/u;
 const MAX_PAGE_TEXT_UNITS = 50000;
 
@@ -176,6 +178,31 @@ function isConfirmedLineEndHyphen(hyphen, continuation, root) {
   return verticalDelta >= minimumDelta && verticalDelta <= maximumDelta && startsAtPreviousLine;
 }
 
+function lineHyphenContinuationIndex(units, hyphenIndex) {
+  let index = hyphenIndex + 1;
+  let crossedTextLine = false;
+  while (index < units.length) {
+    const character = units[index].character;
+    if (LINE_BREAK.test(character)) {
+      crossedTextLine = true;
+      index += 1;
+      continue;
+    }
+    if (HORIZONTAL_WHITESPACE.test(character)) {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+
+  // A normal PDF.js TextNode boundary has no explicit newline and continues
+  // to use the adjacent character. Whitespace is only skipped when it
+  // contains a real text-line separator; ordinary spaced hyphenation must
+  // never be stitched by this fallback.
+  if (index === hyphenIndex + 1) return index;
+  return crossedTextLine ? index : -1;
+}
+
 function appendUnit(units, target, index) {
   const unit = units[index];
   target.push(unit);
@@ -199,12 +226,12 @@ function collectSegments(consumedUnits) {
   return segments;
 }
 
-function makeToken(index, consumedUnits, logicalSurface) {
+function makeToken(index, consumedUnits, logicalSurface, rawSurface = consumedUnits.map((unit) => unit.character).join("")) {
   const surfaceKey = normalizeTermKey(logicalSurface);
   if (!surfaceKey) return null;
   return {
     index,
-    rawSurface: consumedUnits.map((unit) => unit.character).join(""),
+    rawSurface,
     surfaceKey,
     segments: collectSegments(consumedUnits),
   };
@@ -233,6 +260,7 @@ export function scanPageTextLayer(textLayer) {
     const start = index;
     const consumedUnits = [];
     const logicalParts = [];
+    const rawParts = [];
     let word = readWordEnd(units, index, textLayer);
     if (!word.hasLetter) {
       index = word.end > index ? word.end : index + 1;
@@ -243,11 +271,14 @@ export function scanPageTextLayer(textLayer) {
       for (let cursor = index; cursor < word.end; cursor += 1) {
         appendUnit(units, consumedUnits, cursor);
       }
-      logicalParts.push(units.slice(index, word.end).map((unit) => unit.character).join(""));
+      const wordSurface = units.slice(index, word.end).map((unit) => unit.character).join("");
+      logicalParts.push(wordSurface);
+      rawParts.push(wordSurface);
       index = word.end;
 
       const hyphen = units[index];
-      const continuation = units[index + 1];
+      const continuationIndex = lineHyphenContinuationIndex(units, index);
+      const continuation = continuationIndex >= 0 ? units[continuationIndex] : null;
       const previous = units[index - 1];
       if (
         !hyphen ||
@@ -262,7 +293,11 @@ export function scanPageTextLayer(textLayer) {
       }
 
       appendUnit(units, consumedUnits, index);
-      index += 1;
+      rawParts.push(hyphen.character);
+      for (let separatorIndex = index + 1; separatorIndex < continuationIndex; separatorIndex += 1) {
+        appendUnit(units, consumedUnits, separatorIndex);
+      }
+      index = continuationIndex;
       word = readWordEnd(units, index, textLayer);
       if (!word.hasLetter || word.end === index) break;
     }
@@ -270,7 +305,7 @@ export function scanPageTextLayer(textLayer) {
     // The source is DOM-owned; its line-end hyphen remains in rawSurface and
     // segment offsets, while only the logical key drops that line-break mark.
     const logicalSurface = logicalParts.join("");
-    const token = makeToken(tokens.length, consumedUnits, logicalSurface);
+    const token = makeToken(tokens.length, consumedUnits, logicalSurface, rawParts.join(""));
     if (token) tokens.push(token);
 
     // A defensive progress guard for malformed/fake DOM text inputs.

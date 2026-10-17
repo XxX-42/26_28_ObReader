@@ -2,9 +2,9 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
-**0.10.5 版**在 0.10.4 的 WAL-Sidecar v3.2 和词汇学习功能上，修复 PDF 文本层跨节点空格推断、行尾断词（如 `compa-` 换行 `rable`）的选词与高亮映射、紧邻行高亮几何错位，并改进 `low/lower/lowest` 等比较级和最高级的已学状态共享。原 PDF 仍保持不可变；Windows、macOS 和 iPadOS 共用同一三文件包。
+**0.10.6 版**在 0.10.5 的词汇学习修复上，补齐 PDF 文本层同一节点中显式换行的断词处理（如 `compa-\nrable`）：只有换行几何确认续词位于下一行时才忽略断行连字符；选中跨行文字仍映射回完整逻辑单词。普通行内连字符仍按两个词处理。原 PDF 仍保持不可变；Windows、macOS 和 iPadOS 共用同一三文件包。
 
-当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.5 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。
+当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.6 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。
 
 之前的[0.6.0 三文件候选包](dist/pdf-web-reader-0.1general-0.6.0-candidate.zip)使用不可变的逐设备批注操作批次，并据此重建 JSON 快照缓存。0.7.0 版新增无损 Float32 编码和经过验证、可重放的存储检查点；文件大小和尾部样本仍可用于快速排除明显的 PDF 变化，但要水合外置批注，必须先确认带算法标识的完整 `xxh64-v1` 哈希相同，并且有序页面身份也匹配。旧版 SHA-256 哈希仍可读取；资源完整性、构建产物、供应来源和稳定文档标识继续使用 SHA-256。
 
