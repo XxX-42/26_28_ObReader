@@ -37,7 +37,7 @@ const anchorFixture = {
   createdAt: 1792200000000,
 };
 
-test("native PDF fragment remains usable while carrying enhanced stable identity", () => {
+test("copied Reader fragments expose only the native page fallback and enhanced stable target", () => {
   const fragment = encodeReaderLinkFragment({
     pageNumber: 42,
     selection: "15,3,18,9",
@@ -45,16 +45,24 @@ test("native PDF fragment remains usable while carrying enhanced stable identity
     documentId: "xxh64-v1:0123456789abcdef",
     target: { kind: "selection", id: "anchor-abc_123" },
   });
-  assert.match(fragment, /page=42/);
-  assert.match(fragment, /selection=15%2C3%2C18%2C9/);
+  assert.equal(fragment, "page=42&obreader=sel.anchor-abc_123");
+  assert.doesNotMatch(fragment, /(?:^|&)(?:selection|docKey|obdoc)=/);
   const parsed = parseReaderLinkFragment(fragment);
   assert.deepEqual(parsed, {
     pageNumber: 42,
-    selection: "15,3,18,9",
-    docKey: "aabbccddeeff",
-    documentId: "xxh64-v1:0123456789abcdef",
+    selection: null,
+    docKey: null,
+    documentId: null,
     target: { kind: "selection", id: "anchor-abc_123" },
   });
+  const legacy = parseReaderLinkFragment(
+    "page=42&selection=15%2C3%2C18%2C9&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=sel.anchor-abc_123",
+  );
+  assert.deepEqual(legacy, {
+    pageNumber: 42, selection: "15,3,18,9", docKey: "aabbccddeeff",
+    documentId: "xxh64-v1:0123456789abcdef",
+    target: { kind: "selection", id: "anchor-abc_123" },
+  }, "previously copied identity-bearing links remain readable");
   const page = parseReaderLinkFragment(encodeReaderLinkFragment({
     pageNumber: 37, target: { kind: "page", id: "ref:37R" },
   }));
@@ -117,6 +125,54 @@ test("backlink index updates only the changed Markdown file and can be rebuilt",
   assert.equal(index.get("aabbccddeeff", { kind: "selection", id: "anchor-2" })[0].sourcePath, first.path);
   index.removeFile(second.path);
   assert.equal(index.getDocument("aabbccddeeff").length, 1);
+});
+
+test("path-only Reader links are indexed by their resolved vault PDF route", async () => {
+  const index = createReaderBacklinkIndex();
+  const docKey = "aabbccddeeff";
+  const documentId = "document-full-id";
+  const pageIdentities = ["page-one"];
+  const source = { path: "Notes/Quote.md" };
+  const fragment = encodeReaderLinkFragment({
+    pageNumber: 1, docKey, documentId, target: { kind: "selection", id: "anchor-path" },
+  });
+  index.replaceFile(source, { links: [{
+    link: `Books/Book%20A.pdf#${fragment}`,
+    displayText: "quoted passage",
+    position: { start: { offset: 12, line: 3 } },
+  }] });
+
+  const routeRows = index.getByPdfPath("Books/Book A.pdf");
+  assert.equal(routeRows.length, 1);
+  assert.equal(routeRows[0].routePath, "Books/Book A.pdf");
+  assert.equal(routeRows[0].docKey, null);
+  assert.equal(routeRows[0].documentId, null);
+
+  const anchor = { ...anchorFixture, docKey, documentId, anchorId: "anchor-path", pageIdentity: "page-one" };
+  const pageIndex = await buildReaderBacklinkPageIndex({
+    index,
+    sourcePath: "Books/Book A.pdf",
+    anchorStore: { async get(key, id, expectedId) {
+      assert.equal(key, docKey);
+      assert.equal(id, "anchor-path");
+      assert.equal(expectedId, documentId);
+      return anchor;
+    } },
+    docKey, documentId, pageIdentities,
+  });
+  assert.equal(pageIndex.forPage("page-one").rows.length, 1);
+  assert.equal(pageIndex.forPage("page-one").markers[0].kind, "selection");
+  index.replaceFile(source, { links: [] });
+  assert.equal(index.getByPdfPath("Books/Book A.pdf").length, 0);
+});
+
+test("explicit relative PDF routes resolve against the Markdown note path", () => {
+  const index = createReaderBacklinkIndex();
+  index.replaceFile({ path: "Notes/Quotes/Reference.md" }, { links: [{
+    link: "../../Books/Book.pdf#page=9&obreader=page.page-identity",
+    position: { start: { offset: 0, line: 0 } },
+  }] });
+  assert.equal(index.getByPdfPath("Books/Book.pdf").length, 1);
 });
 
 test("backlink index isolates matching short keys by full document identity", () => {

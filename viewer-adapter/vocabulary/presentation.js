@@ -35,9 +35,9 @@ function splitMeanings(value) {
 
 /** Return only display-safe vocabulary fields; persistence metadata never reaches the pill. */
 export function vocabularyEntryPresentation(record) {
-  const hasPersonalRecord = Boolean(
-    record && typeof record === "object" && !Array.isArray(record),
-  );
+  const hasPersonalRecord = typeof record?.hasPersonalRecord === "boolean"
+    ? record.hasPersonalRecord
+    : Boolean(record && typeof record === "object" && !Array.isArray(record));
   const pronunciation = cleanText(
     record?.phonetic || record?.ipa || record?.pronunciation,
     160,
@@ -48,11 +48,16 @@ export function vocabularyEntryPresentation(record) {
   const status = Number.isInteger(record?.status) && record.status >= 1 && record.status <= 5
     ? record.status
     : null;
+  const dictionaryLookupState = record?.dictionaryLookupState;
   const meaningState = meanings.length > 0
     ? "available"
     : hasPersonalRecord
       ? "not-saved-in-personal-record"
-      : "external-dictionary-not-queried";
+      : dictionaryLookupState === "not-found"
+        ? "dictionary-not-found"
+        : dictionaryLookupState === "unavailable"
+          ? "dictionary-unavailable"
+          : "external-dictionary-not-queried";
   return Object.freeze({
     hasPersonalRecord,
     pronunciation,
@@ -62,7 +67,11 @@ export function vocabularyEntryPresentation(record) {
       ? "未查询外部词典"
       : meaningState === "not-saved-in-personal-record"
         ? "个人词条未保存释义"
-        : "",
+        : meaningState === "dictionary-not-found"
+          ? "词典中未找到释义"
+          : meaningState === "dictionary-unavailable"
+            ? "离线词典暂不可用"
+            : "",
     status,
     statusLabel: status !== null
       ? STATUS_LABELS[status]

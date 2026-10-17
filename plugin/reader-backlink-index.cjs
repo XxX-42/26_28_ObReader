@@ -1,11 +1,41 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 "use strict";
 
-const { parseReaderLinkFragment } = require("./reader-anchor-store.cjs");
+const { parseReaderLinkDestination } = require("./reader-anchor-store.cjs");
 
 function targetKey(docKey, target, documentId = "") {
   if (!docKey || !target?.kind || typeof target.id !== "string") return null;
   return `${docKey}:${documentId || "*"}:${target.kind}:${target.id}`;
+}
+
+function normalizePdfRoutePath(routePath, markdownSourcePath = "") {
+  if (typeof routePath !== "string" || !routePath.trim()) return null;
+  let value = routePath.trim().replaceAll("\\", "/").normalize("NFC");
+  try { value = decodeURIComponent(value); } catch { /* Preserve a literal malformed/legacy route. */ }
+  // Obsidian treats explicit ./ and ../ destinations relative to the Markdown
+  // note. Generated Reader links use vault-relative PDF paths, so bare paths
+  // are deliberately kept vault-relative instead of being prefixed by the note.
+  if (/^(?:\.\/|\.\.\/)/.test(value)) {
+    const source = typeof markdownSourcePath === "string" ? markdownSourcePath.replaceAll("\\", "/") : "";
+    const slash = source.lastIndexOf("/");
+    value = `${slash >= 0 ? source.slice(0, slash + 1) : ""}${value}`;
+  }
+  const parts = [];
+  for (const part of value.replace(/^\/+/, "").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") { if (parts.length) parts.pop(); continue; }
+    parts.push(part);
+  }
+  return parts.length ? parts.join("/") : null;
+}
+
+function routeTargetKey(routePath, target) {
+  if (!routePath || !target?.kind || typeof target.id !== "string") return null;
+  return `route:${routePath}:${target.kind}:${target.id}`;
+}
+
+function rowSort(left, right) {
+  return left.sourcePath.localeCompare(right.sourcePath) || (left.offset ?? -1) - (right.offset ?? -1);
 }
 
 function occurrenceKey(pageIdentity, start, end) {
@@ -19,6 +49,7 @@ async function buildReaderBacklinkPageIndex({
   anchorStore,
   docKey,
   documentId,
+  sourcePath = null,
   pageIdentities,
   annotations = [],
   tombstones = [],
@@ -38,7 +69,17 @@ async function buildReaderBacklinkPageIndex({
   };
   const buildStartedAt = Date.now();
   const lookupStartedAt = Date.now();
-  const rows = index.getDocument(docKey, documentId);
+  const identityRows = index.getDocument(docKey, documentId);
+  const routeRows = typeof sourcePath === "string" && sourcePath &&
+      typeof index.getByPdfPath === "function"
+    ? index.getByPdfPath(sourcePath) : [];
+  // Old links may have both identity parameters and a route. Collapse those
+  // duplicate index entries before counting markers or resolving Anchors.
+  const uniqueRows = new Map();
+  for (const row of [...identityRows, ...routeRows]) {
+    uniqueRows.set(`${row.sourcePath}\0${row.offset}\0${row.target.kind}\0${row.target.id}`, row);
+  }
+  const rows = [...uniqueRows.values()].sort(rowSort);
   const backlinkLookupMs = Math.max(0, Date.now() - lookupStartedAt);
   const anchorStartedAt = Date.now();
   const selectionRows = new Map();
@@ -150,6 +191,7 @@ async function buildReaderBacklinkPageIndex({
 
 function createReaderBacklinkIndex() {
   const byTarget = new Map();
+  const byPdfRoute = new Map();
   const bySource = new Map();
   let revision = 0;
 
@@ -157,10 +199,13 @@ function createReaderBacklinkIndex() {
     const prior = bySource.get(sourcePath);
     if (!prior) return false;
     for (const [key, rowIds] of prior) {
-      const rows = byTarget.get(key);
+      const rows = byTarget.get(key) || byPdfRoute.get(key);
       if (!rows) continue;
       for (const rowId of rowIds) rows.delete(rowId);
-      if (rows.size === 0) byTarget.delete(key);
+      if (rows.size === 0) {
+        byTarget.delete(key);
+        byPdfRoute.delete(key);
+      }
     }
     bySource.delete(sourcePath);
     revision += 1;
@@ -175,16 +220,17 @@ function createReaderBacklinkIndex() {
     const sourceTargets = new Map();
     for (const link of links) {
       if (typeof link?.link !== "string") continue;
-      const marker = link.link.indexOf("#");
-      if (marker < 0) continue;
-      const parsed = parseReaderLinkFragment(link.link.slice(marker + 1));
-      if (!parsed.docKey || !parsed.target) continue;
-      const key = targetKey(parsed.docKey, parsed.target, parsed.documentId || "*");
-      if (!key) continue;
+      const parsed = parseReaderLinkDestination(link.link);
+      if (!parsed.target) continue;
+      const routePath = normalizePdfRoutePath(parsed.routePath, sourcePath);
+      const identityIndexKey = targetKey(parsed.docKey, parsed.target, parsed.documentId || "*");
+      const routeIndexKey = routeTargetKey(routePath, parsed.target);
+      if (!identityIndexKey && !routeIndexKey) continue;
       const start = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
       const row = Object.freeze({
         sourcePath,
         target: parsed.target,
+        routePath,
         docKey: parsed.docKey,
         documentId: parsed.documentId,
         pageNumber: parsed.pageNumber,
@@ -193,13 +239,19 @@ function createReaderBacklinkIndex() {
         line: Number.isSafeInteger(link.position?.start?.line) ? link.position.start.line : null,
         offset: start,
       });
-      const rowId = `${sourcePath}\0${start}\0${key}`;
-      let rows = byTarget.get(key);
-      if (!rows) byTarget.set(key, (rows = new Map()));
-      rows.set(rowId, row);
-      let sourceRows = sourceTargets.get(key);
-      if (!sourceRows) sourceTargets.set(key, (sourceRows = new Set()));
-      sourceRows.add(rowId);
+      const indexes = identityIndexKey
+        ? [[byTarget, identityIndexKey]]
+        : [[byPdfRoute, routeIndexKey]];
+      for (const [table, key] of indexes) {
+        if (!key) continue;
+        const rowId = `${sourcePath}\0${start}\0${key}`;
+        let rows = table.get(key);
+        if (!rows) table.set(key, (rows = new Map()));
+        rows.set(rowId, row);
+        let sourceRows = sourceTargets.get(key);
+        if (!sourceRows) sourceTargets.set(key, (sourceRows = new Set()));
+        sourceRows.add(rowId);
+      }
     }
     if (sourceTargets.size) bySource.set(sourcePath, sourceTargets);
     revision += 1;
@@ -214,17 +266,32 @@ function createReaderBacklinkIndex() {
   }
 
   function getDocument(docKey, documentId = null) {
-    const prefix = documentId ? `${docKey}:${documentId}:` : `${docKey}:`;
+    const prefixes = documentId ? [`${docKey}:${documentId}:`, `${docKey}:*:`] : [`${docKey}:`];
     const result = [];
     for (const [key, rows] of byTarget) {
-      if (key.startsWith(prefix)) result.push(...rows.values());
+      if (prefixes.some((prefix) => key.startsWith(prefix))) result.push(...rows.values());
     }
-    return result.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath) ||
-      (left.offset ?? -1) - (right.offset ?? -1));
+    return result.sort(rowSort);
   }
 
-  return Object.freeze({ replaceFile, removeFile, get, getDocument,
-    get size() { return byTarget.size; }, get revision() { return revision; } });
+  function getByPdfPath(sourcePath, target = null) {
+    const normalizedPath = normalizePdfRoutePath(sourcePath);
+    if (!normalizedPath) return [];
+    if (target) {
+      const key = routeTargetKey(normalizedPath, target);
+      return key ? [...(byPdfRoute.get(key)?.values() || [])].sort(rowSort) : [];
+    }
+    const prefix = `route:${normalizedPath}:`;
+    const result = [];
+    for (const [key, rows] of byPdfRoute) {
+      if (key.startsWith(prefix)) result.push(...rows.values());
+    }
+    return result.sort(rowSort);
+  }
+
+  return Object.freeze({ replaceFile, removeFile, get, getDocument, getByPdfPath,
+    get size() { return byTarget.size + byPdfRoute.size; }, get revision() { return revision; } });
 }
 
-module.exports = { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, occurrenceKey };
+module.exports = { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, occurrenceKey,
+  normalizePdfRoutePath };

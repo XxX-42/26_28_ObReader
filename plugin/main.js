@@ -30,6 +30,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:PDF_MERGE_CLIENT_REQUIRE */ const { createPdfMergeClient } = require("./pdf-merge-client.cjs");
 /* BUILD:PDF_ANNOTATION_HOST_REQUIRE */ const { createPdfAnnotationHost } = require('./pdf-annotation-host.cjs');
 /* BUILD:VOCABULARY_SERVICE_REQUIRE */ const { VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH } = require('./vocabulary/service.cjs');
+/* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
 /* BUILD:READER_ANCHOR_STORE_REQUIRE */ const { createReaderAnchorStore, parseReaderLinkFragment, encodeReaderLinkFragment } = require('./reader-anchor-store.cjs');
@@ -2820,16 +2821,32 @@ class PdfReaderView extends EditableFileView {
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
       try {
-        const record = await this.plugin.getVocabularyService().getTerm(message.key);
+        const [record, dictionaryResult] = await Promise.all([
+          this.plugin.getVocabularyService().getTerm(message.key),
+          this.plugin.getVocabularyDictionary().lookup(message.key)
+            .then((value) => ({ value, state: value ? "found" : "not-found" }))
+            .catch((error) => {
+              const code = error?.code || "dictionary-unavailable";
+              this.plugin.sessionLog?.record("vocabularyDictionary", { event: "lookup-unavailable", code });
+              return { value: null, state: "unavailable" };
+            }),
+        ]);
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        const personal = record && record.type === message.entryType ? record : null;
+        const dictionary = dictionaryResult.value;
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-entry-result",
           requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
           documentId: identity.documentId, openRequest: identity.openRequest,
-          record: record && record.type === message.entryType ? {
-            key: message.key, storageKey: record.key, type: record.type, status: record.status,
-            translation: record.translation || "", phonetic: record.phonetic || "",
-          } : null,
+          record: {
+            key: message.key,
+            ...(personal ? { storageKey: personal.key, status: personal.status } : {}),
+            type: message.entryType,
+            hasPersonalRecord: Boolean(personal),
+            translation: personal?.translation || dictionary?.translation || "",
+            phonetic: personal?.phonetic || dictionary?.phonetic || "",
+            dictionaryLookupState: dictionaryResult.state,
+          },
         });
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
@@ -3596,6 +3613,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
     this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
     this.vocabularyService = null;
+    this.vocabularyDictionary = null;
     this.views = new Set();
     this.popoutCloseGates = new Map();
     this.popoutProtectionWarnings = new WeakSet();
@@ -3935,7 +3953,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       view.annotationSnapshot === snapshot && view.annotationSourceHash === sourceHash;
     if (!document?.docKey || !document.documentId || !Array.isArray(pageIdentities) ||
         !snapshot || !isCurrent()) return null;
-    const cacheKey = `${document.docKey}:${document.documentId}:${sourceHash || ""}`;
+    const routePath = view.documentFile?.path || view.file?.path || document.sourcePath || "";
+    const cacheKey = `${document.docKey}:${document.documentId}:${sourceHash || ""}:${routePath}`;
     const indexRevision = this.readerBacklinkIndex?.revision || 0;
     let entry = this.readerBacklinkPageIndexes.get(cacheKey);
     if (entry && entry.indexRevision === indexRevision && entry.pageIdentities === pageIdentities &&
@@ -3957,6 +3976,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       anchorStore: this.readerAnchorStore,
       docKey: document.docKey,
       documentId: document.documentId,
+      sourcePath: view.documentFile?.path || view.file?.path || document.sourcePath || null,
       pageIdentities,
       annotations,
       tombstones,
@@ -4085,26 +4105,50 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return true;
   }
 
+  resolveLinkedPdfFile(linkPath, sourcePath = "") {
+    if (!linkPath) return null;
+    const metadataResolved = this.app.metadataCache?.getFirstLinkpathDest?.(linkPath, sourcePath);
+    if (isPdfFile(metadataResolved)) return metadataResolved;
+    // The generated links use a Vault-relative path. Direct lookup also makes
+    // this work in contexts where Obsidian's metadata cache is still warming.
+    const directPath = normalizePath(String(linkPath).replace(/^\//u, ""));
+    const direct = this.app.vault.getAbstractFileByPath(directPath);
+    return isPdfFile(direct) ? direct : null;
+  }
+
   async resolveReaderLinkDocument(parsed, linkPath, sourcePath = "") {
-    if (!parsed?.docKey || !parsed.documentId) throw new Error("链接缺少稳定的 PDF 文档身份。");
-    const route = await this.annotationHost.store.documentForIdentity({
-      docKey: parsed.docKey,
-      documentId: parsed.documentId,
-    });
-    if (route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
-      throw new Error("链接中的 PDF 文档身份无法验证。");
-    }
-    const currentPath = route.sourcePath;
-    const file = currentPath ? this.app.vault.getAbstractFileByPath(currentPath) : null;
-    if (!isPdfFile(file)) throw new Error("链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
-    if (linkPath) {
-      const direct = this.app.metadataCache?.getFirstLinkpathDest?.(linkPath, sourcePath);
-      if (direct && isPdfFile(direct) && direct.path !== file.path) {
+    if (!parsed?.target && !parsed?.pageNumber) throw new Error("链接没有可识别的 Reader 目标。");
+    let route = null;
+    let file = null;
+    if (parsed.docKey && parsed.documentId) {
+      // Legacy links keep resolving by stable identity, including after a PDF
+      // rename. New compact links intentionally carry only the PDF path.
+      route = await this.annotationHost.store.documentForIdentity({
+        docKey: parsed.docKey,
+        documentId: parsed.documentId,
+      });
+      if (route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
+        throw new Error("链接中的 PDF 文档身份无法验证。");
+      }
+      file = route.sourcePath ? this.app.vault.getAbstractFileByPath(route.sourcePath) : null;
+      const pathFile = this.resolveLinkedPdfFile(linkPath, sourcePath);
+      if (pathFile && isPdfFile(file) && pathFile.path !== file.path) {
         this.sessionLog?.record("readerAnchor", { event: "stale-path-routed-by-identity", docKey: parsed.docKey });
       }
+    } else {
+      file = this.resolveLinkedPdfFile(linkPath, sourcePath);
+      if (!file) throw new Error("链接中的 PDF 路径当前无法解析。");
+      route = await this.annotationHost.store.documentForPath(file.path);
     }
-    let readerTarget = normalizeReaderTarget({ ...parsed.target, docKey: parsed.docKey,
-      documentId: parsed.documentId, pageNumber: parsed.pageNumber, selection: parsed.selection });
+    if (!isPdfFile(file)) throw new Error("链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+    const needsDocumentIdentity = parsed.target?.kind === "selection" || parsed.target?.kind === "annotation";
+    if (needsDocumentIdentity && !route) {
+      throw new Error("此稳定目标尚无已验证的 PDF 身份；可以使用原生页码回退。");
+    }
+    const documentId = route?.documentId || null;
+    const docKey = route?.docKey || null;
+    let readerTarget = normalizeReaderTarget({ ...parsed.target, docKey,
+      documentId, pageNumber: parsed.pageNumber, selection: parsed.selection });
     if (!readerTarget && parsed.pageNumber) readerTarget = { kind: "page-number", pageNumber: parsed.pageNumber,
       selection: parsed.selection };
     if (!readerTarget) throw new Error("链接没有可识别的 Reader 目标。");
@@ -4123,12 +4167,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         throw new Error("当前批注存储不支持只读链接解析。");
       }
       const identity = effective.document || effective;
-      if (identity.documentId !== parsed.documentId || identity.docKey !== parsed.docKey) {
+      if (identity.documentId !== documentId || identity.docKey !== docKey) {
         throw new Error("批注状态与链接中的文档身份不匹配。");
       }
     }
     if (readerTarget.kind === "selection") {
-      const anchor = await this.readerAnchorStore.get(parsed.docKey, readerTarget.id, parsed.documentId);
+      const anchor = await this.readerAnchorStore.get(docKey, readerTarget.id, documentId);
       if (!anchor || anchor.sourceHash !== route.source?.sourceHash) {
         throw new Error("Selection Anchor 不存在或来源版本不匹配；原生页码回退仍可用。");
       }
@@ -4159,7 +4203,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       } catch { /* The native path fallback below remains available. */ }
     }
     if (!isPdfFile(file) && linkPath) {
-      file = this.app.metadataCache?.getFirstLinkpathDest?.(linkPath, sourcePath) || null;
+      file = this.resolveLinkedPdfFile(linkPath, sourcePath);
     }
     return isPdfFile(file)
       ? { file, readerTarget: { kind: "page-number", pageNumber, selection: parsed?.selection || null } }
@@ -4173,7 +4217,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const hashIndex = href.indexOf("#");
     if (hashIndex < 0) return false;
     const parsed = parseReaderLinkFragment(href.slice(hashIndex + 1));
-    if (!parsed.docKey || !parsed.documentId || !parsed.target) return false;
+    if (!parsed.target) return false;
     event.preventDefault?.();
     event.stopPropagation?.();
     let linkPath = "";
@@ -4380,6 +4424,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   onunload() {
     this.isUnloading = true;
     void this.vocabularyService?.dispose?.().catch(() => undefined);
+    this.vocabularyDictionary?.clearCache?.();
     if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
     this.prewarmTimer = null;
@@ -4920,6 +4965,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.vocabularyService = new VocabularyService({ adapter: this.app.vault.adapter });
     }
     return this.vocabularyService;
+  }
+
+  getVocabularyDictionary() {
+    if (!this.vocabularyDictionary) {
+      this.vocabularyDictionary = new VocabularyDictionary({ adapter: this.app.vault.adapter });
+    }
+    return this.vocabularyDictionary;
   }
 
   async importVocabulary(text, format, policy = {}) {

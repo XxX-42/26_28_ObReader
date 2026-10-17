@@ -47,6 +47,29 @@ test("missing personal learning state is distinct from an unqueried dictionary",
   assert.equal(emptyPersonalRecord.meaningFallbackLabel, "个人词条未保存释义");
 });
 
+test("dictionary results provide meanings without inventing personal learning state", () => {
+  const view = vocabularyEntryPresentation({
+    key: "on",
+    type: "word",
+    hasPersonalRecord: false,
+    dictionaryLookupState: "found",
+    translation: "prep. 在…之上\\nadv. …上去\\na. 正起作用的",
+    phonetic: "ɒn",
+  });
+  assert.equal(view.hasPersonalRecord, false);
+  assert.equal(view.status, null);
+  assert.equal(view.statusLabel, "无个人学习状态");
+  assert.equal(view.pronunciation, "ɒn");
+  assert.deepEqual(view.meanings, ["prep. 在…之上", "adv. …上去", "a. 正起作用的"]);
+});
+
+test("dictionary miss and unavailable index are shown distinctly", () => {
+  assert.equal(vocabularyEntryPresentation({ hasPersonalRecord: false, dictionaryLookupState: "not-found" })
+    .meaningFallbackLabel, "词典中未找到释义");
+  assert.equal(vocabularyEntryPresentation({ hasPersonalRecord: false, dictionaryLookupState: "unavailable" })
+    .meaningFallbackLabel, "离线词典暂不可用");
+});
+
 test("escaped dictionary line breaks are rendered as separate meanings", () => {
   const view = vocabularyEntryPresentation({
     translation: "adv. 大概, 大部分, 主要\\n[经] 大部份",

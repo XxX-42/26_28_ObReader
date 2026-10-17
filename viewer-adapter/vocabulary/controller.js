@@ -868,9 +868,9 @@ export class VocabularyController {
       : "正在保存…";
     pill.pronunciation.textContent = presentation.pronunciation;
     pill.pronunciation.hidden = presentation.pronunciation.length === 0;
-    // This lookup reads only the user's personal vocabulary store. An absent
-    // row must not be presented as a dictionary miss: no external dictionary
-    // query occurs in this flow.
+    // The host merges an optional, read-only dictionary result with this
+    // document's personal learning state. The latter remains the only source
+    // of status; dictionary metadata must never create a synthetic status.
     pill.meanings.textContent = presentation.meanings.length
       ? presentation.meanings.join("\n")
       : presentation.meaningFallbackLabel;
@@ -932,7 +932,15 @@ export class VocabularyController {
     if (typeof priorStorageKey === "string" && priorStorageKey &&
         message.record.storageKey !== priorStorageKey) return false;
     pill.pendingStatus = null;
-    this.updatePillRecord(message.record);
+    const priorRecord = pill.record || {};
+    this.updatePillRecord({
+      ...priorRecord,
+      ...message.record,
+      hasPersonalRecord: true,
+      dictionaryLookupState: priorRecord.dictionaryLookupState,
+      translation: message.record.translation || priorRecord.translation || "",
+      phonetic: message.record.phonetic || priorRecord.phonetic || "",
+    });
     const acknowledged = message.record;
     const canonicalKey = typeof acknowledged.storageKey === "string" && acknowledged.storageKey
       ? acknowledged.storageKey

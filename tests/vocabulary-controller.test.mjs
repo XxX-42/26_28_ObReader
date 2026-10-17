@@ -826,6 +826,33 @@ test("eligible collapsed single-word click opens a local pill and durable status
     documentId: "doc-1", openRequest: 7, record: null }), true);
   assert.equal(controller.entryPill.statusElement.textContent, "无个人学习状态");
   assert.equal(controller.entryPill.meanings.textContent, "未查询外部词典");
+  const dictionaryTranslation = "prep. 在...之上\nadv. ...上去\na. 正起作用的\n[计] 打开";
+  assert.equal(controller.handleEntryResult({ requestId: unrecordedTap.requestId, key: "alpha", pageNumber: 1,
+    documentId: "doc-1", openRequest: 7,
+    record: {
+      key: "alpha", type: "word", hasPersonalRecord: false,
+      translation: dictionaryTranslation, phonetic: "ɒn", dictionaryLookupState: "found",
+    } }), true);
+  assert.equal(controller.entryPill.meanings.textContent, dictionaryTranslation);
+  assert.equal(controller.entryPill.pronunciation.textContent, "ɒn");
+  assert.equal(controller.entryPill.record.hasPersonalRecord, false);
+  assert.equal(controller.requestStatusChange(5), true);
+  const dictionaryStatusUpdate = posted.filter((message) => message.type === "vocab-set-status").at(-1);
+  assert.equal(controller.handleStatusAck({ durable: true, requestId: dictionaryStatusUpdate.requestId,
+    key: "alpha", pageNumber: 1, documentId: "doc-1", openRequest: 8,
+    record: { key: "alpha", storageKey: "alpha", type: "word", status: 5 } }), false,
+  "a stale durable ACK cannot alter the current dictionary-backed card");
+  assert.equal(controller.entryPill.meanings.textContent, dictionaryTranslation);
+  assert.equal(controller.entryPill.pronunciation.textContent, "ɒn");
+  assert.equal(controller.entryPill.record.hasPersonalRecord, false);
+  assert.equal(controller.handleStatusAck({ durable: true, requestId: dictionaryStatusUpdate.requestId,
+    key: "alpha", pageNumber: 1, documentId: "doc-1", openRequest: 7,
+    record: { key: "alpha", storageKey: "alpha", type: "word", status: 5 } }), true,
+  "a durable status ACK may omit dictionary fields because they are not persisted in the personal record");
+  assert.equal(controller.entryPill.meanings.textContent, dictionaryTranslation);
+  assert.equal(controller.entryPill.pronunciation.textContent, "ɒn");
+  assert.equal(controller.entryPill.record.hasPersonalRecord, true);
+  assert.equal(controller.entryPill.status, 5);
   controller.updatePillRecord({ key: "alpha", type: "word" });
   assert.equal(controller.entryPill.statusElement.textContent, "学习状态未设置");
   assert.equal(controller.entryPill.meanings.textContent, "个人词条未保存释义");
@@ -868,7 +895,7 @@ test("eligible collapsed single-word click opens a local pill and durable status
   assert.equal(controller.entryPill.pronunciation.textContent, "/ˈælfə/");
   assert.equal(controller.entryPill.meanings.textContent.includes("local note"), false);
   assert.equal(controller.requestStatusChange(3), true);
-  const update = posted.find((message) => message.type === "vocab-set-status");
+  const update = posted.filter((message) => message.type === "vocab-set-status").at(-1);
   assert.equal(update.status, 3);
   assert.equal(update.key, "alpha", "the operation keeps the queried surface as its request key");
   assert.equal(update.storageKey, "alpha", "the canonical key is separately supplied for the durable row");

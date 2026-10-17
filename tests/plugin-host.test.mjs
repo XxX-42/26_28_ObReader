@@ -1209,6 +1209,11 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   view.rendererGeneration = "renderer-vocab";
   view.documentId = "word-click-doc";
   view.openRequest = 11;
+  harness.plugin.getVocabularyDictionary = () => ({
+    lookup: async (key) => key === "alpha"
+      ? { key: "alpha", translation: "阿尔法", phonetic: "ˈælfə", source: "ECDICT" }
+      : null,
+  });
   const beforeVocabularyMutation = new Map(harness.storedFiles);
   sent.length = 0;
   const send = (type, fields = {}, rendererGeneration = "renderer-vocab") => view.onMessage({ source: frame, data: {
@@ -1224,7 +1229,10 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   await new Promise((resolve) => setTimeout(resolve, 0));
   const entry = sent.find((message) => message.type === "vocab-entry-result");
   assert.equal(entry.requestId, "entry-1");
-  assert.equal(entry.record, null);
+  assert.deepEqual(entry.record, {
+    key: "alpha", type: "word", hasPersonalRecord: false,
+    translation: "阿尔法", phonetic: "ˈælfə", dictionaryLookupState: "found",
+  }, "dictionary meaning is returned without inventing a personal learning record");
   assert.equal(entry.documentId, "word-click-doc");
   assert.deepEqual([...harness.storedFiles], [...beforeVocabularyMutation],
     "looking up a missing personal vocabulary record is read-only");
@@ -1236,7 +1244,8 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   await new Promise((resolve) => setTimeout(resolve, 0));
   const runEntry = sent.find((message) => message.type === "vocab-entry-result" && message.requestId === "entry-run");
   assert.deepEqual(runEntry.record, {
-    key: "ran", storageKey: "run", type: "word", status: 3, translation: "跑", phonetic: "",
+    key: "ran", storageKey: "run", status: 3, type: "word", hasPersonalRecord: true,
+    translation: "跑", phonetic: "", dictionaryLookupState: "not-found",
   });
 
   send("vocab-set-status", { requestId: "status-run", entryRequestId: "entry-run", pageNumber: 2,
@@ -1473,7 +1482,7 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   });
   const selection = await harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(link({ kind: "selection", id: selectionAnchor.anchorId }, 2)),
-    "rename-link.pdf",
+    file.path,
   );
   assert.equal(selection.file, file);
   assert.equal(selection.readerTarget.kind, "selection");
@@ -1481,7 +1490,7 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
 
   const page = await harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(link({ kind: "page", id: "page-two" }, 2)),
-    "rename-link.pdf",
+    file.path,
   );
   assert.equal(page.file, file);
   assert.deepEqual(page.readerTarget, {
@@ -1496,14 +1505,25 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   harness.files.set(file.path, file);
   await harness.plugin.annotationHost.renamed(file, oldPath);
 
+  const legacyAnnotationLink = `page=2&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`;
   const annotation = await harness.plugin.resolveReaderLinkDocument(
-    parseReaderLinkFragment(link({ kind: "annotation", id: annotationId }, 2)),
+    parseReaderLinkFragment(legacyAnnotationLink),
     "rename-link.pdf",
   );
   assert.equal(annotation.file, file, "the stable document route wins over a stale Markdown path");
   assert.equal(annotation.readerTarget.pageNumber, 2);
   assert.equal(view.annotationDocument.documentId, document.documentId);
   assert.equal(view.annotationDocument.docKey, document.docKey);
+
+  const compactAnnotationLink = link({ kind: "annotation", id: annotationId }, 2);
+  assert.equal(compactAnnotationLink, `page=2&obreader=ann.${annotationId}`,
+    "newly copied links expose only the native page fallback and stable target ID");
+  const compactAnnotation = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(compactAnnotationLink), file.path,
+  );
+  assert.equal(compactAnnotation.file, file, "the compact link resolves through its current PDF route");
+  assert.equal(compactAnnotation.readerTarget.documentId, document.documentId);
+  assert.equal(compactAnnotation.readerTarget.docKey, document.docKey);
 
   await saveSidecarOperations(reader, {
     requestId: "rename-link-delete-annotation",
@@ -1512,7 +1532,7 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   });
   await assert.rejects(
     harness.plugin.resolveReaderLinkDocument(
-      parseReaderLinkFragment(link({ kind: "annotation", id: annotationId }, 2)),
+      parseReaderLinkFragment(legacyAnnotationLink),
       "rename-link.pdf",
     ),
     /已删除或不存在/,
@@ -1550,10 +1570,8 @@ test("WAL Reader links resolve a renamed document through a read-only effective-
   const append = adapter.append.bind(adapter);
   adapter.write = async (...args) => { storageWrites += 1; return write(...args); };
   adapter.append = async (...args) => { storageWrites += 1; return append(...args); };
-  const fragment = encodeReaderLinkFragment({ pageNumber: 1, docKey: document.docKey,
-    documentId: document.documentId,
-    target: { kind: "annotation", id: annotationId } });
-  const result = await harness.plugin.resolveReaderLinkDocument(parseReaderLinkFragment(fragment), "wal-link.pdf");
+  const legacyFragment = `page=1&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`;
+  const result = await harness.plugin.resolveReaderLinkDocument(parseReaderLinkFragment(legacyFragment), "wal-link.pdf");
   assert.equal(result.file, file);
   assert.equal(result.readerTarget.kind, "annotation");
   assert.equal(result.readerTarget.pageNumber, 1);

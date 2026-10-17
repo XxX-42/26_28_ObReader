@@ -2,6 +2,10 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
+**0.11.2 版**将个人学习状态与离线词典查询接通：没有个人学习记录的单词仍可显示 ECDICT 释义和音标，保存学习等级后保留当前释义。词典查询只在打开词条卡时发生，不进入页面匹配和缩放重绘链路。复制的 Reader 链接采用 `[[PDF路径#page=N&obreader=sel.ID|显示文字]]`，不再输出 `docKey`、`obdoc` 或额外的 selection 参数；旧链接仍可读取。
+
+ECDICT 原始数据与可重建查询索引均位于 `00_Archive/21_VocabularyData/dictionaries/ECDICT/`。已有 `ecdict.csv.gz` 时，可运行 `node scripts/build-ecdict-index.mjs --input <ecdict.csv.gz路径> --output <Vault路径>/00_Archive/21_VocabularyData/dictionaries/ECDICT/index-v1` 生成确定性分片。插件通过跨平台 Vault DataAdapter 按需读取分片；个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。
+
 **0.10.6 版**在 0.10.5 的词汇学习修复上，补齐 PDF 文本层同一节点中显式换行的断词处理（如 `compa-\nrable`）：只有换行几何确认续词位于下一行时才忽略断行连字符；选中跨行文字仍映射回完整逻辑单词。普通行内连字符仍按两个词处理。原 PDF 仍保持不可变；Windows、macOS 和 iPadOS 共用同一三文件包。
 
 当前写入格式为 JSONL。现有 v3.1 和 Format 3 文件仍作为只读迁移／恢复输入；本候选版不会清理或回收旧数据。Sidecar 快照是可重建缓存，设备 WAL 锚点、归档和尾部记录提供恢复能力。继续使用 0.10.6 写入器前，请先升级所有会编辑该文档的设备。真实的跨设备 Obsidian Sync 和 iPad 硬件验收与本地自动化测试分开进行；详情见[协议说明](ANNOTATION_STORE.md)、[实现证据](WAL_SIDECAR_IMPLEMENTATION.md)和[验收记录](GENERAL_ACCEPTANCE.md)。

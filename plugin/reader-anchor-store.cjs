@@ -42,18 +42,29 @@ function parseReaderLinkFragment(value) {
   };
 }
 
-function encodeReaderLinkFragment({ pageNumber, selection, docKey, documentId, target } = {}) {
+function encodeReaderLinkFragment(options = {}) {
+  const { pageNumber, target } = options;
   const params = new URLSearchParams();
   if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
-  if (typeof selection === "string" && selection.length <= 128) params.set("selection", selection);
-  if (DOC_KEY.test(docKey || "")) params.set("docKey", docKey.toLowerCase());
-  if (typeof documentId === "string" && documentId.length > 0 && documentId.length <= 512) params.set("obdoc", documentId);
+  // Stable document identity remains in the Vault Anchor Store. Keep copied
+  // links human-readable and natively useful: page is the fallback and
+  // obreader is the enhanced target. Legacy selection/docKey/obdoc values are
+  // still accepted by the parser below, but are never emitted again.
   if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" &&
       target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
     const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";
     params.set("obreader", `${prefix}.${target.id}`);
   }
   return params.toString();
+}
+
+function parseReaderLinkDestination(value) {
+  const raw = typeof value === "string" ? value : "";
+  const marker = raw.indexOf("#");
+  if (marker < 0) return { routePath: null, ...parseReaderLinkFragment(raw) };
+  let routePath = raw.slice(0, marker).trim();
+  try { routePath = decodeURIComponent(routePath); } catch { /* Keep malformed legacy path literal. */ }
+  return { routePath: routePath || null, ...parseReaderLinkFragment(raw.slice(marker + 1)) };
 }
 
 function validateSelectionAnchor(value) {
@@ -175,6 +186,7 @@ function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
 module.exports = {
   ROOT,
   parseReaderLinkFragment,
+  parseReaderLinkDestination,
   encodeReaderLinkFragment,
   validateSelectionAnchor,
   createReaderAnchorStore,

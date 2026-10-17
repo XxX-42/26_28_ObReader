@@ -135,6 +135,7 @@ for (const file of [
   path.join(pluginSource, "reader-anchor-store.cjs"),
   path.join(pluginSource, "reader-backlink-index.cjs"),
   path.join(pluginSource, "vocabulary", "service.cjs"),
+  path.join(pluginSource, "vocabulary", "dictionary.cjs"),
   path.join(pluginSource, "vocabulary", "modals.cjs"),
 ]) {
   try {
@@ -348,6 +349,8 @@ const annotationHostMarker =
   /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
 const vocabularyServiceMarker =
   /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*,?\s*(?:VOCABULARY_PATH\s*,?\s*)?\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
+const vocabularyDictionaryMarker =
+  /\/\* BUILD:VOCABULARY_DICTIONARY_REQUIRE \*\/\s*const\s*\{\s*VocabularyDictionary\s*\}\s*=\s*require\((['"])\.\/vocabulary\/dictionary\.cjs\1\);/s;
 const vocabularyModalsMarker =
   /\/\* BUILD:VOCABULARY_MODALS_REQUIRE \*\/\s*const\s*\{\s*createVocabularyModals\s*\}\s*=\s*require\((['"])\.\/vocabulary\/modals\.cjs\1\);/s;
 const heavyWorkMarker =
@@ -378,6 +381,11 @@ assert.equal(
   [...sourceMain.matchAll(new RegExp(vocabularyServiceMarker.source, "gs"))].length,
   1,
   "Expected exactly one vocabulary service build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(vocabularyDictionaryMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one offline dictionary build marker in plugin/main.js",
 );
 assert.equal(
   [...sourceMain.matchAll(new RegExp(vocabularyModalsMarker.source, "gs"))].length,
@@ -440,6 +448,11 @@ const inlinedVocabularyService = await inlineModule(
   "__PDFReaderVocabularyService",
   "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH",
 );
+const inlinedVocabularyDictionary = await inlineModule(
+  "vocabulary/dictionary.cjs",
+  "__PDFReaderVocabularyDictionary",
+  "VocabularyDictionary",
+);
 const inlinedVocabularyModals = await inlineModule(
   "vocabulary/modals.cjs",
   "__PDFReaderVocabularyModals",
@@ -472,6 +485,7 @@ const bundledMain = sourceMain
   .replace(mergeClientMarker, () => inlinedMergeClient)
   .replace(annotationHostMarker, () => inlinedAnnotationHost)
   .replace(vocabularyServiceMarker, () => inlinedVocabularyService)
+  .replace(vocabularyDictionaryMarker, () => inlinedVocabularyDictionary)
   .replace(vocabularyModalsMarker, () => inlinedVocabularyModals)
   .replace(heavyWorkMarker, () => inlinedHeavyWork)
   .replace(recoveryMarker, () => inlinedRecovery)
@@ -487,6 +501,7 @@ assert.ok(!bundledMain.includes("./asset-runtime.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
 assert.ok(!bundledMain.includes("./pdf-hash-runtime.cjs"));
+assert.ok(!bundledMain.includes("./vocabulary/dictionary.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./heavy-work.cjs"));
 assert.ok(!bundledMain.includes("./pdf-recovery.cjs"));
