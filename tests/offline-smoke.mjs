@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 import {
   attachCleanupErrors,
@@ -28,6 +29,7 @@ import {
 const dist = path.join(root, "dist", "pdf-web-reader");
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const browserPath = resolveBrowserPath();
+const artifacts = resolveTestArtifactRoot(root);
 
 if (!browserPath) {
   throw new Error(
@@ -50,7 +52,7 @@ let server;
 let temp;
 
 try {
-  await mkdir(path.join(root, "tests", "artifacts"), { recursive: true });
+  await mkdir(artifacts, { recursive: true });
   temp = await createTempRoot("offline-three-file-");
   const adapter = createDiskAdapter(temp);
   const mainSource = await readBuiltMain();
@@ -155,7 +157,7 @@ try {
     executablePath: browserPath,
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  }, { testName: "offline-smoke" });
+  }, { testName: "offline-smoke", artifactsDir: artifacts });
   browserObserver = observeBrowserTestChildStderr(browser.process?.());
   page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
@@ -688,12 +690,7 @@ try {
       );
       await page
         .screenshot({
-          path: path.join(
-            root,
-            "tests",
-            "artifacts",
-            `offline-smoke-ink-failure-${runId}.png`,
-          ),
+          path: path.join(artifacts, `offline-smoke-ink-failure-${runId}.png`),
         })
         .catch(() => {});
       throw error;
@@ -987,12 +984,7 @@ try {
         consoleErrors,
         snapshot,
       };
-      const artifactPath = path.join(
-        root,
-        "tests",
-        "artifacts",
-        `mac-offline-reopen-timeout-${runId}.json`,
-      );
+      const artifactPath = path.join(artifacts, `mac-offline-reopen-timeout-${runId}.json`);
       await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
       console.error(`Offline reopen diagnostic saved: ${artifactPath}`);
       error.message = `${error.message}\nOffline reopen snapshot: ${JSON.stringify(artifact)}`;
@@ -1145,7 +1137,7 @@ try {
     ownedPages: [page],
     server: server?.listening ? server : undefined,
   });
-  const cleanupPath = path.join(root, "tests", "artifacts", `offline-smoke-${runId}.cleanup.json`);
+  const cleanupPath = path.join(artifacts, `offline-smoke-${runId}.cleanup.json`);
   try {
     if (temp) await removeTempRoot(temp);
   } catch (error) {

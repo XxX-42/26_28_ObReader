@@ -225,11 +225,55 @@ async function inspectSampleOutputFile(outputPath) {
   }
 }
 
-const errorRecord = (error) => ({
-  name: error?.name || "Error",
-  message: error?.message || String(error),
-  stack: error?.stack || null,
-});
+const errorRecord = (error, ancestors = new Set()) => {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) {
+    return { name: "Error", message: String(error), stack: null };
+  }
+  if (ancestors.has(error)) {
+    return {
+      name: error?.name || "Error",
+      message: error?.message || "Circular error reference",
+      circularReference: true,
+    };
+  }
+
+  ancestors.add(error);
+  const record = {
+    name: error?.name || "Error",
+    message: error?.message || String(error),
+    stack: error?.stack || null,
+  };
+  for (const property of ["code", "errno", "syscall", "signal"]) {
+    const value = error?.[property];
+    if (typeof value === "string" || typeof value === "number") record[property] = value;
+  }
+  if (Array.isArray(error?.errors)) {
+    record.errors = error.errors.map((innerError) => errorRecord(innerError, ancestors));
+  }
+  if (error?.cause !== undefined) record.cause = errorRecord(error.cause, ancestors);
+  ancestors.delete(error);
+  return record;
+};
+
+const summarizeInnerErrors = (entry, label = "inner error") => {
+  const details = [];
+  const describe = (error) => {
+    const codeDetails = ["code", "errno", "syscall", "signal"]
+      .filter((property) => error?.[property] !== undefined)
+      .map((property) => `${property}=${String(error[property])}`);
+    const suffix = codeDetails.length ? ` [${codeDetails.join(", ")}]` : "";
+    return `${error?.name || "Error"}: ${error?.message || String(error)}${suffix}`;
+  };
+  for (const [index, error] of (entry.errors || []).entries()) {
+    details.push(`${label} ${index + 1}: ${describe(error)}`);
+    details.push(...summarizeInnerErrors(error, `${label} ${index + 1}`));
+  }
+  if (entry.cause) {
+    details.push(`cause: ${describe(entry.cause)}`);
+    details.push(...summarizeInnerErrors(entry.cause, "cause"));
+  }
+  return details;
+};
 
 const withinDeadline = async (promise, timeoutMs, label) => {
   let timer;
@@ -1753,12 +1797,17 @@ export async function cleanupBrowserTestResources({
 export function attachCleanupErrors(primaryError, report) {
   if (!report?.errors?.length) return primaryError;
   const entries = report.errors;
+  const details = entries
+    .map((entry) => [
+      `${entry.phase}: ${entry.message}`,
+      ...summarizeInnerErrors(entry),
+    ].join("; "))
+    .join("; ");
   if (primaryError) {
     const error = primaryError instanceof Error
       ? primaryError
       : new Error(String(primaryError), { cause: primaryError });
     const oldMessage = error.message || String(error);
-    const details = entries.map((entry) => `${entry.phase}: ${entry.message}`).join("; ");
     error.cleanupErrors = [...(error.cleanupErrors || []), ...entries];
     error.cleanupReport = report;
     error.cleanupError = new AggregateError(
@@ -1771,7 +1820,7 @@ export function attachCleanupErrors(primaryError, report) {
   }
   const cleanupError = new AggregateError(
     entries.map((entry) => Object.assign(new Error(entry.message), entry)),
-    "Browser test cleanup failed",
+    details ? `Browser test cleanup failed: ${details}` : "Browser test cleanup failed",
   );
   cleanupError.cleanupReport = report;
   return cleanupError;

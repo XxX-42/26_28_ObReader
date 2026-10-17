@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { PDFDocument } from "pdf-lib";
 import { withAtomicProcess } from "./atomic-adapter-process.mjs";
+import { VocabularyController } from "../viewer-adapter/vocabulary/controller.js";
+import { scanPageTextLayer } from "../viewer-adapter/vocabulary/page-scanner.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
@@ -753,6 +755,67 @@ async function waitForSentMessage(reader, predicate, attempts = 100) {
   assert.fail("Timed out waiting for the expected Viewer bridge message");
 }
 
+function makeWrappedVocabularyFixture() {
+  const unitRects = new Map([
+    ["wrapped-first:5", { top: 10, left: 70, width: 5, height: 12 }],
+    ["wrapped-second:0", { top: 24, left: 4, width: 7, height: 12 }],
+  ]);
+  const segmentRects = new Map();
+  let textLayer;
+  const documentRef = {
+    body: {
+      children: [],
+      appendChild(node) { node.parentNode = this; this.children.push(node); return node; },
+      removeChild(node) { this.children.splice(this.children.indexOf(node), 1); node.parentNode = null; return node; },
+    },
+    createElement(tag) {
+      return {
+        tagName: tag.toUpperCase(), dataset: {}, style: {}, attributes: {}, childNodes: [], listeners: new Map(),
+        classList: { toggle() {} },
+        setAttribute(name, value) { this.attributes[name] = value; },
+        addEventListener(type, listener) { this.listeners.set(type, listener); },
+        appendChild(node) { node.parentNode = this; this.childNodes.push(node); return node; },
+        append(...nodes) { nodes.forEach((node) => this.appendChild(node)); },
+        getBoundingClientRect() { return { width: 320, height: 180 }; },
+        remove() { this.parentNode?.removeChild?.(this); },
+      };
+    },
+    createRange() {
+      let startNode = null;
+      let startOffset = 0;
+      return {
+        setStart(node, offset) { startNode = node; startOffset = offset; },
+        setEnd() {},
+        getBoundingClientRect() { return unitRects.get(`${startNode?.id}:${startOffset}`) || null; },
+        getClientRects() { return segmentRects.get(startNode) || []; },
+        detach() {},
+      };
+    },
+  };
+  const makeText = (value, id) => ({
+    id, nodeType: 3, nodeName: "#text", nodeValue: value, data: value, length: value.length,
+    ownerDocument: documentRef, isConnected: true, parentNode: null,
+  });
+  const firstLine = makeText("compa-", "wrapped-first");
+  const secondLine = makeText("rable", "wrapped-second");
+  segmentRects.set(firstLine, [{ left: 10, top: 10, right: 74, bottom: 22, width: 64, height: 12 }]);
+  segmentRects.set(secondLine, [{ left: 4, top: 24, right: 38, bottom: 36, width: 34, height: 12 }]);
+  textLayer = {
+    nodeType: 1, tagName: "DIV", childNodes: [firstLine, secondLine], ownerDocument: documentRef,
+    contains(node) { return node === this || node === firstLine || node === secondLine; },
+  };
+  firstLine.parentNode = textLayer;
+  secondLine.parentNode = textLayer;
+  const pageRoot = {
+    ownerDocument: documentRef,
+    querySelector(selector) { return selector === ".textLayer" ? textLayer : null; },
+    contains(node) { return node === this || node === textLayer || textLayer.contains(node); },
+    getBoundingClientRect() { return { left: 0, top: 0, width: 600, height: 800 }; },
+  };
+  textLayer.parentNode = pageRoot;
+  return { documentRef, firstLine, pageRoot, textLayer };
+}
+
 async function saveSidecarOperations(reader, {
   requestId = "sidecar-save",
   revision = 1,
@@ -1212,22 +1275,97 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   harness.plugin.getVocabularyDictionary = () => ({
     lookup: async (key) => key === "alpha"
       ? { key: "alpha", translation: "阿尔法", phonetic: "ˈælfə", source: "ECDICT" }
-      : null,
+      : key === "comparable"
+        ? { key: "comparable", translation: "可比较的", phonetic: "ˌkɒmpəˈræbəl", source: "ECDICT" }
+        : null,
   });
-  const beforeVocabularyMutation = new Map(harness.storedFiles);
   sent.length = 0;
   const send = (type, fields = {}, rendererGeneration = "renderer-vocab") => view.onMessage({ source: frame, data: {
     channel: "pdf-web-reader", token: view.token, type, rendererGeneration,
     documentId: view.documentId, openRequest: view.openRequest, ...fields,
   } });
+  const wrappedProof = [{
+    offset: 5,
+    left: { segmentIndex: 0, sourceOffset: 4, text: "a" },
+    hyphen: { segmentIndex: 0, sourceOffset: 5, text: "-" },
+    right: { segmentIndex: 1, sourceOffset: 0, text: "r" },
+  }];
 
   send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha", entryType: "word" }, "renderer-old");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sent.length, 0, "stale renderer cannot query the local store");
 
+  send("vocab-token-tap", { requestId: "entry-invalid", pageNumber: 1, key: "comparable",
+    rawSurface: "compa-rable", logicalSurface: "unrelated", entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.length, 0, "a display surface cannot authorize a different logical lookup key");
+
+  send("vocab-token-tap", { requestId: "entry-unproven-hyphen", pageNumber: 1, key: "wellknown",
+    rawSurface: "well-known", logicalSurface: "wellknown", entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent.length, 0, "a normal lexical hyphen cannot be removed without scanner evidence");
+
+  for (const [requestId, lineHyphenEvidence] of [
+    ["entry-fake-offset", [{
+      offset: 4,
+      left: { segmentIndex: 0, sourceOffset: 3, text: "p" },
+      hyphen: { segmentIndex: 0, sourceOffset: 4, text: "a" },
+      right: { segmentIndex: 1, sourceOffset: 0, text: "r" },
+    }]],
+    ["entry-mismatched-neighbor", [{
+      ...wrappedProof[0], right: { ...wrappedProof[0].right, text: "x" },
+    }]],
+    ["entry-too-many-proofs", Array.from({ length: 65 }, () => wrappedProof[0])],
+  ]) {
+    send("vocab-token-tap", { requestId, pageNumber: 1, key: "comparable",
+      rawSurface: "compa-rable", logicalSurface: "comparable", lineHyphenEvidence, entryType: "word" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(sent.length, 0, `${requestId} cannot authorize a vocabulary lookup`);
+  }
+
+  send("vocab-set-status", { requestId: "status-unproven-hyphen", entryRequestId: "entry-unproven-hyphen", pageNumber: 1,
+    key: "wellknown", rawSurface: "well-known", logicalSurface: "wellknown", status: 5, entryType: "word" });
+  send("vocab-set-status", { requestId: "status-fake-offset", entryRequestId: "entry-fake-offset", pageNumber: 1,
+    key: "comparable", rawSurface: "compa-rable", logicalSurface: "comparable",
+    lineHyphenEvidence: [{ ...wrappedProof[0], offset: 4 }], status: 5, entryType: "word" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("wellknown")) ?? null, null,
+    "an unproven ordinary hyphen cannot create a durable status record");
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("comparable")) ?? null, null,
+    "a fabricated status offset cannot create a durable status record");
+  assert.equal(sent.some((message) => message.type === "vocab-status-ack"), false,
+    "rejected status proofs never receive a durable acknowledgement");
+
+  send("vocab-token-tap", { requestId: "entry-ordinary-hyphen", pageNumber: 1,
+    key: "well-known", rawSurface: "well-known", entryType: "word" });
+  const ordinaryHyphenEntry = await waitForSentMessage(reader,
+    (message) => message.type === "vocab-entry-result" && message.requestId === "entry-ordinary-hyphen");
+  assert.equal(ordinaryHyphenEntry.record.key, "well-known",
+    "an unmodified ordinary hyphen retains its original lookup identity");
+
+  send("vocab-token-tap", { requestId: "entry-wrapped", pageNumber: 1, key: "comparable",
+    rawSurface: "compa-rable", logicalSurface: "comparable", lineHyphenEvidence: wrappedProof, entryType: "word" });
+  const wrappedEntry = await waitForSentMessage(reader,
+    (message) => message.type === "vocab-entry-result" && message.requestId === "entry-wrapped");
+  assert.deepEqual(wrappedEntry.record, {
+    key: "comparable", type: "word", hasPersonalRecord: false,
+    translation: "可比较的", phonetic: "ˌkɒmpəˈræbəl", dictionaryLookupState: "found",
+  }, "a validated logical surface reaches the host dictionary and returns to the pill");
+
+  send("vocab-set-status", { requestId: "status-wrapped", entryRequestId: "entry-wrapped", pageNumber: 1,
+    key: "comparable", rawSurface: "compa-rable", logicalSurface: "comparable",
+    lineHyphenEvidence: wrappedProof, status: 5, entryType: "word" });
+  const wrappedAck = await waitForSentMessage(reader,
+    (message) => message.type === "vocab-status-ack" && message.requestId === "status-wrapped");
+  assert.equal(wrappedAck.record.key, "comparable");
+  assert.equal(wrappedAck.record.storageKey, "comparable");
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("comparable")).status, 5,
+    "status is saved against the logical vocabulary surface without persisting the visible wrap hyphen");
+  const beforeVocabularyMutation = new Map(harness.storedFiles);
+
   send("vocab-token-tap", { requestId: "entry-1", pageNumber: 1, key: "alpha", rawSurface: "Alpha", entryType: "word" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const entry = sent.find((message) => message.type === "vocab-entry-result");
+  const entry = sent.find((message) => message.type === "vocab-entry-result" && message.requestId === "entry-1");
   assert.equal(entry.requestId, "entry-1");
   assert.deepEqual(entry.record, {
     key: "alpha", type: "word", hasPersonalRecord: false,
@@ -1256,7 +1394,7 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   assert.equal(runAck.record.storageKey, "run", "ack exposes the actual persisted record key");
   assert.equal(runAck.record.status, 5);
   assert.equal((await service.getTerm("run")).status, 5);
-  assert.deepEqual(JSON.parse(await service.exportJson()).records.map((record) => record.key), ["run"]);
+  assert.deepEqual(JSON.parse(await service.exportJson()).records.map((record) => record.key), ["comparable", "run"]);
 
   send("vocab-set-status", { requestId: "status-1", entryRequestId: "entry-1", pageNumber: 1,
     key: "alpha", rawSurface: "Alpha", status: 5, entryType: "word" });
@@ -1281,6 +1419,134 @@ test("word popup lookup is identity-bound and vocabulary status replies only aft
   const jsonlBefore = [...beforeVocabularyMutation].filter(([path]) => path.endsWith(".jsonl"));
   const jsonlAfter = [...harness.storedFiles].filter(([path]) => path.endsWith(".jsonl"));
   assert.deepEqual(jsonlAfter, jsonlBefore, "vocabulary status does not write or alter annotation WAL files");
+  harness.plugin.onunload();
+});
+
+test("scanner proof crosses the authenticated controller-host bridge and commits the logical pill key", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  harness.plugin.settings.vocabularyEnabled = true;
+  const pdfFile = new harness.TFile("Books/vocabulary-wrap-e2e.pdf", [37, 80, 68, 70, 45, 49]);
+  const reader = await createSidecarReader(harness, pdfFile);
+  const { view, frame, sent } = reader;
+  harness.plugin.getVocabularyDictionary = () => ({
+    lookup: async (key) => key === "comparable"
+      ? { key, translation: "可比较的", phonetic: "ˌkɒmpəˈræbəl", source: "ECDICT" }
+      : null,
+  });
+
+  const fixture = makeWrappedVocabularyFixture();
+  const listeners = new Map();
+  const eventBus = {
+    _on(name, listener) { listeners.set(name, listener); },
+    _off(name, listener) { if (listeners.get(name) === listener) listeners.delete(name); },
+  };
+  const app = {
+    pdfDocument: { numPages: 1 },
+    pdfViewer: {
+      getPageView(index) { return index === 0 ? { div: fixture.pageRoot } : null; },
+      getVisiblePages() { return { views: [{ id: 1 }] }; },
+    },
+  };
+  const windowRef = {
+    getSelection() { return { isCollapsed: true, rangeCount: 0 }; },
+    innerWidth: 800,
+    innerHeight: 600,
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const sentToHost = [];
+  const controller = new VocabularyController({
+    app,
+    eventBus,
+    documentRef: fixture.documentRef,
+    windowRef,
+    postToHost(type, fields) {
+      const data = {
+        channel: "pdf-web-reader",
+        token: view.token,
+        type,
+        rendererGeneration: view.rendererGeneration,
+        documentId: view.documentId,
+        openRequest: view.openRequest,
+        ...fields,
+      };
+      sentToHost.push(data);
+      view.onMessage({ source: frame, data });
+      return true;
+    },
+    getIdentity: () => ({ documentId: view.documentId, openRequest: view.openRequest }),
+    makeId: () => "wrap-e2e",
+    scan: scanPageTextLayer,
+    makeOverlay: () => ({ draw() {}, clear() {}, dispose() {} }),
+  });
+  const originalPostMessage = frame.postMessage.bind(frame);
+  frame.postMessage = (message) => {
+    originalPostMessage(message);
+    if (message.type === "vocab-page-results") controller.handlePageResults(message);
+    else if (message.type === "vocab-entry-result") controller.handleEntryResult(message);
+    else if (message.type === "vocab-status-ack") controller.handleStatusAck(message);
+    else if (message.type === "reader-backlink-occurrence-result") controller.handleOccurrenceBacklinks(message);
+  };
+
+  controller.setDocument(view.documentId, view.openRequest, true);
+  const pageResults = await waitForSentMessage(reader, (message) => message.type === "vocab-page-results");
+  assert.equal(controller.handlePageResults(pageResults), false,
+    "the simulated Viewer event route already delivered the host page result to the controller");
+  const [token] = controller.pages.get("1").tokens;
+  assert.equal(token.rawSurface, "compa-rable");
+  assert.equal(token.logicalSurface, "comparable");
+  assert.equal(token.surfaceKey, "comparable");
+  assert.deepEqual(token.lineHyphenEvidence, [{
+    offset: 5,
+    left: { segmentIndex: 0, sourceOffset: 4, text: "a" },
+    hyphen: { segmentIndex: 0, sourceOffset: 5, text: "-" },
+    right: { segmentIndex: 1, sourceOffset: 0, text: "r" },
+  }], "the proof is produced by the geometry-confirming scanner");
+
+  assert.equal(controller.handleTap({
+    type: "click", targetRole: "text-layer", button: 0, detail: 1,
+    pageIndex: 0, clientPoint: { x: 30, y: 15 },
+  }), true);
+  const tap = sentToHost.find((message) => message.type === "vocab-token-tap");
+  assert.deepEqual(tap.lineHyphenEvidence, token.lineHyphenEvidence,
+    "the controller sends the scanner-generated proof through the authenticated bridge envelope");
+  assert.deepEqual({
+    channel: tap.channel,
+    token: tap.token,
+    rendererGeneration: tap.rendererGeneration,
+    documentId: tap.documentId,
+    openRequest: tap.openRequest,
+  }, {
+    channel: "pdf-web-reader",
+    token: view.token,
+    rendererGeneration: view.rendererGeneration,
+    documentId: view.documentId,
+    openRequest: view.openRequest,
+  });
+
+  const entryReply = await waitForSentMessage(reader,
+    (message) => message.type === "vocab-entry-result" && message.requestId === tap.requestId);
+  assert.equal(entryReply.record.translation, "可比较的");
+  assert.equal(controller.entryPill.heading.textContent, "comparable",
+    "the actual host dictionary response resolves into the logical word pill");
+  assert.equal(controller.entryPill.entry.rawSurface, "compa-rable",
+    "the pill retains the physical PDF surface for occurrence checks");
+
+  assert.equal(controller.requestStatusChange(5), true);
+  const status = sentToHost.find((message) => message.type === "vocab-set-status");
+  assert.deepEqual(status.lineHyphenEvidence, token.lineHyphenEvidence,
+    "status reuses the same scanner proof and request identity");
+  const statusAck = await waitForSentMessage(reader,
+    (message) => message.type === "vocab-status-ack" && message.requestId === status.requestId);
+  assert.equal(statusAck.durable, true);
+  assert.equal(controller.entryPill.status, 5,
+    "the durable host acknowledgement updates the live pill");
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("comparable")).status, 5,
+    "the host persists the logical term, without creating a raw-hyphen key");
+  assert.equal((await harness.plugin.getVocabularyService().getTerm("compa-rable")) ?? null, null);
+
+  controller.dispose();
   harness.plugin.onunload();
 });
 

@@ -17,13 +17,14 @@ import { root } from "./bundled-plugin-test-utils.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 import { withTestNetworkFirewall } from "./test-network-firewall.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 
 const browserPath = resolveBrowserPath();
 const fixture = path.join(root, "tests", "fixtures", "tracemonkey.pdf");
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const viewerHtmlPath = path.join(vendorRoot, "web", "viewer.html");
 const bridgePath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
-const artifacts = path.join(root, "tests", "artifacts");
+const artifacts = resolveTestArtifactRoot(root);
 const channel = "pdf-web-reader";
 const token = `highlight-multiline-${Date.now()}-${process.pid}`;
 const documentPath = "tests/fixtures/tracemonkey.pdf";
@@ -206,7 +207,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
       });
       const result = { variant, interactions: [], errors: [] };
       trace.results.push(result);
-      page.on("pageerror", (error) => result.errors.push({ source: "pageerror", message: String(error.message).slice(0, 400) }));
+      page.on("pageerror", (error) => result.errors.push({ source: "pageerror", phase: result.currentPhase || "startup", message: String(error.message).slice(0, 400), stack: String(error.stack).slice(0, 3000) }));
       page.on("console", (message) => { if (message.type() === "error") result.errors.push({ source: "console", message: String(message.text()).slice(0, 400) }); });
       page.on("requestfailed", (request) => result.errors.push({ source: "requestfailed", url: request.url(), message: request.failure()?.errorText || null }));
       await page.goto(`http://127.0.0.1:${server.address().port}/?variant=${variant}`, { waitUntil: "domcontentloaded" });
@@ -229,6 +230,29 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
           document.getElementById("editorHighlightButton") && !document.getElementById("editorHighlightButton").disabled);
       }, { timeout: 25_000 });
       await frame.waitForSelector('.page[data-page-number="1"] .textLayer span', { timeout: 40_000 });
+      await frame.evaluate(() => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        window.__highlightUnselectTrace = [];
+        const addEditor = manager.addEditor;
+        manager.addEditor = function (editor) {
+          let prototype = Object.getPrototypeOf(editor);
+          while (prototype && !Object.hasOwn(prototype, "unselect")) prototype = Object.getPrototypeOf(prototype);
+          if (prototype && !Object.hasOwn(prototype, "__unselectTraced")) {
+            prototype.__unselectTraced = true;
+            const unselect = prototype.unselect;
+            prototype.unselect = function (...args) {
+              window.__highlightUnselectTrace.push({
+                at: performance.now(), id: this.id, selected: this.isSelected,
+                connected: this.div?.isConnected, currentLayer: Boolean(this._uiManager?.currentLayer),
+                focused: this.div?.contains(document.activeElement),
+                stack: new Error("unselect trace").stack,
+              });
+              return unselect.apply(this, args);
+            };
+          }
+          return addEditor.call(this, editor);
+        };
+      });
       await frame.evaluate((source) => {
         window.__highlightMultilineProbe = { trace: {} };
         const install = (0, eval)(`(${source})`);
@@ -244,6 +268,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
       });
 
       for (const requestedLines of [1, 2, 4]) {
+        result.currentPhase = `select-${requestedLines}-lines`;
         const pageNumber = requestedLines === 4 ? 2 : 1;
         const pageIndex = pageNumber - 1;
         const scenarioUsedBands = requestedLines === 4 ? [] : usedBands;
@@ -446,6 +471,18 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
       await persistEvidence(`${variant}-save-complete`);
 
       if (variant === "candidate") {
+        result.currentPhase = "focused-reopen";
+        result.focusedReopen = await frame.evaluate(() => {
+          const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+          const editor = [...manager.getEditors(0)].find((editor) =>
+            editor.annotationEditorType === 9 || editor.constructor?._editorType === 9);
+          if (!editor?.div) throw new Error("A real Highlight editor is required for focused reopen");
+          manager.setSelected(editor);
+          editor.div.focus({ preventScroll: true });
+          return { selected: manager.hasSelection, focused: editor.div.contains(document.activeElement) };
+        });
+        assert.deepEqual(result.focusedReopen, { selected: true, focused: true },
+          "Reopen must exercise an actually selected and focused Highlight before layer destruction");
         const reopenRequest = await page.evaluate(() => window.__highlightMultilineHost.reopen());
         await page.waitForFunction((documentId, openRequest) =>
           window.__highlightMultilineHost?.opened?.some((event) => event.documentId === documentId && event.openRequest === openRequest) ||
@@ -473,6 +510,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
             activeOpenRequest: window.__highlightMultilineBridgeState.activeOpenRequest,
             externalSourceConfirmed: window.__highlightMultilineBridgeState.externalSourceConfirmed,
             hydratedHighlightCount: highlights.length,
+            focusedEditor: Boolean(document.activeElement?.closest?.(".annotationEditorLayer")),
             editors: highlights.map((editor) => {
               const serialized = editor.serialize?.() || {};
               const bounds = editor.div?.getBoundingClientRect();
@@ -486,6 +524,8 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
         });
         await persistEvidence("candidate-reopen-complete");
       }
+
+      result.unselectTrace = await frame.evaluate(() => window.__highlightUnselectTrace);
 
       result.hostErrors = await page.evaluate(() => ({
         parent: window.__highlightMultilineHost.errors,
@@ -511,6 +551,10 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
     assert.deepEqual(candidateFailures, [], `Current mode-9 selection did not preserve every requested visual line; see ${artifactPath}`);
     assert.ok(candidate.reopen?.hydratedHighlightCount >= 3,
       `Saved highlights should hydrate after reopen; see ${artifactPath}`);
+    assert.equal(candidate.reopen?.focusedEditor, false,
+      "Restoring persisted highlights must not take creation focus during tool-mode restoration");
+    assert.deepEqual(candidate.errors.filter((error) => error.source === "pageerror"), [],
+      "Saving and reopening focused highlights must not throw during editor-layer teardown");
   } catch (error) {
     primaryError = error;
     trace.failure = { name: error?.name || "Error", message: String(error?.message || error).slice(0, 2_000) };

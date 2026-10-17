@@ -10,8 +10,16 @@ function makeRangeDocument(unitRects = new Map(), segmentRects = new Map()) {
   const document = {
     head: { appendChild(node) { node.parentNode = this; } },
     createElement(tag) {
-      assert.equal(tag, "style");
-      return { dataset: {}, textContent: "", remove() {} };
+      return {
+        tagName: tag.toUpperCase(), dataset: {}, style: {}, childNodes: [], attributes: {},
+        classList: { toggle() {} }, listeners: new Map(),
+        setAttribute(name, value) { this.attributes[name] = value; },
+        addEventListener(type, listener) { this.listeners.set(type, listener); },
+        appendChild(node) { node.parentNode = this; this.childNodes.push(node); return node; },
+        append(...nodes) { nodes.forEach((node) => this.appendChild(node)); },
+        getBoundingClientRect() { return { width: 320, height: 180 }; },
+        remove() { this.parentNode?.removeChild?.(this); },
+      };
     },
     createRange() {
       let startNode = null;
@@ -26,6 +34,11 @@ function makeRangeDocument(unitRects = new Map(), segmentRects = new Map()) {
         detach() {},
       };
     },
+  };
+  document.body = {
+    childNodes: [],
+    appendChild(node) { node.parentNode = this; this.childNodes.push(node); return node; },
+    removeChild(node) { this.childNodes.splice(this.childNodes.indexOf(node), 1); node.parentNode = null; return node; },
   };
   return document;
 }
@@ -92,6 +105,7 @@ test("PDF line-end compa-/rable keeps comparable lookup identity and both physic
   const [token] = scanPageTextLayer(textLayer);
 
   assert.equal(token.rawSurface, "compa-rable", "the displayed PDF text retains its visible line-end hyphen");
+  assert.equal(token.logicalSurface, "comparable", "the lookup surface omits only the layout hyphen");
   assert.equal(token.surfaceKey, "comparable", "dictionary lookup uses the unhyphenated logical word");
   assert.deepEqual(token.segments, [
     { textNode: firstLine, startOffset: 0, endOffset: 6 },
@@ -99,6 +113,12 @@ test("PDF line-end compa-/rable keeps comparable lookup identity and both physic
   ]);
   assert.deepEqual(token.segments.map(({ textNode, startOffset, endOffset }) =>
     textNode.nodeValue.slice(startOffset, endOffset)), ["compa-", "rable"]);
+  assert.deepEqual(token.lineHyphenEvidence, [{
+    offset: 5,
+    left: { segmentIndex: 0, sourceOffset: 4, text: "a" },
+    hyphen: { segmentIndex: 0, sourceOffset: 5, text: "-" },
+    right: { segmentIndex: 1, sourceOffset: 0, text: "r" },
+  }], "the scanner records bounded source evidence for the geometry-confirmed wrap");
   assert.deepEqual([firstLine.nodeValue, secondLine.nodeValue], originalText,
     "tokenization never rewrites PDF.js source text");
 
@@ -128,7 +148,9 @@ test("PDF line-end compa-/rable keeps comparable lookup identity and both physic
     },
   };
   const windowRef = {
-    getSelection() { return { rangeCount: 0 }; },
+    getSelection() { return { isCollapsed: true, rangeCount: 0 }; },
+    innerWidth: 800,
+    innerHeight: 600,
     addEventListener() {},
     removeEventListener() {},
   };
@@ -177,6 +199,67 @@ test("PDF line-end compa-/rable keeps comparable lookup identity and both physic
     [[secondLine, 0], [secondLine, 5]],
   ]);
   assert.equal(segmentRects.size, 2);
+
+  assert.equal(controller.handleTap({
+    type: "click", targetRole: "text-layer", button: 0, detail: 1,
+    pageIndex: 0, clientPoint: { x: 30, y: 15 },
+  }), true, "the scanned physical TextNode ranges still identify a direct tap");
+  const tap = posted.find((message) => message.type === "vocab-token-tap");
+  assert.deepEqual({ key: tap.key, rawSurface: tap.rawSurface, logicalSurface: tap.logicalSurface }, {
+    key: "comparable", rawSurface: "compa-rable", logicalSurface: "comparable",
+  }, "the controller sends separate lookup and display surfaces");
+  assert.deepEqual(tap.lineHyphenEvidence, token.lineHyphenEvidence,
+    "the host lookup receives the scanner's physical proof without alteration");
+  assert.equal(controller.handleEntryResult({
+    requestId: tap.requestId,
+    key: "comparable",
+    pageNumber: 1,
+    documentId: "doc-1",
+    openRequest: 1,
+    record: {
+      key: "comparable", type: "word", hasPersonalRecord: false,
+      translation: "可比较的", phonetic: "ˌkɒmpəˈræbəl", dictionaryLookupState: "found",
+    },
+  }), true, "the host reply resolves the tapped logical surface into the active pill");
+  assert.equal(controller.entryPill.heading.textContent, "comparable",
+    "the pill displays the logical word without the PDF line-wrap hyphen");
+  assert.equal(controller.entryPill.popup.attributes["aria-label"], "LingQ 词条：comparable",
+    "the pill accessibility label uses the same logical display surface");
+  assert.equal(controller.entryPill.entry.rawSurface, "compa-rable",
+    "the physical text remains available for occurrence and context checks");
+  assert.equal(controller.entryPill.meanings.textContent, "可比较的");
+  const physicalRange = controller.rangeForOccurrence(1, 0, 1, "compa-rable");
+  assert.deepEqual([physicalRange.start, physicalRange.end], [
+    [firstLine, 0], [secondLine, 5],
+  ], "logical display normalization leaves the physical cross-line Range unchanged");
+  assert.equal(controller.requestStatusChange(5), true);
+  const status = posted.find((message) => message.type === "vocab-set-status");
+  assert.equal(status.logicalSurface, "comparable",
+    "status writes retain the lookup surface while occurrence display remains physical");
+  assert.deepEqual(status.lineHyphenEvidence, token.lineHyphenEvidence,
+    "the durable status message carries the same verified wrap proof");
+
+  const page = controller.pages.get("1");
+  const phraseContinuation = {
+    ...token,
+    index: 1,
+    rawSurface: "well-known",
+    logicalSurface: "wellknown",
+    surfaceKey: "wellknown",
+    lineHyphenEvidence: [{
+      offset: 4,
+      left: { segmentIndex: 0, sourceOffset: 3, text: "l" },
+      hyphen: { segmentIndex: 0, sourceOffset: 4, text: "-" },
+      right: { segmentIndex: 1, sourceOffset: 0, text: "k" },
+    }],
+  };
+  page.tokens = [token, phraseContinuation];
+  page.phraseMatches = [{ startIndex: 0, endIndex: 2, status: 1 }];
+  const phraseEntry = controller.entryForTappedToken(page, token);
+  assert.equal(phraseEntry.rawSurface, "compa-rable well-known");
+  assert.equal(phraseEntry.logicalSurface, "comparable wellknown");
+  assert.deepEqual(phraseEntry.lineHyphenEvidence.map(({ offset }) => offset), [5, 16],
+    "phrase assembly rebases each token proof into the exact joined raw UTF-16 surface");
   renderer.dispose();
   controller.dispose();
 });
@@ -198,6 +281,12 @@ test("an explicit newline after a PDF line-end hyphen stitches identity and sele
 
   assert.equal(token.rawSurface, "compa-rable", "layout newline is not exposed as part of the word");
   assert.equal(token.surfaceKey, "comparable", "lookup joins only after geometry confirms a line break");
+  assert.deepEqual(token.lineHyphenEvidence, [{
+    offset: 5,
+    left: { segmentIndex: 0, sourceOffset: 4, text: "a" },
+    hyphen: { segmentIndex: 0, sourceOffset: 5, text: "-" },
+    right: { segmentIndex: 0, sourceOffset: 7, text: "r" },
+  }], "explicit line separators retain exact text-node offsets around the proven hyphen");
   assert.deepEqual(token.segments, [
     { textNode: text, startOffset: 0, endOffset: 12 },
   ], "the physical range still spans the visible hyphen and line separator");
@@ -232,4 +321,27 @@ test("same-line ordinary hyphens stay separate and are not treated as wrapped wo
   const tokens = scanPageTextLayer(textLayer);
   assert.deepEqual(tokens.map((token) => token.surfaceKey), ["well", "known"]);
   assert.deepEqual(tokens.map((token) => token.rawSurface), ["well", "known"]);
+  assert.deepEqual(tokens.map((token) => token.lineHyphenEvidence), [[], []],
+    "ordinary same-line hyphens do not produce proof that could authorize character removal");
+});
+
+test("scanner rejects a token whose geometry-confirmed wraps exceed the bounded proof count", () => {
+  const unitRects = new Map();
+  const document = makeRangeDocument(unitRects);
+  const wrapCount = 65;
+  const text = makeText(`${"a-\n".repeat(wrapCount)}a`, "many-wrapped-lines", document);
+  for (let index = 0; index < wrapCount; index += 1) {
+    const hyphenOffset = index * 3 + 1;
+    const continuationOffset = hyphenOffset + 2;
+    const top = 10 + index * 20;
+    unitRects.set(`many-wrapped-lines:${hyphenOffset}`, { top, left: 70, width: 5, height: 12 });
+    unitRects.set(`many-wrapped-lines:${continuationOffset}`, {
+      top: top + 14, left: 4, width: 7, height: 12,
+    });
+  }
+  const textLayer = makeElement([text], document, "textLayer");
+
+  assert.throws(() => scanPageTextLayer(textLayer),
+    (error) => error instanceof RangeError && error.code === "line-hyphen-evidence-limit",
+    "the scanner fails explicitly instead of silently dropping a token whose proof would be truncated");
 });

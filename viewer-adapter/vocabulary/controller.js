@@ -555,6 +555,8 @@ export class VocabularyController {
       pageNumber,
       key: entry.surfaceKey,
       rawSurface: entry.rawSurface,
+      logicalSurface: entry.logicalSurface,
+      ...(entry.lineHyphenEvidence?.length ? { lineHyphenEvidence: entry.lineHyphenEvidence } : {}),
       entryType: entry.type,
       documentId: this.identity.documentId,
       openRequest: this.identity.openRequest,
@@ -575,6 +577,15 @@ export class VocabularyController {
         .find((match) => tokenIndex >= match.startIndex && tokenIndex < match.endIndex);
     if (phrase) {
       const tokens = page.tokens.slice(phrase.startIndex, phrase.endIndex);
+      let rawOffset = 0;
+      const lineHyphenEvidence = [];
+      for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        for (const evidence of token.lineHyphenEvidence || []) {
+          lineHyphenEvidence.push({ ...evidence, offset: evidence.offset + rawOffset });
+        }
+        rawOffset += (token.rawSurface || "").length + (index + 1 < tokens.length ? 1 : 0);
+      }
       return {
         type: "phrase",
         startIndex: phrase.startIndex,
@@ -583,6 +594,8 @@ export class VocabularyController {
         // returned by the host identifies the durable vocabulary family.
         surfaceKey: tokens.map((token) => token.surfaceKey).join(" "),
         rawSurface: tokens.map((token) => token.rawSurface).join(" "),
+        logicalSurface: tokens.map((token) => token.logicalSurface ?? token.rawSurface).join(" "),
+        ...(lineHyphenEvidence.length ? { lineHyphenEvidence } : {}),
       };
     }
     // A click in LingQ mode is also the lookup gesture for words that have
@@ -590,7 +603,11 @@ export class VocabularyController {
     // only runs when the Selection is collapsed; the tap can then add a new
     // status record through the same existing pill controls.
     return { type: "word", startIndex: tokenIndex, endIndex: tokenIndex + 1,
-      surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface };
+      surfaceKey: tappedToken.surfaceKey, rawSurface: tappedToken.rawSurface,
+      logicalSurface: tappedToken.logicalSurface ?? tappedToken.rawSurface,
+      ...(tappedToken.lineHyphenEvidence?.length
+        ? { lineHyphenEvidence: tappedToken.lineHyphenEvidence }
+        : {}) };
   }
 
   rangeForOccurrence(pageNumber, startIndex, endIndex, expectedSurface = null) {
@@ -665,9 +682,10 @@ export class VocabularyController {
     this.dismissEntryPill();
     if (!this.document?.createElement || !this.document.body) return false;
     const popup = this.document.createElement("section");
+    const displaySurface = entry.logicalSurface ?? entry.rawSurface;
     popup.className = "pdfReaderVocabularyPill";
     popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-label", `LingQ 词条：${entry.rawSurface}`);
+    popup.setAttribute("aria-label", `LingQ 词条：${displaySurface}`);
     popup.dataset.requestId = requestId;
     popup.dataset.key = entry.surfaceKey;
     popup.dataset.type = entry.type;
@@ -675,7 +693,7 @@ export class VocabularyController {
 
     const heading = this.document.createElement("div");
     heading.className = "pdfReaderVocabularyPillHeading";
-    heading.textContent = entry.rawSurface;
+    heading.textContent = displaySurface;
     const status = this.document.createElement("span");
     status.className = "pdfReaderVocabularyPillStatus";
     status.textContent = "正在读取学习状态…";
@@ -891,6 +909,10 @@ export class VocabularyController {
         ? { storageKey: pill.record.storageKey }
         : {}),
       rawSurface: pill.entry.rawSurface,
+      logicalSurface: pill.entry.logicalSurface,
+      ...(pill.entry.lineHyphenEvidence?.length
+        ? { lineHyphenEvidence: pill.entry.lineHyphenEvidence }
+        : {}),
       status,
       entryType: pill.entry.type,
       pageNumber: pill.page.pageNumber,
@@ -1168,6 +1190,8 @@ function sameTokenSegments(previous, next) {
     const before = previous[index];
     const after = next[index];
       if (before?.surfaceKey !== after?.surfaceKey || before?.rawSurface !== after?.rawSurface ||
+          before?.logicalSurface !== after?.logicalSurface ||
+          JSON.stringify(before?.lineHyphenEvidence || []) !== JSON.stringify(after?.lineHyphenEvidence || []) ||
           before?.segments?.length !== after?.segments?.length) return false;
     for (let segmentIndex = 0; segmentIndex < before.segments.length; segmentIndex += 1) {
       const left = before.segments[segmentIndex];

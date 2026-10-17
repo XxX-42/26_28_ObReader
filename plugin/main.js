@@ -49,6 +49,93 @@ const VOCABULARY_DISPLAY_LABELS = Object.freeze({
   all: "全部等级", learning: "学习中（1–4级）", focus: "重点（1–3级）",
 });
 const PERSISTABLE_ANNOTATION_TOOL_MODES = new Set([3, 5, 9, 10, 15]);
+const MAX_VOCABULARY_SURFACE_CHARS = 1600;
+const MAX_LINE_HYPHEN_EVIDENCE = 64;
+const MAX_LINE_HYPHEN_SEGMENT_INDEX = 255;
+const MAX_LINE_HYPHEN_SOURCE_OFFSET = 50000;
+const VOCABULARY_LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
+const VOCABULARY_LETTER = /^\p{L}$/u;
+const VOCABULARY_LINE_HYPHEN = /^[-\u2010]$/u;
+
+function vocabularyCodePointBefore(value, offset) {
+  if (offset <= 0 || offset > value.length) return "";
+  const last = value.charCodeAt(offset - 1);
+  if (last >= 0xdc00 && last <= 0xdfff && offset > 1) {
+    const previous = value.charCodeAt(offset - 2);
+    if (previous >= 0xd800 && previous <= 0xdbff) return value.slice(offset - 2, offset);
+  }
+  return value.slice(offset - 1, offset);
+}
+
+function vocabularyHasLetterBefore(value, offset) {
+  let cursor = offset;
+  while (cursor > 0) {
+    const previous = vocabularyCodePointBefore(value, cursor);
+    cursor -= previous.length;
+    if (VOCABULARY_LETTER.test(previous)) return true;
+    if (!/^\p{M}$/u.test(previous)) return false;
+  }
+  return false;
+}
+
+function validateVocabularySurface(message) {
+  const rawSurface = message?.rawSurface;
+  const logicalSurface = message?.logicalSurface === undefined
+    ? rawSurface
+    : message.logicalSurface;
+  if (typeof rawSurface !== "string" || rawSurface.length < 1 ||
+      rawSurface.length > MAX_VOCABULARY_SURFACE_CHARS ||
+      typeof logicalSurface !== "string" || logicalSurface.length < 1 ||
+      logicalSurface.length > MAX_VOCABULARY_SURFACE_CHARS) return null;
+
+  const evidence = message.lineHyphenEvidence === undefined ? [] : message.lineHyphenEvidence;
+  if (!Array.isArray(evidence) || evidence.length > MAX_LINE_HYPHEN_EVIDENCE) return null;
+  let previousOffset = -1;
+  const offsets = [];
+  for (const proof of evidence) {
+    const offset = proof?.offset;
+    const left = proof?.left;
+    const hyphen = proof?.hyphen;
+    const right = proof?.right;
+    if (!Number.isSafeInteger(offset) || offset <= previousOffset || offset < 1 ||
+        offset + 1 >= rawSurface.length || !left || !hyphen || !right) return null;
+    const rawHyphen = rawSurface.slice(offset, offset + 1);
+    const before = vocabularyCodePointBefore(rawSurface, offset);
+    const afterCodePoint = rawSurface.codePointAt(offset + 1);
+    const after = Number.isInteger(afterCodePoint) ? String.fromCodePoint(afterCodePoint) : "";
+    if (!VOCABULARY_LINE_HYPHEN.test(rawHyphen) ||
+        !VOCABULARY_LETTER_OR_MARK.test(before) || !vocabularyHasLetterBefore(rawSurface, offset) ||
+        !VOCABULARY_LETTER.test(after) ||
+        left.text !== before || hyphen.text !== rawHyphen || right.text !== after) return null;
+
+    for (const endpoint of [left, hyphen, right]) {
+      if (!Number.isSafeInteger(endpoint.segmentIndex) || endpoint.segmentIndex < 0 ||
+          endpoint.segmentIndex > MAX_LINE_HYPHEN_SEGMENT_INDEX ||
+          !Number.isSafeInteger(endpoint.sourceOffset) || endpoint.sourceOffset < 0 ||
+          endpoint.sourceOffset > MAX_LINE_HYPHEN_SOURCE_OFFSET ||
+          typeof endpoint.text !== "string" || endpoint.text.length < 1 || endpoint.text.length > 2) return null;
+    }
+    if (left.segmentIndex > hyphen.segmentIndex || hyphen.segmentIndex > right.segmentIndex ||
+        right.segmentIndex - left.segmentIndex > MAX_LINE_HYPHEN_EVIDENCE) return null;
+    if (hyphen.segmentIndex - left.segmentIndex > 1) return null;
+    if (left.segmentIndex === hyphen.segmentIndex &&
+        left.sourceOffset + left.text.length !== hyphen.sourceOffset) return null;
+    if (hyphen.segmentIndex === right.segmentIndex &&
+        hyphen.sourceOffset + hyphen.text.length > right.sourceOffset) return null;
+
+    offsets.push(offset);
+    previousOffset = offset;
+  }
+
+  let reconstructedSurface = rawSurface;
+  for (let index = offsets.length - 1; index >= 0; index -= 1) {
+    const offset = offsets[index];
+    reconstructedSurface = reconstructedSurface.slice(0, offset) + reconstructedSurface.slice(offset + 1);
+  }
+  if (reconstructedSurface !== logicalSurface ||
+      normalizeVocabularyTermKey(logicalSurface) !== message.key) return null;
+  return logicalSurface;
+}
 
 function normalizeVocabularyDisplayMode(value) {
   return VOCABULARY_DISPLAY_MODES.includes(value) ? value : "all";
@@ -2815,9 +2902,8 @@ class PdfReaderView extends EditableFileView {
         (message.entryType === "phrase"
           ? message.key.split(" ").length >= 2 && message.key.split(" ").length <= 12
           : !message.key.includes(" "));
-      const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
-        message.rawSurface.length <= 1600 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
-      if (!validRequest || !validKey || !validSurface ||
+      const logicalSurface = validateVocabularySurface(message);
+      if (!validRequest || !validKey || logicalSurface === null ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
       try {
@@ -2867,9 +2953,8 @@ class PdfReaderView extends EditableFileView {
         (message.entryType === "phrase"
           ? message.key.split(" ").length >= 2 && message.key.split(" ").length <= 12
           : !message.key.includes(" "));
-      const validSurface = typeof message.rawSurface === "string" && message.rawSurface.length > 0 &&
-        message.rawSurface.length <= 1600 && normalizeVocabularyTermKey(message.rawSurface) === message.key;
-      if (!validRequest || !validKey || !validSurface ||
+      const logicalSurface = validateVocabularySurface(message);
+      if (!validRequest || !validKey || logicalSurface === null ||
           !Number.isInteger(message.status) || message.status < 1 || message.status > 5 ||
           typeof message.entryRequestId !== "string" || message.entryRequestId.length > 128 ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
@@ -2877,7 +2962,7 @@ class PdfReaderView extends EditableFileView {
       try {
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         const service = this.plugin.getVocabularyService();
-        const record = await service.upsertTerm(message.rawSurface, { type: message.entryType, status: message.status });
+        const record = await service.upsertTerm(logicalSurface, { type: message.entryType, status: message.status });
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-status-ack", durable: true,

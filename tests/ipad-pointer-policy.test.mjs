@@ -14,9 +14,11 @@ import {
   cleanupBrowserTestResources,
 } from "./browser-test-cleanup.mjs";
 import { root } from "./bundled-plugin-test-utils.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 
 const browserPath = resolveBrowserPath();
+const artifactsPath = resolveTestArtifactRoot(root);
 const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const vendorWeb = path.join(vendorRoot, "web");
 const bridgeCssPath = path.join(root, "viewer-adapter", "bridge.css");
@@ -596,12 +598,7 @@ test(
       mouseAfterTouch: null,
       pageErrors: [],
     };
-    const artifactPath = path.join(
-      root,
-      "tests",
-      "artifacts",
-      `ipad-pointer-policy-${Date.now()}-${process.pid}.json`,
-    );
+    const artifactPath = path.join(artifactsPath, `ipad-pointer-policy-${Date.now()}-${process.pid}.json`);
     try {
       await new Promise((resolve, reject) => {
         server.once("error", reject);
@@ -611,7 +608,7 @@ test(
         executablePath: browserPath,
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
-      }, { testName: "ipad-pointer-policy" });
+      }, { testName: "ipad-pointer-policy", artifactsDir: artifactsPath });
       page = await browser.newPage();
       await page.setViewport({
         width: 1180,
@@ -2620,12 +2617,13 @@ test(
         "The Pencil fixture must wait for the host-confirmed source identity before editing");
       assert.equal(penInputReadiness.externalSourceConfirmed, true,
         "The Pencil fixture must have a confirmed external source before editing");
-      const penPageNumberPoint = await localPointInHost(
-        penViewer,
-        penPage,
-        "#pageNumber",
-      );
-      await penPage.mouse.click(penPageNumberPoint.x, penPageNumberPoint.y);
+      // Focusing a text input in mobile emulation can asynchronously pan the
+      // visual viewport after coordinates were measured. Focus the scroll
+      // container without opening an input/keyboard instead.
+      await penViewer.evaluate(() => {
+        window.focus();
+        document.getElementById("viewerContainer").focus({ preventScroll: true });
+      });
       await penViewer.waitForFunction(() => document.hasFocus(), { timeout: 8_000 });
       report.penViewerFocusedByTrustedToolbarClick = await penViewer.evaluate(() => ({
         hasFocus: document.hasFocus(),
@@ -2683,24 +2681,29 @@ test(
       // Tool-button activation can move focus back to the host in Chromium's
       // mobile emulation. Re-focus the actual iframe immediately before
       // dispatching simulated Pencil input so it targets the active viewer.
-      const penDrawFocusPoint = await localPointInHost(
-        penViewer,
-        penPage,
-        "#pageNumber",
-      );
-      await penPage.mouse.click(penDrawFocusPoint.x, penDrawFocusPoint.y);
+      await penPage.bringToFront();
+      await penViewer.evaluate(() => {
+        // This second Reader shares the fixture's saved reading position with
+        // the first one. Establish the page-1 precondition before measuring
+        // dispatch coordinates; an offscreen layer produces no pointer events.
+        PDFViewerApplication.pdfViewer.currentPageNumber = 1;
+        document.getElementById("viewerContainer").scrollTop = 0;
+        window.focus();
+        document.getElementById("viewerContainer").focus({ preventScroll: true });
+      });
       await penViewer.waitForFunction(() => document.hasFocus(), { timeout: 8_000 });
       report.penViewerFocusedBeforeDraw = await penViewer.evaluate(() => ({
         hasFocus: document.hasFocus(),
         activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
       }));
       const beforePenDraw = await inputSnapshot(penViewer);
-      const penDrawStart = await localPointInHost(
+      const penDrawStart = await visiblePointInHost(
         penViewer,
         penPage,
         '.page[data-page-number="1"] .annotationEditorLayer',
         [0.64, 0.48],
       );
+      report.penDrawDispatchTarget = penDrawStart;
       const penEventOffset = await penViewer.evaluate(() =>
         window.__ipadPointerEvents?.length || 0,
       );
@@ -2710,7 +2713,7 @@ test(
         y: penDrawStart.y + 18,
       }, 1);
       const duringPenDraw = await inputSnapshot(penViewer);
-      const fingerDuringPen = await localPointInHost(
+      const fingerDuringPen = await visiblePointInHost(
         penViewer,
         penPage,
         '.page[data-page-number="1"]',
@@ -2735,6 +2738,16 @@ test(
         x: penDrawStart.x + 72,
         y: penDrawStart.y + 54,
       }, 0);
+      report.penStrokeBeforeCommit = await inputSnapshot(penViewer);
+      report.penStrokeEvents = await penViewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], penEventOffset);
+      assert.ok(report.penStrokeBeforeCommit.drawingPathCount > beforePenDraw.drawingPathCount,
+        "The simulated Pencil must produce a non-empty drawing before its save boundary");
+      // As with the mouse stroke above, this fixture disables autosave. Commit
+      // the real PDF.js drawing session at the normal save/close boundary;
+      // pointerup alone does not promise an editor has left that live session.
+      await penViewer.evaluate(() => PDFViewerApplication.pdfViewer
+        ._layerProperties.annotationEditorUIManager.currentLayer?.commitOrRemove?.());
       await penViewer.waitForFunction(
         (previous) => document.querySelectorAll(
           '.page[data-page-number="1"] .annotationEditorLayer .inkEditor',

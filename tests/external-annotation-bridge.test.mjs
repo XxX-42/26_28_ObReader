@@ -71,6 +71,85 @@ function evaluateHelpers(names, body, exposed = []) {
   return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
 
+test("history reveals only newly restored Sidecar FreeText in the current editor layer", () => {
+  const helpers = evaluateHelpers(
+    ["liveSidecarFreeTextEditors", "showRestoredSidecarFreeTextEditors"],
+    "const state = { disposed: false, annotationUuidByRuntimeId: new Map() };",
+    ["state"],
+  );
+  const { state, liveSidecarFreeTextEditors, showRestoredSidecarFreeTextEditors } = helpers;
+  let shows = 0;
+  const layer = { div: {} };
+  const builder = { annotationEditorLayer: layer, show() { shows += 1; } };
+  const editors = [];
+  const manager = { *getEditors() { yield* editors; } };
+  const app = { pdfDocument: { numPages: 1 }, pdfViewer: {
+    _layerProperties: { annotationEditorUIManager: manager },
+    getPageView() { return { annotationEditorLayer: builder }; },
+  } };
+  state.app = app;
+  const makeEditor = (id, fields = {}) => ({
+    id, editorType: "freetext", pageIndex: 0, parent: layer,
+    div: { isConnected: true, parentElement: layer.div },
+    isEmpty() { return false; }, ...fields,
+  });
+  const existing = makeEditor("existing");
+  state.annotationUuidByRuntimeId.set(existing.id, "existing-uuid");
+  editors.push(existing);
+  const before = liveSidecarFreeTextEditors(manager, app);
+  const restored = makeEditor("restored");
+  state.annotationUuidByRuntimeId.set(restored.id, "same-durable-uuid");
+  editors.push(restored, makeEditor("unbound"));
+  for (const [id, fields] of [
+    ["native", { annotationElementId: "12R" }],
+    ["deleted", { deleted: true }],
+    ["empty", { isEmpty() { return true; } }],
+    ["stale", { parent: {} }],
+    ["detached", { div: { isConnected: false, parentElement: layer.div } }],
+  ]) {
+    state.annotationUuidByRuntimeId.set(id, `${id}-uuid`);
+    editors.push(makeEditor(id, fields));
+  }
+  showRestoredSidecarFreeTextEditors(manager, app, before);
+  assert.equal(shows, 1, "only the rebuilt, bound Sidecar editor reveals its live layer");
+  assert.equal(state.annotationUuidByRuntimeId.get(restored.id), "same-durable-uuid");
+  showRestoredSidecarFreeTextEditors(manager, app, liveSidecarFreeTextEditors(manager, app));
+  assert.equal(shows, 1, "unchanged history does not reveal any layer");
+  state.disposed = true;
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  state.disposed = false;
+  state.app = { ...app };
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  state.app = app;
+  app.pdfViewer._layerProperties.annotationEditorUIManager = {};
+  showRestoredSidecarFreeTextEditors(manager, app, new Set());
+  assert.equal(shows, 1, "disposed, cross-document and replaced-manager sessions cannot reveal stale layers");
+});
+
+test("Sidecar hydration initializes editors without taking creation focus and restores hooks on failure", () => {
+  const { addHydratedEditor } = evaluateHelpers(["addHydratedEditor"], "");
+  const focusRequests = [];
+  const prototype = { onceAdded(focus) { focusRequests.push(focus); } };
+  const editor = Object.create(prototype);
+  const layer = { add(value) { value.onceAdded(true); return value; } };
+  assert.equal(addHydratedEditor(layer, editor), editor);
+  assert.deepEqual(focusRequests, [false], "restoring content is not a new user-created focused editor");
+  assert.equal(Object.hasOwn(editor, "onceAdded"), false, "the temporary adapter cannot leak into later user gestures");
+  editor.onceAdded(true);
+  assert.deepEqual(focusRequests, [false, true], "normal user creation keeps the original PDF.js focus semantics");
+
+  const ownHook = function (focus) { focusRequests.push(focus); };
+  Object.defineProperty(editor, "onceAdded", { value: ownHook, writable: false, enumerable: true, configurable: true });
+  const before = Object.getOwnPropertyDescriptor(editor, "onceAdded");
+  assert.throws(() => addHydratedEditor({ add(value) {
+    value.onceAdded(true);
+    throw new Error("renderer failed");
+  } }, editor), /renderer failed/);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(editor, "onceAdded"), before,
+    "a failed hydration restores the exact original hook descriptor");
+  assert.equal(focusRequests.at(-1), false);
+});
+
 test("stable page anchors navigate through the PDF.js viewer scroll container", async () => {
   const { navigateReaderAnchor, state, messages, pageScrollCalls, pageFocus, getPageLookups } = evaluateHelpers(
     ["performanceNow", "clearTemporaryReaderAnchorFocus", "showTemporaryReaderAnchorFocus", "navigateReaderAnchor"],
@@ -509,6 +588,8 @@ test("empty undo/redo does not mark the PDF dirty, while an editor change still 
     function getAnnotationStorageRows(value) { return new Map(value.rows); }
     function captureSavedEditorHistory() { return []; }
     function snapshotSavedFreeTextEditors() { return { activeEditors: new Set(), editorStates: new Map() }; }
+    function liveSidecarFreeTextEditors() { return new Set(); }
+    function showRestoredSidecarFreeTextEditors() {}
     function changedSavedFreeTextEditors() { return []; }
     function hasSavedEditorHistoryTransition() { return false; }
     function noteMutation() { state.revision += 1; }
