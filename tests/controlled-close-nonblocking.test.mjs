@@ -65,7 +65,10 @@ test("successful save acknowledgement retains its verified revision", async () =
   assert.equal(notices.length,0);
 });
 test("direct SDK teardown uses the same bounded flush, not the old 120-second wait", () => {
-  const body=source.slice(source.indexOf("  async onClose() {"),source.indexOf("  async onClose() {")+500);
+  const start = source.indexOf("  async onClose() {");
+  const end = source.indexOf("\n  async ", start + 1);
+  assert.ok(start >= 0 && end > start, "the test fixture extracts the complete onClose method");
+  const body = source.slice(start, end);
   assert.match(body,/flushDocument\(250\)/);
 });
 

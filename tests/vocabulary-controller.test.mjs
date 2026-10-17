@@ -106,6 +106,87 @@ function makeRuntime() {
   };
 }
 
+function makeContextPillRuntime() {
+  const posted = [];
+  const body = {
+    children: [],
+    appendChild(node) { node.parentNode = this; this.children.push(node); },
+  };
+  const documentRef = {
+    body,
+    createElement(tagName) {
+      return {
+        tagName,
+        style: {},
+        dataset: {},
+        className: "",
+        children: [],
+        attributes: {},
+        listeners: {},
+        hidden: false,
+        disabled: false,
+        readOnly: false,
+        value: "",
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        append(...nodes) { for (const node of nodes) this.appendChild(node); },
+        appendChild(node) { node.parentNode = this; this.children.push(node); },
+        addEventListener(type, listener) { this.listeners[type] = listener; },
+        click() { this.listeners.click?.({ stopPropagation() {} }); },
+        remove() {
+          const index = this.parentNode?.children.indexOf(this) ?? -1;
+          if (index >= 0) this.parentNode.children.splice(index, 1);
+          this.parentNode = null;
+        },
+        classList: { toggle() {} },
+      };
+    },
+  };
+  const textNode = { data: "walking", nodeValue: "walking", length: 7, nodeType: 3 };
+  const textLayer = { contains: (node) => node === textNode };
+  const pageRoot = {
+    querySelector: (selector) => selector === ".textLayer" ? textLayer : null,
+    contains: (node) => node === pageRoot || node === textLayer || node === textNode,
+  };
+  let identity = { documentId: "doc-context", openRequest: 31 };
+  const overlay = { draw() {}, clear() {}, dispose() {} };
+  const app = { pdfViewer: {
+    getPageView: () => ({ div: pageRoot }),
+    getVisiblePages: () => ({ views: [{ id: 1 }] }),
+  } };
+  const controller = new VocabularyController({
+    app,
+    documentRef,
+    windowRef: { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} },
+    postToHost(type, fields) { posted.push({ type, ...fields }); return true; },
+    getIdentity: () => ({ ...identity }),
+    makeId: () => "context-test",
+    scan: () => [{ index: 0, rawSurface: "walking", logicalSurface: "walking", surfaceKey: "walking",
+      segments: [{ textNode, startOffset: 0, endOffset: 7 }] }],
+    makeOverlay: () => overlay,
+  });
+  controller.setDocument(identity.documentId, identity.openRequest, true);
+  const openPill = () => {
+    assert.equal(controller.showEntryPill({
+      page: controller.pages.get("1"),
+      entry: { type: "word", startIndex: 0, endIndex: 1,
+        surfaceKey: "walking", rawSurface: "walk-\ning", logicalSurface: "walking" },
+      requestId: `entry-${posted.length}`,
+      x: 30,
+      y: 30,
+    }), true);
+    return controller.entryPill;
+  };
+  return {
+    body,
+    controller,
+    identity,
+    posted,
+    documentRef,
+    openPill,
+    setIdentity(next) { identity = next; },
+  };
+}
+
 test("feature-off controller does no page scan or host query", () => {
   const runtime = makeRuntime();
   runtime.controller.setDocument("doc-1", 7, false);
@@ -987,4 +1068,221 @@ test("LingQ lookup accepts unhighlighted words, while an enabled multiword phras
     type: "word", startIndex: 0, endIndex: 1, surfaceKey: "alpha", rawSurface: "Alpha", logicalSurface: "Alpha",
   });
   runtime.controller.dispose();
+});
+
+test("LingQ context capture binds the preview to the pill identity and saves only after explicit confirmation", () => {
+  const runtime = makeContextPillRuntime();
+  const pill = runtime.openPill();
+  pill.contextCapture.click();
+  const capture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  assert.deepEqual(capture, {
+    type: "reader-vocabulary-context-capture-request",
+    requestId: pill.contextRequestId,
+    pageNumber: 1,
+    expectedSurface: "walking",
+    documentId: "doc-context",
+    openRequest: 31,
+  });
+
+  const preview = {
+    type: "reader-vocabulary-context-preview",
+    requestId: capture.requestId,
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    surface: "walking",
+    sentence: "She is walking home.",
+    captureId: "capture-context-1",
+  };
+  assert.equal(runtime.controller.handleVocabularyContextPreview({ ...preview, documentId: "stale-doc" }), false,
+    "a preview from another PDF cannot update the open card");
+  assert.equal(runtime.controller.handleVocabularyContextPreview({ ...preview, requestId: "old-request" }), false,
+    "a preview from a retired request cannot update the open card");
+  assert.equal(runtime.controller.handleVocabularyContextPreview({ ...preview, surface: "walk" }), true,
+    "a host preview for a different surface is rejected and leaves the card recoverable");
+  assert.equal(pill.contextPreview.hidden, true);
+  assert.equal(pill.contextCapture.disabled, false);
+  pill.contextCapture.click();
+  const retryCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+
+  assert.equal(runtime.controller.handleVocabularyContextPreview({ ...preview, requestId: retryCapture.requestId }), true);
+  assert.equal(pill.contextPreview.value, "She is walking home.");
+  assert.equal(pill.contextPreview.readOnly, true,
+    "the UI displays the exact sentence the host will verify against its private anchor");
+  assert.equal(pill.contextConfirm.hidden, false);
+  assert.equal(runtime.posted.filter((message) => message.type === "reader-vocabulary-context-save-request").length, 0,
+    "receiving a preview never saves it automatically");
+
+  pill.contextConfirm.click();
+  const save = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-save-request").at(-1);
+  assert.deepEqual(save, {
+    type: "reader-vocabulary-context-save-request",
+    requestId: retryCapture.requestId,
+    captureId: "capture-context-1",
+    documentId: "doc-context",
+    openRequest: 31,
+  });
+  assert.equal("sentence" in save, false, "the host-owned capture remains the source of the saved sentence");
+  assert.equal("anchor" in save, false, "the viewer never receives or sends the private anchor");
+  assert.equal(pill.contextState, "saving");
+
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: save.requestId,
+    captureId: "wrong-capture",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    status: "committed",
+  }), false, "a save result for a different capture is ignored");
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: save.requestId,
+    captureId: "capture-context-1",
+    documentId: "doc-context",
+    openRequest: 30,
+    ok: true,
+    status: "committed",
+  }), false, "a save result from an expired open request is ignored");
+  assert.equal(pill.contextState, "saving");
+  runtime.setIdentity({ documentId: "doc-next", openRequest: 32 });
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: save.requestId,
+    captureId: "capture-context-1",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    status: "committed",
+  }), false, "a matching response cannot update a card after the host identity has advanced");
+
+  runtime.controller.dispose();
+});
+
+test("LingQ context failure permits a fresh capture, success completes the flow, and dismiss clears pending work", () => {
+  const runtime = makeContextPillRuntime();
+  let pill = runtime.openPill();
+  pill.contextCapture.click();
+  const failedCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  assert.equal(runtime.controller.handleVocabularyContextPreview({
+    type: "reader-vocabulary-context-preview",
+    requestId: failedCapture.requestId,
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: false,
+    error: "selection-required",
+    message: "请先选择一句文本。",
+  }), true);
+  assert.equal(pill.contextState, null);
+  assert.equal(pill.contextStatus.textContent, "请先选择一句文本。",
+    "the human-readable host message is surfaced when present");
+
+  pill.contextCapture.click();
+  const firstCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  const firstPreview = {
+    type: "reader-vocabulary-context-preview",
+    requestId: firstCapture.requestId,
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    surface: "walking",
+    sentence: "She is walking home.",
+    captureId: "capture-context-retry",
+  };
+  assert.equal(runtime.controller.handleVocabularyContextPreview(firstPreview), true);
+  pill.contextConfirm.click();
+  const failedSave = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-save-request").at(-1);
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: failedSave.requestId,
+    captureId: "capture-context-retry",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: false,
+    status: "source-stale",
+    message: "原文已变化，请重新选择。",
+  }), true);
+  assert.equal(pill.contextPreview.hidden, true,
+    "a failed save discards the preview and asks for a newly verified capture");
+  assert.equal(pill.contextCapture.disabled, false);
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: failedSave.requestId,
+    captureId: "capture-context-retry",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    status: "committed",
+  }), false, "a duplicate result after failure cannot complete a later capture");
+
+  pill.contextCapture.click();
+  const successfulCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  assert.notEqual(successfulCapture.requestId, failedSave.requestId);
+  assert.equal(runtime.controller.handleVocabularyContextPreview({
+    ...firstPreview,
+    requestId: successfulCapture.requestId,
+    captureId: "capture-context-success",
+  }), true);
+  pill.contextConfirm.click();
+  const successfulSave = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-save-request").at(-1);
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: successfulSave.requestId,
+    captureId: "capture-context-success",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    status: "committed",
+    message: "语境已保存。",
+  }), true);
+  assert.equal(pill.contextState, "saved");
+  assert.equal(pill.contextStatus.textContent, "语境已保存。");
+  assert.equal(pill.contextCapture.hidden, true);
+  assert.equal(pill.contextConfirm.hidden, true);
+  assert.equal(pill.contextPreview.value, "She is walking home.");
+
+  runtime.controller.dismissEntryPill();
+  pill = runtime.openPill();
+  pill.contextCapture.click();
+  const pendingCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  runtime.controller.dismissEntryPill();
+  assert.equal(pill.contextRequestId, null);
+  assert.equal(pill.contextCaptureId, null);
+  assert.equal(runtime.controller.handleVocabularyContextPreview({
+    ...firstPreview,
+    requestId: pendingCapture.requestId,
+  }), false, "dismissing the pill retires an in-flight capture request");
+
+  pill = runtime.openPill();
+  pill.contextCapture.click();
+  const finalCapture = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-capture-request").at(-1);
+  assert.equal(runtime.controller.handleVocabularyContextPreview({
+    ...firstPreview,
+    requestId: finalCapture.requestId,
+  }), true);
+  pill.contextConfirm.click();
+  const pendingSave = runtime.posted.filter((message) =>
+    message.type === "reader-vocabulary-context-save-request").at(-1);
+  runtime.controller.dismissEntryPill();
+  assert.equal(runtime.controller.handleVocabularyContextSaveResult({
+    type: "reader-vocabulary-context-save-result",
+    requestId: pendingSave.requestId,
+    captureId: "capture-context-retry",
+    documentId: "doc-context",
+    openRequest: 31,
+    ok: true,
+    status: "committed",
+  }), false, "dismissing the pill retires an in-flight save result");
+  runtime.controller.dispose();
+  assert.equal(runtime.body.children.length, 0);
 });

@@ -524,6 +524,7 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
 
     _renderContexts(epoch) {
       this.panel.createEl("h3", { text: "语境" });
+      this.panel.createEl("p", { text: "打开来源时会按稳定文档身份重新验证 PDF 和选区；来源失效时不会按旧路径或坐标猜测。" });
       const key = this.selectedFamilyKey || this.selectedKeys.values().next().value;
       if (!key) {
         this.panel.createDiv({ cls: "vocabulary-workbench__empty", text: "从词库选择一个词族，再查看它保存的语境。" });
@@ -574,8 +575,13 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
           const row = list.createDiv({ cls: "vocabulary-workbench__context-row", attr: { "data-role": "context-record" } });
           row.createEl("strong", { text: context.surface || key });
           row.createEl("p", { text: context.sentence || "（无句子）" });
-          row.createEl("span", { text: [context.documentId, context.pageNumberHint ? `第 ${context.pageNumberHint} 页` : ""].filter(Boolean).join(" · ") });
-          row.createEl("small", { text: context.createdAt || "" });
+          row.createEl("span", { text: [context.pageNumberHint ? `第 ${context.pageNumberHint} 页` : "来源页未知",
+            context.createdAt ? `保存于 ${context.createdAt}` : ""].filter(Boolean).join(" · ") });
+          this._button(row, "验证并打开来源", `context-open-${this._safeActionKey(context.contextId)}`, async () => {
+            if (typeof this.api.openContext !== "function") throw new Error("Context 来源导航服务尚未连接。");
+            const result = await this.api.openContext(context.contextId);
+            if (this._isCurrent(epoch)) this._setStatus(result?.message || "已请求打开来源；Reader 会在导航前再次验证身份。");
+          }, { cls: "vocabulary-workbench__secondary" });
         }
         if (!contexts.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: "这个词族还没有保存语境。" });
         pagination.setAttribute?.("data-page", String(state.index + 1));

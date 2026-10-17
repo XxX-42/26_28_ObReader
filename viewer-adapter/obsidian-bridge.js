@@ -9798,6 +9798,22 @@
       return;
     }
 
+    if (message.type === "reader-vocabulary-context-preview") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      state.vocabularyController?.handleVocabularyContextPreview?.(message);
+      return;
+    }
+
+    if (message.type === "reader-vocabulary-context-save-result") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest) return;
+      state.vocabularyController?.handleVocabularyContextSaveResult?.(message);
+      return;
+    }
+
     if (message.type === "reader-anchor-navigate") {
       if (message.rendererGeneration !== rendererGeneration ||
           message.documentId !== state.activeDocumentId ||

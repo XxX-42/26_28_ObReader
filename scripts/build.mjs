@@ -349,6 +349,8 @@ const annotationHostMarker =
   /\/\* BUILD:PDF_ANNOTATION_HOST_REQUIRE \*\/\s*const\s*\{\s*createPdfAnnotationHost\s*\}\s*=\s*require\((['"])\.\/pdf-annotation-host\.cjs\1\);/s;
 const vocabularyServiceMarker =
   /\/\* BUILD:VOCABULARY_SERVICE_REQUIRE \*\/\s*const\s*\{\s*VocabularyService\s*,\s*normalizeTermKey\s*:\s*normalizeVocabularyTermKey\s*,?\s*(?:VOCABULARY_PATH\s*,?\s*)?\}\s*=\s*require\((['"])\.\/vocabulary\/service\.cjs\1\);/s;
+const vocabularyCanonicalMarker =
+  /\/\* BUILD:VOCABULARY_CANONICAL_REQUIRE \*\/\s*const\s*\{\s*canonicalHash\s*\}\s*=\s*require\((['"])\.\/vocabulary\/canonical\.cjs\1\);/s;
 const vocabularyWorkspaceMarker = /\/\* BUILD:VOCABULARY_WORKSPACE_REQUIRE \*\/\s*const\s*\{[^}]+\}\s*=\s*require\((['"])\.\/vocabulary\/workspace\.cjs\1\);/s;
 const vocabularyWorkbenchMarker = /\/\* BUILD:VOCABULARY_WORKBENCH_REQUIRE \*\/\s*const\s*\{\s*createVocabularyWorkbench\s*\}\s*=\s*require\((['"])\.\/vocabulary\/workbench\.cjs\1\);/s;
 const vocabularyDictionaryMarker =
@@ -383,6 +385,11 @@ assert.equal(
   [...sourceMain.matchAll(new RegExp(vocabularyServiceMarker.source, "gs"))].length,
   1,
   "Expected exactly one vocabulary service build marker in plugin/main.js",
+);
+assert.equal(
+  [...sourceMain.matchAll(new RegExp(vocabularyCanonicalMarker.source, "gs"))].length,
+  1,
+  "Expected exactly one vocabulary canonical build marker in plugin/main.js",
 );
 assert.equal(
   [...sourceMain.matchAll(new RegExp(vocabularyDictionaryMarker.source, "gs"))].length,
@@ -450,6 +457,11 @@ const inlinedVocabularyService = await inlineModule(
   "__PDFReaderVocabularyService",
   "VocabularyService, normalizeTermKey: normalizeVocabularyTermKey, VOCABULARY_PATH",
 );
+const inlinedVocabularyCanonical = await inlineModule(
+  "vocabulary/canonical.cjs",
+  "__PDFReaderVocabularyCanonical",
+  "canonicalHash",
+);
 assert.equal([...sourceMain.matchAll(new RegExp(vocabularyWorkspaceMarker.source, "gs"))].length, 1);
 assert.equal([...sourceMain.matchAll(new RegExp(vocabularyWorkbenchMarker.source, "gs"))].length, 1);
 const inlinedVocabularyWorkspace = await inlineModule("vocabulary/workspace.cjs", "__PDFReaderVocabularyWorkspace", "createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer");
@@ -491,6 +503,7 @@ const bundledMain = sourceMain
   .replace(mergeClientMarker, () => inlinedMergeClient)
   .replace(annotationHostMarker, () => inlinedAnnotationHost)
   .replace(vocabularyServiceMarker, () => inlinedVocabularyService)
+  .replace(vocabularyCanonicalMarker, () => inlinedVocabularyCanonical)
   .replace(vocabularyWorkspaceMarker, () => inlinedVocabularyWorkspace)
   .replace(vocabularyWorkbenchMarker, () => inlinedVocabularyWorkbench)
   .replace(vocabularyDictionaryMarker, () => inlinedVocabularyDictionary)
@@ -510,6 +523,7 @@ assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./pdf-sync-host.cjs"));
 assert.ok(!bundledMain.includes("./pdf-hash-runtime.cjs"));
 assert.ok(!bundledMain.includes("./vocabulary/dictionary.cjs"));
+assert.ok(!bundledMain.includes("./vocabulary/canonical.cjs"));
 assert.ok(!bundledMain.includes("./pdf-merge-client.cjs"));
 assert.ok(!bundledMain.includes("./heavy-work.cjs"));
 assert.ok(!bundledMain.includes("./pdf-recovery.cjs"));

@@ -108,6 +108,41 @@ function snapshotIdentity(anchor) {
   return canonicalStringify(canonicalAnchorTuple(anchor));
 }
 
+function tokenizeContextSurface(value) {
+  if (typeof value !== "string") return [];
+  const joined = value.normalize("NFC")
+    // PDF text selection may preserve a visual line-end hyphen even when it
+    // represents one printed word. Rejoin only the explicit line-break form;
+    // ordinary compound hyphens remain part of the token.
+    .replace(/([\p{L}\p{M}])[-\u2010]\s*\r?\n\s*([\p{L}\p{M}])/gu, "$1$2");
+  const matches = joined.match(/[\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+(?:['’][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*(?:[./…-][\p{Script=Latin}\p{Script_Extensions=Latin}\p{M}0-9]+)*/gu) || [];
+  return matches.map((token) => normalizeContextToken(token)).filter(Boolean);
+}
+
+function normalizeContextToken(token) {
+  // Keep token identity aligned with the existing vocabulary key normalizer,
+  // while stripping sentence punctuation around a token.
+  const normalized = String(token).normalize("NFC").replace(/^[^\p{L}\p{M}0-9]+|[^\p{L}\p{M}0-9]+$/gu, "");
+  return normalized ? normalized.toLowerCase().replace(/[\u2018\u2019\u02BC\uFF07]/gu, "'") : "";
+}
+
+function sentenceContainsFamilySurface(sentence, surface, family) {
+  const sentenceTokens = tokenizeContextSurface(sentence);
+  if (!sentenceTokens.length) return false;
+  const candidates = new Set([surface, ...(family?.records || []).flatMap((record) => [record.surface, record.key])]
+    .filter((value) => typeof value === "string")
+    .map((value) => tokenizeContextSurface(value))
+    .filter((tokens) => tokens.length > 0)
+    .map((tokens) => tokens.join("\u001f")));
+  for (const candidate of candidates) {
+    const tokens = candidate.split("\u001f");
+    for (let start = 0; start + tokens.length <= sentenceTokens.length; start += 1) {
+      if (tokens.every((token, offset) => token === sentenceTokens[start + offset])) return true;
+    }
+  }
+  return false;
+}
+
 function requireCoreSnapshotIdentity(identity) {
   if (!identity || identity.exists !== true || typeof identity.storeId !== "string" || !identity.storeId ||
       typeof identity.path !== "string" || !identity.path.startsWith(`${VOCABULARY_DATA_ROOT}/`) ||
@@ -222,6 +257,21 @@ function createVocabularyContextService({
     return clone(actual);
   }
 
+  async function validateSentence(input = {}) {
+    const surface = typeof input.surface === "string" ? input.surface.normalize("NFC").trim() : "";
+    const sentence = typeof input.sentence === "string" ? input.sentence.normalize("NFC").trim() : "";
+    if (!surface || !sentence) throw codedError("VOCAB_CONTEXT_SENTENCE_INVALID", "A vocabulary surface and non-empty sentence are required.");
+    const evidence = await vocabularyService.getFamilyEvidence(surface);
+    const family = evidence?.family;
+    if (!family || family.familyKey !== input.familyKey) {
+      throw codedError("VOCAB_CONTEXT_SURFACE_FAMILY_MISMATCH", "The vocabulary surface does not belong to the selected family.");
+    }
+    if (!sentenceContainsFamilySurface(sentence, surface, family)) {
+      throw codedError("VOCAB_CONTEXT_SURFACE_NOT_IN_SENTENCE", "The selected sentence does not contain the selected vocabulary surface or a saved family variant.");
+    }
+    return { surface, sentence, familyKey: family.familyKey };
+  }
+
   async function validateFamilyReferences(records) {
     const pairs = new Map();
     for (const record of records) {
@@ -265,6 +315,9 @@ function createVocabularyContextService({
       throw codedError("VOCAB_CONTEXT_SENTENCE_INVALID", "A non-empty sentence is required.");
     }
     const sentence = input.sentence.normalize("NFC").trim();
+    if (!sentenceContainsFamilySurface(sentence, surface, family)) {
+      throw codedError("VOCAB_CONTEXT_SURFACE_NOT_IN_SENTENCE", "The selected sentence does not contain the selected vocabulary surface or a saved family variant.");
+    }
     if (!input.anchor || typeof input.anchor !== "object") {
       throw codedError("VOCAB_CONTEXT_ANCHOR_REQUIRED", "An existing verified Selection Anchor is required.");
     }
@@ -389,6 +442,7 @@ function createVocabularyContextService({
     storeId: CONTEXT_STORE_ID,
     load,
     saveContext,
+    validateSentence,
     getContext,
     listFamily,
     verifySource: verifyContextSource,
