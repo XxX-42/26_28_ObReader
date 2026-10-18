@@ -8,6 +8,7 @@
     "test:fast": "node scripts/test-vocabulary-gates.mjs fast",
     "test:browser": "node scripts/test-vocabulary-gates.mjs browser",
     "test:race": "node scripts/test-vocabulary-gates.mjs race",
+    "test:vocabulary-nightly": "node scripts/test-vocabulary-nightly.mjs",
     "test:gates": "node scripts/test-vocabulary-gates.mjs all",
     "test:release": "npm run build && npm test && npm run test:offline",
     "test:offline": "node tests/offline-smoke.mjs",

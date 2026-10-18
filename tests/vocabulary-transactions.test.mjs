@@ -131,6 +131,89 @@ test("local recovery completes result/base states and preserves a third-state re
   assert.equal(adapter.filePaths(`${ROOT}/transactions/${DEVICE}/${SESSION}/`).filter((path) => path.endsWith(".pending.json")).length, 1);
 });
 
+test("two-store commits recover safely from a crash before and after every durable file mutation", async () => {
+  const mutatingOperations = new Set(["write", "rename", "remove"]);
+  const firstPath = `${ROOT}/matrix-a.json`;
+  const secondPath = `${ROOT}/matrix-b.json`;
+  const boundaryTrace = [];
+  const baselineAdapter = new VocabularyMemoryAdapter();
+  await baselineAdapter.mkdir("00_Archive");
+  await baselineAdapter.mkdir(ROOT);
+  const firstBase = await seed(baselineAdapter, firstPath);
+  const secondBase = await seed(baselineAdapter, secondPath);
+  baselineAdapter.hook = async (event) => {
+    if (event.phase === "before" && mutatingOperations.has(event.operation)) {
+      boundaryTrace.push({ operation: event.operation, path: event.path, from: event.from, to: event.to });
+    }
+  };
+  const matrixWrites = (a, b) => [
+    write(firstPath, "matrix-a", a, 2, "first result"),
+    write(secondPath, "matrix-b", b, 2, "second result"),
+  ];
+  const successfulBaseline = await coordinator(baselineAdapter, { ids: ["matrix-tx"] }).commit({
+    actionId: "matrix-baseline",
+    writes: matrixWrites(firstBase, secondBase),
+  });
+  assert.equal(successfulBaseline.status, "committed");
+  assert.equal(boundaryTrace.length, 10, `the two-store write has ten durable mutation points: ${JSON.stringify(boundaryTrace)}`);
+
+  for (let boundary = 0; boundary < boundaryTrace.length; boundary += 1) {
+    for (const phase of ["before", "after"]) {
+      const adapter = new VocabularyMemoryAdapter();
+      await adapter.mkdir("00_Archive");
+      await adapter.mkdir(ROOT);
+      const a = await seed(adapter, firstPath);
+      const b = await seed(adapter, secondPath);
+      let mutationIndex = 0;
+      let injected = false;
+      adapter.hook = async (event) => {
+        if (!mutatingOperations.has(event.operation)) return;
+        if (event.phase === "before") mutationIndex += 1;
+        if (!injected && mutationIndex === boundary + 1 && event.phase === phase) {
+          injected = true;
+          throw new Error(`simulated process loss at ${phase} ${event.operation} #${boundary + 1}`);
+        }
+      };
+
+      let commitResult = null;
+      let commitError = null;
+      try {
+        commitResult = await coordinator(adapter, { ids: ["matrix-tx"] }).commit({
+          actionId: `matrix-${boundary}-${phase}`,
+          writes: matrixWrites(a, b),
+        });
+      } catch (error) {
+        commitError = error;
+      }
+      assert.equal(injected, true, `failure injection did not hit ${phase} mutation ${boundary + 1}`);
+      adapter.hook = null;
+
+      const pendingPrefix = `${ROOT}/transactions/${DEVICE}/${SESSION}/`;
+      const pendingBeforeRecovery = [...adapter.files.keys()].some((path) => path.startsWith(pendingPrefix) && path.endsWith(".pending.json"));
+      const restarted = coordinator(adapter, { ids: ["restart-must-not-create-a-new-transaction"] });
+      const recovered = await restarted.recoverLocal();
+      const firstAfter = await restarted.readSnapshot(firstPath);
+      const secondAfter = await restarted.readSnapshot(secondPath);
+
+      if (pendingBeforeRecovery) {
+        assert.equal(recovered.status, "recovered", `${phase} mutation ${boundary + 1}: ${JSON.stringify(recovered)}`);
+        assert.equal(firstAfter.value.value, "first result", `first store not recovered after ${phase} mutation ${boundary + 1}`);
+        assert.equal(secondAfter.value.value, "second result", `second store not recovered after ${phase} mutation ${boundary + 1}`);
+        assert.equal([...adapter.files.keys()].some((path) => path.startsWith(pendingPrefix) && path.endsWith(".pending.json")), false,
+          `recovery left the local intent after ${phase} mutation ${boundary + 1}`);
+      } else if (commitError) {
+        assert.ok(["none", "clean"].includes(recovered.status), `${phase} mutation ${boundary + 1} had no durable intent: ${JSON.stringify(recovered)}`);
+        assert.equal(firstAfter.value.value, "base", `first store changed without a durable intent after ${phase} mutation ${boundary + 1}`);
+        assert.equal(secondAfter.value.value, "base", `second store changed without a durable intent after ${phase} mutation ${boundary + 1}`);
+      } else {
+        assert.equal(commitResult?.status, "committed", `a post-commit cleanup interruption must not undo verified results`);
+        assert.equal(firstAfter.value.value, "first result");
+        assert.equal(secondAfter.value.value, "second result");
+      }
+    }
+  }
+});
+
 test("foreign pending data is ignored and an unscoped malformed local intent does not block an unrelated store", async () => {
   const adapter = new MemoryDataAdapter();
   const localPath = `${ROOT}/unrelated.json`;
@@ -146,6 +229,37 @@ test("foreign pending data is ignored and an unscoped malformed local intent doe
   assert.equal(recovery.conflicts.length, 1);
   assert.equal(recovery.conflicts[0].diagnosticOnly, true);
   assert.equal((await tx.readSnapshot(localPath)).value.value, "committed");
+});
+
+test("a foreign pending file arriving after a local intent cannot alter local recovery", async () => {
+  const adapter = new VocabularyMemoryAdapter();
+  await adapter.mkdir("00_Archive");
+  await adapter.mkdir(ROOT);
+  const path = `${ROOT}/local-recovery.json`;
+  const base = await seed(adapter, path);
+  const tx = coordinator(adapter, { ids: ["local-arrival-order"] });
+  adapter.hook = async ({ phase, operation, path: eventPath }) => {
+    if (phase === "after" && operation === "write" && eventPath.endsWith(".pending.json")) {
+      throw new Error("simulated interruption after local intent install");
+    }
+  };
+  await assert.rejects(tx.commit({
+    actionId: "local-arrival-order-action",
+    writes: [write(path, "local-store", base, 2, "local result")],
+  }), /simulated interruption/);
+  adapter.hook = null;
+  const foreignDirectory = `${ROOT}/transactions/device-foreign-02/session-foreign-02`;
+  await adapter.mkdir("00_Archive/21_VocabularyData/transactions");
+  await adapter.mkdir("00_Archive/21_VocabularyData/transactions/device-foreign-02");
+  await adapter.mkdir(foreignDirectory);
+  const foreignPath = `${foreignDirectory}/remote.pending.json`;
+  await adapter.write(foreignPath, "remote file has not fully synced");
+
+  const restarted = coordinator(adapter);
+  const recovery = await restarted.recoverLocal();
+  assert.equal(recovery.status, "recovered");
+  assert.equal((await restarted.readSnapshot(path)).value.value, "local result");
+  assert.equal(await adapter.exists(foreignPath), true, "foreign pending evidence is neither read nor removed by this device");
 });
 
 test("review actions append into bounded packed segments, retain ACKed prefixes across an interrupted replacement, and expose no one-file-per-action growth", async () => {

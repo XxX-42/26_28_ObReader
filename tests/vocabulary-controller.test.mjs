@@ -407,8 +407,11 @@ test("page token response caches lexical ranges so zoom only redraws geometry", 
   runtime.listeners.get("scalechanging")({ scale: 1.25 });
   runtime.flushAnimationFrames();
   assert.equal(overlay.draws.length, 2);
+  runtime.listeners.get("scalechanging")({ scale: 2 });
+  runtime.flushAnimationFrames();
+  assert.equal(overlay.draws.length, 3, "100% → 125% → 200% recomputes only visible geometry");
   assert.equal(phraseMatchCalls, 0, "zoom uses cached lexical ranges and only remeasures/draws geometry");
-  assert.equal(runtime.posted.length, 1, "zoom does not re-query the host");
+  assert.equal(runtime.posted.length, 1, "125% and 200% zoom do not re-query the host");
   assert.equal(page.renderMetrics.highlightedTokenCount, 3);
   assert.ok(page.renderMetrics.overlayGeometryAndPaintMs >= 0);
   runtime.controller.dispose();

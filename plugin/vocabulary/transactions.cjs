@@ -664,11 +664,23 @@ class VocabularyTransactionCoordinator {
 
       // All result payloads are verified. Only tx-owned staging/backups and the
       // local intent are eligible for cleanup; user/shard files are never GC'd.
+      let cleanupFailed = false;
       for (const mutation of payload.mutations) {
-        await this._removeIfExists(`${mutation.path}.vocab-stage-${hashPathSegment(payload.txId)}`).catch(() => undefined);
-        await this._removeIfExists(`${mutation.path}.vocab-backup-${hashPathSegment(payload.txId)}`).catch(() => undefined);
+        for (const suffix of ["stage", "backup"]) {
+          const temporaryPath = `${mutation.path}.vocab-${suffix}-${hashPathSegment(payload.txId)}`;
+          try {
+            await this._removeIfExists(temporaryPath);
+          } catch {
+            // Keep the verified local intent while any transaction-owned
+            // temporary file still needs cleanup. Startup recovery can retry
+            // cleanup without replaying or changing the verified result.
+            cleanupFailed = true;
+          }
+        }
       }
-      await this._removeIfExists(pendingPath).catch(() => undefined);
+      if (!cleanupFailed) {
+        try { await this._removeIfExists(pendingPath); } catch { /* recovery retries from the retained intent */ }
+      }
       return { status: "committed", txId: payload.txId, actionId: payload.actionId, cleanupPending: Boolean(await this.adapter.exists(pendingPath)) };
     } finally {
       release();

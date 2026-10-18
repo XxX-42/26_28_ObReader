@@ -107,8 +107,17 @@ test("acknowledged review actions recover before a new session and never rewrite
   const family = await first.service.getFamily("walk");
   const review = await first.runtime.ensureReviewSession();
   await review.enroll(family.familyKey, { actionId: "enroll-walk" });
+  first.adapter.resetMetrics();
   await review.remember(family.familyKey, { actionId: "remember-walk" });
+  const ratingIo = first.adapter.measured();
   const coreBytes = first.adapter.files.get(VOCABULARY_PATH);
+  assert.equal(ratingIo.writes, 0, "one rating does not rewrite canonical Review or vocabulary snapshots");
+  assert.equal(ratingIo.appends, 1, "one acknowledged rating appends only to the bounded local session journal");
+  assert.ok(ratingIo.writtenBytes < 64 * 1024, "one rating writes less than one bounded journal segment");
+  assert.equal(ratingIo.filesTouched.length, 1);
+  assert.match(ratingIo.filesTouched[0], /^00_Archive\/21_VocabularyData\/transactions\/local-device-one\//);
+  assert.ok(!ratingIo.filesTouched.includes(VOCABULARY_PATH));
+  assert.ok(!ratingIo.filesTouched.some((file) => file.startsWith("00_Archive/21_VocabularyData/review/states/")));
   const priorSession = review.getStatus().sessionId;
   // Simulated process termination: all timers/memory vanish; disk is retained.
   first.timers.clear();

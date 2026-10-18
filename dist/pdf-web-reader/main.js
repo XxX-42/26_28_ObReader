@@ -14734,11 +14734,23 @@ var __PDFReaderVocabularyWorkspace = (() => {
               }
             }
             if (unverified.length) return { status: "conflict", conflicts: unverified, txId: payload.txId };
+            let cleanupFailed = false;
             for (const mutation of payload.mutations) {
-              await this._removeIfExists(`${mutation.path}.vocab-stage-${hashPathSegment(payload.txId)}`).catch(() => void 0);
-              await this._removeIfExists(`${mutation.path}.vocab-backup-${hashPathSegment(payload.txId)}`).catch(() => void 0);
+              for (const suffix of ["stage", "backup"]) {
+                const temporaryPath = `${mutation.path}.vocab-${suffix}-${hashPathSegment(payload.txId)}`;
+                try {
+                  await this._removeIfExists(temporaryPath);
+                } catch {
+                  cleanupFailed = true;
+                }
+              }
             }
-            await this._removeIfExists(pendingPath).catch(() => void 0);
+            if (!cleanupFailed) {
+              try {
+                await this._removeIfExists(pendingPath);
+              } catch {
+              }
+            }
             return { status: "committed", txId: payload.txId, actionId: payload.actionId, cleanupPending: Boolean(await this.adapter.exists(pendingPath)) };
           } finally {
             release();
