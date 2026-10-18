@@ -167,6 +167,32 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore+1,
         "Releasing on the LingQ sector should issue exactly one toggle request.");
     };
+    const wheelSectors = async () => viewer.evaluate(() => ({
+      labels: [...document.querySelectorAll(".pdfToolWheel button")].map((button) => button.getAttribute("aria-label")),
+      disabled: [...document.querySelectorAll(".pdfToolWheel button")].map((button) => button.getAttribute("aria-disabled") === "true"),
+      paths: [...document.querySelectorAll(".pdfToolWheel svg > path")].map((path) => ({
+        disabled: path.classList.contains("disabled"),
+        d: path.getAttribute("d"),
+      })),
+    }));
+    const openWheel = async () => {
+      await page.mouse.move(offset.x+center.x, offset.y+center.y);
+      await page.mouse.down({button:"middle"});
+      await viewer.waitForSelector(".pdfToolWheel", {timeout:5_000});
+    };
+    const closeWheel = async () => {
+      await page.mouse.up({button:"middle"});
+      await viewer.waitForFunction(() => !document.querySelector(".pdfToolWheel"), {timeout:5_000});
+    };
+    await openWheel();
+    const annotationLayout = await wheelSectors();
+    assert.deepEqual(annotationLayout.labels, [
+      "LingQ 模式", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线",
+    ], "With LingQ off, the original six tool sectors remain available.");
+    assert.deepEqual(annotationLayout.disabled, [false, false, false, false, false, false]);
+    assert.equal(annotationLayout.paths.length, 6);
+    await closeWheel();
+
     const readLingQWheelAppearance = async (expectedEnabled) => {
       const countBefore = await page.evaluate(() => window.__host.toggleRequests.length);
       await page.mouse.move(offset.x+center.x, offset.y+center.y);
@@ -189,7 +215,37 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
       assert.equal(appearance.labelColor, expectedEnabled ? "rgb(105, 87, 213)" : "rgb(255, 255, 255)");
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore,
         "Opening and closing the wheel must not change the persisted LingQ state.");
-      await page.mouse.up({button:"middle"});
+      const sectors = await wheelSectors();
+      if (expectedEnabled) {
+        assert.deepEqual(sectors.labels, ["退出 LingQ", "预留 1", "预留 2", "预留 3"]);
+        assert.deepEqual(sectors.disabled, [false, true, true, true]);
+        assert.deepEqual(sectors.paths.map((path) => path.disabled), [false, true, true, true]);
+        assert.equal(sectors.paths.length, 4);
+        const placeholderCountBefore = await page.evaluate(() => window.__host.toggleRequests.length);
+        const placeholderAngle = 350 * Math.PI / 180;
+        await page.mouse.move(
+          offset.x+center.x+70*Math.cos(placeholderAngle),
+          offset.y+center.y+70*Math.sin(placeholderAngle),
+          {steps:3},
+        );
+        assert.ok(await viewer.$(".pdfToolWheel"), "Hovering a placeholder keeps the wheel open.");
+        const preview = await viewer.evaluate(() => [...document.querySelectorAll(".pdfToolWheel svg > path")]
+          .map((path) => path.classList.contains("active")));
+        assert.equal(preview[1], false, "A placeholder must not receive hover selection.");
+        await page.mouse.up({button:"middle"});
+        await viewer.waitForFunction(() => !document.querySelector(".pdfToolWheel"), {timeout:5_000});
+        assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), placeholderCountBefore,
+          "Releasing on a placeholder only closes the wheel.");
+        assert.equal(await page.evaluate(() => window.__host.vocabularyEnabled), true,
+          "A placeholder must leave LingQ enabled.");
+      } else {
+        assert.deepEqual(sectors.labels, [
+          "LingQ 模式", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线",
+        ], "Exiting LingQ restores the six annotation tool sectors.");
+        assert.deepEqual(sectors.disabled, [false, false, false, false, false, false]);
+        assert.equal(sectors.paths.length, 6);
+      }
+      if (!expectedEnabled) await page.mouse.up({button:"middle"});
       await viewer.waitForFunction(() => !document.querySelector(".pdfToolWheel"), {timeout:5_000});
     };
     await toggleOnRelease(true);

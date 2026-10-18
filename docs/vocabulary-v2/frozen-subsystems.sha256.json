@@ -1,12 +1,22 @@
 {
   "baseSha": "3a840a6ec4924bfeb4e2a684e734226c2ba2c4ee",
-  "scope": "Annotation storage, input controllers, PDF.js vendor and source PDF fixtures; none may change during Vocabulary v2.",
+  "scope": "Annotation storage, input controllers and source PDF fixtures remain frozen. PDF.js vendor remains frozen except for the explicit LingQ tool-wheel UI override below.",
   "reviewedUpstreamOverrides": {
     "commit": "b6eb9fb372f2caa8724b6ee15183f7db76783b6f",
     "reason": "0.11.9 adds queued read-mode switching at iPad input boundaries; these exact two controller snapshots are included and guarded after review.",
     "sha256": {
       "viewer-adapter/input/annotation-controller.js": "ca76cfd369c02e07193aef5d2a06ba83a285493975c9064fcbfcaf727416dfcf",
       "viewer-adapter/input/ios-direct-manipulation-controller.js": "ef95674772c15b6b1d208ecc63871b407ce3f53035b19595221df9a26bdea70c"
+    }
+  },
+  "reviewedFeatureOverrides": {
+    "feature": "LingQ-aware radial tool wheel",
+    "reason": "The requested wheel layout is implemented in the vendored PDF.js viewer; the frozen PDF rendering, annotation editor and source PDF paths remain unchanged.",
+    "sha256": {
+      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "323bfefb28af065d91a7a6fc6bdd2664fd875d8ba30b9fc7974a1f3efd589862",
+      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "71eeaeadbf39b05a92895f8e5a7bec9ae0d8bfda759eab00a84bc32bbb9ad4b6",
+      "vendor/pdfjs-generic-legacy/web/viewer.css": "29952838c6070b5a4e1155b16215b6bf8dd88d5e4159674355715cc3e322ce94",
+      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "eef018c32f2083647c05a6a062e320429ea21ab7cd643dd666f72814c1f8359b"
     }
   },
   "sha256": {

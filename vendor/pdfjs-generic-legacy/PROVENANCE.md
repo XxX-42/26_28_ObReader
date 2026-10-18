@@ -85,3 +85,14 @@ cleared draw object and leaving subsequent Ink strokes delayed or uncommitted.
 The change is limited to `build/pdf.mjs`; the PDF worker and serialized
 annotation format are unchanged. The updated artifact is pinned in
 `SHA256SUMS.json`.
+
+## LingQ-aware tool-wheel layout
+
+The PDF.js viewer keeps its original six-sector annotation tool wheel while
+LingQ is disabled. When the Obsidian bridge's acknowledged
+`vocabularyEnabled` state is enabled, the top sector becomes “退出 LingQ” and
+the remaining 300 degrees are divided into three disabled placeholder sectors.
+Selecting a placeholder only closes the wheel. The existing bridge toggle
+event, PDF.js annotation tools, PDF worker, and annotation serialization are
+unchanged. The modified viewer module and stylesheet are pinned in
+`SHA256SUMS.json`.

@@ -34,16 +34,23 @@ test("PDF lexical matching cannot import Context, Review, History or Dictionary 
   }
 });
 
-test("frozen storage/input/vendor/PDF files retain baseline bytes except the reviewed 0.11.9 read-mode hooks", async () => {
+test("frozen storage/input/PDF files and vendor retain baseline bytes except reviewed scoped overrides", async () => {
   const manifest = JSON.parse(await readFile(path.join(root, "docs/vocabulary-v2/frozen-subsystems.sha256.json"), "utf8"));
   assert.equal(Object.keys(manifest.sha256).length, 441);
   assert.deepEqual(Object.keys(manifest.reviewedUpstreamOverrides?.sha256 || {}).sort(), [
     "viewer-adapter/input/annotation-controller.js",
     "viewer-adapter/input/ios-direct-manipulation-controller.js",
   ]);
+  assert.deepEqual(Object.keys(manifest.reviewedFeatureOverrides?.sha256 || {}).sort(), [
+    "vendor/pdfjs-generic-legacy/PROVENANCE.md",
+    "vendor/pdfjs-generic-legacy/SHA256SUMS.json",
+    "vendor/pdfjs-generic-legacy/web/viewer.css",
+    "vendor/pdfjs-generic-legacy/web/viewer.mjs",
+  ]);
   for (const [file, expected] of Object.entries(manifest.sha256)) {
     const actual = createHash("sha256").update(await readFile(path.join(root, file))).digest("hex");
-    const reviewed = manifest.reviewedUpstreamOverrides?.sha256?.[file];
-    assert.equal(actual, reviewed || expected, `frozen subsystem changed outside the reviewed upstream change: ${file}`);
+    const reviewed = manifest.reviewedUpstreamOverrides?.sha256?.[file] ||
+      manifest.reviewedFeatureOverrides?.sha256?.[file];
+    assert.equal(actual, reviewed || expected, `frozen subsystem changed outside a reviewed override: ${file}`);
   }
 });

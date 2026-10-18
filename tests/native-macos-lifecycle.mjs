@@ -5084,6 +5084,7 @@ async function testNativeToolWheel() {
   await persistReport();
   const view = await openReader(primaryPage, relativePath);
   let initialLingQEnabled = null;
+  let originalLingQEnabled = null;
   try {
     await pageGeometry(view, 0);
     const center = await evaluateJson(view.page, `JSON.stringify((() => {
@@ -5113,6 +5114,12 @@ async function testNativeToolWheel() {
     })())`);
     const vocabularyEnabled = () => evaluateJson(view.page,
       `JSON.stringify(app.plugins.plugins[${JSON.stringify(pluginId)}]?.settings?.vocabularyEnabled === true)`);
+    originalLingQEnabled = await vocabularyEnabled();
+    if (originalLingQEnabled) {
+      await view.page.evaluate(async ({ pluginId: id }) =>
+        app.plugins.plugins[id].setVocabularyEnabled(false), { pluginId });
+      await waitFor("LingQ off before annotation wheel regression", vocabularyEnabled, (enabled) => !enabled, 8_000);
+    }
     const wheelState = () => evaluateJson(view.page, `JSON.stringify((() => {
       const leaf = app.workspace.getLeavesOfType(${JSON.stringify(viewType)})
         .find(candidate => candidate.id === ${JSON.stringify(view.leafId)});
@@ -5126,9 +5133,11 @@ async function testNativeToolWheel() {
         mode: frame.contentWindow.PDFViewerApplication.pdfViewer.annotationEditorMode,
         center: { x: frameRect.x + rect.x + rect.width / 2, y: frameRect.y + rect.y + rect.height / 2 },
         width: rect.width, height: rect.height,
+        sectorPaths: [...wheel.querySelectorAll('svg path')].map(path => path.getAttribute('class') || ''),
         sectors: [...wheel.querySelectorAll('button')].map(button => ({
           title: button.title || null,
           ariaLabel: button.getAttribute('aria-label'),
+          disabled: button.getAttribute('aria-disabled') === 'true',
           className: button.className || null,
         })) };
     })())`);
@@ -5155,6 +5164,9 @@ async function testNativeToolWheel() {
         const previousMode = await modeForView();
         const opened = await openWheel();
         middleHeld = true;
+        assert.deepEqual(opened.sectors.map((sector) => sector.ariaLabel), [
+          "LingQ 模式", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线",
+        ], "With LingQ off, the original six-sector annotation wheel is preserved.");
         assert.equal(opened.mode, previousMode,
           "Opening the tool wheel must leave the active annotation tool unchanged.");
         const angle = ((index * 60 - 90) * Math.PI) / 180;
@@ -5244,12 +5256,42 @@ async function testNativeToolWheel() {
       await waitFor("LingQ wheel to close after release", wheelState, (state) => !state.open, 8_000);
       assert.equal(await modeForView(), modeBeforeExit,
         "Toggling LingQ from the wheel must preserve the active annotation tool.");
+      let activeWheel = await openWheel();
+      exitHeld = true;
+      assert.deepEqual(activeWheel.sectors.map((sector) => sector.ariaLabel), [
+        "退出 LingQ", "预留 1", "预留 2", "预留 3",
+      ], "With LingQ on, the wheel shows an exit action and three placeholders.");
+      assert.deepEqual(activeWheel.sectors.map((sector) => sector.disabled), [false, true, true, true]);
+      for (let index = 0; index < 3; index += 1) {
+        if (index > 0) {
+          activeWheel = await openWheel();
+          exitHeld = true;
+        }
+        const angle = (350 + index * 100) * Math.PI / 180;
+        const placeholderPoint = {
+          x: activeWheel.center.x + 80 * Math.cos(angle),
+          y: activeWheel.center.y + 80 * Math.sin(angle),
+        };
+        await view.page.mouse.move(placeholderPoint.x, placeholderPoint.y);
+        const placeholderPreview = await wheelState();
+        assert.equal(placeholderPreview.open, true, "Hovering a placeholder keeps the wheel open.");
+        assert.equal(placeholderPreview.sectorPaths[index + 1].split(/\s+/).includes("active"), false,
+          "A disabled placeholder must not show an active hover state.");
+        assert.equal(await vocabularyEnabled(), true, "Hovering a placeholder must not change LingQ state.");
+        await view.page.mouse.up({ button: "middle" });
+        exitHeld = false;
+        await waitFor("placeholder release to close the wheel", wheelState, (state) => !state.open, 8_000);
+        assert.equal(await vocabularyEnabled(), true, "Selecting a placeholder must leave LingQ enabled.");
+        assert.equal(await modeForView(), modeBeforeExit, "Selecting a placeholder must preserve the PDF tool.");
+      }
       const secondWheel = await openWheel();
       exitHeld = true;
+      assert.equal(secondWheel.sectors[0].ariaLabel, "退出 LingQ",
+        "Reopening the wheel while LingQ is active labels its top sector as exit.");
       const secondPoint = { x: secondWheel.center.x, y: secondWheel.center.y - 80 };
       await view.page.mouse.move(secondPoint.x, secondPoint.y);
       assert.equal((await wheelState()).open, true,
-        "The LingQ sector remains available when previewing the reverse toggle.");
+        "The LingQ exit sector remains open while previewing before release.");
       await view.page.mouse.up({ button: "middle" });
       exitHeld = false;
       const restoredLingQEnabled = await waitFor(
@@ -5264,8 +5306,19 @@ async function testNativeToolWheel() {
         initialEnabled: initialLingQEnabled,
         enabledAfterFirstRelease,
         restoredLingQEnabled,
+        activeWheelLabels: secondWheel.sectors.map((sector) => sector.ariaLabel),
+        placeholderCount: secondWheel.sectors.filter((sector) => sector.disabled).length,
         mode: await modeForView(),
       };
+      const restoredWheel = await openWheel();
+      exitHeld = true;
+      assert.deepEqual(restoredWheel.sectors.map((sector) => sector.ariaLabel), [
+        "LingQ 模式", "5 文字框", "4 自由画笔", "3 荧光笔", "2 矩形框", "1 下划线",
+      ], "Turning LingQ off restores the original annotation sectors.");
+      await view.page.mouse.up({ button: "middle" });
+      exitHeld = false;
+      await view.page.keyboard.press("Escape");
+      await waitFor("Escape to close restored annotation wheel", wheelState, (state) => !state.open, 8_000);
     } finally {
       if (exitHeld) await view.page.mouse.up({ button: "middle" }).catch(() => {});
       if (initialLingQEnabled !== null &&
@@ -5304,6 +5357,14 @@ async function testNativeToolWheel() {
     await persistReport().catch(() => {});
     throw error;
   } finally {
+    if (originalLingQEnabled !== null) {
+      await view.page.evaluate(async ({ enabled, pluginId: id }) => {
+        const plugin = app.plugins.plugins[id];
+        if (plugin && plugin.settings?.vocabularyEnabled !== enabled) {
+          await plugin.setVocabularyEnabled(enabled);
+        }
+      }, { enabled: originalLingQEnabled, pluginId }).catch(() => {});
+    }
     await detachOwnedView(view, { allowDirty: true });
   }
 }
