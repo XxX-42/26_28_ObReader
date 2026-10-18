@@ -665,7 +665,9 @@ body {
 }
 
 :root[data-vocabulary-enabled="true"] .pdfToolWheel button[data-sector="0"] {
-  color: var(--interactive-accent, #6957d5);
+  /* The selected wedge is already filled with the accent color; using that
+     same color for its caption makes "退出 LingQ" disappear into the wedge. */
+  color: #fff;
   font-weight: 650;
 }
 

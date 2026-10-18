@@ -11,12 +11,12 @@
   },
   "reviewedFeatureOverrides": {
     "feature": "LingQ-aware radial tool wheel and Windows PDF permission behavior",
-    "reason": "The vendored PDF.js viewer preserves the LingQ radial layout while keeping LingQ available on read-only PDFs, disabling only annotation actions without permission, and enabling annotation editing when MODIFY_CONTENTS or MODIFY_ANNOTATIONS is granted. Rendering, annotation serialization and source PDF paths remain unchanged.",
+    "reason": "The vendored PDF.js viewer preserves the LingQ radial layout while keeping the active exit caption legible against its selected accent wedge, keeps LingQ available on read-only PDFs, disables only annotation actions without permission, and enables annotation editing when MODIFY_CONTENTS or MODIFY_ANNOTATIONS is granted. Rendering, annotation serialization and source PDF paths remain unchanged.",
     "sha256": {
-      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "08b38b5772570c72ff90ae0bed99e924d6ecd7ba216c06b4bbe4f07ae97967fd",
-      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "1af16bc8fcddb747f60458782ba756f57724804f0d2b26e7288ac85eb4ed93c6",
-      "vendor/pdfjs-generic-legacy/web/viewer.css": "fc7e502452bb62fa634a7ada8a4314f54e9dc8db9c486a9abfb874b7b4c571ff",
-      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "d758de69490d8303cde1fbe761dfb8e1bd783e76d02b80793d0e924b2c27a540"
+      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "f7474d8cca73b714818d464c751b55533d256332ef99831a5101eda77e46ee4b",
+      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "9fe5d94acf477bed9c975b1c4de2e067f947f7c1d4e820660999f3b2d20dc3a6",
+      "vendor/pdfjs-generic-legacy/web/viewer.css": "56abcc904746b55f49ca80ef0b0d358413d8eb0a90cdface5e76d7a6e03f75f7",
+      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "9d49b93b72403ffd1a596a2225341598411286c50ced21477a0e71caaa80b710"
     }
   },
   "sha256": {

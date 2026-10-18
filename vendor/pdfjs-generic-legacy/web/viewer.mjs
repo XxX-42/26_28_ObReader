@@ -26687,12 +26687,19 @@ function onToolWheelDown(evt) {
       label.setAttribute("aria-disabled", "true");
       sector.classList.add("disabled");
     }
-    label.style.left = `${50 + 32 * Math.cos(angle)}%`;
-    label.style.top = `${50 + 32 * Math.sin(angle)}%`;
+    // The active LingQ wheel's exit caption is longer than the former L-mode
+    // label. Keep it farther out in its narrow 60° sector so the caption has
+    // room without colliding with the center or adjacent placeholder wedges.
+    const labelRadius = index === 0 && items.length === 4 ? 40 : 32;
+    label.style.left = `${50 + labelRadius * Math.cos(angle)}%`;
+    label.style.top = `${50 + labelRadius * Math.sin(angle)}%`;
     const icon = document.createElement("span");
     icon.className = "pdfToolWheelIcon";
     icon.textContent = item.icon;
-    label.append(icon, document.createTextNode(item.label));
+    const caption = document.createElement("span");
+    caption.className = "pdfToolWheelLabelText";
+    caption.textContent = item.label;
+    label.append(icon, caption);
     element.append(label);
   });
   element.prepend(svg);

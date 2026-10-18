@@ -206,13 +206,29 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
           fill: sector && getComputedStyle(sector).fill,
           labelColor: label && getComputedStyle(label).color,
           fontWeight: label && getComputedStyle(label).fontWeight,
+          visibleCaption: label?.querySelector(".pdfToolWheelLabelText")?.textContent,
+          captionRect: (() => {
+            const caption = label?.querySelector(".pdfToolWheelLabelText");
+            const rect = caption?.getBoundingClientRect();
+            return rect ? { width: rect.width, height: rect.height } : null;
+          })(),
+          labelZIndex: label && getComputedStyle(label).zIndex,
         };
       });
       assert.equal(appearance.enabled, expectedEnabled,
         "The wheel appearance must reflect the bridge's acknowledged vocabulary state.");
       assert.equal(appearance.fill, expectedEnabled ? "rgb(105, 87, 213)" : "rgba(48, 52, 59, 0.933)",
         "The LingQ wedge should be visibly selected only while LingQ is enabled.");
-      assert.equal(appearance.labelColor, expectedEnabled ? "rgb(105, 87, 213)" : "rgb(255, 255, 255)");
+      assert.equal(appearance.labelColor, "rgb(255, 255, 255)",
+        "The caption must contrast with both the normal and selected wedge fills.");
+      assert.notEqual(appearance.labelColor, appearance.fill,
+        "The selected LingQ caption must not blend into its accent-filled wedge.");
+      assert.equal(appearance.visibleCaption, expectedEnabled ? "退出 LingQ" : "LingQ 模式",
+        "The LingQ sector must render its state-specific visible caption, not only an aria-label.");
+      assert.ok(appearance.captionRect?.width > 0 && appearance.captionRect?.height > 0,
+        "The visible LingQ caption must have a painted layout box.");
+      assert.equal(appearance.labelZIndex, "2",
+        "Wheel captions must layer above the sector SVG.");
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore,
         "Opening and closing the wheel must not change the persisted LingQ state.");
       const sectors = await wheelSectors();

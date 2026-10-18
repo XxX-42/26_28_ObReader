@@ -97,6 +97,11 @@ event, PDF.js annotation tools, PDF worker, and annotation serialization are
 unchanged. The modified viewer module and stylesheet are pinned in
 `SHA256SUMS.json`.
 
+When LingQ is enabled, the selected top wedge uses the theme accent as its fill;
+its “退出 LingQ” caption therefore stays white for readable contrast. The
+caption is an explicit text element layered above the sector SVG and is placed
+farther out in the narrow exit wedge. This affects wheel presentation only.
+
 ## Read-only PDF tool-wheel correction: Windows validation 2026-10-19
 
 The tool wheel remains available when PDF.js reports
