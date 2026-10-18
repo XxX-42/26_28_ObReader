@@ -26541,15 +26541,22 @@ function toolWheelSector(wheel, evt) {
 }
 function selectToolWheel(index) {
   const item = TOOL_WHEEL_ITEMS[index];
+  if (!item) {
+    closeToolWheel.call(this);
+    return;
+  }
+  if (
+    item.mode !== null &&
+    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
+  ) {
+    return;
+  }
   closeToolWheel.call(this);
   if (item.action === "toggle-lingq") {
     window.dispatchEvent(new Event("pdf-reader-toggle-lingq"));
     return;
   }
-  if (
-    item.mode === null ||
-    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
-  ) {
+  if (item.mode === null) {
     return;
   }
   this.eventBus.dispatch("hideannotationeditorparams", { source: window });
@@ -26583,7 +26590,6 @@ function onToolWheelDown(evt) {
     evt.pointerType !== "mouse" ||
     !this.pdfDocument ||
     this.overlayManager.active ||
-    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE ||
     !(evt.target instanceof Element) ||
     !this.pdfViewer.container.contains(evt.target) ||
     evt.target.closest(
@@ -26631,6 +26637,14 @@ function onToolWheelDown(evt) {
     label.setAttribute("role", "menuitem");
     label.setAttribute("aria-label", item.label);
     label.dataset.sector = index;
+    if (
+      item.mode !== null &&
+      this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
+    ) {
+      label.disabled = true;
+      label.setAttribute("aria-disabled", "true");
+      sector.classList.add("disabled");
+    }
     const angle = ((index * 60 - 90) * Math.PI) / 180;
     label.style.left = `${50 + 32 * Math.cos(angle)}%`;
     label.style.top = `${50 + 32 * Math.sin(angle)}%`;
@@ -26665,9 +26679,13 @@ function onToolWheelMove(evt) {
     return;
   }
   const index = toolWheelSector(wheel, evt);
-  wheel.sectors.forEach((sector, i) =>
-    sector.classList.toggle("active", i === index),
-  );
+  wheel.sectors.forEach((sector, i) => {
+    const item = TOOL_WHEEL_ITEMS[i];
+    const disabled =
+      item.mode !== null &&
+      this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE;
+    sector.classList.toggle("active", i === index && !disabled);
+  });
   evt.preventDefault();
   evt.stopImmediatePropagation();
 }

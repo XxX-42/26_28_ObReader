@@ -197,6 +197,93 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
     await toggleOnRelease(false);
     await readLingQWheelAppearance(false);
     assert.deepEqual(await page.evaluate(() => window.__host.toggleRequests), [true, false]);
+
+    const readOnlyCenter = await viewer.evaluate(() => {
+      const rect = document.getElementById("viewerContainer").getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await viewer.evaluate(() => {
+      const pdfViewer = PDFViewerApplication.pdfViewer;
+      window.__toolWheelPermissionOverride = {
+        pdfViewer,
+        descriptor: Object.getOwnPropertyDescriptor(pdfViewer, "annotationEditorMode"),
+      };
+      Object.defineProperty(pdfViewer, "annotationEditorMode", {
+        configurable: true,
+        get: () => -1,
+      });
+    });
+    let permissionProbePointerHeld = false;
+    const sectorPoint = (index) => {
+      const angle = ((index * 60 - 90) * Math.PI) / 180;
+      return {
+        x: offset.x + readOnlyCenter.x + 80 * Math.cos(angle),
+        y: offset.y + readOnlyCenter.y + 80 * Math.sin(angle),
+      };
+    };
+    try {
+      await page.mouse.move(offset.x + readOnlyCenter.x, offset.y + readOnlyCenter.y);
+      await page.mouse.down({ button: "middle" });
+      permissionProbePointerHeld = true;
+      await viewer.waitForSelector(".pdfToolWheel", { timeout: 5_000 });
+      const permissionAppearance = await viewer.evaluate(() => ({
+        mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+        sectors: [...document.querySelectorAll(".pdfToolWheel button")].map((button) => ({
+          disabled: button.disabled,
+          ariaDisabled: button.getAttribute("aria-disabled"),
+        })),
+      }));
+      assert.equal(permissionAppearance.mode, -1,
+        "The permission probe must model PDF.js DISABLE mode.");
+      assert.equal(permissionAppearance.sectors.length, 6,
+        "Read-only PDFs must still expose LingQ and the six-sector wheel.");
+      assert.equal(permissionAppearance.sectors[0].disabled, false,
+        "The read-only wheel keeps its non-annotation LingQ action available.");
+      assert.deepEqual(permissionAppearance.sectors.slice(1).map((sector) => sector.disabled),
+        [true, true, true, true, true],
+        "Every annotation sector must be visibly disabled when PDF editing is forbidden.");
+      assert.deepEqual(permissionAppearance.sectors.slice(1).map((sector) => sector.ariaDisabled),
+        ["true", "true", "true", "true", "true"]);
+
+      const disabledTool = sectorPoint(5);
+      await page.mouse.move(disabledTool.x, disabledTool.y);
+      await page.mouse.up({ button: "middle" });
+      permissionProbePointerHeld = false;
+      assert.ok(await viewer.$(".pdfToolWheel"),
+        "Trying a disabled annotation tool must not dismiss the wheel or enable editing.");
+      assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), -1,
+        "Read-only PDF permissions must remain enforced after a disabled-sector selection.");
+
+      await viewer.click('.pdfToolWheel button[data-sector="0"]');
+      await page.waitForFunction(() => window.__host.vocabularyEnabled === true,
+        { timeout: 5_000 });
+      assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), -1,
+        "The LingQ action must not change the PDF annotation permission mode.");
+
+      await page.mouse.move(offset.x + readOnlyCenter.x, offset.y + readOnlyCenter.y);
+      await page.mouse.down({ button: "middle" });
+      permissionProbePointerHeld = true;
+      await viewer.waitForSelector(".pdfToolWheel", { timeout: 5_000 });
+      const lingqPoint = sectorPoint(0);
+      await page.mouse.move(lingqPoint.x, lingqPoint.y);
+      await page.mouse.up({ button: "middle" });
+      permissionProbePointerHeld = false;
+      await page.waitForFunction(() => window.__host.vocabularyEnabled === false,
+        { timeout: 5_000 });
+      assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), -1);
+    } finally {
+      if (permissionProbePointerHeld) await page.mouse.up({ button: "middle" }).catch(() => {});
+      await viewer.evaluate(() => {
+        const saved = window.__toolWheelPermissionOverride;
+        if (!saved) return;
+        if (saved.descriptor) {
+          Object.defineProperty(saved.pdfViewer, "annotationEditorMode", saved.descriptor);
+        } else {
+          delete saved.pdfViewer.annotationEditorMode;
+        }
+        delete window.__toolWheelPermissionOverride;
+      });
+    }
   } catch (error) {
     primaryError = error;
   } finally {

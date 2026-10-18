@@ -85,3 +85,12 @@ cleared draw object and leaving subsequent Ink strokes delayed or uncommitted.
 The change is limited to `build/pdf.mjs`; the PDF worker and serialized
 annotation format are unchanged. The updated artifact is pinned in
 `SHA256SUMS.json`.
+
+## Read-only PDF tool-wheel correction: Windows validation 2026-10-19
+
+The tool wheel remains available when PDF.js reports `AnnotationEditorType.DISABLE`,
+so non-annotation actions such as LingQ can still be used on a permission-restricted
+PDF. Annotation sectors are marked disabled and cannot change the editor mode;
+the PDF permission is never bypassed. The change is limited to
+`web/viewer.mjs` and `web/viewer.css`, is a local project correction rather than
+an upstream PDF.js backport, and is pinned in `SHA256SUMS.json`.
