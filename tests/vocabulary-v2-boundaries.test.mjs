@@ -34,11 +34,16 @@ test("PDF lexical matching cannot import Context, Review, History or Dictionary 
   }
 });
 
-test("all 441 frozen storage/input/vendor/PDF files retain their baseline bytes", async () => {
+test("frozen storage/input/vendor/PDF files retain baseline bytes except the reviewed 0.11.9 read-mode hooks", async () => {
   const manifest = JSON.parse(await readFile(path.join(root, "docs/vocabulary-v2/frozen-subsystems.sha256.json"), "utf8"));
   assert.equal(Object.keys(manifest.sha256).length, 441);
+  assert.deepEqual(Object.keys(manifest.reviewedUpstreamOverrides?.sha256 || {}).sort(), [
+    "viewer-adapter/input/annotation-controller.js",
+    "viewer-adapter/input/ios-direct-manipulation-controller.js",
+  ]);
   for (const [file, expected] of Object.entries(manifest.sha256)) {
     const actual = createHash("sha256").update(await readFile(path.join(root, file))).digest("hex");
-    assert.equal(actual, expected, `frozen subsystem changed: ${file}`);
+    const reviewed = manifest.reviewedUpstreamOverrides?.sha256?.[file];
+    assert.equal(actual, reviewed || expected, `frozen subsystem changed outside the reviewed upstream change: ${file}`);
   }
 });

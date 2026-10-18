@@ -1,6 +1,14 @@
 {
   "baseSha": "3a840a6ec4924bfeb4e2a684e734226c2ba2c4ee",
   "scope": "Annotation storage, input controllers, PDF.js vendor and source PDF fixtures; none may change during Vocabulary v2.",
+  "reviewedUpstreamOverrides": {
+    "commit": "b6eb9fb372f2caa8724b6ee15183f7db76783b6f",
+    "reason": "0.11.9 adds queued read-mode switching at iPad input boundaries; these exact two controller snapshots are included and guarded after review.",
+    "sha256": {
+      "viewer-adapter/input/annotation-controller.js": "ca76cfd369c02e07193aef5d2a06ba83a285493975c9064fcbfcaf727416dfcf",
+      "viewer-adapter/input/ios-direct-manipulation-controller.js": "ef95674772c15b6b1d208ecc63871b407ce3f53035b19595221df9a26bdea70c"
+    }
+  },
   "sha256": {
     "plugin/pdf-annotation-host.cjs": "9f9340e9d57fce9fa4d79c6392022705923534bdfc40e3267f31f9d4f9b7b2de",
     "plugin/pdf-annotation-store.cjs": "96924d0682f53e799501673b1a180481d263d4e1e6ad7a9ca4529c4b7eb78d53",

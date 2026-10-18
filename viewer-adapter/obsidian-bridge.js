@@ -156,6 +156,8 @@
     annotationUuidByRuntimeId: new Map(),
     annotationRefByRuntimeId: new Map(),
     annotationUuidByPdfRef: new Map(),
+    annotationRuntimeBindings: new Map(),
+    annotationTrackingFailure: null,
     annotationSnapshot: new Map(),
     annotationOperations: [],
     dirtyAnnotationRevisions: new Map(),
@@ -207,12 +209,14 @@
     vocabularyEnabled: vocabularyEnabledAtBoot,
     vocabularyHighlightLevels: vocabularyHighlightLevelsAtBoot,
     vocabularyDisplayMode: normalizeVocabularyDisplayMode(bridgeScript.dataset.vocabularyDisplayMode),
+    vocabularyWordDisplayMode: bridgeScript.dataset.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
     readerBacklinkHighlights: null,
     readerBacklinkPageKey: null,
     readerBacklinkPageResults: null,
     readerBacklinkRetryTimer: null,
     preferredAnnotationToolMode: 0,
     restoredAnnotationToolIdentity: null,
+    vocabularyReadModeToolChoice: null,
     vocabularyController: null,
   };
   if (document.documentElement?.dataset) {
@@ -778,21 +782,70 @@
       isEnabled: true,
       highlightLevels: state.vocabularyHighlightLevels,
       displayMode: state.vocabularyDisplayMode,
+      wordDisplayMode: state.vocabularyWordDisplayMode,
     });
     return state.vocabularyController;
   }
 
+  function vocabularyReadModeIsSafe() {
+    const pdfViewer = state.app?.pdfViewer;
+    return !!pdfViewer?._layerProperties?.annotationEditorUIManager &&
+      Number.isInteger(pdfViewer.annotationEditorMode) &&
+      state.editorMode === pdfViewer.annotationEditorMode &&
+      !isEditBoundaryBusy() &&
+      manualPointerCount() === 0 &&
+      penPolicyPointerIds().length === 0 &&
+      state.iosDirectManipulationController?.hasActiveInputSession?.() !== true;
+  }
+
+  function requestVocabularyReadMode(documentId, openRequest) {
+    const app = state.app;
+    const pdfDocument = app?.pdfDocument;
+    const pdfViewer = app?.pdfViewer;
+    if (!state.vocabularyEnabled || !app || !pdfViewer) {
+      return false;
+    }
+    if (state.editorMode === 0 && pdfViewer.annotationEditorMode === 0) {
+      state.annotationController?.cancelPendingReadMode?.();
+      return false;
+    }
+    const generation = rendererGeneration;
+    const explicitToolChoice = state.vocabularyReadModeToolChoice;
+    if (explicitToolChoice?.documentId === documentId &&
+        explicitToolChoice?.openRequest === openRequest &&
+        explicitToolChoice?.rendererGeneration === generation) {
+      return false;
+    }
+    const identity = { documentId, openRequest };
+    return state.annotationController?.requestReadMode?.({
+      isSafe: vocabularyReadModeIsSafe,
+      isCurrent: () => !state.disposed &&
+        state.vocabularyEnabled === true &&
+        rendererGeneration === generation &&
+        state.app === app && app.pdfDocument === pdfDocument &&
+        state.activeDocumentId === identity.documentId &&
+        state.activeOpenRequest === identity.openRequest &&
+        state.requestedDocumentId === identity.documentId &&
+        state.requestedOpenRequest === identity.openRequest,
+    }) === true;
+  }
+
   function setVocabularyEnabled(enabled) {
+    const wasEnabled = state.vocabularyEnabled === true;
     state.vocabularyEnabled = enabled === true;
     syncVocabularyMenuButton();
     if (!state.vocabularyEnabled) {
+      state.vocabularyReadModeToolChoice = null;
+      state.annotationController?.cancelPendingReadMode?.();
       state.vocabularyController?.dispose?.();
       state.vocabularyController = null;
       return;
     }
+    if (!wasEnabled) state.vocabularyReadModeToolChoice = null;
     const controller = ensureVocabularyController();
     if (controller && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       controller.setDocument(state.activeDocumentId, state.activeOpenRequest, true);
+      requestVocabularyReadMode(state.activeDocumentId, state.activeOpenRequest);
     }
     syncVocabularyMenuButton();
   }
@@ -932,6 +985,19 @@
     return true;
   }
 
+  function handleVocabularyWordDisplayModeMessage(message) {
+    if (message?.rendererGeneration !== rendererGeneration || !["whole", "roots"].includes(message.mode)) return false;
+    const matchesActive = message.documentId === state.activeDocumentId && message.openRequest === state.activeOpenRequest;
+    const pending = state.pendingVocabularySettings;
+    const matchesPending = message.documentId === state.requestedDocumentId && message.openRequest === state.requestedOpenRequest &&
+      pending?.documentId === message.documentId && pending?.openRequest === message.openRequest;
+    if (!matchesActive && !matchesPending) return false;
+    if (matchesPending) pending.wordDisplayMode = message.mode;
+    state.vocabularyWordDisplayMode = message.mode;
+    state.vocabularyController?.setWordDisplayMode?.(message.mode);
+    return true;
+  }
+
   function handleVocabularyEnabledMessage(message) {
     if (message?.rendererGeneration !== rendererGeneration || typeof message.enabled !== "boolean") return false;
     const matchesActive = message.documentId === state.activeDocumentId &&
@@ -946,6 +1012,10 @@
         state.pendingVocabularySettings?.openRequest !== message.openRequest) return false;
     state.pendingVocabularySettings.enabled = message.enabled;
     state.vocabularyEnabled = message.enabled;
+    if (!message.enabled) {
+      state.vocabularyReadModeToolChoice = null;
+      state.annotationController?.cancelPendingReadMode?.();
+    }
     syncVocabularyMenuButton();
     // A newer document is queued; clear old page overlays now and defer
     // scanning until that exact open request becomes active.
@@ -954,6 +1024,7 @@
   }
 
   function prepareVocabularyOpen(message) {
+    state.annotationController?.cancelPendingReadMode?.();
     state.vocabularyController?.setDocument?.(null, null, false);
     const pending = state.pendingVocabularySettings;
     const matchesPending = pending?.documentId === message.documentId &&
@@ -962,11 +1033,14 @@
       pending?.openRequest === message.openRequest
       ? pending.enabled === true
       : message.vocabularyEnabled === true;
+    if (!state.vocabularyEnabled) state.vocabularyReadModeToolChoice = null;
     setVocabularyHighlightLevels(pending?.documentId === message.documentId &&
       pending?.openRequest === message.openRequest
       ? pending.levels
       : message.vocabularyHighlightLevels);
     setVocabularyDisplayMode(matchesPending ? pending.displayMode : message.vocabularyDisplayMode);
+    state.vocabularyWordDisplayMode = (matchesPending ? pending.wordDisplayMode : message.vocabularyWordDisplayMode) === "roots" ? "roots" : "whole";
+    state.vocabularyController?.setWordDisplayMode?.(state.vocabularyWordDisplayMode);
     state.preferredAnnotationToolMode = normalizeAnnotationToolMode(message.preferredAnnotationToolMode);
     state.restoredAnnotationToolIdentity = null;
     syncVocabularyMenuButton();
@@ -975,7 +1049,9 @@
   function restorePreferredAnnotationTool(documentId, openRequest) {
     const mode = normalizeAnnotationToolMode(state.preferredAnnotationToolMode);
     const identityKey = `${documentId}:${openRequest}`;
-    if (mode === 0 || state.readOnly || !state.externalSourceConfirmed ||
+    // LingQ has explicit priority while enabled: keep its read interaction
+    // available, while retaining the saved annotation preference for later.
+    if (state.vocabularyEnabled || mode === 0 || state.readOnly || !state.externalSourceConfirmed ||
         state.restoredAnnotationToolIdentity === identityKey ||
         documentId !== state.activeDocumentId || openRequest !== state.activeOpenRequest) return false;
     state.restoredAnnotationToolIdentity = identityKey;
@@ -993,6 +1069,7 @@
       state.requestedOpenRequest === openRequest;
     if (state.vocabularyEnabled && isLatestOpen) {
       ensureVocabularyController()?.setDocument?.(documentId, openRequest, true);
+      requestVocabularyReadMode(documentId, openRequest);
     } else {
       state.vocabularyController?.setDocument?.(null, null, false);
     }
@@ -2687,6 +2764,7 @@
         state.annotationRefByRuntimeId.get(runtimeId) || null;
       const referenceKey = pdfAnnotationRefKey(reference);
       const runtimeUuid = state.annotationUuidByRuntimeId.get(runtimeId);
+      const runtimeBinding = state.annotationRuntimeBindings?.get(runtimeId);
       const priorRow = state.annotationSnapshot?.get(runtimeId);
       const boundRow = state.externalAnnotationRows?.get(runtimeUuid ||
         (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)));
@@ -2706,7 +2784,8 @@
               ? identity.pageIndex
               : Number.isSafeInteger(priorRow?.pageIndex)
                 ? priorRow.pageIndex
-                : Number.isSafeInteger(boundRow?.pageIndex) ? boundRow.pageIndex : null;
+                : Number.isSafeInteger(boundRow?.pageIndex) ? boundRow.pageIndex
+                  : Number.isSafeInteger(runtimeBinding?.pageIndex) ? runtimeBinding.pageIndex : null;
       let uuid = runtimeUuid || (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)) ||
         identity?.uuid || priorRow?.uuid || null;
       let exactRow = uuid ? state.externalAnnotationRows?.get(uuid) || priorRow : null;
@@ -2724,7 +2803,7 @@
       }
       let kind = externalKindForEditor(value, editor);
       if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) {
-        kind = [identity?.kind, exactRow?.kind, priorRow?.kind]
+        kind = [identity?.kind, exactRow?.kind, priorRow?.kind, runtimeBinding?.kind]
           .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
       }
       if (value.deleted === true && (!uuid || !EXTERNAL_ANNOTATION_KINDS.has(kind) ||
@@ -2738,6 +2817,9 @@
       }
       if (!uuid) uuid = makeSyncUuid();
       state.annotationUuidByRuntimeId.set(runtimeId, uuid);
+      if (EXTERNAL_ANNOTATION_KINDS.has(kind) && Number.isSafeInteger(pageIndex)) {
+        state.annotationRuntimeBindings?.set(runtimeId, { uuid, kind, pageIndex });
+      }
       if (canonicalReference) {
         state.annotationRefByRuntimeId.set(runtimeId, canonicalReference);
         state.annotationUuidByPdfRef.set(
@@ -2965,6 +3047,8 @@
       state.annotationUuidByRuntimeId.clear();
       state.annotationRefByRuntimeId.clear();
       state.annotationUuidByPdfRef.clear();
+      state.annotationRuntimeBindings?.clear();
+      state.annotationTrackingFailure = null;
       state.annotationOperations = [];
       state.dirtyAnnotationRevisions.clear();
       state.dirtyPageRevisions.clear();
@@ -4343,6 +4427,8 @@
     const operations = captureSyncOperations(revision);
     const operationIds = new Set(operations.map((operation) => operation.uuid));
     const missingDirtyIds = dirtyState.dirtyAnnotationIds.filter((uuid) => !operationIds.has(uuid));
+    if (!missingDirtyIds.length && !capture.liveEditorSerializationErrorCount &&
+        !capture.liveEditorEnumerationErrorCount) state.annotationTrackingFailure = null;
     runtimeLogRecord("annotation-operation.capture", {
       reason,
       revision,
@@ -4405,7 +4491,9 @@
   }
 
   function assertCompleteOperationSnapshot(snapshot, context) {
-    if (!snapshot || snapshot.missingDirtyIds?.length) {
+    if (!snapshot || snapshot.missingDirtyIds?.length ||
+        snapshot.capture?.liveEditorSerializationErrorCount ||
+        snapshot.capture?.liveEditorEnumerationErrorCount) {
       throw new Error(
         `The ${context} edits do not have a complete lossless annotation operation snapshot (${snapshot?.missingDirtyIds?.length || 0} dirty annotations are missing).`,
       );
@@ -4784,9 +4872,9 @@
       state.committingInkForSave = true;
       try {
         app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+        state.pendingInkCommit = false;
       } finally {
         state.committingInkForSave = false;
-        state.pendingInkCommit = false;
       }
     }
     prepareContentForSave();
@@ -5337,7 +5425,10 @@
       waiter.resolve(result);
     }
     state.inputBoundaryWaiters = remaining;
-    if (result) schedulePendingExternalAnnotationUpdate();
+    if (result) {
+      schedulePendingExternalAnnotationUpdate();
+      runAnnotationObserver("input.boundary", () => state.annotationController?.notifyInputBoundary?.());
+    }
   }
 
   function closeControlMatches(control, message) {
@@ -5602,29 +5693,96 @@
     return scheduleAutoSave();
   }
 
+  function recordAnnotationTrackingFailure(phase, error) {
+    // An observer must never unwind through PDF.js's commit/cleanup stack.
+    // This does not acknowledge or discard edits: the save/recovery boundary
+    // still captures and validates every row again, including tombstones.
+    state.dirty = true;
+    state.autoSavePending = true;
+    state.lastRecoveredDocumentId = null;
+    state.lastRecoveredRevision = null;
+    state.lastCloseWritebackAck = null;
+    const previous = state.annotationTrackingFailure;
+    const message = String(error?.message || error);
+    state.annotationTrackingFailure = {
+      phase, message, code: error?.code || null, revision: state.revision,
+      count: previous?.phase === phase && previous?.message === message ? previous.count + 1 : 1,
+    };
+    if (state.annotationTrackingFailure.count === 1) {
+      try { runtimeLogRecord("annotation-operation.observer-error", {
+        phase, error: runtimeLogError(error),
+      }); } catch { /* Diagnostics cannot interrupt editor cleanup either. */ }
+    }
+  }
+
+  function runAnnotationObserver(phase, observe) {
+    try { return observe(); }
+    catch (error) {
+      recordAnnotationTrackingFailure(phase, error);
+      return undefined;
+    }
+  }
+
+  function failAnnotationPreparation(phase, error) {
+    recordAnnotationTrackingFailure(phase, error);
+    state.autoSavePaused = true;
+    clearAutoSaveTimer();
+    try { sendError(error?.message || "Could not commit the current annotation.", {
+      documentId: state.activeDocumentId, code: "annotation-editor-commit-failed",
+    }); } catch { /* Keep the dirty state even if the host is unavailable. */ }
+    return false;
+  }
+
+  function rememberAnnotationEditorIdentity(editor) {
+    if (state.hydratingExternalAnnotations || !editor || editor.deleted || typeof editor.id !== "string" || !editor.id ||
+        !Number.isSafeInteger(editor.pageIndex) || editor.pageIndex < 0) return;
+    const kind = normalizeSyncKind(editor.editorType);
+    if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) return;
+    const runtimeId = editor.id;
+    const reference = canonicalPdfAnnotationRef(editor.annotationElementId);
+    const referenceKey = pdfAnnotationRefKey(reference);
+    const identity = referenceKey && state.syncState?.identities?.find(candidate =>
+      pdfAnnotationRefKey(candidate?.ref) === referenceKey);
+    let uuid = state.annotationUuidByRuntimeId.get(runtimeId) ||
+      (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)) || identity?.uuid;
+    // Native editor registration can precede the source-identity handshake.
+    // Only genuinely new, reference-free editors may allocate a UUID here.
+    if (!uuid && referenceKey) return;
+    uuid ||= makeSyncUuid();
+    state.annotationUuidByRuntimeId.set(runtimeId, uuid);
+    state.annotationRuntimeBindings ||= new Map();
+    state.annotationRuntimeBindings.set(runtimeId, { uuid, kind, pageIndex: editor.pageIndex });
+    if (reference) {
+      state.annotationRefByRuntimeId.set(runtimeId, reference);
+      state.annotationUuidByPdfRef.set(referenceKey, uuid);
+    }
+  }
+
   function noteMutation({ schedule = true } = {}) {
     if (!state.activeDocumentId || state.disposed || state.hydratingExternalAnnotations) {
       return;
     }
     state.revision += 1;
-    refreshAnnotationOperations(state.revision);
     state.dirty = true;
     state.lastRecoveredDocumentId = null;
     state.lastRecoveredRevision = null;
     state.lastCloseWritebackAck = null;
+    runAnnotationObserver("mutation.capture", () => refreshAnnotationOperations(state.revision));
     const app = state.app;
     if (app) {
       app._annotationStorageModified = true;
-      app._updateOverwriteOriginalState?.();
-      app.setTitle?.();
+      runAnnotationObserver("mutation.controls", () => {
+        app._updateOverwriteOriginalState?.();
+        app.setTitle?.();
+      });
     }
-    syncBridgeControls();
+    runAnnotationObserver("mutation.controls", () => syncBridgeControls());
     if (
       schedule &&
       !state.committingInkForSave &&
       !state.preparingContentForSave
     ) {
-      scheduleAutoSave();
+      runAnnotationObserver("mutation.schedule", () => scheduleAutoSave());
     }
   }
 
@@ -5669,6 +5827,8 @@
               state.freeTextCommitReady = true;
               try {
                 prepareContentForSave({ commitFreeText: true });
+              } catch (error) {
+                failAnnotationPreparation("autosave.in-flight-prepare", error);
               } finally {
                 state.freeTextCommitReady = false;
               }
@@ -5718,23 +5878,27 @@
       state.autoSavePending = true;
       return false;
     }
-    if (state.pendingInkCommit) {
-      state.committingInkForSave = true;
-      try {
-        // Ink keeps a drawing session open across strokes. End an idle stroke
-        // before serialization so the current path reaches AnnotationStorage.
-        app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
-      } finally {
-        state.committingInkForSave = false;
-        state.pendingInkCommit = false;
-      }
-    }
-    state.freeTextCommitReady =
-      state.freeTextFocused && state.freeTextInputPending;
     try {
-      prepareContentForSave({ commitFreeText: true });
-    } finally {
-      state.freeTextCommitReady = false;
+      if (state.pendingInkCommit) {
+        state.committingInkForSave = true;
+        try {
+          // Ink keeps a drawing session open across strokes. End an idle stroke
+          // before serialization so the current path reaches AnnotationStorage.
+          app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+          state.pendingInkCommit = false;
+        } finally {
+          state.committingInkForSave = false;
+        }
+      }
+      state.freeTextCommitReady =
+        state.freeTextFocused && state.freeTextInputPending;
+      try {
+        prepareContentForSave({ commitFreeText: true });
+      } finally {
+        state.freeTextCommitReady = false;
+      }
+    } catch (error) {
+      return failAnnotationPreparation("autosave.prepare", error);
     }
     state.autoSavePending = false;
     if (!isDirty(app)) {
@@ -5768,6 +5932,7 @@
         state.manualSaveQueued = true;
         return;
       }
+      try {
       if (state.manualCommitQueued) {
         state.manualCommitQueued = false;
         state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.commitOrRemove?.();
@@ -5782,12 +5947,19 @@
         state.committingInkForSave = true;
         try {
           state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+          state.pendingInkCommit = false;
         } finally {
           state.committingInkForSave = false;
-          state.pendingInkCommit = false;
         }
       }
-      void requestSave("manual").then(resolveManualSaveWaiters);
+      void requestSave("manual").then(resolveManualSaveWaiters, error => {
+        failAnnotationPreparation("manual.prepare", error);
+        resolveManualSaveWaiters(false);
+      });
+      } catch (error) {
+        failAnnotationPreparation("manual.prepare", error);
+        resolveManualSaveWaiters(false);
+      }
     }, 0);
   }
 
@@ -6308,9 +6480,9 @@
           // ACK. Commit it at this revision boundary before serializing again.
           state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager
             ?.currentLayer?.commitOrRemove?.();
+          state.pendingInkCommit = false;
         } finally {
           state.committingInkForSave = false;
-          state.pendingInkCommit = false;
         }
       }
       lastResult = await saveOneRevision(origin);
@@ -6377,9 +6549,9 @@
         state.committingInkForSave = true;
         try {
           app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+          state.pendingInkCommit = false;
         } finally {
           state.committingInkForSave = false;
-          state.pendingInkCommit = false;
         }
       }
 
@@ -6485,7 +6657,8 @@
       return requestRecovery(reason, deadline, { closeRecovery });
     }
     state.recoveryCloseIntent = closeRecovery;
-    state.recoveryPromise = runRecoverySequence(reason, deadline, { closeRecovery }).finally(() => {
+    state.recoveryPromise = runRecoverySequence(reason, deadline, { closeRecovery })
+      .catch(error => failAnnotationPreparation("recovery.prepare", error)).finally(() => {
       state.recoveryPromise = null;
       state.recoveryCloseIntent = false;
     });
@@ -6534,7 +6707,8 @@
       state.autoSavePending = false;
     }
     clearAutoSaveTimer();
-    prepareContentForSave();
+    try { prepareContentForSave(); }
+    catch (error) { return failAnnotationPreparation("save.prepare", error); }
     if (state.savePromise) {
       if (origin === "manual") {
         state.manualSaveRequestedDuringFlight = true;
@@ -6560,12 +6734,16 @@
       state.committingInkForSave = true;
       try {
         state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+        state.pendingInkCommit = false;
+      } catch (error) {
+        return failAnnotationPreparation("save.ink-commit", error);
       } finally {
         state.committingInkForSave = false;
-        state.pendingInkCommit = false;
       }
     }
-    state.savePromise = runSaveSequence(origin).finally(() => {
+    state.savePromise = runSaveSequence(origin).catch(error =>
+      failAnnotationPreparation("save.sequence", error),
+    ).finally(() => {
       state.savePromise = null;
       if (!isDirty()) {
         state.autoSavePending = false;
@@ -6600,8 +6778,8 @@
     }
     const previousOnModified = storage.onModified;
     const wrappedOnModified = () => {
-      previousOnModified?.();
-      noteMutation();
+      try { previousOnModified?.(); }
+      finally { runAnnotationObserver("storage.modified", () => noteMutation()); }
     };
     storage.onModified = wrappedOnModified;
     const cleanups = [() => {
@@ -6617,10 +6795,10 @@
       storage,
       "remove",
       (original, [key]) => {
-        const existed = storage.has(key);
+        const existed = runAnnotationObserver("storage.remove-before", () => storage.has(key));
         const result = original.call(storage, key);
-        if (existed) {
-          noteMutation();
+        if (existed !== false) {
+          runAnnotationObserver("storage.remove", () => noteMutation());
         }
         return result;
       },
@@ -6632,7 +6810,7 @@
       (original, args) => {
         const result = original.apply(storage, args);
         if (result) {
-          noteMutation();
+          runAnnotationObserver("storage.updateEditor", () => noteMutation());
         }
         return result;
       },
@@ -6651,6 +6829,15 @@
     }
     const cleanups = [];
 
+    // A live editor can be removed before its first serializable snapshot.
+    // Capture identity/type at registration, never manufacture an identity
+    // later from a deleted placeholder or guess its geometry.
+    wrapMethod(manager, "addEditor", (original, [editor]) => {
+      const result = original.call(manager, editor);
+      runAnnotationObserver("editor.identity", () => rememberAnnotationEditorIdentity(editor));
+      return result;
+    }, cleanups);
+
     // Commands represent completed model edits (including moves, resizes,
     // parameter changes and drawing steps). UI state events also report focus
     // and selection, so they aren't used as a mutation signal.
@@ -6660,8 +6847,10 @@
       (original, args) => {
         const result = original.apply(manager, args);
         if (args[0]) {
-          noteMutation();
-          scheduleFreeTextGeometryRefresh(app);
+          runAnnotationObserver("editor.commands", () => {
+            noteMutation();
+            scheduleFreeTextGeometryRefresh(app);
+          });
         }
         return result;
       },
@@ -6674,42 +6863,49 @@
         (original, args) => {
           const direction = methodName;
           const revisionBefore = state.revision;
-          const annotationRowsBefore = getAnnotationStorageRows(app, {
-            includeLiveEditors: true,
-          });
-          const savedEditorHistory = captureSavedEditorHistory(manager, direction);
-          const before = snapshotSavedFreeTextEditors(manager, app);
-          const sidecarBefore = liveSidecarFreeTextEditors(manager, app);
+          const beforeState = runAnnotationObserver("history.before", () => ({
+            rows: getAnnotationStorageRows(app, { includeLiveEditors: true }),
+            history: captureSavedEditorHistory(manager, direction),
+            freeText: snapshotSavedFreeTextEditors(manager, app),
+            sidecar: liveSidecarFreeTextEditors(manager, app),
+          }));
           const result = original.apply(manager, args);
-          showRestoredSidecarFreeTextEditors(manager, app, sidecarBefore);
-          const changedEditors = changedSavedFreeTextEditors(
-            manager,
-            app,
-            before,
-          );
-          const annotationRowsAfter = getAnnotationStorageRows(app, {
-            includeLiveEditors: true,
-          });
-          const historyChanged = hasSavedEditorHistoryTransition(
-            manager,
-            direction,
-            savedEditorHistory,
-          );
-          // PDF.js does not expose whether undo/redo consumed a command. Only
-          // mark a new revision when the annotation model or saved-editor
-          // history actually changed; a no-op command must not trap close in a
-          // dirty state with an empty operation batch.
-          if (
-            state.revision === revisionBefore &&
-            (annotationRowsChanged(annotationRowsBefore, annotationRowsAfter) ||
-              changedEditors.length > 0 || historyChanged)
-          ) {
+          if (!beforeState) {
             noteMutation();
+            return result;
           }
-          reconcileSavedEditorHistory(manager, direction, savedEditorHistory);
-          if (changedEditors.length > 0) {
-            queueFreeTextAppearanceRepair(app, manager, changedEditors);
-          }
+          runAnnotationObserver("history.after", () => {
+            const { rows: annotationRowsBefore, history: savedEditorHistory, freeText: before, sidecar: sidecarBefore } = beforeState;
+            showRestoredSidecarFreeTextEditors(manager, app, sidecarBefore);
+            const changedEditors = changedSavedFreeTextEditors(
+              manager,
+              app,
+              before,
+            );
+            const annotationRowsAfter = getAnnotationStorageRows(app, {
+              includeLiveEditors: true,
+            });
+            const historyChanged = hasSavedEditorHistoryTransition(
+              manager,
+              direction,
+              savedEditorHistory,
+            );
+            // PDF.js does not expose whether undo/redo consumed a command. Only
+            // mark a new revision when the annotation model or saved-editor
+            // history actually changed; a no-op command must not trap close in a
+            // dirty state with an empty operation batch.
+            if (
+              state.revision === revisionBefore &&
+              (annotationRowsChanged(annotationRowsBefore, annotationRowsAfter) ||
+                changedEditors.length > 0 || historyChanged)
+            ) {
+              noteMutation();
+            }
+            reconcileSavedEditorHistory(manager, direction, savedEditorHistory);
+            if (changedEditors.length > 0) {
+              queueFreeTextAppearanceRepair(app, manager, changedEditors);
+            }
+          });
           return result;
         },
         cleanups,
@@ -6720,16 +6916,16 @@
       "removeEditor",
       (original, [editor]) => {
         const storage = app.pdfDocument?.annotationStorage;
-        const changesDocument = !!(
+        const changesDocument = runAnnotationObserver("editor.remove-before", () => !!(
           editor?.deleted ||
           (editor && storage?.has(editor.id)) ||
           editor?.hasBeenModified
-        );
+        ));
         const result = original.call(manager, editor);
-        discardDeferredAccessibilityMove(editor);
-        if (changesDocument) {
-          noteMutation();
-        }
+        runAnnotationObserver("editor.remove", () => {
+          discardDeferredAccessibilityMove(editor);
+          if (changesDocument !== false) noteMutation();
+        });
         return result;
       },
       cleanups,
@@ -6742,8 +6938,9 @@
         manager,
         methodName,
         (original, args) => {
+          runAnnotationObserver("editor.deletion-identity", () => rememberAnnotationEditorIdentity(args[0]));
           const result = original.apply(manager, args);
-          noteMutation();
+          runAnnotationObserver("editor.deletion", () => noteMutation());
           return result;
         },
         cleanups,
@@ -6768,17 +6965,18 @@
         state.activeDocumentId !== documentId ||
         state.activeOpenRequest !== openRequest
       ) return;
-      const current = getAnnotationStorageRows(app);
-      const geometrySettled = [...current.values()].some((row) =>
-        row.kind === "FreeText" &&
-        !hasNonDegeneratePdfRect(before.get(row.runtimeId)?.value?.rect) &&
-        hasNonDegeneratePdfRect(row.value?.rect),
-      );
-      if (geometrySettled) {
-        // FreeTextEditor.commit() registers its command before final layout.
-        // Re-capture on the next task so the durable row has its real bounds.
-        noteMutation();
-      }
+      runAnnotationObserver("editor.freetext-geometry", () => {
+        const current = getAnnotationStorageRows(app);
+        const geometrySettled = [...current.values()].some((row) =>
+          row.kind === "FreeText" &&
+          !hasNonDegeneratePdfRect(before.get(row.runtimeId)?.value?.rect) &&
+          hasNonDegeneratePdfRect(row.value?.rect),
+        );
+        if (geometrySettled) {
+          // Re-capture after PDF.js has measured the committed FreeText.
+          noteMutation();
+        }
+      });
     }, 0);
   }
 
@@ -7877,6 +8075,10 @@
       pointerEventsSeen: state.pointerDiagnostics.total,
       pointerEventsDropped: state.pointerDiagnostics.dropped,
       activePointers: activePointerCount(),
+      editorMode: state.editorMode,
+      vocabularyEnabled: state.vocabularyEnabled === true,
+      annotationTrackingFailure: state.annotationTrackingFailure
+        ? { ...state.annotationTrackingFailure } : null,
       pointers: state.pointerDiagnostics.samples.map((sample) => ({ ...sample })),
     };
   }
@@ -7928,6 +8130,16 @@
   }
 
   function onBridgeIosClick(intent, controls) {
+    if (intent?.targetRegion === "editor-mode-buttons") {
+      if (state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
+        state.vocabularyReadModeToolChoice = {
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+          rendererGeneration,
+        };
+      }
+      state.annotationController?.cancelPendingReadMode?.();
+    }
     if (intent?.targetRegion === "vocabulary-pill") return;
     // Keep the lookup transient: an outside click closes it. A click on a
     // different highlighted token can open the next card in this same event.
@@ -8056,17 +8268,19 @@
     ) {
       // Some WebViews deliver the last caret position only with pointerup,
       // especially when a Pencil crosses the whitespace between text lines.
-      updateOwnedPenTextSelection(pointer, intent, controls);
+      runAnnotationObserver("pointer.selection-end", () => updateOwnedPenTextSelection(pointer, intent, controls));
     }
     deletePenPolicyPointer(pointerId);
-    state.inputPolicy?.refreshPenGestureTouchAction?.();
+    runAnnotationObserver("pointer.touch-action-end", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
     pointer.ending = true;
     pointer.buttons = Number.isInteger(intent?.buttons)
       ? intent.buttons
       : pointer.buttons;
     if (cancel) {
-      invalidatePendingPenHighlight(pointer);
-      cancelPdfJsPointerSession(pointer);
+      runAnnotationObserver("pointer.cancel", () => {
+        invalidatePendingPenHighlight(pointer);
+        cancelPdfJsPointerSession(pointer);
+      });
     }
     // Pointer listeners in PDF.js finish the editor, temporary eraser, and
     // tool wheel during this dispatch. Defer bridge cleanup until they run.
@@ -8074,16 +8288,17 @@
       if (activePointer(pointerId) !== pointer) {
         return;
       }
-      if (!cancel && reason === "pointerup") {
-        finishPenHighlightFallback(pointer);
+      try {
+        if (!cancel && reason === "pointerup") finishPenHighlightFallback(pointer);
+      } catch (error) {
+        recordAnnotationTrackingFailure("pointer.highlight-end", error);
+      } finally {
+        // Each cleanup step is independent: an observer or a stale PDF.js
+        // layer must not leave our pointer/capture ownership behind.
+        runAnnotationObserver("pointer.release", () => releasePointerCapture(pointer));
+        deleteActivePointer(pointerId);
+        runAnnotationObserver("pointer.touch-action", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
       }
-      if (cancel && !isPointerSessionCurrent(pointer)) {
-        // The session changed while the event was in flight; only release the
-        // bridge's own bookkeeping and browser capture.
-      }
-      releasePointerCapture(pointer);
-      deleteActivePointer(pointerId);
-      state.inputPolicy?.refreshPenGestureTouchAction?.();
       recordPointerDiagnostic(
         reason === "pointerup" ? "pointerup" : "pointercancel",
         pointer,
@@ -8096,7 +8311,7 @@
         state.pendingInkCommit = true;
         state.autoSavePending = true;
       }
-      syncBridgeControls();
+      runAnnotationObserver("pointer.controls", () => syncBridgeControls());
       if (!hasActivePointerInteraction()) {
         if (
           state.closeControl?.phase === "closing" &&
@@ -8219,6 +8434,7 @@
         getManager: () =>
           state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager || null,
         getPdfViewer: () => state.app?.pdfViewer || null,
+        getEventBus: () => state.app?.eventBus || null,
         getEraser: () => state.app?.pdfAnnotationEraser || null,
         getEditorMode: () => state.editorMode,
         getPdfViewerMode: () => state.app?.pdfViewer?.annotationEditorMode,
@@ -8284,6 +8500,10 @@
         isEraserActive: () => document.body.classList.contains("editorEraserMode"),
         isAnnotationToolActive: annotationToolIsActive,
         invalidatePendingPenHighlight: () => invalidatePendingPenHighlight(),
+        onInputBoundary: () => runAnnotationObserver(
+          "input.boundary",
+          () => state.annotationController?.notifyInputBoundary?.(),
+        ),
       })
       : null;
     const legacyListeners = new Map([
@@ -8316,6 +8536,9 @@
     });
     state.inputRouter = router;
     state.pointerAbortController = router.start();
+    if (state.vocabularyEnabled && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
+      requestVocabularyReadMode(state.activeDocumentId, state.activeOpenRequest);
+    }
   }
 
   function onBridgeWheel() {
@@ -8350,7 +8573,7 @@
   function onBridgePointerEnd(intent, controls) {
     if (state.iosDirectManipulationController?.handlePointerEnd(intent, controls)) return;
     deletePenPolicyPointer(intent.pointerId);
-    state.inputPolicy?.refreshPenGestureTouchAction?.();
+    runAnnotationObserver("pointer.touch-action-end", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
     finishTrackedPointer(intent.pointerId, intent.type || "pointerup", intent, {
       cancel: intent.type === "pointercancel",
       controls,
@@ -8370,7 +8593,7 @@
       !intent.relatedTargetPresent
     ) {
       deletePenPolicyPointer(intent.pointerId);
-      state.inputPolicy?.refreshPenGestureTouchAction?.();
+      runAnnotationObserver("pointer.touch-action-out", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
     }
     const pointer = activePointer(intent.pointerId);
     if (
@@ -8387,7 +8610,7 @@
   function onBridgeLostPointerCapture(intent, controls) {
     if (state.iosDirectManipulationController?.handleLostPointerCapture(intent, controls)) return;
     deletePenPolicyPointer(intent.pointerId);
-    state.inputPolicy?.refreshPenGestureTouchAction?.();
+    runAnnotationObserver("pointer.touch-action-lost-capture", () => state.inputPolicy?.refreshPenGestureTouchAction?.());
     const pointer = activePointer(intent.pointerId);
     if (!pointer || pointer.ending) {
       return;
@@ -8717,9 +8940,9 @@
               state.committingInkForSave = true;
               try {
                 state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+                state.pendingInkCommit = false;
               } finally {
                 state.committingInkForSave = false;
-                state.pendingInkCommit = false;
               }
             }
             result = await requestSave("manual");
@@ -8871,21 +9094,27 @@
     ) {
       return fail(new Error("The PDF export request belongs to an inactive document session."));
     }
-    const boundaryReached = await waitForInputBoundary(110000);
-    if (!boundaryReached) return fail(new Error("Finish the current PDF annotation before exporting."));
-    if (state.pendingInkCommit) {
-      state.committingInkForSave = true;
-      try {
-        app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
-      } finally {
-        state.committingInkForSave = false;
-        state.pendingInkCommit = false;
-      }
-    }
-    prepareContentForSave();
-    const revision = state.revision;
+    let revision = state.revision;
     const startedAt = performance.now();
     try {
+      const boundaryReached = await waitForInputBoundary(110000);
+      if (!boundaryReached) return fail(new Error("Finish the current PDF annotation before exporting."));
+      if (state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
+          state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest) {
+        return fail(new Error("The PDF export request belongs to an inactive document session."));
+      }
+      if (state.pendingInkCommit) {
+        state.committingInkForSave = true;
+        try {
+          app.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+          state.pendingInkCommit = false;
+        } finally {
+          state.committingInkForSave = false;
+        }
+      }
+      prepareContentForSave();
+      revision = state.revision;
+      assertCompleteOperationSnapshot(captureOperationSnapshot(revision, "export"), "export");
       // This full PDF serialization is intentionally reachable only through
       // the explicit “export annotated copy” command. The result is returned
       // as a new file; it never replaces the immutable source PDF.
@@ -9095,6 +9324,7 @@
       enabled: message.vocabularyEnabled === true,
       levels: normalizeVocabularyHighlightLevels(message.vocabularyHighlightLevels),
       displayMode: normalizeVocabularyDisplayMode(message.vocabularyDisplayMode),
+      wordDisplayMode: message.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
     };
     state.vocabularyEnabled = state.pendingVocabularySettings.enabled;
     setVocabularyHighlightLevels(state.pendingVocabularySettings.levels);
@@ -9375,9 +9605,9 @@
           state.committingInkForSave = true;
           try {
             app?.pdfViewer?._layerProperties?.annotationEditorUIManager?.currentLayer?.commitOrRemove?.();
+            state.pendingInkCommit = false;
           } finally {
             state.committingInkForSave = false;
-            state.pendingInkCommit = false;
           }
         }
         const sessionToSave = captureAutoSaveSession();
@@ -9853,6 +10083,11 @@
       return;
     }
 
+    if (message.type === "vocab-set-word-mode") {
+      handleVocabularyWordDisplayModeMessage(message);
+      return;
+    }
+
     if (message.type === "vocab-page-results") {
       if (message.rendererGeneration !== rendererGeneration) return;
       state.vocabularyController?.handlePageResults?.(message);
@@ -10257,27 +10492,27 @@
         if (state.vocabularyEnabled) ensureVocabularyController();
         app.eventBus?._on(
           "pagerendered",
-          ({ pageNumber }) => {
+          ({ pageNumber }) => runAnnotationObserver("viewer.page-rendered", () => {
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
               observeAccessibilityManager(
                 app,
                 app.pdfViewer?.getPageView?.(pageNumber - 1),
               );
             }
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "textlayerrendered",
-          ({ pageNumber }) => {
+          ({ pageNumber }) => runAnnotationObserver("viewer.text-layer", () => {
             const results = state.readerBacklinkPageResults;
             if (results?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(results);
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "pagesloaded",
-          ({ pagesCount } = {}) => {
+          ({ pagesCount } = {}) => runAnnotationObserver("viewer.pages-loaded", () => {
             updatePageNumberWidth(pagesCount);
             observeAccessibilityManagers(app);
             void hydrateRenderedExternalPages(app).catch((error) => {
@@ -10285,20 +10520,20 @@
                 error: runtimeLogError(error),
               });
             });
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "pagechanging",
-          () => {
+          () => runAnnotationObserver("viewer.pagechanged", () => {
             syncBridgeControls();
             requestReaderBacklinksForPage();
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "annotationlayerrendered",
-          ({ pageNumber }) => {
+          ({ pageNumber }) => runAnnotationObserver("viewer.annotation-layer", () => {
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
               const pageIndex = pageNumber - 1;
               for (const row of state.externalAnnotationRows.values()) {
@@ -10307,13 +10542,14 @@
                 }
               }
             }
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "annotationeditorlayerrendered",
-          ({ pageNumber }) => {
+          ({ pageNumber }) => runAnnotationObserver("viewer.editor-layer", () => {
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
+              runAnnotationObserver("input.layer-ready", () => state.annotationController?.notifyInputBoundary?.());
               observeAccessibilityManager(
                 app,
                 app.pdfViewer?.getPageView?.(pageNumber - 1),
@@ -10329,12 +10565,13 @@
               const backlinks = state.readerBacklinkPageResults;
               if (backlinks?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(backlinks);
             }
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "annotationeditormodechanged",
-          ({ mode }) => {
+          ({ mode, isFromKeyboard }) => runAnnotationObserver("viewer.editor-mode", () => {
+            if (mode !== 0 && isFromKeyboard) state.annotationController?.cancelPendingReadMode?.();
             cancelManualMomentum();
             invalidatePendingPenHighlight();
             state.editorMode = mode;
@@ -10359,7 +10596,7 @@
             setDeferredTimeout(() => {
               if (state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
                   state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest) return;
-              observeAccessibilityManagers(app);
+              runAnnotationObserver("viewer.editor-mode-deferred", () => observeAccessibilityManagers(app));
               // Enabling a PDF.js tool recreates native source editors without
               // emitting a new page-layer render. Reapply verified tombstones.
               void hydrateRenderedExternalPages(app).catch(error => {
@@ -10373,12 +10610,13 @@
               setReadOnlyState(true);
             }
             syncBridgeControls();
-          },
+            state.annotationController?.notifyInputBoundary?.();
+          }),
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(
           "editingstateschanged",
-          ({ details = {} }) => {
+          ({ details = {} }) => runAnnotationObserver("viewer.editor-history", () => {
             if (typeof details.hasSomethingToUndo === "boolean") {
               state.editorHistory.canUndo = details.hasSomethingToUndo;
             }
@@ -10389,7 +10627,7 @@
               state.editorHistory.hasSelection = details.hasSelectedEditor;
             }
             syncBridgeControls();
-          },
+          }),
           { signal: state.eventAbortController.signal },
         );
         window.addEventListener("focusin", onBridgeFocusIn, {

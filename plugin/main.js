@@ -42,6 +42,8 @@ function drainViewerRuntimeLog(view) {
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
+const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2";
+const VOCABULARY_DICTIONARY_MANIFEST = `${VOCABULARY_DICTIONARY_ROOT}/manifest.json`;
 const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
 const DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS = Object.freeze({
   words: Object.freeze([1, 2, 3, 4, 5]),
@@ -193,6 +195,50 @@ const MOBILE_STAGE_LABELS = Object.freeze({
   "resource-failed": "资源加载失败",
   disposed: "阅读器已关闭",
 });
+
+function vocabularyDictionaryPercent(status) {
+  if (Number.isFinite(status?.percent)) {
+    return Math.min(100, Math.max(0, Math.floor(status.percent)));
+  }
+  const count = Number.isFinite(status?.count) ? Math.max(0, status.count) : 0;
+  const total = Number.isFinite(status?.total) ? Math.max(0, status.total) : 0;
+  return total > 0 ? Math.min(100, Math.floor((count / total) * 100)) : 0;
+}
+
+function vocabularyDictionaryStatusText(status) {
+  switch (status?.phase) {
+    case "verifying": return `正在校验词典 · ${vocabularyDictionaryPercent(status)}%`;
+    case "building": return `正在建立词典缓存 · ${vocabularyDictionaryPercent(status)}%`;
+    case "waiting": return `等待缓存任务 · ${vocabularyDictionaryPercent(status)}%`;
+    case "ready": return `词典缓存已就绪 · ${(Number(status.count) || 0).toLocaleString("zh-CN")} 条`;
+    case "unavailable": return "本地词典暂不可用";
+    default: return "词典缓存尚未初始化";
+  }
+}
+
+function applyVocabularyDictionaryStatus(plugin, status) {
+  plugin.vocabularyDictionaryStatus = status && typeof status === "object"
+    ? { ...status }
+    : { phase: "idle", count: 0, total: 0 };
+  plugin.readerSettingsTab?.vocabularyDictionaryStatusSetting?.setName?.(
+    vocabularyDictionaryStatusText(plugin.vocabularyDictionaryStatus),
+  );
+  if (plugin.settings?.vocabularyEnabled !== true) return;
+  const phase = String(plugin.vocabularyDictionaryStatus.phase || "idle");
+  const percent = Math.floor(vocabularyDictionaryPercent(plugin.vocabularyDictionaryStatus) / 10) * 10;
+  const signature = `${phase}:${percent}`;
+  if (phase === "idle" || signature === plugin.vocabularyDictionaryLastLogSignature) return;
+  plugin.vocabularyDictionaryLastLogSignature = signature;
+  plugin.sessionLog?.record("vocabularyDictionary", { event: "cache-progress", phase, percent });
+}
+
+function isVocabularyDictionaryResourcePath(value) {
+  if (typeof value !== "string") return false;
+  const filePath = normalizePath(value);
+  if (filePath === VOCABULARY_DICTIONARY_MANIFEST) return true;
+  const prefix = `${VOCABULARY_DICTIONARY_ROOT}/entries.`;
+  return filePath.startsWith(prefix) && /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(prefix.length));
+}
 
 let activePdfHashRuntime = null;
 
@@ -796,6 +842,20 @@ function sanitizeInputDiagnostics(value) {
     pointerEventsDropped: clampDiagnosticInteger(value.pointerEventsDropped, 0, Number.MAX_SAFE_INTEGER) ?? 0,
     activePointers: clampDiagnosticInteger(value.activePointers, 0, 64) ?? 0,
     pointers,
+    ...(Number.isSafeInteger(value.editorMode) ? {
+      editorMode: clampDiagnosticInteger(value.editorMode, 0, 1024),
+    } : {}),
+    ...(typeof value.vocabularyEnabled === "boolean" ? {
+      vocabularyEnabled: value.vocabularyEnabled,
+    } : {}),
+    ...(value.annotationTrackingFailure && typeof value.annotationTrackingFailure === "object" ? {
+      annotationTrackingFailure: {
+        phase: String(value.annotationTrackingFailure.phase || "").slice(0, 100),
+        code: String(value.annotationTrackingFailure.code || "").slice(0, 100),
+        revision: clampDiagnosticInteger(value.annotationTrackingFailure.revision, 0, Number.MAX_SAFE_INTEGER),
+        count: clampDiagnosticInteger(value.annotationTrackingFailure.count, 0, Number.MAX_SAFE_INTEGER),
+      },
+    } : {}),
   };
 }
 
@@ -1006,15 +1066,24 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
     this.vocabularyToggle = null;
+    this.vocabularyDictionaryStatusSetting = null;
+    this.vocabularyDictionaryRebuildButton = null;
+    this.vocabularyDictionaryUnsubscribe = null;
+    this.isDisplayingVocabularySettings = false;
     this.vocabularyLevelButtons = new Map();
     this.vocabularyDisplayModeButtons = new Map();
   }
 
   display() {
     const { containerEl } = this;
+    this.isDisplayingVocabularySettings = true;
+    this.vocabularyDictionaryUnsubscribe?.();
+    this.vocabularyDictionaryUnsubscribe = null;
     containerEl.empty();
     this.vocabularyLevelButtons.clear();
     this.vocabularyDisplayModeButtons.clear();
+    this.vocabularyDictionaryStatusSetting = null;
+    this.vocabularyDictionaryRebuildButton = null;
     const heading = (text) => containerEl.createEl("h3", {
       cls: "pdfWebReaderSettingHeading",
       text,
@@ -1045,6 +1114,18 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.vocabularyEnabled)
           .onChange((enabled) => this.plugin.setVocabularyEnabled(enabled));
       });
+    this.vocabularyDictionaryStatusSetting = new Setting(containerEl)
+      .setName(vocabularyDictionaryStatusText(this.plugin.vocabularyDictionaryStatus))
+      .setDesc(`词典资源目录：${VOCABULARY_DICTIONARY_ROOT}/；仅建立本地查询缓存。`)
+      .addButton((button) => {
+        button.setButtonText("重建缓存");
+        button.setTooltip?.("重新校验词典资源并重建本地查询缓存");
+        button.setDisabled?.(!this.plugin.settings.vocabularyEnabled);
+        button.onClick(() => void this.plugin.rebuildVocabularyDictionaryCache().catch((error) =>
+          new Notice(`词典缓存重建失败：${error.message || error}`, 8000)));
+        this.vocabularyDictionaryRebuildButton = button;
+      });
+    this.observeVocabularyDictionary(this.plugin.vocabularyDictionary);
     {
       const setting = new Setting(containerEl)
         .setName("高亮显示模式")
@@ -1133,6 +1214,36 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
 
   syncVocabularyEnabled(enabled) {
     this.vocabularyToggle?.setValue?.(enabled === true);
+    this.vocabularyDictionaryRebuildButton?.setDisabled?.(enabled !== true);
+  }
+
+  observeVocabularyDictionary(dictionary) {
+    this.vocabularyDictionaryUnsubscribe?.();
+    this.vocabularyDictionaryUnsubscribe = null;
+    if (typeof dictionary?.subscribe !== "function") {
+      applyVocabularyDictionaryStatus(this.plugin, this.plugin.vocabularyDictionaryStatus);
+      return false;
+    }
+    const unsubscribe = dictionary.subscribe((status) => applyVocabularyDictionaryStatus(this.plugin, status));
+    this.vocabularyDictionaryUnsubscribe = typeof unsubscribe === "function" ? unsubscribe : null;
+    return true;
+  }
+
+  syncVocabularyDictionaryStatus(status) {
+    applyVocabularyDictionaryStatus(this.plugin, status);
+  }
+
+  hide() {
+    this.vocabularyDictionaryUnsubscribe?.();
+    this.vocabularyDictionaryUnsubscribe = null;
+    this.isDisplayingVocabularySettings = false;
+    this.vocabularyDictionaryStatusSetting = null;
+    this.vocabularyDictionaryRebuildButton = null;
+    this.vocabularyToggle = null;
+  }
+
+  dispose() {
+    this.hide();
   }
 
   syncVocabularyDisplayMode(mode) {
@@ -1255,6 +1366,7 @@ class PdfReaderView extends EditableFileView {
     this.messageListener = (event) => this.onMessage(event);
     this.syncForegroundListener = () => {};
     this.pendingVocabularySelections = new Map();
+    this.pendingVocabularyEntryLookups = new Map();
     this.vocabularyEntryModal = null;
     this.pendingReaderAnchorCaptures = new Map();
     this.pendingVocabularyContextCaptures = new Map();
@@ -1334,6 +1446,7 @@ class PdfReaderView extends EditableFileView {
     const openRequest = this.openRequest;
     const wasCurrent =
       this.documentFile === file || this.file === file || this.requestedPath === file.path;
+    if (wasCurrent) this.cancelVocabularyEntryLookups();
     // FileView may invoke this from super.onClose(). Once SDK teardown has
     // started, the onClose flush result must stand; a second prepare request
     // cannot veto destruction and can only fail against a detached iframe.
@@ -1388,6 +1501,7 @@ class PdfReaderView extends EditableFileView {
 
   async onOpen() {
     this.teardownStarted = false;
+    this.cancelVocabularyEntryLookups();
     this.rendererGeneration = makeToken();
     await super.onOpen();
     this.contentEl.empty();
@@ -1451,6 +1565,7 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
+    this.cancelVocabularyEntryLookups();
     this.readerTargetApplySequence += 1;
     for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
     this.pendingReaderAnchorCaptures.clear();
@@ -2264,6 +2379,7 @@ class PdfReaderView extends EditableFileView {
       `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
       `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
       `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
+      `data-vocabulary-word-display-mode="${this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole"}" ` +
       `data-renderer-generation="${escapeAttribute(this.rendererGeneration)}"></script>`;
     const baseTag = `<base href="${escapeAttribute(webBase)}">`;
     const injection = `${baseTag}${bridgeScript}`;
@@ -2454,6 +2570,7 @@ class PdfReaderView extends EditableFileView {
         `data-vocabulary-enabled="${this.plugin.settings.vocabularyEnabled === true}" ` +
         `data-vocabulary-highlight-levels="${escapeAttribute(JSON.stringify(this.plugin.settings.vocabularyHighlightLevels))}" ` +
         `data-vocabulary-display-mode="${normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode)}" ` +
+        `data-vocabulary-word-display-mode="${this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole"}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
         `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
@@ -2507,6 +2624,7 @@ class PdfReaderView extends EditableFileView {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
     }
+    this.cancelVocabularyEntryLookups();
     if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
       this.cancelVocabularyWork();
     }
@@ -2590,6 +2708,7 @@ class PdfReaderView extends EditableFileView {
   }
 
   cancelVocabularyWork() {
+    this.cancelVocabularyEntryLookups();
     for (const pending of this.pendingVocabularySelections.values()) {
       globalThis.clearTimeout(pending.timer);
     }
@@ -2601,6 +2720,39 @@ class PdfReaderView extends EditableFileView {
   clearPendingVocabularyContextCaptures() {
     for (const pending of this.pendingVocabularyContextCaptures.values()) globalThis.clearTimeout(pending.timer);
     this.pendingVocabularyContextCaptures.clear();
+  }
+
+  cancelVocabularyEntryLookups() {
+    for (const pending of [...(this.pendingVocabularyEntryLookups?.values() || [])]) {
+      pending.cancel?.();
+    }
+    this.pendingVocabularyEntryLookups?.clear?.();
+  }
+
+  updatePendingVocabularyEntryPersonalRecord(identity, entryRequestId, key, record) {
+    if (!record || !this.pendingVocabularyEntryLookups) return false;
+    let updated = false;
+    for (const pending of this.pendingVocabularyEntryLookups.values()) {
+      if (!pending.active || pending.identity?.documentId !== identity?.documentId ||
+          pending.identity?.openRequest !== identity?.openRequest ||
+          pending.identity?.rendererGeneration !== identity?.rendererGeneration) continue;
+      if (pending.entryRequestId !== entryRequestId && pending.key !== key && pending.personal?.key !== record.key) continue;
+      const prior = pending.personal || {};
+      pending.updatePersonal?.({
+        ...prior,
+        ...record,
+        key: pending.key,
+        storageKey: record.key,
+        type: pending.entryType,
+        hasPersonalRecord: true,
+        translation: record.translation || prior.translation || "",
+        phonetic: record.phonetic || prior.phonetic || "",
+      });
+      pending.personalChanged = true;
+      pending.sendProgress?.(pending.lastProgressStatus, true);
+      updated = true;
+    }
+    return updated;
   }
 
   setVocabularyEnabled(enabled) {
@@ -2638,6 +2790,15 @@ class PdfReaderView extends EditableFileView {
       documentId: this.documentId,
       openRequest: this.openRequest,
       mode: normalizeVocabularyDisplayMode(mode),
+    });
+  }
+
+  setVocabularyWordDisplayMode(mode) {
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({
+      channel: CHANNEL, token: this.token, type: "vocab-set-word-mode",
+      documentId: this.documentId, openRequest: this.openRequest,
+      mode: mode === "roots" ? "roots" : "whole",
     });
   }
 
@@ -2865,6 +3026,11 @@ class PdfReaderView extends EditableFileView {
       await this.plugin.setVocabularyDisplayMode(message.mode);
       return true;
     }
+    if (message.type === "vocab-word-mode-request") {
+      if (!["whole", "roots"].includes(message.mode) || this.teardownStarted === true) return true;
+      await this.plugin.setVocabularyWordDisplayMode(message.mode);
+      return true;
+    }
     if (!this.plugin.settings.vocabularyEnabled) return true;
 
     if (message.type === "vocab-page-query") {
@@ -2927,34 +3093,11 @@ class PdfReaderView extends EditableFileView {
       if (!validRequest || !validKey || logicalSurface === null ||
           !Number.isInteger(message.pageNumber) || message.pageNumber < 1 || message.pageNumber > 100000) return true;
       const identity = { documentId: this.documentId, openRequest: this.openRequest, rendererGeneration: this.rendererGeneration };
+      this.cancelVocabularyEntryLookups();
+      let service, dictionaryService, vocabularyInitialization;
       try {
-        const [record, dictionaryResult] = await Promise.all([
-          this.plugin.getVocabularyService().getTerm(message.key),
-          this.plugin.getVocabularyDictionary().lookup(message.key)
-            .then((value) => ({ value, state: value ? "found" : "not-found" }))
-            .catch((error) => {
-              const code = error?.code || "dictionary-unavailable";
-              this.plugin.sessionLog?.record("vocabularyDictionary", { event: "lookup-unavailable", code });
-              return { value: null, state: "unavailable" };
-            }),
-        ]);
-        if (!this.isCurrentVocabularyIdentity(identity)) return true;
-        const personal = record && record.type === message.entryType ? record : null;
-        const dictionary = dictionaryResult.value;
-        this.postToViewer({
-          channel: CHANNEL, token: this.token, type: "vocab-entry-result",
-          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
-          documentId: identity.documentId, openRequest: identity.openRequest,
-          record: {
-            key: message.key,
-            ...(personal ? { storageKey: personal.key, status: personal.status } : {}),
-            type: message.entryType,
-            hasPersonalRecord: Boolean(personal),
-            translation: personal?.translation || dictionary?.translation || "",
-            phonetic: personal?.phonetic || dictionary?.phonetic || "",
-            dictionaryLookupState: dictionaryResult.state,
-          },
-        });
+        dictionaryService = this.plugin.getVocabularyDictionary();
+        vocabularyInitialization = Promise.resolve(this.plugin.initializeVocabulary());
       } catch (error) {
         if (this.isCurrentVocabularyIdentity(identity)) this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-entry-result",
@@ -2962,6 +3105,138 @@ class PdfReaderView extends EditableFileView {
           documentId: identity.documentId, openRequest: identity.openRequest,
           error: error.code || "vocabulary-read-failed",
         });
+        return true;
+      }
+      let dictionaryStatus = null;
+      try { dictionaryStatus = dictionaryService?.getStatus?.() || null; } catch { /* Older adapters need no progress UI. */ }
+      const hasDictionaryStatus = Boolean(dictionaryStatus && typeof dictionaryService?.subscribe === "function");
+      const supportsDictionaryProgress = hasDictionaryStatus && dictionaryStatus.phase !== "ready";
+      let progressState = null;
+      if (supportsDictionaryProgress) {
+        progressState = {
+          requestId: message.requestId,
+          entryRequestId: message.requestId,
+          key: message.key,
+          entryType: message.entryType,
+          pageNumber: message.pageNumber,
+          identity,
+          active: true,
+          personal: null,
+          personalChanged: false,
+          unsubscribe: null,
+          lastProgressSignature: null,
+          lastProgressStatus: dictionaryStatus,
+          sendProgress: null,
+          updatePersonal: null,
+          cancel: null,
+        };
+        const matchingPersonal = (record) => record && record.type === message.entryType ? record : null;
+        const postEntryRecord = (personalRecord, lookupState, progress = null) => {
+          if (!progressState.active || !this.isCurrentVocabularyIdentity(identity)) return false;
+          const personal = matchingPersonal(personalRecord);
+          return this.postToViewer({
+            channel: CHANNEL, token: this.token, type: "vocab-entry-result",
+            requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+            documentId: identity.documentId, openRequest: identity.openRequest,
+            record: {
+              key: message.key,
+              ...(personal ? { storageKey: personal.key, status: personal.status } : {}),
+              type: message.entryType,
+              hasPersonalRecord: Boolean(personal),
+              translation: personal?.translation || "",
+              phonetic: personal?.phonetic || "",
+              dictionaryLookupState: lookupState,
+              ...(progress ? {
+                dictionaryLookupCount: progress.count,
+                dictionaryLookupTotal: progress.total,
+                dictionaryLookupPercent: progress.percent,
+              } : {}),
+            },
+          });
+        };
+        progressState.updatePersonal = (record) => {
+          const personal = matchingPersonal(record);
+          progressState.personal = personal ? { ...personal } : null;
+        };
+        progressState.sendProgress = (status, force = false) => {
+          if (!progressState.active || !this.isCurrentVocabularyIdentity(identity)) return false;
+          const count = Number.isFinite(status?.count) ? Math.max(0, Math.floor(status.count)) : 0;
+          const total = Number.isFinite(status?.total) ? Math.max(0, Math.floor(status.total)) : 0;
+          const percent = Math.floor(vocabularyDictionaryPercent({ ...status, count, total }) / 10) * 10;
+          const signature = String(status?.phase || "building") + ":" + total + ":" + percent;
+          if (!force && signature === progressState.lastProgressSignature) return false;
+          progressState.lastProgressSignature = signature;
+          progressState.lastProgressStatus = status;
+          return postEntryRecord(progressState.personal, "preparing", { count, total, percent });
+        };
+        progressState.cancel = () => {
+          if (!progressState.active) return false;
+          progressState.active = false;
+          progressState.unsubscribe?.();
+          progressState.unsubscribe = null;
+          this.pendingVocabularyEntryLookups.delete(message.requestId);
+          return true;
+        };
+        this.pendingVocabularyEntryLookups.set(message.requestId, progressState);
+        // Give the Viewer a useful cold-cache state before awaiting either
+        // Vault data or the first verified dictionary generation.
+        progressState.sendProgress(dictionaryStatus);
+        try {
+          const unsubscribe = dictionaryService.subscribe((status) => progressState.sendProgress(status));
+          progressState.unsubscribe = typeof unsubscribe === "function" ? unsubscribe : null;
+        } catch { /* A status observer is optional; the lookup still works. */ }
+      }
+      try {
+        await vocabularyInitialization;
+        if (!this.isCurrentVocabularyIdentity(identity) || progressState && !progressState.active) return true;
+        service = this.plugin.getVocabularyService();
+        const [record, dictionaryResult] = await Promise.all([
+          service.getTerm(message.key),
+          dictionaryService.lookup(message.key)
+            .then((value) => ({ value, state: value ? "found" : "not-found" }))
+            .catch((error) => {
+              const code = error?.code || "dictionary-unavailable";
+              this.plugin.sessionLog?.record("vocabularyDictionary", { event: "lookup-unavailable", code });
+              return { value: null, state: "unavailable" };
+            }),
+        ]);
+        if (!this.isCurrentVocabularyIdentity(identity) || progressState && !progressState.active) return true;
+        if (progressState && !progressState.personalChanged) {
+          progressState.updatePersonal(record);
+          progressState.sendProgress(progressState.lastProgressStatus, true);
+        }
+        // The dictionary can take long enough for a user to change this
+        // entry's learning level. Read the current personal row after lookup
+        // completes so a late dictionary result cannot restore stale status.
+        const finalRecord = hasDictionaryStatus ? await service.getTerm(message.key) : record;
+        if (!this.isCurrentVocabularyIdentity(identity) || progressState && !progressState.active) return true;
+        progressState?.updatePersonal(finalRecord);
+        const personal = progressState?.personal || (finalRecord && finalRecord.type === message.entryType ? finalRecord : null);
+        const dictionary = dictionaryResult.value;
+        const entry = {
+          key: message.key,
+          ...(personal ? { storageKey: personal.key, status: personal.status } : {}),
+          type: message.entryType,
+          hasPersonalRecord: Boolean(personal),
+          translation: personal?.translation || dictionary?.translation || "",
+          phonetic: personal?.phonetic || dictionary?.phonetic || "",
+          dictionaryLookupState: dictionaryResult.state,
+        };
+        this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-entry-result",
+          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          record: entry,
+        });
+      } catch (error) {
+        if (this.isCurrentVocabularyIdentity(identity) && (!progressState || progressState.active)) this.postToViewer({
+          channel: CHANNEL, token: this.token, type: "vocab-entry-result",
+          requestId: message.requestId, key: message.key, pageNumber: message.pageNumber,
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          error: error.code || "vocabulary-read-failed",
+        });
+      } finally {
+        progressState?.cancel?.();
       }
       return true;
     }
@@ -2989,6 +3264,7 @@ class PdfReaderView extends EditableFileView {
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
         const record = await runtime.mutatePersonal(() => service.upsertTerm(logicalSurface, { type: message.entryType, status: message.status }));
         if (!this.isCurrentVocabularyIdentity(identity)) return true;
+        this.updatePendingVocabularyEntryPersonalRecord(identity, message.entryRequestId, message.key, record);
         this.postToViewer({
           channel: CHANNEL, token: this.token, type: "vocab-status-ack", durable: true,
           requestId: message.requestId, entryRequestId: message.entryRequestId,
@@ -3425,6 +3701,7 @@ class PdfReaderView extends EditableFileView {
       vocabularyEnabled: this.plugin.settings.vocabularyEnabled === true,
       vocabularyHighlightLevels: this.plugin.settings.vocabularyHighlightLevels,
       vocabularyDisplayMode: normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode),
+      vocabularyWordDisplayMode: this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
       preferredAnnotationToolMode: normalizeAnnotationToolMode(this.plugin.settings.lastAnnotationToolMode),
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
@@ -3750,6 +4027,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       vocabularyEnabled: false,
       vocabularyHighlightLevels: normalizeVocabularyHighlightLevels(null),
       vocabularyDisplayMode: "all",
+      vocabularyWordDisplayMode: "whole",
       ...((await this.loadData()) || {}),
     };
     this.settings.autoSave = this.settings.autoSave !== false;
@@ -3757,8 +4035,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings.vocabularyEnabled = this.settings.vocabularyEnabled === true;
     this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
     this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
+    this.settings.vocabularyWordDisplayMode = this.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole";
     this.vocabularyService = null;
     this.vocabularyDictionary = null;
+    this.vocabularyDictionaryStatus = { phase: "idle", count: 0, total: 0 };
+    this.vocabularyDictionaryWarmupTimer = null;
+    this.vocabularyDictionaryRefreshTimer = null;
+    this.vocabularyDictionaryLastLogSignature = null;
     this.views = new Set();
     this.vocabularyInitialization = null;
     this.vocabularyUnsubscribe = null;
@@ -3966,6 +4249,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (typeof this.app.vault.on === "function") {
       this.registerEvent(
         this.app.vault.on("modify", (file) => {
+          if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
           }
@@ -3979,6 +4263,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("create", (file) => {
+          if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
           }
@@ -3989,6 +4274,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("delete", (file) => {
+          if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.removeReaderBacklinkFile(file.path);
           }
@@ -3996,6 +4282,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          if (isVocabularyDictionaryResourcePath(file?.path) || isVocabularyDictionaryResourcePath(oldPath)) {
+            this.handleVocabularyDictionaryResourceChange(file?.path, oldPath);
+          }
           if (typeof oldPath === "string" && oldPath.toLowerCase().endsWith(".md")) {
             this.removeReaderBacklinkFile(oldPath, { notify: false });
           }
@@ -4060,6 +4349,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         void this.handleEnhancedPdfLinkClick(event);
       }, true);
     }
+    if (this.settings.vocabularyEnabled) this.scheduleVocabularyDictionaryWarmup();
   }
 
   async rebuildReaderBacklinkIndex() {
@@ -4773,12 +5063,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.vocabularyUnsubscribe?.();
     this.vocabularyUnsubscribe = null;
     this.vocabularyWorkbench?.close?.();
+    this.clearVocabularyDictionaryTimers();
+    this.readerSettingsTab?.dispose?.();
     void (async () => {
       try { await this.vocabularyRuntime?.close?.(); }
       catch (error) { this.sessionLog?.record("vocabulary", { event: "controlled-close-pending", code: error?.code || "vocabulary-close-failed" }); }
-      finally { await this.vocabularyService?.dispose?.(); }
+      finally {
+        await Promise.allSettled([
+          Promise.resolve().then(() => this.vocabularyService?.dispose?.()),
+          Promise.resolve().then(() => this.vocabularyDictionary?.dispose?.()),
+        ]);
+      }
     })().catch(() => undefined);
-    this.vocabularyDictionary?.clearCache?.();
     if (activePdfHashRuntime === this.pdfHashRuntime) activePdfHashRuntime = null;
     if (this.prewarmTimer != null) globalThis.clearTimeout(this.prewarmTimer);
     this.prewarmTimer = null;
@@ -5362,7 +5658,14 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   getVocabularyDictionary() {
     if (!this.vocabularyDictionary) {
-      this.vocabularyDictionary = new VocabularyDictionary({ adapter: this.app.vault.adapter });
+      this.vocabularyDictionary = new VocabularyDictionary({
+        adapter: this.app.vault.adapter,
+        onStatus: (status) => applyVocabularyDictionaryStatus(this, status),
+      });
+      applyVocabularyDictionaryStatus(this, this.vocabularyDictionary.getStatus?.() || { phase: "idle", count: 0, total: 0 });
+      if (this.readerSettingsTab?.isDisplayingVocabularySettings === true) {
+        this.readerSettingsTab.observeVocabularyDictionary(this.vocabularyDictionary);
+      }
     }
     return this.vocabularyDictionary;
   }
@@ -5393,6 +5696,66 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     }
     await this.vocabularyRuntime.ready();
     return this.vocabularyRuntime;
+  }
+
+  scheduleVocabularyDictionaryWarmup(delay = 0) {
+    if (this.settings?.vocabularyEnabled !== true || this.isUnloading) return false;
+    if (this.vocabularyDictionaryWarmupTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryWarmupTimer);
+    this.vocabularyDictionaryWarmupTimer = globalThis.setTimeout(() => {
+      this.vocabularyDictionaryWarmupTimer = null;
+      if (this.settings?.vocabularyEnabled !== true || this.isUnloading) return;
+      let dictionary;
+      try { dictionary = this.getVocabularyDictionary(); }
+      catch (error) {
+        applyVocabularyDictionaryStatus(this, { phase: "unavailable", count: 0, total: 0 });
+        return;
+      }
+      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+    }, Math.max(0, Number(delay) || 0));
+    return true;
+  }
+
+  scheduleVocabularyDictionaryRefresh(delay = 300) {
+    if (this.settings?.vocabularyEnabled !== true || this.isUnloading) return false;
+    if (this.vocabularyDictionaryRefreshTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryRefreshTimer);
+    this.vocabularyDictionaryRefreshTimer = globalThis.setTimeout(() => {
+      this.vocabularyDictionaryRefreshTimer = null;
+      if (this.settings?.vocabularyEnabled !== true || this.isUnloading) return;
+      let dictionary;
+      try { dictionary = this.getVocabularyDictionary(); }
+      catch { return; }
+      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+    }, Math.max(0, Number(delay) || 0));
+    return true;
+  }
+
+  clearVocabularyDictionaryTimers() {
+    if (this.vocabularyDictionaryWarmupTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryWarmupTimer);
+    if (this.vocabularyDictionaryRefreshTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryRefreshTimer);
+    this.vocabularyDictionaryWarmupTimer = null;
+    this.vocabularyDictionaryRefreshTimer = null;
+  }
+
+  handleVocabularyDictionaryResourceChange(...paths) {
+    if (!paths.some(isVocabularyDictionaryResourcePath)) return false;
+    this.vocabularyDictionary?.invalidate?.();
+    if (this.settings?.vocabularyEnabled === true) this.scheduleVocabularyDictionaryRefresh();
+    return true;
+  }
+
+  async rebuildVocabularyDictionaryCache() {
+    if (this.settings?.vocabularyEnabled !== true || this.isUnloading) return false;
+    if (this.vocabularyDictionaryWarmupTimer != null) {
+      globalThis.clearTimeout(this.vocabularyDictionaryWarmupTimer);
+      this.vocabularyDictionaryWarmupTimer = null;
+    }
+    if (this.vocabularyDictionaryRefreshTimer != null) {
+      globalThis.clearTimeout(this.vocabularyDictionaryRefreshTimer);
+      this.vocabularyDictionaryRefreshTimer = null;
+    }
+    const dictionary = this.getVocabularyDictionary();
+    await dictionary.rebuildCache();
+    return true;
   }
 
   async importVocabulary(text, format, policy = {}) {
@@ -5527,7 +5890,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   async setVocabularyEnabled(enabled) {
     this.settings.vocabularyEnabled = Boolean(enabled);
     if (!this.settings.vocabularyEnabled) {
+      if (this.vocabularyDictionaryWarmupTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryWarmupTimer);
+      if (this.vocabularyDictionaryRefreshTimer != null) globalThis.clearTimeout(this.vocabularyDictionaryRefreshTimer);
+      this.vocabularyDictionaryWarmupTimer = null;
+      this.vocabularyDictionaryRefreshTimer = null;
       for (const view of this.views) view.cancelVocabularyWork();
+    } else {
+      this.scheduleVocabularyDictionaryWarmup();
     }
     try {
       await this.saveData(this.settings);
@@ -5549,6 +5918,26 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       for (const view of this.views) view.setVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
       this.readerSettingsTab?.syncVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
     }
+  }
+
+  async setVocabularyWordDisplayMode(mode) {
+    if (!["whole", "roots"].includes(mode)) return false;
+    // One plugin host serves multiple Reader windows. Serialize preference
+    // writes so a late failure cannot roll back a newer confirmed choice.
+    const update = async () => {
+      const previous = this.settings.vocabularyWordDisplayMode;
+      this.settings.vocabularyWordDisplayMode = mode;
+      try {
+        await this.saveData({ ...this.settings });
+      } catch (error) {
+        this.settings.vocabularyWordDisplayMode = previous;
+        new Notice(`构词显示模式无法保存：${error.message || error}`, 8000);
+      }
+      for (const view of this.views) view.setVocabularyWordDisplayMode(this.settings.vocabularyWordDisplayMode);
+      return this.settings.vocabularyWordDisplayMode === mode;
+    };
+    this.vocabularyWordModeQueue = (this.vocabularyWordModeQueue || Promise.resolve()).then(update, update);
+    return this.vocabularyWordModeQueue;
   }
 
   async setLastAnnotationToolMode(mode) {

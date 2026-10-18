@@ -1,214 +1,205 @@
-/*
- * Read-only ECDICT lookup over Vault DataAdapter files.
- *
- * This is deliberately separate from VocabularyService: dictionary content is
- * shared reference data, while the vocabulary service owns personal learning
- * status and notes.
- */
-const DEFAULT_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/index-v1";
-const DICTIONARY_KIND = "pdf-reader-ecdict-index";
-const SHARD_KIND = "pdf-reader-ecdict-shard";
-
-class VocabularyDictionaryError extends Error {
-  constructor(message, code, options) {
-    super(message, options);
-    this.name = "VocabularyDictionaryError";
-    this.code = code;
-  }
-}
-
-function normalizeDictionaryKey(value) {
-  if (typeof value !== "string") return "";
-  return value.normalize("NFC").trim().replace(/\s+/gu, " ").toLowerCase().normalize("NFC");
-}
-
-function dictionaryShardIdForTerm(value) {
-  const points = [...normalizeDictionaryKey(value)].slice(0, 2);
-  if (!points.length) return "";
-  return points.map((point) => `u${point.codePointAt(0).toString(16).padStart(6, "0")}`).join("-");
-}
-
-function asBytes(value) {
-  if (value instanceof Uint8Array) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  throw new TypeError("DataAdapter.readBinary() must return an ArrayBuffer or byte view.");
-}
-
-function dictionaryError(message, code, cause) {
-  return new VocabularyDictionaryError(message, code, cause ? { cause } : undefined);
-}
-
-async function sha256Hex(bytes) {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle || typeof subtle.digest !== "function") {
-    throw dictionaryError("Web Crypto SHA-256 is unavailable for dictionary integrity verification.",
-      "DICTIONARY_INTEGRITY_UNAVAILABLE");
-  }
-  const digest = await subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
-}
-
-async function gunzipUtf8(bytes) {
-  const Decompress = globalThis.DecompressionStream;
-  if (typeof Decompress !== "function" || typeof globalThis.Blob !== "function" ||
-      typeof globalThis.Response !== "function") {
-    throw dictionaryError("This WebView does not provide the gzip Web APIs required by ECDICT.",
-      "DICTIONARY_GZIP_UNAVAILABLE");
-  }
-  let stream;
-  try {
-    stream = new Blob([bytes]).stream().pipeThrough(new Decompress("gzip"));
-    return new TextDecoder("utf-8", { fatal: true }).decode(await new Response(stream).arrayBuffer());
-  } catch (error) {
-    if (error?.code) throw error;
-    throw dictionaryError("ECDICT shard gzip data is invalid.", "DICTIONARY_SHARD_CORRUPT", error);
-  }
-}
-
-function validateManifest(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value) ||
-      value.schemaVersion !== 1 || value.kind !== DICTIONARY_KIND ||
-      value.shardScheme !== "first-two-codepoints-hex" ||
-      !value.shards || typeof value.shards !== "object" || Array.isArray(value.shards)) {
-    throw dictionaryError("ECDICT manifest has an unsupported or malformed schema.", "DICTIONARY_MANIFEST_CORRUPT");
-  }
-  for (const [id, descriptor] of Object.entries(value.shards)) {
-    if (!/^u[0-9a-f]{6}(?:-u[0-9a-f]{6})?$/.test(id) || !descriptor ||
-        descriptor.file !== `shards/${id}.json.gz` || !Number.isInteger(descriptor.entryCount) ||
-        descriptor.entryCount < 0 || !/^[0-9a-f]{64}$/.test(descriptor.sha256 || "")) {
-      throw dictionaryError(`ECDICT manifest shard descriptor is invalid: ${id}`, "DICTIONARY_MANIFEST_CORRUPT");
-    }
-  }
-  return value;
-}
+/* Vault resources are authoritative; IndexedDB is a disposable local index. */
+const { DictionaryQueryCache, DEFAULT_CACHE_NAME } = require("./dictionary-cache.cjs");
+const { DEFAULT_DICTIONARY_ROOT, VocabularyDictionaryError, dictionaryError, normalizeDictionaryKey,
+  validateManifest, generationId, asBytes } = require("./dictionary-resource.cjs");
+const WORKER_SOURCE = typeof __PDF_DICTIONARY_WORKER_SOURCE__ === "string" ? __PDF_DICTIONARY_WORKER_SOURCE__ : null;
 
 class VocabularyDictionary {
-  constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, maxCachedShards = 8 } = {}) {
+  constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, cache, cacheName = DEFAULT_CACHE_NAME,
+    workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {} } = {}) {
     if (!adapter || typeof adapter.read !== "function" || typeof adapter.readBinary !== "function") {
-      throw new TypeError("VocabularyDictionary requires an Obsidian DataAdapter with read() and readBinary().");
-    }
-    if (!Number.isInteger(maxCachedShards) || maxCachedShards < 1) {
-      throw new RangeError("maxCachedShards must be a positive integer.");
+      throw new TypeError("VocabularyDictionary requires a Vault DataAdapter with read() and readBinary().");
     }
     this.adapter = adapter;
     this.root = String(root).replace(/\/+$/u, "");
-    this.maxCachedShards = maxCachedShards;
+    this.cache = cache || new DictionaryQueryCache({ name: cacheName });
+    this.cacheName = cacheName;
+    this.workerSource = workerSource;
+    this.WorkerClass = WorkerClass;
+    this.listeners = new Set([onStatus]);
+    this.status = { phase: "idle", count: 0, total: 0 };
     this.manifestPromise = null;
-    this.shardCache = new Map();
-    this.shardPromises = new Map();
+    this.pending = null;
+    this.disposed = false;
+    this.worker = null;
+    this.abortController = new AbortController();
+    this.readyGeneration = null;
+    this.revision = 0;
   }
-
+  getStatus() { return { ...this.status }; }
+  subscribe(callback) {
+    this.listeners.add(callback);
+    callback(this.getStatus());
+    return () => this.listeners.delete(callback);
+  }
+  emit(status) {
+    if (this.disposed) return;
+    const percent = value => value.total ? Math.floor(value.count / value.total * 100) : 0;
+    const unchanged = this.status.phase === status.phase && this.status.total === status.total &&
+      this.status.code === status.code && percent(this.status) === percent(status);
+    this.status = { ...status };
+    if (unchanged) return;
+    for (const listener of this.listeners) { try { listener(this.getStatus()); } catch {} }
+  }
+  async manifest() {
+    if (!this.manifestPromise) {
+      this.manifestPromise = (async () => {
+        let raw;
+        try { raw = await this.adapter.read(`${this.root}/manifest.json`); }
+        catch (cause) { throw dictionaryError("Dictionary resource manifest has not synchronized yet.", "DICTIONARY_INDEX_MISSING", cause); }
+        try { return validateManifest(JSON.parse(raw)); }
+        catch (cause) {
+          if (cause?.code) throw cause;
+          throw dictionaryError("Dictionary manifest is invalid JSON.", "DICTIONARY_MANIFEST_CORRUPT", cause);
+        }
+      })().catch(error => { this.manifestPromise = null; throw error; });
+    }
+    return this.manifestPromise;
+  }
+  async loadBytes(manifest) {
+    try { return asBytes(await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`)); }
+    catch (cause) { throw dictionaryError("Dictionary resource has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
+  }
   async lookup(term) {
     const key = normalizeDictionaryKey(term);
     if (!key) return null;
-    const manifest = await this._getManifest();
-    const shardId = dictionaryShardIdForTerm(key);
-    const descriptor = manifest.shards[shardId];
-    if (!descriptor) return null;
-    const entries = await this._getShard(shardId, descriptor);
-    const entry = entries.get(key);
-    return entry ? { key: entry.key, translation: entry.translation, phonetic: entry.phonetic, source: "ECDICT" } : null;
-  }
-
-  async _getManifest() {
-    if (!this.manifestPromise) {
-      this.manifestPromise = (async () => {
-        const path = `${this.root}/manifest.json`;
-        if (typeof this.adapter.exists === "function" && !(await this.adapter.exists(path))) {
-          throw dictionaryError("ECDICT index manifest is missing.", "DICTIONARY_INDEX_MISSING");
-        }
-        let raw;
-        try {
-          raw = await this.adapter.read(path);
-        } catch (error) {
-          throw dictionaryError("Unable to read ECDICT index manifest.", "DICTIONARY_INDEX_MISSING", error);
-        }
-        try {
-          return validateManifest(JSON.parse(raw));
-        } catch (error) {
-          if (error instanceof VocabularyDictionaryError) throw error;
-          throw dictionaryError("ECDICT index manifest is not valid JSON.", "DICTIONARY_MANIFEST_CORRUPT", error);
-        }
-      })();
-    }
     try {
-      return await this.manifestPromise;
+      const manifest = await this.manifest();
+      const ready = await this.cache.ready(manifest);
+      if (ready) {
+        this.readyGeneration = ready;
+        this.emit({ phase: "ready", count: ready.count, total: ready.count });
+        return await this.cache.lookup(ready.id, key);
+      }
+      // A resource update must not take an already verified dictionary offline.
+      const previous = await this.cache.active(manifest.dictionaryId);
+      if (previous) {
+        void this.ensureReady().catch(() => {});
+        return await this.cache.lookup(previous.id, key);
+      }
+      const built = await this.ensureReady();
+      return await this.cache.lookup(built.id, key);
     } catch (error) {
-      this.manifestPromise = null;
+      if (error?.code === "DICTIONARY_CACHE_RETRY" && !this.disposed) {
+        const ready = await this.ensureReady();
+        return this.cache.lookup(ready.id, key);
+      }
+      if (error?.code === "DICTIONARY_CACHE_INCOMPLETE" && !this.disposed) {
+        this.readyGeneration = null;
+        const rebuilt = await this.ensureReady({ force: true });
+        return this.cache.lookup(rebuilt.id, key);
+      }
+      const previous = await this.cache.active().catch(() => null);
+      if (previous && !this.disposed) return this.cache.lookup(previous.id, key);
+      if (error?.code) throw error;
+      throw dictionaryError("The local dictionary query cache is unavailable.", "DICTIONARY_CACHE_UNAVAILABLE", error);
+    }
+  }
+  async ensureReady({ force = false } = {}) {
+    if (this.disposed) throw dictionaryError("Dictionary service has been disposed.", "DICTIONARY_CACHE_CANCELLED");
+    if (this.pending) {
+      if (this.pendingRevision === this.revision && (!force || this.pendingForce)) return this.pending;
+      await this.pending.catch(() => {});
+      return this.ensureReady({ force });
+    }
+    const revision = this.revision;
+    this.pendingRevision = revision;
+    this.pendingForce = force;
+    const task = (async () => {
+      const manifest = await this.manifest();
+      const existing = !force && await this.cache.ready(manifest);
+      if (existing) return existing;
+      this.emit({ phase: "verifying", count: 0, total: manifest.entryCount });
+      if (this.workerSource && typeof this.WorkerClass === "function") {
+        try { return await this.prepareInWorker(manifest, force); }
+        catch (error) {
+          // CSP and Worker availability differ between desktop and WKWebView.
+          if (!error.workerUnavailable) throw error;
+          await this.cache.releaseOwner(generationId(manifest)).catch(() => {});
+        }
+      }
+      return this.cache.prepare(manifest, () => this.loadBytes(manifest), {
+        force, signal: this.abortController.signal, onProgress: progress => this.emit(progress),
+      });
+    })().then(ready => {
+      if (revision === this.revision) {
+        this.readyGeneration = ready;
+        this.emit({ phase: "ready", count: ready.count, total: ready.count });
+      }
+      return ready;
+    }).catch(error => {
+      this.emit({ phase: "unavailable", count: this.status.count, total: this.status.total,
+        code: error?.code || "DICTIONARY_CACHE_UNAVAILABLE" });
       throw error;
-    }
+    }).finally(() => {
+      if (this.pending === task) this.pending = null;
+    });
+    this.pending = task;
+    return task;
   }
-
-  async _getShard(shardId, descriptor) {
-    if (this.shardCache.has(shardId)) {
-      const value = this.shardCache.get(shardId);
-      this.shardCache.delete(shardId);
-      this.shardCache.set(shardId, value);
-      return value;
-    }
-    if (this.shardPromises.has(shardId)) return this.shardPromises.get(shardId);
-    const pending = this._loadShard(shardId, descriptor).then((entries) => {
-      this.shardCache.set(shardId, entries);
-      while (this.shardCache.size > this.maxCachedShards) {
-        this.shardCache.delete(this.shardCache.keys().next().value);
-      }
-      return entries;
-    }).finally(() => this.shardPromises.delete(shardId));
-    this.shardPromises.set(shardId, pending);
-    return pending;
-  }
-
-  async _loadShard(shardId, descriptor) {
-    const path = `${this.root}/${descriptor.file}`;
-    if (typeof this.adapter.exists === "function" && !(await this.adapter.exists(path))) {
-      throw dictionaryError(`ECDICT shard is missing: ${shardId}`, "DICTIONARY_SHARD_MISSING");
-    }
-    let compressed;
+  async prepareInWorker(manifest, force) {
+    let url, worker, startup;
+    const unavailable = cause => Object.assign(dictionaryError("Dictionary Worker is unavailable; use cooperative import.",
+      "DICTIONARY_WORKER_UNAVAILABLE", cause), { workerUnavailable: true });
     try {
-      compressed = asBytes(await this.adapter.readBinary(path));
+      url = URL.createObjectURL(new Blob([this.workerSource], { type: "text/javascript" }));
+      worker = new this.WorkerClass(url, { name: "pdf-reader-dictionary" });
+      this.worker = worker;
+      return await new Promise((resolve, reject) => {
+        let started = false;
+        const abort = () => finish(reject, dictionaryError("Dictionary service was closed.", "DICTIONARY_CACHE_CANCELLED"));
+        const finish = (callback, value) => {
+          this.abortController.signal.removeEventListener("abort", abort);
+          clearTimeout(startup);
+          callback(value);
+        };
+        startup = setTimeout(() => finish(reject, unavailable()), 5000);
+        this.abortController.signal.addEventListener("abort", abort, { once: true });
+        worker.onerror = event => finish(reject, unavailable(event?.message));
+        worker.onmessageerror = event => finish(reject, unavailable(event));
+        worker.onmessage = ({ data }) => {
+          if (data?.type === "started" && !started) {
+            started = true;
+            clearTimeout(startup);
+            void this.loadBytes(manifest).then(bytes => {
+              if (this.disposed) return finish(reject, dictionaryError("Dictionary service was closed.", "DICTIONARY_CACHE_CANCELLED"));
+              const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+                ? bytes.buffer : bytes.slice().buffer;
+              worker.postMessage({ type: "prepare", manifest, bytes: buffer,
+                cacheName: this.cacheName, ownerId: this.cache.ownerId, force }, [buffer]);
+            }).catch(error => finish(reject, error));
+          } else if (data?.type === "progress") this.emit(data.progress);
+          else if (data?.type === "ready") finish(resolve, data.ready);
+          else if (data?.type === "error") {
+            const error = dictionaryError(data.error.message, data.error.code);
+            if (["DICTIONARY_CACHE_UNAVAILABLE", "DICTIONARY_GZIP_UNAVAILABLE"].includes(error.code)) error.workerUnavailable = true;
+            finish(reject, error);
+          }
+        };
+      });
     } catch (error) {
-      const missing = typeof this.adapter.exists !== "function";
-      throw dictionaryError(`Unable to read ECDICT shard: ${shardId}`,
-        missing ? "DICTIONARY_SHARD_MISSING" : "DICTIONARY_SHARD_READ_FAILED", error);
+      if (error?.code) throw error;
+      throw unavailable(error);
+    } finally {
+      clearTimeout(startup);
+      worker?.terminate();
+      if (url) URL.revokeObjectURL(url);
+      if (this.worker === worker) this.worker = null;
     }
-    const digest = await sha256Hex(compressed);
-    if (digest !== descriptor.sha256) {
-      throw dictionaryError(`ECDICT shard integrity check failed: ${shardId}`, "DICTIONARY_SHARD_CORRUPT");
-    }
-    let shard;
-    try {
-      shard = JSON.parse(await gunzipUtf8(compressed));
-    } catch (error) {
-      if (error instanceof VocabularyDictionaryError) throw error;
-      throw dictionaryError(`ECDICT shard JSON is invalid: ${shardId}`, "DICTIONARY_SHARD_CORRUPT", error);
-    }
-    if (!shard || shard.schemaVersion !== 1 || shard.kind !== SHARD_KIND ||
-        shard.shardId !== shardId || !Array.isArray(shard.entries) ||
-        shard.entries.length !== descriptor.entryCount) {
-      throw dictionaryError(`ECDICT shard schema is invalid: ${shardId}`, "DICTIONARY_SHARD_CORRUPT");
-    }
-    const entries = new Map();
-    for (const entry of shard.entries) {
-      if (!entry || typeof entry.key !== "string" || normalizeDictionaryKey(entry.key) !== entry.key ||
-          dictionaryShardIdForTerm(entry.key) !== shardId || typeof entry.translation !== "string" ||
-          typeof entry.phonetic !== "string" || entries.has(entry.key)) {
-        throw dictionaryError(`ECDICT shard contains an invalid entry: ${shardId}`, "DICTIONARY_SHARD_CORRUPT");
-      }
-      entries.set(entry.key, entry);
-    }
-    return entries;
   }
-
-  clearCache() {
-    this.shardCache.clear();
+  invalidate() {
+    this.manifestPromise = null;
+    this.readyGeneration = null;
+    this.revision += 1;
+  }
+  async rebuildCache() { this.invalidate(); return this.ensureReady({ force: true }); }
+  clearCache() { this.invalidate(); }
+  dispose() {
+    this.disposed = true;
+    this.abortController.abort();
+    this.worker?.terminate();
+    this.cache.close();
+    this.listeners.clear();
   }
 }
-
-module.exports = {
-  DEFAULT_DICTIONARY_ROOT,
-  VocabularyDictionary,
-  VocabularyDictionaryError,
-  normalizeDictionaryKey,
-  dictionaryShardIdForTerm,
-};
+module.exports = { DEFAULT_DICTIONARY_ROOT, VocabularyDictionary, VocabularyDictionaryError, normalizeDictionaryKey };

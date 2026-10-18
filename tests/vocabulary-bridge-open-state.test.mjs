@@ -37,7 +37,7 @@ test("vocabulary enable changes during parsing follow the matching open and igno
   const functions = [
     "normalizeVocabularyDisplayMode", "normalizeAnnotationToolMode", "normalizeVocabularyHighlightLevels",
     "syncVocabularyDisplayModeButton", "setVocabularyDisplayMode",
-    "queueOpen", "handleVocabularyEnabledMessage",
+    "queueOpen", "handleVocabularyEnabledMessage", "requestVocabularyReadMode",
     "syncVocabularyMenuButton",
     "setVocabularyHighlightLevels", "handleVocabularyHighlightLevelsMessage",
     "prepareVocabularyOpen", "bindVocabularyToOpenedDocument",
@@ -128,7 +128,7 @@ test("vocabulary enable changes during parsing follow the matching open and igno
 test("Reader menu waits for host enable before scanning and binds toggles to a pending open", () => {
   const functions = [
     "syncVocabularyMenuButton", "setVocabularyEnabled", "toggleVocabularyFromMenu",
-    "handleVocabularyEnabledMessage", "bindVocabularyToOpenedDocument",
+    "handleVocabularyEnabledMessage", "bindVocabularyToOpenedDocument", "requestVocabularyReadMode",
   ].map(extractFunction).join("\n");
   const api = vm.runInNewContext(`(() => {
     const events = [];

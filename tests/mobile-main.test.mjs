@@ -887,6 +887,9 @@ test("ready-frame diagnostics reject stale replies and sanitize bounded input sa
     type: "input-diagnostics", requestId: request.requestId,
     rendererGeneration: "stale-generation", schema: 1,
     pointerEventsSeen: 40, pointerEventsDropped: 0, activePointers: 1,
+    editorMode: 15, vocabularyEnabled: true,
+    annotationTrackingFailure: { phase: "mutation.capture", code: "annotation-deletion-identity-unresolved",
+      revision: 8, count: 2, message: "Private PDF content" },
     pointers: samples,
   };
   view.handleMobileRuntimeMessage(reply);
@@ -896,6 +899,10 @@ test("ready-frame diagnostics reject stale replies and sanitize bounded input sa
   assert.equal(snapshot.pointers.length, 32);
   assert.equal(snapshot.pointers[0].editorMode, 8);
   assert.equal(snapshot.pointerEventsSeen, 40);
+  assert.equal(snapshot.editorMode, 15);
+  assert.equal(snapshot.vocabularyEnabled, true);
+  assert.equal(snapshot.annotationTrackingFailure.code, "annotation-deletion-identity-unresolved");
+  assert.equal(snapshot.annotationTrackingFailure.revision, 8);
   assert.equal(JSON.stringify(snapshot).includes("Private"), false);
   assert.equal(view.mobileInputDiagnosticsRequests.size, 0);
 

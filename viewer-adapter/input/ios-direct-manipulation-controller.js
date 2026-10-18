@@ -12,6 +12,7 @@
       isEraserActive,
       isAnnotationToolActive,
       invalidatePendingPenHighlight,
+      onInputBoundary = () => {},
     }) {
       this.getInputRouter = getInputRouter;
       this.getViewportController = getViewportController;
@@ -22,6 +23,7 @@
       this.isEraserActive = isEraserActive;
       this.isAnnotationToolActive = isAnnotationToolActive;
       this.invalidatePendingPenHighlight = invalidatePendingPenHighlight;
+      this.onInputBoundary = onInputBoundary;
       this._nativeTouchPointers = new Map();
       this._completedVocabularyTap = null;
     }
@@ -43,6 +45,13 @@
     clearPenPolicyPointers() { this.router()?.clearPenPolicyPointers(); }
     capturePointer(pointerId, target) { return this.router()?.capturePointer(pointerId, target) || false; }
     releasePointerCapture(pointerId) { this.router()?.releasePointerCapture(pointerId); }
+
+    hasActiveInputSession() {
+      return this.activePointerValues().length > 0 ||
+        this.manualPointerCount() > 0 ||
+        this.penPolicyPointerIds().length > 0 ||
+        this._nativeTouchPointers.size > 0;
+    }
 
     hasActivePenEditorGesture() {
       return (this.router()?.penPolicyPointerCount || 0) > 0 ||
@@ -138,6 +147,7 @@
       ) {
         this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
       }
+      this.onInputBoundary();
       return true;
     }
 
@@ -325,6 +335,7 @@
         this.getInputPolicy()?.rememberPanClickTarget?.("pen", pointer.pageTarget);
       }
       this.releasePointerCapture(pointerId);
+      this.onInputBoundary();
       return pointer;
     }
 
@@ -340,6 +351,7 @@
       for (const pointer of pointers) this.releasePointerCapture(pointer.pointerId);
       this.clearPenPolicyPointers();
       if (clearClickTargets) this.getInputPolicy()?.clearPanClickTargets?.();
+      this.onInputBoundary();
     }
 
     handlePointerMove(intent, controls) {
@@ -404,6 +416,7 @@
       if (!this.hasActivePenEditorGesture()) {
         this.getInputPolicy()?.clearFingerTextSelectionSuppression?.();
       }
+      this.onInputBoundary();
       return true;
     }
 

@@ -1,7 +1,7 @@
 {
   "id": "pdf-web-reader",
   "name": "PDF Web Reader",
-  "version": "0.11.6",
+  "version": "0.12.0",
   "minAppVersion": "1.14.4",
   "description": "Read vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
   "author": "XxX-42",

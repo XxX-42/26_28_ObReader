@@ -224,6 +224,9 @@ const mergeWorkerLicense = [
   await readBundledDependencyLicense("tslib", ["LICENSE.txt", "LICENSE"]),
   await readBundledDependencyLicense("@noble/hashes", ["LICENSE", "LICENSE.md"]),
   await readBundledDependencyLicense("xxhash-wasm", ["LICENSE.md", "LICENSE"]),
+  await readBundledDependencyLicense("dexie", ["LICENSE", "LICENSE.md"]),
+  "\n\n===== dexie NOTICE =====\n\n" +
+    await readFile(path.join(root, "node_modules", "dexie", "NOTICE"), "utf8"),
 ].join("");
 
 const runtimeInputs = [
@@ -433,6 +436,17 @@ const inlinedHelper =
   runtimeBundle.outputFiles[0].text
     .trimEnd() +
   "\n  return __PDFReaderAssetRuntime;\n})();";
+const dictionaryWorkerBundle = await buildBundle({
+  entryPoints: [path.join(pluginSource, "vocabulary", "dictionary-worker.cjs")],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: ["es2022"],
+  legalComments: "inline",
+  define: { "process.env.NODE_ENV": '"production"' },
+  write: false,
+});
+assert.equal(dictionaryWorkerBundle.outputFiles.length, 1);
 async function inlineModule(entry, globalName, exportName) {
   const bundle = await buildBundle({
     entryPoints: [path.join(pluginSource, entry)],
@@ -442,6 +456,8 @@ async function inlineModule(entry, globalName, exportName) {
     platform: "browser",
     target: ["es2022"],
     legalComments: "none",
+    define: { "process.env.NODE_ENV": '"production"',
+      __PDF_DICTIONARY_WORKER_SOURCE__: JSON.stringify(dictionaryWorkerBundle.outputFiles[0].text) },
     write: false,
   });
   assert.equal(bundle.outputFiles.length, 1, `Expected one bundle for ${entry}`);
