@@ -3,8 +3,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, readlink, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, writeFile } from "node:fs/promises";
 import { once } from "node:events";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -301,9 +302,7 @@ function parseTapSkips(text) {
   return skips;
 }
 
-function childEnvironment({ env = process.env, rootDir, runId, gate, testFile, round, caseDir }) {
-  const profileDir = path.join(caseDir, "profile-tmp");
-  const artifactsDir = path.join(caseDir, "artifacts");
+function childEnvironment({ env = process.env, rootDir, runId, gate, testFile, round, profileDir, artifactsDir }) {
   return {
     ...env,
     TMPDIR: profileDir,
@@ -322,9 +321,9 @@ function childEnvironment({ env = process.env, rootDir, runId, gate, testFile, r
   };
 }
 
-async function ensureCaseDirectories(caseDir) {
-  await mkdir(path.join(caseDir, "profile-tmp"), { recursive: true });
+async function ensureCaseDirectories(caseDir, artifactsDir) {
   await mkdir(path.join(caseDir, "artifacts"), { recursive: true });
+  await mkdir(artifactsDir, { recursive: true });
 }
 
 function waitForStreamFinish(stream) {
@@ -361,12 +360,25 @@ export async function runCases(cases, {
       const itemRound = item.round ?? round ?? 1;
       const key = `${itemGate}-round-${String(itemRound).padStart(2, "0")}-${path.basename(testFile, ".test.mjs")}`;
       const caseDir = path.join(artifactsRoot, "runs", runId, "children", safeName(key));
-      await ensureCaseDirectories(caseDir);
+      const artifactKey = createHash("sha256")
+        .update(`${runId}\0${itemGate}\0${itemRound}\0${testFile}`)
+        .digest("hex")
+        .slice(0, 12);
+      const artifactName = safeName(path.basename(testFile, ".test.mjs")).slice(0, 24) || "case";
+      // Keep retained test artifacts below a short per-case path. The raw
+      // runner logs remain under caseDir, while browser profiles/screenshots
+      // must not exceed Windows MAX_PATH when launch metadata adds more levels.
+      const testArtifactsDir = path.join(artifactsRoot, "out", artifactKey, artifactName);
+      await ensureCaseDirectories(caseDir, testArtifactsDir);
+      // Keep OS temp paths shallow. Nesting temporary browser profiles under
+      // the retained run-artifact tree exceeds the Windows MAX_PATH limit once
+      // browser tests create their own artifacts below TMPDIR.
+      const profileDir = await mkdtemp(path.join(tmpdir(), "pvr-gate-"));
       const stdoutPath = path.join(caseDir, "stdout.raw.log");
       const stderrPath = path.join(caseDir, "stderr.raw.log");
       const stdoutStream = createWriteStream(stdoutPath, { flags: "wx" });
       const stderrStream = createWriteStream(stderrPath, { flags: "wx" });
-      const env = childEnvironment({ env: process.env, rootDir, runId, gate: itemGate, testFile, round: itemRound, caseDir });
+      const env = childEnvironment({ env: process.env, rootDir, runId, gate: itemGate, testFile, round: itemRound, profileDir, artifactsDir: testArtifactsDir });
       const resolvedFile = path.resolve(rootDir, testFile);
       const args = execution === "script"
         ? [resolvedFile]
@@ -409,9 +421,16 @@ export async function runCases(cases, {
         skips,
         stdoutPath,
         stderrPath,
+        testArtifactsPath: testArtifactsDir,
         rawBytes: { stdout: Buffer.byteLength(stdout), stderr: Buffer.byteLength(stderr) },
         logContainsFailure: /\bnot ok\b|ERR_TEST_FAILURE|AssertionError|Error:/i.test(`${stdout}\n${stderr}`),
       };
+      if (status === "passed") {
+        await rm(profileDir, { recursive: true, force: true });
+      } else {
+        // Keep a failed child's private temp directory available for diagnosis.
+        results[index].profileTempPath = profileDir;
+      }
     }
   };
 

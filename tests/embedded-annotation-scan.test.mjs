@@ -12,6 +12,21 @@ import { cleanupBrowserTestResources } from "./browser-test-cleanup.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 
+function isWithinDirectory(parent, target) {
+  const relative = path.relative(parent, target);
+  return relative === "" || (
+    !path.isAbsolute(relative) &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`)
+  );
+}
+
+test("embedded fixture server accepts descendants and rejects path escapes on this platform", () => {
+  const parent = path.resolve(root, "vendor", "pdfjs-generic-legacy");
+  assert.equal(isWithinDirectory(parent, path.join(parent, "build", "pdf.mjs")), true);
+  assert.equal(isWithinDirectory(parent, path.resolve(parent, "..", "outside.mjs")), false);
+});
+
 test("native PDF annotation scan recognizes supported source marks and excludes links", { timeout: 60_000 }, async () => {
   const supplied = process.env.PDF_READER_EMBEDDED_INSPECTION_SOURCE;
   let bytes;
@@ -48,7 +63,7 @@ test("native PDF annotation scan recognizes supported source marks and excludes 
       if (!pathname.startsWith("/pdfjs/")) { res.statusCode = 404; return res.end(); }
       const dir = path.join(root, "vendor/pdfjs-generic-legacy");
       const target = path.resolve(dir, pathname.slice(7));
-      if (!target.startsWith(`${dir}/`)) { res.statusCode = 403; return res.end(); }
+      if (!isWithinDirectory(dir, target)) { res.statusCode = 403; return res.end(); }
       res.setHeader("Content-Type", target.endsWith(".mjs") ? "text/javascript" : "application/octet-stream");
       res.end(await readFile(target));
     } catch { res.statusCode = 404; res.end(); }
@@ -154,7 +169,7 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
       if(name==='/bridge.js'){res.setHeader('Content-Type','text/javascript');return res.end(bridge);}
       if(name==='/bridge.css'){res.setHeader('Content-Type','text/css');return res.end(await readFile(path.join(root,'viewer-adapter/bridge.css')));}
       const relative=name.startsWith('/pdfjs/')?name.slice(7):name.startsWith('/build/')?name.slice(1):'web'+name;
-      const target=path.resolve(vendor,relative);if(!target.startsWith(vendor+'/'))throw new Error('path');
+      const target=path.resolve(vendor,relative);if(!isWithinDirectory(vendor,target))throw new Error('path');
       const ext=path.extname(target);res.setHeader('Content-Type',({'.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.ftl':'text/plain','.svg':'image/svg+xml'})[ext]||'application/octet-stream');
       res.end(await readFile(target));
     }catch{res.statusCode=404;res.end();}
