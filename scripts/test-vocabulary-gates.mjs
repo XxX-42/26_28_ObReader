@@ -167,6 +167,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/pdf-merge-worker.test.mjs",
     "tests/pdf-recovery.test.mjs",
     "tests/pdf-sync-host.test.mjs",
+    "tests/pdfjs-annotation-permission-policy.test.mjs",
     "tests/pdfjs-collapsed-selection-backport.test.mjs",
     "tests/pdfjs-drawing-session-regression.test.mjs",
     "tests/pending-save-integration.test.mjs",

@@ -94,3 +94,14 @@ PDF. Annotation sectors are marked disabled and cannot change the editor mode;
 the PDF permission is never bypassed. The change is limited to
 `web/viewer.mjs` and `web/viewer.css`, is a local project correction rather than
 an upstream PDF.js backport, and is pinned in `SHA256SUMS.json`.
+
+## Annotation-only permission correction: 2026-10-19
+
+The frozen viewer now enables annotation editors when the PDF grants either
+`MODIFY_CONTENTS` or `MODIFY_ANNOTATIONS`. Previously it required only
+`MODIFY_CONTENTS`, disabling annotation tools even when the document explicitly
+granted the annotation permission used by the remote RAND PDF. Documents that
+grant neither permission remain read-only. Ordinary edits continue to persist
+through the external sidecar and do not write the source PDF. This is a local
+permission-policy correction, not an upstream PDF.js backport, and is pinned in
+`SHA256SUMS.json`.

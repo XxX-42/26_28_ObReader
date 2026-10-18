@@ -390,7 +390,7 @@
   "web/standard_fonts/LiberationSans-Regular.ttf": "f8ace1f892b2bd9dc1792ba7f097fa7588f84fed48321480e04de5390828221f",
   "web/viewer.css": "c3b419b6e9598adb60c783e1506606d54a177b6b47b2c4fce689463ab75da33c",
   "web/viewer.html": "3e33de0dd001441d1d31645f553e6bc4af8323db965b98004fcb7e387db07bb6",
-  "web/viewer.mjs": "285329511ef93f740437a434d4cef5ee86e2d95db32c49a57bd7009595ac2968",
+  "web/viewer.mjs": "0b16b701ea293455f0357619bd4aaa3a713c65745c11f6563e5031499b61cf97",
   "web/wasm/LICENSE_JBIG2": "9e66b7f1b934a28b37f3bc4dac97915de1674271e79a0a88182a18ed9731b4d1",
   "web/wasm/LICENSE_OPENJPEG": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6",
   "web/wasm/LICENSE_PDFJS_JBIG2": "aad3cce09842e00e9e11ad5e8fef8cc02fbc3a3768fe2f007443b9cee37aaee5",

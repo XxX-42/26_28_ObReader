@@ -20624,7 +20624,8 @@ class PDFViewer {
     if (!permissions.includes(PermissionFlag.COPY) && this.#textLayerMode === TextLayerMode.ENABLE) {
       params.textLayerMode = TextLayerMode.ENABLE_PERMISSIONS;
     }
-    if (!permissions.includes(PermissionFlag.MODIFY_CONTENTS)) {
+    if (!permissions.includes(PermissionFlag.MODIFY_CONTENTS) &&
+        !permissions.includes(PermissionFlag.MODIFY_ANNOTATIONS)) {
       params.annotationEditorMode = AnnotationEditorType.DISABLE;
     }
     if (!permissions.includes(PermissionFlag.MODIFY_ANNOTATIONS) && !permissions.includes(PermissionFlag.FILL_INTERACTIVE_FORMS) && this.#annotationMode === AnnotationMode.ENABLE_FORMS) {
