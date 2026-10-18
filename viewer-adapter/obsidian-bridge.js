@@ -8331,6 +8331,15 @@
 
   function onBridgePointerDown(intent, controls) {
     cancelManualMomentum();
+    // Stop native momentum on the actual iPad toolbar contact. PDF.js may
+    // re-emit annotationeditormodechanged during foreground restoration, so
+    // that lifecycle event must not own a scroll interruption.
+    if (iosInputPolicy && intent?.targetRegion === "editor-mode-buttons" &&
+        intent.pointerType !== "pen") {
+      state.viewportController?.interruptNativeScroll(
+        document.getElementById("viewerContainer"),
+      );
+    }
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(intent);
     state.iosDirectManipulationController?.preparePointerDown(intent);
@@ -10583,7 +10592,10 @@
                 openRequest: state.activeOpenRequest,
               });
             }
-            state.inputPolicy?.onToolChange?.();
+            // Keyboard tool changes have no pointerdown preflight. Physical
+            // toolbar contacts are handled before PDF.js receives them; do
+            // not treat non-keyboard lifecycle mode replays as tool changes.
+            if (isFromKeyboard) state.inputPolicy?.onToolChange?.();
             if (annotationToolIsActive()) {
               refreshFingerTextSelectionSuppression();
             } else {

@@ -2929,6 +2929,23 @@ test(
     );
     const savesBeforeText = await page.evaluate(() => window.__host.saves.length);
     await openSecondaryToolbar();
+    // A toolbar click can coincide with a queued PDFPageView.reset from the
+    // FreeText layout. PDF.js briefly hides the retained editor layer during
+    // that reset, then shows it again when the page update settles. Sample the
+    // toolbar round-trip only after the same page and editor layer are stable;
+    // the visibility assertion below remains unchanged and still times out if
+    // the layer fails to return.
+    await viewer.waitForFunction((pausedState) => {
+      const app = window.PDFViewerApplication;
+      const pageView = app?.pdfViewer?.getPageView(pausedState.pageIndex);
+      const builder = pageView?.annotationEditorLayer;
+      const editor = app?.pdfViewer?._layerProperties
+        ?.annotationEditorUIManager?.getEditor(pausedState.editorId);
+      return pageView?.renderingState === 3 &&
+        builder?.div?.isConnected &&
+        !builder.div.hidden &&
+        editor?.div?.isConnected;
+    }, { timeout:20_000 }, pausedFreeText);
     const resumedFreeText = await viewer.evaluate(async (pausedState) => {
       const app = window.PDFViewerApplication;
       const pageView = app?.pdfViewer?.getPageView(pausedState.pageIndex);

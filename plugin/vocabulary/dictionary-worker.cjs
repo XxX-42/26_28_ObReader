@@ -5,7 +5,12 @@ self.onmessage = async ({ data }) => {
   try {
     // The worker can use a larger bounded batch without blocking Reader input.
     // Cooperative main-thread fallback retains the smaller default batch.
-    cache = new DictionaryQueryCache({ name: data.cacheName, ownerId: data.ownerId, batchSize: 4000 });
+    const batchSize = Number.isSafeInteger(data.batchSize) && data.batchSize >= 1000 && data.batchSize <= 32000
+      ? data.batchSize : 4000;
+    cache = new DictionaryQueryCache({ name: data.cacheName, ownerId: data.ownerId, batchSize,
+      onProfile: data.profileEnabled === true
+        ? profile => self.postMessage({ type: "profile", profile })
+        : null });
     const ready = await cache.prepare(data.manifest, () => data.bytes, {
       force: data.force === true,
       onProgress: progress => self.postMessage({ type: "progress", progress }),

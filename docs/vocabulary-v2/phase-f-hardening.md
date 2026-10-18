@@ -115,9 +115,10 @@ individual rating.
 
 ## Acceptance limits
 
-- Full Fast, Browser, Race, and nightly gates passed on the simulation above.
-  Source/fixture immutability and architecture boundary tests passed in the
-  same run.
+- The earlier full candidate run passed Fast, Browser, Race, and Nightly as
+  recorded above. The later priority-follow-up runs are separate and supersede
+  that result for the current source; their exact gate outcomes are recorded
+  below.
 - The initial Phase E Browser run had one iPad pointer lifecycle failure that
   did not reproduce in the isolated scenario, the Phase D baseline, the clean
   Phase E rerun, or any of four nightly rounds. Its precise timing trigger is
@@ -140,10 +141,132 @@ individual rating.
   stage/backup cleanup succeeds. Recovery retries cleanup without replaying the
   already verified canonical result.
 
-The candidate three-file package and SHA-256 values are:
+## Priority follow-up — 2026-10-18
+
+### P0: gesture-25 long tail
+
+The 30-minute run `run-2026-10-18T02-44-01.025Z-25801-9f41536c` remains
+incomplete: its second round stopped when the existing 80 ms event-arrival
+assertion observed about 102 ms for gesture 25. The failure artifact records no
+Long Task at that time. Its CDP touch-move dispatch acknowledgement was also
+delayed by roughly 115 ms, which places the stall in browser/input scheduling or
+the CDP delivery path rather than identifying a slow Reader callback; this is
+evidence, not a proven root cause.
+
+A same-machine comparison was collected with CPU sampling enabled:
+
+| Source | Gesture-25 runs | Event-arrival max range | Over 80 ms | CPU profile |
+| --- | ---: | ---: | ---: | --- |
+| `39fb121b10140f265e3f006cee2b1a8cf6f891c3` | 11 | 72.7–75.6 ms | 0 | sampled Reader/main script median about 1.28 ms |
+| `b6b178dc142b6900fa7b4bbdd7d23c5f4d0bc96c` | 19 | 71.9–76.3 ms | 0 | sampled Reader/main script median about 1.29 ms |
+
+The profile-enabled current-source rerun for gesture 25 recorded 73.9 ms at
+most; 125 of 132 CPU samples were idle, four were program time, and the only
+named Reader frame (`runtimeLogRecord`) accounted for under 1 ms. Its Long Task
+list was empty. A separate profiler run that stopped at gesture 24 did observe
+a 58 ms Long Task near page startup, but it was not contemporaneous with that
+late gesture. These runs do not reproduce or explain the 102 ms observation.
+The 80 ms gate is unchanged and remains open; the earlier 30-minute result is
+not accepted as a pass. The available evidence does not justify changing the
+Reader gesture path. Per-run A/B timings, profile summaries, the original
+102 ms capture, and the new profiled sample are consolidated at
+`tests/artifacts/vocabulary-stress/priority-2026-10-18/gesture-ab.json`.
+
+### P1: ECDICT cold IndexedDB build
+
+The final-source full-resource run is
+`tests/output/dictionary-0.11.8/browser-full-benchmark-batch-4000.json`. It
+loaded 770,611 entries from a 16,734,703-byte compressed resource in 66.44 s.
+The six measured stages were:
+
+| Stage | Duration |
+| --- | ---: |
+| Manifest/cache probe | 48 ms |
+| Vault binary read | 85 ms |
+| SHA-256 verification | 12 ms |
+| Gzip decode + JSONL validation | 874 ms |
+| IndexedDB persistence | 63.55 s |
+| Cache finalization | 1.80 s |
+
+Within persistence, `entries.bulkPut` consumed 62.22 s of 63.55 s across 193
+4,000-entry batches. Membership read/write consumed about 0.80 s combined;
+entry preparation was 87 ms. A 100-query warm sample had 0.6 ms p95 lookup
+latency. The measured bottleneck is IndexedDB population, not vocabulary lookup,
+resource reading, integrity, decode, or membership-array rewriting. Batch-size
+experiments did not show a stable improvement (8,000 varied between runs and
+16,000 was slower), so the production batch size remains 4,000; no speculative
+retuning was accepted. This is Chromium IndexedDB evidence, not an iPad
+WKWebView cold-build measurement.
+
+The profiling callback is opt-in and disabled by default. It records aggregate
+stage timings rather than a per-entry clock or query, so regular dictionary
+loads do not pay the diagnostic instrumentation cost.
+
+### P2: compact bulk-import History
+
+History schema v3 now encodes complete record-root lifecycle batches by grouping
+shared store/path/kind metadata and storing each entity ID with its record
+payload. Readers inflate this representation to the established reversible
+batch API; mixed and field-level changes remain expanded. Crash-recovery
+pending intents, staging, backups, and recovery ordering are unchanged.
+
+The 25,000-record regression verifies compact creation and inverse deletion,
+25,000-row preview, undo, and redo. In the in-memory DataAdapter measurement,
+the create History batch was 5,851,151 bytes versus an 8,650,813-byte export
+bundle; the full transfer wrote 38,980,847 bytes. These are local structural
+measurements, not real Sync throughput or multi-device transaction guarantees.
+
+### Release evidence boundary
+
+Fast Gate passed 97/97 after the profiling-default fix. Race Gate passed 60/60
+after that diagnostics-only fix. The Browser Gate run before the foreground
+scroll follow-up finished with 25 passed, 1 failed, and 0 skipped; the failure
+was a foreground scroll-write race, not gesture-25 latency or dictionary
+profiling. In that run, gesture 25 arrived within 28.7 ms. Reports:
+
+- Fast: `tests/artifacts/vocabulary-gates/runs/run-2026-10-18T05-58-54-063Z-65559-fbcfddb2/report.json`.
+- Browser: `tests/artifacts/vocabulary-gates/runs/run-2026-10-18T06-00-00-563Z-66699-01c61170/report.json`.
+- Race: `tests/artifacts/vocabulary-gates/runs/run-2026-10-18T06-06-03-083Z-69328-009a2a5a/report.json`.
+
+Build and offline three-file smoke passed; the latter opened the fixture,
+created five editor types, saved/reopened them, and verified bulk deletion did
+not resurrect. The 30-minute Nightly remains incomplete, and the A/B evidence
+does not explain the earlier 102 ms gesture-25 long tail. No physical
+iPad/WKWebView test or real cross-device Sync test was performed; both remain
+release acceptance items. Vocabulary still does not support automatic
+cross-device concurrent merge.
+
+### Follow-up: native scroll interruption ownership and LingQ check
+
+The remaining Browser Gate failure after the foreground-scroll change exposed a
+second input path: keyboard tool changes do not have a preceding pointer event.
+The bridge now interrupts native iPad scrolling on a real non-Pencil contact
+with the editor toolbar, before PDF.js changes tools. Keyboard tool changes
+still call the input policy because they have no pointer-down preflight. A
+replayed non-keyboard `annotationeditormodechanged` lifecycle event does not
+interrupt scrolling. `IOSInputPolicy` and its existing Pencil behavior remain
+unchanged.
+
+The candidate passed the latest gates:
+
+- Fast Gate: 97 passed, 0 failed, 0 skipped — `tests/artifacts/vocabulary-gates/runs/run-2026-10-18T07-57-58-663Z-89711-5f39f571/report.json`.
+- Browser Gate: 26 passed, 0 failed, 0 skipped — `tests/artifacts/vocabulary-gates/runs/run-2026-10-18T07-59-07-424Z-90862-cd3c8728/report.json`.
+- Targeted `native-finger-ownership` and `ipad-pointer-policy`: 2 passed, 0 failed, 0 skipped. The native pointer-policy evidence is `tests/artifacts/ipad-pointer-policy-1792310253044-89560.json`.
+- Build and offline three-file smoke passed; `git diff --check` is clean.
+
+LingQ browser coverage passed for dictionary cache, toolbar/mode interaction,
+compact word-card layout, text-layer tap to vocabulary lookup, Workbench,
+morphology, and the offline package smoke. This verifies the built candidate
+in the browser harness. It does not verify the already-installed Obsidian
+plugin, a real iPad/WKWebView, or cross-device Sync; no deployment or push was
+performed. The 30-minute Nightly remains incomplete, and the earlier 102 ms
+gesture-25 observation remains unexplained; its 80 ms threshold was not
+changed.
+
+The rebuilt candidate remains version 0.12.0. Current output hashes are:
 
 | File | Size | SHA-256 |
 | --- | ---: | --- |
-| `dist/pdf-web-reader/main.js` | 8,230,966 bytes | `45e5c5dffe8d1bd1fc9f71acaf5c06485ba9d17d62d3029780409f92054fcc14` |
-| `dist/pdf-web-reader/manifest.json` | 261 bytes | `5adbd6ef42830f2fb624a6145d8c7645c1e854ed3cf146c305311a01de07294f` |
+| `dist/pdf-web-reader/main.js` | 8,866,116 bytes | `c308b91032d2151647577e376943cd679624343a66ddd7892c3101d7a231f471` |
+| `dist/pdf-web-reader/manifest.json` | 261 bytes | `1487d5a6fd66223ba0575adddb8fd67281a9154e93c4dedf374b4c42469717ca` |
 | `dist/pdf-web-reader/styles.css` | 8,058 bytes | `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea` |

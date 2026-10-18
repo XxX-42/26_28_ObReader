@@ -14,7 +14,8 @@ function cacheError(error) {
 /** This database contains reference-data caches only, never personal records. */
 class DictionaryQueryCache {
   constructor({ name = DEFAULT_CACHE_NAME, indexedDB = globalThis.indexedDB, IDBKeyRange = globalThis.IDBKeyRange,
-    batchSize = 1000, leaseMs = 30000, now = () => Date.now(), ownerId = makeOwner(), yieldControl = pause } = {}) {
+    batchSize = 1000, leaseMs = 30000, now = () => Date.now(), ownerId = makeOwner(), yieldControl = pause,
+    onProfile = null } = {}) {
     this.db = new Dexie(name, { indexedDB, IDBKeyRange });
     this.db.version(1).stores({ entries: "[generation+key]", generations: "&id", active: "&dictionaryId",
       membership: "[generation+bucket]" });
@@ -23,6 +24,7 @@ class DictionaryQueryCache {
     this.now = now;
     this.ownerId = ownerId;
     this.yieldControl = yieldControl;
+    this.onProfile = typeof onProfile === "function" ? onProfile : null;
     this.closed = false;
     this.pending = new Map();
     this.verifiedGenerations = new Set();
@@ -151,16 +153,22 @@ class DictionaryQueryCache {
       return { row };
     });
   }
-  async prepare(manifest, loadBytes, { onProgress = () => {}, signal, force = false } = {}) {
+  async prepare(manifest, loadBytes, { onProgress = () => {}, onProfile = this.onProfile, signal, force = false } = {}) {
     validateManifest(manifest);
     const id = generationId(manifest);
     if (this.pending.has(id)) return this.pending.get(id);
-    const pending = this._prepare(manifest, loadBytes, { onProgress, signal, force })
+    const pending = this._prepare(manifest, loadBytes, { onProgress, onProfile, signal, force })
       .catch(error => { throw cacheError(error); }).finally(() => this.pending.delete(id));
     this.pending.set(id, pending);
     return pending;
   }
-  async _prepare(manifest, loadBytes, { onProgress, signal, force }) {
+  async _prepare(manifest, loadBytes, { onProgress, onProfile, signal, force }) {
+    const profileEnabled = typeof onProfile === "function";
+    const now = profileEnabled ? () => globalThis.performance?.now?.() ?? Date.now() : null;
+    const profile = (stage, durationMs, details = {}) => {
+      if (!profileEnabled) return;
+      try { onProfile?.({ stage, durationMs: Math.max(0, durationMs), ...details }); } catch {}
+    };
     let acquired;
     do {
       this.checkCancelled(signal);
@@ -173,20 +181,33 @@ class DictionaryQueryCache {
     } while (acquired.busy);
     const lease = acquired.row;
     const id = lease.id;
+    const persistence = { batchCount: 0, entryPrepareMs: 0, entryBulkPutMs: 0, membershipReadMs: 0,
+      membershipWriteMs: 0, generationMetadataMs: 0, transactionMs: 0 };
     try {
       onProgress({ phase: "verifying", count: lease.count, total: manifest.entryCount });
-      const bytes = await verifyResource(manifest, await loadBytes());
+      const bytes = await loadBytes();
+      const verifyStartedAt = now?.() ?? 0;
+      await verifyResource(manifest, bytes);
+      if (now) profile("sha256_integrity", now() - verifyStartedAt, { compressedBytes: bytes.byteLength });
       this.checkCancelled(signal);
-      await decodeResource(manifest, bytes, async (batch, progress) => {
+      const decodeResult = await decodeResource(manifest, bytes, async (batch, progress) => {
         this.checkCancelled(signal);
         if (progress.count <= lease.count) { await this.yieldControl(); return; }
+        const transactionStartedAt = now?.() ?? 0;
         await this.db.transaction("rw", this.db.generations, this.db.entries, this.db.membership, async () => {
           const current = await this.db.generations.get(id);
           if (current?.owner !== this.ownerId || current.fence !== lease.fence) {
             throw dictionaryError("Another window resumed dictionary preparation.", "DICTIONARY_CACHE_LEASE_LOST");
           }
+          const entryPrepareStartedAt = now?.() ?? 0;
           const fresh = batch.filter(entry => entry.key > current.lastKey);
-          if (fresh.length) await this.db.entries.bulkPut(fresh.map(entry => ({ generation: id, ...entry })));
+          const prepared = fresh.map(entry => ({ generation: id, ...entry }));
+          if (now) persistence.entryPrepareMs += now() - entryPrepareStartedAt;
+          if (fresh.length) {
+            const entryStartedAt = now?.() ?? 0;
+            await this.db.entries.bulkPut(prepared);
+            if (now) persistence.entryBulkPutMs += now() - entryStartedAt;
+          }
           const buckets = new Map();
           for (const entry of fresh) {
             const bucket = entry.key.slice(0, 2);
@@ -194,17 +215,32 @@ class DictionaryQueryCache {
             buckets.get(bucket).push(entry.key);
           }
           for (const [bucket, keys] of buckets) {
+            const membershipReadStartedAt = now?.() ?? 0;
             const existing = await this.db.membership.get([id, bucket]);
+            if (now) persistence.membershipReadMs += now() - membershipReadStartedAt;
+            const membershipWriteStartedAt = now?.() ?? 0;
             await this.db.membership.put({ generation: id, bucket, keys: [...(existing?.keys || []), ...keys] });
+            if (now) persistence.membershipWriteMs += now() - membershipWriteStartedAt;
           }
+          const metadataStartedAt = now?.() ?? 0;
           await this.db.generations.put({ ...current, count: current.count + fresh.length,
             lastKey: progress.lastKey, prefixes: [...new Set([...current.prefixes, ...buckets.keys()])],
             leaseUntil: this.now() + this.leaseMs });
+          if (now) persistence.generationMetadataMs += now() - metadataStartedAt;
         }).catch(error => { throw cacheError(error); });
+        persistence.batchCount += 1;
+        if (now) persistence.transactionMs += now() - transactionStartedAt;
         onProgress({ phase: "building", count: progress.count, total: manifest.entryCount });
         await this.yieldControl();
-      }, { batchSize: this.batchSize, checkCancelled: () => this.checkCancelled(signal) });
+      }, { batchSize: this.batchSize, checkCancelled: () => this.checkCancelled(signal), collectProfile: profileEnabled });
+      if (profileEnabled) {
+        profile("gzip_jsonl_decode_validate", decodeResult.profile?.streamReadMs + decodeResult.profile?.jsonlValidationMs || 0,
+          { streamReadMs: decodeResult.profile?.streamReadMs || 0,
+            jsonlValidationMs: decodeResult.profile?.jsonlValidationMs || 0, entries: decodeResult.count });
+        profile("indexeddb_batch_persistence", persistence.transactionMs, persistence);
+      }
       this.checkCancelled(signal);
+      const finalizeStartedAt = now?.() ?? 0;
       const ready = await this.db.transaction("rw", this.db.generations, this.db.entries, this.db.active, async () => {
         const current = await this.db.generations.get(id);
         if (current?.owner !== this.ownerId || current.fence !== lease.fence) {
@@ -219,6 +255,7 @@ class DictionaryQueryCache {
         await this.db.active.put({ dictionaryId: manifest.dictionaryId, generation: id });
         return row;
       });
+      if (now) profile("cache_finalize", now() - finalizeStartedAt, { count: ready.count });
       onProgress({ phase: "ready", count: ready.count, total: manifest.entryCount });
       this.verifiedGenerations.add(`${id}:${ready.fence}`);
       return ready;

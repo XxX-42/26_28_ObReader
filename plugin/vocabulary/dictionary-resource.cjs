@@ -53,13 +53,21 @@ async function verifyResource(manifest, value) {
 }
 
 /** Stream JSONL in bounded batches instead of allocating a 770k-entry array. */
-async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, checkCancelled = () => {} } = {}) {
+async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, checkCancelled = () => {}, collectProfile = false } = {}) {
   if (typeof globalThis.DecompressionStream !== "function" || typeof globalThis.Blob !== "function") {
     throw dictionaryError("This WebView does not provide gzip decompression.", "DICTIONARY_GZIP_UNAVAILABLE");
   }
   let reader;
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let pending = "", lastKey = "", count = 0, uncompressedBytes = 0, batch = [];
+  let streamReadMs = 0, callbackMs = 0;
+  const now = collectProfile ? () => globalThis.performance?.now?.() ?? Date.now() : null;
+  const decodeStartedAt = now ? now() : 0;
+  async function sendBatch(entries, progress) {
+    const callbackStartedAt = now ? now() : 0;
+    await onBatch(entries, progress);
+    if (now) callbackMs += now() - callbackStartedAt;
+  }
   async function line(text) {
     if (!text) throw dictionaryError("Dictionary resource has an empty JSONL record.", "DICTIONARY_RESOURCE_CORRUPT");
     let entry;
@@ -77,7 +85,7 @@ async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, chec
     batch.push(entry);
     if (batch.length >= batchSize) {
       checkCancelled();
-      await onBatch(batch, { count, lastKey });
+      await sendBatch(batch, { count, lastKey });
       batch = [];
     }
   }
@@ -85,7 +93,9 @@ async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, chec
     reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")).getReader();
     while (true) {
       checkCancelled();
+      const readStartedAt = now ? now() : 0;
       const chunk = await reader.read();
+      if (now) streamReadMs += now() - readStartedAt;
       if (chunk.done) break;
       uncompressedBytes += chunk.value.byteLength;
       if (uncompressedBytes > manifest.uncompressedBytes) throw dictionaryError("Dictionary decompressed size exceeds its manifest.", "DICTIONARY_RESOURCE_CORRUPT");
@@ -103,8 +113,11 @@ async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, chec
     if (count !== manifest.entryCount || uncompressedBytes !== manifest.uncompressedBytes) {
       throw dictionaryError("Dictionary entry count or uncompressed size is incomplete.", "DICTIONARY_RESOURCE_CORRUPT");
     }
-    if (batch.length) await onBatch(batch, { count, lastKey });
-    return { count, lastKey };
+    if (batch.length) await sendBatch(batch, { count, lastKey });
+    const jsonlValidationMs = now
+      ? Math.max(0, now() - decodeStartedAt - streamReadMs - callbackMs)
+      : 0;
+    return { count, lastKey, ...(now ? { profile: { streamReadMs, jsonlValidationMs } } : {}) };
   } catch (cause) {
     if (typeof cause?.code === "string" && cause.code.startsWith("DICTIONARY_")) throw cause;
     throw dictionaryError("Dictionary gzip/UTF-8 resource is invalid.", "DICTIONARY_RESOURCE_CORRUPT", cause);

@@ -119,10 +119,15 @@ test("browser dictionary imports in a real worker and falls back at a mobile vie
       const { VocabularyDictionary } = window.DictionaryBundle;
       const originalWorker = window.Worker;
       window.__dictionaryWorkerCount = 0;
+      window.__dictionaryWorkerMessages = [];
       class CountingWorker extends originalWorker {
         constructor(...args) {
           super(...args);
           window.__dictionaryWorkerCount += 1;
+        }
+        postMessage(message, transfer) {
+          window.__dictionaryWorkerMessages.push({ type: message?.type, profileEnabled: message?.profileEnabled });
+          return super.postMessage(message, transfer);
         }
       }
       const reads = { manifest: 0, binary: 0 };
@@ -141,12 +146,14 @@ test("browser dictionary imports in a real worker and falls back at a mobile vie
         },
       };
       const status = [];
+      const profile = [];
       const dictionary = new VocabularyDictionary({
         adapter,
         root: "/dictionary",
         cacheName,
         WorkerClass: CountingWorker,
         onStatus: (value) => status.push(value.phase),
+        onProfile: (value) => profile.push(value.stage),
       });
       // The bundle embeds the worker source at build time; passing undefined
       // lets the module's compile-time value select the real worker path.
@@ -157,10 +164,25 @@ test("browser dictionary imports in a real worker and falls back at a mobile vie
         status: ready.status,
         lookup,
         workerCount: window.__dictionaryWorkerCount,
+        workerMessages: [...window.__dictionaryWorkerMessages],
         binaryReads: reads.binary,
         phases: status,
+        profile,
       };
       dictionary.dispose();
+      const noProfile = new VocabularyDictionary({
+        adapter,
+        root: "/dictionary",
+        cacheName: `${cacheName}-no-profile`,
+        WorkerClass: CountingWorker,
+      });
+      const noProfileReady = await noProfile.ensureReady();
+      result.noProfile = {
+        count: noProfileReady.count,
+        workerCount: window.__dictionaryWorkerCount - result.workerCount,
+        workerMessages: window.__dictionaryWorkerMessages.slice(result.workerMessages.length),
+      };
+      noProfile.dispose();
       return result;
     }, { origin, cacheName: `dictionary-worker-${crypto.randomUUID()}` });
 
@@ -170,8 +192,18 @@ test("browser dictionary imports in a real worker and falls back at a mobile vie
       key: "alpha", translation: "阿尔法", phonetic: "ˈælfə", source: "ECDICT",
     });
     assert.equal(workerResult.workerCount, 1, "the import ran in a real browser Worker");
+    assert.equal(workerResult.workerMessages.find(({ type }) => type === "prepare")?.profileEnabled, true,
+      "profile collection is explicitly enabled only when an observer is provided");
     assert.equal(workerResult.binaryReads, 1, "the main thread fetches the Vault resource once");
     assert.ok(workerResult.phases.includes("ready"));
+    assert.deepEqual(new Set(workerResult.profile), new Set([
+      "manifest_cache_probe", "vault_binary_read", "sha256_integrity",
+      "gzip_jsonl_decode_validate", "indexeddb_batch_persistence", "cache_finalize",
+    ]), "worker profile events are forwarded to the optional observer");
+    assert.equal(workerResult.noProfile.count, 3);
+    assert.equal(workerResult.noProfile.workerCount, 1);
+    assert.equal(workerResult.noProfile.workerMessages.find(({ type }) => type === "prepare")?.profileEnabled, false,
+      "default worker imports do not enable performance instrumentation");
 
     await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     // Changing the emulated mobile device can reload the page in Puppeteer.

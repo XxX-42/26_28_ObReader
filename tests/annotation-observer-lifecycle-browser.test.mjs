@@ -71,6 +71,17 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
     });
     await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 15 &&
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0));
+    // `opened` and the editor layer can become available before PDF.js has
+    // finished painting page 1. While `.loadingIcon.loading` is present, its
+    // page overlay receives pointerdown; a later move can land on the editor
+    // layer and make this look like a flaky Ink lifecycle failure.
+    await frame.waitForFunction(() => {
+      const page = document.querySelector('.page[data-page-number="1"]');
+      return page?.querySelector("canvas") &&
+        page.querySelector(".annotationEditorLayer") &&
+        !page.classList.contains("loadingIcon") &&
+        !page.classList.contains("loading");
+    });
     await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await frame.evaluate(() => PDFViewerApplication.pdfDocument.annotationStorage
       .setValue("pdfjs_internal_editor_unbound_test", { deleted: true }));
@@ -81,6 +92,10 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
         const bounds = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0).div.getBoundingClientRect();
         return { x: Math.max(40, bounds.left + 120), y: Math.max(90, bounds.top + 160 + offset) };
       }, offset);
+      const startsOnEditorLayer = await frame.evaluate(point =>
+        document.elementFromPoint(point.x, point.y)?.closest(".annotationEditorLayer") !== null,
+      point);
+      assert.equal(startsOnEditorLayer, true, "an Ink stroke must begin on the editor layer, after the PDF page loading overlay is gone");
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1, pointerType: "pen" });
       for (let n = 1; n <= 6; n++) await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x + n * 8, y: point.y + n * 6, button: "left", buttons: 1, pointerType: "pen" });
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x + 48, y: point.y + 36, button: "left", buttons: 0, clickCount: 1, pointerType: "pen" });

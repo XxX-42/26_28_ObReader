@@ -13,6 +13,9 @@ import { resolveBrowserPath } from "./browser-path.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const resourceRoot = process.argv[2];
 assert.ok(resourceRoot, "Pass the generated resource-v2 directory explicitly.");
+const workerBatchSize = Number(process.argv[3] || 4000);
+assert.ok(Number.isSafeInteger(workerBatchSize) && workerBatchSize >= 1000 && workerBatchSize <= 32000,
+  "Worker batch size must be an integer from 1000 through 32000.");
 const manifest = JSON.parse(await readFile(path.join(resourceRoot, "manifest.json"), "utf8"));
 const worker = await build({ entryPoints: [path.join(root, "plugin/vocabulary/dictionary-worker.cjs")],
   bundle: true, write: false, platform: "browser", format: "iife", define: { "process.env.NODE_ENV": '"production"' } });
@@ -33,17 +36,17 @@ const server = createServer((request, response) => {
     <title>ECDICT local cache acceptance</title><style>body{font:18px system-ui;padding:24px;max-width:650px;margin:auto}pre{white-space:pre-wrap}progress{width:100%}</style>
     <h1>ECDICT 本机缓存</h1><progress max="${manifest.entryCount}" value="0"></progress><p id="state">词典准备中</p><pre id="meaning"></pre>
     <script src="/runtime.js"></script><script>
-      window.binaryReads = 0; window.progress=[]; window.ticks=[];
+      window.binaryReads = 0; window.progress=[]; window.profile=[]; window.ticks=[];
       let last=performance.now(); window.timer=setInterval(()=>{const now=performance.now();ticks.push(now-last);last=now},16);
-      window.dictionary=new DictionaryRuntime.VocabularyDictionary({cacheName:'obreader-full-benchmark',adapter:{
+      window.dictionary=new DictionaryRuntime.VocabularyDictionary({cacheName:'obreader-full-benchmark',workerBatchSize:${workerBatchSize},adapter:{
         async read(path){return (await fetch('/manifest.json')).text()},
         async readBinary(path){binaryReads++;return (await fetch('/'+path.split('/').at(-1))).arrayBuffer()}
-      },onStatus(status){progress.push({...status,at:performance.now()});document.querySelector('progress').value=status.count;
+      },onProfile(event){profile.push({...event,at:performance.now()});},onStatus(status){progress.push({...status,at:performance.now()});document.querySelector('progress').value=status.count;
         document.querySelector('#state').textContent=status.phase==='ready'?'词典已就绪：'+status.count+' 条':'词典准备中 '+Math.round(status.count/(status.total||1)*100)+'%';}});
-      window.run=async()=>{const start=performance.now(); const first=await dictionary.lookup('on'); const coldMs=performance.now()-start;
+      window.run=async()=>{const profileStart=profile.length;const start=performance.now(); const first=await dictionary.lookup('on'); const coldMs=performance.now()-start;const coldProfile=profile.slice(profileStart);
         document.querySelector('#meaning').textContent=first.translation+'\\n'+first.phonetic;
         const latencies=[];for(let i=0;i<100;i++){const t=performance.now();const entry=await dictionary.lookup(['on','mostly','subscription','details','about'][i%5]);if(!entry?.translation)throw Error('missing definition');latencies.push(performance.now()-t)}
-        clearInterval(timer);latencies.sort((a,b)=>a-b);return {coldMs,binaryReads,first,p50Ms:latencies[50],p95Ms:latencies[95],maxFrameGapMs:Math.max(0,...ticks),progress:progress.filter((p,i)=>!i||p.phase!==progress[i-1].phase),heap:performance.memory?.usedJSHeapSize||null}};
+        clearInterval(timer);latencies.sort((a,b)=>a-b);return {coldMs,binaryReads,first,p50Ms:latencies[50],p95Ms:latencies[95],maxFrameGapMs:Math.max(0,...ticks),progress:progress.filter((p,i)=>!i||p.phase!==progress[i-1].phase),coldProfile,heap:performance.memory?.usedJSHeapSize||null}};
     </script>`);
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -65,9 +68,10 @@ try {
   await mkdir(path.join(root, "tests/artifacts"), { recursive: true });
   await page.screenshot({ path: path.join(root, "tests/artifacts/dictionary-cache-mobile-ready.png") });
   await mkdir(path.join(root, "tests/output/dictionary-0.11.8"), { recursive: true });
-  const report = { entryCount: manifest.entryCount, resourceBytes: manifest.compressedBytes, cold, warm,
+  const report = { entryCount: manifest.entryCount, resourceBytes: manifest.compressedBytes, workerBatchSize, cold, warm,
     platform: "Chromium automation; mobile viewport is not iPad WKWebView acceptance" };
-  await writeFile(path.join(root, "tests/output/dictionary-0.11.8/browser-full-benchmark.json"), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(path.join(root, `tests/output/dictionary-0.11.8/browser-full-benchmark-batch-${workerBatchSize}.json`),
+    `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report));
 } finally {
   await browser?.close();

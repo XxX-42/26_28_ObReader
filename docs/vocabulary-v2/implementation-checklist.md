@@ -113,9 +113,13 @@ retained and its exact timing trigger remains unknown.
   and mobile simulations. Native Windows/macOS/iPadOS device acceptance remains
   separate and pending.
 - [x] Complete Fast, Functional Browser, Race and offline three-file gates.
-- [x] `npm run test:vocabulary-nightly` passed its default 30-minute duration:
-  four complete rounds of the 5,340/25,000 lexical benchmark, 25,000-record
-  transfer, Fast, Browser and ten-round Race gates, with raw per-case logs.
+- [x] An earlier `npm run test:vocabulary-nightly` run passed its default
+  duration: four complete rounds of the 5,340/25,000 lexical benchmark,
+  25,000-record transfer, Fast, Browser and ten-round Race gates.
+- [ ] The newer run `run-2026-10-18T02-44-01.025Z-25801-9f41536c` did not
+  complete: it stopped at 15m26s on iPad-simulated gesture 25 exceeding the
+  existing 80ms event-arrival gate. The gate is still open; see the priority
+  follow-up in [phase-f-hardening.md](phase-f-hardening.md).
 - [x] Record per-action files/directories/read/write bytes, persisted snapshot
   and bundle bytes, structural record/token/trie-step counters and
   baseline-to-candidate timings. A rating appends about 1.1 KB locally and does

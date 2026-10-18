@@ -4,8 +4,8 @@ const { canonicalHash, canonicalStringify, hashText } = require("./canonical.cjs
 const { VOCABULARY_DATA_ROOT, normalizePath } = require("./transactions.cjs");
 
 const HISTORY_KIND = "vocabulary-history-batch";
-const HISTORY_SCHEMA_VERSION = 2;
-const SUPPORTED_HISTORY_SCHEMA_VERSIONS = new Set([1, HISTORY_SCHEMA_VERSION]);
+const HISTORY_SCHEMA_VERSION = 3;
+const SUPPORTED_HISTORY_SCHEMA_VERSIONS = new Set([1, 2, HISTORY_SCHEMA_VERSION]);
 const HISTORY_CHANGE_KINDS = new Set(["field", "record", "entityCreate", "entityDelete"]);
 const HISTORY_ENTITY_KINDS = new Set(["record", "entityCreate", "entityDelete"]);
 const RESERVED_FIELDS = new Set([
@@ -325,6 +325,48 @@ class VocabularyHistory {
     };
   }
 
+  _encodeBatch(summary) {
+    const batch = this._batchValue(summary);
+    if (batch.schemaVersion !== 3 || !batch.changes.length || batch.changes.some((change) =>
+      !["entityCreate", "entityDelete"].includes(change.kind) || change.field !== undefined ||
+      change.fieldPath.length !== 2 || change.fieldPath[0] !== "records" ||
+      change.fieldPath[1] !== change.entityId ||
+      (change.kind === "entityCreate" && (change.beforeExists || !change.afterExists)) ||
+      (change.kind === "entityDelete" && (!change.beforeExists || change.afterExists)) ||
+      !change[change.kind === "entityCreate" ? "after" : "before"] ||
+      typeof change[change.kind === "entityCreate" ? "after" : "before"] !== "object" ||
+      Array.isArray(change[change.kind === "entityCreate" ? "after" : "before"]))) {
+      return batch;
+    }
+
+    // Lifecycle imports carry one full record per entity. Store the shared
+    // store/path/kind once, then only the entity identity and payload; readers
+    // inflate this back into the established reversible change API. The
+    // transaction coordinator's pending/staging protocol is unchanged.
+    const groupsByKey = new Map();
+    for (const change of batch.changes) {
+      const groupKey = canonicalStringify({ storeId: change.storeId, path: change.path, kind: change.kind });
+      let group = groupsByKey.get(groupKey);
+      if (!group) {
+        group = { storeId: change.storeId, path: change.path, kind: change.kind, records: [] };
+        groupsByKey.set(groupKey, group);
+      }
+      group.records.push([change.entityId, change.kind === "entityCreate" ? change.after : change.before]);
+    }
+    return {
+      schemaVersion: 3,
+      kind: HISTORY_KIND,
+      revision: 1,
+      batchId: batch.batchId,
+      sessionId: batch.sessionId,
+      deviceId: batch.deviceId,
+      transactionId: batch.transactionId,
+      actionKind: batch.actionKind,
+      stores: batch.stores,
+      changes: { encoding: "record-root-lifecycle-v1", groups: [...groupsByKey.values()] },
+    };
+  }
+
   async prepareRecordBatch(summary, snapshot) {
     const normalized = normalizeSummary(summary, this.root);
     if (normalized.deviceId !== this.coordinator.deviceId) {
@@ -342,32 +384,67 @@ class VocabularyHistory {
       storeId: "vocabulary-history",
       expectedRevision: 0,
       expectedHash: null,
-      text: canonicalStringify(this._batchValue(normalized)),
+      text: canonicalStringify(this._encodeBatch(normalized)),
     };
   }
 
   _decodeBatch(snapshot, expectedBatchId) {
+    const raw = snapshot?.value;
     if (!snapshot?.exists || !snapshot.value || canonicalStringify(snapshot.value) !== snapshot.text ||
-        !SUPPORTED_HISTORY_SCHEMA_VERSIONS.has(snapshot.value.schemaVersion) || snapshot.value.kind !== HISTORY_KIND ||
-        snapshot.value.revision !== 1 || snapshot.value.batchId !== expectedBatchId ||
-        !Array.isArray(snapshot.value.changes) || !Array.isArray(snapshot.value.stores)) {
+        !SUPPORTED_HISTORY_SCHEMA_VERSIONS.has(raw.schemaVersion) || raw.kind !== HISTORY_KIND ||
+        raw.revision !== 1 || raw.batchId !== expectedBatchId || !Array.isArray(raw.stores)) {
       throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} failed verification.`);
     }
+    let changes = raw.changes;
+    let entities = raw.entities;
+    const compact = raw.schemaVersion === 3 && raw.changes && !Array.isArray(raw.changes) &&
+      raw.changes.encoding === "record-root-lifecycle-v1";
+    if (compact) {
+      if (Object.keys(raw.changes).some((key) => !["encoding", "groups"].includes(key)) ||
+          !Array.isArray(raw.changes.groups) || Object.hasOwn(raw, "entities")) {
+        throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} has an invalid compact encoding.`);
+      }
+      changes = [];
+      entities = [];
+      for (const group of raw.changes.groups) {
+        if (!group || Object.keys(group).some((key) => !["storeId", "path", "kind", "records"].includes(key)) ||
+            !["entityCreate", "entityDelete"].includes(group.kind) || !Array.isArray(group.records) ||
+            group.records.length === 0) {
+          throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} has an invalid compact lifecycle group.`);
+        }
+        for (const row of group.records) {
+          if (!Array.isArray(row) || row.length !== 2 || typeof row[0] !== "string" || !row[1] ||
+              typeof row[1] !== "object" || Array.isArray(row[1])) {
+            throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} has an invalid compact lifecycle row.`);
+          }
+          const [entityId, value] = row;
+          const change = { storeId: group.storeId, path: group.path, entityId,
+            fieldPath: ["records", entityId], kind: group.kind,
+            beforeExists: group.kind === "entityDelete", afterExists: group.kind === "entityCreate" };
+          if (change.beforeExists) change.before = value;
+          if (change.afterExists) change.after = value;
+          changes.push(change);
+          entities.push({ storeId: group.storeId, entityId, kind: group.kind });
+        }
+      }
+    } else if (!Array.isArray(changes) || !Array.isArray(entities)) {
+      throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} has invalid changes or entity metadata.`);
+    }
     const summary = normalizeSummary({
-      batchId: snapshot.value.batchId,
-      sessionId: snapshot.value.sessionId,
-      deviceId: snapshot.value.deviceId,
-      transactionId: snapshot.value.transactionId,
-      kind: snapshot.value.actionKind,
-      entities: snapshot.value.entities,
-      stores: snapshot.value.stores,
-      changes: snapshot.value.changes.map(({ changeId, ...change }) => change),
-    }, this.root, snapshot.value.schemaVersion);
-    const expected = this._batchValue(summary);
-    if (!deeplyEqual(expected, snapshot.value)) {
+      batchId: raw.batchId,
+      sessionId: raw.sessionId,
+      deviceId: raw.deviceId,
+      transactionId: raw.transactionId,
+      kind: raw.actionKind,
+      entities,
+      stores: raw.stores,
+      changes: changes.map(({ changeId, ...change }) => change),
+    }, this.root, raw.schemaVersion);
+    const expected = this._encodeBatch(summary);
+    if (!deeplyEqual(expected, raw)) {
       throw codedError("VOCAB_HISTORY_BATCH_INVALID", `History batch ${expectedBatchId} contains unsupported fields.`);
     }
-    return snapshot.value;
+    return raw.schemaVersion === 3 ? this._batchValue(summary) : raw;
   }
 
   async readBatch(batchId, { deviceId = this.coordinator.deviceId } = {}) {

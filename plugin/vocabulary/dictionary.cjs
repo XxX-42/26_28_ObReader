@@ -6,7 +6,8 @@ const WORKER_SOURCE = typeof __PDF_DICTIONARY_WORKER_SOURCE__ === "string" ? __P
 
 class VocabularyDictionary {
   constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, cache, cacheName = DEFAULT_CACHE_NAME,
-    workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {} } = {}) {
+    workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {}, onProfile = null,
+    workerBatchSize = 4000 } = {}) {
     if (!adapter || typeof adapter.read !== "function" || typeof adapter.readBinary !== "function") {
       throw new TypeError("VocabularyDictionary requires a Vault DataAdapter with read() and readBinary().");
     }
@@ -16,7 +17,10 @@ class VocabularyDictionary {
     this.cacheName = cacheName;
     this.workerSource = workerSource;
     this.WorkerClass = WorkerClass;
+    this.workerBatchSize = Number.isSafeInteger(workerBatchSize) && workerBatchSize >= 1000 && workerBatchSize <= 32000
+      ? workerBatchSize : 4000;
     this.listeners = new Set([onStatus]);
+    this.onProfile = typeof onProfile === "function" ? onProfile : null;
     this.status = { phase: "idle", count: 0, total: 0 };
     this.manifestPromise = null;
     this.pending = null;
@@ -41,6 +45,9 @@ class VocabularyDictionary {
     if (unchanged) return;
     for (const listener of this.listeners) { try { listener(this.getStatus()); } catch {} }
   }
+  emitProfile(event) {
+    try { this.onProfile?.({ ...event }); } catch {}
+  }
   async manifest() {
     if (!this.manifestPromise) {
       this.manifestPromise = (async () => {
@@ -57,22 +64,33 @@ class VocabularyDictionary {
     return this.manifestPromise;
   }
   async loadBytes(manifest) {
-    try { return asBytes(await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`)); }
+    const startedAt = this.onProfile ? (globalThis.performance?.now?.() ?? Date.now()) : null;
+    try {
+      const bytes = asBytes(await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`));
+      if (startedAt !== null) this.emitProfile({ stage: "vault_binary_read",
+        durationMs: (globalThis.performance?.now?.() ?? Date.now()) - startedAt, compressedBytes: bytes.byteLength });
+      return bytes;
+    }
     catch (cause) { throw dictionaryError("Dictionary resource has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
   }
   async lookup(term) {
     const key = normalizeDictionaryKey(term);
     if (!key) return null;
     try {
+      const probeStartedAt = this.onProfile ? (globalThis.performance?.now?.() ?? Date.now()) : null;
       const manifest = await this.manifest();
       const ready = await this.cache.ready(manifest);
+      let previous = null;
+      if (!ready) previous = await this.cache.active(manifest.dictionaryId);
+      if (probeStartedAt !== null) this.emitProfile({ stage: "manifest_cache_probe",
+        durationMs: (globalThis.performance?.now?.() ?? Date.now()) - probeStartedAt,
+        cacheState: ready ? "ready" : previous ? "previous-generation" : "cold" });
       if (ready) {
         this.readyGeneration = ready;
         this.emit({ phase: "ready", count: ready.count, total: ready.count });
         return await this.cache.lookup(ready.id, key);
       }
       // A resource update must not take an already verified dictionary offline.
-      const previous = await this.cache.active(manifest.dictionaryId);
       if (previous) {
         void this.ensureReady().catch(() => {});
         return await this.cache.lookup(previous.id, key);
@@ -119,7 +137,9 @@ class VocabularyDictionary {
         }
       }
       return this.cache.prepare(manifest, () => this.loadBytes(manifest), {
-        force, signal: this.abortController.signal, onProgress: progress => this.emit(progress),
+        force, signal: this.abortController.signal,
+        onProfile: this.onProfile ? event => this.emitProfile(event) : null,
+        onProgress: progress => this.emit(progress),
       });
     })().then(ready => {
       if (revision === this.revision) {
@@ -166,9 +186,11 @@ class VocabularyDictionary {
               const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
                 ? bytes.buffer : bytes.slice().buffer;
               worker.postMessage({ type: "prepare", manifest, bytes: buffer,
-                cacheName: this.cacheName, ownerId: this.cache.ownerId, force }, [buffer]);
+                cacheName: this.cacheName, ownerId: this.cache.ownerId, force,
+                batchSize: this.workerBatchSize, profileEnabled: Boolean(this.onProfile) }, [buffer]);
             }).catch(error => finish(reject, error));
           } else if (data?.type === "progress") this.emit(data.progress);
+          else if (data?.type === "profile") this.emitProfile(data.profile);
           else if (data?.type === "ready") finish(resolve, data.ready);
           else if (data?.type === "error") {
             const error = dictionaryError(data.error.message, data.error.code);

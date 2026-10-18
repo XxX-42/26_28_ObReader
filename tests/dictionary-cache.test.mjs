@@ -73,13 +73,18 @@ test("cold lookup imports once; warm lookups and reopened cache avoid readBinary
   const resource = makeResource(makeEntries());
   const adapter = new MemoryAdapter(resource);
   const firstCache = createCache(name);
-  const first = new VocabularyDictionary({ adapter, cache: firstCache });
+  const profile = [];
+  const first = new VocabularyDictionary({ adapter, cache: firstCache, onProfile: event => profile.push(event) });
   t.after(() => first.dispose());
 
   assert.deepEqual(await first.lookup(" WORD001 "), {
     key: "word001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   });
   assert.equal(adapter.readBinaryCount, 1, "cold lookup reads the resource once");
+  assert.deepEqual(new Set(profile.map(({ stage }) => stage)), new Set([
+    "manifest_cache_probe", "vault_binary_read", "sha256_integrity",
+    "gzip_jsonl_decode_validate", "indexeddb_batch_persistence", "cache_finalize",
+  ]), "cold dictionary preparation reports all six opt-in profile stages");
   assert.deepEqual(await first.lookup("word001"), {
     key: "word001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   });
@@ -107,6 +112,35 @@ test("cold lookup imports once; warm lookups and reopened cache avoid readBinary
     key: "word003", translation: "释义 3", phonetic: "p3", source: "ECDICT",
   });
   assert.equal(rebuildAdapter.readBinaryCount, 1, "clearing the database causes one fresh import");
+});
+
+test("cooperative dictionary import does not collect performance profiles by default", async (t) => {
+  const name = `dictionary-cache-unprofiled-${randomUUID()}`;
+  const resource = makeResource(makeEntries());
+  const adapter = new MemoryAdapter(resource);
+  const cache = createCache(name);
+  const prepareOptions = [];
+  const originalPrepare = cache.prepare.bind(cache);
+  cache.prepare = (manifest, loadBytes, options) => {
+    prepareOptions.push(options);
+    return originalPrepare(manifest, loadBytes, options);
+  };
+  const dictionary = new VocabularyDictionary({
+    adapter,
+    cache,
+    workerSource: null,
+    WorkerClass: null,
+  });
+  t.after(async () => {
+    dictionary.dispose();
+    const database = new Dexie(name, { indexedDB, IDBKeyRange });
+    await database.delete();
+  });
+
+  await dictionary.ensureReady();
+  assert.equal(prepareOptions.length, 1);
+  assert.equal(prepareOptions[0].onProfile, null,
+    "the default cooperative import passes no profiling callback into the cache pipeline");
 });
 
 test("two cache instances sharing one database coordinate a single import", async (t) => {

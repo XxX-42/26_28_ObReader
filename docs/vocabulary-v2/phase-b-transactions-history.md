@@ -8,6 +8,12 @@ Every canonical write records a base and result identity. A new absent file has 
 
 History records field-level changes, not whole-store snapshots. A batch contains its local device and transaction IDs, affected store paths, entities, and before/after presence and values. Registered store handlers resolve fields against domain identity and construct restore plans; restore rejects an unregistered store. The default resolver handles V2 records by looking up `record.key`, never by array position. Protected identity fields are only admitted as part of a complete, explicit `entityCreate` or `entityDelete` lifecycle. Restore defaults to clean changes, reports already-restored changes, and requires explicit change IDs to overwrite conflicts. Entity lifecycle groups are all-or-nothing. A successful restore writes a new inverse History batch, so the same mechanism supports redo.
 
+### Compact bulk lifecycle batches (History schema v3)
+
+History schemas v1 and v2 remain readable. New batches use schema v3. When every change in a batch is a complete record-root create/delete lifecycle, the persisted batch stores common store/path/kind metadata once and groups rows as `[entityId, recordPayload]` under `changes.encoding = "record-root-lifecycle-v1"`. It omits repeated field envelopes and derives lifecycle entity metadata and stable change IDs when read. The public History API still returns the same expanded `entities` and `changes` shape, so preview, clean-only restore, inverse batches and redo retain their existing semantics. Mixed or field-level batches remain in the expanded representation.
+
+The compact format changes only finalized History serialization. Pending transaction payloads, staging, backups, recovery, ACK and cleanup order are unchanged. A 25,000-record import regression verifies the stored compact encoding, all 25,000 preview rows, bulk undo and redo, and compact encoding of the inverse deletion. On the current in-memory DataAdapter run, the create History batch was 5,851,151 bytes versus an 8,650,813-byte export bundle; this is a structural test measurement, not a Vault Sync throughput claim.
+
 Review actions are first recorded in bounded local journal segments. Ordinary checkpoints install canonical Review data and an updated summary in one pending transaction; they do not create permanent History. Closing a changed Review session records one final History batch for that session. A net-zero session creates no History batch. Undo and redo each create their own inverse batch.
 
 ## Pending transactions, locks, and recovery
