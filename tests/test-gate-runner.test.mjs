@@ -200,6 +200,14 @@ test("fast process pool never exceeds its cap and gives each child private direc
   assert.ok(results.every((result) => result.status === "passed"));
   assert.equal(new Set(counters.environments.map((env) => env.TMPDIR)).size, cases.length);
   assert.equal(new Set(results.map((result) => result.stdoutPath)).size, cases.length);
+  assert.ok(counters.environments.every((env) => path.dirname(env.TMPDIR) === os.tmpdir()));
+  assert.ok(counters.environments.every((env) => path.basename(env.TMPDIR).startsWith("pvr-gate-")));
+  assert.equal(new Set(counters.environments.map((env) => env.VOCABULARY_GATE_ARTIFACTS_DIR)).size, cases.length);
+  assert.ok(counters.environments.every((env) => path.basename(path.dirname(path.dirname(env.VOCABULARY_GATE_ARTIFACTS_DIR))) === "out"));
+  if (process.platform === "win32") {
+    assert.ok(counters.environments.every((env) => env.TMPDIR.length - os.tmpdir().length < 40));
+    assert.ok(counters.environments.every((env) => env.VOCABULARY_GATE_ARTIFACTS_DIR.length < 180));
+  }
   assert.ok(counters.environments.every((env) => env.VOCABULARY_GATE_PORT === "0"));
   await assert.rejects(() => runCases(cases, { rootDir: root, artifactsRoot: path.join(root, "cap-check"), parallelism: 5, gate: "fast", spawnImpl: fakeSpawn() }), /capped at 4/);
 });

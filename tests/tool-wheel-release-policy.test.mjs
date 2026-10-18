@@ -181,8 +181,16 @@ test("LingQ sector stays open while previewing and toggles only on middle-button
     "toolWheelSector",
     "selectToolWheel",
     "closeToolWheel",
+    "TOOL_WHEEL_ITEMS",
+    "AnnotationEditorType",
     `return (${moveSource});`,
-  )(toolWheelSector, selectToolWheel, closeToolWheel);
+  )(
+    toolWheelSector,
+    selectToolWheel,
+    closeToolWheel,
+    Array.from({ length: 6 }, (_, index) => ({ mode: index === 0 ? null : index })),
+    { DISABLE: -1 },
+  );
   const onToolWheelUp = new Function(
     "toolWheelSector",
     "selectToolWheel",
@@ -190,6 +198,7 @@ test("LingQ sector stays open while previewing and toggles only on middle-button
     `return (${upSource});`,
   )(toolWheelSector, selectToolWheel, closeToolWheel);
   const makeReader = () => ({
+    pdfViewer: { annotationEditorMode: 0 },
     _toolWheelPointer: 7,
     _toolWheel: {
       x: 100,
@@ -228,6 +237,14 @@ test("LingQ sector stays open while previewing and toggles only on middle-button
   assert.deepEqual(selected, [], "Hovering must not toggle LingQ before the gesture commits.");
   assert.equal(reader._toolWheel.sectors[0].classList.contains("active"), true,
     "The LingQ sector receives the same active preview as tool sectors.");
+
+  const readOnlyReader = makeReader();
+  readOnlyReader.pdfViewer.annotationEditorMode = -1;
+  onToolWheelMove.call(readOnlyReader, event(topPoint.x, topPoint.y));
+  assert.equal(readOnlyReader._toolWheel.sectors[0].classList.contains("active"), true,
+    "LingQ remains previewable when annotation editing is disabled.");
+  assert.equal(readOnlyReader._toolWheel.sectors[1].classList.contains("active"), false,
+    "Read-only annotation tools are not presented as selectable sectors.");
 
   onToolWheelUp.call(reader, event(topPoint.x, topPoint.y));
   assert.deepEqual(selected, [0], "Releasing on LingQ selects the LingQ action.");

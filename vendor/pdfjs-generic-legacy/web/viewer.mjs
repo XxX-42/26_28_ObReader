@@ -20624,7 +20624,8 @@ class PDFViewer {
     if (!permissions.includes(PermissionFlag.COPY) && this.#textLayerMode === TextLayerMode.ENABLE) {
       params.textLayerMode = TextLayerMode.ENABLE_PERMISSIONS;
     }
-    if (!permissions.includes(PermissionFlag.MODIFY_CONTENTS)) {
+    if (!permissions.includes(PermissionFlag.MODIFY_CONTENTS) &&
+        !permissions.includes(PermissionFlag.MODIFY_ANNOTATIONS)) {
       params.annotationEditorMode = AnnotationEditorType.DISABLE;
     }
     if (!permissions.includes(PermissionFlag.MODIFY_ANNOTATIONS) && !permissions.includes(PermissionFlag.FILL_INTERACTIVE_FORMS) && this.#annotationMode === AnnotationMode.ENABLE_FORMS) {
@@ -26566,6 +26567,17 @@ function toolWheelSector(wheel, evt) {
 }
 function selectToolWheel(index) {
   const item = this._toolWheel?.items[index];
+  if (!item) {
+    closeToolWheel.call(this);
+    return;
+  }
+  // Permission-disabled annotation sectors stay visible so the wheel remains
+  // useful for LingQ, but selecting one must neither dismiss the wheel nor
+  // change PDF.js's read-only editor mode. LingQ placeholders are disabled
+  // for a different reason and should simply close the wheel.
+  if (item.permissionDisabled) {
+    return;
+  }
   closeToolWheel.call(this);
   if (!item || item.disabled) {
     return;
@@ -26574,10 +26586,7 @@ function selectToolWheel(index) {
     window.dispatchEvent(new Event("pdf-reader-toggle-lingq"));
     return;
   }
-  if (
-    item.mode === null ||
-    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
-  ) {
+  if (item.mode === null) {
     return;
   }
   this.eventBus.dispatch("hideannotationeditorparams", { source: window });
@@ -26611,7 +26620,6 @@ function onToolWheelDown(evt) {
     evt.pointerType !== "mouse" ||
     !this.pdfDocument ||
     this.overlayManager.active ||
-    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE ||
     !(evt.target instanceof Element) ||
     !this.pdfViewer.container.contains(evt.target) ||
     evt.target.closest(
@@ -26642,8 +26650,15 @@ function onToolWheelDown(evt) {
   element.style.cssText = `left:${evt.clientX - radius}px;top:${evt.clientY - radius}px;width:${radius * 2}px;height:${radius * 2}px;--tool-wheel-scale:${radius / 120}`;
   // The bridge mirrors the acknowledged, persisted vocabularyEnabled state
   // onto this document root; the wheel reads that single source at open time.
-  const items = toolWheelItemsForState(
+  const layoutItems = toolWheelItemsForState(
     document.documentElement.dataset.vocabularyEnabled === "true",
+  );
+  const permissionDisabled =
+    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE;
+  const items = layoutItems.map((item) =>
+    permissionDisabled && item.mode !== null && item.mode !== undefined && !item.disabled
+      ? { ...item, disabled: true, permissionDisabled: true }
+      : item,
   );
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "-120 -120 240 240");
@@ -26667,6 +26682,11 @@ function onToolWheelDown(evt) {
     if (item.disabled) label.setAttribute("aria-disabled", "true");
     label.dataset.sector = index;
     const angle = (((item.startAngle + item.endAngle) / 2) * Math.PI) / 180;
+    if (item.permissionDisabled) {
+      label.disabled = true;
+      label.setAttribute("aria-disabled", "true");
+      sector.classList.add("disabled");
+    }
     label.style.left = `${50 + 32 * Math.cos(angle)}%`;
     label.style.top = `${50 + 32 * Math.sin(angle)}%`;
     const icon = document.createElement("span");

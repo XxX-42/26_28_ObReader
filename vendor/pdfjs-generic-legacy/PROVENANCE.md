@@ -96,3 +96,25 @@ Selecting a placeholder only closes the wheel. The existing bridge toggle
 event, PDF.js annotation tools, PDF worker, and annotation serialization are
 unchanged. The modified viewer module and stylesheet are pinned in
 `SHA256SUMS.json`.
+
+## Read-only PDF tool-wheel correction: Windows validation 2026-10-19
+
+The tool wheel remains available when PDF.js reports
+`AnnotationEditorType.DISABLE`, so non-annotation actions such as LingQ can
+still be used on a permission-restricted PDF. Annotation sectors are marked
+disabled and cannot change the editor mode; selecting one keeps the wheel open
+and the PDF permission is never bypassed. LingQ's enabled layout continues to
+use its exit sector and three disabled placeholders. The change is limited to
+`web/viewer.mjs` and `web/viewer.css`, is a local project correction rather than
+an upstream PDF.js backport, and is pinned in `SHA256SUMS.json`.
+
+## Annotation-only permission correction: 2026-10-19
+
+The frozen viewer now enables annotation editors when the PDF grants either
+`MODIFY_CONTENTS` or `MODIFY_ANNOTATIONS`. Previously it required only
+`MODIFY_CONTENTS`, disabling annotation tools even when the document explicitly
+granted the annotation permission used by the remote RAND PDF. Documents that
+grant neither permission remain read-only. Ordinary edits continue to persist
+through the external sidecar and do not write the source PDF. This is a local
+permission-policy correction, not an upstream PDF.js backport, and is pinned in
+`SHA256SUMS.json`.

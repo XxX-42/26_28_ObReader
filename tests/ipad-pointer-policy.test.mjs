@@ -2061,6 +2061,24 @@ test(
         event.trusted && !event.targetInViewer,
       ), "The momentum-stopping contact must land on a toolbar control");
 
+      // The earlier toolbar tests intentionally leave Ink selected. This case
+      // verifies selecting Ink through a trusted Pencil tap, so make the
+      // precondition explicit; PDF.js correctly toggles the active tool off
+      // when its already-selected button is clicked.
+      await viewer.evaluate(() => {
+        PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
+          source: window,
+          mode: 0,
+          isFromKeyboard: true,
+          createNewEditor: false,
+        });
+      });
+      await viewer.waitForFunction(() =>
+        PDFViewerApplication.pdfViewer.annotationEditorMode === 0 &&
+        !document.getElementById("editorInkButton").classList.contains("toggled"),
+        { timeout: 3_000 },
+      );
+
       const penMomentumPoint = await localPointInHost(
         viewer,
         page,
@@ -2870,6 +2888,27 @@ test(
       if (penViewer) {
         report.penFailureState = await penViewer.evaluate(() => ({
           mode: window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null,
+          pdfDocumentReady: !!window.PDFViewerApplication?.pdfDocument,
+          pdfDocumentPages: window.PDFViewerApplication?.pdfDocument?.numPages ?? null,
+          firstPage: (() => {
+            const page = document.querySelector('.page[data-page-number="1"]');
+            const view = window.PDFViewerApplication?.pdfViewer?.getPageView?.(0);
+            const rect = page?.getBoundingClientRect();
+            return {
+              exists: !!page,
+              loaded: page?.dataset.loaded || null,
+              width: rect?.width ?? null,
+              height: rect?.height ?? null,
+              textSpans: page?.querySelectorAll(".textLayer span").length ?? 0,
+              renderingState: view?.renderingState ?? null,
+              canvasConnected: view?.canvas?.isConnected ?? false,
+            };
+          })(),
+          visiblePages: [...document.querySelectorAll(".page")].slice(0, 4).map((page) => ({
+            page: page.dataset.pageNumber || null,
+            loaded: page.dataset.loaded || null,
+            textSpans: page.querySelectorAll(".textLayer span").length,
+          })),
           visibility: document.visibilityState,
           hasFocus: document.hasFocus(),
           activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
@@ -2886,6 +2925,7 @@ test(
           })(),
         })).catch((inspectionError) => ({ inspectionError: inspectionError.message }));
       }
+      report.missingRequests = [...new Set(missingRequests)];
     } finally {
       cleanupReport = await cleanupBrowserTestResources({
         browser,

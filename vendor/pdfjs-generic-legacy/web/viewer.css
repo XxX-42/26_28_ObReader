@@ -8941,8 +8941,12 @@ dialog :link{
   fill: #346da8;
 }
 .pdfToolWheel path.disabled {
-  fill: #30343b88;
-  stroke: #89909a66;
+  fill: #52565f;
+  stroke: #737984;
+}
+.pdfToolWheel path.disabled.active {
+  fill: #52565f;
+  stroke: #737984;
 }
 .pdfToolWheel button {
   position: absolute;
@@ -8956,8 +8960,9 @@ dialog :link{
   cursor: pointer;
 }
 .pdfToolWheel button[aria-disabled="true"] {
-  opacity: 0.48;
-  cursor: default;
+  color: #a0a5af;
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 .pdfToolWheelIcon {
   display: block;

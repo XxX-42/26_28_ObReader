@@ -1,6 +1,6 @@
 {
   "baseSha": "3a840a6ec4924bfeb4e2a684e734226c2ba2c4ee",
-  "scope": "Annotation storage, input controllers and source PDF fixtures remain frozen. PDF.js vendor remains frozen except for the explicit LingQ tool-wheel UI override below.",
+  "scope": "Annotation storage, input controllers and source PDF fixtures remain frozen. PDF.js vendor remains frozen except for the reviewed LingQ tool-wheel and Windows PDF permission overrides below.",
   "reviewedUpstreamOverrides": {
     "commit": "b6eb9fb372f2caa8724b6ee15183f7db76783b6f",
     "reason": "0.11.9 adds queued read-mode switching at iPad input boundaries; these exact two controller snapshots are included and guarded after review.",
@@ -10,13 +10,13 @@
     }
   },
   "reviewedFeatureOverrides": {
-    "feature": "LingQ-aware radial tool wheel",
-    "reason": "The requested wheel layout is implemented in the vendored PDF.js viewer; the frozen PDF rendering, annotation editor and source PDF paths remain unchanged.",
+    "feature": "LingQ-aware radial tool wheel and Windows PDF permission behavior",
+    "reason": "The vendored PDF.js viewer preserves the LingQ radial layout while keeping LingQ available on read-only PDFs, disabling only annotation actions without permission, and enabling annotation editing when MODIFY_CONTENTS or MODIFY_ANNOTATIONS is granted. Rendering, annotation serialization and source PDF paths remain unchanged.",
     "sha256": {
-      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "323bfefb28af065d91a7a6fc6bdd2664fd875d8ba30b9fc7974a1f3efd589862",
-      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "71eeaeadbf39b05a92895f8e5a7bec9ae0d8bfda759eab00a84bc32bbb9ad4b6",
-      "vendor/pdfjs-generic-legacy/web/viewer.css": "29952838c6070b5a4e1155b16215b6bf8dd88d5e4159674355715cc3e322ce94",
-      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "eef018c32f2083647c05a6a062e320429ea21ab7cd643dd666f72814c1f8359b"
+      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "08b38b5772570c72ff90ae0bed99e924d6ecd7ba216c06b4bbe4f07ae97967fd",
+      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "1af16bc8fcddb747f60458782ba756f57724804f0d2b26e7288ac85eb4ed93c6",
+      "vendor/pdfjs-generic-legacy/web/viewer.css": "fc7e502452bb62fa634a7ada8a4314f54e9dc8db9c486a9abfb874b7b4c571ff",
+      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "d758de69490d8303cde1fbe761dfb8e1bd783e76d02b80793d0e924b2c27a540"
     }
   },
   "sha256": {
@@ -49,8 +49,8 @@
     "plugin/storage/wal-writer-coordinator.cjs": "6360ae4087f89c4887b3b68df205619008cb630fcd369e2b6408122e43272bdf",
     "tests/fixtures/tracemonkey.pdf": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
     "vendor/pdfjs-generic-legacy/LICENSE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
-    "vendor/pdfjs-generic-legacy/PROVENANCE.md": "eb16bc4b670214bb423bf57ada89b56b9a9992dbaf8348fbbe05dd78612a5f43",
-    "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "65eb4a2efa03811776809fe12781844256497e00fef18f256daed74be64b6565",
+    "vendor/pdfjs-generic-legacy/PROVENANCE.md": "c6ca7b63445a6a0a1de19761ba1a6f6ee918e9b54a58f048e968d9c40378d09b",
+    "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "b2bc43e81ded6d2f6aa380f226eccebc79e8f40c7cc3a64eb0cacd5ae850cbe6",
     "vendor/pdfjs-generic-legacy/build/pdf.mjs": "ab20f071d405f64f989da69a55b88254b07483ad65aca790eb6212dc8c2afea9",
     "vendor/pdfjs-generic-legacy/build/pdf.sandbox.mjs": "fef18628fb5e0fb460ff36180e6d747b77100e4f00db19547b091e4f2810aa5b",
     "vendor/pdfjs-generic-legacy/build/pdf.worker.mjs": "49fbc19f355378d78a2e1f0a4b9e1846c287c8fd1504f23d841d775ddbb7e9cf",
@@ -439,9 +439,9 @@
     "vendor/pdfjs-generic-legacy/web/standard_fonts/LiberationSans-BoldItalic.ttf": "a224075ac17495ad0a3af3bc0a419ac0704a8b3fd1095456201fb9b095fc281d",
     "vendor/pdfjs-generic-legacy/web/standard_fonts/LiberationSans-Italic.ttf": "832b4406dbef23628800d3aaad21048534ac84d7e3ad955be83b8172ed8ef512",
     "vendor/pdfjs-generic-legacy/web/standard_fonts/LiberationSans-Regular.ttf": "f8ace1f892b2bd9dc1792ba7f097fa7588f84fed48321480e04de5390828221f",
-    "vendor/pdfjs-generic-legacy/web/viewer.css": "3a61d01117d7dc756a022950850c4ebd9fa45473785e9243ef71e94f2c5b6c5c",
+    "vendor/pdfjs-generic-legacy/web/viewer.css": "c3b419b6e9598adb60c783e1506606d54a177b6b47b2c4fce689463ab75da33c",
     "vendor/pdfjs-generic-legacy/web/viewer.html": "3e33de0dd001441d1d31645f553e6bc4af8323db965b98004fcb7e387db07bb6",
-    "vendor/pdfjs-generic-legacy/web/viewer.mjs": "184400465af5eb88999c0d646eccd217c7f752a3712348537a6665931ec2768f",
+    "vendor/pdfjs-generic-legacy/web/viewer.mjs": "0b16b701ea293455f0357619bd4aaa3a713c65745c11f6563e5031499b61cf97",
     "vendor/pdfjs-generic-legacy/web/wasm/LICENSE_JBIG2": "9e66b7f1b934a28b37f3bc4dac97915de1674271e79a0a88182a18ed9731b4d1",
     "vendor/pdfjs-generic-legacy/web/wasm/LICENSE_OPENJPEG": "a6af136f3e15038a666b61f376612a07d9a4e48cb7c01adbf3e33b3f14ab49b6",
     "vendor/pdfjs-generic-legacy/web/wasm/LICENSE_PDFJS_JBIG2": "aad3cce09842e00e9e11ad5e8fef8cc02fbc3a3768fe2f007443b9cee37aaee5",
