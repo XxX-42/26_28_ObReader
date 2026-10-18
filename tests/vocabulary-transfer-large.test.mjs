@@ -66,7 +66,9 @@ test("25,000-record bundle export, preview, and transactional import preserve ev
   assert.ok(historyPreview.items.every((item) => item.status === "clean"));
   console.log(JSON.stringify({ scale: "25000", sourceImportMs, exportMs, previewMs, importMs, verifyMs,
     targetFilesTouched: targetMetrics.filesTouched.length, targetReadBytes: targetMetrics.readBytes,
-    targetWrittenBytes: targetMetrics.writtenBytes, historyBytes, historyChangeCount: coreChanges.length,
+    targetWrittenBytes: targetMetrics.writtenBytes, targetReads: targetMetrics.reads,
+    targetWrites: targetMetrics.writes, targetAppends: targetMetrics.appends,
+    targetDirectoryCount: targetMetrics.directoryCount, historyBytes, historyChangeCount: coreChanges.length,
     bundleBytes, historyPreviewMs, totalMs: performance.now() - startedAt }));
   await source.runtime.close();
   await target.runtime.close();

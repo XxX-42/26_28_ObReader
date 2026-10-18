@@ -96,34 +96,47 @@ GC is authorized by this task.
   non-reproducible frozen iPad lifecycle failure remains recorded.
 
 Implementation and the targeted Review/UI tests are recorded in
-[phase-e-review.md](phase-e-review.md). Phase E remains unaccepted until the
-full Browser Gate's frozen iPad pointer lifecycle failure is characterized;
-that unchanged boundary is outside the Review change set.
+[phase-e-review.md](phase-e-review.md). The first full Browser run had one
+non-reproducible frozen iPad pointer lifecycle failure; the Phase D baseline
+and a clean Phase E rerun both passed 22/22. The original failure report is
+retained and its exact timing trigger remains unknown.
 
 ## Phase F — hardening and candidate delivery
 
-- [ ] Crash every transaction boundary; repeat migration/recovery/finalize;
-  foreign pending permutations; external canonical replacement and restore
-  conflicts; missing/corrupt dictionary shards; family and Known transitions.
-- [ ] Three-feature interoperability and same inputs across DataAdapter
-  platform simulations; desktop/mobile simulation is separate from real iPad.
-- [ ] Run the complete Fast, Functional, Race and offline three-file gates.
-- [ ] Run the default 30-minute stress matrix at 5,340 and 25,000 records,
-  6,000 page tokens, 12-token phrases and the specified fault/lifecycle cases.
-- [ ] Record files/directories/read and write bytes per action, structural
-  memory metrics and baseline-to-candidate timings. No MB-scale main snapshot
-  rewrite per rating; no permanent one-file-per-click history/context design.
-- [ ] Runtime/static evidence: normal page matching has zero vocabulary full
-  scans and per-token vocabulary normalizations; zoom has zero vocabulary
-  queries, lexical matches, dictionary lookups and backlink rebuilds. PDF page
-  matching never accesses Review/Context/History; dictionary never runs in page
-  or zoom paths.
-- [ ] Source PDF SHA-256 identical and frozen annotation storage/vendor/input
-  regression suites pass; no real user data has been changed by validation.
-- [ ] Deliver phase commit list, complete raw-linked test/performance report,
-  migration and Context/Review/History protocol docs, known limitations and
-  candidate three-file package. Explicitly state that cross-device concurrent
-  automatic Vocabulary merge is not implemented.
+- [x] Crash injection before/after all ten durable mutation points in a
+  two-store transaction; repeat migration/recovery/finalize across stress
+  rounds; test foreign pending arrival before and after local pending; retain
+  external canonical replacement, restore conflict, missing/corrupt dictionary
+  shard, family, and Known transition coverage. Evidence is in the final Fast
+  Gate report and [Phase F report](phase-f-hardening.md).
+- [x] Three-feature interoperability and shared DataAdapter/Chromium desktop
+  and mobile simulations. Native Windows/macOS/iPadOS device acceptance remains
+  separate and pending.
+- [x] Complete Fast, Functional Browser, Race and offline three-file gates.
+- [x] `npm run test:vocabulary-nightly` passed its default 30-minute duration:
+  four complete rounds of the 5,340/25,000 lexical benchmark, 25,000-record
+  transfer, Fast, Browser and ten-round Race gates, with raw per-case logs.
+- [x] Record per-action files/directories/read/write bytes, persisted snapshot
+  and bundle bytes, structural record/token/trie-step counters and
+  baseline-to-candidate timings. A rating appends about 1.1 KB locally and does
+  not rewrite the main snapshot; Context and History use batched records rather
+  than one permanent file per click. These are DataAdapter simulations, not
+  cross-platform heap measurements.
+- [x] Runtime/static evidence: normal page matching has zero vocabulary full
+  scans and per-token vocabulary normalizations; 100%→125%→200% zoom reuses
+  lexical results with no additional host page query. Static boundaries keep
+  page matching out of Review/Context/History and dictionary shards.
+- [x] Checked-in PDF fixture SHA-256 remained identical; frozen annotation
+  storage/vendor/input regression suites pass. No real user data changed.
+- [x] Deliver phase commit list, raw-linked test/performance report, migration
+  and Context/Review/History protocol docs, known limitations, and candidate
+  three-file package. Cross-device concurrent automatic Vocabulary merge is
+  not implemented.
 
 Real Windows/macOS/iPadOS device acceptance requires device evidence. Missing
 device evidence remains pending and is never substituted by Chromium tests.
+
+The Phase F runner and final evidence are documented in
+[phase-f-hardening.md](phase-f-hardening.md). Real-device acceptance remains
+pending; simulation results do not substitute for iPad, Windows, or macOS
+Obsidian validation.

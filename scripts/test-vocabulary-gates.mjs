@@ -185,6 +185,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/vocabulary-dictionary.test.mjs",
     "tests/vocabulary-line-end-hyphen-regression.test.mjs",
     "tests/vocabulary-history.test.mjs",
+    "tests/vocabulary-nightly-gate.test.mjs",
     "tests/vocabulary-normalizer-scanner.test.mjs",
     "tests/vocabulary-phrase-matcher.test.mjs",
     "tests/vocabulary-pill-placement.test.mjs",
