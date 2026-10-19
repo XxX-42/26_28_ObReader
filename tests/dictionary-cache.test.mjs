@@ -241,6 +241,38 @@ test("interrupted imports resume; forced replacements stay quarantined until rea
   assert.equal((await cache.active())?.id, rebuilt.id);
 });
 
+test("membership import reuses the sorted bucket tail and rereads it once after resume", async (t) => {
+  const entries = makeEntries(10);
+  const resource = makeResource(entries);
+  const cache = createCache(`dictionary-cache-membership-tail-${randomUUID()}`, { batchSize: 2 });
+  t.after(() => cache.close());
+
+  const membershipGet = cache.db.membership.get.bind(cache.db.membership);
+  let membershipGetCalls = 0;
+  cache.db.membership.get = (...args) => {
+    membershipGetCalls += 1;
+    return membershipGet(...args);
+  };
+
+  const controller = new AbortController();
+  await assert.rejects(cache.prepare(resource.manifest, async () => resource.compressed, {
+    signal: controller.signal,
+    onProgress: (progress) => {
+      if (progress.phase === "building" && progress.count === 2) controller.abort();
+    },
+  }), (error) => error.code === "DICTIONARY_CACHE_CANCELLED");
+  assert.equal(membershipGetCalls, 0,
+    "a fresh sorted build does not reread the membership bucket it just committed");
+
+  membershipGetCalls = 0;
+  const ready = await cache.prepare(resource.manifest, async () => resource.compressed);
+  assert.equal(ready.status, "ready");
+  assert.equal(membershipGetCalls, 1,
+    "resume reloads the unfinished membership tail once, then reuses it for later batches");
+  const membership = await membershipGet([ready.id, "wo"]);
+  assert.deepEqual(membership.keys, entries.map((entry) => entry.key));
+});
+
 test("missing or corrupt source bytes during force rebuild retain the prior ready slot", async (t) => {
   const resource = makeResource(makeEntries(4));
   for (const failureKind of ["missing", "corrupt"]) {

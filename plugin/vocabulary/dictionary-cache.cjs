@@ -177,6 +177,12 @@ class DictionaryQueryCache {
       onProgress({ phase: "verifying", count: lease.count, total: manifest.entryCount });
       const bytes = await verifyResource(manifest, await loadBytes());
       this.checkCancelled(signal);
+      // Sorted keys keep each two-character membership bucket contiguous. Keep
+      // only the unfinished tail in memory so normal adjacent batches do not
+      // reread and recopy the same historical key array. Every committed batch
+      // still writes the complete tail row, so crash/lease recovery remains
+      // durable and only needs one IndexedDB read when resuming that bucket.
+      let membershipTail = null;
       await decodeResource(manifest, bytes, async (batch, progress) => {
         this.checkCancelled(signal);
         if (progress.count <= lease.count) { await this.yieldControl(); return; }
@@ -193,9 +199,22 @@ class DictionaryQueryCache {
             if (!buckets.has(bucket)) buckets.set(bucket, []);
             buckets.get(bucket).push(entry.key);
           }
+          const previousBucket = current.lastKey ? current.lastKey.slice(0, 2) : "";
           for (const [bucket, keys] of buckets) {
-            const existing = await this.db.membership.get([id, bucket]);
-            await this.db.membership.put({ generation: id, bucket, keys: [...(existing?.keys || []), ...keys] });
+            let membershipKeys = keys;
+            if (bucket === previousBucket) {
+              const canReuseTail = membershipTail?.bucket === bucket &&
+                membershipTail.lastKey === current.lastKey;
+              const existingKeys = canReuseTail
+                ? membershipTail.keys
+                : (await this.db.membership.get([id, bucket]))?.keys || [];
+              if (existingKeys.length) {
+                existingKeys.push(...keys);
+                membershipKeys = existingKeys;
+              }
+            }
+            await this.db.membership.put({ generation: id, bucket, keys: membershipKeys });
+            membershipTail = { bucket, keys: membershipKeys, lastKey: keys[keys.length - 1] };
           }
           await this.db.generations.put({ ...current, count: current.count + fresh.length,
             lastKey: progress.lastKey, prefixes: [...new Set([...current.prefixes, ...buckets.keys()])],
