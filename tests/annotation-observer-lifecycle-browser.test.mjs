@@ -18,7 +18,7 @@ const token = "observer-lifecycle-regression";
 test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowledge a save", {
   skip: !browserPath && "Chrome or Edge is required", timeout: 90_000,
 }, async () => {
-  const runtime = await readBridgeRuntimeSource();
+  const runtime = await readBridgeRuntimeSource(process.env.PDF_READER_BRIDGE_SOURCE || undefined);
   const css = await readFile(path.join(root, "viewer-adapter/bridge.css"));
   const html = (await readFile(path.join(root, "vendor/pdfjs-generic-legacy/web/viewer.html"), "utf8"))
     .replace(/<head\b[^>]*>/i, head => `${head}<link rel="stylesheet" href="/bridge.css"><script src="/bridge.js" data-channel="pdf-web-reader" data-token="${token}" data-renderer-generation="observer-renderer" data-ios-input-policy="true" data-base-url="/vendor/pdfjs-generic-legacy/web/"></script>`);
@@ -70,17 +70,21 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
       PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", { source: window, mode: 15, createNewEditor: false });
     });
     await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 15 &&
-      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0));
-    await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode() === 15 &&
+      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0)?.div.classList.contains('inkEditing') &&
+      !document.documentElement.hasAttribute('data-pdf-reader-readonly'));
     await frame.evaluate(() => PDFViewerApplication.pdfDocument.annotationStorage
       .setValue("pdfjs_internal_editor_unbound_test", { deleted: true }));
     const cdp = await page.createCDPSession();
     const strokes = [];
     const stroke = async (offset) => {
+      const before = await frame.evaluate(()=>({readOnly:document.documentElement.hasAttribute('data-pdf-reader-readonly'),
+        managerMode:PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode()}));
       const point = await frame.evaluate(offset => {
         const bounds = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0).div.getBoundingClientRect();
         return { x: Math.max(40, bounds.left + 120), y: Math.max(90, bounds.top + 160 + offset) };
       }, offset);
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point, button: "none", buttons: 0, pointerType: "pen" });
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1, pointerType: "pen" });
       for (let n = 1; n <= 6; n++) await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x + n * 8, y: point.y + n * 6, button: "left", buttons: 1, pointerType: "pen" });
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x + 48, y: point.y + 36, button: "left", buttons: 0, clickCount: 1, pointerType: "pen" });
@@ -90,6 +94,7 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
         editors: [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].map(editor => ({ id: editor.id, type: editor.editorType })),
         errors: observerErrors, hit: document.elementFromPoint(point.x, point.y)?.outerHTML?.slice(0, 300),
       }), point));
+      strokes.at(-1).before = before;
     };
     await stroke(0);
     await stroke(90);
@@ -121,7 +126,7 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
     assert.equal(await page.evaluate(() => messages.filter(message => message.type === "export-ready").length), 0);
     await mkdir(path.join(root, "tests/artifacts"), { recursive: true });
     await writeFile(path.join(root, "tests/artifacts/annotation-observer-lifecycle.json"), JSON.stringify({
-      platform: "Chromium mobile simulation", inkCount, input, tools: [3, 9, 10, 5, 15, 0], saved,
+      platform: "Chromium mobile simulation", inkCount, input, strokes, tools: [3, 9, 10, 5, 15, 0], saved,
       errors: await frame.evaluate(() => observerErrors),
     }, null, 2));
   } catch (error) { primaryError = error; }

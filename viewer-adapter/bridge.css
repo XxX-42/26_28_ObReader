@@ -13,9 +13,12 @@ body {
 
 /* Do not paint source-PDF annotations until the host has verified the
    document identity and the exact sidecar tombstones have been applied.
-   The page canvas and the external annotation-editor layer remain visible. */
+   Source APs can also be painted into Canvas. Hold that surface until the
+   verified mask is installed and its replacement render has completed. */
 :root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer,
-:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer * {
+:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer *,
+:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .canvasWrapper,
+#viewerContainer [data-pdf-reader-mask-pending] .canvasWrapper {
   visibility: hidden !important;
 }
 
@@ -665,7 +668,9 @@ body {
 }
 
 :root[data-vocabulary-enabled="true"] .pdfToolWheel button[data-sector="0"] {
-  color: var(--interactive-accent, #6957d5);
+  /* The selected wedge is already filled with the accent color; using that
+     same color for its caption makes "退出 LingQ" disappear into the wedge. */
+  color: #fff;
   font-weight: 650;
 }
 

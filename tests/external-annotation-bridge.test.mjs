@@ -860,7 +860,7 @@ test("confirmed deletion masks are installed before PDF.js receives the document
   const helper=functionSource("installInitialDeletionMask");
   const scope=vm.runInThisContext(`(() => {
     const calls=[];const state={annotationController:{setEmbeddedDeletionMask(storage,refs){calls.push(["mask",storage,refs]);}}};
-    const session={signal:{aborted:false}};state.openSession=session;
+    const session={signal:{aborted:false,addEventListener(){},removeEventListener(){}}};state.openSession=session;
     const original=function(doc){calls.push(["setDocument",doc]);return "native-result";};
     const app={pdfViewer:{setDocument:original}};
     function runtimeLogRecord(){}
@@ -887,6 +887,7 @@ test("confirmed deletion masks are installed before PDF.js receives the document
 test("native annotation layers remain gated until exact tombstones are masked and embedded rows are hidden", () => {
   const helpers = [
     functionSource("setNativeAnnotationLayersPending"),
+    functionSource("externalAnnotationMaskRows"),
     functionSource("applyConfirmedNativeAnnotationLayerState"),
   ].join("\n");
   const scope = vm.runInThisContext(`(() => {
@@ -941,7 +942,7 @@ test("native annotation layers remain gated until exact tombstones are masked an
 });
 
 test("confirmed native mask transitions notify the page renderer before hydration consumes the same mask", () => {
-  const scope = evaluateHelpers(["applyConfirmedNativeAnnotationLayerState"], `
+  const scope = evaluateHelpers(["externalAnnotationMaskRows", "applyConfirmedNativeAnnotationLayerState"], `
     const repaints = [];
     let masked = true;
     const row = { uuid: "native-text", pageIndex: 0, embeddedRef: "11R", deleted: false };

@@ -11,6 +11,7 @@ const { createRegistryCache } = require("./registry-cache.cjs");
 const { createFormat3Importer } = require("./format3-importer.cjs");
 const { createObsidianStorageBridge } = require("./obsidian-storage-bridge.cjs");
 const { createJsonlCheckpointStore } = require("./jsonl-checkpoint.cjs");
+const { createDeletionRetention } = require("./deletion-retention.cjs");
 const { activateJsonlProtocol } = require("./protocol-barrier.cjs");
 
 const PROTOCOL = "wal-sidecar-v3.1";
@@ -30,7 +31,7 @@ function advanceJsonlGeneration(adapter, docKey) {
 
 function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root = "00_Archive/20_PDFData",
   hash, verifyHash, identityHash = hash, deviceId, uuid, onTiming = () => {}, sourceExists = (path) => adapter.exists(path),
-  maintenance = { tailOperations: 256, walBytes: 512 * 1024 }, jsonlMode = false, ...legacyOptions }) {
+  maintenance = { tailOperations: 256, walBytes: 512 * 1024 }, jsonlMode = false, clock = Date.now, ...legacyOptions }) {
   const stableHash = async (bytes) => {
     const result = await identityHash(bytes);
     return /^[0-9a-f]{64}$/i.test(result) ? `sha256-v1:${result}` : result;
@@ -39,8 +40,9 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
   const wals = createWalStore({ adapter, root, hash, verifyHash, deviceId, token: uuid, sidecarStore: sidecars });
   const jsonl = jsonlMode ? createObsidianStorageBridge({ adapter, root, hash, verifyHash }) : null;
   const jsonlCheckpoints = jsonlMode ? createJsonlCheckpointStore({ adapter, root, hash, verifyHash, token: uuid }) : null;
+  const deletionRetention = jsonlMode ? createDeletionRetention({ adapter, root, deviceId, hash, verifyHash, token: uuid, clock }) : null;
   const coordinator = createWalWriterCoordinator();
-  const legacy = createPdfAnnotationStore({ adapter, root, hash, identityHash, deviceId, uuid, ...legacyOptions });
+  const legacy = createPdfAnnotationStore({ adapter, root, hash, identityHash, deviceId, uuid, clock, ...legacyOptions });
   const importer = createFormat3Importer({ legacyStore: legacy, sidecarStore: sidecars, stableHash });
   const registry = createRegistryCache({ adapter, root, ensureDirectory });
   const documents = new Map();
@@ -503,7 +505,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
         const originKey = receiptKey && `${deviceId}:${input.uuid}:${input.originOpId}`;
         const repeated = originKey && (durableByOrigin.get(originKey) || appendedByOrigin.get(originKey));
         if (repeated) {
-          const { seq: _seq, version: _version, opId: _opId, ...original } = repeated;
+          const { seq: _seq, version: _version, opId: _opId, deletedAt: _deletedAt, ...original } = repeated;
           if (canonicalJson(original) !== canonicalJson(input)) throw failure("WAL_OPERATION_COLLISION", "An input operation ID names different annotation content.");
           acknowledgedOpId = repeated.opId;
           continue;
@@ -513,6 +515,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
           state.annotations[input.uuid] || state.tombstones[input.uuid]);
         const seq = own.nextSeq++;
         const operation = { ...input, seq, opId: `${deviceId}:${document.docKey}:${seq}`,
+          ...(jsonl && input.type === "ANNOTATION_DELETE" ? { deletedAt: clock() } : {}),
           version: { rev: (prior?.version.rev || 0) + 1, deviceId, seq } };
         operationKinds.set(operation.opId, input.type === "ANNOTATION_DELETE" ? "DELETE" :
           (pendingWinners.get(key) || state.annotations[input.uuid]) ? "UPDATE" : "CREATE");
@@ -556,7 +559,7 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
       }
       for (const op of appended) {
         if (op.originOpId) {
-          const { seq: _seq, version: _version, opId, ...input } = op;
+          const { seq: _seq, version: _version, opId, deletedAt: _deletedAt, ...input } = op;
           receipts.set(`${document.docKey}:${op.uuid}:${op.originOpId}`, {
             opId, inputHash: await hash(new TextEncoder().encode(canonicalJson(input))),
           });
@@ -641,6 +644,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
         throw failure("IDENTITY_ROUTE_CONFLICT", "The PDF path has conflicting document identities.");
       }
     }
+    const projection = deletionRetention ? await deletionRetention.project(loaded.document, loaded.state,
+      { readOnly: readOnly || loaded.errors.length > 0 }) : { tombstones: loaded.state.tombstones, deletionGuards: [] };
     const rows = (map, deleted) => Object.values(map).map((op) => ({ uuid: op.uuid, kind: op.kind,
       pageIndex: op.pageIndex, embeddedRef: op.embeddedRef ?? null, ...(deleted ? {} : { deleted: false }),
       ...(deleted ? {} : { payload: op.payload }), version: op.version,
@@ -662,7 +667,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
           Math.max(maximum.get(entry.deviceId) || 0, entry.operations.at(-1)?.seq || 0));
         return [...maximum.values()].reduce((sum, value) => sum + value, 0);
       })(),
-      annotations: rows(loaded.state.annotations, false), tombstones: rows(loaded.state.tombstones, true),
+      annotations: rows(loaded.state.annotations, false), tombstones: rows(projection.tombstones, true),
+      ...(projection.deletionGuards.length ? { deletionGuards: projection.deletionGuards } : {}),
       ...(loaded.errors.length ? { syncPending: true } : {}) };
   }
   async function materializeSnapshot(document) {
@@ -679,7 +685,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
           await jsonlCheckpoints.writeAnchor(loaded.document, deviceId, ownRows, archive);
           archived = true;
         }
-        if (archived || !(await adapter.exists(jsonlCheckpoints.snapshotPath(loaded.document)))) {
+        const projection = await deletionRetention.project(loaded.document, loaded.state);
+        if (archived || projection.deletionGuards.length || !(await adapter.exists(jsonlCheckpoints.snapshotPath(loaded.document)))) {
           const watermarks = {};
           for (const wal of loaded.valid) watermarks[wal.deviceId] = Math.max(watermarks[wal.deviceId] || 0, wal.nextSeq - 1);
           for (const entry of loaded.jsonlAnchors) watermarks[entry.deviceId] = Math.max(
@@ -688,7 +695,8 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
             watermarks[entry.deviceId] || 0, entry.archive.lastSeq);
           for (const entry of loaded.jsonlRows) watermarks[entry.deviceId] = Math.max(
             watermarks[entry.deviceId] || 0, entry.operations.at(-1)?.seq || 0);
-          await jsonlCheckpoints.writeSnapshot(loaded.document, loaded.state, watermarks);
+          await jsonlCheckpoints.writeSnapshot(loaded.document, { ...loaded.state, tombstones: projection.tombstones,
+            deletionGuards: projection.deletionGuards }, watermarks);
         }
         if (ownRows.length) {
           // The active JSONL is rotated only after an immutable device archive,

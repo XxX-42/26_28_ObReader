@@ -38,9 +38,9 @@ function world() {
       return { files: directFiles, folders: [...directFolders] };
     },
   };
-  const store = (deviceId, jsonlMode) => createWalAnnotationStore({ adapter, root: ROOT, deviceId,
+  const store = (deviceId, jsonlMode, options = {}) => createWalAnnotationStore({ adapter, root: ROOT, deviceId,
     uuid: (() => { let id = 0; return () => `${deviceId}-${++id}`; })(), hash, identityHash: hash,
-    jsonlMode });
+    jsonlMode, ...options });
   return { files, folders, calls, adapter, store };
 }
 
@@ -49,6 +49,43 @@ function annotation(uuid, index, { deleted = false, origin = "viewer" } = {}) {
     ...(!deleted ? { payload: { editor: { annotationType: 5, rect: [1, 2, 100, 120], index } } } : {}),
     clock: { timestamp: index + 1, logical: index, deviceId: origin, opId: `${origin}-${uuid}-${index}` } };
 }
+
+test("48-day retention projects expired deletes into guards without rewriting WAL history", async () => {
+  const w = world();
+  const start = Date.UTC(2026, 9, 22);
+  let now = start;
+  const options = { clock: () => now };
+  let store = w.store("windows-retention", true, options);
+  const document = await store.registerDocument({ sourcePath: "Fixtures/retention.pdf",
+    source: { sourceHash: hash("retention immutable source"), size: 1024, pageCount: 1, orderedPageIdentities: ["page-0"] } });
+  const deleted = { ...annotation("retained-delete", 0, { deleted: true }), embeddedRef: "7R" };
+  await store.appendOperations({ document, operations: [deleted] });
+  const original = await store.readDocument(document);
+  assert.equal(original.tombstones.length, 1);
+  await store.materializeSnapshot(document);
+  const history = new Map([...w.files].filter(([p]) => /\.(?:archive\..*\.json|anchor\.json|jsonl)$/.test(p)));
+  now += 48 * 24 * 60 * 60 * 1000 - 1;
+  store = w.store("windows-retention", true, options);
+  assert.equal((await store.readDocument(document)).tombstones.length, 1);
+  now++;
+  const expired = await store.readDocument(document);
+  assert.equal(expired.tombstones.length, 0, "expired full tombstones leave the active snapshot");
+  assert.deepEqual(expired.deletionGuards, [{ uuid: deleted.uuid, version: original.tombstones[0].version,
+    pageIndex: 0, embeddedRef: "7R" }]);
+  await store.materializeSnapshot(document);
+  const disk = JSON.parse(w.files.get(`${ROOT}/sidecars/${document.docKey}.annotations.json`));
+  assert.equal(disk.tombstones.length, 0);
+  assert.deepEqual(disk.deletionGuards, expired.deletionGuards);
+  for (const [p, bytes] of history) assert.equal(w.files.get(p), bytes, `history retained: ${p}`);
+  const cold = w.store("windows-retention", true, options);
+  assert.deepEqual((await cold.readDocument(document)).deletionGuards, expired.deletionGuards);
+  await cold.appendOperations({ document, operations: [annotation(deleted.uuid, 2)] });
+  const restored = await cold.readDocument(document);
+  assert.equal(restored.annotations.length, 1, "a newer intentional restore wins");
+  assert.deepEqual(restored.deletionGuards || [], []);
+  await cold.appendOperations({ document, operations: [{ ...deleted, clock: { ...deleted.clock, opId: "delete-again" } }] });
+  assert.equal((await cold.readDocument(document)).tombstones.length, 1, "a new delete starts its own retention period");
+});
 
 test("activated JSONL epoch rejects a pre-existing Format 3 writer but permits read-only migration", async () => {
   const w = world();

@@ -1,5 +1,14 @@
 # PDF.js Viewer snapshot
 
+## Preserved deployed Windows wheel assets: 2026-10-22
+
+The already deployed 0.12.0 wheel layout and CSS were reconciled from the
+read-only installed asset bundle `4c579f55b8ef7c8b18f0da31c4f9cc206a9eb721f58f72a99f356f6d98dbf5c4`.
+This preserves the LingQ exit sector, disabled placeholders and readable
+captions when rebuilding the first-paint/deletion-retention patch. It changes
+no PDF.js core/Worker or upstream version. `SHA256SUMS.json` pins these exact
+existing `web/viewer.mjs` and `web/viewer.css` assets.
+
 This directory contains the production `generic-legacy` viewer artifact used by
 the Obsidian plugin. It was copied from the local PDF.js fork at commit
 `c80e5a952` (`windows`, pushed as `xxx42/windows`) on 2026-10-07. The artifact

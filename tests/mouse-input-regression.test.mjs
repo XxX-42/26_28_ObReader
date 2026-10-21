@@ -2929,14 +2929,20 @@ test(
     );
     const savesBeforeText = await page.evaluate(() => window.__host.saves.length);
     await openSecondaryToolbar();
-    const resumedFreeText = await viewer.evaluate(async (pausedState) => {
+    const resumedFreeTextHandle = await viewer.waitForFunction((pausedState) => {
       const app = window.PDFViewerApplication;
       const pageView = app?.pdfViewer?.getPageView(pausedState.pageIndex);
       const builder = pageView?.annotationEditorLayer;
       if (!builder || !pageView?.viewport) {
         throw new Error("The annotation layer disappeared before the pause/resume probe");
       }
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      // Mode/viewport refresh may enqueue another legitimate page reset after
+      // toolbar focus. Capture only a completed Canvas/editor resume boundary,
+      // rather than assuming two animation frames finish that async redraw.
+      if (pageView.renderingState !== 3) return false;
+      const lastPause = window.__mousePdfEditorLifecycleTrace
+        ?.filter(entry => entry.method === "layer.pause.begin").at(-1);
+      if (lastPause?.callArgs?.paused === true) return false;
       const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
       const editor = manager.getEditor(pausedState.editorId);
       const internal = editor?.div?.querySelector(".internal");
@@ -2964,7 +2970,8 @@ test(
       };
       window.__mouseTestMilestones.pauseResumeToolbarFocus = snapshot;
       return snapshot;
-    }, pausedFreeText);
+    }, { timeout:20_000 }, pausedFreeText);
+    const resumedFreeText = await resumedFreeTextHandle.jsonValue();
     assert.equal(resumedFreeText.visible, true, JSON.stringify(resumedFreeText));
     assert.equal(resumedFreeText.toolbarFocused, true, JSON.stringify(resumedFreeText));
     assert.equal(resumedFreeText.focusIsInEditor, false, JSON.stringify(resumedFreeText));

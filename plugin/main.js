@@ -4338,6 +4338,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const foreground = () => {
       if (globalThis.document?.visibilityState !== "hidden") {
         this.scheduleViewerPrewarm("foreground");
+        void this.annotationHost?.watchDeletionRetention?.();
       }
     };
     if (typeof this.registerDomEvent === "function" && globalThis.window?.addEventListener) {
@@ -4426,8 +4427,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.readerBacklinkPageIndexes.set(cacheKey, entry);
     const annotations = Array.isArray(snapshot.annotations) ? snapshot.annotations :
       Object.values(snapshot.annotations || {});
-    const tombstones = Array.isArray(snapshot.tombstones) ? snapshot.tombstones :
-      Object.values(snapshot.tombstones || {});
+    const tombstones = [...(Array.isArray(snapshot.tombstones) ? snapshot.tombstones :
+      Object.values(snapshot.tombstones || {})), ...(snapshot.deletionGuards || [])];
     entry.promise = buildReaderBacklinkPageIndex({
       index: this.readerBacklinkIndex,
       anchorStore: this.readerAnchorStore,
@@ -4637,7 +4638,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } else if (readerTarget.kind === "annotation") {
       const toRows = (value) => Array.isArray(value) ? value : Object.values(value || {});
       const rows = toRows(effective?.annotations);
-      const tombstones = toRows(effective?.tombstones);
+      const tombstones = [...toRows(effective?.tombstones), ...toRows(effective?.deletionGuards)];
       const row = rows.find((entry) => entry?.uuid === readerTarget.id && entry.deleted !== true &&
         !tombstones.some((deleted) => deleted?.uuid === readerTarget.id));
       if (!row) throw new Error("批注目标已删除或不存在；链接不会重新绑定到其他批注。");

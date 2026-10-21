@@ -186,7 +186,8 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
         "The wheel appearance must reflect the bridge's acknowledged vocabulary state.");
       assert.equal(appearance.fill, expectedEnabled ? "rgb(105, 87, 213)" : "rgba(48, 52, 59, 0.933)",
         "The LingQ wedge should be visibly selected only while LingQ is enabled.");
-      assert.equal(appearance.labelColor, expectedEnabled ? "rgb(105, 87, 213)" : "rgb(255, 255, 255)");
+      assert.equal(appearance.labelColor, "rgb(255, 255, 255)",
+        "The deployed wheel keeps the LingQ caption readable on its accent wedge.");
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore,
         "Opening and closing the wheel must not change the persisted LingQ state.");
       await page.mouse.up({button:"middle"});

@@ -26514,7 +26514,9 @@ function onBeforeUnload(evt) {
   return true;
 }
 // Clockwise screen coordinates, starting at the top. LingQ toggles on release
-// like the other sectors; labels follow 1–5 counterclockwise.
+// like the other sectors; labels follow 1–5 counterclockwise while LingQ is
+// disabled. Once enabled, the wheel keeps the top LingQ exit sector and splits
+// the remaining arc into three disabled placeholders.
 const TOOL_WHEEL_ITEMS = [
   { label: "LingQ 模式", icon: "L", action: "toggle-lingq", mode: null },
   { label: "5 文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
@@ -26523,6 +26525,28 @@ const TOOL_WHEEL_ITEMS = [
   { label: "2 矩形框", icon: "□", mode: AnnotationEditorType.SQUARE },
   { label: "1 下划线", icon: "U̲", mode: AnnotationEditorType.UNDERLINE },
 ];
+function toolWheelItemsForState(vocabularyEnabled) {
+  if (vocabularyEnabled) {
+    return [
+      {
+        label: "退出 LingQ",
+        icon: "L",
+        action: "toggle-lingq",
+        mode: null,
+        startAngle: 240,
+        endAngle: 300,
+      },
+      { label: "预留 1", icon: "…", disabled: true, startAngle: 300, endAngle: 400 },
+      { label: "预留 2", icon: "…", disabled: true, startAngle: 400, endAngle: 500 },
+      { label: "预留 3", icon: "…", disabled: true, startAngle: 500, endAngle: 600 },
+    ];
+  }
+  return TOOL_WHEEL_ITEMS.map((item, index) => ({
+    ...item,
+    startAngle: 240 + index * 60,
+    endAngle: 300 + index * 60,
+  }));
+}
 function closeToolWheel() {
   this._toolWheel?.element.remove();
   this._toolWheel = null;
@@ -26534,25 +26558,30 @@ function toolWheelSector(wheel, evt) {
   if (distance < (wheel.radius / 5) * 1.3 || distance > wheel.radius) {
     return -1;
   }
-  return Math.floor(
-    ((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI / 6 + Math.PI * 2) %
-      (Math.PI * 2)) /
-      (Math.PI / 3),
+  let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  if (angle < 0) angle += 360;
+  if (angle < 240) angle += 360;
+  return wheel.items.findIndex((item) =>
+    angle >= item.startAngle && angle < item.endAngle,
   );
 }
 function selectToolWheel(index) {
-  const item = TOOL_WHEEL_ITEMS[index];
+  const item = this._toolWheel?.items[index];
   if (!item) {
     closeToolWheel.call(this);
     return;
   }
-  if (
-    item.mode !== null &&
-    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
-  ) {
+  // Permission-disabled annotation sectors stay visible so the wheel remains
+  // useful for LingQ, but selecting one must neither dismiss the wheel nor
+  // change PDF.js's read-only editor mode. LingQ placeholders are disabled
+  // for a different reason and should simply close the wheel.
+  if (item.permissionDisabled) {
     return;
   }
   closeToolWheel.call(this);
+  if (!item || item.disabled) {
+    return;
+  }
   if (item.action === "toggle-lingq") {
     window.dispatchEvent(new Event("pdf-reader-toggle-lingq"));
     return;
@@ -26619,17 +26648,30 @@ function onToolWheelDown(evt) {
   element.setAttribute("role", "menu");
   element.setAttribute("aria-label", "批注工具圆盘");
   element.style.cssText = `left:${evt.clientX - radius}px;top:${evt.clientY - radius}px;width:${radius * 2}px;height:${radius * 2}px;--tool-wheel-scale:${radius / 120}`;
+  // The bridge mirrors the acknowledged, persisted vocabularyEnabled state
+  // onto this document root; the wheel reads that single source at open time.
+  const layoutItems = toolWheelItemsForState(
+    document.documentElement.dataset.vocabularyEnabled === "true",
+  );
+  const permissionDisabled =
+    this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE;
+  const items = layoutItems.map((item) =>
+    permissionDisabled && item.mode !== null && item.mode !== undefined && !item.disabled
+      ? { ...item, disabled: true, permissionDisabled: true }
+      : item,
+  );
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "-120 -120 240 240");
   const sectors = [];
-  TOOL_WHEEL_ITEMS.forEach((item, index) => {
-    const start = ((index * 60 - 120) * Math.PI) / 180;
-    const end = start + Math.PI / 3;
+  items.forEach((item, index) => {
+    const start = (item.startAngle * Math.PI) / 180;
+    const end = (item.endAngle * Math.PI) / 180;
     const sector = document.createElementNS(svg.namespaceURI, "path");
     sector.setAttribute(
       "d",
       `M 0 0 L ${120 * Math.cos(start)} ${120 * Math.sin(start)} A 120 120 0 0 1 ${120 * Math.cos(end)} ${120 * Math.sin(end)} Z`,
     );
+    sector.classList.toggle("disabled", item.disabled === true);
     svg.append(sector);
     sectors.push(sector);
     const label = document.createElement("button");
@@ -26637,22 +26679,27 @@ function onToolWheelDown(evt) {
     label.tabIndex = -1;
     label.setAttribute("role", "menuitem");
     label.setAttribute("aria-label", item.label);
+    if (item.disabled) label.setAttribute("aria-disabled", "true");
     label.dataset.sector = index;
-    if (
-      item.mode !== null &&
-      this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE
-    ) {
+    const angle = (((item.startAngle + item.endAngle) / 2) * Math.PI) / 180;
+    if (item.permissionDisabled) {
       label.disabled = true;
       label.setAttribute("aria-disabled", "true");
       sector.classList.add("disabled");
     }
-    const angle = ((index * 60 - 90) * Math.PI) / 180;
-    label.style.left = `${50 + 32 * Math.cos(angle)}%`;
-    label.style.top = `${50 + 32 * Math.sin(angle)}%`;
+    // The active LingQ wheel's exit caption is longer than the former L-mode
+    // label. Keep it farther out in its narrow 60° sector so the caption has
+    // room without colliding with the center or adjacent placeholder wedges.
+    const labelRadius = index === 0 && items.length === 4 ? 40 : 32;
+    label.style.left = `${50 + labelRadius * Math.cos(angle)}%`;
+    label.style.top = `${50 + labelRadius * Math.sin(angle)}%`;
     const icon = document.createElement("span");
     icon.className = "pdfToolWheelIcon";
     icon.textContent = item.icon;
-    label.append(icon, document.createTextNode(item.label));
+    const caption = document.createElement("span");
+    caption.className = "pdfToolWheelLabelText";
+    caption.textContent = item.label;
+    label.append(icon, caption);
     element.append(label);
   });
   element.prepend(svg);
@@ -26670,6 +26717,7 @@ function onToolWheelDown(evt) {
     x: evt.clientX,
     y: evt.clientY,
     radius,
+    items,
     pointerId: evt.pointerId,
     held: true,
   };
@@ -26681,11 +26729,10 @@ function onToolWheelMove(evt) {
   }
   const index = toolWheelSector(wheel, evt);
   wheel.sectors.forEach((sector, i) => {
-    const item = TOOL_WHEEL_ITEMS[i];
-    const disabled =
-      item.mode !== null &&
-      this.pdfViewer.annotationEditorMode === AnnotationEditorType.DISABLE;
-    sector.classList.toggle("active", i === index && !disabled);
+    sector.classList.toggle(
+      "active",
+      i === index && wheel.items[i]?.disabled !== true,
+    );
   });
   evt.preventDefault();
   evt.stopImmediatePropagation();

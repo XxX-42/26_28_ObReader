@@ -88,6 +88,8 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
     "sameAnnotationPayload",
     "addHydratedEditor",
     "hydrateExternalAnnotation",
+    "externalAnnotationMaskRows",
+    "compareDeletionGuardVersion",
     "hydrateExternalAnnotationsForPage",
     "applyExternalAnnotationsSnapshot",
     "externalSourceIdentityMatchesViewer",
@@ -121,6 +123,7 @@ function makeHarness({ deserialize, onReadOnly } = {}) {
         sourceHash: "source-hash-a",
       },
       externalAnnotationRows: new Map(),
+      externalDeletionGuards: new Map(),
       externalAnnotationHydration: new Map(),
       externalAnnotationRefs: new Set(),
       externalSource: null,
@@ -574,4 +577,24 @@ test("confirmed bulk tombstones remove an already hydrated annotation rather tha
   assert.equal(state.externalAnnotationHydration.has(uuid), false);
   assert.equal(state.annotationSnapshot.has(editor.id), false);
   assert.equal(harness.getDeserializeCalls(), 0, "a tombstone never creates an editor");
+});
+
+test("expired deletion guards stay out of active rows and reject stale updates while newer restores win", async () => {
+  const harness = makeHarness();
+  const guard = { uuid: "expired-square", pageIndex: 0, embeddedRef: null,
+    version: { rev: 50, deviceId: "wal-device", seq: 0 } };
+  const snapshot = { ...walSnapshot([]), schemaVersion: 2, storageProtocol: "wal-sidecar-v3.2-jsonl",
+    tombstones: [], deletionGuards: [guard] };
+  harness.applyExternalAnnotationsSnapshot(snapshot);
+  assert.equal(harness.state.externalAnnotationRows.size, 0);
+  assert.equal(harness.state.externalDeletionGuards.size, 1);
+  assert.equal(await harness.hydrateExternalAnnotationsForPage(0), true);
+  assert.equal(harness.getDeserializeCalls(), 0, "guards never deserialize editor payloads");
+  harness.applyExternalAnnotationsSnapshot(walSnapshot([{ uuid: guard.uuid, timestamp: 40, opId: "late-old-set", rect: [1,2,30,40] }]));
+  assert.equal(harness.state.externalAnnotationRows.size, 0, "late stale state cannot revive the annotation");
+  harness.applyExternalAnnotationsSnapshot(walSnapshot([{ uuid: guard.uuid, timestamp: 51, opId: "intentional-restore", rect: [1,2,30,40] }]));
+  assert.equal(harness.state.externalDeletionGuards.size, 0);
+  assert.equal(harness.state.externalAnnotationRows.get(guard.uuid).deleted, false);
+  assert.equal(await harness.hydrateExternalAnnotationsForPage(0), true);
+  assert.equal(harness.getDeserializeCalls(), 1);
 });

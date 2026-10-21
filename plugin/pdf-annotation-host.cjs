@@ -766,6 +766,17 @@ function createPdfAnnotationHost({
     }
   }
 
+  async function watchDeletionRetention() {
+    if (disposed || store.sourceProtocol !== "wal-sidecar-v3.2-jsonl") return;
+    for (const [id, state] of sourceStates) {
+      const views = [...(documentViews.get(id) || [])].filter(view => !view.teardownStarted);
+      if (!views.length || views.some(view => view.annotationSourceMismatch || view.annotationSyncPending ||
+          view.annotationStorageUnavailable)) continue;
+      await broadcastDocument(state.document);
+      await scheduleSnapshotMaterialization(state.document);
+    }
+  }
+
   function readSnapshot(document) {
     const previous = snapshotReads.get(document.documentId) || Promise.resolve();
     const task = previous.catch(() => {}).then(() => store.readDocument(document));
@@ -1074,6 +1085,7 @@ function createPdfAnnotationHost({
     releaseView,
     establishNewCopy,
     broadcastDocument,
+    watchDeletionRetention,
     dispose,
   };
 }

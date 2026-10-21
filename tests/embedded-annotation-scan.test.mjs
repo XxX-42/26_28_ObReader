@@ -149,10 +149,10 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     '<link rel="stylesheet" href="/bridge.css"><script src="/bridge.js" data-channel="pdf-web-reader" data-token="embedded-bulk" data-ios-input-policy="true"></script><script src="viewer.mjs" type="module"></script>');
   const host = `<!doctype html><style>body{margin:0}iframe{width:900px;height:740px;border:0}</style><iframe id="reader" src="/pdfjs/web/viewer.html?file="></iframe><script>
     const frame=document.getElementById('reader'); const rows=new Map(${JSON.stringify(seedRows)}.map(row=>[row.uuid,row]));let identity=null;let sequence=0;
-    window.host={rows,errors:[],saves:0,opened:0};
-    const snapshot=()=>({schemaVersion:1,kind:'pdf-annotation-snapshot',documentId:${JSON.stringify(documentId)},source:identity&&{sourceHash:'xxh64-v1:test',pageCount:identity.pageCount,orderedPageIdentities:identity.orderedPageIdentities},annotations:[...rows.values()],legacyIdentities:[]});
+    window.host={rows,errors:[],saves:0,opened:0,useGuards:false};
+    const snapshot=()=>({schemaVersion:host.useGuards?2:1,kind:'pdf-annotation-snapshot',documentId:${JSON.stringify(documentId)},source:identity&&{sourceHash:'xxh64-v1:test',pageCount:identity.pageCount,orderedPageIdentities:identity.orderedPageIdentities},annotations:host.useGuards?[]:[...rows.values()],...(host.useGuards?{tombstones:[],deletionGuards:[...rows.values()].filter(r=>r.deleted).map(r=>({uuid:r.uuid,pageIndex:r.pageIndex,embeddedRef:r.embeddedRef,version:{rev:r.clock.timestamp,deviceId:r.clock.deviceId,seq:r.clock.logical}}))}:{}),legacyIdentities:[]});
     const send=(data)=>frame.contentWindow.postMessage({channel:'pdf-web-reader',token:'embedded-bulk',documentId:${JSON.stringify(documentId)},openRequest:sequence,...data},'*');
-    window.reopen=async()=>{sequence++;const data=await fetch('/source.pdf').then(r=>r.arrayBuffer());send({type:'open',data,filename:'native.pdf',autoSave:false,sourceHashConfirmed:!!identity,externalAnnotations:identity?snapshot():null});};
+    window.reopen=async(options={})=>{sequence++;const data=await fetch('/source.pdf').then(r=>r.arrayBuffer());send({type:'open',data,filename:'native.pdf',autoSave:false,sourceHashConfirmed:!!identity&&options.sourceHashConfirmed!==false,externalAnnotations:identity?snapshot():null});};
     addEventListener('message',event=>{if(event.source!==frame.contentWindow)return;const m=event.data;if(m?.token!=='embedded-bulk')return;
       if(m.type==='ready'&&!sequence)void reopen();
       if(m.type==='opened')host.opened++;
@@ -167,7 +167,7 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
       if(name==='/source.pdf'){res.setHeader('Content-Type','application/pdf');return res.end(bytes);}
       if(name==='/pdfjs/web/viewer.html'){res.setHeader('Content-Type','text/html');return res.end(viewerHtml);}
       if(name==='/bridge.js'){res.setHeader('Content-Type','text/javascript');return res.end(bridge);}
-      if(name==='/bridge.css'){res.setHeader('Content-Type','text/css');return res.end(await readFile(path.join(root,'viewer-adapter/bridge.css')));}
+      if(name==='/bridge.css'){res.setHeader('Content-Type','text/css');return res.end(await readFile(process.env.PDF_READER_BRIDGE_CSS || path.join(root,'viewer-adapter/bridge.css')));}
       const relative=name.startsWith('/pdfjs/')?name.slice(7):name.startsWith('/build/')?name.slice(1):'web'+name;
       const target=path.resolve(vendor,relative);if(!isWithinDirectory(vendor,target))throw new Error('path');
       const ext=path.extname(target);res.setHeader('Content-Type',({'.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.ftl':'text/plain','.svg':'image/svg+xml'})[ext]||'application/octet-stream');
@@ -246,13 +246,43 @@ test("embedded AP marks delete, persist, and stay absent after reopen while PDF 
     assert.ok(firstPaints.length>0,'record actual first native canvas render');
     assert.ok(firstPaints.every(rgb=>rgb.every(c=>c>240)),`deleted AP must never be painted, including the first frame: ${JSON.stringify(firstPaints)}`);
     assert.equal(await viewer.$$eval('.annotationLayer .linkAnnotation',nodes=>nodes.filter(n=>getComputedStyle(n).display!=='none').length),1,'native PDF link remains');
-    await viewer.click('#editorInkButton');
-    await new Promise(resolve=>setTimeout(resolve,150));
-    const visibleNative=await viewer.evaluate(()=>[...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].filter(e=>!e.deleted).map(e=>({id:e.id,ref:e.annotationElementId})));
-    assert.deepEqual(visibleNative,[],'tombstoned native marks must stay absent after selecting Ink');
     assert.equal(await page.evaluate(()=>[...host.rows.values()].filter(r=>r.deleted).length),2);
     assert.deepEqual(await page.evaluate(()=>host.errors),[]);
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),beforeHash);
+    // Expired tombstones are transmitted as guards, with identity confirmation
+    // deliberately arriving after the first canvas render. Inspect actual
+    // display visibility as well as pixels: hidden pre-confirmation paints
+    // must never expose the original AP while the replacement render runs.
+    for (const useGuards of [false,true]) {
+    await viewer.evaluate(()=>{
+      window.__guardPaints=[];
+      if(window.__guardPaintListener)PDFViewerApplication.eventBus._off('pagerendered',window.__guardPaintListener);
+      window.__guardPaintListener=({pageNumber})=>{
+        if(pageNumber!==1)return;
+        const pv=PDFViewerApplication.pdfViewer.getPageView(0);if(!pv?.canvas)return;
+        const [x,y]=pv.viewport.convertToViewportPoint(65,65);
+        const rgb=[...pv.canvas.getContext('2d').getImageData(Math.floor(x*pv.outputScale.sx),Math.floor(y*pv.outputScale.sy),1,1).data].slice(0,3);
+        window.__guardPaints.push({rgb,visible:getComputedStyle(pv.canvas).visibility==='visible'});
+      };
+      PDFViewerApplication.eventBus._on('pagerendered',window.__guardPaintListener);
+    });
+    await page.evaluate(useGuards=>{host.useGuards=useGuards;return reopen({sourceHashConfirmed:false});},useGuards);
+    await page.waitForFunction(expected=>host.opened===expected||host.errors.length>0,{},useGuards?4:3);
+    assert.deepEqual(await page.evaluate(()=>host.errors),[],'guard reopen has no bridge errors');
+    await viewer.waitForFunction(()=>!document.documentElement.classList.contains('pdfReaderNativeAnnotationLayersPending')&&
+      PDFViewerApplication.pdfViewer.getPageView(0)?.renderingState===3&&
+      !PDFViewerApplication.pdfViewer.getPageView(0)?.div.hasAttribute('data-pdf-reader-mask-pending'));
+    const guarded=await pixel();
+    assert.ok(guarded.every(c=>c>240),`expired guard still hides original AP: ${guarded}`);
+    const paints=await viewer.evaluate(()=>window.__guardPaints);
+    assert.ok(paints.length>0,'guard case observes real canvas paints');
+    assert.ok(paints.every(p=>!p.visible||p.rgb.every(c=>c>240)),`no visible old AP frame: ${JSON.stringify(paints)}`);
+    }
+    await viewer.click('#editorInkButton');
+    const guardEditors=await viewer.evaluate(()=>[...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].filter(e=>!e.deleted).length);
+    assert.equal(guardEditors,0,'guards do not hydrate visible editors');
+    assert.equal(await viewer.$$eval('.annotationLayer .linkAnnotation',nodes=>nodes.filter(n=>getComputedStyle(n).display!=='none').length),1);
+    assert.deepEqual(await page.evaluate(()=>host.errors),[]);
     console.log(JSON.stringify({before,after,reopened,firstPaints,deleted:2,linksPreserved:1,sourceUnchanged:true}));
   } finally {await cleanupBrowserTestResources({browser,ownedPages:browser?await browser.pages():[],server});}
 });

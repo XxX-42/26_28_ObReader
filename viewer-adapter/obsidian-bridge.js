@@ -159,6 +159,7 @@
     annotationRuntimeBindings: new Map(),
     annotationTrackingFailure: null,
     annotationSnapshot: new Map(),
+    externalDeletionGuards: new Map(),
     annotationOperations: [],
     dirtyAnnotationRevisions: new Map(),
     dirtyPageRevisions: new Map(),
@@ -1471,7 +1472,7 @@
       });
     }
 
-    for (const row of state.externalAnnotationRows.values()) {
+    for (const row of externalAnnotationMaskRows()) {
       if (!row?.uuid) continue;
       if (row.deleted === true || state.pendingBulkDeletedUuids.has(row.uuid) ||
           state.dirtyDeletedAnnotationIds.has(row.uuid)) {
@@ -2523,12 +2524,31 @@
       legacyIdentityRefs.add(`${row.pageIndex}\0${ref}`);
       return { uuid: row.uuid, ref, pageIndex: row.pageIndex, kind: normalizeSyncKind(row.kind) };
     });
+    const deletionGuards = [];
+    const guardIds = new Set();
+    if (value.deletionGuards !== undefined && !Array.isArray(value.deletionGuards)) {
+      throw new Error("External PDF deletion guard list is invalid.");
+    }
+    for (const guard of value.deletionGuards || []) {
+      const version = guard?.version;
+      if (!guard || typeof guard.uuid !== "string" || !guard.uuid || guardIds.has(guard.uuid) ||
+          !Number.isSafeInteger(guard.pageIndex) || guard.pageIndex < 0 ||
+          !version || !Number.isSafeInteger(version.rev) || version.rev < 0 ||
+          !Number.isSafeInteger(version.seq) || version.seq < 0 ||
+          typeof version.deviceId !== "string" || !version.deviceId ||
+          (guard.embeddedRef != null && !canonicalPdfAnnotationRef(guard.embeddedRef))) {
+        throw new Error("External PDF deletion guard is invalid.");
+      }
+      guardIds.add(guard.uuid);
+      deletionGuards.push({ uuid: guard.uuid, version: { ...version }, pageIndex: guard.pageIndex,
+        embeddedRef: guard.embeddedRef == null ? null : canonicalPdfAnnotationRef(guard.embeddedRef) });
+    }
     const seen = new Set();
     const annotations = [];
     for (const row of rows) {
       if (
         !row || typeof row !== "object" ||
-        typeof row.uuid !== "string" || !row.uuid || seen.has(row.uuid) ||
+        typeof row.uuid !== "string" || !row.uuid || seen.has(row.uuid) || guardIds.has(row.uuid) ||
         !EXTERNAL_ANNOTATION_KINDS.has(normalizeSyncKind(row.kind)) ||
         !Number.isSafeInteger(row.pageIndex) || row.pageIndex < 0 ||
         !row.clock || !Number.isSafeInteger(row.clock.timestamp) ||
@@ -2591,7 +2611,19 @@
       legacyIdentities,
       annotations,
       compactInkEncoding: value.compactInkEncoding === true,
+      deletionGuards,
     };
+  }
+
+  function compareDeletionGuardVersion(guard, row) {
+    const right = row.version || { rev: row.clock.timestamp, deviceId: row.clock.deviceId, seq: row.clock.logical };
+    const left = guard.version;
+    return left.rev - right.rev || (left.deviceId < right.deviceId ? -1 : left.deviceId > right.deviceId ? 1 : 0) || left.seq - right.seq;
+  }
+
+  function externalAnnotationMaskRows() {
+    return [...state.externalAnnotationRows.values(), ...(state.externalDeletionGuards?.values() || [])].map(row =>
+      row.version && !row.clock ? { ...row, deleted: true } : row);
   }
 
   function applyLegacyAnnotationIdentities(identities = []) {
@@ -3329,7 +3361,7 @@
 
   async function hydrateRenderedExternalPages(app = state.app) {
     const pageViews = app?.pdfViewer?._pages;
-    if (!Array.isArray(pageViews) || !state.externalAnnotationRows.size) return;
+    if (!Array.isArray(pageViews) || (!state.externalAnnotationRows.size && !state.externalDeletionGuards?.size)) return;
     for (const pageView of pageViews) {
       const layer = pageView?.annotationEditorLayer?.annotationEditorLayer;
       if (!layer || !Number.isSafeInteger(layer.pageIndex)) continue;
@@ -3407,7 +3439,7 @@
 
   function observeExternalAnnotationLayerMutations() {
     stopExternalAnnotationLayerObserver();
-    const rows = [...state.externalAnnotationRows.values()]
+    const rows = externalAnnotationMaskRows()
       .filter((row) => row.embeddedRef);
     if (!rows.length || typeof MutationObserver !== "function") return false;
     const pageIndices = new Set(rows.map((row) => row.pageIndex));
@@ -3462,7 +3494,7 @@
     if (token && (token.documentId !== documentId || token.openRequest !== openRequest)) {
       return false;
     }
-    const rows = [...state.externalAnnotationRows.values()];
+    const rows = externalAnnotationMaskRows();
     const deletedRefs = [...new Set(rows
       .filter((row) => row.deleted === true && row.embeddedRef)
       .map((row) => canonicalPdfAnnotationRef(row.embeddedRef))
@@ -3555,6 +3587,9 @@
     if (restoreEmbedded) restoreSuppressedEmbeddedAnnotations(retainedEmbeddedRefs);
     if (clearRows) {
       state.externalAnnotationRows.clear();
+      state.externalDeletionGuards?.clear();
+      state.maskPaintCleanup?.();
+      state.maskPaintCleanup = null;
       state.externalAnnotationRefs.clear();
       state.externalSource = null;
       state.pendingExternalAnnotationsUpdate = null;
@@ -3924,10 +3959,33 @@
     // Reuse PDF.js page rendering only for loaded pages with exact embedded
     // references. Its update preserves editor/selection layers and source bytes.
     const pages = new Set(rows.filter(row => row.embeddedRef).map(row => row.pageIndex));
+    state.maskPaintCleanup?.();
+    const cleanups = [];
+    const pdfDocument = app.pdfDocument;
+    const session = state.openSession;
+    const cleanup = () => { for (const dispose of cleanups.splice(0)) dispose(); };
+    state.maskPaintCleanup = cleanup;
+    session?.signal.addEventListener("abort", cleanup, { once: true });
+    cleanups.push(() => session?.signal.removeEventListener("abort", cleanup));
     let updated = false;
     for (const pageIndex of pages) {
       const view = app.pdfViewer?.getPageView?.(pageIndex);
       if (view?.canvas && typeof view.update === "function") {
+        const bus = app.eventBus;
+        if (view.div && bus?._on && bus?._off) {
+          // update() replaces Canvas asynchronously. Hide the previous AP
+          // until the render using the confirmed deletion mask finishes.
+          view.div.setAttribute("data-pdf-reader-mask-pending", "");
+          const onRendered = (event) => {
+            if (event.pageNumber !== pageIndex + 1 || event.error || app.pdfDocument !== pdfDocument ||
+                state.openSession !== session) return;
+            view.div.removeAttribute("data-pdf-reader-mask-pending");
+            bus._off("pagerendered", onRendered);
+            runtimeLogRecord("external-annotation.mask-page-rendered", { pageIndex });
+          };
+          bus._on("pagerendered", onRendered);
+          cleanups.push(() => { bus._off("pagerendered", onRendered); view.div.removeAttribute("data-pdf-reader-mask-pending"); });
+        }
         view.update({});
         updated = true;
       }
@@ -3937,7 +3995,7 @@
 
   async function hydrateExternalAnnotationsForPage(pageIndex) {
     if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || state.disposed) return true;
-    const rows = [...state.externalAnnotationRows.values()]
+    const rows = externalAnnotationMaskRows()
       .filter((row) => row.pageIndex === pageIndex && (
         row.deleted === true
           ? !state.dirtyAnnotationRevisions.has(row.uuid) || state.pendingBulkDeletedUuids.has(row.uuid)
@@ -3945,13 +4003,13 @@
             !state.dirtyDeletedAnnotationIds.has(row.uuid)
       ));
     if (!rows.length) return true;
-    const deletedRefs = [...state.externalAnnotationRows.values()]
+    const deletedRefs = externalAnnotationMaskRows()
       .filter(row => row.deleted && row.embeddedRef &&
         (!state.dirtyAnnotationRevisions.has(row.uuid) || state.pendingBulkDeletedUuids.has(row.uuid)))
       .map(row => canonicalPdfAnnotationRef(row.embeddedRef)).filter(Boolean);
     const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(state.app?.pdfDocument?.annotationStorage, deletedRefs);
     if (maskChanged) {
-      repaintEmbeddedAnnotationMaskPages([...state.externalAnnotationRows.values()]);
+      repaintEmbeddedAnnotationMaskPages(externalAnnotationMaskRows());
     }
     const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
     if (!getAnnotationEditorManager() || !pageView?.annotationEditorLayer?.annotationEditorLayer) {
@@ -4028,12 +4086,16 @@
     const incoming = new Map(normalized.annotations.map((row) => [row.uuid, row]));
     const dirtyIds = new Set(captureDirtySyncState(state.revision).dirtyAnnotationIds);
     const merged = reset ? new Map() : new Map(state.externalAnnotationRows);
+    const guards = reset ? new Map() : new Map(state.externalDeletionGuards);
     const deferredUuids = [];
     for (const row of incoming.values()) {
       if (dirtyIds.has(row.uuid)) {
         deferredUuids.push(row.uuid);
         continue;
       }
+      const guard = guards.get(row.uuid);
+      if (guard && compareDeletionGuardVersion(guard, row) >= 0) continue;
+      guards.delete(row.uuid);
       const previous = merged.get(row.uuid);
       if (!previous || row.authoritative || compareSyncStamps(
         { timestamp: row.clock.timestamp, logical: row.clock.logical, actorId: row.clock.deviceId, operationId: row.clock.opId },
@@ -4060,9 +4122,19 @@
         }
       }
     }
+    for (const guard of normalized.deletionGuards || []) {
+      if (dirtyIds.has(guard.uuid)) { deferredUuids.push(guard.uuid); continue; }
+      const row = merged.get(guard.uuid);
+      const previous = guards.get(guard.uuid);
+      if ((row && compareDeletionGuardVersion(guard, row) < 0) ||
+          (previous && compareDeletionGuardVersion(guard, previous) < 0)) continue;
+      merged.delete(guard.uuid);
+      guards.set(guard.uuid, guard);
+    }
     state.externalAnnotationRows = merged;
+    state.externalDeletionGuards = guards;
     state.externalAnnotationRefs = new Set(
-      [...merged.values()].filter((row) => row.embeddedRef).map((row) => row.embeddedRef),
+      externalAnnotationMaskRows().filter((row) => row.embeddedRef).map((row) => row.embeddedRef),
     );
     state.externalSource = normalized.source;
     state.compactInkEncoding = normalized.compactInkEncoding === true;
@@ -4076,7 +4148,7 @@
     state.externalSourceConfirmed = true;
     for (const row of merged.values()) seedSyncClock({ identities: [row.clock] });
     return {
-      pages: [...incoming.values()].map((row) => row.pageIndex),
+      pages: [...new Set([...incoming.values(), ...guards.values()].map((row) => row.pageIndex))],
       deferredUuids,
     };
   }
@@ -9347,7 +9419,8 @@
   function installInitialDeletionMask(app, session, snapshot, sourceHashConfirmed) {
     const viewer = app.pdfViewer;
     if (sourceHashConfirmed !== true || !viewer || typeof viewer.setDocument !== "function") return () => {};
-    const refs = snapshot.annotations.filter(row => row.deleted && row.embeddedRef).map(row => row.embeddedRef);
+    const refs = [...snapshot.annotations.filter(row => row.deleted), ...(snapshot.deletionGuards || [])]
+      .filter(row => row.embeddedRef).map(row => row.embeddedRef);
     if (!refs.length) return () => {};
     const original = viewer.setDocument;
     const wrapped = function (pdfDocument, ...args) {
@@ -9359,7 +9432,13 @@
       return original.call(this, pdfDocument, ...args);
     };
     viewer.setDocument = wrapped;
-    return () => { if (viewer.setDocument === wrapped) viewer.setDocument = original; };
+    const restore = () => {
+      if (viewer.setDocument === wrapped) viewer.setDocument = original;
+      session.signal.removeEventListener("abort", restore);
+    };
+    session.signal.addEventListener("abort", restore, { once: true });
+    runtimeLogRecord("external-annotation.initial-mask-installed", { deletedReferences: refs.length });
+    return restore;
   }
 
   function createOpenSession(documentId) {
@@ -9739,6 +9818,7 @@
       applyLegacyAnnotationIdentities(provisionalExternal.legacyIdentities);
       state.externalAnnotationRows.clear();
       state.externalAnnotationRefs.clear();
+      state.externalDeletionGuards.clear();
       state.annotationSnapshot = getAnnotationStorageRows(app);
       const loadedSnapshot = snapshotChanges(app);
       restoreChanges(app, {
@@ -10536,7 +10616,7 @@
           ({ pageNumber }) => runAnnotationObserver("viewer.annotation-layer", () => {
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
               const pageIndex = pageNumber - 1;
-              for (const row of state.externalAnnotationRows.values()) {
+              for (const row of externalAnnotationMaskRows()) {
                 if (row.pageIndex === pageIndex && row.embeddedRef) {
                   suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
                 }

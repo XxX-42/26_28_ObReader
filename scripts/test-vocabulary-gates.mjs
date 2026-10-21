@@ -140,6 +140,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/controlled-close-nonblocking.test.mjs",
     "tests/controlled-close-publication.test.mjs",
     "tests/default-routing.test.mjs",
+    "tests/deletion-retention.test.mjs",
     "tests/dictionary-cache.test.mjs",
     "tests/dictionary-host-state.test.mjs",
     "tests/detached-writeback-integration.test.mjs",

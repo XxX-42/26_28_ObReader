@@ -50,6 +50,7 @@ test("tool wheel closes on outside release while center and sector behavior stay
       x: 100,
       y: 100,
       radius: 96,
+      items: Array.from({ length: 6 }, (_, index) => ({ startAngle: 240 + index * 60, endAngle: 300 + index * 60 })),
     },
   });
   const release = (x, y) => ({
@@ -142,6 +143,7 @@ test("LingQ sector stays open while previewing and toggles only on middle-button
       x: 100,
       y: 100,
       radius: 96,
+      items: Array.from({ length: 6 }, (_, index) => ({ startAngle: 240 + index * 60, endAngle: 300 + index * 60 })),
       pointerId: 7,
       sectors: Array.from({ length: 6 }, () => {
         const active = new Set();

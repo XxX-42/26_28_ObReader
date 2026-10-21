@@ -21,7 +21,8 @@ import {
   validateManifest,
 } from "../scripts/test-vocabulary-gates.mjs";
 
-function fakeSpawn({ delayMs = 5, failureFor = () => false, outputFor = null, counters = null } = {}) {
+function fakeSpawn({ delayMs = 5, failureFor = () => false, outputFor = null, counters = null, holdUntilStarted = 0 } = {}) {
+  const held = [];
   return (_command, _args, options) => {
     const child = new EventEmitter();
     child.stdout = new PassThrough();
@@ -35,7 +36,7 @@ function fakeSpawn({ delayMs = 5, failureFor = () => false, outputFor = null, co
       counters.maxActive = Math.max(counters.maxActive, counters.active);
       counters.environments.push(options.env);
     }
-    setTimeout(() => {
+    const finish = () => {
       const stdout = outputFor
         ? outputFor({ testFile, round, options, fail })
         : fail
@@ -45,7 +46,12 @@ function fakeSpawn({ delayMs = 5, failureFor = () => false, outputFor = null, co
       child.stderr.end(fail ? "raw stderr for planned failure\n" : "raw stderr for success\n");
       if (counters) counters.active -= 1;
       child.emit("close", fail ? 17 : 0, null);
-    }, delayMs);
+    };
+    if (counters && counters.started <= holdUntilStarted) {
+      held.push(finish);
+      // runCases awaits spawnImpl before installing its close listener.
+      if (counters.started === holdUntilStarted) for (const release of held) setImmediate(release);
+    } else setTimeout(finish, delayMs);
     return child;
   };
 }
@@ -192,7 +198,7 @@ test("fast process pool never exceeds its cap and gives each child private direc
     artifactsRoot: path.join(root, "artifacts"),
     parallelism: 3,
     gate: "fast",
-    spawnImpl: fakeSpawn({ delayMs: 8, counters }),
+    spawnImpl: fakeSpawn({ counters, holdUntilStarted: 3 }),
   });
   assert.equal(counters.started, cases.length);
   assert.equal(counters.maxActive, 3);

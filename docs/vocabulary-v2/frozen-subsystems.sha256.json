@@ -9,6 +9,18 @@
       "viewer-adapter/input/ios-direct-manipulation-controller.js": "ef95674772c15b6b1d208ecc63871b407ce3f53035b19595221df9a26bdea70c"
     }
   },
+  "reviewedDeletionRetentionOverrides": {
+    "reason": "2026-10-22: event-driven 48-day active tombstone projection; preserve installed Windows LingQ wheel assets without upgrading PDF.js. Original frozen hashes remain below.",
+    "sha256": {
+      "plugin/pdf-annotation-host.cjs": "ebbaf2d966321d8502b18f504d6b937941547de2e36d9ef8e11577da913ff333",
+      "plugin/storage/jsonl-checkpoint.cjs": "8383d59bd6adb275da64249b9e2fbd4147fa42d05500c7d3989842702bb51d93",
+      "plugin/storage/wal-annotation-store.cjs": "48d71c312f4000b85829ee5cbbe4359aeb755431d2bf7ae67c7e870864edaac8",
+      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "f4c16cc568f4467f2c197888e36d52b39c9f7a7fc980356e8f65ad076bcc0e8d",
+      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "9fe5d94acf477bed9c975b1c4de2e067f947f7c1d4e820660999f3b2d20dc3a6",
+      "vendor/pdfjs-generic-legacy/web/viewer.css": "56abcc904746b55f49ca80ef0b0d358413d8eb0a90cdface5e76d7a6e03f75f7",
+      "vendor/pdfjs-generic-legacy/web/viewer.mjs": "9d49b93b72403ffd1a596a2225341598411286c50ced21477a0e71caaa80b710"
+    }
+  },
   "sha256": {
     "plugin/pdf-annotation-host.cjs": "9f9340e9d57fce9fa4d79c6392022705923534bdfc40e3267f31f9d4f9b7b2de",
     "plugin/pdf-annotation-store.cjs": "96924d0682f53e799501673b1a180481d263d4e1e6ad7a9ca4529c4b7eb78d53",

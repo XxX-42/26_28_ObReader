@@ -161,6 +161,7 @@ function createJsonlCheckpointStore({ adapter, root, hash, verifyHash, token } =
       sourceHash: document.source.sourceHash, watermarks,
       annotations: Object.values(state.annotations || {}),
       tombstones: Object.values(state.tombstones || {}),
+      ...(state.deletionGuards?.length ? { deletionGuards: state.deletionGuards } : {}),
       routing: state.routing || null };
     return io.writeJsonAtomic(snapshotPath(document), value, {
       validate: (candidate) => {

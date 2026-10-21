@@ -95,6 +95,7 @@ test("bulk target planning ignores acknowledged stale upserts but includes dirty
     const EXTERNAL_ANNOTATION_KINDS = new Set(["Ink"]);
     function normalizeSyncKind(kind) { return kind; }
     function canonicalPdfAnnotationRef(ref) { return ref || null; }
+    ${extractFunction("externalAnnotationMaskRows")}
     ${extractFunction("collectKnownAnnotationDeletionTargets")}
     return collectKnownAnnotationDeletionTargets();
   })()`;
