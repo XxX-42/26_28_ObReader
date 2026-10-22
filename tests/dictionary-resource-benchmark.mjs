@@ -319,12 +319,20 @@ try {
   const record = { event: "harness-failed", at: new Date().toISOString(),
     error: { name: error?.name || "Error", message: String(error?.message || error), stack: error?.stack || null } };
   await appendFile(resultsPath, `${JSON.stringify(record)}\n`);
-  throw error;
+  failedRuns += 1;
+  for (const planned of plan.filter(row => !finishedRuns.some(done => done.sequence === row.sequence))) {
+    const unrun = { ...planned, runSetId, status: "NOT_RUN", reason: "Harness infrastructure aborted the declared plan",
+      error: record.error };
+    finishedRuns.push(unrun);
+    await appendFile(resultsPath, `${JSON.stringify(unrun)}\n`);
+  }
 } finally {
   await new Promise(resolve => server.close(resolve));
 }
 
-const summary = { runSetId, plannedRuns: plan.length, completedRuns: finishedRuns.length,
+const summary = { runSetId, plannedRuns: plan.length,
+  completedRuns: finishedRuns.filter(run => run.status !== "NOT_RUN").length,
+  notRun: finishedRuns.filter(run => run.status === "NOT_RUN").length,
   passedRuns: finishedRuns.filter(run => run.status === "passed").length,
   failedRuns, status: failedRuns ? "FAILED" : "COMPLETE",
   runPlan: planPath, runResults: resultsPath, variantOrder: predeclaredPlan.variantOrder };
