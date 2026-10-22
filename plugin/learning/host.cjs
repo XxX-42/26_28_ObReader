@@ -58,7 +58,13 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
       await routeFor(anchor);
       return liveView(anchor) ? verified(anchor) : failed("source-not-currently-verified");
     },
-    verifyAnnotation: async anchor => await annotationRow(anchor) ? verified(anchor) : failed("annotation-deleted-or-unavailable"),
+    verifyAnnotation: async anchor => {
+      const row = await annotationRow(anchor);
+      if (!row) return failed("annotation-deleted-or-unavailable");
+      const currentVersion = fromAnnotation(row)?.annotationVersion || null;
+      return canonicalHash(currentVersion) === canonicalHash(anchor.annotationVersion || null)
+        ? verified(anchor) : failed("annotation-version-changed");
+    },
     verifyReaderAnchor: async anchor => {
       const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
       return liveView(anchor) && stored && stored.sourceHash === anchor.sourceHash && stored.pageIdentity === anchor.pageIdentity
@@ -93,9 +99,10 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
     if (!source?.targetText?.trim()) throw unresolved("target-text-unavailable");
     const service = await getService();
     if (disposed || plugin.isUnloading || !(await guard())) throw unresolved("source-changed-before-draft");
-    const checkedService = { ...service, confirmDraft: async (...args) => {
+    const sourceGuard = async () => !disposed && !plugin.isUnloading && await guard();
+    const checkedService = { ...service, confirmDraft: async (draftId, options = {}) => {
       if (disposed || plugin.isUnloading || !(await guard())) throw Object.assign(new Error("来源已变化，草稿已保留；请重新核对来源。"), { code: "LEARNING_SOURCE_STALE" });
-      return service.confirmDraft(...args);
+      return service.confirmDraft(draftId, { ...options, sourceGuard });
     } };
     const modal = new DraftModal(plugin.app, { service: checkedService, source });
     const onClose = modal.onClose?.bind(modal);

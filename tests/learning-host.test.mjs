@@ -215,6 +215,7 @@ test("Context confirmation rechecks the current source after asynchronous Anchor
 });
 
 test("audit: source revocation during post-verification snapshot loading prevents confirmation", {timeout:5000}, async () => {
+  for (const mutation of ["source-revoked", "annotation-text-changed", "annotation-version-changed"]) {
   const f = fixture();
   const modal = await f.host.fromAnnotationRequest(f.view, f.request);
   modal.promptInput.value = "Question";
@@ -234,11 +235,31 @@ test("audit: source revocation during post-verification snapshot loading prevent
   };
   const confirming = modal.confirm();
   await entered;
-  f.view.annotationHydrationAllowed = false;
-  f.view.annotationSourceMismatch = true;
+  if (mutation === "source-revoked") {
+    f.view.annotationHydrationAllowed = false;
+    f.view.annotationSourceMismatch = true;
+  } else if (mutation === "annotation-text-changed") {
+    f.row.payload.editor.text = "changed after verification";
+  } else {
+    f.row.version = { ...f.row.version, rev: 2 };
+  }
   release();
   await assert.rejects(confirming, error => error.code === "LEARNING_SOURCE_STALE");
   assert.equal(f.adapter.files.size, 0);
+  assert.equal(modal.closed, false, mutation);
+  assert.equal(modal.promptInput.value, "Question", mutation);
+  }
+});
+
+test("annotation resolution rejects a changed canonical version for the same UUID", async () => {
+  const f = fixture();
+  const anchor = semantic.fromAnnotation(f.row, {
+    documentId: f.route.documentId, docKey: f.route.docKey,
+    sourcePath: f.route.sourcePath, sourceHash: f.route.source.sourceHash, pageIdentity: "page-test",
+  });
+  assert.equal((await f.host.resolveSource(anchor)).status, "verified");
+  f.row.version = { ...f.row.version, rev: 2 };
+  assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
 });
 
 test("mixed Review rows preserve canonical learning state and source fields", async () => {

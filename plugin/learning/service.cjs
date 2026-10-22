@@ -421,8 +421,9 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     return { status: drafts.delete(draftId) ? "cancelled" : "missing", writes: 0 };
   }
 
-  async function confirmDraft(draftId, { actionId } = {}) {
+  async function confirmDraft(draftId, { actionId, sourceGuard } = {}) {
     const selectedActionId = validateActionId(actionId);
+    if (sourceGuard !== undefined && typeof sourceGuard !== "function") throw new TypeError("Learning sourceGuard must be a function.");
     return enqueue(async () => {
       const draft = drafts.get(draftId);
       if (!draft) throw codedError("LEARNING_DRAFT_MISSING", "The learning draft is no longer available.");
@@ -470,6 +471,13 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
         entities: [{ storeId: LEARNING_STORE_ID, entityId: item.itemId, kind: "entityCreate" }],
         stores: makeHistoryStores(plan), changes: [change],
       };
+      // Planning awaits storage I/O. Recheck both authoritative source evidence
+      // and the Host's captured draft identity after those awaits. This is a
+      // pre-commit validity check, not an atomic transaction with source files.
+      await verifyExactSource(draft.source);
+      if (sourceGuard && !(await sourceGuard())) {
+        throw codedError("LEARNING_SOURCE_STALE", "The selected source changed while preparing confirmation; the draft remains available.");
+      }
       const result = await coordinator.commit({
         actionId: selectedActionId,
         writes: plan.writes,
@@ -853,7 +861,7 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     if (!supported.has(format)) throw codedError("LEARNING_EXPORT_FORMAT_INVALID", "Export format must be json, markdown, csv, or anki-tsv.");
     return runtime.exclusive(async () => {
       const loaded = await load();
-      const batches = await history.listBatches({ deviceIds: [coordinator.deviceId] });
+      const batches = await history.listBatches();
       const allEvents = [];
       const eventById = new Map();
       for (const batch of batches) {
