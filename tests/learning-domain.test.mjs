@@ -39,13 +39,13 @@ function markdownSource(sourcePath, { offset = 5, text = "quoted words", line = 
   };
 }
 
-function createFixture({ adapter = new VocabularyMemoryAdapter(), initialTime = "2026-10-22T10:00:00.000Z" } = {}) {
+function createFixture({ adapter = new VocabularyMemoryAdapter(), initialTime = "2026-10-22T10:00:00.000Z", deviceId = "learning-domain-device" } = {}) {
   let id = 0;
   let currentTime = initialTime;
   let sourceVerified = true;
   const coordinator = new VocabularyTransactionCoordinator({
     adapter,
-    deviceId: "learning-domain-device",
+    deviceId,
     sessionId: "learning-domain-session",
     now: () => Date.parse(currentTime),
     makeId: () => `tx-${++id}`,
@@ -216,6 +216,17 @@ test("Rating undo restores the event head, retains immutable events, and a new r
   assert.deepEqual(events.map((event) => event.actionId).sort(), ["branch-rate-1", "branch-rate-2", "branch-rate-3"]);
   assert.equal(events.find((event) => event.actionId === "branch-rate-2").onCurrentBranch, false);
   assert.equal(events.find((event) => event.actionId === "branch-rate-3").onCurrentBranch, true);
+});
+
+test("audit: export on another device retains immutable ratings and event ancestry", async () => {
+  const first = createFixture({ deviceId: "device-a" });
+  const service = first.createService();
+  const saved = await confirm(service);
+  const rated = await service.rate(saved.item.itemId, "remember", { actionId: "device-a-rating" });
+  const second = createFixture({ adapter: first.adapter, deviceId: "device-b" });
+  const exported = JSON.parse((await second.createService().exportItems("json")).content);
+  assert.equal(exported.items[0].lastReviewEvent.eventId, rated.event.eventId);
+  assert.deepEqual(exported.items[0].reviewHistory.map(event => event.eventId), [rated.event.eventId]);
 });
 
 test("Leitner scheduler matches the existing Review service UTC transitions", async () => {

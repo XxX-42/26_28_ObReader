@@ -214,6 +214,33 @@ test("Context confirmation rechecks the current source after asynchronous Anchor
   assert.equal(f.adapter.files.size,0,'a revoked source must not commit any learning item or History');
 });
 
+test("audit: source revocation during post-verification snapshot loading prevents confirmation", {timeout:5000}, async () => {
+  const f = fixture();
+  const modal = await f.host.fromAnnotationRequest(f.view, f.request);
+  modal.promptInput.value = "Question";
+  let verified = false, release, reached;
+  const held = new Promise(resolve => { release = resolve; });
+  const entered = new Promise(resolve => { reached = resolve; });
+  const route = f.plugin.annotationHost.store.documentForIdentity;
+  f.plugin.annotationHost.store.documentForIdentity = async anchor => {
+    const result = await route(anchor); verified = true; return result;
+  };
+  const read = f.runtime.coordinator.readSnapshot.bind(f.runtime.coordinator);
+  f.runtime.coordinator.readSnapshot = async path => {
+    if (verified && path.includes("learning/items") && path.endsWith("manifest.json")) {
+      verified = false; reached(); await held;
+    }
+    return read(path);
+  };
+  const confirming = modal.confirm();
+  await entered;
+  f.view.annotationHydrationAllowed = false;
+  f.view.annotationSourceMismatch = true;
+  release();
+  await assert.rejects(confirming, error => error.code === "LEARNING_SOURCE_STALE");
+  assert.equal(f.adapter.files.size, 0);
+});
+
 test("mixed Review rows preserve canonical learning state and source fields", async () => {
   const f = fixture();
   const modal = await f.host.fromAnnotationRequest(f.view, f.request);
