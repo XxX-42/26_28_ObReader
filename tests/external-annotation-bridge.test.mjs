@@ -73,7 +73,7 @@ function evaluateHelpers(names, body, exposed = []) {
 
 test("annotation sidebar is lazy, uses sorted active targets, and refreshes only while open", async () => {
   const helpers = evaluateHelpers(
-    ["buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
+    ["getLiveAnnotationSidebarTexts", "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
     "function normalizeSyncKind(value) { return value; }",
   );
   const previousDocument = globalThis.document;
@@ -162,9 +162,9 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     const list = new Element("ul");
     const count = new Element("span");
     const closeButton = new Element("button");
-    const editorPayload = { text: "not displayed or interpreted by the sidebar" };
+    const editorPayload = { text: "selected JavaScript target text" };
     const targets = new Map([
-      ["b", { uuid: "b", pageIndex: 1, kind: "Square", editorPayload }],
+      ["b", { uuid: "b", pageIndex: 1, kind: "Highlight", editorPayload }],
       ["a", { uuid: "a", pageIndex: 0, kind: "Underline", editorPayload: null }],
       ["deleted", { uuid: "deleted", pageIndex: 0, kind: "Highlight", deleted: true }],
     ]);
@@ -186,7 +186,19 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     assert.deepEqual(rows.map(row => row.dataset.uuid), ["a", "b"], "rows use page then UUID ordering");
     assert.equal(rows[0].children[0].tagName, "time");
     assert.equal(rows[0].children[1].className, "sidebarCommentText");
-    assert.equal(rows[0].children[1].textContent, "第 1 页 · Underline");
+    assert.equal(rows[0].children[0].textContent, "p001 · Underline");
+    assert.equal(rows[0].children[1].textContent, "（目标文字暂不可用）");
+    assert.equal(rows[1].children[0].textContent, "p002 · Highlight");
+    assert.equal(rows[1].children[1].textContent, "selected JavaScript target text");
+    assert.equal(rows[1].children[1].title, "selected JavaScript target text",
+      "the full target text is available as a hover tooltip");
+    assert.equal(helpers.resolveAnnotationSidebarTargetText({
+      kind: "FreeText", editorPayload: { value: "free text content" },
+    }, new Map()), "free text content", "FreeText uses PDF.js's serialized value field");
+    assert.equal(helpers.resolveAnnotationSidebarTargetText({
+      kind: "Highlight", uuid: "live", editorPayload: { text: "stale text" },
+    }, new Map([["live", "current live selection"]])), "current live selection",
+    "live Highlight editor text takes precedence over stale payload data");
 
     targets.set("c", { uuid: "c", pageIndex: 0, kind: "Highlight", editorPayload: null });
     assert.equal(controller.refreshIfOpen(), true);

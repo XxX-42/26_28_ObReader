@@ -1226,6 +1226,64 @@
     }
   }
 
+  function labelSecondaryToolbarControls() {
+    // The bundled Fluent locale files are not readable from Obsidian's app://
+    // viewer origin on Windows. Keep PDF.js's existing labels whenever they
+    // were localized, and only provide a fallback for empty label spans.
+    const isChinese = /^zh(?:-|$)/iu.test(window.navigator?.language || "");
+    const labels = isChinese
+      ? {
+          presentationMode: "演示模式",
+          firstPage: "转到第一页",
+          lastPage: "转到最后一页",
+          pageRotateCw: "顺时针旋转",
+          pageRotateCcw: "逆时针旋转",
+          cursorSelectTool: "文本选择工具",
+          cursorHandTool: "手形工具",
+          scrollPage: "单页滚动",
+          scrollVertical: "垂直滚动",
+          scrollHorizontal: "水平滚动",
+          scrollWrapped: "连续滚动",
+          spreadNone: "不分栏",
+          spreadOdd: "奇数页跨页",
+          spreadEven: "偶数页跨页",
+          documentProperties: "文档属性",
+        }
+      : {
+          presentationMode: "Presentation Mode",
+          firstPage: "Go to First Page",
+          lastPage: "Go to Last Page",
+          pageRotateCw: "Rotate Clockwise",
+          pageRotateCcw: "Rotate Counterclockwise",
+          cursorSelectTool: "Text Selection Tool",
+          cursorHandTool: "Hand Tool",
+          scrollPage: "Page Scrolling",
+          scrollVertical: "Vertical Scrolling",
+          scrollHorizontal: "Horizontal Scrolling",
+          scrollWrapped: "Wrapped Scrolling",
+          spreadNone: "No Spreads",
+          spreadOdd: "Odd Spreads",
+          spreadEven: "Even Spreads",
+          documentProperties: "Document Properties",
+        };
+
+    for (const [id, fallback] of Object.entries(labels)) {
+      const button = document.getElementById(id);
+      const label = button?.querySelector("span");
+      if (!button || !label || label.textContent?.trim()) continue;
+
+      // Detach only this untranslated label from Fluent; translated labels
+      // above remain fully owned by PDF.js localization.
+      for (const element of [button, label]) {
+        element.removeAttribute("data-l10n-id");
+        element.removeAttribute("data-l10n-args");
+      }
+      label.textContent = fallback;
+      button.title = fallback;
+      button.setAttribute("aria-label", fallback);
+    }
+  }
+
   function hideUnusedToolbarControls() {
     for (const id of [
       "editorStamp",
@@ -1545,7 +1603,39 @@
     return collectKnownAnnotationDeletionTargets(pageIndex).size;
   }
 
-  function buildAnnotationSidebarViewModels(targets) {
+  function getLiveAnnotationSidebarTexts() {
+    const texts = new Map();
+    if (typeof state === "undefined" || !state?.app) return texts;
+    const manager = state.app.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    if (!manager) return texts;
+    for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId || []) {
+      if (typeof uuid !== "string" || !uuid) continue;
+      const editor = manager.getEditor?.(runtimeId);
+      if (normalizeSyncKind(editor?.editorType) !== "Highlight") continue;
+      const text = editor.div?.getAttribute?.("aria-label")?.trim();
+      if (text) texts.set(uuid, text);
+    }
+    return texts;
+  }
+
+  function resolveAnnotationSidebarTargetText(row, liveTexts) {
+    const payload = row?.editorPayload && typeof row.editorPayload === "object"
+      ? row.editorPayload
+      : null;
+    const candidates = row?.kind === "FreeText"
+      ? [payload?.value]
+      : row?.kind === "Highlight"
+        ? [liveTexts?.get?.(row?.uuid), payload?.text]
+        : [];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") continue;
+      const text = candidate.replace(/\s+/gu, " ").trim();
+      if (text) return text;
+    }
+    return "（目标文字暂不可用）";
+  }
+
+  function buildAnnotationSidebarViewModels(targets, liveTexts = getLiveAnnotationSidebarTexts()) {
     return [...(targets?.values?.() || [])]
       .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
         row.uuid && Number.isSafeInteger(row.pageIndex) && row.pageIndex >= 0)
@@ -1556,6 +1646,10 @@
         editorPayload: row.editorPayload && typeof row.editorPayload === "object"
           ? row.editorPayload
           : null,
+        targetText: resolveAnnotationSidebarTargetText({
+          ...row,
+          kind: normalizeSyncKind(row.kind),
+        }, liveTexts),
       }))
       .sort((left, right) => left.pageIndex - right.pageIndex ||
         (left.uuid < right.uuid ? -1 : left.uuid > right.uuid ? 1 : 0));
@@ -1612,13 +1706,15 @@
         row.dataset.uuid = item.uuid;
         row.dataset.pageIndex = String(item.pageIndex);
 
-        const pageLabel = `第 ${item.pageIndex + 1} 页`;
+        const pageLabel = `p${String(item.pageIndex + 1).padStart(3, "0")} · ${item.kind}`;
         const page = document.createElement("time");
         page.textContent = pageLabel;
-        page.setAttribute("aria-hidden", "true");
+        page.setAttribute("aria-label", pageLabel);
         const text = document.createElement("div");
         text.className = "sidebarCommentText";
-        text.textContent = `${pageLabel} · ${item.kind}`;
+        text.textContent = item.targetText;
+        text.title = item.targetText;
+        text.setAttribute("aria-label", item.targetText);
         row.append(page, text);
         fragment.append(row);
       }
@@ -11011,6 +11107,7 @@
           }
         }
         labelSaveControls();
+        labelSecondaryToolbarControls();
         installBridgeControls();
         state.ready = true;
         postToHost("ready", { rendererGeneration });
