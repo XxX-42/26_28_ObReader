@@ -2962,6 +2962,7 @@ class PdfReaderView extends EditableFileView {
     this.readerTargetApplyPendingTarget = pendingTarget;
     const isCurrent = () => sequence === this.readerTargetApplySequence &&
       this.isCurrentReaderAnchorIdentity(identity) && this.annotationDocument === document &&
+      this.annotationHydrationAllowed === true && this.annotationSourceMismatch !== true &&
       this.pendingReaderTarget === pendingTarget &&
       this.annotationPageIdentity?.orderedPageIdentities === pageIdentities;
     const run = async () => {

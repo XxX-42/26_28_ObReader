@@ -4492,3 +4492,57 @@ test("Workbench command opens the shared factory class with a narrow lazy host f
     "oversized bulk input is rejected before any vocabulary data writes");
   harness.plugin.onunload();
 });
+
+test("selection Reader navigation stops if source verification changes during anchor lookup", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const originalBytes = Uint8Array.from([37, 80, 68, 70, 1, 2, 3]);
+  const file = new harness.TFile("Books/anchor-race.pdf", originalBytes);
+  const reader = await createSidecarReader(harness, file, {
+    pageCount: 1, orderedPageIdentities: ["verified-page-one"],
+  });
+  const { view } = reader;
+  assert.equal(view.annotationHydrationAllowed, true);
+  assert.equal(view.annotationSourceMismatch, false);
+
+  const target = { kind: "selection", id: "anchor-race-target",
+    docKey: view.annotationDocument.docKey, documentId: view.annotationDocument.documentId, pageNumber: 1 };
+  view.pendingReaderTarget = target;
+  view.navigationState = { readerTarget: target };
+
+  let markLookupStarted;
+  const lookupStarted = new Promise((resolve) => { markLookupStarted = resolve; });
+  let resumeLookup;
+  const pendingAnchor = new Promise((resolve) => { resumeLookup = resolve; });
+  harness.plugin.readerAnchorStore = { get: (...args) => {
+    markLookupStarted(args);
+    return pendingAnchor;
+  } };
+  const navigation = view.applyPendingReaderTarget();
+  const [docKey, anchorId, documentId] = await lookupStarted;
+  assert.deepEqual([docKey, anchorId, documentId],
+    [target.docKey, target.id, target.documentId]);
+
+  file.bytes = Uint8Array.from([37, 80, 68, 70, 9, 8, 7]);
+  assert.equal(await harness.plugin.annotationHost.handleSourceModify(file), true,
+    "the existing host source-modify path handles the changed PDF bytes");
+  assert.equal(view.annotationSourceMismatch, true);
+  assert.equal(view.annotationHydrationAllowed, false);
+
+  resumeLookup({
+    anchorId: target.id,
+    docKey: target.docKey,
+    documentId: target.documentId,
+    sourceHash: view.annotationSourceHash,
+    pageIdentity: "verified-page-one",
+    pageCount: 1,
+    orderedPageIdentityDigest: await harness.plugin.pdfHashRuntime.fingerprint(
+      new TextEncoder().encode(JSON.stringify(["verified-page-one"])),
+    ),
+  });
+  assert.equal(await navigation, false,
+    "navigation is discarded after async work observes source hydration has been revoked");
+  assert.equal(reader.sent.some((message) => message.type === "reader-anchor-navigate"), false,
+    "the prior PDF's Selection Anchor is never applied to the modified source");
+  harness.plugin.onunload();
+});
