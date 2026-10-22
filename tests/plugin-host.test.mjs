@@ -4769,3 +4769,58 @@ test("selection Reader navigation stops if source verification changes during an
     "the prior PDF's Selection Anchor is never applied to the modified source");
   harness.plugin.onunload();
 });
+
+test("learning Markdown Source requires its exact editor span after the asynchronous note open", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const noteFile = new harness.TFile("Notes/Learning Source.md");
+  harness.files.set(noteFile.path, noteFile);
+  const originalText = "exact excerpt\nMore source text.";
+  const editor = {
+    value: originalText,
+    cursors: [], selections: [], scrolls: 0, focuses: 0,
+    getValue() { return this.value; },
+    offsetToPos(offset) {
+      const prefix = this.value.slice(0, offset).split("\n");
+      return { line: prefix.length - 1, ch: prefix.at(-1).length };
+    },
+    lineCount() { return this.value.split("\n").length; },
+    setCursor(position) { this.cursors.push({ ...position }); },
+    setSelection(from, to) { this.selections.push([{ ...from }, { ...to }]); },
+    scrollIntoView() { this.scrolls += 1; },
+    focus() { this.focuses += 1; },
+  };
+  harness.app.workspace.activeLeaf = { view: {
+    file: noteFile, editor, containerEl: {}, getViewType: () => "markdown",
+  } };
+  let openStarted;
+  const started = new Promise((resolve) => { openStarted = resolve; });
+  let finishOpen;
+  const openBarrier = new Promise((resolve) => { finishOpen = resolve; });
+  harness.app.workspace.openLinkText = async () => {
+    openStarted();
+    await openBarrier;
+  };
+  const sourceText = "exact excerpt";
+  const row = { sourcePath: noteFile.path, offset: 0, endOffset: sourceText.length,
+    line: 0, sourceText };
+  const pending = harness.plugin.openReaderBacklinkSource(row, {
+    source: "learning-item", requireExact: true,
+  });
+  await started;
+  editor.value = `New leading text\n${sourceText}\n${sourceText}\nMore source text.`;
+  assert.notEqual(editor.value.slice(row.offset, row.endOffset), sourceText,
+    "the recorded editor span no longer contains the saved excerpt");
+  assert.notEqual(editor.value.indexOf(sourceText), -1);
+  assert.notEqual(editor.value.lastIndexOf(sourceText), editor.value.indexOf(sourceText),
+    "the same excerpt now occurs at multiple other spans");
+  finishOpen();
+
+  assert.equal(await pending, false,
+    "a learning excerpt whose recorded editor span changed during open is unresolved");
+  assert.deepEqual(editor.selections, [], "no duplicate excerpt is searched for or selected");
+  assert.deepEqual(editor.cursors, [], "requireExact suppresses stale line fallback");
+  assert.equal(editor.scrolls, 0);
+  assert.equal(editor.focuses, 0);
+  harness.plugin.onunload();
+});

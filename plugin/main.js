@@ -4663,7 +4663,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return null;
   }
 
-  async openReaderBacklinkSource(row, { source = "backlink" } = {}) {
+  async openReaderBacklinkSource(row, { source = "backlink", requireExact = false } = {}) {
     const sourcePath = typeof row?.sourcePath === "string" ? row.sourcePath : "";
     const workspace = this.app.workspace;
     if (!sourcePath || typeof workspace?.openLinkText !== "function") return false;
@@ -4675,6 +4675,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
       return false;
     }
+    const requireExactSourceText = requireExact === true && evidence.kind === "source-text";
+    const rejectUnresolvedSourceText = () => {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: "TARGET_UNRESOLVED" });
+      return false;
+    };
     try {
       await workspace.openLinkText(sourcePath, "", true);
     } catch (error) {
@@ -4696,7 +4702,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
     const view = leaf?.view;
     const editor = view?.editor;
-    if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) return true;
+    if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) {
+      return requireExactSourceText ? rejectUnresolvedSourceText() : true;
+    }
 
     let position = null;
     let endPosition = null;
@@ -4725,6 +4733,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         }
       } catch { position = null; endPosition = null; positionKind = "file"; }
     }
+    if (requireExactSourceText && (!sourceTextMatches || !position)) return rejectUnresolvedSourceText();
     if (!position && Number.isSafeInteger(evidence.line) && evidence.line >= 0) {
       let lineCount = null;
       try { lineCount = editor.lineCount?.(); } catch { /* Use the already available text when possible. */ }
@@ -4748,7 +4757,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } catch (error) {
       this.sessionLog?.record("readerBacklinks", { event: "source-position-failed", source,
         code: error?.code || "unknown" });
-      return true;
+      return requireExactSourceText ? false : true;
     }
     for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
 
