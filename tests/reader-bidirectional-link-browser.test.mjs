@@ -693,6 +693,11 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     }, { timeout: 8_000 }, annotationId);
     assert.equal(createHash('sha256').update(await readFile(fixture)).digest('hex'), sourceSha256, 'source SHA-256 remains unchanged');
     assert.equal(await frame.evaluate(() => window.__learningSourceSaveCalls), 0, 'ordinary annotation/learning saves never call PDF saveDocument');
+    await page.evaluate(receipt => { window.__learningBrowser.receipt = receipt; }, {
+      stage: 'E2E-4 assertions passed', itemId: learned.itemId, source: learned.source,
+      answer: learned.answer, sourceSha256, canonicalFiles: learningEvidence.files,
+      boundary: 'mocked Obsidian Modal/Workspace/DataAdapter; real Host/draft/Workbench/coordinator/shards/History',
+    });
     await frame.$eval('#editorCommentsSidebarCloseButton', button => button.click());
     host.state.annotationIds.push(annotationId);
     host.state.annotations.push({ uuid: annotationId, pageIndex: annotationCapture.pageIndex, deleted: false });
@@ -796,6 +801,11 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       diagnosticDirectory = artifactDirectory;
       await mkdir(artifactDirectory, { recursive: true });
       const trace = await page.evaluate(() => ({ host: window.__readerBacklinkE2E,
+        learning: window.__learningBrowser && { receipt: window.__learningBrowser.receipt,
+          errors: window.__learningBrowser.errors, request: window.__learningBrowser.request,
+          draftError: window.__learningBrowser.draft?.lastError?.message,
+          contextDraftError: window.__learningBrowser.contextDraft?.lastError?.message,
+          canonicalFiles: [...window.__learningBrowser.adapter.files.keys()] },
         iframeRect: document.querySelector("iframe")?.getBoundingClientRect().toJSON() }));
       const viewer = page.frames().find((candidate) => candidate.url().includes("/web/viewer.html"));
       const viewerTrace = viewer && await viewer.evaluate(() => ({ clicks: window.__backlinkE2EClicks,
