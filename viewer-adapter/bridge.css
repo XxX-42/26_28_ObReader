@@ -623,6 +623,86 @@ body {
   flex: 1 1 auto;
 }
 
+.pdfReaderAnnotationSidebarFilters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.55fr);
+  gap: 6px;
+  flex: none;
+  padding: 8px 10px;
+  border-block-end: 1px solid var(--comment-border-color, currentColor);
+}
+
+.pdfReaderAnnotationSidebarFilters input,
+.pdfReaderAnnotationSidebarFilters select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 7px;
+  box-sizing: border-box;
+  color: var(--comment-fg-color, inherit);
+  background: var(--comment-bg-color, Canvas);
+  border: 1px solid var(--comment-border-color, currentColor);
+  border-radius: 4px;
+}
+
+.pdfReaderAnnotationSidebarHelp {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--comment-date-fg-color, currentColor);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+#editorCommentsSidebarList > .sidebarComment {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.pdfReaderAnnotationSidebarNavigate {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding: 6px;
+  color: inherit;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pdfReaderAnnotationSidebarNavigate:hover,
+.pdfReaderAnnotationSidebarNavigate.selected {
+  background: var(--comment-hover-bg-color, transparent);
+}
+
+.pdfReaderAnnotationSidebarNavigate:focus-visible,
+.pdfReaderAnnotationReviewButton:focus-visible {
+  outline: 2px solid var(--comment-focus-outline-color, currentColor);
+  outline-offset: 1px;
+}
+
+.pdfReaderAnnotationReviewButton {
+  flex: none;
+  align-self: center;
+  margin-inline-end: 4px;
+  padding: 5px 7px;
+  color: var(--comment-fg-color, inherit);
+  font: inherit;
+  font-size: 11px;
+  background: var(--comment-bg-color, Canvas);
+  border: 1px solid var(--comment-border-color, currentColor);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pdfReaderAnnotationReviewButton:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
 #scaleSelectContainer {
   width: 64px;
   min-width: 0;

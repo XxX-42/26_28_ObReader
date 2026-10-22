@@ -1777,6 +1777,8 @@
         kind,
         ref: canonicalPdfAnnotationRef(ref || row.embeddedRef || row.reference || row.operationReference),
         editorPayload: editorPayload && typeof editorPayload === "object" ? editorPayload : null,
+        version: row.version && typeof row.version === "object" ? { ...row.version } : null,
+        clock: row.clock && typeof row.clock === "object" ? { ...row.clock } : null,
         source,
       });
     };
@@ -1868,6 +1870,43 @@
     return texts;
   }
 
+  function getAnnotationSidebarTargetTextEvidence(targets) {
+    const evidence = new Map();
+    for (const [uuid, text] of getLiveAnnotationSidebarTexts()) {
+      evidence.set(uuid, { text, source: "captured" });
+    }
+    if (!targets?.values) return evidence;
+    for (const row of targets.values()) {
+      if (!row || row.deleted === true || typeof row.uuid !== "string" || !row.uuid) continue;
+      const kind = normalizeSyncKind(row.kind);
+      const payload = row.editorPayload && typeof row.editorPayload === "object" ? row.editorPayload : null;
+      if (kind === "FreeText" && typeof payload?.value === "string" && payload.value.trim()) {
+        evidence.set(row.uuid, { text: payload.value, source: "stored" });
+        continue;
+      }
+      if (kind !== "Highlight" || evidence.has(row.uuid)) continue;
+      if (typeof payload?.text === "string" && payload.text.trim()) {
+        evidence.set(row.uuid, { text: payload.text, source: "stored" });
+        continue;
+      }
+      if (typeof state === "undefined" || !state?.app) continue;
+      const recovered = getLegacyHighlightSidebarTargetText(row.pageIndex, payload);
+      if (typeof recovered === "string" && recovered.trim()) {
+        evidence.set(row.uuid, { text: recovered, source: "recovered" });
+      }
+    }
+    return evidence;
+  }
+
+  function resolveAnnotationSidebarTargetTextEvidence(row, textEvidence) {
+    const evidence = textEvidence?.get?.(row?.uuid);
+    if (typeof evidence?.text === "string" && evidence.text.trim() &&
+        ["captured", "stored", "recovered"].includes(evidence.source)) {
+      return { targetText: evidence.text, targetTextSource: evidence.source };
+    }
+    return { targetText: "", targetTextSource: "unavailable" };
+  }
+
   function resolveAnnotationSidebarTargetText(row, liveTexts) {
     const payload = row?.editorPayload && typeof row.editorPayload === "object"
       ? row.editorPayload
@@ -1885,22 +1924,29 @@
     return "（目标文字暂不可用）";
   }
 
-  function buildAnnotationSidebarViewModels(targets, liveTexts = getAnnotationSidebarTargetTexts(targets)) {
+  function buildAnnotationSidebarViewModels(targets, textEvidence = getAnnotationSidebarTargetTextEvidence(targets)) {
     return [...(targets?.values?.() || [])]
       .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
         row.uuid && Number.isSafeInteger(row.pageIndex) && row.pageIndex >= 0)
-      .map((row) => ({
-        uuid: row.uuid,
-        pageIndex: row.pageIndex,
-        kind: normalizeSyncKind(row.kind),
-        editorPayload: row.editorPayload && typeof row.editorPayload === "object"
-          ? row.editorPayload
-          : null,
-        targetText: resolveAnnotationSidebarTargetText({
-          ...row,
+      .map((row) => {
+        const rowTextEvidence = resolveAnnotationSidebarTargetTextEvidence(row, textEvidence);
+        const targetText = rowTextEvidence.targetText;
+        return {
+          uuid: row.uuid,
+          pageIndex: row.pageIndex,
+          pageIdentity: row.pageIdentity || null,
+          sourceHash: row.sourceHash || null,
           kind: normalizeSyncKind(row.kind),
-        }, liveTexts),
-      }))
+          editorPayload: row.editorPayload && typeof row.editorPayload === "object"
+            ? row.editorPayload
+            : null,
+          version: row.version && typeof row.version === "object" ? { ...row.version } : null,
+          clock: row.clock && typeof row.clock === "object" ? { ...row.clock } : null,
+          targetText,
+          targetTextSource: rowTextEvidence.targetTextSource,
+          displayText: targetText ? targetText.replace(/\s+/gu, " ").trim() : "（目标文字暂不可用）",
+        };
+      })
       .sort((left, right) => left.pageIndex - right.pageIndex ||
         (left.uuid < right.uuid ? -1 : left.uuid > right.uuid ? 1 : 0));
   }
@@ -1912,23 +1958,30 @@
     list,
     count,
     closeButton,
+    searchInput = null,
+    typeFilter = null,
     collectTargets,
     createSessionGuard,
     navigate,
+    onAddToReview = null,
   }) {
     let open = false;
-    let refreshFrame = 0;
+    let refreshFrame = null;
+    let pendingTargetRefresh = false;
     let selectedUuid = null;
     let items = [];
+    let visibleItems = [];
 
     function setSelected(uuid, focus = false) {
       selectedUuid = uuid;
       for (const row of list.querySelectorAll("li.sidebarComment")) {
         const selected = row.dataset.uuid === uuid;
         row.classList.toggle("selected", selected);
-        row.setAttribute("aria-pressed", String(selected));
-        row.tabIndex = selected ? 0 : -1;
-        if (selected && focus) row.focus();
+        const navigateButton = row.children?.[0];
+        navigateButton?.classList.toggle("selected", selected);
+        navigateButton?.setAttribute("aria-pressed", String(selected));
+        if (navigateButton) navigateButton.tabIndex = selected ? 0 : -1;
+        if (selected && focus) navigateButton?.focus();
       }
     }
 
@@ -1942,35 +1995,80 @@
       return true;
     }
 
-    function render() {
+    function filteredItems() {
+      const term = typeof searchInput?.value === "string"
+        ? searchInput.value.trim().replace(/\s+/gu, " ").toLocaleLowerCase()
+        : "";
+      const kind = typeof typeFilter?.value === "string" ? typeFilter.value : "all";
+      return items.filter((item) => {
+        if (kind !== "all" && kind && item.kind !== kind) return false;
+        if (!term) return true;
+        if (item.targetTextSource === "unavailable" || !item.targetText) return false;
+        return item.targetText.replace(/\s+/gu, " ").toLocaleLowerCase().includes(term);
+      });
+    }
+
+    function render({ reloadTargets = false } = {}) {
       if (!open) return;
-      items = buildAnnotationSidebarViewModels(collectTargets());
+      if (reloadTargets) items = buildAnnotationSidebarViewModels(collectTargets());
       if (selectedUuid && !items.some((item) => item.uuid === selectedUuid)) selectedUuid = null;
+      visibleItems = filteredItems();
       const fragment = document.createDocumentFragment();
-      for (const item of items) {
+      for (const item of visibleItems) {
         const row = document.createElement("li");
         row.className = "sidebarComment";
-        row.setAttribute("role", "button");
-        row.setAttribute("aria-pressed", String(item.uuid === selectedUuid));
-        row.tabIndex = item.uuid === selectedUuid ? 0 : -1;
+        row.setAttribute("role", "group");
         row.dataset.uuid = item.uuid;
         row.dataset.pageIndex = String(item.pageIndex);
 
+        const navigateButton = document.createElement("button");
+        navigateButton.type = "button";
+        navigateButton.className = "pdfReaderAnnotationSidebarNavigate";
+        navigateButton.setAttribute("aria-pressed", String(item.uuid === selectedUuid));
+        navigateButton.tabIndex = item.uuid === selectedUuid ? 0 : -1;
         const pageLabel = `p${String(item.pageIndex + 1).padStart(3, "0")} · ${item.kind}`;
         const page = document.createElement("time");
         page.textContent = pageLabel;
         page.setAttribute("aria-label", pageLabel);
         const text = document.createElement("div");
         text.className = "sidebarCommentText";
-        text.textContent = item.targetText;
-        text.title = item.targetText;
-        text.setAttribute("aria-label", item.targetText);
-        row.append(page, text);
+        text.textContent = item.displayText;
+        text.title = item.displayText;
+        text.setAttribute("aria-label", item.displayText);
+        navigateButton.setAttribute("aria-label", `${pageLabel} · ${item.displayText}`);
+        navigateButton.append(page, text);
+        row.append(navigateButton);
+        if (item.kind === "Highlight") {
+          const reviewButton = document.createElement("button");
+          reviewButton.type = "button";
+          reviewButton.className = "pdfReaderAnnotationReviewButton";
+          reviewButton.textContent = "加入复习";
+          reviewButton.setAttribute("aria-label", `将第 ${item.pageIndex + 1} 页高亮加入复习`);
+          reviewButton.disabled = !item.targetText || item.targetTextSource === "unavailable" ||
+            typeof onAddToReview !== "function";
+          reviewButton.title = !item.targetText || item.targetTextSource === "unavailable"
+            ? "目标文字暂不可用，无法加入复习"
+            : typeof onAddToReview !== "function" ? "复习功能尚未连接" : "加入复习";
+          row.append(reviewButton);
+        }
         fragment.append(row);
       }
       list.replaceChildren(fragment);
-      count.textContent = String(items.length);
+      count.textContent = String(visibleItems.length);
       setSelected(selectedUuid);
+    }
+
+    function scheduleRender({ reloadTargets = false } = {}) {
+      if (!open) return false;
+      if (reloadTargets) pendingTargetRefresh = true;
+      if (refreshFrame !== null) return false;
+      refreshFrame = requestAnimationFrame(() => {
+        refreshFrame = null;
+        const shouldReload = pendingTargetRefresh;
+        pendingTargetRefresh = false;
+        render({ reloadTargets: shouldReload });
+      });
+      return true;
     }
 
     function openSidebar() {
@@ -1978,14 +2076,15 @@
       open = true;
       menu.classList.remove("hidden");
       button.setAttribute("aria-expanded", "true");
-      render();
+      scheduleRender({ reloadTargets: true });
       return true;
     }
 
     function close() {
       open = false;
-      if (refreshFrame) cancelAnimationFrame(refreshFrame);
-      refreshFrame = 0;
+      if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
+      refreshFrame = null;
+      pendingTargetRefresh = false;
       menu.classList.add("hidden");
       button.setAttribute("aria-expanded", "false");
       return true;
@@ -1995,17 +2094,23 @@
       close();
       selectedUuid = null;
       items = [];
+      visibleItems = [];
+      if (searchInput) searchInput.value = "";
+      if (typeFilter) typeFilter.value = "all";
       list.replaceChildren();
       count.textContent = "0";
     }
 
     function refreshIfOpen() {
-      if (!open || refreshFrame) return false;
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = 0;
-        render();
-      });
-      return true;
+      return scheduleRender({ reloadTargets: true });
+    }
+
+    function onSearchInput() {
+      scheduleRender();
+    }
+
+    function onTypeFilterChange() {
+      scheduleRender();
     }
 
     function onButtonClick() {
@@ -2019,19 +2124,39 @@
     }
 
     function onListClick(event) {
+      const reviewButton = event.target?.closest?.(".pdfReaderAnnotationReviewButton");
+      if (reviewButton) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        if (reviewButton.disabled || !open) return;
+        const row = reviewButton.closest?.("li.sidebarComment");
+        const item = items.find((candidate) => candidate.uuid === row?.dataset?.uuid);
+        if (!item || item.kind !== "Highlight" || !item.targetText ||
+            item.targetTextSource === "unavailable" || typeof onAddToReview !== "function") return;
+        const guard = createSessionGuard();
+        if (!guard()) return;
+        void onAddToReview({ uuid: item.uuid, pageIndex: item.pageIndex,
+          targetText: item.targetText, targetTextSource: item.targetTextSource }, guard);
+        return;
+      }
+      const navigateButton = event.target?.closest?.(".pdfReaderAnnotationSidebarNavigate");
+      if (!navigateButton) return;
       const row = event.target?.closest?.("li.sidebarComment");
       if (!row || !list.contains(row)) return;
       void activate(row, false);
     }
 
     function onListKeyDown(event) {
+      if (event.target?.closest?.(".pdfReaderAnnotationReviewButton")) return;
+      const navigateButton = event.target?.closest?.(".pdfReaderAnnotationSidebarNavigate");
+      if (!navigateButton) return;
       const row = event.target?.closest?.("li.sidebarComment");
-      const index = items.findIndex((item) => item.uuid === row?.dataset?.uuid);
+      const index = visibleItems.findIndex((item) => item.uuid === row?.dataset?.uuid);
       let nextIndex = index;
-      if (event.key === "ArrowDown") nextIndex = Math.min(items.length - 1, Math.max(0, index + 1));
+      if (event.key === "ArrowDown") nextIndex = Math.min(visibleItems.length - 1, Math.max(0, index + 1));
       else if (event.key === "ArrowUp") nextIndex = Math.max(0, index < 0 ? 0 : index - 1);
       else if (event.key === "Home") nextIndex = 0;
-      else if (event.key === "End") nextIndex = items.length - 1;
+      else if (event.key === "End") nextIndex = visibleItems.length - 1;
       else if (event.key === "Enter" || event.key === " ") {
         if (row) {
           event.preventDefault();
@@ -2039,17 +2164,19 @@
         }
         return;
       } else return;
-      if (!items.length) return;
+      if (!visibleItems.length) return;
       event.preventDefault();
       const next = [...list.querySelectorAll("li.sidebarComment")]
-        .find((candidate) => candidate.dataset.uuid === items[nextIndex].uuid);
-      next?.focus();
+        .find((candidate) => candidate.dataset.uuid === visibleItems[nextIndex].uuid);
+      next?.children?.[0]?.focus();
     }
 
     button.addEventListener("click", onButtonClick);
     closeButton.addEventListener("click", onCloseClick);
     list.addEventListener("click", onListClick);
     list.addEventListener("keydown", onListKeyDown);
+    searchInput?.addEventListener("input", onSearchInput);
+    typeFilter?.addEventListener("change", onTypeFilterChange);
     sidebar.querySelector("#editorCommentsSidebarResizer")?.setAttribute("hidden", "");
     return {
       open: openSidebar,
@@ -2063,6 +2190,8 @@
         closeButton.removeEventListener("click", onCloseClick);
         list.removeEventListener("click", onListClick);
         list.removeEventListener("keydown", onListKeyDown);
+        searchInput?.removeEventListener("input", onSearchInput);
+        typeFilter?.removeEventListener("change", onTypeFilterChange);
       },
     };
   }
@@ -2540,8 +2669,39 @@
     const annotationSidebarList = document.getElementById("editorCommentsSidebarList");
     const annotationSidebarCount = document.getElementById("editorCommentsSidebarCount");
     const annotationSidebarClose = document.getElementById("editorCommentsSidebarCloseButton");
+    const annotationSidebarListContainer = document.getElementById("editorCommentsSidebarListContainer");
     let annotationSidebarButton = null;
     if (annotationSidebar && annotationSidebarList && annotationSidebarCount && annotationSidebarClose) {
+      const filters = document.createElement("div");
+      filters.className = "pdfReaderAnnotationSidebarFilters";
+      const searchInput = document.createElement("input");
+      searchInput.id = "pdfReaderAnnotationSidebarSearch";
+      searchInput.type = "search";
+      searchInput.placeholder = "搜索已保存文字";
+      searchInput.setAttribute("aria-label", "搜索批注文字");
+      const typeFilter = document.createElement("select");
+      typeFilter.id = "pdfReaderAnnotationSidebarTypeFilter";
+      typeFilter.setAttribute("aria-label", "按批注类型筛选");
+      for (const [value, label] of [
+        ["all", "全部类型"], ["Highlight", "Highlight"], ["Underline", "Underline"],
+        ["FreeText", "FreeText"], ["Square", "Square"], ["Ink", "Ink"],
+        ["InkHighlight", "InkHighlight"],
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        typeFilter.append(option);
+      }
+      const filterHelp = document.createElement("p");
+      filterHelp.className = "pdfReaderAnnotationSidebarHelp";
+      filterHelp.textContent = "仅检索已保存文字及已渲染页面可恢复文字";
+      filters.append(searchInput, typeFilter, filterHelp);
+      if (annotationSidebarListContainer?.parentElement === annotationSidebar) {
+        annotationSidebar.insertBefore(filters, annotationSidebarListContainer);
+      } else {
+        annotationSidebar.append(filters);
+      }
+
       const container = document.createElement("div");
       container.className = "toolbarButtonWithContainer pdfReaderAnnotationSidebarControl";
       annotationSidebarButton = document.createElement("button");
@@ -2569,6 +2729,8 @@
         list: annotationSidebarList,
         count: annotationSidebarCount,
         closeButton: annotationSidebarClose,
+        searchInput,
+        typeFilter,
         collectTargets: () => collectKnownAnnotationDeletionTargets(),
         createSessionGuard: () => {
           const documentId = state.activeDocumentId;
@@ -2580,6 +2742,21 @@
             source?.identityStatus === "KNOWN";
         },
         navigate: navigateToAnnotationUuid,
+        onAddToReview: (item, guard) => {
+          const actual = state.actualSourceIdentity;
+          const pageIdentity = actual?.orderedPageIdentities?.[item.pageIndex];
+          if (!guard() || typeof pageIdentity !== "string" || !actual?.sourceHash) return false;
+          return postToHost("learning-review-draft-request", {
+            documentId: state.activeDocumentId,
+            openRequest: state.activeOpenRequest,
+            sourceHash: actual.sourceHash,
+            pageIndex: item.pageIndex,
+            pageIdentity,
+            uuid: item.uuid,
+            targetText: item.targetText,
+            targetTextSource: item.targetTextSource,
+          });
+        },
       });
     }
 

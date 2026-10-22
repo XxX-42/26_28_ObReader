@@ -73,7 +73,9 @@ function evaluateHelpers(names, body, exposed = []) {
 
 test("annotation sidebar is lazy, uses sorted active targets, and refreshes only while open", async () => {
   const helpers = evaluateHelpers(
-    ["getLiveAnnotationSidebarTexts", "getAnnotationSidebarTargetTexts", "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
+    ["getLiveAnnotationSidebarTexts", "getAnnotationSidebarTargetTexts", "getLegacyHighlightSidebarTargetText",
+      "getAnnotationSidebarTargetTextEvidence", "resolveAnnotationSidebarTargetTextEvidence",
+      "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
     "function normalizeSyncKind(value) { return value; }",
   );
   const previousDocument = globalThis.document;
@@ -91,6 +93,7 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
       this.parentElement = null;
       this._classes = new Set();
       this.textContent = "";
+      this.value = "";
       this.disabled = false;
       this.tabIndex = -1;
       this.classList = {
@@ -143,7 +146,14 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
       visit(this);
       return matches;
     }
-    closest(selector) { return selector === "li.sidebarComment" && this.tagName === "li" ? this : null; }
+    closest(selector) {
+      for (let node = this; node; node = node.parentElement) {
+        if (selector === "li.sidebarComment" && node.tagName === "li" && node.classList.contains("sidebarComment")) return node;
+        const className = /^\.([\w-]+)$/.exec(selector)?.[1];
+        if (className && node.classList.contains(className)) return node;
+      }
+      return null;
+    }
     contains(node) { return this.querySelectorAll("li.sidebarComment").includes(node); }
     focus() { this.focused = true; }
   }
@@ -152,8 +162,27 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     createElement: tagName => new Element(tagName),
     createDocumentFragment: () => new Element("#fragment"),
   };
-  globalThis.requestAnimationFrame = callback => { pendingFrames.push(callback); return pendingFrames.length; };
-  globalThis.cancelAnimationFrame = () => {};
+  let nextFrameId = -1;
+  const queuedFrames = new Map();
+  const cancelledFrames = [];
+  globalThis.requestAnimationFrame = callback => {
+    const id = ++nextFrameId;
+    queuedFrames.set(id, callback);
+    pendingFrames.push(id);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = id => {
+    cancelledFrames.push(id);
+    queuedFrames.delete(id);
+    const index = pendingFrames.indexOf(id);
+    if (index >= 0) pendingFrames.splice(index, 1);
+  };
+  const runNextFrame = () => {
+    const id = pendingFrames.shift();
+    const callback = queuedFrames.get(id);
+    queuedFrames.delete(id);
+    callback?.();
+  };
   try {
     const button = new Element("button");
     const menu = new Element("div");
@@ -162,6 +191,9 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     const list = new Element("ul");
     const count = new Element("span");
     const closeButton = new Element("button");
+    const searchInput = new Element("input");
+    const typeFilter = new Element("select");
+    typeFilter.value = "all";
     const editorPayload = { text: "selected JavaScript target text" };
     const targets = new Map([
       ["b", { uuid: "b", pageIndex: 1, kind: "Highlight", editorPayload }],
@@ -170,28 +202,43 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     ]);
     let collectCalls = 0;
     let navigated = [];
+    const reviewRequests = [];
     const controller = helpers.createAnnotationSidebarController({
       button, menu, sidebar, list, count, closeButton,
+      searchInput, typeFilter,
       collectTargets: () => { collectCalls += 1; return targets; },
       createSessionGuard: () => () => true,
       navigate: async (uuid, pageIndex) => { navigated.push([uuid, pageIndex]); return { ok: true }; },
+      onAddToReview: (target, guard) => { reviewRequests.push({ ...target, current: guard() }); },
     });
 
     assert.equal(collectCalls, 0, "constructing the controller and initial PDF view do not collect rows");
     assert.equal(controller.refreshIfOpen(), false, "closed sidebar ignores state refreshes");
+    searchInput.value = "selected";
+    searchInput.dispatch("input");
+    typeFilter.value = "Highlight";
+    typeFilter.dispatch("change");
+    assert.equal(queuedFrames.size, 0, "closed search and type changes do not schedule collection or rendering");
+    assert.equal(collectCalls, 0, "closed search and type changes never scan active annotation targets");
+    searchInput.value = "";
+    typeFilter.value = "all";
     button.dispatch("click");
+    assert.equal(collectCalls, 0, "opening queues the first active snapshot in the next animation frame");
+    runNextFrame();
     assert.equal(collectCalls, 1, "the first toolbar activation builds the list");
     assert.equal(count.textContent, "2", "deleted records are excluded from the visible count");
     const rows = list.querySelectorAll("li.sidebarComment");
     assert.deepEqual(rows.map(row => row.dataset.uuid), ["a", "b"], "rows use page then UUID ordering");
-    assert.equal(rows[0].children[0].tagName, "time");
-    assert.equal(rows[0].children[1].className, "sidebarCommentText");
-    assert.equal(rows[0].children[0].textContent, "p001 · Underline");
-    assert.equal(rows[0].children[1].textContent, "（目标文字暂不可用）");
-    assert.equal(rows[1].children[0].textContent, "p002 · Highlight");
-    assert.equal(rows[1].children[1].textContent, "selected JavaScript target text");
-    assert.equal(rows[1].children[1].title, "selected JavaScript target text",
+    assert.equal(rows[0].children[0].children[0].tagName, "time");
+    assert.equal(rows[0].children[0].children[1].className, "sidebarCommentText");
+    assert.equal(rows[0].children[0].children[0].textContent, "p001 · Underline");
+    assert.equal(rows[0].children[0].children[1].textContent, "（目标文字暂不可用）");
+    assert.equal(rows[1].children[0].children[0].textContent, "p002 · Highlight");
+    assert.equal(rows[1].children[0].children[1].textContent, "selected JavaScript target text");
+    assert.equal(rows[1].children[0].children[1].title, "selected JavaScript target text",
       "the full target text is available as a hover tooltip");
+    assert.equal(rows[1].children[1].textContent, "加入复习");
+    assert.equal(rows[1].children[1].disabled, false, "saved Highlight text enables the explicit review action");
     assert.equal(helpers.resolveAnnotationSidebarTargetText({
       kind: "FreeText", editorPayload: { value: "free text content" },
     }, new Map()), "free text content", "FreeText uses PDF.js's serialized value field");
@@ -204,23 +251,58 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     assert.equal(controller.refreshIfOpen(), true);
     assert.equal(controller.refreshIfOpen(), false, "multiple changes coalesce into one animation frame");
     assert.equal(collectCalls, 1, "refresh waits for the coalesced frame");
-    pendingFrames.shift()();
+    runNextFrame();
     assert.equal(collectCalls, 2);
     assert.equal(count.textContent, "3");
 
     const refreshedRows = list.querySelectorAll("li.sidebarComment");
-    list.dispatch("click", { target: refreshedRows[0] });
+    const unavailableReviewButton = refreshedRows.find(row => row.dataset.uuid === "c").children[1];
+    assert.equal(unavailableReviewButton.disabled, true, "missing quote evidence disables review creation");
+    assert.match(unavailableReviewButton.title, /目标文字暂不可用/);
+    const availableReviewButton = refreshedRows.find(row => row.dataset.uuid === "b").children[1];
+    list.dispatch("click", { target: availableReviewButton, stopPropagation() { this.stopped = true; } });
+    assert.deepEqual(reviewRequests, [{ uuid: "b", pageIndex: 1, targetText: "selected JavaScript target text",
+      targetTextSource: "stored", current: true }], "the review action carries one read-only text snapshot");
+    assert.equal(navigated.length, 0, "review button clicks do not also activate Reader navigation");
+
+    const collectBeforeSearch = collectCalls;
+    searchInput.value = "javascript";
+    searchInput.dispatch("input");
+    assert.equal(collectCalls, collectBeforeSearch, "typing filters the collected snapshot without scanning again");
+    runNextFrame();
+    assert.deepEqual(list.querySelectorAll("li.sidebarComment").map(row => row.dataset.uuid), ["b"]);
+    assert.equal(count.textContent, "1");
+    typeFilter.value = "Underline";
+    typeFilter.dispatch("change");
+    assert.equal(collectCalls, collectBeforeSearch, "type filtering also leaves the effective source collection alone");
+    runNextFrame();
+    assert.equal(list.querySelectorAll("li.sidebarComment").length, 0);
+    searchInput.value = "";
+    typeFilter.value = "all";
+    searchInput.dispatch("input");
+    typeFilter.dispatch("change");
+    runNextFrame();
+
+    const allRows = list.querySelectorAll("li.sidebarComment");
+    const firstNavigate = allRows[0].children[0];
+    list.dispatch("click", { target: firstNavigate });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(navigated[0], ["a", 0], "list activation resolves through the supplied shared navigator");
-    list.dispatch("keydown", { target: refreshedRows[0], key: "ArrowDown" });
-    assert.equal(refreshedRows[1].focused, true, "arrow navigation focuses the next list item");
-    list.dispatch("keydown", { target: refreshedRows[1], key: "Enter" });
+    list.dispatch("keydown", { target: firstNavigate, key: "ArrowDown" });
+    assert.equal(allRows[1].children[0].focused, true, "arrow navigation focuses the next list item");
+    list.dispatch("keydown", { target: allRows[1].children[0], key: "Enter" });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(navigated[1], ["c", 0], "Enter activates the focused annotation");
 
+    assert.equal(controller.refreshIfOpen(), true, "a current refresh can be pending immediately before close");
+    const frameToCancel = pendingFrames[0];
     closeButton.dispatch("click");
     assert.equal(controller.isOpen(), false);
     assert.equal(menu.classList.contains("hidden"), true);
+    assert.ok(cancelledFrames.includes(frameToCancel), "closing cancels the pending animation frame");
+    searchInput.value = "anything";
+    searchInput.dispatch("input");
+    assert.equal(queuedFrames.size, 0, "closed search cannot leak a scheduled observer or frame");
     controller.closeAndClear();
     assert.equal(list.querySelectorAll("li.sidebarComment").length, 0, "session replacement clears prior-document rows");
     assert.equal(count.textContent, "0");
@@ -238,8 +320,8 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
 test("legacy Highlight sidebar text is recovered only from text covered by its quads", () => {
   const helpers = evaluateHelpers(
     ["annotationSidebarTextGlyphs", "recoverHighlightTextFromTextLayer", "getLiveAnnotationSidebarTexts",
-      "getLegacyHighlightSidebarTargetText", "getAnnotationSidebarTargetTexts", "resolveAnnotationSidebarTargetText",
-      "buildAnnotationSidebarViewModels"],
+      "getLegacyHighlightSidebarTargetText", "getAnnotationSidebarTargetTexts", "getAnnotationSidebarTargetTextEvidence",
+      "resolveAnnotationSidebarTargetTextEvidence", "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels"],
       `const state = { annotationSidebarTextGeometryCache: new WeakMap(), app: null };
      function normalizeSyncKind(value) { return value; }
      function pageElementForIndex(index) { return state.pageRoots?.get(index) || null; }
@@ -359,6 +441,9 @@ test("comment sidebar keeps PDF.js comments disabled and refreshes only at exist
   assert.match(functionSource("handleAnnotationSourceMismatch"), /annotationSidebarController\?\.closeAndClear\(\)/);
   assert.match(functionSource("openDocument"), /annotationSidebarController\?\.closeAndClear\(\)/);
   assert.match(functionSource("dispose"), /annotationSidebarController\?\.dispose\(\)/);
+  assert.match(functionSource("installBridgeControls"), /learning-review-draft-request/,
+    "review requests carry only one current PDF target and its text provenance to the Host");
+  assert.match(functionSource("installBridgeControls"), /仅检索已保存文字及已渲染页面可恢复文字/);
 });
 
 test("history reveals only newly restored Sidecar FreeText in the current editor layer", () => {
