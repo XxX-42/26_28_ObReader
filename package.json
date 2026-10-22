@@ -23,7 +23,8 @@
     "@noble/hashes": "1.8.0",
     "esbuild": "0.25.12",
     "fake-indexeddb": "6.2.6",
-    "puppeteer-core": "25.12.0"
+    "puppeteer-core": "25.12.0",
+    "ts-fsrs": "5.4.2"
   },
   "dependencies": {
     "dexie": "4.4.6",

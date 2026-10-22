@@ -1,0 +1,100 @@
+{
+  "fixtureSchemaVersion": 1,
+  "sourceKind": "learning-item-synthetic",
+  "historyCompleteness": "complete",
+  "itemId": "learning:v1:fsrs-eval-001",
+  "externalId": "ext-fsrs-eval-001",
+  "createdAtUTC": "2026-10-01T08:00:00.000Z",
+  "storedLeitnerState": {
+    "box": 3,
+    "dueAt": "2026-10-22T09:00:00.000Z",
+    "lastReviewedAt": "2026-10-15T09:00:00.000Z",
+    "reviewCount": 5,
+    "lapseCount": 1
+  },
+  "lastReviewEvent": {
+    "schemaVersion": 1,
+    "eventId": "learning-event:eval-5",
+    "itemId": "learning:v1:fsrs-eval-001",
+    "actionId": "learning-action:eval-5",
+    "rating": "remember",
+    "reviewedAtUTC": "2026-10-15T09:00:00.000Z",
+    "sequence": 5,
+    "previousEventId": "learning-event:eval-4",
+    "schedulerVersion": "leitner-utc-v1"
+  },
+  "reviewHistory": [
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-1",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-1",
+      "rating": "remember",
+      "reviewedAtUTC": "2026-10-01T09:00:00.000Z",
+      "sequence": 1,
+      "previousEventId": null,
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-2",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-2",
+      "rating": "remember",
+      "reviewedAtUTC": "2026-10-04T09:00:00.000Z",
+      "sequence": 2,
+      "previousEventId": "learning-event:eval-1",
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-3-undone-branch",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-3-undone-branch",
+      "rating": "remember",
+      "reviewedAtUTC": "2026-10-10T09:00:00.000Z",
+      "sequence": 3,
+      "previousEventId": "learning-event:eval-2",
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": false
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-3-current-branch",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-3-current-branch",
+      "rating": "forget",
+      "reviewedAtUTC": "2026-10-11T09:00:00.000Z",
+      "sequence": 3,
+      "previousEventId": "learning-event:eval-2",
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-4",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-4",
+      "rating": "remember",
+      "reviewedAtUTC": "2026-10-12T09:00:00.000Z",
+      "sequence": 4,
+      "previousEventId": "learning-event:eval-3-current-branch",
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": true
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "learning-event:eval-5",
+      "itemId": "learning:v1:fsrs-eval-001",
+      "actionId": "learning-action:eval-5",
+      "rating": "remember",
+      "reviewedAtUTC": "2026-10-15T09:00:00.000Z",
+      "sequence": 5,
+      "previousEventId": "learning-event:eval-4",
+      "schedulerVersion": "leitner-utc-v1",
+      "onCurrentBranch": true
+    }
+  ]
+}
