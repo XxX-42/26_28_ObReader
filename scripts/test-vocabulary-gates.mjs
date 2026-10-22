@@ -16,6 +16,8 @@ export const RACE_TESTS = Object.freeze([
   "tests/autosave-mobile-regression.test.mjs",
   "tests/highlight-multiline-regression.test.mjs",
   "tests/plugin-host.test.mjs",
+  "tests/learning-domain.test.mjs",
+  "tests/learning-host.test.mjs",
   "tests/vocabulary-transactions.test.mjs",
   "tests/vocabulary-review-transaction-integration.test.mjs",
   "tests/vocabulary-v2-runtime.test.mjs",
