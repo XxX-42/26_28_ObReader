@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -285,6 +285,8 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
   let page;
   let primaryError;
   let cleanupReport;
+  let diagnosticDirectory;
+  const gestureDiagnostics = [];
   try {
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); }); });
     browser = await launchTestBrowser(puppeteer, { executablePath: browserPath, headless: true,
@@ -380,10 +382,36 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         error.message += `\nNavigation probe trace: ${JSON.stringify(trace)}`;
         throw error;
       }
+      // Navigation acknowledges the target before scrollIntoView's smooth animation ends.
+      // Trusted pointer geometry must be measured after both documents stop scrolling.
+      await page.evaluate(() => { window.__backlinkScrollSettlement = { position: null, stableFrames: 0 }; });
+      await page.waitForFunction(() => {
+        const iframe = document.querySelector("iframe");
+        const viewer = iframe?.contentDocument?.querySelector("#viewerContainer");
+        const rect = iframe?.getBoundingClientRect();
+        const position = [scrollX, scrollY, rect?.x, rect?.y, viewer?.scrollLeft, viewer?.scrollTop].join(",");
+        const state = window.__backlinkScrollSettlement ||= { position: null, stableFrames: 0 };
+        state.stableFrames = state.position === position ? state.stableFrames + 1 : 0;
+        state.position = position;
+        return state.stableFrames >= 8;
+      }, { timeout: 5_000, polling: "raf" });
       return page.evaluate(() => window.__readerBacklinkE2E.opened
         .filter((row) => row.type === "navigation-result").at(-1));
     };
-    const clickFramePoint = async (point) => page.mouse.click(frameOffset.x + point.x, frameOffset.y + point.y);
+    const clickFramePoint = async (point) => {
+      const currentFrameOffset = await page.$eval("iframe", (iframe) => iframe.getBoundingClientRect().toJSON());
+      const viewer = await frame.evaluate((point) => ({ point,
+        hit: document.elementFromPoint(point.x, point.y)?.outerHTML,
+        currentPage: PDFViewerApplication.pdfViewer.currentPageNumber,
+        ranges: [...(CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])].map((range) => ({
+          text: range.toString(), rects: [...range.getClientRects()].map((rect) => rect.toJSON()) })),
+        activeRequest: window.__pdfReaderBridgeState?.readerBacklinkActiveRequest,
+        controllerPage: window.__pdfReaderBridgeState?.backlinkInteractionController?.page,
+        pageResults: window.__pdfReaderBridgeState?.readerBacklinkPageResults,
+      }), point);
+      gestureDiagnostics.push({ cachedFrameOffset: frameOffset, currentFrameOffset, viewer });
+      await page.mouse.click(currentFrameOffset.x + point.x, currentFrameOffset.y + point.y);
+    };
     const targetOpenCount = () => page.evaluate(() => window.__readerBacklinkE2E.messages.filter((message) => message.type === "reader-backlink-target-open").length);
     const pageBadgePoint = async (pageNumber, pageIdentity) => frame.evaluate(({ pageNumber, pageIdentity }) => {
       const page = document.querySelector(`.page[data-page-number="${pageNumber}"]`);
@@ -653,10 +681,39 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       currentPdfPathAfterRename: host.state.currentPdfPath,
       sourceHashMismatch: { ok: mismatch.ok, reason: mismatch.reason },
     }));
+    const successDirectory = path.join(root, "test-results", `backlink-success-${Date.now()}-${process.pid}`);
+    diagnosticDirectory = successDirectory;
+    await mkdir(successDirectory, { recursive: true });
+    await writeFile(path.join(successDirectory, "trace.json"), JSON.stringify({ gestureDiagnostics,
+      host: await page.evaluate(() => window.__readerBacklinkE2E) }, null, 2));
+    t.diagnostic(`Success artifacts: ${successDirectory}`);
   } catch (error) {
     primaryError = error;
+    if (page && !page.isClosed()) {
+      const artifactDirectory = path.join(root, "test-results", `backlink-failure-${Date.now()}-${process.pid}`);
+      diagnosticDirectory = artifactDirectory;
+      await mkdir(artifactDirectory, { recursive: true });
+      const trace = await page.evaluate(() => ({ host: window.__readerBacklinkE2E,
+        iframeRect: document.querySelector("iframe")?.getBoundingClientRect().toJSON() }));
+      const viewer = page.frames().find((candidate) => candidate.url().includes("/web/viewer.html"));
+      const viewerTrace = viewer && await viewer.evaluate(() => ({ clicks: window.__backlinkE2EClicks,
+        currentPage: PDFViewerApplication.pdfViewer.currentPageNumber,
+        selection: getSelection()?.toString(),
+        highlights: [...(CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])].map((range) => ({
+          text: range.toString(), rects: [...range.getClientRects()].map((rect) => {
+            const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+            return { ...rect.toJSON(), hit: document.elementFromPoint(x, y)?.outerHTML };
+          }) })),
+        pageResults: window.__pdfReaderBridgeState?.readerBacklinkPageResults,
+        activeRequest: window.__pdfReaderBridgeState?.readerBacklinkActiveRequest,
+        controllerPage: window.__pdfReaderBridgeState?.backlinkInteractionController?.page }));
+      await writeFile(path.join(artifactDirectory, "trace.json"), JSON.stringify({ error: error.stack, gestureDiagnostics, trace, viewerTrace }, null, 2));
+      await page.screenshot({ path: path.join(artifactDirectory, "failure.png") });
+      error.message += `\nFailure artifacts: ${artifactDirectory}`;
+    }
   } finally {
     cleanupReport = await cleanupBrowserTestResources({ browser, ownedPages: [page].filter(Boolean), server });
+    if (diagnosticDirectory) await writeFile(path.join(diagnosticDirectory, "cleanup.json"), JSON.stringify(cleanupReport, null, 2));
   }
   const error = attachCleanupErrors(primaryError, cleanupReport);
   if (error) throw error;
