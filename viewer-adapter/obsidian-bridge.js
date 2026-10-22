@@ -2750,6 +2750,12 @@
             documentId: state.activeDocumentId,
             openRequest: state.activeOpenRequest,
             sourceHash: actual.sourceHash,
+            revision: state.revision,
+            confirmedRevision: state.confirmedRevision,
+            dirty: isDirty() || state.dirtyAnnotationRevisions.size > 0,
+            pending: Boolean(state.savePromise || state.pendingSave || state.pendingRecovery ||
+              state.recoveryPromise || state.pendingExternalAnnotationsUpdate ||
+              state.hydratingExternalAnnotations || state.syncCheckpointInProgress),
             pageIndex: item.pageIndex,
             pageIdentity,
             uuid: item.uuid,

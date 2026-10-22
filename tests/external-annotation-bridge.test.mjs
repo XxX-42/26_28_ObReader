@@ -443,6 +443,11 @@ test("comment sidebar keeps PDF.js comments disabled and refreshes only at exist
   assert.match(functionSource("dispose"), /annotationSidebarController\?\.dispose\(\)/);
   assert.match(functionSource("installBridgeControls"), /learning-review-draft-request/,
     "review requests carry only one current PDF target and its text provenance to the Host");
+  assert.match(functionSource("installBridgeControls"), /revision: state\.revision/,
+    "the Host can reject drafts from an unconfirmed viewer revision");
+  assert.match(functionSource("installBridgeControls"), /confirmedRevision: state\.confirmedRevision/);
+  assert.match(functionSource("installBridgeControls"), /dirty: isDirty\(\)/);
+  assert.match(functionSource("installBridgeControls"), /pending: Boolean\(state\.savePromise/);
   assert.match(functionSource("installBridgeControls"), /仅检索已保存文字及已渲染页面可恢复文字/);
 });
 

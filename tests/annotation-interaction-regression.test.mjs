@@ -844,7 +844,7 @@ test(
           const channel='pdf-web-reader', token=${JSON.stringify(view.token)};
           const documentId='fixtures/tracemonkey.pdf';
           const iframe=document.querySelector('iframe');
-          const state=window.__hostState={opened:0,saves:0,savedOperations:[],received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
+          const state=window.__hostState={opened:0,saves:0,savedOperations:[],reviewDraftRequests:[],received:[],opensSent:[],openedMessages:[],saveAcks:[],readyGenerations:[],errors:[]};
           let fixtureBytes;
           const sendOpen=(data,label)=>{
             state.opensSent.push({label,documentId,byteLength:data.byteLength,openRequest:null,rendererGeneration:state.readyGenerations.at(-1)??null});
@@ -855,6 +855,7 @@ test(
             const message=event.data;
             if(!message||message.channel!==channel||message.token!==token)return;
           state.received.push({type:message.type,documentId:message.documentId??null,requestId:message.requestId??null,sessionId:message.sessionId??null,revision:message.revision??null,openRequest:message.openRequest??null,rendererGeneration:message.rendererGeneration??null,code:message.code??null,message:message.type==='error'?message.message:undefined});
+            if(message.type==='learning-review-draft-request') state.reviewDraftRequests.push(structuredClone(message));
             if(message.type==='ready'){
               state.readyGenerations.push(message.rendererGeneration??null);
               const data=fixtureBytes.slice(0);
@@ -2903,6 +2904,81 @@ test(
       const highlightSave = await saveAndReopen();
       results.at(-1).save = highlightSave;
       await persistProgress();
+      const savedHighlight = await page.evaluate(() => {
+        const saved = window.__hostState.savedOperations.at(-1);
+        const snapshot = window.__browserSidecarHost.snapshotFor(saved?.documentId);
+        const operation = [...(saved?.operations || [])].reverse()
+          .find((row) => row.kind === "Highlight" && row.deleted !== true);
+        const row = snapshot?.annotations.find((entry) => entry.uuid === operation?.uuid);
+        const targetText = row?.payload?.editor?.text;
+        const pageIndex = row?.pageIndex;
+        return {
+          uuid: row?.uuid ?? null,
+          pageIndex: Number.isSafeInteger(pageIndex) ? pageIndex : null,
+          pageIdentity: Number.isSafeInteger(pageIndex)
+            ? snapshot?.source?.orderedPageIdentities?.[pageIndex] ?? null : null,
+          sourceHash: snapshot?.source?.sourceHash ?? null,
+          targetText: typeof targetText === "string" ? targetText : null,
+        };
+      });
+      assert.ok(savedHighlight.uuid, "the real Highlight is present in the Sidecar snapshot after save/reopen");
+      assert.ok(savedHighlight.targetText?.includes("Dynamic languages"), JSON.stringify(savedHighlight));
+      assert.equal(typeof savedHighlight.pageIdentity, "string");
+      await viewer.$eval("#pdfReaderAnnotationSidebarButton", (button) => button.click());
+      await viewer.waitForFunction(() =>
+        !document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden") &&
+        document.getElementById("pdfReaderAnnotationSidebarSearch")?.isConnected &&
+        document.getElementById("pdfReaderAnnotationSidebarTypeFilter")?.isConnected,
+      { timeout: 10_000 });
+      const normalizedTargetText = savedHighlight.targetText.replace(/\s+/gu, " ").trim();
+      const searchTerm = normalizedTargetText.slice(0, Math.min(24, normalizedTargetText.length));
+      await viewer.type("#pdfReaderAnnotationSidebarSearch", searchTerm);
+      await viewer.select("#pdfReaderAnnotationSidebarTypeFilter", "Highlight");
+      await viewer.waitForFunction(({ uuid, targetText }) => {
+        const rows = [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")];
+        return document.getElementById("editorCommentsSidebarCount")?.textContent === "1" &&
+          rows.length === 1 && rows[0].dataset.uuid === uuid &&
+          rows[0].querySelector(".sidebarCommentText")?.textContent === targetText.replace(/\s+/gu, " ").trim();
+      }, { timeout: 10_000 }, savedHighlight);
+      await viewer.$eval(
+        `#editorCommentsSidebarList li.sidebarComment[data-uuid="${savedHighlight.uuid}"] .pdfReaderAnnotationSidebarNavigate`,
+        (button) => button.click(),
+      );
+      await viewer.waitForFunction(({ uuid, pageIndex }) => {
+        const row = document.querySelector(`#editorCommentsSidebarList li.sidebarComment[data-uuid="${uuid}"]`);
+        return PDFViewerApplication.pdfViewer.currentPageNumber === pageIndex + 1 &&
+          row?.classList.contains("selected");
+      }, { timeout: 15_000 }, savedHighlight);
+      const reviewButton = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${savedHighlight.uuid}"] .pdfReaderAnnotationReviewButton`;
+      assert.equal(await viewer.$eval(reviewButton, (button) => button.disabled), false,
+        "the persisted Highlight text enables the explicit review request");
+      const reviewRequestCount = await page.evaluate(() => window.__hostState.reviewDraftRequests.length);
+      const pageBeforeReviewRequest = await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentPageNumber);
+      await viewer.$eval(reviewButton, (button) => button.click());
+      await page.waitForFunction((count) =>
+        window.__hostState.reviewDraftRequests.length === count + 1,
+      { timeout: 10_000 }, reviewRequestCount);
+      const reviewRequest = await page.evaluate(() => window.__hostState.reviewDraftRequests.at(-1));
+      const openedSession = await page.evaluate(() => window.__hostState.openedMessages.at(-1));
+      assert.equal(reviewRequest.documentId, "fixtures/tracemonkey.pdf");
+      assert.equal(reviewRequest.openRequest, openedSession.openRequest);
+      assert.equal(reviewRequest.sourceHash, savedHighlight.sourceHash);
+      assert.equal(reviewRequest.pageIndex, savedHighlight.pageIndex);
+      assert.equal(reviewRequest.pageIdentity, savedHighlight.pageIdentity);
+      assert.equal(reviewRequest.uuid, savedHighlight.uuid);
+      assert.equal(reviewRequest.targetText, savedHighlight.targetText);
+      assert.ok(["captured", "stored"].includes(reviewRequest.targetTextSource));
+      assert.equal(reviewRequest.revision, openedSession.revision);
+      assert.equal(reviewRequest.confirmedRevision, openedSession.confirmedRevision);
+      assert.equal(reviewRequest.revision, reviewRequest.confirmedRevision);
+      assert.equal(reviewRequest.dirty, false);
+      assert.equal(reviewRequest.pending, false);
+      assert.equal(typeof reviewRequest.rendererGeneration, "string");
+      assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentPageNumber), pageBeforeReviewRequest,
+        "the sibling review button posts a request without triggering annotation navigation");
+      results.at(-1).semanticSidebar = { savedHighlight, reviewRequest };
+      await persistProgress();
+      await viewer.$eval("#editorCommentsSidebarCloseButton", (button) => button.click());
       const highlightOverHighlight = await createTextMarkup(9);
       results.at(-1).highlightOverHighlight = highlightOverHighlight;
       await persistProgress();
