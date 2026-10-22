@@ -14,3 +14,13 @@ The paired Viewer fix rejects a superseded request before clearing or asynchrono
 ## Scope
 
 This is a proven asynchronous presentation correctness repair. It does not change WAL, Sidecar, source identity, annotation persistence or PDF.js vendor. Input performance and Native acceptance remain separate gates.
+
+## P0: source verification revoked during target lookup
+
+Independent review found that an in-flight Selection Anchor lookup checked session identity but not a subsequently revoked source/hydration gate. The new host regression pauses `readerAnchorStore.get()`, changes the same PDF through the existing `annotationHost.handleSourceModify()` path, then resumes the lookup. The old continuation returns true and sends `reader-anchor-navigate`; the repaired continuation returns false with zero navigation messages.
+
+The only production change adds `annotationHydrationAllowed === true` and `annotationSourceMismatch !== true` to the existing `isCurrent()` continuation/send guard. There is no additional source fingerprint, protocol change or storage write.
+
+- Isolated D worktree including its other P1 work: Host/Anchor 103/103, zero failures/skips.
+- Integration after cherry-picking only this P0 repair: `node --test tests/plugin-host.test.mjs tests/reader-anchor-store.test.mjs`: 98/98, zero failures/skips/cancelled.
+- Browser and Native execution of this specific race: NOT RUN. The installed Native baseline is still the original 0.12.2 bundle; source code is not evidence of a reloaded runtime.
