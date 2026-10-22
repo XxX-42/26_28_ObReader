@@ -2,6 +2,11 @@
 
 This document describes the independent `learning-items-v1` domain module. It does not wire the host UI, alter the Vocabulary bundle, or claim a Native closed-loop acceptance result.
 
+Integration note: `plugin/learning/host.cjs` now supplies the lazy Host facade
+and the existing Workbench exposes explicit drafts, mixed Review and source
+return. See the stage acceptance documents for executed results; the original
+domain-module boundary described here remains unchanged.
+
 ## Runtime ownership
 
 The host creates the service with the existing runtime objects:
@@ -43,7 +48,11 @@ The provider surface declares `explain`, `translate`, `generateQuestions`, `gene
 
 `exportItems("json"|"markdown"|"csv"|"anki-tsv")` is independent from the existing Vocabulary bundle. Each export includes stable `ExternalID`, prompt, answer, target text, and source link/evidence. JSON includes exact source provenance and derives the rating event graph from immutable History, including events on branches not currently active. PDF links use the existing Reader fragment encoder; Markdown/backlink export uses a safe vault-relative path and the captured source line when available. Unsafe URL-like source paths are not emitted as links.
 
-FSRS remains a development-only replay/migration experiment. A future experiment may use `ts-fsrs@5.4.2` in a separate dev dependency/runtime, but production learning modules must not import it and this workflow must not modify shared `node_modules`. Missing historical ratings must not be reconstructed.
+FSRS remains a development-only replay/migration experiment. The root project
+now pins `ts-fsrs@5.4.2` as a dev dependency for the separate replay script and
+fixture tests (`FSRS_EVALUATION.md`). Production learning modules do not import
+it. Child worktrees must not install into their shared `node_modules` junction.
+Missing historical ratings must not be reconstructed.
 
 ## Verification boundary
 
