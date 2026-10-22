@@ -100,3 +100,89 @@ test("invalid provider pages fail closed instead of looping on empty or repeated
   const bounded = createTodayReviewAggregator({ vocabulary: oversized, learning: empty, pageSize: 1 }).openSession();
   await assert.rejects(bounded.nextPage({ limit: 1 }), (error) => error.code === "TODAY_REVIEW_PROVIDER_PAGE_INVALID");
 });
+
+test("nextPage reports hasMore=false when all providers are empty", async () => {
+  const calls = { vocabulary: 0, learning: 0 };
+  const empty = (providerId) => ({
+    async listDue() { calls[providerId] += 1; return { items: [], nextCursor: null }; },
+  });
+  const session = createTodayReviewAggregator({
+    vocabulary: empty("vocabulary"), learning: empty("learning"), pageSize: 3,
+  }).openSession();
+
+  const page = await session.nextPage({ limit: 3 });
+  assert.deepEqual(page.items, []);
+  assert.equal(page.hasMore, false);
+  assert.deepEqual(calls, { vocabulary: 1, learning: 1 });
+});
+
+test("an exactly exhausted final page has no more even before provider done flips, without lookahead reads", async () => {
+  const calls = { vocabulary: 0, learning: 0 };
+  const vocabulary = {
+    async listDue() {
+      calls.vocabulary += 1;
+      return { items: [
+        { familyKey: "v-1", dueAt: "2026-10-22T09:00:00.000Z" },
+        { familyKey: "v-2", dueAt: "2026-10-22T10:00:00.000Z" },
+      ], nextCursor: null };
+    },
+  };
+  const learning = {
+    async listDue() { calls.learning += 1; return { items: [], nextCursor: null }; },
+  };
+  const session = createTodayReviewAggregator({ vocabulary, learning, pageSize: 2 }).openSession();
+
+  const page = await session.nextPage({ limit: 2 });
+  assert.equal(page.items.length, 2);
+  assert.equal(page.cursor.vocabulary.buffered, 0);
+  assert.equal(page.cursor.vocabulary.done, false, "done remains false because consuming a loaded buffer does not perform another fill");
+  assert.equal(page.hasMore, false, "empty buffers and null cursors mean the page is final even if done has not flipped");
+  assert.deepEqual(calls, { vocabulary: 1, learning: 1 }, "hasMore must not fetch a lookahead page");
+});
+
+test("nextCursor signals more after the current provider buffer is exactly consumed", async () => {
+  let vocabularyCalls = 0;
+  let learningCalls = 0;
+  const vocabulary = {
+    async listDue() {
+      vocabularyCalls += 1;
+      return { items: [{ familyKey: "v-1", dueAt: "2026-10-22T09:00:00.000Z" }], nextCursor: "v-next" };
+    },
+  };
+  const learning = {
+    async listDue() { learningCalls += 1; return { items: [], nextCursor: null }; },
+  };
+  const session = createTodayReviewAggregator({ vocabulary, learning, pageSize: 1 }).openSession();
+
+  const page = await session.nextPage({ limit: 1 });
+  assert.equal(page.items[0].providerId, "vocabulary");
+  assert.equal(page.cursor.vocabulary.buffered, 0);
+  assert.equal(page.hasMore, true);
+  assert.equal(vocabularyCalls, 1, "the next cursor is enough; don't fetch it just to compute hasMore");
+  assert.equal(learningCalls, 1);
+});
+
+test("unconsumed buffers across providers keep hasMore true", async () => {
+  const calls = { vocabulary: 0, learning: 0 };
+  const provider = (providerId, rows) => ({
+    async listDue() {
+      calls[providerId] += 1;
+      return { items: rows, nextCursor: null };
+    },
+  });
+  const vocabulary = provider("vocabulary", [
+    { familyKey: "v-1", dueAt: "2026-10-22T09:00:00.000Z" },
+    { familyKey: "v-2", dueAt: "2026-10-22T11:00:00.000Z" },
+  ]);
+  const learning = provider("learning", [
+    { itemId: "l-1", dueAt: "2026-10-22T10:00:00.000Z" },
+    { itemId: "l-2", dueAt: "2026-10-22T12:00:00.000Z" },
+  ]);
+  const session = createTodayReviewAggregator({ vocabulary, learning, pageSize: 2 }).openSession();
+
+  const page = await session.nextPage({ limit: 1 });
+  assert.deepEqual(page.items.map((row) => `${row.providerId}:${row.itemId}`), ["vocabulary:v-1"]);
+  assert.ok(page.cursor.vocabulary.buffered > 0 || page.cursor.learning.buffered > 0);
+  assert.equal(page.hasMore, true);
+  assert.deepEqual(calls, { vocabulary: 1, learning: 1 });
+});

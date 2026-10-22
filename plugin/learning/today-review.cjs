@@ -138,6 +138,7 @@ function createTodayReviewAggregator({ vocabulary, learning, pageSize = DEFAULT_
       }
       return {
         items: output,
+        hasMore: [...state.values()].some((current) => current.buffer.length > 0 || current.nextCursor != null),
         cursor: Object.fromEntries(providers.map(({ id }) => {
           const current = state.get(id);
           return [id, { providerCursor: current.cursor, buffered: current.buffer.length, done: current.done }];
