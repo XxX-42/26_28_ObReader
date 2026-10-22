@@ -1795,6 +1795,145 @@ test("Reader backlink pages use a document cache and invalidate it when Markdown
   harness.plugin.onunload();
 });
 
+test("Reader backlink source navigation focuses the exact Markdown link and never overwrites user movement", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const content = "A quote.\n[[Books/Book.pdf#page=2|Reader source]]\nLater text.";
+  const start = content.indexOf("[[Books/");
+  const end = content.indexOf("]]", start) + 2;
+  const selected = content.slice(start, end);
+  const timers = new Map();
+  let timerId = 0;
+  const listeners = new Map();
+  const ownerWindow = {
+    setTimeout(callback, delay) {
+      const id = ++timerId;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+    fireTimeout(id) {
+      const timer = timers.get(id);
+      if (!timer) return false;
+      timers.delete(id);
+      timer.callback();
+      return true;
+    },
+  };
+  const fromOffset = (offset) => {
+    const prefix = content.slice(0, offset).split("\n");
+    return { line: prefix.length - 1, ch: prefix.at(-1).length };
+  };
+  const toOffset = ({ line, ch }) => content.split("\n").slice(0, line).join("\n").length +
+    (line > 0 ? 1 : 0) + ch;
+  const editor = {
+    value: content,
+    anchor: { line: 0, ch: 0 },
+    head: { line: 0, ch: 0 },
+    selection: "",
+    scrolls: [],
+    focused: false,
+    getValue() { return this.value; },
+    offsetToPos(offset) { return fromOffset(offset); },
+    lineCount() { return this.value.split("\n").length; },
+    setSelection(anchor, head) {
+      this.anchor = { ...anchor };
+      this.head = { ...head };
+      this.selection = this.value.slice(toOffset(anchor), toOffset(head));
+    },
+    setCursor(position) {
+      this.anchor = { ...position };
+      this.head = { ...position };
+      this.selection = "";
+    },
+    getSelection() { return this.selection; },
+    getCursor(which) { return { ...(which === "from" ? this.anchor : this.head) }; },
+    scrollIntoView(position, center) { this.scrolls.push({ position, center }); },
+    focus() { this.focused = true; },
+  };
+  const containerEl = {
+    ownerDocument: { defaultView: ownerWindow },
+    addEventListener(name, listener) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name).add(listener);
+    },
+    removeEventListener(name, listener) { listeners.get(name)?.delete(listener); },
+    dispatch(name) { for (const listener of [...(listeners.get(name) || [])]) listener({ type: name }); },
+  };
+  const markdownLeaf = { view: { file: { path: "Notes/Source.md" }, editor, containerEl,
+    getViewType: () => "markdown" } };
+  const openCalls = [];
+  harness.app.workspace.openLinkText = async (...args) => {
+    openCalls.push(args);
+    harness.app.workspace.activeLeaf = markdownLeaf;
+  };
+  const row = { sourcePath: "Notes/Source.md", offset: start, endOffset: end, line: 1 };
+
+  assert.equal(await harness.plugin.openReaderBacklinkSource(row, { source: "unit-test" }), true);
+  assert.deepEqual(openCalls, [["Notes/Source.md", "", true]]);
+  assert.equal(editor.getSelection(), selected);
+  assert.deepEqual(editor.scrolls, [{ position: fromOffset(start), center: true }]);
+  assert.equal(editor.focused, true);
+  const [timer] = timers.keys();
+  assert.equal(timers.get(timer).delay, 1400);
+  assert.equal(ownerWindow.fireTimeout(timer), true);
+  assert.equal(editor.getSelection(), "", "the temporary link focus clears after its short display interval");
+  assert.deepEqual(editor.getCursor("to"), fromOffset(end));
+
+  await harness.plugin.openReaderBacklinkSource(row, { source: "unit-test" });
+  const secondTimer = [...timers.keys()][0];
+  containerEl.dispatch("pointerdown");
+  editor.setCursor({ line: 2, ch: 3 });
+  assert.equal(timers.has(secondTimer), false, "real user input cancels temporary focus cleanup immediately");
+  assert.deepEqual(editor.getCursor("to"), { line: 2, ch: 3 }, "user movement is never reset");
+
+  editor.scrolls.length = 0;
+  await harness.plugin.openReaderBacklinkSource({ ...row, offset: content.length + 1, line: 0 },
+    { source: "invalid-offset-test" });
+  assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "an invalid offset safely falls back to the indexed line");
+  assert.deepEqual(editor.scrolls, [{ position: { line: 0, ch: 0 }, center: true }]);
+  harness.plugin.onunload();
+});
+
+test("Reader backlink target-open reuses the page index and routes one exact source row", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const view = {
+    annotationDocument: { docKey: "doc-key", documentId: "document-id" },
+    annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+    annotationHydrationAllowed: true,
+    isCurrentReaderAnchorIdentity: () => true,
+  };
+  const row = { sourcePath: "Notes/Source.md", target: { kind: "annotation", id: "annotation-id" } };
+  const selectionRow = { sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "anchor-id" } };
+  let requestedAnchorIds = null;
+  let opened = null;
+  harness.plugin.getReaderBacklinkPageIndex = async () => ({ value: {
+    forPage: () => ({ rows: [row] }),
+    forAnchorIds: (ids) => { requestedAnchorIds = ids; return [selectionRow]; },
+  } });
+  harness.plugin.openReaderBacklinkSource = async (actual, options) => { opened = { actual, options }; return true; };
+  const identity = { documentId: "document-id", openRequest: 3, rendererGeneration: "generation" };
+  assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(view, {
+    ...identity, requestId: "target-open", targetKind: "annotation", targetId: "annotation-id",
+    pageNumber: 1, pageIdentity: "page-one",
+  }), true);
+  assert.deepEqual(opened, { actual: row, options: { source: "viewer" } });
+
+  opened = null;
+  await harness.plugin.handleReaderBacklinkTargetOpen(view, {
+    ...identity, requestId: "target-open-selection", targetKind: "selection", targetId: "anchor-id",
+    pageNumber: 1, pageIdentity: "page-one",
+  });
+  assert.deepEqual(requestedAnchorIds, ["anchor-id"]);
+  assert.equal(opened.actual, selectionRow);
+  assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(view, {
+    ...identity, requestId: "target-open-stale", targetKind: "annotation", targetId: "annotation-id",
+    pageNumber: 2, pageIdentity: "stale-page",
+  }), false, "a stale or mismatched page identity fails closed");
+  harness.plugin.onunload();
+});
+
 test("enhanced Reader links keep stable page, selection and annotation identity across PDF rename", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

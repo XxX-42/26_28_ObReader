@@ -127,6 +127,26 @@ test("backlink index updates only the changed Markdown file and can be rebuilt",
   assert.equal(index.getDocument("aabbccddeeff").length, 1);
 });
 
+test("backlink index preserves MetadataCache link end offsets for exact source focus", () => {
+  const index = createReaderBacklinkIndex();
+  const sourcePath = "Notes/Exact Source.md";
+  index.replaceFile({ path: sourcePath }, { links: [{
+    link: "Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two",
+    displayText: "page reference",
+    position: { start: { offset: 17, line: 1 }, end: { offset: 42, line: 1 } },
+  }] });
+  const [row] = index.get("aabbccddeeff", { kind: "page", id: "page-two" });
+  assert.equal(row.offset, 17);
+  assert.equal(row.endOffset, 42);
+
+  index.replaceFile({ path: sourcePath }, { links: [{
+    link: "Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two",
+    position: { start: { offset: 5, line: 0 } },
+  }] });
+  assert.equal(index.get("aabbccddeeff", { kind: "page", id: "page-two" })[0].endOffset, null,
+    "missing end offsets stay absent instead of being inferred from display text");
+});
+
 test("path-only Reader links are indexed by their resolved vault PDF route", async () => {
   const index = createReaderBacklinkIndex();
   const docKey = "aabbccddeeff";

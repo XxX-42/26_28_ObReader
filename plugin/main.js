@@ -62,6 +62,20 @@ const VOCABULARY_LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
 const VOCABULARY_LETTER = /^\p{L}$/u;
 const VOCABULARY_LINE_HYPHEN = /^[-\u2010]$/u;
 
+function isValidEditorPosition(position) {
+  return Number.isSafeInteger(position?.line) && position.line >= 0 &&
+    Number.isSafeInteger(position?.ch) && position.ch >= 0;
+}
+
+function copyEditorPosition(position) {
+  return isValidEditorPosition(position) ? { line: position.line, ch: position.ch } : null;
+}
+
+function sameEditorPosition(left, right) {
+  return isValidEditorPosition(left) && isValidEditorPosition(right) &&
+    left.line === right.line && left.ch === right.ch;
+}
+
 function vocabularyCodePointBefore(value, offset) {
   if (offset <= 0 || offset > value.length) return "";
   const last = value.charCodeAt(offset - 1);
@@ -3496,6 +3510,16 @@ class PdfReaderView extends EditableFileView {
       });
       return;
     }
+    if (message.type === "reader-backlink-target-open") {
+      if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
+          message.openRequest !== this.openRequest || typeof message.requestId !== "string" ||
+          message.requestId.length > 128) return;
+      void this.plugin.handleReaderBacklinkTargetOpen(this, message).catch((error) => {
+        this.plugin.sessionLog?.record("readerBacklinks", { event: "target-open-failed",
+          code: error.code || "unknown" });
+      });
+      return;
+    }
     if (message.type === "reader-backlink-occurrence-query" ||
         message.type === "reader-backlink-occurrence-open") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
@@ -4553,6 +4577,125 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 
+  async openReaderBacklinkSource(row, { source = "backlink" } = {}) {
+    const sourcePath = typeof row?.sourcePath === "string" ? row.sourcePath : "";
+    const workspace = this.app.workspace;
+    if (!sourcePath || typeof workspace?.openLinkText !== "function") return false;
+    try {
+      await workspace.openLinkText(sourcePath, "", true);
+    } catch (error) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: error?.code || "unknown" });
+      new Notice(`无法打开 Markdown 来源：${error?.message || error}`);
+      return false;
+    }
+
+    const leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
+    const view = leaf?.view;
+    const editor = view?.editor;
+    if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) return true;
+
+    let position = null;
+    let endPosition = null;
+    let value = null;
+    try { value = editor.getValue?.(); } catch { /* Fall back to the metadata line. */ }
+    if (typeof value === "string" && typeof editor.offsetToPos === "function" &&
+        Number.isSafeInteger(row.offset) && row.offset >= 0 && row.offset <= value.length) {
+      try {
+        const candidate = editor.offsetToPos(row.offset);
+        if (isValidEditorPosition(candidate)) position = candidate;
+        if (position && Number.isSafeInteger(row.endOffset) && row.endOffset > row.offset &&
+            row.endOffset <= value.length) {
+          const candidateEnd = editor.offsetToPos(row.endOffset);
+          if (isValidEditorPosition(candidateEnd)) endPosition = candidateEnd;
+        }
+      } catch { position = null; endPosition = null; }
+    }
+    if (!position && Number.isSafeInteger(row.line) && row.line >= 0) {
+      let lineCount = null;
+      try { lineCount = editor.lineCount?.(); } catch { /* Use the already available text when possible. */ }
+      if (!Number.isSafeInteger(lineCount) && typeof value === "string") lineCount = value.split("\n").length;
+      if (Number.isSafeInteger(lineCount) && row.line < lineCount) position = { line: row.line, ch: 0 };
+    }
+    if (!position) return true;
+
+    try {
+      if (endPosition && typeof editor.setSelection === "function") editor.setSelection(position, endPosition);
+      else editor.setCursor?.(position);
+      editor.scrollIntoView?.(position, true);
+      editor.focus?.();
+    } catch (error) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-position-failed", source,
+        code: error?.code || "unknown" });
+      return true;
+    }
+
+    // A brief selection makes the source link easy to spot without editing the note.
+    // Any user input or a changed leaf/editor cancels cleanup, so we never restore an old cursor.
+    if (endPosition && typeof editor.getCursor === "function" && typeof editor.setCursor === "function") {
+      const from = copyEditorPosition(editor.getCursor("from"));
+      const to = copyEditorPosition(editor.getCursor("to"));
+      const container = view.containerEl;
+      const ownerWindow = container?.ownerDocument?.defaultView || globalThis.window || globalThis;
+      const addEvents = ["pointerdown", "keydown", "beforeinput"];
+      let timer = null;
+      let userInteracted = false;
+      const focusCleanups = this.readerBacklinkFocusCleanups ||= new Set();
+      const clearFocusGuard = () => {
+        if (timer != null) ownerWindow.clearTimeout?.(timer);
+        for (const eventName of addEvents) container?.removeEventListener?.(eventName, onUserInput, true);
+        focusCleanups.delete(clearFocusGuard);
+      };
+      const onUserInput = () => { userInteracted = true; clearFocusGuard(); };
+      for (const eventName of addEvents) container?.addEventListener?.(eventName, onUserInput, true);
+      focusCleanups.add(clearFocusGuard);
+      timer = ownerWindow.setTimeout?.(() => {
+        try {
+          const activeLeaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
+          if (!userInteracted && !this.isUnloading && activeLeaf === leaf && activeLeaf?.view === view &&
+              view.editor === editor && editor.getSelection?.() === value.slice(row.offset, row.endOffset) &&
+              sameEditorPosition(editor.getCursor("from"), from) && sameEditorPosition(editor.getCursor("to"), to)) {
+            editor.setCursor(endPosition);
+          }
+        } finally { clearFocusGuard(); }
+      }, 1400);
+    }
+    this.sessionLog?.record("readerBacklinks", { event: "source-opened", source,
+      positioned: Boolean(position), selected: Boolean(endPosition) });
+    return true;
+  }
+
+  async handleReaderBacklinkTargetOpen(view, message) {
+    const { documentId, openRequest, rendererGeneration } = message;
+    const document = view.annotationDocument;
+    const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
+    const targetKinds = new Set(["selection", "annotation", "page"]);
+    const isCurrent = () => view.isCurrentReaderAnchorIdentity({ documentId, openRequest, rendererGeneration }) &&
+      view.annotationDocument === document && view.annotationHydrationAllowed === true;
+    if (!document?.docKey || !document.documentId || !isCurrent() || !targetKinds.has(message.targetKind) ||
+        typeof message.targetId !== "string" || !message.targetId || message.targetId.length > 512 ||
+        !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+        pageIdentities?.[message.pageNumber - 1] !== message.pageIdentity) return false;
+    const backlinkPageIndex = await this.getReaderBacklinkPageIndex(view, { documentId, openRequest, rendererGeneration });
+    if (!backlinkPageIndex || !isCurrent()) return false;
+    let rows;
+    if (message.targetKind === "selection") {
+      rows = backlinkPageIndex.value.forAnchorIds([message.targetId]);
+    } else {
+      rows = backlinkPageIndex.value.forPage(message.pageIdentity).rows.filter((row) =>
+        row.target?.kind === message.targetKind && row.target?.id === message.targetId &&
+        !(message.targetKind === "annotation" && row.targetStatus === "deleted"));
+    }
+    if (!isCurrent()) return false;
+    if (rows.length === 1) {
+      await this.openReaderBacklinkSource(rows[0], { source: "viewer" });
+    } else if (rows.length > 1) {
+      new ReaderBacklinksModal(this.app, rows,
+        (row) => { void this.openReaderBacklinkSource(row, { source: "viewer-modal" }); }).open();
+    }
+    return true;
+  }
+
   async handleReaderBacklinkOccurrenceMessage(view, message) {
     const document = view.annotationDocument;
     const pageIdentities = view.annotationPageIdentity?.orderedPageIdentities;
@@ -4587,9 +4730,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         requestId: message.requestId, documentId: message.documentId, openRequest: message.openRequest,
         rendererGeneration: message.rendererGeneration, ok: true, count: rows.length,
         anchorIds: [...new Set(anchorIds)] });
-    } else {
+    } else if (rows.length === 1) {
+      await this.openReaderBacklinkSource(rows[0], { source: "lingq-occurrence" });
+    } else if (rows.length > 1) {
       new ReaderBacklinksModal(this.app, rows,
-        (row) => this.app.workspace.openLinkText(row.sourcePath, "", true)).open();
+        (row) => { void this.openReaderBacklinkSource(row, { source: "lingq-occurrence-modal" }); }).open();
     }
     return true;
   }
@@ -5058,7 +5203,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!cached || !isCurrent()) return;
     const rows = cached.value.forPage(pageIdentity).rows;
     if (!isCurrent()) return;
-    new ReaderBacklinksModal(this.app, rows, (row) => this.app.workspace.openLinkText(row.sourcePath, "", true)).open();
+    new ReaderBacklinksModal(this.app, rows,
+      (row) => { void this.openReaderBacklinkSource(row, { source: "page-modal" }); }).open();
     this.sessionLog?.record("readerBacklinks", { event: "page-query", pageIndex, resultCount: rows.length });
   }
 
@@ -5092,6 +5238,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
+    this.readerBacklinkFocusCleanups?.clear?.();
     this.vocabularyUnsubscribe?.();
     this.vocabularyUnsubscribe = null;
     this.vocabularyWorkbench?.close?.();

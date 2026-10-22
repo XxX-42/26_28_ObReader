@@ -227,6 +227,7 @@ function createReaderBacklinkIndex() {
       const routeIndexKey = routeTargetKey(routePath, parsed.target);
       if (!identityIndexKey && !routeIndexKey) continue;
       const start = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
+      const end = Number.isSafeInteger(link.position?.end?.offset) ? link.position.end.offset : null;
       const row = Object.freeze({
         sourcePath,
         target: parsed.target,
@@ -238,6 +239,7 @@ function createReaderBacklinkIndex() {
         displayText: typeof link.displayText === "string" && link.displayText ? link.displayText : null,
         line: Number.isSafeInteger(link.position?.start?.line) ? link.position.start.line : null,
         offset: start,
+        endOffset: end,
       });
       const indexes = identityIndexKey
         ? [[byTarget, identityIndexKey]]
