@@ -187,6 +187,34 @@ function makeContextPillRuntime() {
   };
 }
 
+test("Context sentence selection preserves only the current pill page and session", () => {
+  const runtime = makeContextPillRuntime();
+  const pill = runtime.openPill();
+  const page = pill.page;
+  const node = page.tokens[0].segments[0].textNode;
+  const range = { collapsed: false, startContainer: node, endContainer: node };
+  const selection = { rangeCount: 1, isCollapsed: false, getRangeAt: () => range };
+  runtime.controller.window.getSelection = () => selection;
+  const intent = { type: "click", targetRole: "text-layer", pageIndex: 0, button: 0 };
+  assert.equal(runtime.controller.shouldPreserveEntryPillForSelection(intent), true);
+  assert.equal(runtime.controller.entryPill, pill);
+  for (const invalid of [ { pageIndex: 1 }, { nativeActivationTarget: true },
+    { nativeContextTarget: true }, { targetRole: "toolbar" }, { button: 2 } ]) {
+    assert.equal(runtime.controller.shouldPreserveEntryPillForSelection({ ...intent, ...invalid }), false);
+  }
+  range.endContainer = {};
+  assert.equal(runtime.controller.shouldPreserveEntryPillForSelection(intent), false, "cross-page selection is not retained");
+  range.endContainer = node;
+  selection.isCollapsed = true;
+  assert.equal(runtime.controller.shouldPreserveEntryPillForSelection(intent), false);
+  selection.isCollapsed = false;
+  runtime.setIdentity({ documentId: "doc-context", openRequest: 32 });
+  assert.equal(runtime.controller.shouldPreserveEntryPillForSelection(intent), false, "old session cannot retain a pill");
+  assert.equal(runtime.posted.filter(row => row.type === "reader-vocabulary-context-save-request").length, 0,
+    "retaining selection never writes Context; explicit confirmation is still required");
+  runtime.controller.dispose();
+});
+
 test("feature-off controller does no page scan or host query", () => {
   const runtime = makeRuntime();
   runtime.controller.setDocument("doc-1", 7, false);

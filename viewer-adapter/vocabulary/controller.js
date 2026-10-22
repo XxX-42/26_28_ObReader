@@ -603,6 +603,22 @@ export class VocabularyController {
    * ownership hook. This method deliberately installs no document/window
    * listeners; TextLayer nodes are only measured through short-lived Ranges.
    */
+  shouldPreserveEntryPillForSelection(intent) {
+    const pill = this.entryPill;
+    if (!pill || !this.enabled || !this.identityIsCurrent(pill) || intent?.type !== "click" ||
+        intent.targetRole !== "text-layer" || intent.button !== 0 || intent.nativeActivationTarget ||
+        intent.nativeContextTarget || intent.pageIndex !== pill.page.pageNumber - 1) return false;
+    const page = this.pages.get(pageKey(pill.page.pageNumber));
+    if (page !== pill.page || !this.isPageVisible(page.pageNumber)) return false;
+    const selection = this.window?.getSelection?.();
+    if (!selection || selection.isCollapsed !== false || selection.rangeCount !== 1) return false;
+    try {
+      const range = selection.getRangeAt(0);
+      return range?.collapsed === false && page.textLayer.contains(range.startContainer) &&
+        page.textLayer.contains(range.endContainer);
+    } catch { return false; }
+  }
+
   handleTap(intent) {
     if (!this.enabled || !this.identityIsCurrent() || intent?.type !== "click" ||
         intent.targetRole !== "text-layer" || intent.nativeContextTarget ||

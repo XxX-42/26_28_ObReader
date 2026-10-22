@@ -73,7 +73,7 @@ function makeBridgeHarness({ mobile = false } = {}) {
       vocabularyController: {
         setDocument(...args) { calls.push({ type: "setDocument", args }); },
         dispose() { calls.push({ type: "dispose" }); },
-        dismissEntryPill() {},
+        dismissEntryPill() { calls.push({ type: "dismiss-pill" }); },
         handleTap(intent) { calls.push({ type: "lookup", intent }); },
       },
       app: null,
@@ -219,6 +219,34 @@ test("an explicit touch backlink badge needs no LingQ text-tap candidate on Wind
     api.onBridgeIosClick(badgeClick, {});
     assert.equal(activated, 1, "explicit badges still respect an active annotation tool");
   }
+});
+
+test("a current-page Context selection keeps its pill and owns no lookup or backlink click", () => {
+  const api = makeBridgeHarness();
+  api.setVocabularyEnabled(true);
+  api.calls.length = 0;
+  api.state.vocabularyController.shouldPreserveEntryPillForSelection = () => true;
+  api.state.backlinkInteractionController = { handleRoutedPointerEvent() {
+    api.calls.push({ type: "backlink" }); return true;
+  } };
+  const intent = { type: "click", targetRole: "text-layer", button: 0,
+    pageIndex: 2, pointerType: "mouse", clientPoint: { x: 20, y: 30 } };
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(Array.from(api.calls), [], "native sentence selection must retain Save Context without navigation");
+  api.state.inputPolicy = { handlePanClick: () => true, lastPenPanClickTarget: 2 };
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(Array.from(api.calls, call => call.type), ["dismiss-pill"], "pan still dismisses without navigating");
+  api.calls.length = 0;
+  api.state.inputPolicy = { handlePanClick: () => false };
+  api.setEditorMode(15);
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(Array.from(api.calls, call => call.type), ["dismiss-pill"], "an active tool still dismisses the pill");
+  api.calls.length = 0;
+  api.setEditorMode(0);
+  api.state.vocabularyController.shouldPreserveEntryPillForSelection = () => false;
+  api.state.backlinkInteractionController.handleRoutedPointerEvent = () => false;
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(Array.from(api.calls, call => call.type), ["dismiss-pill", "lookup"], "ordinary outside clicks keep prior behavior");
 });
 
 test("badge ownership retains the established pointerdown motion, selection and popup cleanup", () => {

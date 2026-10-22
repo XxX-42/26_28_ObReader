@@ -9063,10 +9063,16 @@
       state.annotationController?.cancelPendingReadMode?.();
     }
     if (intent?.targetRegion === "vocabulary-pill") return;
+    const panClickSuppressed = state.inputPolicy?.handlePanClick?.(intent, controls) === true;
+    // Selecting a sentence is the existing Save Context workflow. The drag's
+    // final native click must not dismiss its owner or navigate a backlink.
+    if (!panClickSuppressed && state.editorMode === 0 && !annotationToolIsActive() &&
+        !state.closeControl && !state.disposed &&
+        !state.iosDirectManipulationController?.hasActivePenEditorGesture?.() &&
+        state.vocabularyController?.shouldPreserveEntryPillForSelection?.(intent) === true) return;
     // Keep the lookup transient: an outside click closes it. A click on a
     // different highlighted token can open the next card in this same event.
     state.vocabularyController?.dismissEntryPill?.();
-    const panClickSuppressed = state.inputPolicy?.handlePanClick?.(intent, controls) === true;
     if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
     if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
     // Explicit role=button badges are native activations, not text-tap
