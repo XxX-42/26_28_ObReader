@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { constants, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -8,7 +9,14 @@ import xxhash from "xxhash-wasm";
 import { PDFDocument, PDFName } from "pdf-lib";
 import { nativeConfig, nativeCdp, nativeEvalJson, assertNativeTestPreflight } from "./native-config.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
-import { mapNativeSidecarAdapterArgs } from "./native-sidecar-isolation.mjs";
+import {
+  mapNativeSidecarAdapterArgs,
+  mapNativeSidecarListResult,
+  serializeNativeSidecarAdapterMapper,
+} from "./native-sidecar-isolation.mjs";
+import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
+import { assertNativeCloseEvidence, completeNativeControlledClose, nativeFixtureViewCount,
+  nativeMaintenanceTerminal } from "./native-controlled-close.mjs";
 
 // This is an opt-in Native Obsidian test, never part of npm test. Only a new
 // fixture is editable. Existing sidecar files are guarded before any mutation.
@@ -33,6 +41,7 @@ const text = "SIDECAR NATIVE 0.7\nVISIBLE FREETEXT";
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const { h64Raw } = await xxhash();
 const hashes = bytes => ({ sha256: sha(bytes), xxh64: `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`, bytes: bytes.byteLength });
+const verifyHash = bytes => `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`;
 const absolute = p => path.join(nativeConfig.vault, ...p.split("/"));
 function absolutePathForVault(p) {
   return path.join(nativeConfig.vault, ...p.split("/"));
@@ -43,7 +52,24 @@ async function installedTriplet() {
     return [name,{sha256:sha(bytes),bytes:bytes.byteLength}];
   })));
 }
-const report = { version: expectedVersion, scenario, vault: nativeConfig.vault, fixture: file, isolatedStoreRoot, startedAt: new Date().toISOString(), stages: [], status: "running" };
+const report = {
+  version: expectedVersion,
+  scenario,
+  vault: nativeConfig.vault,
+  fixture: file,
+  isolatedStoreRoot,
+  repository: {
+    branch: execFileSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).trim(),
+    head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+    dirty: Boolean(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim()),
+    acceptanceRunnerSha256: sha(await readFile(new URL(import.meta.url))),
+    sidecarIsolationHelperSha256: sha(await readFile(path.join(root, "tests/native-sidecar-isolation.mjs"))),
+    walEvidenceHelperSha256: sha(await readFile(path.join(root, "tests/native-wal-evidence.mjs"))),
+  },
+  startedAt: new Date().toISOString(),
+  stages: [],
+  status: "running",
+};
 report.driverSourceHashReads = [];
 async function sourceHashes(label) {
   const startedAt = performance.now();
@@ -59,6 +85,7 @@ let callSequence = 0;
 function run(fn, arg) {
   const expression = `(async()=>{if(app.vault.adapter.basePath!==${JSON.stringify(nativeConfig.vault)})throw Error('Wrong Vault');
     if(app.plugins.plugins['pdf-web-reader']?.manifest.version!==${JSON.stringify(expectedVersion)})throw Error('Wrong runtime version');
+    ${serializeNativeSidecarAdapterMapper()}
     return JSON.stringify(await (${fn.toString()})(${JSON.stringify(arg ?? null)}));})()`;
   // Obsidian's Windows CLI socket cannot reliably receive a large JSON request
   // in one chunk. Keep the command short; preserve the exact evaluated script
@@ -135,6 +162,7 @@ async function state() {
       });
     return { ready: v.ready, revision: v.currentRevision, confirmed: v.confirmedRevision, pending: v.pendingSaves,
       dirty: !!a?._hasChanges?.(), mode: a?.pdfViewer?.annotationEditorMode, docKey: v.annotationDocument?.docKey,
+      documentId: v.annotationDocument?.documentId, sourceHash: v.annotationDocument?.source?.sourceHash,
       snapshot: v.annotationSnapshot, editors, buttonsReady: !d.getElementById("editorUnderlineButton")?.disabled,
       visibility: d.visibilityState, pageRendered: a?.pdfViewer?.getPageView(0)?.renderingState };
   });
@@ -160,6 +188,9 @@ async function open() {
     const t = globalThis.__sidecarNative07;
     t.viewerWindows.set(w,v.token);
     t.docKey=v.annotationDocument?.docKey;
+    t.documentId=v.annotationDocument?.documentId;
+    t.sourceHash=v.annotationDocument?.source?.sourceHash;
+    t.protocol=app.plugins.plugins['pdf-web-reader'].annotationHost?.store?.sourceProtocol||null;
     const post = v.postToViewer;
     t.originals.push({object:v,name:'postToViewer',original:post});
     v.postToViewer = function(message, ...args) {
@@ -214,43 +245,114 @@ async function point(rx, ry) {
 }
 async function checkpoint() {
   const s = await state();
-  const base = `${storeRoot}/checkpoints/${s.docKey}`;
-  const ck = JSON.parse(await readFile(absolute(`${base}.json`), "utf8"));
-  const all = await tree(storeRoot);
-  return { revision: ck.revision, integrity: ck.integrity, annotations: ck.annotations, tombstones: ck.tombstones,
-    operationBatchFiles: [...all.keys()].filter(p => p.includes(`/ops/${s.docKey}/`) && p.endsWith(".json")),
-    checkpointBytes: all.get(`${base}.json`)?.byteLength, backupHash: sha(all.get(`${base}.previous.json`) || Buffer.alloc(0)),
-    snapshotPointers: [...all].filter(([p]) => p.endsWith(`--${s.docKey}.pdfdata.json`)).map(([p,b]) => ({ path: p, value: JSON.parse(b) })) };
+  const all = await tree(isolatedStoreRoot);
+  return readNativeWalEvidence({
+    files: all,
+    isolatedRoot: isolatedStoreRoot,
+    virtualRoot: storeRoot,
+    docKey: s.docKey,
+    documentId: s.documentId,
+    sourceHash: s.sourceHash,
+    viewerRevision: s.revision,
+    confirmedViewerRevision: s.confirmed,
+    hash: verifyHash,
+  });
 }
 async function saved(label, expectedTypes) {
   await doc(({ w, d }) => { w.focus(); d.getElementById("viewerContainer").focus(); return true; });
   await key("s", "KeyS", 83, 2);
-  await wait(`saved ${label}`, state, s => !s.dirty && !s.pending && s.revision === s.confirmed, 30_000);
-  const ck = await wait(`checkpoint ${label}`, async () => checkpoint().catch(() => null), ck => ck && JSON.stringify(ck.annotations.map(x => x.kind).sort()) === JSON.stringify([...expectedTypes].sort()));
-  report.stages.push({ label, state: await state(), checkpoint: ck, hashes: await sourceHashes(label) });
+  const savedState = await wait(`saved ${label}`, state, s => !s.dirty && !s.pending && s.revision === s.confirmed, 30_000);
+  const acks = await run(({ docKey, documentId }) => {
+    const trace = globalThis.__sidecarNative07;
+    return trace.docKey === docKey
+      ? trace.acks.filter(ack => ack.type === "saved" && ack.documentId === documentId)
+      : [];
+  }, { docKey: savedState.docKey, documentId: savedState.documentId });
+  const matchingAck = acks.filter(ack => ack.revision === savedState.revision && ack.external === true).at(-1);
+  assert.ok(matchingAck, `A durable external save acknowledgement must match Viewer revision ${savedState.revision}`);
+  const ck = await wait(`WAL replay ${label}`, checkpoint, evidence => {
+    const rows = evidence?.annotations || [];
+    const typesMatch = JSON.stringify(rows.map(row => row.kind).sort()) === JSON.stringify([...expectedTypes].sort());
+    return typesMatch && (evidence.protocol === "legacy-checkpoint" || evidence.durableWal?.status === "replayed");
+  });
+  assert.deepEqual(ck.annotations.map(row => row.kind).sort(), [...expectedTypes].sort(),
+    "Independently replayed durable annotation kinds must match the expected state");
+  assert.equal(new Set(ck.annotations.map(row => row.uuid)).size, ck.annotations.length,
+    "Independent WAL replay must retain unique annotation UUIDs");
+  for (const row of ck.annotations) {
+    assert.ok(row.uuid && row.kind && Number.isSafeInteger(row.pageIndex), "Persisted annotation identity, kind, and page must be present");
+    assert.ok(row.payload && typeof row.payload === "object", "Persisted annotation payload must be retained for readback");
+  }
+  for (const row of ck.annotations.filter(annotation => annotation.kind === "FreeText")) {
+    assert.equal(row.payload.editor?.value, text, "FreeText text must survive an independent WAL readback");
+    assert.ok(Array.isArray(row.payload.editor?.rect) && row.payload.editor.rect.length === 4 &&
+      row.payload.editor.rect.every(Number.isFinite), "FreeText PDF geometry must survive an independent WAL readback");
+  }
+  assert.equal(savedState.revision, savedState.confirmed, "Viewer revision must be confirmed before persistence evidence is accepted");
+  report.stages.push({ label, state: savedState, matchingSaveAck: matchingAck, checkpoint: ck, hashes: await sourceHashes(label) });
   console.log(`Native sidecar stage: ${label}`);
   assert.deepEqual(report.stages.at(-1).hashes, report.sourceBefore);
   return ck;
 }
+async function controlledDetach(label, targetToken = null, expectedRemaining = 0) {
+  const maintenanceOffset = await run(() => globalThis.__sidecarNative07.maintenance.length);
+  const evidence = await completeNativeControlledClose({ runSerialized: run, waitFor: wait,
+    loadFiles: tree, readWalEvidence: readNativeWalEvidence, hash: verifyHash,
+    filePath: file, targetToken, expectedRemaining, label, maintenanceOffset,
+    isolatedRoot: isolatedStoreRoot, virtualRoot: storeRoot });
+  (report.controlledCloses ||= []).push(evidence);
+  return evidence;
+}
 async function close() {
-  await run(async p => { const v = [...app.plugins.plugins["pdf-web-reader"].views].find(v => v.requestedPath === p); await v.leaf.detach(); return true; }, file);
-  await wait("Reader completely detached", () => run(p => [...app.plugins.plugins["pdf-web-reader"].views].filter(v => v.requestedPath === p).length, file), n => n === 0, 8_000);
+  const result = await controlledDetach("Reader controlled close");
+  assert.equal(result.alreadyAbsent, undefined, "Reader controlled close requires the exact fixture Reader to be open");
+  return result;
+}
+async function closeFailedFixtureSafely() {
+  const active = await run(p => [...app.plugins.plugins["pdf-web-reader"].views].filter(view => view.requestedPath === p).length, file);
+  if (active > 0) return controlledDetach("Failure-path controlled close", null, 0);
+  const priorClose = [...(report.controlledCloses || [])].reverse().find(item =>
+    item.ok && item.remaining === 0 && item.maintenance?.event === "annotation-snapshot-materialized");
+  if (priorClose) return { alreadyAbsent: true, quiescedBy: priorClose.label, maintenance: priorClose.maintenance };
+  const session = await run(() => {
+    const trace = globalThis.__sidecarNative07, plugin = app.plugins.plugins["pdf-web-reader"];
+    return { docKey: trace?.docKey, documentId: trace?.documentId, sourceHash: trace?.sourceHash,
+      protocol: trace?.protocol || plugin.annotationHost?.store?.sourceProtocol || null,
+      latestAckAt: trace?.acks.at(-1)?.at || 0 };
+  });
+  if (!session.docKey || !session.documentId) return { alreadyAbsent: true, noOpenedDocument: true };
+  if (!session.protocol?.startsWith("wal-sidecar-v3.")) return { alreadyAbsent: true, noWalMaintenanceExpected: true, session };
+  const maintenance = await wait("failure-path background annotation maintenance settled", () => run(nativeMaintenanceTerminal,
+    { documentId: session.documentId, offset: 0 }), row => Boolean(row && row.receivedAt > session.latestAckAt), 20_000);
+  const wal = await readNativeWalEvidence({ files: await tree(isolatedStoreRoot), isolatedRoot: isolatedStoreRoot,
+    virtualRoot: storeRoot, docKey: session.docKey, documentId: session.documentId,
+    sourceHash: session.sourceHash, viewerRevision: report.failureState?.revision ?? 0,
+    confirmedViewerRevision: report.failureState?.confirmed ?? 0, hash: verifyHash });
+  assertNativeCloseEvidence({ viewCount: 0, maintenance, wal, isolatedRoot: isolatedStoreRoot });
+  return { alreadyAbsent: true, maintenance, walAfterClose: { snapshotStatus: wal.snapshot?.status, walStatus: wal.durableWal?.status } };
 }
 async function exportCopy(expectedTypes) {
-  run(()=>{globalThis.__sidecarNative07.exportAllowed=true;return true;});
+  const expectedPath = `${folder}/immutable-source (PDF Reader Export).pdf`;
+  const targetState = await run(async p => ({
+    exists: await app.vault.adapter.exists(p),
+    indexed: Boolean(app.vault.getAbstractFileByPath(p)),
+  }), expectedPath);
+  assert.deepEqual(targetState, { exists: false, indexed: false },
+    "The exact fixture export target must not exist before the test-only write permit is granted");
+  report.exportAuthorization = { path: expectedPath, initiallyAbsent: true };
+  run(p=>{const t=globalThis.__sidecarNative07;t.exportAllowed=true;t.exportAllowedPath=p;t.exportTargetWasAbsent=true;return true;},expectedPath);
   let exported;
   try {
     exported=await run(async p=>{const v=[...app.plugins.plugins['pdf-web-reader'].views].find(v=>v.requestedPath===p);return await v.exportAnnotatedCopy();},file);
   } finally {
-    run(()=>{globalThis.__sidecarNative07.exportAllowed=false;return true;});
+    run(()=>{const t=globalThis.__sidecarNative07;t.exportAllowed=false;t.exportTargetWasAbsent=false;return true;});
   }
-  assert.notEqual(exported,file);
-  assert.ok(exported.startsWith(folder+'/'),'Export must stay in this new fixture folder');
+  assert.equal(exported,expectedPath,'Only the predeclared, initially absent export path is permitted');
   const exportBytes=await readFile(absolute(exported)), pdf=await PDFDocument.load(exportBytes), annotations=[];
   const supported=['Underline','Square','Highlight','Ink','FreeText'];
   for(const [pageIndex,page] of pdf.getPages().entries()){const list=page.node.Annots();if(!list)continue;for(let i=0;i<list.size();i++){const dict=list.lookup(i), subtype=dict.get(PDFName.of('Subtype'))?.toString().slice(1);if(supported.includes(subtype))annotations.push({pageIndex,subtype,rect:dict.get(PDFName.of('Rect'))?.toString(),contents:dict.get(PDFName.of('Contents'))?.decodeText?.()});}}
   assert.deepEqual(annotations.map(x=>x.subtype).sort(),[...expectedTypes].sort());
-  report.export={path:exported,hashes:hashes(exportBytes),annotations};
+  report.export={path:exported,hashes:hashes(exportBytes),annotations,authorization:report.exportAuthorization};
   report.sourceAfter=await sourceHashes('after-explicit-export');assert.deepEqual(report.sourceAfter,report.sourceBefore);
 }
 function decodePng(buffer) {
@@ -375,7 +477,7 @@ async function independentReaderLifecycle() {
       firstClean:!a.pendingSaves&&a.currentRevision===a.confirmedRevision};
   }));
   assert.ok(report.readerLifecycle.distinctDocument&&report.readerLifecycle.firstClean);
-  await run(async()=>{await globalThis.__sidecarNative07.lifecycleFirst.leaf.detach();return true;});
+  await controlledDetach("Reader A lifecycle detach", report.readerLifecycle.firstToken, 1);
   await wait('A fully detached while B remains',()=>run(p=>[...app.plugins.plugins['pdf-web-reader'].views].filter(v=>v.requestedPath===p).length,file),n=>n===1);
   await open();
   assert.equal(await doc(({v})=>v.token),report.readerLifecycle.secondToken);
@@ -384,8 +486,18 @@ async function independentReaderLifecycle() {
 
 try {
   report.installedTripletBefore=await installedTriplet();
-  const preflight = run(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir, pluginEnabled: app.plugins.enabledPlugins.has("pdf-web-reader"), pluginVersion: app.plugins.plugins["pdf-web-reader"].manifest.version, readerViews: [...app.plugins.plugins["pdf-web-reader"].views].map(v=>({path:v.requestedPath,revision:v.currentRevision,confirmed:v.confirmedRevision,pending:v.pendingSaves,dirty:!!v.iframe?.contentWindow?.PDFViewerApplication?._hasChanges?.()})), visibility: document.visibilityState }));
+  const preflight = run(() => ({ vault: app.vault.adapter.basePath, vaultName: app.vault.getName?.() || null,
+    configDir: app.vault.configDir, pluginEnabled: app.plugins.enabledPlugins.has("pdf-web-reader"),
+    pluginVersion: app.plugins.plugins["pdf-web-reader"].manifest.version,
+    readerViews: [...app.plugins.plugins["pdf-web-reader"].views].map(v=>({path:v.requestedPath,
+      revision:v.currentRevision,confirmed:v.confirmedRevision,pending:v.pendingSaves,
+      dirty:!!v.iframe?.contentWindow?.PDFViewerApplication?._hasChanges?.()})),
+    visibility: document.visibilityState }));
   assertNativeTestPreflight(preflight, expectedVersion); report.preflight=preflight;
+  report.vaultIdentity = { path: preflight.vault, name: preflight.vaultName, configDir: preflight.configDir };
+  report.runtimeVersion = preflight.pluginVersion;
+  report.bundleSha256 = report.installedTripletBefore["main.js"].sha256;
+  report.installedBundle = report.installedTripletBefore;
   nativeCdp("Emulation.setFocusEmulationEnabled", {enabled:true});
   await mkdir(absolute(folder), {recursive:true});
   if(scenario==='benchmark-large'){
@@ -396,14 +508,26 @@ try {
     report.fixtureProvenance='New 120-page synthetic fixture, 16 MiB incompressible attachment; same historical recipe, NOT identical historical bytes and NOT historical A/B';
   }else await copyFile(path.join(root,"tests/fixtures/tracemonkey.pdf"),absolute(file),constants.COPYFILE_EXCL);
   report.sourceBefore=await sourceHashes('initial');
+  report.fixtureHash = report.sourceBefore;
   instrumented=true;
-  run(async ({file,prefix,protectedPaths,isolatedRoot})=>{
+  run(async ({file,prefix,protectedPaths,isolatedRoot,fixtureFolder})=>{
     if(globalThis.__sidecarNative07)throw Error("Previous Native instrumentation still present");
     const a=app.vault.adapter, p=app.plugins.plugins["pdf-web-reader"], protectedSet=new Set(protectedPaths), originals=[];
-    const trace=globalThis.__sidecarNative07={file,prefix,isolatedRoot,clockOrigin:performance.timeOrigin,viewerWindows:new Map(),viewerTimings:[],viewerLogLosses:[],storeTimings:[],io:[],acks:[],pointers:[],messages:[],listeners:[],pdfSerializations:[],sourceWriteAttempts:[],blockedExistingWrites:[],exportAllowed:false,originals};
+    const originalAdapterExists=a.exists;
+    const trace=globalThis.__sidecarNative07={file,prefix,isolatedRoot,fixtureFolder,clockOrigin:performance.timeOrigin,viewerWindows:new Map(),viewerTimings:[],viewerLogLosses:[],storeTimings:[],maintenance:[],io:[],listMappings:[],acks:[],pointers:[],messages:[],listeners:[],pdfSerializations:[],sourceWriteAttempts:[],pdfWriteAttempts:[],blockedExistingWrites:[],exportAllowed:false,exportAllowedPath:null,exportTargetWasAbsent:false,originals};
+    const pathString=value=>typeof value==='string'?value:String(value?.path||'');
+    const isPdfPath=value=>/\.pdf$/i.test(pathString(value));
+    const isApprovedExport=async target=>trace.exportAllowed===true&&trace.exportTargetWasAbsent===true&&target===trace.exportAllowedPath&&typeof target==='string'&&target.startsWith(`${fixtureFolder}/`)&&isPdfPath(target)&&!(await originalAdapterExists.call(a,target));
+    const assertPdfWrite=async(layer,name,target,allowedMethod)=>{if(!isPdfPath(target))return;const path=pathString(target);if(path===file){trace.sourceWriteAttempts.push({layer,name,path});throw Error('Source PDF mutation forbidden');}if(allowedMethod&&await isApprovedExport(path))return;trace.pdfWriteAttempts.push({layer,name,path,allowedPath:trace.exportAllowedPath});throw Error('PDF mutation outside the explicitly approved new-fixture export is forbidden');};
+    const rawList=a.list;
+    if(typeof rawList==='function'){originals.push({object:a,name:'list',original:rawList});a.list=async function(path,...args){const storageResult=await rawList.call(this,path,...args);const storeResult=mapNativeSidecarListResult(storageResult,isolatedRoot,prefix);if(path===isolatedRoot||String(path).startsWith(`${isolatedRoot}/`))trace.listMappings.push({storagePath:path,storageFiles:storageResult?.files||[],storageFolders:storageResult?.folders||[],storeFiles:storeResult?.files||[],storeFolders:storeResult?.folders||[]});return storeResult;};}
+    const adapterPdfWriteMethods=['write','writeBinary','append','appendBinary','remove','rename','process','removeFile','update','copy','copyRecursive'];
+    for(const name of adapterPdfWriteMethods){if(typeof a[name]!=='function')continue;const original=a[name];originals.push({object:a,name,original});a[name]=async function(...args){const paths=name==='rename'?[pathString(args[0]),pathString(args[1])]:['copy','copyRecursive'].includes(name)?[pathString(args[1])]:[pathString(args[0])];for(const target of paths)if(isPdfPath(target)){await assertPdfWrite('adapter',name,target,name==='writeBinary');break;}return original.apply(this,args);};}
+    const vaultPdfWriteMethods=['modifyBinary','appendBinary','modify','append','createBinary','create','delete','rename','copy'];
+    for(const name of vaultPdfWriteMethods){if(typeof app.vault[name]!=='function')continue;const original=app.vault[name];originals.push({object:app.vault,name,original});app.vault[name]=async function(target,...args){const paths=name==='rename'?[pathString(target),pathString(args[0])]:name==='copy'?[pathString(args[0])]:[pathString(target)];for(const path of paths)if(isPdfPath(path)){await assertPdfWrite('vault',name,path,name==='createBinary');break;}return original.call(this,target,...args);};}
     trace.messageListener=e=>{const v=[...p.views].find(v=>v.requestedPath===file);const expected=trace.viewerWindows.get(e.source)||(e.source===v?.iframe?.contentWindow?v.token:null);if(!expected||e.data?.channel!=='pdf-web-reader'||e.data.token!==expected)return;if(['save','recover'].includes(e.data.type))trace.messages.push({at:performance.now(),type:e.data.type,revision:e.data.revision,requestId:e.data.requestId,operations:e.data.operations?.length??e.data.annotationOperations?.length,encodedBytes:new TextEncoder().encode(JSON.stringify(e.data)).length});if(e.data.type==='runtime-log'&&Array.isArray(e.data.rows))for(const raw of e.data.rows){try{const row=JSON.parse(raw);if(row.kind==='sidecar-performance')trace.viewerTimings.push({...row,receivedAt:performance.now()});else if(row.kind==='log-loss')trace.viewerLogLosses.push({...row,receivedAt:performance.now()});}catch{}}};window.addEventListener('message',trace.messageListener);
-    const record=p.sessionLog.record;originals.push({object:p.sessionLog,name:'record',original:record});p.sessionLog.record=function(kind,fields){if(kind==='annotationStore'&&fields?.event==='annotation-performance')trace.storeTimings.push({...fields,receivedAt:performance.now()});return record.call(this,kind,fields);};
-    const adapterMethods=["read","write","readBinary","writeBinary","append","appendBinary","remove","rename","exists","mkdir","list","process"];
+    const record=p.sessionLog.record;originals.push({object:p.sessionLog,name:'record',original:record});p.sessionLog.record=function(kind,fields){if(kind==='annotationStore'&&fields?.event==='annotation-performance')trace.storeTimings.push({...fields,receivedAt:performance.now()});if(kind==='annotationStore'&&['annotation-snapshot-materialized','annotation-snapshot-sync-pending','annotation-snapshot-materialize-failed'].includes(fields?.event))trace.maintenance.push({...fields,receivedAt:performance.now()});return record.call(this,kind,fields);};
+    const adapterMethods=["read","write","readBinary","writeBinary","append","appendBinary","remove","rename","exists","mkdir","list","process","removeFile","update","copy","copyRecursive"];
     for(const name of adapterMethods){if(typeof a[name]!=="function")continue;const original=a[name];originals.push({object:a,name,original});a[name]=async function(...args){const target=String(args[0]||'');const mappedArgs=mapNativeSidecarAdapterArgs(name,args,prefix,isolatedRoot);const mappedTarget=String(mappedArgs[0]||'');const writing=!["read","readBinary","exists","list"].includes(name);if(writing&&(target===file||String(args[1]||'')===file)){trace.sourceWriteAttempts.push({name,target});throw Error("Source PDF mutation forbidden");}if(writing&&!mappedTarget.startsWith(isolatedRoot)&&protectedSet.has(target)){trace.blockedExistingWrites.push(target);throw Error("Existing annotation data is protected");}if(name==='rename'&&protectedSet.has(String(args[1]))&&!String(mappedArgs[1]||'').startsWith(isolatedRoot)){trace.blockedExistingWrites.push(String(args[1]));throw Error('Existing target protected');}const t=performance.now();try{const result=await original.apply(this,mappedArgs);if(target===file||target===prefix||target.startsWith(prefix+'/'))trace.io.push({name,path:target,storagePath:mappedTarget,at:t,ms:performance.now()-t,bytes:typeof args[1]==='string'?new TextEncoder().encode(args[1]).length:args[1]?.byteLength??(typeof result==='string'?new TextEncoder().encode(result).length:result?.byteLength??0)});return result;}catch(e){trace.io.push({name,path:target,storagePath:mappedTarget,at:t,error:String(e)});throw e;}};}
     for(const name of ['modifyBinary','appendBinary','modify','append','createBinary','create','delete','rename']){if(typeof app.vault[name]!=='function')continue;const original=app.vault[name];originals.push({object:app.vault,name,original});app.vault[name]=function(target,...args){if(String(target?.path||target)===file){trace.sourceWriteAttempts.push({name,path:file});throw Error('Source PDF mutation forbidden');}return original.call(this,target,...args);};}
     return true;
@@ -416,7 +540,8 @@ try {
       await drag(await point(.14+i*.025,.28+i*.012),await point(.25+i*.025,.34+i*.012));
       await wait('benchmark Square created',state,s=>s.editors.filter(e=>e.type===5).length===i+1);
       const ck=await saved(`benchmark-${i+1}`,Array(i+1).fill('Square'));
-      report.benchmark.push({edit:i+1,checkpointRevision:ck.revision,checkpointBytes:ck.checkpointBytes,heap:nativeCdp('Runtime.getHeapUsage')});
+      report.benchmark.push({edit:i+1,viewerRevision:ck.viewer.revision,walWatermarkTotal:ck.walWatermarkTotal,
+        checkpointBytes:ck.checkpointBytes,heap:nativeCdp('Runtime.getHeapUsage')});
     }
     if(process.env.PDF_READER_REQUIRE_PHASE_TIMINGS==='1'){
       await wait('independent phase telemetry delivered',()=>run(()=>{const t=globalThis.__sidecarNative07;return{capture:t.viewerTimings.filter(x=>x.phase==='capture'&&x.status==='ok').length,encode:t.viewerTimings.filter(x=>x.phase==='encode'&&x.status==='ok').length,gc:t.storeTimings.filter(x=>x.phase==='gc'&&x.docKey===t.docKey).length};}),s=>s.capture>=10&&s.encode>=10&&s.gc>0,8_000);
@@ -477,12 +602,64 @@ try {
   assert.deepEqual(Object.fromEntries((await state()).snapshot.annotations.map(r=>[r.kind,r.uuid])),report.initialUuids);
   await freeTextVisual('freetext-after-reopen');
   // Move a saved Square through actual pointer input.
+  const squareRows=(await checkpoint()).annotations.filter(row=>row.kind==='Square');
+  const squareEditors=(await state()).editors.filter(editor=>editor.type===5);
+  assert.equal(squareRows.length,1,'The persisted five-tool state must contain exactly one Square before moving it');
+  assert.equal(squareEditors.length,1,'The reopened Viewer must contain exactly one Square before moving it');
+  const squareUuid=report.initialUuids.Square;
+  const squareRow=squareRows.find(row=>row.uuid===squareUuid);
+  assert.ok(squareRow,'The reopened Square must retain its acknowledged UUID');
+  const squareEditor=squareEditors[0],squareBefore=squareEditor.serialized.rect;
+  const identityRectDelta=Math.max(...squareBefore.map((value,index)=>Math.abs(value-squareRow.payload.editor.rect[index])));
+  assert.ok(identityRectDelta<0.1,'The original Square editor must map to the persisted UUID by its unchanged PDF geometry');
+  report.squareMove={uuid:squareUuid,editorId:squareEditor.id,rectBefore:squareBefore,identityRectDelta};
   await doc(({a})=>{a.eventBus.dispatch('switchannotationeditormode',{mode:0});return true;});
-  const squareBefore=(await state()).editors.find(e=>e.type===5).serialized.rect;
-  const squarePoint=await doc(({v,d,a})=>{const m=a.pdfViewer._layerProperties.annotationEditorUIManager;const e=[...d.querySelectorAll('.annotationEditorLayer > div[id]')].find(e=>m.getEditor(e.id)?.constructor._editorType===5);const r=e.getBoundingClientRect(),f=v.iframe.getBoundingClientRect();return{x:f.x+r.x+r.width/2,y:f.y+r.y+r.height/2};});
-  await click(squarePoint); await drag(squarePoint,{x:squarePoint.x+20,y:squarePoint.y+14});
-  await wait('saved Square moved',state,s=>JSON.stringify(s.editors.find(e=>e.type===5)?.serialized.rect)!==JSON.stringify(squareBefore));
-  await saved('square-moved',five);
+  const modeZero=await wait('saved Square is hit-testable in mode NONE',async()=>{
+    const sample=await doc(({a,d,arg})=>{
+      const e=d.getElementById(arg.editorId),layer=e?.closest('.annotationEditorLayer'),r=e?.getBoundingClientRect();
+      if(!e||!layer||!r)return null;
+      const x=r.x+r.width/2,y=r.y+r.height/2,hit=d.elementFromPoint(x,y),style=getComputedStyle(e);
+      return {mode:a.pdfViewer.annotationEditorMode,editorId:e.id,layerClass:layer.className,
+        creationPriority:layer.classList.contains('creationPriority'),pointerEvents:style.pointerEvents,
+        center:{x,y},hitTag:hit?.tagName||null,hitClass:typeof hit?.className==='string'?hit.className:null,
+        hitEditor:hit===e||e.contains(hit),selected:e.classList.contains('selectedEditor'),explicitlyEditing:e.classList.contains('explicitlyEditing')};
+    },{editorId:squareEditor.id});
+    report.squareMove.modePreconditionLast=sample;
+    return sample;
+  },sample=>sample?.mode===0&&!sample.creationPriority&&sample.hitEditor);
+  report.squareMove.modePrecondition=modeZero;
+  const squarePoint=await doc(({v,arg})=>{const r=arg.center,f=v.iframe.getBoundingClientRect();return{x:f.x+r.x,y:f.y+r.y};},modeZero);
+  await click(squarePoint);
+  const selectedSquare=await wait('existing Square selected for native drag',async()=>{
+    const sample=await doc(({a,d,arg})=>{
+      const manager=a.pdfViewer._layerProperties.annotationEditorUIManager;
+      const e=d.getElementById(arg.editorId),editor=e&&manager.getEditor(e.id),r=e?.getBoundingClientRect();
+      if(!e||!editor||!r)return null;
+      const x=r.x+r.width/2,y=r.y+r.height/2,hit=d.elementFromPoint(x,y);
+      return {editorId:e.id,managerSelected:manager.isSelected(editor),selected:e.classList.contains('selectedEditor'),
+        explicitlyEditing:e.classList.contains('explicitlyEditing'),mode:a.pdfViewer.annotationEditorMode,
+        center:{x,y},hitTag:hit?.tagName||null,hitClass:typeof hit?.className==='string'?hit.className:null,
+        hitEditor:hit===e||e.contains(hit),layerClass:e.closest('.annotationEditorLayer')?.className||null};
+    },{editorId:squareEditor.id});
+    report.squareMove.selectionPreconditionLast=sample;
+    return sample;
+  },sample=>sample?.managerSelected&&sample.selected&&sample.explicitlyEditing&&sample.hitEditor);
+  report.squareMove.selectionPrecondition=selectedSquare;
+  const moveTarget={x:squarePoint.x+20,y:squarePoint.y+14};
+  await drag(squarePoint,moveTarget);
+  await wait('original saved Square moved through trusted pointer input',state,s=>{
+    const editor=s.editors.find(item=>item.id===squareEditor.id&&item.type===5);
+    return !!editor&&JSON.stringify(editor.serialized.rect)!==JSON.stringify(squareBefore);
+  });
+  const movedState=await state();
+  assert.equal(movedState.editors.filter(editor=>editor.type===5).length,1,'Moving the saved Square must not create a second Square');
+  assert.equal(movedState.editors.find(editor=>editor.type===5)?.id,squareEditor.id,'The moved editor must be the original Square');
+  const moveCheckpoint=await saved('square-moved',five);
+  const persistedMovedSquare=moveCheckpoint.annotations.filter(row=>row.kind==='Square');
+  assert.equal(persistedMovedSquare.length,1,'The moved WAL state must still contain one Square');
+  assert.equal(persistedMovedSquare[0].uuid,squareUuid,'Moving the Square must preserve its original UUID');
+  report.squareMove.rectAfter=movedState.editors.find(editor=>editor.id===squareEditor.id).serialized.rect;
+  report.squareMove.persistedUuid=persistedMovedSquare[0].uuid;
   const underlinePoint=await doc(({v,d,a})=>{const m=a.pdfViewer._layerProperties.annotationEditorUIManager;const e=[...d.querySelectorAll('.annotationEditorLayer > div[id]')].find(e=>m.getEditor(e.id)?.constructor._editorType===10);const r=e.getBoundingClientRect(),f=v.iframe.getBoundingClientRect();return{x:f.x+r.x+r.width/2,y:f.y+r.y+r.height/2};});
   await click(underlinePoint); await key('Delete','Delete',46);
   const four=five.filter(t=>t!=='Underline'); await saved('delete',four);
@@ -498,13 +675,37 @@ try {
   }
 } catch(error) {
   report.status='failed';report.error=error.stack||String(error);
-  try{report.failureState=await state();report.failureScreenshot=(await screenshot('failure')).output;}catch(e){report.failureCaptureError=String(e);}
+  try{report.failureState=await state();}catch(e){report.failureStateError=String(e);}
+  try{report.failureDom=await doc(({a,d,w})=>{
+    const manager=a?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+    const squares=[...d.querySelectorAll('.annotationEditorLayer > div[id]')].filter(e=>manager?.getEditor(e.id)?.constructor._editorType===5);
+    return {mode:a?.pdfViewer?.annotationEditorMode,currentPageNumber:a?.pdfViewer?.currentPageNumber,
+      initialBookmark:a?.initialBookmark||null,pdfHistoryBookmark:a?.pdfHistory?.currentBookmark||null,
+      loadingInProgress:a?.loadingInProgress??null,hasPdfDocument:!!a?.pdfDocument,
+      squares:squares.map(e=>{const r=e.getBoundingClientRect(),hit=d.elementFromPoint(r.x+r.width/2,r.y+r.height/2),style=w.getComputedStyle(e),editor=manager.getEditor(e.id);return{
+        id:e.id,rect:editor?.serialize?.(true)?.rect||null,className:e.className,pointerEvents:style.pointerEvents,
+        selected:manager.isSelected(editor),explicitlyEditing:e.classList.contains('explicitlyEditing'),
+        center:{x:r.x+r.width/2,y:r.y+r.height/2},hitTag:hit?.tagName||null,
+        hitClass:typeof hit?.className==='string'?hit.className:null,hitEditor:hit===e||e.contains(hit),
+        layerClass:e.closest('.annotationEditorLayer')?.className||null};})};
+  });}catch(e){report.failureDomError=String(e);}
+  try{report.failureScreenshot=(await screenshot('failure')).output;}catch(e){report.failureScreenshotError=String(e);}
   process.exitCode=1;
 } finally {
   if (diagnoseTextCapture && report.status === "passed") report.status = "diagnostic-passed";
+  let restoreInstrumentation = true;
+  if (instrumented && report.status === "failed") {
+    try { report.failureCleanup = await closeFailedFixtureSafely(); }
+    catch (error) {
+      report.failureCleanupError = String(error.stack || error);
+      report.safetyGuardsRetained = true;
+      restoreInstrumentation = false;
+      process.exitCode = 1;
+    }
+  }
   if (instrumented) {
     try {
-      const artifactMeta = run(async tracePath => {
+      const artifactMeta = run(async ({ tracePath, restoreWrappers }) => {
         const t = globalThis.__sidecarNative07;
         t.probeCleanup?.();
         const summarizeSelectionProbe = probe => ({
@@ -551,8 +752,10 @@ try {
           viewerTimings: t.viewerTimings,
           viewerLogLosses: t.viewerLogLosses,
           storeTimings: t.storeTimings.filter(x => x.docKey === t.docKey),
+          maintenance: t.maintenance,
           selectionProbes: (t.selectionProbes || []).map(summarizeSelectionProbe),
-          io: t.io.map(({ name, path, ms, bytes, error }) => ({ name, path, ms, bytes, error })),
+          io: t.io.map(({ name, path, storagePath, ms, bytes, error }) => ({ name, path, storagePath, ms, bytes, error })),
+          listMappings: t.listMappings,
           acks: t.acks.map(({ at, type, documentId, openRequest, revision, external,
             operationCount, batchId, requestId, code }) => ({ at, type, documentId,
             openRequest, revision, external, operationCount, batchId, requestId, code })),
@@ -560,12 +763,15 @@ try {
           messages: t.messages,
           pdfSerializations: t.pdfSerializations,
           sourceWriteAttempts: t.sourceWriteAttempts,
+          pdfWriteAttempts: t.pdfWriteAttempts,
           blockedExistingWrites: t.blockedExistingWrites,
         };
         window.removeEventListener('message', t.messageListener);
         for (const { target, type, listener } of t.listeners) target.removeEventListener(type, listener, true);
-        for (const { object, name, original } of t.originals.reverse()) object[name] = original;
-        delete globalThis.__sidecarNative07;
+        if (restoreWrappers) {
+          for (const { object, name, original } of t.originals.reverse()) object[name] = original;
+          delete globalThis.__sidecarNative07;
+        }
         const serialized = JSON.stringify(out);
         const adapter = app.vault.adapter;
         const folder = tracePath.slice(0, tracePath.lastIndexOf("/"));
@@ -574,8 +780,8 @@ try {
         await adapter.write(tracePath, serialized);
         const bytes = Buffer.byteLength(serialized, "utf8");
         const sha256 = require("node:crypto").createHash("sha256").update(serialized, "utf8").digest("hex");
-        return { ok: true, artifactPath: tracePath, bytes, sha256 };
-      }, traceArtifactVaultPath);
+        return { ok: true, artifactPath: tracePath, bytes, sha256, guardsRetained: !restoreWrappers };
+      }, { tracePath: traceArtifactVaultPath, restoreWrappers: restoreInstrumentation });
       assert.equal(artifactMeta?.ok, true, "Native trace artifact write did not return an OK receipt");
       assert.equal(artifactMeta.artifactPath, traceArtifactVaultPath, "Native trace escaped its unique plugin test-output path");
       assert.ok(artifactMeta.artifactPath.startsWith(`${nativeConfig.configDir}/plugins/pdf-web-reader/.native-test-output/`));
@@ -588,12 +794,14 @@ try {
         bytes: artifactMeta.bytes,
         sha256: artifactMeta.sha256,
         verified: true,
+        guardsRetained: artifactMeta.guardsRetained,
       };
     } catch (error) {
       report.instrumentationCleanupError = String(error);
     }
   }
-  if (report.instrumentationCleanupError || report.trace?.sourceWriteAttempts.length ||
+  if (report.instrumentationCleanupError || report.failureCleanupError || report.trace?.sourceWriteAttempts.length ||
+      report.trace?.pdfWriteAttempts.length ||
       report.trace?.blockedExistingWrites.length || report.trace?.pdfSerializations.some(x=>!x.exportAllowed)) {
     report.safetyGuardFailure='Native instrumentation cleanup, source-write, pre-existing-sidecar, or daily-serialization guard failed';
     report.status='failed';process.exitCode=1;
@@ -604,7 +812,7 @@ try {
     report.installedTripletAfter=await installedTriplet();
     assert.deepEqual(report.installedTripletAfter,report.installedTripletBefore,'Installed candidate changed during Native test');
   } catch(e) {report.installedTripletError=String(e);report.status='failed';process.exitCode=1;}
-  report.protectedFiles=await Promise.all([...protectedFiles].filter(([p])=>p!==storeRoot+'/_index.json').map(async([p,b])=>({path:p,before:sha(b),after:sha(await readFile(absolute(p))),unchanged:sha(b)===sha(await readFile(absolute(p)))})));
+  report.protectedFiles=await Promise.all([...protectedFiles].map(async([p,b])=>({path:p,before:sha(b),after:sha(await readFile(absolute(p))),unchanged:sha(b)===sha(await readFile(absolute(p)))})));
   if(report.protectedFiles.some(x=>!x.unchanged)){report.status='failed';process.exitCode=1;}
   if (report.nativeTraceArtifact) {
     if (report.status === "passed") {
@@ -621,5 +829,5 @@ try {
     }
   }
   report.finishedAt=new Date().toISOString();await writeFile(resultPath,JSON.stringify(report,null,2));
-  console.log(JSON.stringify({status:report.status,resultPath,error:report.error,sourceBefore:report.sourceBefore,sourceAfter:report.sourceAfter,sourceWriteAttempts:report.trace?.sourceWriteAttempts,pdfSerializations:report.trace?.pdfSerializations}));
+  console.log(JSON.stringify({status:report.status,resultPath,error:report.error,sourceBefore:report.sourceBefore,sourceAfter:report.sourceAfter,sourceWriteAttempts:report.trace?.sourceWriteAttempts,pdfWriteAttempts:report.trace?.pdfWriteAttempts,pdfSerializations:report.trace?.pdfSerializations}));
 }

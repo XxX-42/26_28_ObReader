@@ -2,10 +2,10 @@ import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import puppeteer from "puppeteer-core";
 import { resolveBrowserPath } from "./browser-path.mjs";
@@ -16,6 +16,10 @@ import {
 import { root } from "./bundled-plugin-test-utils.mjs";
 import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
+import {
+  installLearningReliabilityProbe,
+  LEARNING_RELIABILITY_SEQUENCE_PLAN,
+} from "./learning-reliability-diagnostics.mjs";
 
 const browserPath = resolveBrowserPath();
 const artifactsPath = resolveTestArtifactRoot(root);
@@ -23,6 +27,17 @@ const vendorRoot = path.join(root, "vendor", "pdfjs-generic-legacy");
 const vendorWeb = path.join(vendorRoot, "web");
 const bridgeCssPath = path.join(root, "viewer-adapter", "bridge.css");
 const bridgeJsPath = path.join(root, "viewer-adapter", "obsidian-bridge.js");
+const diagnosticsEnabled = process.env.PDF_READER_LEARNING_RELIABILITY_DIAGNOSTICS === "1";
+const isSeparateCpuProfileRun = process.env.PDF_READER_IPAD_CPU_PROFILE === "1" ||
+  process.env.PDF_READER_IPAD_PROFILE_INERTIA === "1";
+const isRootCauseReadinessDiagnostic =
+  process.env.PDF_READER_LEARNING_ROOT_CAUSE_READINESS === "1";
+const pointerPolicyAssetGitRef = process.env.PDF_READER_LEARNING_ASSET_GIT_REF?.trim() || null;
+const pointerPolicyAssetCache = new Map();
+const learningCandidateGitSHA = Object.freeze({
+  A: "b6b178dc142b6900fa7b4bbdd7d23c5f4d0bc96c",
+  B: "9c361330388cbc929ef76bcc53b83f49a7360c04",
+});
 const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".ftl", "text/plain; charset=utf-8"],
@@ -249,7 +264,83 @@ async function dispatchTouch(cdp, type, point = null, id = 1) {
   const touchPoints = point
     ? [{ x: point.x, y: point.y, id, radiusX: 1, radiusY: 1, force: 1 }]
     : [];
+  const startedAt = performance.now();
   await cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+  const completedAt = performance.now();
+  return {
+    type,
+    pointerId: id,
+    startedAt,
+    completedAt,
+    startedAtEpochMs: performance.timeOrigin + startedAt,
+    completedAtEpochMs: performance.timeOrigin + completedAt,
+    acknowledgementMs: completedAt - startedAt,
+  };
+}
+
+async function beginReliabilitySequence(viewer, id) {
+  if (!diagnosticsEnabled) return null;
+  const plan = LEARNING_RELIABILITY_SEQUENCE_PLAN.find((sequence) => sequence.id === id);
+  assert.ok(plan, `Unknown reliability sequence ${id}`);
+  const result = await viewer.evaluate((sequence) => {
+    const probe = window.__learningReliabilityProbe;
+    if (!probe) throw new Error("Learning reliability probe was not installed");
+    return probe.begin(sequence.id, sequence);
+  }, plan);
+  return { ...plan, startedAt: result.startedAt, startState: result.startState };
+}
+
+async function endReliabilitySequence(viewer, id, report, extra = {}) {
+  if (!diagnosticsEnabled) return null;
+  const result = await viewer.evaluate((sequenceId) => {
+    const probe = window.__learningReliabilityProbe;
+    if (!probe) throw new Error("Learning reliability probe is unavailable");
+    return probe.end(sequenceId);
+  }, id);
+  const capture = { ...result, ...extra };
+  report.reliabilityDiagnostics.sequences.push(capture);
+  return capture;
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function vendorVersionFromModule(bytes) {
+  const source = Buffer.isBuffer(bytes) ? bytes.toString("utf8") : String(bytes);
+  return source.match(/pdfjsVersion\s*=\s*([^\s*]+)/)?.[1] || null;
+}
+
+function runSequenceAssertion(report, sequenceId, assertion) {
+  try {
+    assertion();
+  } catch (error) {
+    if (!diagnosticsEnabled || !LEARNING_RELIABILITY_SEQUENCE_PLAN.some((sequence) =>
+      sequence.id === sequenceId,
+    )) throw error;
+    report.reliabilityDiagnostics.acceptanceAssertionFailures ||= [];
+    report.reliabilityDiagnostics.acceptanceAssertionFailures.push({
+      sequenceId,
+      name: error?.name || "AssertionError",
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+  }
+}
+
+async function readRuntimeAsset(relativePath, encoding = null) {
+  const normalizedPath = relativePath.split(path.sep).join("/");
+  let bytes = pointerPolicyAssetCache.get(normalizedPath);
+  if (!bytes) {
+    bytes = pointerPolicyAssetGitRef
+      ? execFileSync("git", ["show", `${pointerPolicyAssetGitRef}:${normalizedPath}`], {
+        cwd: root,
+        maxBuffer: 64 * 1024 * 1024,
+      })
+      : await readFile(path.join(root, relativePath));
+    pointerPolicyAssetCache.set(normalizedPath, bytes);
+  }
+  return encoding ? bytes.toString(encoding) : bytes;
 }
 
 async function waitMs(milliseconds) {
@@ -281,7 +372,7 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
   const plannedOffsetsMs = [0, 22, 44, 65];
   const dispatchTimings = [];
   const dispatchPromises = [];
-  const sendAt = (type, pointAtTime, offsetMs) => {
+  const sendAt = (type, pointAtTime, offsetMs, actionIndex) => {
     const touchPoints = pointAtTime
       ? [{
         x: pointAtTime.x,
@@ -293,31 +384,39 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
       }]
       : [];
     const startedAt = performance.now();
+    const startedAtEpochMs = performance.timeOrigin + startedAt;
     const dispatchPromise = cdp.send("Input.dispatchTouchEvent", {
       type,
       touchPoints,
       timestamp: baseTimestamp + offsetMs / 1000,
     }).then(() => {
+      const completedAt = performance.now();
       dispatchTimings.push({
+        sequenceId: `gesture-${id}`,
+        actionIndex,
         type,
         offsetMs,
         startedAt,
-        completedAt: performance.now(),
+        completedAt,
+        startedAtEpochMs,
+        completedAtEpochMs: performance.timeOrigin + completedAt,
+        plannedEventEpochMs: baseTimestamp * 1000 + offsetMs,
+        acknowledgementMs: completedAt - startedAt,
       });
     });
     dispatchPromises.push(dispatchPromise);
   };
 
-  sendAt("touchStart", point, plannedOffsetsMs[0]);
+  sendAt("touchStart", point, plannedOffsetsMs[0], 0);
   for (let step = 1; step <= 2; step += 1) {
     await waitMs(plannedOffsetsMs[step] - plannedOffsetsMs[step - 1]);
     sendAt("touchMove", {
       x: point.x,
       y: point.y - distance * step / 2,
-    }, plannedOffsetsMs[step]);
+    }, plannedOffsetsMs[step], step);
   }
   await waitMs(plannedOffsetsMs.at(-1) - plannedOffsetsMs.at(-2));
-  sendAt("touchEnd", null, plannedOffsetsMs.at(-1));
+  sendAt("touchEnd", null, plannedOffsetsMs.at(-1), plannedOffsetsMs.length - 1);
   await Promise.all(dispatchPromises);
 
   // CDP's touchEnd acknowledgement may arrive before Chromium dispatches its
@@ -375,24 +474,32 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
   report.trustedTimedFingerGestures ||= [];
   report.trustedTimedFingerGestures.push(evidence);
 
-  assert.ok(timing.sequence.length >= 3 && timing.sequence.length <= plannedOffsetsMs.length,
-    `Fast finger gesture ${id} must deliver down, movement, and release events`);
-  assert.equal(timing.sequence[0].type, "pointerdown");
-  assert.equal(timing.sequence.at(-1).type, "pointerup");
+  const sequenceId = id === 21
+    ? "gesture21-fast-flick"
+    : id === 25
+      ? "gesture25-to-26-toolbar-contact"
+      : id === 27
+        ? "gesture27-to-pencil-contact"
+        : `gesture-${id}`;
+  const validate = (assertion) => runSequenceAssertion(report, sequenceId, assertion);
+  validate(() => assert.ok(timing.sequence.length >= 3 && timing.sequence.length <= plannedOffsetsMs.length,
+    `Fast finger gesture ${id} must deliver down, movement, and release events`));
+  validate(() => assert.equal(timing.sequence[0].type, "pointerdown"));
+  validate(() => assert.equal(timing.sequence.at(-1).type, "pointerup"));
   const moves = timing.sequence.slice(1, -1);
-  assert.ok(moves.length >= 1 && moves.every((event) => event.type === "pointermove"),
-    `Fast finger gesture ${id} must deliver trusted movement events in order`);
+  validate(() => assert.ok(moves.length >= 1 && moves.every((event) => event.type === "pointermove"),
+    `Fast finger gesture ${id} must deliver trusted movement events in order`));
   for (let index = 0; index < timing.sequence.length; index += 1) {
     const event = timing.sequence[index];
-    assert.equal(event.trusted, true,
-      `Fast finger gesture ${id} must remain trusted browser input`);
-    assert.equal(event.targetInViewer, true,
-      `Fast finger gesture ${id} must reach the PDF viewer`);
-    assert.ok(event.timeStamp <= event.observedAt,
-      `Fast finger gesture ${id} must not use future timestamps`);
-    assert.ok(event.observedAt - event.timeStamp <= 80,
-      `Fast finger gesture ${id} must not arrive over 80 ms after its timestamp`);
-    const relativeTime = event.timeStamp - timing.sequence[0].timeStamp;
+    validate(() => assert.equal(event.trusted, true,
+      `Fast finger gesture ${id} must remain trusted browser input`));
+    validate(() => assert.equal(event.targetInViewer, true,
+      `Fast finger gesture ${id} must reach the PDF viewer`));
+    validate(() => assert.ok(event.timeStamp <= event.observedAt,
+      `Fast finger gesture ${id} must not use future timestamps`));
+    validate(() => assert.ok(event.observedAt - event.timeStamp <= 80,
+      `Fast finger gesture ${id} must not arrive over 80 ms after its timestamp`));
+    const relativeTime = event.timeStamp - (timing.sequence[0]?.timeStamp ?? NaN);
     const plannedOffset = index === 0
       ? 0
       : index === timing.sequence.length - 1
@@ -400,34 +507,34 @@ async function beginFastTouchDrag(cdp, viewer, point, distance, id, report) {
         : plannedOffsetsMs.slice(1, -1).find((offset) =>
           Math.abs(relativeTime - offset) <= 1,
         );
-    assert.ok(Number.isFinite(plannedOffset) && Math.abs(relativeTime - plannedOffset) <= 1,
-      `Fast finger gesture ${id} observed event time must match the 22 ms sample schedule`);
+    validate(() => assert.ok(Number.isFinite(plannedOffset) && Math.abs(relativeTime - plannedOffset) <= 1,
+      `Fast finger gesture ${id} observed event time must match the 22 ms sample schedule`));
     if (index > 0) {
       const previous = timing.sequence[index - 1];
-      assert.ok(event.timeStamp > previous.timeStamp,
-        `Fast finger gesture ${id} event timestamps must increase`);
-      assert.ok(event.timeStamp - previous.timeStamp <= 80,
-        `Fast finger gesture ${id} must not contain a timestamp pause over 80 ms`);
-      assert.ok(event.observedAt >= previous.observedAt);
-      assert.ok(event.observedAt - previous.observedAt <= 80,
-        `Fast finger gesture ${id} must not contain an observed pause over 80 ms`);
+      validate(() => assert.ok(event.timeStamp > previous.timeStamp,
+        `Fast finger gesture ${id} event timestamps must increase`));
+      validate(() => assert.ok(event.timeStamp - previous.timeStamp <= 80,
+        `Fast finger gesture ${id} must not contain a timestamp pause over 80 ms`));
+      validate(() => assert.ok(event.observedAt >= previous.observedAt));
+      validate(() => assert.ok(event.observedAt - previous.observedAt <= 80,
+        `Fast finger gesture ${id} must not contain an observed pause over 80 ms`));
     }
   }
   const lastMove = moves.at(-1);
-  assert.ok(Math.abs(
-    lastMove.timeStamp - timing.sequence[0].timeStamp - plannedOffsetsMs.at(-2),
+  validate(() => assert.ok(Math.abs(
+    (lastMove?.timeStamp ?? NaN) - (timing.sequence[0]?.timeStamp ?? NaN) - plannedOffsetsMs.at(-2),
   ) <= 1,
-  `Fast finger gesture ${id} must reach its endpoint at the scheduled final move`);
-  assert.ok(Math.abs(lastMove.clientY -
-    (timing.sequence[0].clientY - distance)) <= 1,
-  `Fast finger gesture ${id} must deliver its full trusted touch distance`);
-  assert.ok(Math.abs(
-    timing.sequence.at(-1).timeStamp - lastMove.timeStamp -
+  `Fast finger gesture ${id} must reach its endpoint at the scheduled final move`));
+  validate(() => assert.ok(Math.abs((lastMove?.clientY ?? NaN) -
+    ((timing.sequence[0]?.clientY ?? NaN) - distance)) <= 1,
+  `Fast finger gesture ${id} must deliver its full trusted touch distance`));
+  validate(() => assert.ok(Math.abs(
+    (timing.sequence.at(-1)?.timeStamp ?? NaN) - (lastMove?.timeStamp ?? NaN) -
       (plannedOffsetsMs.at(-1) - plannedOffsetsMs.at(-2)),
   ) <= 1,
-  `Fast finger gesture ${id} must release at the scheduled final interval`);
-  assert.ok(timing.observedMoveSpeedPxPerMs >= 1,
-    `Fast finger gesture ${id} must have a clearly moving touch segment`);
+  `Fast finger gesture ${id} must release at the scheduled final interval`));
+  validate(() => assert.ok(timing.observedMoveSpeedPxPerMs >= 1,
+    `Fast finger gesture ${id} must have a clearly moving touch segment`));
   return timing;
 }
 
@@ -500,6 +607,7 @@ async function touchReleaseTiming(viewer, eventOffset) {
 }
 
 async function dispatchSimulatedPen(cdp, type, point, buttons) {
+  const startedAt = performance.now();
   await cdp.send("Input.dispatchMouseEvent", {
     type,
     x: point.x,
@@ -510,11 +618,22 @@ async function dispatchSimulatedPen(cdp, type, point, buttons) {
     force: buttons ? 0.5 : 0,
     clickCount: type === "mousePressed" ? 1 : 0,
   });
+  const completedAt = performance.now();
+  return {
+    type,
+    pointerType: "pen",
+    startedAt,
+    completedAt,
+    startedAtEpochMs: performance.timeOrigin + startedAt,
+    completedAtEpochMs: performance.timeOrigin + completedAt,
+    acknowledgementMs: completedAt - startedAt,
+  };
 }
 
 async function tapSimulatedPen(cdp, point) {
-  await dispatchSimulatedPen(cdp, "mousePressed", point, 1);
-  await dispatchSimulatedPen(cdp, "mouseReleased", point, 0);
+  const down = await dispatchSimulatedPen(cdp, "mousePressed", point, 1);
+  const up = await dispatchSimulatedPen(cdp, "mouseReleased", point, 0);
+  return [down, up];
 }
 
 test(
@@ -524,9 +643,29 @@ test(
     skip: browserPath ? false : "Chrome or Edge is required for trusted pointer input",
   },
   async (t) => {
-    const vendorSource = await readFile(path.join(vendorWeb, "viewer.html"), "utf8");
+    const vendorSource = await readRuntimeAsset(
+      "vendor/pdfjs-generic-legacy/web/viewer.html",
+      "utf8",
+    );
     const html = viewerHtml(vendorSource);
-    const bridgeSource = await readBridgeRuntimeSource(bridgeJsPath);
+    const bridgeCssSource = await readRuntimeAsset("viewer-adapter/bridge.css", "utf8");
+    const rawBridgeSource = await readRuntimeAsset(
+      "viewer-adapter/obsidian-bridge.js",
+      "utf8",
+    );
+    const bridgeSource = await readBridgeRuntimeSource(bridgeJsPath, {
+      gitRef: pointerPolicyAssetGitRef,
+    });
+    const runtimeAssets = {
+      bridgeRuntime: Buffer.from(bridgeSource, "utf8"),
+      bridgeSource: Buffer.from(rawBridgeSource, "utf8"),
+      bridgeCss: Buffer.from(bridgeCssSource, "utf8"),
+      viewerHtml: await readRuntimeAsset("vendor/pdfjs-generic-legacy/web/viewer.html"),
+      viewerModule: await readRuntimeAsset("vendor/pdfjs-generic-legacy/web/viewer.mjs"),
+      pdfModule: await readRuntimeAsset("vendor/pdfjs-generic-legacy/build/pdf.mjs"),
+      viewerCss: await readRuntimeAsset("vendor/pdfjs-generic-legacy/web/viewer.css"),
+    };
+    const viewerModuleVersion = vendorVersionFromModule(runtimeAssets.viewerModule);
     const instrumentedBridgeSource = bridgeSource.replace(
       "  if (document.documentElement?.dataset) {",
       "  window.__ipadPointerPolicyTestState = state;\n  if (document.documentElement?.dataset) {",
@@ -534,6 +673,7 @@ test(
     assert.notEqual(instrumentedBridgeSource, bridgeSource,
       "The iPad harness should expose bridge state only for lifecycle diagnostics");
     const missingRequests = [];
+    const servedAssetHashes = new Map();
     const server = createServer(async (request, response) => {
       const url = new URL(request.url, "http://127.0.0.1");
       if (url.pathname === "/favicon.ico") {
@@ -555,11 +695,13 @@ test(
         return;
       }
       if (url.pathname === "/viewer/viewer.html") {
+        servedAssetHashes.set("viewer/viewer.html", sha256(Buffer.from(html, "utf8")));
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(html);
         return;
       }
       if (url.pathname === "/bridge.js") {
+        servedAssetHashes.set("bridge.js", sha256(Buffer.from(instrumentedBridgeSource, "utf8")));
         response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
         response.end(instrumentedBridgeSource);
         return;
@@ -571,13 +713,15 @@ test(
         return;
       }
       try {
-        const info = await stat(target);
+        const relativePath = path.relative(root, target).split(path.sep).join("/");
+        const body = await readRuntimeAsset(relativePath);
+        servedAssetHashes.set(relativePath, sha256(body));
         response.writeHead(200, {
           "content-type": mimeTypes.get(path.extname(target)) || "application/octet-stream",
-          "content-length": info.size,
+          "content-length": body.byteLength,
           "x-content-type-options": "nosniff",
         });
-        createReadStream(target).pipe(response);
+        response.end(body);
       } catch {
         response.writeHead(404).end("not found");
       }
@@ -598,6 +742,92 @@ test(
       mouseAfterTouch: null,
       pageErrors: [],
     };
+    if (diagnosticsEnabled) {
+      const runnerGitSHA = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: root,
+        encoding: "utf8",
+      }).trim();
+      const implementationGitSHA = process.env.PDF_READER_LEARNING_GIT_SHA?.trim() ||
+        (pointerPolicyAssetGitRef
+          ? execFileSync("git", ["rev-parse", pointerPolicyAssetGitRef], {
+            cwd: root,
+            encoding: "utf8",
+          }).trim()
+          : runnerGitSHA);
+      const assetRefGitSHA = pointerPolicyAssetGitRef
+        ? execFileSync("git", ["rev-parse", pointerPolicyAssetGitRef], {
+          cwd: root,
+          encoding: "utf8",
+        }).trim()
+        : runnerGitSHA;
+      const harnessHashes = {};
+      for (const harnessPath of [
+        "tests/ipad-pointer-policy.test.mjs",
+        "tests/learning-reliability-diagnostics.mjs",
+        "tests/bridge-runtime-source.mjs",
+      ]) {
+        harnessHashes[harnessPath] = sha256(await readFile(path.join(root, harnessPath)));
+      }
+      const trialValue = process.env.PDF_READER_LEARNING_PAIR_TRIAL;
+      report.reliabilityDiagnostics = {
+        schemaVersion: 1,
+        variant: process.env.PDF_READER_LEARNING_VARIANT || "UNSPECIFIED",
+        pairTrial: trialValue ? Number(trialValue) : null,
+        gitSHA: implementationGitSHA,
+        runtimeAssetGitSHA: assetRefGitSHA,
+        runnerGitSHA,
+        runnerHarnessSha256: harnessHashes,
+        runtimeVersion: {
+          browser: null,
+          pdfjs: null,
+          pdfjsBundleVersion: viewerModuleVersion,
+        },
+        bundleHash: {
+          bridgeSourceSha256: sha256(Buffer.from(bridgeSource, "utf8")),
+          servedBridgeSha256: sha256(Buffer.from(instrumentedBridgeSource, "utf8")),
+          assets: Object.fromEntries(Object.entries(runtimeAssets).map(([name, bytes]) =>
+            [name, sha256(bytes)],
+          )),
+        },
+        fixture: {
+          id: "ipad-pointer-policy-14-page-generated-pdf",
+          pageCount: 14,
+          sha256: pointerPolicyPdfSourceHash.replace(/^sha256:/, ""),
+        },
+        browserContext: {
+          viewport: { width: 1180, height: 920, deviceScaleFactor: 1 },
+          isMobile: true,
+          hasTouch: true,
+          headless: true,
+          physicalDevice: false,
+          executablePath: browserPath,
+        },
+        runKind: isRootCauseReadinessDiagnostic
+          ? "root-cause-secondary-viewer-readiness-diagnostic"
+          : isSeparateCpuProfileRun
+            ? "separate-cpu-profile"
+            : "paired-primary-unprofiled",
+        diagnosticCollectionMode: "preserve-acceptance-assertions-and-collect-predeclared-sequence-failures",
+        diagnosticCollectionStatus: "in-progress",
+        acceptanceAssertionFailures: [],
+        sequencePlan: LEARNING_RELIABILITY_SEQUENCE_PLAN,
+        sequences: [],
+      };
+      assert.ok(["A", "B"].includes(report.reliabilityDiagnostics.variant),
+        "Diagnostic runs must identify candidate A or B");
+      const expectedCandidateGitSHA =
+        learningCandidateGitSHA[report.reliabilityDiagnostics.variant];
+      assert.equal(report.reliabilityDiagnostics.gitSHA, expectedCandidateGitSHA,
+        "The implementation SHA must be the predeclared A or B candidate");
+      assert.equal(report.reliabilityDiagnostics.runtimeAssetGitSHA, expectedCandidateGitSHA,
+        "Every served runtime asset must come from the predeclared A or B candidate tree");
+      if (!isSeparateCpuProfileRun && !isRootCauseReadinessDiagnostic) {
+        assert.ok(Number.isInteger(report.reliabilityDiagnostics.pairTrial) &&
+          report.reliabilityDiagnostics.pairTrial >= 1 &&
+          report.reliabilityDiagnostics.pairTrial <= 3,
+        "Primary diagnostic runs must identify one of the three predeclared paired trials");
+      }
+    }
     const artifactPath = path.join(artifactsPath, `ipad-pointer-policy-${Date.now()}-${process.pid}.json`);
     try {
       await new Promise((resolve, reject) => {
@@ -609,6 +839,9 @@ test(
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
       }, { testName: "ipad-pointer-policy", artifactsDir: artifactsPath });
+      if (diagnosticsEnabled) {
+        report.reliabilityDiagnostics.runtimeVersion.browser = await browser.version();
+      }
       page = await browser.newPage();
       await page.setViewport({
         width: 1180,
@@ -622,6 +855,7 @@ test(
         window.__ipadEventRows = new WeakMap();
         window.__ipadCompatMouseReachedDocument = [];
         window.__ipadLongTasks = [];
+        window.__ipadLongTaskObserverAvailable = false;
         if (typeof PerformanceObserver === "function") {
           try {
             const observer = new PerformanceObserver((list) => {
@@ -630,10 +864,15 @@ test(
                   startTime: entry.startTime,
                   duration: entry.duration,
                   name: entry.name,
+                  observedAt: performance.now(),
+                  observedEpochMs: performance.timeOrigin + performance.now(),
+                  sequenceId: window.__learningReliabilityProbe?.active?.id ?? null,
                 });
               }
             });
             observer.observe({ type: "longtask", buffered: true });
+            window.__ipadLongTaskObserver = observer;
+            window.__ipadLongTaskObserverAvailable = true;
           } catch {
             // The browser may not expose Long Tasks in this environment.
           }
@@ -662,7 +901,20 @@ test(
                 : null,
               detail: Number.isFinite(event.detail) ? event.detail : null,
               timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : null,
+              timeStampRelativeMs: Number.isFinite(event.timeStamp)
+                ? event.timeStamp > 1e12
+                  ? event.timeStamp - performance.timeOrigin
+                  : event.timeStamp
+                : null,
+              eventEpochMs: Number.isFinite(event.timeStamp)
+                ? event.timeStamp > 1e12
+                  ? event.timeStamp
+                  : performance.timeOrigin + event.timeStamp
+                : null,
+              sequenceId: window.__learningReliabilityProbe?.active?.id ?? null,
               observedAt: null,
+              observedEpochMs: null,
+              eventDispatchDelayMs: null,
               clientX: Number.isFinite(touch?.clientX) ? touch.clientX
                 : Number.isFinite(event.clientX) ? event.clientX : null,
               clientY: Number.isFinite(touch?.clientY) ? touch.clientY
@@ -676,6 +928,10 @@ test(
             window.__ipadEventRows.set(event, row);
             queueMicrotask(() => {
               row.observedAt = performance.now();
+              row.observedEpochMs = performance.timeOrigin + row.observedAt;
+              row.eventDispatchDelayMs = Number.isFinite(row.timeStampRelativeMs)
+                ? row.observedAt - row.timeStampRelativeMs
+                : null;
               row.defaultPreventedAfterDispatch = event.defaultPrevented;
               row.pointerCaptureAfterDispatch = Number.isFinite(event.pointerId) &&
                 target?.hasPointerCapture?.(event.pointerId) === true;
@@ -693,6 +949,9 @@ test(
           });
         }
       });
+      if (diagnosticsEnabled) {
+        await page.evaluateOnNewDocument(installLearningReliabilityProbe);
+      }
       page.on("pageerror", (error) => report.pageErrors.push(error.message));
       await page.goto(`http://127.0.0.1:${server.address().port}/`, {
         waitUntil: "domcontentloaded",
@@ -708,6 +967,24 @@ test(
         document.querySelector('.page[data-page-number="1"]')
           ?.getBoundingClientRect().width > 0,
       { timeout: 25_000 });
+      if (diagnosticsEnabled) {
+        const runtime = await viewer.evaluate(() => {
+          const app = window.PDFViewerApplication;
+          const probe = window.__learningReliabilityProbe;
+          return {
+            pdfjs: app?.pdfjsVersion ?? window.pdfjsVersion ?? window.PDFJS?.version ?? null,
+            longTaskObserverAvailable: window.__ipadLongTaskObserverAvailable === true,
+            viewerSignalsInstalled: probe?.installViewerSignals?.() === true,
+            initialState: probe?.stateSnapshot?.() ?? null,
+          };
+        });
+        report.reliabilityDiagnostics.runtimeVersion.pdfjs = runtime.pdfjs;
+        report.reliabilityDiagnostics.longTaskObserverAvailable =
+          runtime.longTaskObserverAvailable;
+        report.reliabilityDiagnostics.initialViewerState = runtime.initialState;
+        assert.equal(runtime.viewerSignalsInstalled, true,
+          "PDF.js diagnostic signals must be attached before the gesture scenarios");
+      }
       await viewer.evaluate(() => {
         window.__ipadPageClicksReachedDocument = [];
         document.addEventListener("click", (event) => {
@@ -997,7 +1274,7 @@ test(
         assert.equal(webkitTouchCallout, "none");
       }
       assert.match(
-        await readFile(bridgeCssPath, "utf8"),
+        bridgeCssSource,
         /-webkit-touch-callout:\s*none\s*!important;/,
         "The Safari callout rule must remain present even when Chromium cannot report it",
       );
@@ -1429,6 +1706,7 @@ test(
           };
         }
       }
+      await beginReliabilitySequence(viewer, "gesture21-fast-flick");
       const fastFlickReleaseTiming = await beginFastTouchDrag(
         cdp, viewer, fastFlickPoint, 260, 21, report,
       );
@@ -1556,22 +1834,31 @@ test(
         firstInertiaVelocityPxPerMs: firstInertiaVelocity,
         secondInertiaVelocityPxPerMs: secondInertiaVelocity,
       };
-      assert.ok(firstInertiaDistance > 20,
-        "A recent fast finger release must continue scrolling");
-      assert.ok(secondInertiaDistance > 5,
-        "Finger inertia must continue smoothly across animation frames");
-      assert.ok(secondInertiaVelocity < firstInertiaVelocity,
-        "Finger inertia velocity must decay across measured intervals");
-      assert.equal(fastFlickSettled.storageSize, beforeFastFlick.storageSize);
-      assert.equal(fastFlickSettled.serializedSize, beforeFastFlick.serializedSize);
-      assert.deepEqual(fastFlickSettled.modifiedIds, beforeFastFlick.modifiedIds,
-        "Finger inertia must not modify PDF annotations");
+      await endReliabilitySequence(viewer, "gesture21-fast-flick", report, {
+        releaseTiming: fastFlickReleaseTiming,
+        dispatchTimings: report.trustedTimedFingerGestures
+          .findLast((gesture) => gesture.pointerId === 21)?.dispatchTimings || [],
+        inertia: report.fastFlickInertia,
+      });
+      runSequenceAssertion(report, "gesture21-fast-flick", () => assert.ok(firstInertiaDistance > 20,
+        "A recent fast finger release must continue scrolling"));
+      runSequenceAssertion(report, "gesture21-fast-flick", () => assert.ok(secondInertiaDistance > 5,
+        "Finger inertia must continue smoothly across animation frames"));
+      runSequenceAssertion(report, "gesture21-fast-flick", () => assert.ok(secondInertiaVelocity < firstInertiaVelocity,
+        "Finger inertia velocity must decay across measured intervals"));
+      runSequenceAssertion(report, "gesture21-fast-flick", () =>
+        assert.equal(fastFlickSettled.storageSize, beforeFastFlick.storageSize));
+      runSequenceAssertion(report, "gesture21-fast-flick", () =>
+        assert.equal(fastFlickSettled.serializedSize, beforeFastFlick.serializedSize));
+      runSequenceAssertion(report, "gesture21-fast-flick", () =>
+        assert.deepEqual(fastFlickSettled.modifiedIds, beforeFastFlick.modifiedIds,
+          "Finger inertia must not modify PDF annotations"));
       const fastFlickEvents = await viewer.evaluate((offset) =>
         window.__ipadPointerEvents?.slice(offset) || [], fastFlickEventOffset,
       );
-      assert.ok(fastFlickEvents.some((event) =>
+      runSequenceAssertion(report, "gesture21-fast-flick", () => assert.ok(fastFlickEvents.some((event) =>
         event.type === "pointerdown" && event.pointerType === "touch" && event.trusted,
-      ), "The fast flick must use trusted touch pointer input");
+      ), "The fast flick must use trusted touch pointer input"));
 
       const pausePoint = await localPointInHost(
         viewer,
@@ -2031,6 +2318,7 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
+      await beginReliabilitySequence(viewer, "gesture25-to-26-toolbar-contact");
       const newContactReleaseTiming = await beginFastTouchDrag(
         cdp, viewer, newContactPoint, 180, 25, report,
       );
@@ -2042,24 +2330,45 @@ test(
         after80ms: beforeToolbarTouch,
         releaseTiming: newContactReleaseTiming,
       };
-      assert.ok(beforeToolbarTouch.scrollTop > newContactAtRelease.scrollTop + 5,
-        "The finger flick must have active inertia before the new contact");
-      await dispatchTouch(cdp, "touchStart", toolbarTouchPoint, 26);
-      await dispatchTouch(cdp, "touchEnd");
+      runSequenceAssertion(report, "gesture25-to-26-toolbar-contact", () =>
+        assert.ok(beforeToolbarTouch.scrollTop > newContactAtRelease.scrollTop + 5,
+          "The finger flick must have active inertia before the new contact"));
+      const toolbarContactDispatches = [
+        await dispatchTouch(cdp, "touchStart", toolbarTouchPoint, 26),
+        await dispatchTouch(cdp, "touchEnd", null, 26),
+      ];
       const afterToolbarTouch = await inputSnapshot();
       await waitMs(300);
       const afterToolbarTouchWait = await inputSnapshot();
-      assert.ok(
+      runSequenceAssertion(report, "gesture25-to-26-toolbar-contact", () => assert.ok(
         Math.abs(afterToolbarTouchWait.scrollTop - afterToolbarTouch.scrollTop) <= 1,
         "A new finger contact on the toolbar must stop PDF inertia",
-      );
+      ));
       const toolbarTouchEvents = await viewer.evaluate((offset) =>
         window.__ipadPointerEvents?.slice(offset) || [], toolbarTouchOffset,
       );
-      assert.ok(toolbarTouchEvents.some((event) =>
+      await endReliabilitySequence(
+        viewer,
+        "gesture25-to-26-toolbar-contact",
+        report,
+        {
+          releaseTiming: newContactReleaseTiming,
+          dispatchTimings: report.trustedTimedFingerGestures
+            .findLast((gesture) => gesture.pointerId === 25)?.dispatchTimings || [],
+          followupDispatches: toolbarContactDispatches,
+          inertia: {
+            atRelease: newContactAtRelease,
+            after80ms: beforeToolbarTouch,
+            afterContact: afterToolbarTouch,
+            after300ms: afterToolbarTouchWait,
+          },
+          toolbarContactEvents: toolbarTouchEvents,
+        },
+      );
+      runSequenceAssertion(report, "gesture25-to-26-toolbar-contact", () => assert.ok(toolbarTouchEvents.some((event) =>
         event.type === "pointerdown" && event.pointerType === "touch" &&
         event.trusted && !event.targetInViewer,
-      ), "The momentum-stopping contact must land on a toolbar control");
+      ), "The momentum-stopping contact must land on a toolbar control"));
 
       // The earlier toolbar tests intentionally leave Ink selected. This case
       // verifies selecting Ink through a trusted Pencil tap, so make the
@@ -2085,21 +2394,23 @@ test(
         "#viewerContainer",
         [0.5, 0.5],
       );
+      await beginReliabilitySequence(viewer, "gesture27-to-pencil-contact");
       const penFlickReleaseTiming = await beginFastTouchDrag(
         cdp, viewer, penMomentumPoint, 180, 27, report,
       );
       const penFlickAtRelease = await inputSnapshot();
       await waitMs(70);
       const beforePenStop = await inputSnapshot();
-      assert.ok(beforePenStop.scrollTop > penFlickAtRelease.scrollTop + 5,
-        "The finger flick must be moving before the Pencil contact");
+      runSequenceAssertion(report, "gesture27-to-pencil-contact", () =>
+        assert.ok(beforePenStop.scrollTop > penFlickAtRelease.scrollTop + 5,
+          "The finger flick must be moving before the Pencil contact"));
       report.penToolIntent = await viewer.evaluate(() =>
         window.PdfReaderInputRuntime.createInteractionIntent({
           type: "pointerdown", pointerType: "pen", pointerId: 999,
           target: document.getElementById("editorInkButton"),
         }),
       );
-      await tapSimulatedPen(cdp, toolbarTouchPoint);
+      const pencilContactDispatches = await tapSimulatedPen(cdp, toolbarTouchPoint);
       const afterPenStop = await inputSnapshot();
       await waitMs(300);
       const afterPenStopWait = await inputSnapshot();
@@ -2111,8 +2422,35 @@ test(
         toolModeAfterContact: await viewer.evaluate(() =>
           PDFViewerApplication.pdfViewer.annotationEditorMode),
       };
-      assert.equal(report.penMomentumStop.toolModeAfterContact, 15,
-        "the trusted pen activation selects the native Ink tool");
+      await endReliabilitySequence(
+        viewer,
+        "gesture27-to-pencil-contact",
+        report,
+        {
+          releaseTiming: penFlickReleaseTiming,
+          dispatchTimings: report.trustedTimedFingerGestures
+            .findLast((gesture) => gesture.pointerId === 27)?.dispatchTimings || [],
+          followupDispatches: pencilContactDispatches,
+          inertia: {
+            atRelease: penFlickAtRelease,
+            after70ms: beforePenStop,
+            afterContact: afterPenStop,
+            after300ms: afterPenStopWait,
+          },
+          toolModeAfterContact: report.penMomentumStop.toolModeAfterContact,
+        },
+      );
+      runSequenceAssertion(report, "gesture27-to-pencil-contact", () =>
+        assert.equal(report.penMomentumStop.toolModeAfterContact, 15,
+          "the trusted pen activation selects the native Ink tool"));
+      if (diagnosticsEnabled) {
+        report.reliabilityDiagnostics.diagnosticCollectionStatus = "complete";
+        assert.deepEqual(
+          report.reliabilityDiagnostics.acceptanceAssertionFailures,
+          [],
+          "The three-sequence diagnostic collection completed, but preserved acceptance assertions failed",
+        );
+      }
 
       const mouseMomentumPoint = await localPointInHost(
         viewer,
@@ -2600,6 +2938,70 @@ test(
       );
       penViewer = penPage.frames().find((frame) => frame.name() === "pdf-reader");
       assert.ok(penViewer, "Expected the second PDF.js viewer iframe");
+      const penViewerInitialState = await penViewer.evaluate(async () => {
+        const app = window.PDFViewerApplication;
+        const fingerprint = app?.pdfDocument?.fingerprints?.[0] ?? null;
+        const storedView = await app?.store?.getMultiple?.({
+          page: null,
+          zoom: "auto",
+          scrollLeft: "0",
+          scrollTop: "0",
+          rotation: null,
+        }) ?? null;
+        let matchingStoredHistory = null;
+        try {
+          const database = JSON.parse(localStorage.getItem("pdfjs.history") || "{}");
+          const entry = Array.isArray(database.files)
+            ? database.files.find((file) => file.fingerprint === fingerprint)
+            : null;
+          matchingStoredHistory = entry ? {
+            page: entry.page ?? null,
+            zoom: entry.zoom ?? null,
+            scrollLeft: entry.scrollLeft ?? null,
+            scrollTop: entry.scrollTop ?? null,
+            rotation: entry.rotation ?? null,
+          } : null;
+        } catch {
+          matchingStoredHistory = { parseError: true };
+        }
+        const container = document.getElementById("viewerContainer");
+        return {
+          currentPageNumber: app?.pdfViewer?.currentPageNumber ?? null,
+          initialBookmark: app?.initialBookmark ?? null,
+          pdfHistory: {
+            initialBookmark: app?.pdfHistory?.initialBookmark ?? null,
+            initialRotation: app?.pdfHistory?.initialRotation ?? null,
+            popStateInProgress: app?.pdfHistory?.popStateInProgress ?? null,
+          },
+          viewHistory: {
+            fingerprintAvailable: typeof fingerprint === "string",
+            storedView,
+            matchingStoredHistory,
+            localStorageKeyPresent: localStorage.getItem("pdfjs.history") !== null,
+          },
+          scroll: container ? {
+            top: container.scrollTop,
+            height: container.scrollHeight,
+            viewportHeight: container.clientHeight,
+          } : null,
+          visibility: document.visibilityState,
+          hasFocus: document.hasFocus(),
+        };
+      });
+      report.penViewerInitialState = penViewerInitialState;
+      const penViewerPageOneReset = await penViewer.evaluate(() => {
+        const app = window.PDFViewerApplication;
+        app.pdfViewer.scrollPageIntoView({ pageNumber: 1 });
+        const container = document.getElementById("viewerContainer");
+        return {
+          requestedPageNumber: 1,
+          currentPageNumber: app.pdfViewer.currentPageNumber,
+          scrollTop: container?.scrollTop ?? null,
+        };
+      });
+      report.penViewerPageOneReset = penViewerPageOneReset;
+      assert.equal(penViewerPageOneReset.currentPageNumber, 1,
+        "The secondary-viewer drawing precondition must explicitly navigate to PDF page 1");
       await penViewer.waitForFunction(() => {
         const page = document.querySelector('.page[data-page-number="1"]');
         return PDFViewerApplication.pdfDocument && page?.dataset.loaded === "true" &&
@@ -2829,6 +3231,13 @@ test(
         ),
         observedPointerEvents: penObservation,
       };
+      if (diagnosticsEnabled) {
+        assert.deepEqual(
+          report.reliabilityDiagnostics.sequences.map((sequence) => sequence.id),
+          LEARNING_RELIABILITY_SEQUENCE_PLAN.map((sequence) => sequence.id),
+          "The primary scene must preserve exactly the three predeclared reliability sequences in order",
+        );
+      }
       assert.deepEqual(report.pageErrors, []);
       assert.deepEqual(missingRequests, []);
     } catch (error) {
@@ -2838,6 +3247,20 @@ test(
         message: error?.message || String(error),
         stack: error?.stack || null,
       };
+      if (diagnosticsEnabled && viewer) {
+        report.reliabilityDiagnostics.diagnosticCollectionStatus =
+          report.reliabilityDiagnostics.sequences.length === LEARNING_RELIABILITY_SEQUENCE_PLAN.length
+            ? "complete"
+            : "partial";
+        try {
+          report.reliabilityDiagnostics.incompleteSequence = await viewer.evaluate(() =>
+            window.__learningReliabilityProbe?.snapshotActive?.() ?? null,
+          );
+        } catch (probeError) {
+          report.reliabilityDiagnostics.probeCaptureError =
+            probeError?.message || String(probeError);
+        }
+      }
       if (viewer) {
         report.failureState = await viewer.evaluate(() => ({
           mode: window.PDFViewerApplication?.pdfViewer?.annotationEditorMode ?? null,
@@ -2933,6 +3356,13 @@ test(
         server,
       });
       report.cleanup = cleanupReport;
+      if (diagnosticsEnabled) {
+        report.reliabilityDiagnostics.servedAssetSha256 = Object.fromEntries(
+          [...servedAssetHashes.entries()].sort(([left], [right]) =>
+            left.localeCompare(right),
+          ),
+        );
+      }
       await mkdir(path.dirname(artifactPath), { recursive: true });
       await writeFile(artifactPath, `${JSON.stringify(report, null, 2)}\n`, {
         flag: "wx",
