@@ -9260,10 +9260,10 @@
   }
 
   function onBridgePointerDown(intent, controls) {
-    if (state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(intent);
+    if (state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     state.iosDirectManipulationController?.preparePointerDown(intent);
     if (state.closeControl) {
       controls?.preventDefault?.();

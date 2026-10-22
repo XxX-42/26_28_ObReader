@@ -50,6 +50,7 @@ const bridgeFunctions = [
   "restorePreferredAnnotationTool",
   "bindVocabularyToOpenedDocument",
   "onBridgeIosClick",
+  "onBridgePointerDown",
 ].map((name) => extractFunction(bridgeSource, name)).join("\n");
 const keyboardReadCancellation = bridgeSource.match(
   /if \(mode !== 0 && isFromKeyboard\) state\.annotationController\?\.cancelPendingReadMode\?\.\(\);/,
@@ -131,6 +132,9 @@ function makeBridgeHarness({ mobile = false } = {}) {
     function setPenPolicyPointers(value) { penPolicyPointers = value; }
     function setMobileInputBusy(value) { mobileInputBusy = value; }
     function ensureVocabularyController() { return state.vocabularyController; }
+    function cancelManualMomentum() { calls.push({ type: "cancel-motion" }); }
+    function invalidatePendingPenHighlight() { calls.push({ type: "cancel-selection" }); }
+    function dismissToolbarParameterPopups() { calls.push({ type: "dismiss-params" }); }
     ${bridgeFunctions}
     return {
       state, calls, events, pdfDocument, pdfViewer, setEditBoundaryBusy,
@@ -143,6 +147,7 @@ function makeBridgeHarness({ mobile = false } = {}) {
       restorePreferredAnnotationTool,
       bindVocabularyToOpenedDocument,
       onBridgeIosClick,
+      onBridgePointerDown,
       notifyInputBoundary: () => state.annotationController.notifyInputBoundary(),
       hasPendingReadMode: () => state.annotationController.pendingReadModeRequest !== null,
       isMobileInputBusy: () => mobileInputBusy,
@@ -214,6 +219,16 @@ test("an explicit touch backlink badge needs no LingQ text-tap candidate on Wind
     api.onBridgeIosClick(badgeClick, {});
     assert.equal(activated, 1, "explicit badges still respect an active annotation tool");
   }
+});
+
+test("badge ownership retains the established pointerdown motion, selection and popup cleanup", () => {
+  const api = makeBridgeHarness();
+  api.state.backlinkInteractionController = { handleRoutedPointerEvent() {
+    api.calls.push({ type: "badge-owner" }); return true;
+  } };
+  api.onBridgePointerDown({ type: "pointerdown", pointerType: "mouse" }, {});
+  assert.deepEqual(Array.from(api.calls, call => call.type),
+    ["cancel-motion", "cancel-selection", "dismiss-params", "badge-owner"]);
 });
 
 test("an Ink gesture defers READ until its safe boundary, including on mobile", () => {
