@@ -19,3 +19,8 @@ final click. Cross-page/old-session/native-button/right-button/pan/tool cases
 do not qualify. No listener, selection mutation, persistent state, capture or
 save is added; the existing explicit Host capture/preview/confirm remains the
 sole Context save path. Browser end-to-end verification remains separate.
+
+Post-repair targeted run executed 55 tests, 55 pass / 0 fail / 0 cancelled /
+0 skipped across LingQ read-mode transitions, VocabularyController, vocabulary
+tap priority, backlink interaction and InputRouter boundary tests. This does
+not substitute for the full Browser or Native candidate gates.
