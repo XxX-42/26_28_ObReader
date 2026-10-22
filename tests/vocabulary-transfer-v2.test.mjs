@@ -34,6 +34,25 @@ function fixture(adapter = new VocabularyMemoryAdapter(), prefix = "transfer") {
   return { adapter, personalService, runtime, timers, get verifySourceCalls() { return verifySourceCalls; } };
 }
 
+test("the in-memory adapter separates History, pending-intent, and other transfer traffic", async () => {
+  const adapter = new VocabularyMemoryAdapter();
+  await adapter.mkdir("stores");
+  await adapter.mkdir("stores/history");
+  await adapter.write("stores/history/batch.json", "history");
+  await adapter.read("stores/history/batch.json");
+  await adapter.write("stores/import.pending.json", "intent");
+  await adapter.read("stores/import.pending.json");
+  await adapter.write("stores/summary.pending.json", "summary");
+
+  const metrics = adapter.measured();
+  assert.deepEqual(metrics.byType.history, { reads: 1, readBytes: 7, writes: 1, writtenBytes: 7, appends: 0,
+    appendedBytes: 0, renames: 0, removes: 0 });
+  assert.deepEqual(metrics.byType.pendingIntent, { reads: 1, readBytes: 6, writes: 1, writtenBytes: 6, appends: 0,
+    appendedBytes: 0, renames: 0, removes: 0 });
+  assert.deepEqual(metrics.byType.other, { reads: 0, readBytes: 0, writes: 1, writtenBytes: 7, appends: 0,
+    appendedBytes: 0, renames: 0, removes: 0 });
+});
+
 function selectionAnchor() {
   const hash = `sha256-v1:${"a".repeat(64)}`;
   return {
