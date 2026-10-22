@@ -244,3 +244,23 @@ test("visibility lifecycle invalidates presentation and refreshes the same page 
   vm.runInNewContext("onManualDocumentVisibilityChange();", context);
   assert.deepEqual(calls, ["motion", "clear", "motion", "request-current-page"]);
 });
+
+test("badge focus stays native without bubbling into PDF.js editor activation", () => {
+  let allowed = true;
+  const h = harness({ canActivate: () => allowed });
+  const badge = { dataset: { backlinkTargetKind: "annotation", backlinkTargetId: "uuid-focus" } };
+  const event = { target: { closest: () => badge },
+    stopPropagation() { this.propagationStopped = true; },
+    preventDefault() { this.defaultPrevented = true; } };
+  assert.equal(typeof h.controller.handleBadgeFocus, "function");
+  assert.equal(h.controller.handleBadgeFocus(event), true);
+  assert.equal(event.propagationStopped, true);
+  assert.equal(event.defaultPrevented, undefined, "preserve browser Tab/touch focus and later click");
+  allowed = false;
+  assert.equal(h.controller.handleBadgeFocus(event), false, "an active tool is still authoritative");
+  allowed = true;
+  assert.equal(h.controller.handleBadgeFocus({ target: { closest: () => null } }), false);
+  h.controller.clearPage();
+  assert.equal(h.controller.handleBadgeFocus(event), false, "do not own stale document UI");
+  h.controller.dispose();
+});

@@ -9575,6 +9575,7 @@
   }
 
   function onBridgeFocusIn(event) {
+    if (state.backlinkInteractionController?.handleBadgeFocus?.(event)) return;
     if (isFreeTextTarget(event.target)) {
       state.freeTextFocusGeneration += 1;
       state.freeTextFocused = true;
@@ -9586,6 +9587,7 @@
   }
 
   function onBridgeFocusOut(event) {
+    if (state.backlinkInteractionController?.handleBadgeFocus?.(event)) return;
     if (
       !isFreeTextTarget(event.target) &&
       !isFreeTextEditorContainer(event.target)

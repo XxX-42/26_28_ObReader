@@ -300,6 +300,18 @@
       return !!badge;
     }
 
+    handleBadgeFocus(event) {
+      const badge = event?.target?.closest?.(
+        ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge",
+      );
+      if (!badge || !this.targetFromEvent(event)) return false;
+      // A badge is UI, not the containing PDF.js editor. Preserve native focus
+      // and click, but do not let the editor's focus listener switch tools or
+      // rebuild its DOM between this badge's pointerdown and click.
+      event.stopPropagation?.();
+      return true;
+    }
+
     sendTarget(target, page = this.page, activation = "pointer") {
       if (!target || !page || !this.canActivate() || this.page !== page || !this.currentPageMatches()) return false;
       const requestId = `backlink-open-${page.openRequest}-${++this.requestSequence}`;
