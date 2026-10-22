@@ -16653,9 +16653,16 @@ var __PDFReaderVocabularyWorkspace = (() => {
         };
       }
       function encodeReaderLinkFragment(options = {}) {
-        const { pageNumber, target } = options;
+        const { pageNumber, target, docKey, documentId } = options;
         const params = new URLSearchParams();
         if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
+        if (docKey !== void 0 || documentId !== void 0) {
+          if (!DOC_KEY.test(typeof docKey === "string" ? docKey : "") || typeof documentId !== "string" || !documentId || documentId.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(documentId)) {
+            throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
+          }
+          params.set("docKey", docKey.toLowerCase());
+          params.set("obdoc", documentId);
+        }
         if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" && target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
           const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";
           params.set("obreader", `${prefix}.${target.id}`);
@@ -22224,6 +22231,7 @@ var __PDFReaderVocabularyWorkbench = (() => {
             this.contextPageState = { familyKey: null, cursors: [null], index: 0, nextCursor: null, generation: 0 };
             this.reviewPageState = { cursors: [null], index: 0, nextCursor: null, generation: 0 };
             this.reviewSkippedFamilyKeys = /* @__PURE__ */ new Set();
+            this.reviewSkippedItemKeys = /* @__PURE__ */ new Set();
             this.reviewActionIds = /* @__PURE__ */ new Map();
             this.historyPageIndex = 0;
             this.historyBatches = [];
@@ -22233,6 +22241,15 @@ var __PDFReaderVocabularyWorkbench = (() => {
           }
           onOpen() {
             this.closed = false;
+            this._closeStarted = false;
+            this.reviewPageState = {
+              cursors: [null],
+              index: 0,
+              nextCursor: null,
+              generation: this.reviewPageState.generation + 1
+            };
+            this.reviewSkippedFamilyKeys.clear();
+            this.reviewSkippedItemKeys.clear();
             this.modalEl?.addClass?.("vocabulary-workbench-modal");
             this._renderShell();
             this._renderTab();
@@ -22278,6 +22295,9 @@ var __PDFReaderVocabularyWorkbench = (() => {
           }
           _activateTab(id) {
             if (!TABS.some(([key]) => key === id)) return;
+            if (id === "review" && this.activeTab !== "review") {
+              this.reviewPageState = { cursors: [null], index: 0, nextCursor: null, generation: this.reviewPageState.generation + 1 };
+            }
             this.activeTab = id;
             for (const [key, button] of this.tabButtons) {
               button.setAttribute?.("aria-selected", key === id ? "true" : "false");
@@ -22681,6 +22701,21 @@ var __PDFReaderVocabularyWorkbench = (() => {
                 this._setStatus("\u4E2A\u4EBA\u8BCD\u6C47 CSV \u5DF2\u653E\u5165\u6587\u672C\u6846\uFF1B\u4E0D\u542B Context\u3001Review \u6216 History\u3002");
               }
             }, { cls: "vocabulary-workbench__secondary" });
+            section.createEl("p", { text: "\u5B66\u4E60\u6761\u76EE\u5BFC\u51FA\u72EC\u7ACB\u4E8E\u8BCD\u5E93\u5B8C\u6574 JSON / CSV\uFF1B\u652F\u6301 JSON\u3001Markdown\u3001CSV \u548C Anki TSV\uFF0C\u7ED3\u679C\u653E\u5165\u4E0A\u65B9\u6587\u672C\u6846\uFF0C\u53EF\u590D\u5236\u4FDD\u5B58\u3002" });
+            for (const [format, label] of [["json", "JSON"], ["markdown", "Markdown"], ["csv", "CSV"], ["anki-tsv", "Anki TSV"]]) {
+              this._button(controls, `\u5BFC\u51FA\u5B66\u4E60\u6761\u76EE\uFF08${label}\uFF09`, `export-learning-${format}`, async (button) => {
+                if (typeof this.api.exportLearning !== "function") throw new Error("\u5B66\u4E60\u6761\u76EE\u5BFC\u51FA\u670D\u52A1\u5C1A\u672A\u8FDE\u63A5\u3002");
+                button.textContent = "\u6B63\u5728\u5BFC\u51FA\u2026";
+                const result = await this.api.exportLearning(format);
+                if (typeof result?.content !== "string") throw new Error("\u5B66\u4E60\u6761\u76EE\u5BFC\u51FA\u6CA1\u6709\u8FD4\u56DE\u5B8C\u6574\u6587\u672C\uFF1B\u672A\u5199\u5165\u622A\u65AD\u7ED3\u679C\u3002");
+                if (this._isCurrent(epoch)) {
+                  text.value = result.content;
+                  text.focus?.();
+                  text.select?.();
+                  this._setStatus(`\u5B66\u4E60\u6761\u76EE ${label} \u5BFC\u51FA\u5B8C\u6210\uFF1A${Number(result.itemCount || 0)} \u6761\uFF0C\u5DF2\u653E\u5165\u6587\u672C\u6846\u3002`);
+                }
+              }, { cls: "vocabulary-workbench__secondary" });
+            }
           }
           _renderContexts(epoch) {
             this.panel.createEl("h3", { text: "\u8BED\u5883" });
@@ -22743,6 +22778,18 @@ var __PDFReaderVocabularyWorkbench = (() => {
                   const result = await this.api.openContext(context.contextId);
                   if (this._isCurrent(epoch)) this._setStatus(result?.message || "\u5DF2\u8BF7\u6C42\u6253\u5F00\u6765\u6E90\uFF1BReader \u4F1A\u5728\u5BFC\u822A\u524D\u518D\u6B21\u9A8C\u8BC1\u8EAB\u4EFD\u3002");
                 }, { cls: "vocabulary-workbench__secondary" });
+                this._button(row, "\u52A0\u5165\u590D\u4E60", `context-add-review-${this._safeActionKey(context.contextId)}`, async () => {
+                  if (typeof this.api.addContextToReview !== "function") throw new Error("Context \u52A0\u5165\u590D\u4E60\u7684\u8349\u7A3F\u670D\u52A1\u5C1A\u672A\u8FDE\u63A5\u3002");
+                  const result = await this.api.addContextToReview(context.contextId);
+                  if (!this._isCurrent(epoch)) return;
+                  if (["cancelled", "canceled"].includes(result?.status)) {
+                    this._setStatus("\u5DF2\u53D6\u6D88\u5B66\u4E60\u8349\u7A3F\uFF1B\u672A\u52A0\u5165\u590D\u4E60\u3002");
+                  } else if (result?.status === "missing") {
+                    this._setStatus("\u8BE5 Context \u5DF2\u4E0D\u53EF\u7528\uFF1B\u672A\u521B\u5EFA\u5B66\u4E60\u8349\u7A3F\u3002");
+                  } else {
+                    this._setStatus(result?.message || "\u5B66\u4E60\u8349\u7A3F\u5DF2\u6253\u5F00\uFF1B\u53D6\u6D88\u4E0D\u4F1A\u5199\u5165\uFF0C\u786E\u8BA4\u540E\u624D\u4F1A\u52A0\u5165\u590D\u4E60\u3002");
+                  }
+                }, { cls: "vocabulary-workbench__secondary" });
               }
               if (!contexts.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: "\u8FD9\u4E2A\u8BCD\u65CF\u8FD8\u6CA1\u6709\u4FDD\u5B58\u8BED\u5883\u3002" });
               pagination.setAttribute?.("data-page", String(state.index + 1));
@@ -22759,7 +22806,7 @@ var __PDFReaderVocabularyWorkbench = (() => {
           }
           _renderReview(epoch) {
             this.panel.createEl("h3", { text: "\u4ECA\u65E5\u590D\u4E60" });
-            this.panel.createEl("p", { text: "\u9009\u62E9\u201C\u8BB0\u4F4F\u201D\u6216\u201C\u5FD8\u8BB0\u201D\u66F4\u65B0\u590D\u4E60\u8FDB\u5EA6\uFF1B\u201C\u8DF3\u8FC7\u201D\u53EA\u5728\u672C\u6B21\u6253\u5F00\u7684\u590D\u4E60\u4F1A\u8BDD\u4E2D\u9690\u85CF\u8BE5\u8BCD\uFF0C\u4E0D\u5199\u5165\u590D\u4E60\u8BB0\u5F55\u3002" });
+            this.panel.createEl("p", { text: "\u9009\u62E9\u201C\u8BB0\u4F4F\u201D\u6216\u201C\u5FD8\u8BB0\u201D\u66F4\u65B0\u590D\u4E60\u8FDB\u5EA6\uFF1B\u201C\u8DF3\u8FC7\u201D\u53EA\u5728\u672C\u6B21\u6253\u5F00\u7684\u590D\u4E60\u4F1A\u8BDD\u4E2D\u9690\u85CF\u8BE5\u590D\u4E60\u9879\uFF0C\u4E0D\u5199\u5165\u590D\u4E60\u8BB0\u5F55\u3002" });
             const list = this.panel.createDiv({ cls: "vocabulary-workbench__list", attr: { "data-role": "review-list", "aria-busy": "true" } });
             const pagination = this.panel.createDiv({ cls: "vocabulary-workbench__pagination", attr: { "data-role": "review-pagination" } });
             this._button(pagination, "\u4E0A\u4E00\u9875", "review-previous", () => {
@@ -22792,51 +22839,128 @@ var __PDFReaderVocabularyWorkbench = (() => {
               if (!this._isCurrent(epoch) || generation !== state.generation) return;
               const items = Array.isArray(page?.items) ? page.items : [];
               if (items.length > PAGE_SIZE) throw new Error(`Review \u670D\u52A1\u8FD4\u56DE\u4E86 ${items.length} \u6761\u8BB0\u5F55\uFF0C\u8D85\u8FC7\u6BCF\u9875 ${PAGE_SIZE} \u6761\u4E0A\u9650\uFF1B\u672A\u663E\u793A\u622A\u65AD\u6570\u636E\u3002`);
+              const normalizedItems = items.map((item) => this._normalizeReviewItem(item));
               state.nextCursor = page?.nextCursor || null;
-              const visibleItems = items.filter((item) => !this.reviewSkippedFamilyKeys.has(item.familyKey));
+              const visibleItems = normalizedItems.filter((item) => !this.reviewSkippedItemKeys.has(item.sessionKey) && !(item.providerId === "vocabulary" && this.reviewSkippedFamilyKeys.has(item.familyKey)));
               for (const item of visibleItems) {
-                const row = list.createDiv({ cls: "vocabulary-workbench__row vocabulary-workbench__review-row", attr: { "data-role": "review-row" } });
-                const record = item.family?.records?.[0] || {};
+                const row = list.createDiv({ cls: "vocabulary-workbench__row vocabulary-workbench__review-row", attr: {
+                  "data-role": "review-row",
+                  "data-provider-id": item.providerId,
+                  "data-item-id": item.itemId
+                } });
                 const main = row.createDiv({ cls: "vocabulary-workbench__row-main" });
-                main.createEl("strong", { text: record.surface || item.familyKey || "\u8BCD\u65CF" });
-                main.createEl("span", { text: `\u7B2C ${item.state?.box || 1} \u7BB1 \xB7 \u5230\u671F\uFF1A${formatLocalReviewTime(item.dueAt || item.state?.dueAt)}` });
-                if (record.translation) main.createEl("span", { text: record.translation });
-                const open = this._button(row, "\u8BCD\u5E93\u8BE6\u60C5", `review-details-${this._safeActionKey(item.familyKey)}`, () => {
-                  this.selectedFamilyKey = item.familyKey;
-                  this.activeTab = "vocabulary";
-                  this._renderShell();
-                  this._renderTab();
-                  this._openDetails(item.familyKey);
-                }, { cls: "vocabulary-workbench__secondary" });
-                open.setAttribute?.("aria-label", `\u5728\u8BCD\u5E93\u4E2D\u67E5\u770B ${record.surface || "\u8BCD\u65CF"}`);
-                const actions = row.createDiv({ cls: "vocabulary-workbench__review-actions", attr: { role: "group", "aria-label": `\u590D\u4E60 ${record.surface || "\u8BCD\u65CF"}` } });
-                for (const [kind, label] of [["remember", "\u8BB0\u4F4F"], ["forget", "\u5FD8\u8BB0"], ["skip", "\u8DF3\u8FC7"]]) {
+                let label;
+                if (item.providerId === "learning") {
+                  label = item.prompt || "\u5B66\u4E60\u95EE\u9898";
+                  main.createEl("strong", { text: label });
+                  main.createEl("p", { text: `\u7B54\u6848\uFF1A${item.answer || "\uFF08\u65E0\u7B54\u6848\uFF09"}` });
+                  if (item.targetText) main.createEl("span", { text: `\u539F\u6587\uFF1A${item.targetText}` });
+                  this._button(
+                    row,
+                    "\u8FD4\u56DE\u6765\u6E90",
+                    `review-source-learning-${this._safeActionKey(item.itemId)}`,
+                    () => this._openReviewSource(item, epoch),
+                    { cls: "vocabulary-workbench__secondary" }
+                  );
+                } else {
+                  const record = item.record;
+                  label = record.surface || item.familyKey || "\u8BCD\u65CF";
+                  main.createEl("strong", { text: label });
+                  if (record.translation) main.createEl("span", { text: record.translation });
+                  const open = this._button(row, "\u8BCD\u5E93\u8BE6\u60C5", `review-details-${this._safeActionKey(item.familyKey)}`, () => {
+                    this.selectedFamilyKey = item.familyKey;
+                    this.activeTab = "vocabulary";
+                    this._renderShell();
+                    this._renderTab();
+                    this._openDetails(item.familyKey);
+                  }, { cls: "vocabulary-workbench__secondary" });
+                  open.setAttribute?.("aria-label", `\u5728\u8BCD\u5E93\u4E2D\u67E5\u770B ${label}`);
+                  this._button(
+                    row,
+                    "\u6765\u6E90",
+                    `review-source-vocabulary-${this._safeActionKey(item.itemId)}`,
+                    () => this._openReviewSource(item, epoch),
+                    { cls: "vocabulary-workbench__secondary" }
+                  );
+                }
+                main.createEl("span", { text: `\u7B2C ${item.state?.box || 1} \u7BB1 \xB7 \u5230\u671F\uFF1A${formatLocalReviewTime(item.dueAt)}` });
+                const actions = row.createDiv({ cls: "vocabulary-workbench__review-actions", attr: { role: "group", "aria-label": `\u590D\u4E60 ${label}` } });
+                for (const [kind, label2] of [["remember", "\u8BB0\u4F4F"], ["forget", "\u5FD8\u8BB0"], ["skip", "\u8DF3\u8FC7"]]) {
                   const button = this._button(
                     actions,
-                    label,
-                    `review-${kind}-${this._safeActionKey(item.familyKey)}`,
-                    () => this._runReviewAction(kind, item.familyKey, epoch, list, pagination),
+                    label2,
+                    `review-${kind}-${item.providerId}-${this._safeActionKey(item.itemId)}`,
+                    () => this._runReviewAction(kind, item, epoch, list, pagination),
                     { cls: kind === "skip" ? "vocabulary-workbench__secondary" : "" }
                   );
-                  button.setAttribute?.("aria-label", `${label}\uFF1A${record.surface || "\u8BCD\u65CF"}`);
+                  button.setAttribute?.("aria-label", `${label2}\uFF1A${item.providerId === "learning" ? item.prompt || "\u5B66\u4E60\u95EE\u9898" : item.record.surface || "\u8BCD\u65CF"}`);
                 }
               }
-              if (!visibleItems.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: items.length ? "\u672C\u9875\u5230\u671F\u8BCD\u65CF\u5DF2\u5728\u672C\u6B21\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u53EF\u7EE7\u7EED\u7FFB\u9875\u3002" : "\u4ECA\u5929\u6CA1\u6709\u5230\u671F\u7684\u590D\u4E60\u8BCD\u65CF\u3002" });
+              if (!visibleItems.length) list.createDiv({ cls: "vocabulary-workbench__empty", text: normalizedItems.length ? normalizedItems.every((item) => item.providerId === "vocabulary") ? "\u672C\u9875\u5230\u671F\u8BCD\u65CF\u5DF2\u5728\u672C\u6B21\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u53EF\u7EE7\u7EED\u7FFB\u9875\u3002" : "\u672C\u9875\u5230\u671F\u590D\u4E60\u9879\u5DF2\u5728\u672C\u6B21\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u53EF\u7EE7\u7EED\u7FFB\u9875\u3002" : "\u4ECA\u5929\u6CA1\u6709\u5230\u671F\u7684\u590D\u4E60\u9879\u3002" });
               pagination.setAttribute?.("data-page", String(state.index + 1));
               const previous = pagination.querySelector?.('[data-action="review-previous"]');
               const next = pagination.querySelector?.('[data-action="review-next"]');
               if (previous) previous.disabled = state.index === 0;
               if (next) next.disabled = !state.nextCursor;
-              this._setStatus(`\u4ECA\u65E5\u590D\u4E60\u7B2C ${state.index + 1} \u9875 \xB7 \u5171 ${Number(page?.total ?? items.length)} \u4E2A\u8BCD\u65CF`);
+              const hasTotal = typeof page?.total === "number" && Number.isFinite(page.total) && page.total >= 0;
+              this._setStatus(hasTotal ? `\u4ECA\u65E5\u590D\u4E60\u7B2C ${state.index + 1} \u9875 \xB7 \u5171 ${page.total} \u4E2A\u590D\u4E60\u9879` : `\u4ECA\u65E5\u590D\u4E60\u7B2C ${state.index + 1} \u9875 \xB7 \u672C\u9875 ${items.length} \u4E2A\u590D\u4E60\u9879 \xB7 \u603B\u6570\u672A\u77E5`);
             } catch (error) {
               if (this._isCurrent(epoch) && generation === state.generation) this._showError(error);
             } finally {
               if (this._isCurrent(epoch) && generation === state.generation) list.setAttribute?.("aria-busy", "false");
             }
           }
-          async _runReviewAction(kind, familyKey, epoch, list, pagination) {
+          _normalizeReviewItem(item) {
+            if (!item || typeof item !== "object") throw new Error("Review \u670D\u52A1\u8FD4\u56DE\u4E86\u65E0\u6548\u6761\u76EE\uFF1B\u672A\u663E\u793A\u90E8\u5206\u7ED3\u679C\u3002");
+            const providerId = item.providerId || "vocabulary";
+            if (providerId !== "vocabulary" && providerId !== "learning") {
+              throw new Error(`Review \u670D\u52A1\u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u6765\u6E90 ${String(providerId)}\uFF1B\u672A\u663E\u793A\u90E8\u5206\u7ED3\u679C\u3002`);
+            }
+            const familyKey = providerId === "vocabulary" ? typeof item.familyKey === "string" && item.familyKey ? item.familyKey : item.itemId : null;
+            const itemId = typeof item.itemId === "string" && item.itemId ? item.itemId : familyKey;
+            if (typeof itemId !== "string" || !itemId || providerId === "vocabulary" && (typeof familyKey !== "string" || !familyKey)) {
+              throw new Error("Review \u670D\u52A1\u8FD4\u56DE\u7684\u6761\u76EE\u7F3A\u5C11\u7A33\u5B9A\u8EAB\u4EFD\uFF1B\u672A\u663E\u793A\u90E8\u5206\u7ED3\u679C\u3002");
+            }
+            const state = item.reviewState || item.state || {};
+            const dueAt = item.dueAt || state.dueAt;
+            const record = item.record || item.family?.records?.[0] || {};
+            return {
+              ...item,
+              providerId,
+              itemId,
+              familyKey,
+              state,
+              dueAt,
+              record,
+              sessionKey: `${providerId}\0${itemId}`
+            };
+          }
+          async _openReviewSource(item, epoch) {
+            if (typeof this.api.openReviewSource !== "function") throw new Error("\u590D\u4E60\u6765\u6E90\u5BFC\u822A\u670D\u52A1\u5C1A\u672A\u8FDE\u63A5\u3002");
+            const request = item.providerId === "vocabulary" ? { providerId: "vocabulary", familyKey: item.familyKey } : { providerId: "learning", itemId: item.itemId };
+            const result = await this.api.openReviewSource(request);
+            if (!this._isCurrent(epoch)) return;
+            if (result?.status === "opening") {
+              this._setStatus(result.message || "Reader \u5DF2\u63A5\u53D7\u6765\u6E90\u8BF7\u6C42\uFF1B\u6B63\u5728\u9A8C\u8BC1\u540E\u6253\u5F00\u3002");
+              this.close();
+            } else if (result?.status === "choose-context") {
+              if (typeof result.familyKey !== "string" || !result.familyKey) {
+                this._setStatus("\u6765\u6E90\u9700\u8981\u9009\u62E9\u8BED\u5883\uFF0C\u4F46\u670D\u52A1\u6CA1\u6709\u8FD4\u56DE\u8BCD\u65CF\u8EAB\u4EFD\uFF1B\u5DE5\u4F5C\u53F0\u4FDD\u6301\u6253\u5F00\u3002");
+                return;
+              }
+              this.selectedFamilyKey = result.familyKey;
+              this._activateTab("contexts");
+              this._setStatus("\u8BF7\u4ECE\u73B0\u6709\u8BED\u5883\u5217\u8868\u9009\u62E9\u8981\u67E5\u770B\u7684 Context\u3002");
+            } else if (result?.status === "missing") {
+              this._setStatus("\u6765\u6E90\u5DF2\u5220\u9664\u6216\u4E0D\u53EF\u7528\uFF1B\u5B66\u4E60\u6761\u76EE\u4ECD\u4FDD\u7559\uFF0C\u5DE5\u4F5C\u53F0\u4FDD\u6301\u6253\u5F00\u3002");
+            } else {
+              this._setStatus(result?.message || "\u6765\u6E90\u5C1A\u672A\u6253\u5F00\uFF1B\u5DE5\u4F5C\u53F0\u4FDD\u6301\u6253\u5F00\u3002");
+            }
+          }
+          async _runReviewAction(kind, item, epoch, list, pagination) {
             if (typeof this.api.applyReviewAction !== "function") throw new Error("\u590D\u4E60\u8BC4\u5206\u670D\u52A1\u5C1A\u672A\u8FDE\u63A5\u3002");
-            const actionKey = `${kind}\0${familyKey}`;
+            const reviewItem = this._normalizeReviewItem(item);
+            const actionKey = `${reviewItem.providerId}\0${kind}\0${reviewItem.itemId}`;
             let actionId = this.reviewActionIds.get(actionKey);
             if (!actionId) {
               const randomId = globalThis.crypto?.randomUUID?.();
@@ -22845,11 +22969,19 @@ var __PDFReaderVocabularyWorkbench = (() => {
             }
             const label = { remember: "\u8BB0\u4F4F", forget: "\u5FD8\u8BB0", skip: "\u8DF3\u8FC7" }[kind] || "\u590D\u4E60";
             this._setStatus(`\u6B63\u5728${label}\u2026`);
-            const result = await this.api.applyReviewAction({ kind, familyKey, actionId });
+            const request = { kind, providerId: reviewItem.providerId, itemId: reviewItem.itemId, actionId };
+            if (reviewItem.providerId === "vocabulary") request.familyKey = reviewItem.familyKey;
+            const result = await this.api.applyReviewAction(request);
             if (!this._isCurrent(epoch)) return;
             this.reviewActionIds.delete(actionKey);
-            if (kind === "skip" && result?.status === "skipped") this.reviewSkippedFamilyKeys.add(familyKey);
-            if (result?.status === "known-filtered") this.reviewSkippedFamilyKeys.add(familyKey);
+            if (kind === "skip" && result?.status === "skipped") {
+              this.reviewSkippedItemKeys.add(reviewItem.sessionKey);
+              if (reviewItem.providerId === "vocabulary") this.reviewSkippedFamilyKeys.add(reviewItem.familyKey);
+            }
+            if (result?.status === "known-filtered" && reviewItem.providerId === "vocabulary") {
+              this.reviewSkippedItemKeys.add(reviewItem.sessionKey);
+              this.reviewSkippedFamilyKeys.add(reviewItem.familyKey);
+            }
             if (result?.status === "known-filtered") this._setStatus("\u8BE5\u8BCD\u65CF\u5DF2\u6807\u4E3A\u5DF2\u77E5\uFF0C\u672A\u5199\u5165\u590D\u4E60\u72B6\u6001\u3002");
             else if (result?.status === "not-due") this._setStatus("\u8BE5\u8BCD\u65CF\u5DF2\u4E0D\u5728\u5230\u671F\u961F\u5217\u4E2D\uFF1B\u5217\u8868\u5DF2\u5237\u65B0\u3002");
             else this._setStatus(kind === "skip" ? "\u5DF2\u5728\u672C\u6B21\u590D\u4E60\u4F1A\u8BDD\u4E2D\u8DF3\u8FC7\uFF1B\u672A\u5199\u5165\u6301\u4E45\u6570\u636E\u3002" : `${label}\u5DF2\u786E\u8BA4\u3002`);
@@ -22990,6 +23122,3168 @@ var __PDFReaderVocabularyWorkbench = (() => {
   return require_workbench();
 })();
   return __PDFReaderVocabularyWorkbench;
+})();
+const { createLearningHost } = (() => {
+"use strict";
+var __PDFReaderLearningHost = (() => {
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+
+  // plugin/vocabulary/canonical.cjs
+  var require_canonical = __commonJS({
+    "plugin/vocabulary/canonical.cjs"(exports, module) {
+      "use strict";
+      var SHA256_K = new Uint32Array([
+        1116352408,
+        1899447441,
+        3049323471,
+        3921009573,
+        961987163,
+        1508970993,
+        2453635748,
+        2870763221,
+        3624381080,
+        310598401,
+        607225278,
+        1426881987,
+        1925078388,
+        2162078206,
+        2614888103,
+        3248222580,
+        3835390401,
+        4022224774,
+        264347078,
+        604807628,
+        770255983,
+        1249150122,
+        1555081692,
+        1996064986,
+        2554220882,
+        2821834349,
+        2952996808,
+        3210313671,
+        3336571891,
+        3584528711,
+        113926993,
+        338241895,
+        666307205,
+        773529912,
+        1294757372,
+        1396182291,
+        1695183700,
+        1986661051,
+        2177026350,
+        2456956037,
+        2730485921,
+        2820302411,
+        3259730800,
+        3345764771,
+        3516065817,
+        3600352804,
+        4094571909,
+        275423344,
+        430227734,
+        506948616,
+        659060556,
+        883997877,
+        958139571,
+        1322822218,
+        1537002063,
+        1747873779,
+        1955562222,
+        2024104815,
+        2227730452,
+        2361852424,
+        2428436474,
+        2756734187,
+        3204031479,
+        3329325298
+      ]);
+      function canonicalStringify(value) {
+        return encode(value, /* @__PURE__ */ new Set(), 0);
+      }
+      function encode(value, ancestors, depth) {
+        if (depth > 128) throw codedError("VOCAB_CANONICAL_DEPTH", "Canonical vocabulary data is nested too deeply.");
+        if (value === null) return "null";
+        if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+        if (typeof value === "number") {
+          if (!Number.isFinite(value)) throw codedError("VOCAB_CANONICAL_VALUE", "Canonical data does not accept non-finite numbers.");
+          return JSON.stringify(value);
+        }
+        if (typeof value !== "object") {
+          throw codedError("VOCAB_CANONICAL_VALUE", `Canonical data does not accept ${typeof value} values.`);
+        }
+        if (ancestors.has(value)) throw codedError("VOCAB_CANONICAL_CYCLE", "Canonical data cannot contain cycles.");
+        const prototype = Object.getPrototypeOf(value);
+        const isArray = Array.isArray(value);
+        if (!isArray && prototype !== Object.prototype && prototype !== null) {
+          throw codedError("VOCAB_CANONICAL_OBJECT", "Canonical data accepts only plain objects and arrays.");
+        }
+        if (Object.getOwnPropertySymbols(value).length) {
+          throw codedError("VOCAB_CANONICAL_OBJECT", "Canonical data does not accept symbol properties.");
+        }
+        ancestors.add(value);
+        try {
+          const descriptors = Object.getOwnPropertyDescriptors(value);
+          for (const descriptor of Object.values(descriptors)) {
+            if (!("value" in descriptor)) {
+              throw codedError("VOCAB_CANONICAL_ACCESSOR", "Canonical data does not accept accessors.");
+            }
+          }
+          if (isArray) {
+            const fields2 = [];
+            for (let index = 0; index < value.length; index += 1) {
+              const descriptor = descriptors[String(index)];
+              if (!descriptor) throw codedError("VOCAB_CANONICAL_ARRAY", "Canonical data does not accept sparse arrays.");
+              fields2.push(encode(descriptor.value, ancestors, depth + 1));
+            }
+            for (const key of Object.keys(descriptors)) {
+              if (key === "length") continue;
+              if (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length) {
+                throw codedError("VOCAB_CANONICAL_ARRAY", "Canonical arrays cannot have extra properties.");
+              }
+            }
+            return `[${fields2.join(",")}]`;
+          }
+          const keys = Object.keys(descriptors).filter((key) => descriptors[key].enumerable).sort();
+          const fields = keys.map(
+            (key) => `${JSON.stringify(key)}:${encode(descriptors[key].value, ancestors, depth + 1)}`
+          );
+          return `{${fields.join(",")}}`;
+        } finally {
+          ancestors.delete(value);
+        }
+      }
+      function sha256Text(text) {
+        if (typeof text !== "string") throw new TypeError("SHA-256 input must be a string.");
+        if (typeof TextEncoder !== "function") {
+          throw codedError("VOCAB_HASH_UNAVAILABLE", "TextEncoder is required to hash vocabulary data.");
+        }
+        const input = new TextEncoder().encode(text);
+        const bitLength = input.length * 8;
+        const paddedLength = Math.ceil((input.length + 9) / 64) * 64;
+        const bytes = new Uint8Array(paddedLength);
+        bytes.set(input);
+        bytes[input.length] = 128;
+        const view = new DataView(bytes.buffer);
+        view.setUint32(paddedLength - 8, Math.floor(bitLength / 4294967296), false);
+        view.setUint32(paddedLength - 4, bitLength >>> 0, false);
+        const hash = new Uint32Array([
+          1779033703,
+          3144134277,
+          1013904242,
+          2773480762,
+          1359893119,
+          2600822924,
+          528734635,
+          1541459225
+        ]);
+        const words = new Uint32Array(64);
+        const rotateRight = (value, amount) => value >>> amount | value << 32 - amount;
+        for (let blockOffset = 0; blockOffset < paddedLength; blockOffset += 64) {
+          for (let index = 0; index < 16; index += 1) {
+            words[index] = view.getUint32(blockOffset + index * 4, false);
+          }
+          for (let index = 16; index < 64; index += 1) {
+            const x = words[index - 15];
+            const y = words[index - 2];
+            const smallSigma0 = rotateRight(x, 7) ^ rotateRight(x, 18) ^ x >>> 3;
+            const smallSigma1 = rotateRight(y, 17) ^ rotateRight(y, 19) ^ y >>> 10;
+            words[index] = words[index - 16] + smallSigma0 + words[index - 7] + smallSigma1 >>> 0;
+          }
+          let a = hash[0];
+          let b = hash[1];
+          let c = hash[2];
+          let d = hash[3];
+          let e = hash[4];
+          let f = hash[5];
+          let g = hash[6];
+          let h = hash[7];
+          for (let index = 0; index < 64; index += 1) {
+            const bigSigma1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+            const choice = e & f ^ ~e & g;
+            const temp1 = h + bigSigma1 + choice + SHA256_K[index] + words[index] >>> 0;
+            const bigSigma0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+            const majority = a & b ^ a & c ^ b & c;
+            const temp2 = bigSigma0 + majority >>> 0;
+            h = g;
+            g = f;
+            f = e;
+            e = d + temp1 >>> 0;
+            d = c;
+            c = b;
+            b = a;
+            a = temp1 + temp2 >>> 0;
+          }
+          hash[0] = hash[0] + a >>> 0;
+          hash[1] = hash[1] + b >>> 0;
+          hash[2] = hash[2] + c >>> 0;
+          hash[3] = hash[3] + d >>> 0;
+          hash[4] = hash[4] + e >>> 0;
+          hash[5] = hash[5] + f >>> 0;
+          hash[6] = hash[6] + g >>> 0;
+          hash[7] = hash[7] + h >>> 0;
+        }
+        return [...hash].map((word) => word.toString(16).padStart(8, "0")).join("");
+      }
+      function canonicalHash(value) {
+        return hashText(canonicalStringify(value));
+      }
+      function hashText(text) {
+        return `sha256-v1:${sha256Text(text)}`;
+      }
+      function codedError(code, message) {
+        const error = new Error(message);
+        error.name = "VocabularyCanonicalError";
+        error.code = code;
+        return error;
+      }
+      module.exports = { canonicalStringify, sha256Text, hashText, canonicalHash };
+    }
+  });
+
+  // plugin/semantic/semantic-anchor.cjs
+  var require_semantic_anchor = __commonJS({
+    "plugin/semantic/semantic-anchor.cjs"(exports, module) {
+      "use strict";
+      var TARGET_KINDS = /* @__PURE__ */ new Set(["annotation", "selection", "page", "markdown"]);
+      var TARGET_TEXT_SOURCES = /* @__PURE__ */ new Set(["captured", "stored", "recovered", "unavailable"]);
+      var EVIDENCE_KINDS = /* @__PURE__ */ new Set(["annotation", "reader-anchor", "context", "backlink", "markdown"]);
+      function nonEmptyString(value) {
+        return typeof value === "string" && value.trim() ? value : null;
+      }
+      function textEvidence(value, source) {
+        const text = nonEmptyString(value);
+        if (!text || !TARGET_TEXT_SOURCES.has(source) || source === "unavailable") {
+          return { targetText: "", targetTextSource: "unavailable" };
+        }
+        return { targetText: text, targetTextSource: source };
+      }
+      function copySourceRange(value) {
+        if (!value || typeof value !== "object") return null;
+        const startOffset = Number.isSafeInteger(value.startOffset) ? value.startOffset : Number.isSafeInteger(value.offset) ? value.offset : null;
+        const endOffset = Number.isSafeInteger(value.endOffset) ? value.endOffset : null;
+        const line = Number.isSafeInteger(value.line) && value.line >= 0 ? value.line : null;
+        const text = typeof value.text === "string" ? value.text : null;
+        if (startOffset === null && endOffset === null && line === null && text === null) return null;
+        return { startOffset, endOffset, line, text };
+      }
+      function copyAnnotationVersion(value) {
+        if (!value || typeof value !== "object") return null;
+        const version = value.version && typeof value.version === "object" ? {
+          rev: Number.isSafeInteger(value.version.rev) ? value.version.rev : null,
+          deviceId: nonEmptyString(value.version.deviceId),
+          seq: Number.isSafeInteger(value.version.seq) ? value.version.seq : null
+        } : null;
+        const clock = value.clock && typeof value.clock === "object" ? {
+          timestamp: Number.isSafeInteger(value.clock.timestamp) ? value.clock.timestamp : null,
+          logical: Number.isSafeInteger(value.clock.logical) ? value.clock.logical : null,
+          deviceId: nonEmptyString(value.clock.deviceId),
+          opId: nonEmptyString(value.clock.opId)
+        } : null;
+        if (!version && !clock) return null;
+        return { version, clock };
+      }
+      function makeSemanticAnchor({
+        target,
+        documentId = null,
+        docKey = null,
+        sourcePath = null,
+        sourceHash = null,
+        pageIndex = null,
+        pageIdentity = null,
+        targetText = "",
+        targetTextSource = "unavailable",
+        evidenceKind = null,
+        sourceRange = null,
+        contextId = null,
+        annotationVersion = null
+      } = {}) {
+        if (!target || !TARGET_KINDS.has(target.kind) || !nonEmptyString(target.id) || target.id.length > 512) {
+          return null;
+        }
+        if (evidenceKind !== null && !EVIDENCE_KINDS.has(evidenceKind)) return null;
+        const evidence = textEvidence(targetText, targetTextSource);
+        const anchor = {
+          target: { kind: target.kind, id: target.id },
+          documentId: nonEmptyString(documentId),
+          docKey: nonEmptyString(docKey),
+          sourcePath: nonEmptyString(sourcePath),
+          sourceHash: nonEmptyString(sourceHash),
+          pageIndex: Number.isSafeInteger(pageIndex) && pageIndex >= 0 ? pageIndex : null,
+          pageIdentity: nonEmptyString(pageIdentity),
+          targetText: evidence.targetText,
+          targetTextSource: evidence.targetTextSource,
+          evidenceKind,
+          sourceRange: copySourceRange(sourceRange)
+        };
+        if (nonEmptyString(contextId)) anchor.contextId = contextId;
+        const copiedAnnotationVersion = copyAnnotationVersion(annotationVersion);
+        if (copiedAnnotationVersion) anchor.annotationVersion = copiedAnnotationVersion;
+        return anchor;
+      }
+      function fromAnnotation(annotation, identity = {}) {
+        if (!annotation || typeof annotation !== "object") return null;
+        const uuid = nonEmptyString(annotation.uuid) || nonEmptyString(annotation.id);
+        const kind = annotation.kind;
+        const payload = annotation.editorPayload && typeof annotation.editorPayload === "object" ? annotation.editorPayload : annotation.editor && typeof annotation.editor === "object" ? annotation.editor : annotation.payload?.editor && typeof annotation.payload.editor === "object" ? annotation.payload.editor : annotation.value && typeof annotation.value === "object" ? annotation.value : null;
+        const storedText = kind === "FreeText" ? payload?.value : kind === "Highlight" ? payload?.text : null;
+        const targetText = annotation.targetText ?? storedText;
+        const targetTextSource = annotation.targetTextSource || identity.targetTextSource || (nonEmptyString(storedText) ? "stored" : "unavailable");
+        return makeSemanticAnchor({
+          target: { kind: "annotation", id: uuid },
+          documentId: identity.documentId ?? annotation.documentId,
+          docKey: identity.docKey ?? annotation.docKey,
+          sourcePath: identity.sourcePath ?? annotation.sourcePath,
+          sourceHash: identity.sourceHash ?? annotation.sourceHash,
+          pageIndex: annotation.pageIndex,
+          pageIdentity: identity.pageIdentity ?? annotation.pageIdentity,
+          targetText,
+          targetTextSource,
+          evidenceKind: "annotation",
+          annotationVersion: {
+            version: annotation.version,
+            clock: annotation.clock
+          }
+        });
+      }
+      function fromReaderAnchor(readerAnchor, identity = {}) {
+        if (!readerAnchor || typeof readerAnchor !== "object") return null;
+        return makeSemanticAnchor({
+          target: { kind: "selection", id: readerAnchor.anchorId },
+          documentId: readerAnchor.documentId,
+          docKey: readerAnchor.docKey,
+          sourcePath: identity.sourcePath ?? readerAnchor.sourcePath,
+          sourceHash: readerAnchor.sourceHash,
+          pageIndex: readerAnchor.pageIndexHint,
+          pageIdentity: readerAnchor.pageIdentity,
+          targetText: readerAnchor.exactQuote,
+          targetTextSource: "captured",
+          evidenceKind: "reader-anchor"
+        });
+      }
+      function fromContext(context, identity = {}) {
+        if (!context || typeof context !== "object") return null;
+        const readerAnchor = context.readerAnchor || context.sourceAnchor || context.selectionAnchor || context.anchor || context;
+        if (!readerAnchor || typeof readerAnchor !== "object") return null;
+        const base = fromReaderAnchor(readerAnchor, {
+          sourcePath: identity.sourcePath ?? context.sourcePath
+        });
+        if (!base) return null;
+        base.evidenceKind = "context";
+        base.contextId = nonEmptyString(context.contextId) || nonEmptyString(context.id) || null;
+        if (nonEmptyString(context.targetText)) {
+          const evidence = textEvidence(
+            context.targetText,
+            context.targetTextSource || identity.targetTextSource || "captured"
+          );
+          base.targetText = evidence.targetText;
+          base.targetTextSource = evidence.targetTextSource;
+        }
+        return base;
+      }
+      function fromBacklink(row, identity = {}) {
+        if (!row || typeof row !== "object" || !row.target || typeof row.target !== "object") return null;
+        const sourceRange = {
+          startOffset: row.offset,
+          endOffset: row.endOffset,
+          line: row.line,
+          // displayText is not a source slice and must not be promoted to exact evidence.
+          text: identity.sourceText ?? row.sourceText
+        };
+        return makeSemanticAnchor({
+          target: row.target,
+          documentId: identity.documentId ?? row.documentId,
+          docKey: identity.docKey ?? row.docKey,
+          sourcePath: row.sourcePath,
+          sourceHash: identity.sourceHash ?? row.sourceHash,
+          pageIndex: identity.pageIndex,
+          pageIdentity: identity.pageIdentity,
+          targetText: identity.targetText ?? row.targetText,
+          targetTextSource: identity.targetTextSource ?? row.targetTextSource ?? "unavailable",
+          evidenceKind: "backlink",
+          sourceRange
+        });
+      }
+      function fromMarkdown(selection, identity = {}) {
+        if (!selection || typeof selection !== "object") return null;
+        const sourcePath = nonEmptyString(selection.sourcePath) || nonEmptyString(identity.sourcePath);
+        const offset = selection.offset;
+        const endOffset = selection.endOffset;
+        const exactText = typeof selection.text === "string" ? selection.text : selection.targetText;
+        if (!sourcePath || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(endOffset) || endOffset <= offset) return null;
+        const targetId = nonEmptyString(selection.id) || `md:${offset}:${endOffset}`;
+        return makeSemanticAnchor({
+          target: { kind: "markdown", id: targetId },
+          documentId: identity.documentId ?? selection.documentId,
+          docKey: identity.docKey ?? selection.docKey,
+          sourcePath,
+          sourceHash: identity.sourceHash ?? selection.sourceHash,
+          pageIndex: identity.pageIndex,
+          pageIdentity: identity.pageIdentity,
+          targetText: exactText,
+          targetTextSource: nonEmptyString(exactText) ? "captured" : "unavailable",
+          evidenceKind: "markdown",
+          sourceRange: { startOffset: offset, endOffset, line: selection.line, text: exactText }
+        });
+      }
+      function matchesMarkdownSourceSlice(anchor, markdownText) {
+        const range = anchor?.sourceRange;
+        if (typeof markdownText !== "string" || !range || !Number.isSafeInteger(range.startOffset) || range.startOffset < 0 || !Number.isSafeInteger(range.endOffset) || range.endOffset <= range.startOffset || range.endOffset > markdownText.length || typeof range.text !== "string") return false;
+        const currentSlice = markdownText.slice(range.startOffset, range.endOffset);
+        if (currentSlice !== range.text) return false;
+        return anchor.evidenceKind !== "markdown" || typeof anchor.targetText === "string" && currentSlice === anchor.targetText;
+      }
+      function stableJson(value) {
+        if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+        if (value && typeof value === "object") {
+          return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+        }
+        return JSON.stringify(value);
+      }
+      function hasVerifiedEvidence(result, anchor, { needsPage = false } = {}) {
+        if (!result || result.status !== "verified" || result.sourceCurrent !== true || needsPage && result.pageCurrent !== true) return false;
+        const evidence = result.anchor ?? result.source;
+        return evidence && stableJson(evidence) === stableJson(anchor);
+      }
+      function createSemanticSourceResolver({
+        verifyRouting,
+        verifyReaderAnchor,
+        verifyAnnotation,
+        verifyContext,
+        verifyBacklink,
+        verifyMarkdown
+      } = {}) {
+        const fail = (anchor, reason, routeVerified = false) => {
+          const hasPageFallback = routeVerified && anchor && Number.isSafeInteger(anchor.pageIndex) && anchor.pageIndex >= 0 && nonEmptyString(anchor.pageIdentity);
+          return {
+            status: "unresolved",
+            code: "TARGET_UNRESOLVED",
+            reason,
+            sourceCurrent: false,
+            pageCurrent: false,
+            exact: false,
+            anchor: anchor || null,
+            pageFallback: hasPageFallback ? {
+              kind: "page",
+              id: anchor.pageIdentity,
+              pageIndex: anchor.pageIndex,
+              exact: false
+            } : null
+          };
+        };
+        return async function resolveSource(anchor) {
+          if (!anchor || !anchor.target || !TARGET_KINDS.has(anchor.target.kind) || !nonEmptyString(anchor.target.id) || !EVIDENCE_KINDS.has(anchor.evidenceKind)) {
+            return fail(anchor, "semantic-anchor-invalid");
+          }
+          const isMarkdown = anchor.target.kind === "markdown" || anchor.evidenceKind === "markdown";
+          let routeResult = null;
+          if (!isMarkdown) {
+            if (typeof verifyRouting !== "function") return fail(anchor, "routing-verifier-unavailable");
+            try {
+              routeResult = await verifyRouting(anchor);
+            } catch {
+              return fail(anchor, "routing-verifier-failed");
+            }
+            if (!hasVerifiedEvidence(routeResult, anchor, { needsPage: Boolean(anchor.pageIdentity) })) {
+              return fail(anchor, routeResult?.code || "source-unverified");
+            }
+          }
+          const verifiers = {
+            "reader-anchor": verifyReaderAnchor,
+            annotation: verifyAnnotation,
+            context: verifyContext,
+            backlink: verifyBacklink,
+            markdown: verifyMarkdown
+          };
+          const verifier = verifiers[anchor.evidenceKind];
+          if (typeof verifier !== "function") return fail(anchor, `${anchor.evidenceKind}-verifier-unavailable`, !isMarkdown);
+          let targetResult;
+          try {
+            targetResult = await verifier(anchor);
+          } catch {
+            return fail(anchor, `${anchor.evidenceKind}-verifier-failed`, !isMarkdown);
+          }
+          const needsPage = Boolean(anchor.pageIdentity);
+          if (!hasVerifiedEvidence(targetResult, anchor, { needsPage })) {
+            return fail(anchor, targetResult?.code || "target-unverified", !isMarkdown);
+          }
+          if (anchor.evidenceKind === "backlink") {
+            if (anchor.target.kind !== "page") {
+              const targetVerifier = anchor.target.kind === "annotation" ? verifyAnnotation : verifyReaderAnchor;
+              if (typeof targetVerifier !== "function") return fail(anchor, "target-verifier-unavailable", true);
+              let readerTargetResult;
+              try {
+                readerTargetResult = await targetVerifier(anchor);
+              } catch {
+                return fail(anchor, "target-verifier-failed", true);
+              }
+              if (!hasVerifiedEvidence(readerTargetResult, anchor, { needsPage })) {
+                return fail(anchor, readerTargetResult?.code || "target-unverified", true);
+              }
+            }
+          }
+          return {
+            status: "verified",
+            code: null,
+            sourceCurrent: true,
+            pageCurrent: true,
+            exact: true,
+            anchor,
+            source: anchor,
+            pageFallback: null
+          };
+        };
+      }
+      module.exports = {
+        TARGET_KINDS,
+        TARGET_TEXT_SOURCES,
+        makeSemanticAnchor,
+        fromAnnotation,
+        fromReaderAnchor,
+        fromContext,
+        fromBacklink,
+        fromMarkdown,
+        matchesMarkdownSourceSlice,
+        createSemanticSourceResolver
+      };
+    }
+  });
+
+  // plugin/vocabulary/sharded-store.cjs
+  var require_sharded_store = __commonJS({
+    "plugin/vocabulary/sharded-store.cjs"(exports, module) {
+      "use strict";
+      var { canonicalHash, canonicalStringify, hashText } = require_canonical();
+      var VOCABULARY_DATA_ROOT = "00_Archive/21_VocabularyData";
+      var MAX_SHARD_RECORDS = 512;
+      var MAX_SHARD_BYTES = 256 * 1024;
+      var HASH_PREFIX = /^[a-f0-9]{1,64}$/;
+      var SHARD_FILE = /^[a-f0-9]{1,64}\.json$/;
+      var HASH_VALUE = /^sha256-v1:[a-f0-9]{64}$/;
+      function codedError(code, message) {
+        const error = new Error(message);
+        error.name = "VocabularyShardError";
+        error.code = code;
+        return error;
+      }
+      function assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes }) {
+        if (typeof storeId !== "string" || !storeId || storeId.length > 128 || /[\u0000-\u001f\u007f]/.test(storeId)) {
+          throw codedError("VOCAB_SHARD_STORE_ID_INVALID", "A stable vocabulary shard store ID is required.");
+        }
+        if (typeof root !== "string" || !root.startsWith(`${VOCABULARY_DATA_ROOT}/`) || root.split("/").some((part) => !part || part === "." || part === ".." || /[\\\u0000-\u001f\u007f]/.test(part))) {
+          throw codedError("VOCAB_SHARD_ROOT_INVALID", "Vocabulary shards must be stored beneath 00_Archive/21_VocabularyData/.");
+        }
+        if (typeof kind !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(kind)) {
+          throw codedError("VOCAB_SHARD_KIND_INVALID", "A stable vocabulary shard kind is required.");
+        }
+        if (typeof idOf !== "function") throw new TypeError("Vocabulary shards require an idOf(record) function.");
+        if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > MAX_SHARD_RECORDS) {
+          throw codedError("VOCAB_SHARD_LIMIT_INVALID", `A vocabulary shard may contain at most ${MAX_SHARD_RECORDS} records.`);
+        }
+        if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_SHARD_BYTES) {
+          throw codedError("VOCAB_SHARD_LIMIT_INVALID", `A vocabulary shard may use at most ${MAX_SHARD_BYTES} UTF-8 bytes.`);
+        }
+      }
+      function utf8Length(text) {
+        if (typeof TextEncoder !== "function") throw codedError("VOCAB_SHARD_ENCODER_UNAVAILABLE", "TextEncoder is required to size vocabulary shards.");
+        return new TextEncoder().encode(text).byteLength;
+      }
+      function validateId(value) {
+        if (typeof value !== "string" || !value || value.length > 512 || /[\u0000-\u001f\u007f]/.test(value)) {
+          throw codedError("VOCAB_SHARD_RECORD_ID_INVALID", "Every vocabulary record needs a stable, non-empty ID.");
+        }
+        return value;
+      }
+      function manifestPathFor(root) {
+        return `${root}/manifest.json`;
+      }
+      function hasShardFilesFromListing(listing, root) {
+        if (!listing || !Array.isArray(listing.files)) {
+          throw codedError("VOCAB_SHARD_DIRECTORY_LIST_INVALID", `The DataAdapter returned an invalid directory listing for ${root}.`);
+        }
+        const prefix = `${root}/`;
+        return listing.files.some((path) => {
+          if (typeof path !== "string" || !path.startsWith(prefix)) return false;
+          const leaf = path.slice(prefix.length);
+          return !leaf.includes("/") && SHARD_FILE.test(leaf);
+        });
+      }
+      async function hasShardFilesFromAdapter(adapter, root) {
+        if (!adapter || typeof adapter.exists !== "function" || typeof adapter.list !== "function") {
+          throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_UNAVAILABLE", "The DataAdapter must support exists() and list() to distinguish an empty shard store from an incomplete sync.");
+        }
+        let directoryExists;
+        try {
+          directoryExists = await adapter.exists(root);
+        } catch (error) {
+          throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_FAILED", `Could not inspect shard directory ${root}: ${error.message}`);
+        }
+        if (!directoryExists) return false;
+        let listing;
+        try {
+          listing = await adapter.list(root);
+        } catch (error) {
+          throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_FAILED", `Could not list shard directory ${root}: ${error.message}`);
+        }
+        return hasShardFilesFromListing(listing, root);
+      }
+      function shardPathFor(root, prefix) {
+        if (!HASH_PREFIX.test(prefix || "")) throw codedError("VOCAB_SHARD_PREFIX_INVALID", "A shard path requires a lowercase SHA-256 prefix.");
+        return `${root}/${prefix}.json`;
+      }
+      function safeRecordMap(entries) {
+        const records = /* @__PURE__ */ Object.create(null);
+        for (const [id, record] of entries) {
+          Object.defineProperty(records, id, { value: record, enumerable: true, writable: true, configurable: true });
+        }
+        return records;
+      }
+      function shardValue({ storeId, kind, prefix, revision, records }) {
+        return {
+          schemaVersion: 1,
+          kind: "vocabulary-shard",
+          storeId,
+          storeKind: kind,
+          prefix,
+          revision,
+          records
+        };
+      }
+      function shardText(value) {
+        return canonicalStringify(value);
+      }
+      function makePartition({ entries, prefix, storeId, kind, revision, maxRecords, maxBytes, root }) {
+        const records = safeRecordMap(entries.map(({ id, record }) => [id, record]));
+        const value = shardValue({ storeId, kind, prefix, revision, records });
+        const text = shardText(value);
+        const byteLength = utf8Length(text);
+        if (entries.length > maxRecords || byteLength > maxBytes) return null;
+        return {
+          prefix,
+          path: shardPathFor(root, prefix),
+          value,
+          text,
+          hash: canonicalHash(value),
+          recordCount: entries.length,
+          byteLength
+        };
+      }
+      function partitionRecords({
+        records,
+        storeId,
+        root,
+        kind,
+        idOf = (record) => record?.id,
+        revisionForPrefix = () => 1,
+        maxRecords = MAX_SHARD_RECORDS,
+        maxBytes = MAX_SHARD_BYTES
+      } = {}) {
+        assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes });
+        if (!Array.isArray(records)) throw codedError("VOCAB_SHARD_RECORDS_INVALID", "Vocabulary shard records must be an array.");
+        if (typeof revisionForPrefix !== "function") throw new TypeError("revisionForPrefix(prefix) must be a function.");
+        const ids = /* @__PURE__ */ new Set();
+        const indexed = records.map((record) => {
+          const id = validateId(idOf(record));
+          if (ids.has(id)) throw codedError("VOCAB_SHARD_DUPLICATE_ID", `Duplicate vocabulary record ID: ${id}`);
+          ids.add(id);
+          return { id, record, digest: hashText(id).slice("sha256-v1:".length) };
+        }).sort((left, right) => left.id.localeCompare(right.id));
+        const output = [];
+        function split(entries, prefix) {
+          const revision = revisionForPrefix(prefix);
+          if (!Number.isSafeInteger(revision) || revision < 1) {
+            throw codedError("VOCAB_SHARD_REVISION_INVALID", `Invalid revision for shard ${prefix}.`);
+          }
+          if (entries.length <= maxRecords) {
+            const candidate = makePartition({ entries, prefix, storeId, kind, revision, maxRecords, maxBytes, root });
+            if (candidate) {
+              output.push(candidate);
+              return;
+            }
+          }
+          if (entries.length === 1) {
+            const single = makePartition({ entries, prefix, storeId, kind, revision, maxRecords, maxBytes, root });
+            if (!single) {
+              throw codedError("VOCAB_SHARD_RECORD_TOO_LARGE", `Vocabulary record ${entries[0].id} exceeds the single-record shard limit.`);
+            }
+            output.push(single);
+            return;
+          }
+          if (prefix.length >= 64) {
+            throw codedError("VOCAB_SHARD_HASH_COLLISION", "Distinct vocabulary record IDs have the same full SHA-256 digest.");
+          }
+          const nextGroups = /* @__PURE__ */ new Map();
+          for (const entry of entries) {
+            const nextPrefix = entry.digest.slice(0, prefix.length + 1);
+            const group = nextGroups.get(nextPrefix) || [];
+            group.push(entry);
+            nextGroups.set(nextPrefix, group);
+          }
+          if (nextGroups.size === 1 && nextGroups.keys().next().value === prefix) {
+            throw codedError("VOCAB_SHARD_HASH_COLLISION", "Vocabulary shard records cannot be separated by their hash prefixes.");
+          }
+          for (const nextPrefix of [...nextGroups.keys()].sort()) split(nextGroups.get(nextPrefix), nextPrefix);
+        }
+        const initialGroups = /* @__PURE__ */ new Map();
+        for (const entry of indexed) {
+          const prefix = entry.digest.slice(0, 1);
+          const group = initialGroups.get(prefix) || [];
+          group.push(entry);
+          initialGroups.set(prefix, group);
+        }
+        for (const prefix of [...initialGroups.keys()].sort()) split(initialGroups.get(prefix), prefix);
+        output.sort((left, right) => left.prefix.localeCompare(right.prefix));
+        return output;
+      }
+      function createManifest({ storeId, kind, revision, shards }) {
+        return {
+          schemaVersion: 1,
+          kind: "vocabulary-shard-manifest",
+          storeId,
+          storeKind: kind,
+          revision,
+          shards: shards.map(({ prefix, path, value, hash, recordCount, byteLength }) => ({
+            prefix,
+            path,
+            revision: value.revision,
+            hash,
+            recordCount,
+            byteLength
+          }))
+        };
+      }
+      function parseCanonicalSnapshot(snapshot, path, required = true) {
+        if (!snapshot || typeof snapshot !== "object") throw codedError("VOCAB_SHARD_SNAPSHOT_INVALID", `Invalid snapshot for ${path}.`);
+        if (!snapshot.exists) {
+          if (required) throw codedError("VOCAB_SHARD_MISSING", `A manifest-referenced shard is missing: ${path}`);
+          return null;
+        }
+        if (typeof snapshot.text !== "string") throw codedError("VOCAB_SHARD_SNAPSHOT_INVALID", `Snapshot text is missing for ${path}.`);
+        let value;
+        try {
+          value = JSON.parse(snapshot.text);
+        } catch {
+          throw codedError("VOCAB_SHARD_JSON_INVALID", `Vocabulary data is malformed at ${path}.`);
+        }
+        if (canonicalStringify(value) !== snapshot.text) {
+          throw codedError("VOCAB_SHARD_NONCANONICAL", `Vocabulary data is not canonical at ${path}.`);
+        }
+        if (snapshot.value !== void 0 && canonicalStringify(snapshot.value) !== snapshot.text) {
+          throw codedError("VOCAB_SHARD_SNAPSHOT_MISMATCH", `Snapshot value does not match the stored text at ${path}.`);
+        }
+        const actualHash = canonicalHash(value);
+        if (snapshot.hash !== void 0 && snapshot.hash !== actualHash) {
+          throw codedError("VOCAB_SHARD_HASH_MISMATCH", `Snapshot hash does not match the stored value at ${path}.`);
+        }
+        if (snapshot.revision !== void 0 && snapshot.revision !== value.revision) {
+          throw codedError("VOCAB_SHARD_REVISION_MISMATCH", `Snapshot revision does not match the stored value at ${path}.`);
+        }
+        return value;
+      }
+      function snapshotMap(value) {
+        if (value instanceof Map) return value;
+        if (Array.isArray(value)) return new Map(value.map((item) => [item.prefix, item.snapshot || item]));
+        if (value && typeof value === "object") return new Map(Object.entries(value));
+        return /* @__PURE__ */ new Map();
+      }
+      function validateManifestAndShards({
+        manifestSnapshot,
+        shardSnapshots,
+        storeId,
+        root,
+        kind,
+        idOf = (record) => record?.id,
+        maxRecords = MAX_SHARD_RECORDS,
+        maxBytes = MAX_SHARD_BYTES
+      } = {}) {
+        assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes });
+        const manifestMapPath = manifestPathFor(root);
+        const manifest = parseCanonicalSnapshot(manifestSnapshot, manifestMapPath, false);
+        const shardsByPrefix = snapshotMap(shardSnapshots);
+        if (!manifest) {
+          if (shardsByPrefix.size) throw codedError("VOCAB_SHARD_UNREFERENCED", "Shard snapshots were supplied without an active manifest.");
+          return { manifest: null, records: [], shardSnapshots: /* @__PURE__ */ new Map(), manifestSnapshot, manifestPath: manifestMapPath };
+        }
+        if (manifest.schemaVersion !== 1 || manifest.kind !== "vocabulary-shard-manifest" || manifest.storeId !== storeId || manifest.storeKind !== kind || !Number.isSafeInteger(manifest.revision) || manifest.revision < 1 || !Array.isArray(manifest.shards)) {
+          throw codedError("VOCAB_SHARD_MANIFEST_INVALID", `Invalid vocabulary shard manifest at ${manifestMapPath}.`);
+        }
+        const active = /* @__PURE__ */ new Map();
+        let priorPrefix = "";
+        const records = [];
+        const allIds = /* @__PURE__ */ new Set();
+        for (const entry of manifest.shards) {
+          if (!entry || typeof entry !== "object" || !HASH_PREFIX.test(entry.prefix || "") || entry.path !== shardPathFor(root, entry.prefix) || !Number.isSafeInteger(entry.revision) || entry.revision < 1 || !HASH_VALUE.test(entry.hash || "") || !Number.isSafeInteger(entry.recordCount) || entry.recordCount < 1 || !Number.isSafeInteger(entry.byteLength) || entry.byteLength < 1 || entry.byteLength > maxBytes) {
+            throw codedError("VOCAB_SHARD_MANIFEST_ENTRY_INVALID", "The shard manifest contains an invalid reference.");
+          }
+          if (entry.prefix <= priorPrefix || active.has(entry.prefix)) {
+            throw codedError("VOCAB_SHARD_MANIFEST_ORDER_INVALID", "Manifest shard prefixes must be unique and sorted.");
+          }
+          for (const previous of active.keys()) {
+            if (entry.prefix.startsWith(previous) || previous.startsWith(entry.prefix)) {
+              throw codedError("VOCAB_SHARD_PREFIX_OVERLAP", "Manifest shard prefixes must form a disjoint prefix-free set.");
+            }
+          }
+          priorPrefix = entry.prefix;
+          const snapshot = shardsByPrefix.get(entry.prefix);
+          if (!snapshot) throw codedError("VOCAB_SHARD_MISSING", `The manifest-referenced shard ${entry.prefix} was not loaded.`);
+          const value = parseCanonicalSnapshot(snapshot, entry.path, true);
+          const text = snapshot.text;
+          if (snapshot.revision !== entry.revision || value.revision !== entry.revision || canonicalHash(value) !== entry.hash || snapshot.hash !== entry.hash || utf8Length(text) !== entry.byteLength || entry.recordCount > maxRecords) {
+            throw codedError("VOCAB_SHARD_REFERENCE_MISMATCH", `Manifest metadata does not match shard ${entry.prefix}.`);
+          }
+          if (value.schemaVersion !== 1 || value.kind !== "vocabulary-shard" || value.storeId !== storeId || value.storeKind !== kind || value.prefix !== entry.prefix || !Number.isSafeInteger(value.revision) || !value.records || typeof value.records !== "object" || Array.isArray(value.records)) {
+            throw codedError("VOCAB_SHARD_INVALID", `Shard ${entry.prefix} has an invalid envelope.`);
+          }
+          const keys = Object.keys(value.records).sort();
+          if (keys.length !== entry.recordCount || !keys.length) {
+            throw codedError("VOCAB_SHARD_COUNT_MISMATCH", `Shard ${entry.prefix} has an invalid record count.`);
+          }
+          if (utf8Length(text) > maxBytes) throw codedError("VOCAB_SHARD_SIZE_LIMIT", `Shard ${entry.prefix} exceeds the byte limit.`);
+          for (const id of keys) {
+            validateId(id);
+            const record = value.records[id];
+            if (!record || typeof record !== "object" || Array.isArray(record) || validateId(idOf(record)) !== id) {
+              throw codedError("VOCAB_SHARD_RECORD_ID_MISMATCH", `Shard ${entry.prefix} contains a record with a mismatched ID.`);
+            }
+            if (!hashText(id).slice("sha256-v1:".length).startsWith(entry.prefix)) {
+              throw codedError("VOCAB_SHARD_PREFIX_MISMATCH", `Record ${id} does not belong in shard ${entry.prefix}.`);
+            }
+            if (allIds.has(id)) throw codedError("VOCAB_SHARD_DUPLICATE_ID", `Duplicate vocabulary record ID: ${id}`);
+            allIds.add(id);
+            records.push(record);
+          }
+          active.set(entry.prefix, snapshot);
+        }
+        if (shardsByPrefix.size !== active.size || [...shardsByPrefix.keys()].some((prefix) => !active.has(prefix))) {
+          throw codedError("VOCAB_SHARD_UNREFERENCED", "Loaded shard snapshots do not exactly match the active manifest references.");
+        }
+        records.sort((left, right) => String(idOf(left)).localeCompare(String(idOf(right))));
+        return { manifest, records, shardSnapshots: active, manifestSnapshot, manifestPath: manifestMapPath };
+      }
+      async function readShardedStore({
+        readSnapshot,
+        hasShardFiles,
+        storeId,
+        root,
+        kind,
+        idOf = (record) => record?.id,
+        maxRecords = MAX_SHARD_RECORDS,
+        maxBytes = MAX_SHARD_BYTES
+      } = {}) {
+        if (typeof readSnapshot !== "function") throw new TypeError("A vocabulary shard store requires readSnapshot(path).");
+        assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes });
+        const manifestPath = manifestPathFor(root);
+        const manifestSnapshot = await readSnapshot(manifestPath);
+        const manifestValue = parseCanonicalSnapshot(manifestSnapshot, manifestPath, false);
+        if (!manifestValue) {
+          if (typeof hasShardFiles !== "function") {
+            throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_UNAVAILABLE", "A hasShardFiles(root) probe is required before treating a missing manifest as an empty store.");
+          }
+          let hasOrphanShardFiles;
+          try {
+            hasOrphanShardFiles = await hasShardFiles(root);
+          } catch (error) {
+            if (error?.code?.startsWith("VOCAB_SHARD_DIRECTORY_")) throw error;
+            throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_FAILED", `Could not inspect shard directory ${root}: ${error.message}`);
+          }
+          if (typeof hasOrphanShardFiles !== "boolean") {
+            throw codedError("VOCAB_SHARD_DIRECTORY_PROBE_INVALID", `The shard directory probe for ${root} must return a boolean.`);
+          }
+          if (hasOrphanShardFiles) {
+            throw codedError("VOCAB_SHARD_MANIFEST_MISSING", `Shard files exist without ${manifestPath}; the store is incomplete and cannot be treated as empty.`);
+          }
+          return validateManifestAndShards({
+            manifestSnapshot,
+            shardSnapshots: /* @__PURE__ */ new Map(),
+            storeId,
+            root,
+            kind,
+            idOf,
+            maxRecords,
+            maxBytes
+          });
+        }
+        if (!Array.isArray(manifestValue.shards)) {
+          throw codedError("VOCAB_SHARD_MANIFEST_INVALID", `Invalid vocabulary shard manifest at ${manifestPath}.`);
+        }
+        const shardSnapshots = /* @__PURE__ */ new Map();
+        for (const entry of manifestValue.shards) {
+          if (!entry || typeof entry.prefix !== "string") {
+            throw codedError("VOCAB_SHARD_MANIFEST_ENTRY_INVALID", "The shard manifest contains an invalid reference.");
+          }
+          const expectedPath = shardPathFor(root, entry.prefix);
+          if (entry.path !== expectedPath) throw codedError("VOCAB_SHARD_PATH_MISMATCH", "A shard manifest path does not match its prefix.");
+          shardSnapshots.set(entry.prefix, await readSnapshot(expectedPath));
+        }
+        return validateManifestAndShards({ manifestSnapshot, shardSnapshots, storeId, root, kind, idOf, maxRecords, maxBytes });
+      }
+      function sameRecords(left, right, idOf) {
+        if (left.length !== right.length) return false;
+        const byId = new Map(left.map((record) => [idOf(record), record]));
+        for (const record of right) {
+          const id = idOf(record);
+          if (!byId.has(id) || canonicalStringify(byId.get(id)) !== canonicalStringify(record)) return false;
+        }
+        return true;
+      }
+      async function prepareShardedReplacement({
+        readSnapshot,
+        loaded,
+        records,
+        storeId,
+        root,
+        kind,
+        idOf = (record) => record?.id,
+        maxRecords = MAX_SHARD_RECORDS,
+        maxBytes = MAX_SHARD_BYTES
+      } = {}) {
+        if (typeof readSnapshot !== "function") throw new TypeError("A vocabulary shard store requires readSnapshot(path).");
+        assertStoreOptions({ storeId, root, kind, idOf, maxRecords, maxBytes });
+        if (!loaded || !(loaded.shardSnapshots instanceof Map) || !Array.isArray(loaded.records)) {
+          throw codedError("VOCAB_SHARD_LOADED_STATE_INVALID", "A validated loaded shard store is required.");
+        }
+        if (!Array.isArray(records)) throw codedError("VOCAB_SHARD_RECORDS_INVALID", "Vocabulary shard records must be an array.");
+        const candidateSnapshots = new Map(loaded.shardSnapshots);
+        const candidateValues = /* @__PURE__ */ new Map();
+        for (const [prefix, snapshot] of candidateSnapshots) {
+          candidateValues.set(prefix, parseCanonicalSnapshot(snapshot, shardPathFor(root, prefix), true));
+        }
+        let partitions = [];
+        for (let attempt = 0; attempt < 65; attempt += 1) {
+          const revisionForPrefix = (prefix) => {
+            const snapshot = candidateSnapshots.get(prefix);
+            if (!snapshot?.exists) return 1;
+            const prior = candidateValues.get(prefix);
+            if (!prior || prior.storeId !== storeId || prior.storeKind !== kind || prior.prefix !== prefix) {
+              throw codedError("VOCAB_SHARD_PATH_COLLISION", `The fixed shard path ${shardPathFor(root, prefix)} contains a different store.`);
+            }
+            const priorRecords = Object.values(prior.records || {});
+            const nextRecords = records.filter((record) => hashText(validateId(idOf(record))).slice("sha256-v1:".length).startsWith(prefix));
+            const unchanged = sameRecords(priorRecords, nextRecords, idOf);
+            const revision = unchanged ? prior.revision : prior.revision + 1;
+            if (!Number.isSafeInteger(revision) || revision < 1) {
+              throw codedError("VOCAB_SHARD_REVISION_INVALID", `Shard ${prefix} revision exceeds the safe integer range.`);
+            }
+            return revision;
+          };
+          partitions = partitionRecords({ records, storeId, root, kind, idOf, revisionForPrefix, maxRecords, maxBytes });
+          let fetched = false;
+          for (const part of partitions) {
+            if (candidateSnapshots.has(part.prefix)) continue;
+            const snapshot = await readSnapshot(part.path);
+            candidateSnapshots.set(part.prefix, snapshot);
+            candidateValues.set(part.prefix, snapshot?.exists ? parseCanonicalSnapshot(snapshot, part.path, true) : null);
+            fetched = true;
+          }
+          if (!fetched) break;
+          if (attempt === 64) throw codedError("VOCAB_SHARD_REPARTITION_LIMIT", "Vocabulary shard prefixes did not stabilize.");
+        }
+        if (sameRecords(loaded.records, records, idOf)) {
+          const sameActivePrefixes = loaded.manifest && loaded.manifest.shards.length === partitions.length && loaded.manifest.shards.every((entry, index) => {
+            const part = partitions[index];
+            return part && entry.prefix === part.prefix && entry.path === part.path && entry.revision === part.value.revision && entry.hash === part.hash && entry.recordCount === part.recordCount && entry.byteLength === part.byteLength;
+          });
+          if (sameActivePrefixes) {
+            return {
+              changed: false,
+              noOp: true,
+              writes: [],
+              deletes: [],
+              manifest: loaded.manifest,
+              records: loaded.records.slice(),
+              previousRecords: loaded.records.slice(),
+              manifestPath: manifestPathFor(root)
+            };
+          }
+        }
+        const activeByPrefix = new Map(loaded.shardSnapshots);
+        const partitionByPrefix = new Map(partitions.map((part) => [part.prefix, part]));
+        const writes = [];
+        for (const part of partitions) {
+          const snapshot = candidateSnapshots.get(part.prefix) || { exists: false, revision: 0, hash: null };
+          const currentValue = candidateValues.get(part.prefix);
+          if (snapshot.exists && (!currentValue || currentValue.storeId !== storeId || currentValue.storeKind !== kind || currentValue.prefix !== part.prefix)) {
+            throw codedError("VOCAB_SHARD_PATH_COLLISION", `The fixed shard path ${part.path} contains a different store.`);
+          }
+          const recordsUnchanged = currentValue && sameRecords(Object.values(currentValue.records || {}), Object.values(part.value.records), idOf);
+          const nextRevision = snapshot.exists ? recordsUnchanged ? currentValue.revision : currentValue.revision + 1 : 1;
+          const value = shardValue({ storeId, kind, prefix: part.prefix, revision: nextRevision, records: part.value.records });
+          const text = canonicalStringify(value);
+          const byteLength = utf8Length(text);
+          if (byteLength > maxBytes || Object.keys(value.records).length > maxRecords) {
+            throw codedError("VOCAB_SHARD_SIZE_LIMIT", `Shard ${part.prefix} exceeds the configured limits.`);
+          }
+          const hash = canonicalHash(value);
+          if (snapshot.exists && snapshot.hash === hash && snapshot.text === text) continue;
+          writes.push({
+            path: part.path,
+            storeId,
+            expectedRevision: snapshot.exists ? snapshot.revision : 0,
+            expectedHash: snapshot.exists ? snapshot.hash : null,
+            text
+          });
+          partitionByPrefix.set(part.prefix, { ...part, value, text, hash, byteLength, recordCount: Object.keys(value.records).length });
+        }
+        const finalPartitions = [...partitionByPrefix.values()].sort((left, right) => left.prefix.localeCompare(right.prefix));
+        const oldManifest = loaded.manifest;
+        const manifestReferencesUnchanged = oldManifest && oldManifest.shards.length === finalPartitions.length && oldManifest.shards.every((entry, index) => {
+          const part = finalPartitions[index];
+          return part && entry.prefix === part.prefix && entry.path === part.path && entry.revision === part.value.revision && entry.hash === part.hash && entry.recordCount === part.recordCount && entry.byteLength === part.byteLength;
+        });
+        const manifestRevision = oldManifest ? oldManifest.revision + (manifestReferencesUnchanged ? 0 : 1) : 1;
+        if (!Number.isSafeInteger(manifestRevision)) throw codedError("VOCAB_SHARD_REVISION_INVALID", "Manifest revision exceeds the safe integer range.");
+        const manifest = createManifest({ storeId, kind, revision: manifestRevision, shards: finalPartitions });
+        const manifestText = canonicalStringify(manifest);
+        const manifestSnapshot = loaded.manifestSnapshot || { exists: false, revision: 0, hash: null };
+        const oldManifestText = manifestSnapshot.exists ? manifestSnapshot.text : null;
+        const manifestChanged = oldManifestText !== manifestText;
+        if (manifestChanged) {
+          writes.push({
+            path: manifestPathFor(root),
+            storeId,
+            expectedRevision: manifestSnapshot.exists ? manifestSnapshot.revision : 0,
+            expectedHash: manifestSnapshot.exists ? manifestSnapshot.hash : null,
+            text: manifestText
+          });
+        }
+        const noOp = writes.length === 0;
+        return {
+          changed: !noOp,
+          noOp,
+          writes,
+          deletes: [],
+          manifest,
+          records: records.slice().sort((left, right) => String(idOf(left)).localeCompare(String(idOf(right)))),
+          previousRecords: loaded.records.slice(),
+          manifestPath: manifestPathFor(root)
+        };
+      }
+      function createShardedStore(options = {}) {
+        const { transaction, hasShardFiles: injectedHasShardFiles, ...config } = options;
+        if (!transaction || typeof transaction.readSnapshot !== "function") {
+          throw new TypeError("A vocabulary shard store requires a transaction coordinator with readSnapshot().");
+        }
+        const idOf = config.idOf || ((record) => record?.id);
+        assertStoreOptions({
+          storeId: config.storeId,
+          root: config.root,
+          kind: config.kind,
+          idOf,
+          maxRecords: config.maxRecords ?? MAX_SHARD_RECORDS,
+          maxBytes: config.maxBytes ?? MAX_SHARD_BYTES
+        });
+        const fixed = { ...config, idOf };
+        const hasShardFiles = injectedHasShardFiles || ((root) => hasShardFilesFromAdapter(transaction.adapter, root));
+        async function load() {
+          return readShardedStore({ readSnapshot: (path) => transaction.readSnapshot(path), hasShardFiles, ...fixed });
+        }
+        async function prepare(records) {
+          const loaded = await load();
+          const plan = await prepareShardedReplacement({
+            readSnapshot: (path) => transaction.readSnapshot(path),
+            loaded,
+            records,
+            ...fixed
+          });
+          return { loaded, ...plan };
+        }
+        async function commit({ actionId, records, historySummary = null, entities = [] } = {}) {
+          const plan = await prepare(records);
+          if (plan.noOp) return { status: "unchanged", ...plan };
+          if (typeof transaction.commit !== "function") throw new TypeError("The transaction coordinator does not expose commit().");
+          const result = await transaction.commit({ actionId, writes: plan.writes, deletes: plan.deletes, historySummary, entities });
+          return { ...result, plan };
+        }
+        return Object.freeze({ ...fixed, manifestPath: manifestPathFor(fixed.root), load, prepare, commit });
+      }
+      module.exports = {
+        VOCABULARY_DATA_ROOT,
+        MAX_SHARD_RECORDS,
+        MAX_SHARD_BYTES,
+        manifestPathFor,
+        shardPathFor,
+        partitionRecords,
+        createManifest,
+        validateManifestAndShards,
+        hasShardFilesFromListing,
+        hasShardFilesFromAdapter,
+        readShardedStore,
+        prepareShardedReplacement,
+        createShardedStore
+      };
+    }
+  });
+
+  // plugin/storage/canonical.cjs
+  var require_canonical2 = __commonJS({
+    "plugin/storage/canonical.cjs"(exports, module) {
+      "use strict";
+      var HASH_PATTERNS = Object.freeze({
+        "xxh64-v1": /^xxh64-v1:[a-f0-9]{16}$/i,
+        "sha256-v1": /^sha256-v1:[a-f0-9]{64}$/i
+      });
+      function codedError(code, message) {
+        const error = new Error(message);
+        error.name = "WalSidecarError";
+        error.code = code;
+        return error;
+      }
+      function canonicalJson(value) {
+        return encode(value, /* @__PURE__ */ new Set());
+      }
+      function encode(value, ancestors) {
+        if (value === null) return "null";
+        if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+        if (typeof value === "number") {
+          if (!Number.isFinite(value)) throw codedError("WAL_CANONICAL_INVALID_VALUE", "Canonical JSON does not accept non-finite numbers.");
+          return JSON.stringify(value);
+        }
+        if (typeof value !== "object") {
+          throw codedError("WAL_CANONICAL_INVALID_VALUE", `Canonical JSON does not accept ${typeof value} values.`);
+        }
+        if (ancestors.has(value)) throw codedError("WAL_CANONICAL_CYCLE", "Canonical JSON cannot encode cyclic data.");
+        const isArray = Array.isArray(value);
+        const prototype = Object.getPrototypeOf(value);
+        if (!isArray && prototype !== Object.prototype && prototype !== null) {
+          throw codedError("WAL_CANONICAL_INVALID_OBJECT", "Canonical JSON accepts only plain objects and arrays.");
+        }
+        if (Object.getOwnPropertySymbols(value).length) {
+          throw codedError("WAL_CANONICAL_INVALID_OBJECT", "Canonical JSON does not accept symbol properties.");
+        }
+        ancestors.add(value);
+        try {
+          if (isArray) {
+            const descriptors2 = Object.getOwnPropertyDescriptors(value);
+            const result = [];
+            for (let index = 0; index < value.length; index += 1) {
+              const descriptor = descriptors2[String(index)];
+              if (!descriptor || !("value" in descriptor)) {
+                throw codedError("WAL_CANONICAL_INVALID_ARRAY", "Canonical JSON does not accept sparse arrays or array accessors.");
+              }
+              result.push(encode(descriptor.value, ancestors));
+            }
+            for (const key of Object.keys(descriptors2)) {
+              if (key === "length") continue;
+              if (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length) {
+                throw codedError("WAL_CANONICAL_INVALID_ARRAY", "Canonical JSON does not accept extra array properties.");
+              }
+            }
+            return `[${result.join(",")}]`;
+          }
+          const descriptors = Object.getOwnPropertyDescriptors(value);
+          const keys = Object.keys(descriptors).filter((key) => descriptors[key].enumerable).sort();
+          const fields = [];
+          for (const key of keys) {
+            const descriptor = descriptors[key];
+            if (!("value" in descriptor)) {
+              throw codedError("WAL_CANONICAL_INVALID_OBJECT", "Canonical JSON does not accept object accessors.");
+            }
+            fields.push(`${JSON.stringify(key)}:${encode(descriptor.value, ancestors)}`);
+          }
+          return `{${fields.join(",")}}`;
+        } finally {
+          ancestors.delete(value);
+        }
+      }
+      function unsignedValue(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw codedError("WAL_INTEGRITY_INVALID", "A sidecar integrity envelope must be an object.");
+        }
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) {
+          throw codedError("WAL_INTEGRITY_INVALID", "A sidecar integrity envelope must be a plain object.");
+        }
+        if (Object.getOwnPropertySymbols(value).length) {
+          throw codedError("WAL_INTEGRITY_INVALID", "A sidecar integrity envelope cannot contain symbol properties.");
+        }
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        const result = {};
+        for (const key of Object.keys(descriptors)) {
+          const descriptor = descriptors[key];
+          if (!("value" in descriptor)) {
+            throw codedError("WAL_INTEGRITY_INVALID", "A sidecar integrity envelope cannot contain accessors.");
+          }
+          if (key === "integrity") continue;
+          Object.defineProperty(result, key, {
+            value: descriptor.value,
+            enumerable: true,
+            writable: true,
+            configurable: true
+          });
+        }
+        return result;
+      }
+      function utf8(text) {
+        if (typeof TextEncoder !== "function") {
+          throw codedError("WAL_INTEGRITY_UNAVAILABLE", "TextEncoder is required to hash a sidecar in this runtime.");
+        }
+        return new TextEncoder().encode(text);
+      }
+      function validateTaggedHash(value) {
+        if (typeof value !== "string") return false;
+        return Object.values(HASH_PATTERNS).some((pattern) => pattern.test(value));
+      }
+      async function digest(value, hash) {
+        if (typeof hash !== "function") throw codedError("WAL_INTEGRITY_UNAVAILABLE", "An injected hash function is required.");
+        const result = await hash(utf8(canonicalJson(value)));
+        if (!validateTaggedHash(result)) {
+          throw codedError("WAL_INTEGRITY_INVALID_HASH", "The injected hash function returned an unsupported or incomplete hash.");
+        }
+        return result.toLowerCase();
+      }
+      async function seal(value, hash) {
+        const unsigned = unsignedValue(value);
+        const integrity = await digest(unsigned, hash);
+        return { ...unsigned, integrity };
+      }
+      async function verify(value, hash) {
+        const unsigned = unsignedValue(value);
+        const expected = value.integrity;
+        if (!validateTaggedHash(expected)) {
+          throw codedError("WAL_INTEGRITY_INVALID", "The sidecar integrity hash is missing or has an unsupported format.");
+        }
+        const actual = await digest(unsigned, hash);
+        if (actual !== expected.toLowerCase()) {
+          throw codedError("WAL_INTEGRITY_MISMATCH", "The sidecar integrity hash does not match its contents.");
+        }
+        return unsigned;
+      }
+      module.exports = {
+        canonicalJson,
+        seal,
+        verify,
+        // These aliases keep call sites self-documenting without multiplying logic.
+        sealSidecar: seal,
+        verifySidecar: verify
+      };
+    }
+  });
+
+  // plugin/reader-anchor-store.cjs
+  var require_reader_anchor_store = __commonJS({
+    "plugin/reader-anchor-store.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson, seal, verify } = require_canonical2();
+      var ROOT = "00_Archive/20_PDFData/anchors";
+      var DOC_KEY = /^[a-f0-9]{12}$/i;
+      var ANCHOR_ID = /^[A-Za-z0-9_-]{8,128}$/;
+      var SOURCE_HASH = /^(?:xxh64-v1:[a-f0-9]{16}|sha256-v1:[a-f0-9]{64})$/i;
+      var PAGE_DIGEST = SOURCE_HASH;
+      var ANCHOR_KINDS = /* @__PURE__ */ new Set(["selection", "annotation", "page"]);
+      function codedError(code, message) {
+        const error = new Error(message);
+        error.name = "ReaderAnchorError";
+        error.code = code;
+        return error;
+      }
+      function parseReaderLinkFragment(value) {
+        const raw = typeof value === "string" ? value.replace(/^#/, "") : "";
+        const params = new URLSearchParams(raw.replaceAll("&amp;", "&"));
+        const pageValue = params.get("page");
+        const pageNumber = pageValue && /^\d{1,6}$/.test(pageValue) ? Number(pageValue) : null;
+        const obreader = params.get("obreader");
+        let target = null;
+        if (typeof obreader === "string") {
+          const match = /^(sel|ann|page)\.(.{1,512})$/.exec(obreader);
+          const safeId = match?.[2] && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(match[2]);
+          if (match && safeId) target = {
+            kind: match[1] === "sel" ? "selection" : match[1] === "ann" ? "annotation" : "page",
+            id: match[2]
+          };
+        }
+        const docKey = params.get("docKey");
+        const documentId = params.get("obdoc");
+        const selection = params.get("selection");
+        return {
+          pageNumber,
+          selection: typeof selection === "string" && selection.length <= 128 ? selection : null,
+          docKey: DOC_KEY.test(docKey || "") ? docKey.toLowerCase() : null,
+          documentId: typeof documentId === "string" && documentId.length <= 512 ? documentId : null,
+          target
+        };
+      }
+      function encodeReaderLinkFragment(options = {}) {
+        const { pageNumber, target, docKey, documentId } = options;
+        const params = new URLSearchParams();
+        if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
+        if (docKey !== void 0 || documentId !== void 0) {
+          if (!DOC_KEY.test(typeof docKey === "string" ? docKey : "") || typeof documentId !== "string" || !documentId || documentId.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(documentId)) {
+            throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
+          }
+          params.set("docKey", docKey.toLowerCase());
+          params.set("obdoc", documentId);
+        }
+        if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" && target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
+          const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";
+          params.set("obreader", `${prefix}.${target.id}`);
+        }
+        return params.toString();
+      }
+      function parseReaderLinkDestination(value) {
+        const raw = typeof value === "string" ? value : "";
+        const marker = raw.indexOf("#");
+        if (marker < 0) return { routePath: null, ...parseReaderLinkFragment(raw) };
+        let routePath = raw.slice(0, marker).trim();
+        try {
+          routePath = decodeURIComponent(routePath);
+        } catch {
+        }
+        return { routePath: routePath || null, ...parseReaderLinkFragment(raw.slice(marker + 1)) };
+      }
+      function validateSelectionAnchor(value) {
+        if (!value || value.schemaVersion !== 1 || value.kind !== "obreader-selection-anchor" || !ANCHOR_ID.test(value.anchorId || "") || !DOC_KEY.test(value.docKey || "") || typeof value.documentId !== "string" || !value.documentId || value.documentId.length > 512 || typeof value.sourceHash !== "string" || !SOURCE_HASH.test(value.sourceHash) || typeof value.pageIdentity !== "string" || !value.pageIdentity || value.pageIdentity.length > 512 || !Number.isSafeInteger(value.pageIndexHint) || value.pageIndexHint < 0 || !Number.isSafeInteger(value.textPosition?.start) || value.textPosition.start < 0 || !Number.isSafeInteger(value.textPosition?.end) || value.textPosition.end <= value.textPosition.start || typeof value.exactQuote !== "string" || !value.exactQuote || value.exactQuote.length > 4096 || typeof value.prefix !== "string" || value.prefix.length > 256 || typeof value.suffix !== "string" || value.suffix.length > 256) {
+          throw codedError("READER_ANCHOR_INVALID", "The Selection Anchor is incomplete or invalid.");
+        }
+        const geometry = value.geometry;
+        if (geometry !== null && geometry !== void 0 && (!geometry || ![geometry.x, geometry.y, geometry.width, geometry.height].every(Number.isFinite) || geometry.x < 0 || geometry.y < 0 || geometry.width < 0 || geometry.height < 0 || geometry.x + geometry.width > 1.001 || geometry.y + geometry.height > 1.001)) {
+          throw codedError("READER_ANCHOR_GEOMETRY_INVALID", "The Selection Anchor geometry is invalid.");
+        }
+        if (typeof value.orderedPageIdentityDigest !== "string" || !PAGE_DIGEST.test(value.orderedPageIdentityDigest) || !Number.isSafeInteger(value.pageCount) || value.pageCount < 1 || value.pageIndexHint >= value.pageCount) {
+          throw codedError("READER_ANCHOR_SOURCE_INVALID", "The Selection Anchor source evidence is incomplete.");
+        }
+        return value;
+      }
+      function createReaderAnchorStore({ adapter, hash, makeId, root = ROOT } = {}) {
+        if (!adapter || !["exists", "read", "write", "rename", "mkdir", "list"].every((method) => typeof adapter[method] === "function")) {
+          throw new TypeError("Reader Anchor Store requires the cross-platform Obsidian DataAdapter API.");
+        }
+        if (typeof hash !== "function" || typeof makeId !== "function") {
+          throw new TypeError("Reader Anchor Store requires injected hashing and ID functions.");
+        }
+        async function ensureDirectory(directory) {
+          const parts = directory.split("/");
+          let current = "";
+          for (const part of parts) {
+            if (!part || part === "." || part === ".." || /[\\\x00-\x1f]/.test(part)) {
+              throw codedError("READER_ANCHOR_PATH_INVALID", "Unsafe Anchor Store path.");
+            }
+            current = current ? `${current}/${part}` : part;
+            if (await adapter.exists(current)) continue;
+            try {
+              await adapter.mkdir(current);
+            } catch (error) {
+              if (!await adapter.exists(current)) throw error;
+            }
+          }
+        }
+        function directoryFor(docKey) {
+          if (!DOC_KEY.test(docKey || "")) throw codedError("READER_ANCHOR_DOCKEY_INVALID", "A stable document key is required.");
+          return `${root}/${docKey.toLowerCase()}`;
+        }
+        function pathFor(docKey, anchorId) {
+          if (!ANCHOR_ID.test(anchorId || "")) throw codedError("READER_ANCHOR_ID_INVALID", "A valid Anchor ID is required.");
+          return `${directoryFor(docKey)}/${anchorId}.json`;
+        }
+        async function create(input) {
+          const anchorId = input?.anchorId || makeId();
+          const unsigned = validateSelectionAnchor({ ...input, anchorId, schemaVersion: 1, kind: "obreader-selection-anchor" });
+          const target = pathFor(unsigned.docKey, anchorId);
+          if (await adapter.exists(target)) throw codedError("READER_ANCHOR_ID_COLLISION", "The immutable Anchor ID is already in use.");
+          await ensureDirectory(directoryFor(unsigned.docKey));
+          const sealed = await seal(unsigned, hash);
+          const text = canonicalJson(sealed);
+          const temporary = `${target}.${makeId()}.pending`;
+          await adapter.write(temporary, text);
+          if (await adapter.read(temporary) !== text) throw codedError("READER_ANCHOR_STAGE_MISMATCH", "The Anchor Store staged write did not verify.");
+          if (await adapter.exists(target)) throw codedError("READER_ANCHOR_ID_COLLISION", "The immutable Anchor ID was claimed during the write.");
+          await adapter.rename(temporary, target);
+          if (await adapter.read(target) !== text) throw codedError("READER_ANCHOR_WRITE_MISMATCH", "The persisted Anchor did not verify.");
+          return sealed;
+        }
+        async function get(docKey, anchorId, expectedDocumentId = null) {
+          const target = pathFor(docKey, anchorId);
+          if (!await adapter.exists(target)) return null;
+          let parsed;
+          try {
+            parsed = JSON.parse(await adapter.read(target));
+          } catch {
+            throw codedError("READER_ANCHOR_JSON_INVALID", "The Anchor record is incomplete or malformed.");
+          }
+          let unsigned;
+          try {
+            unsigned = await verify(parsed, hash);
+          } catch (error) {
+            throw codedError(error.code || "READER_ANCHOR_INTEGRITY_INVALID", "The Anchor integrity check failed.");
+          }
+          validateSelectionAnchor(unsigned);
+          if (unsigned.docKey.toLowerCase() !== docKey.toLowerCase() || unsigned.anchorId !== anchorId || expectedDocumentId && unsigned.documentId !== expectedDocumentId) {
+            throw codedError("READER_ANCHOR_IDENTITY_MISMATCH", "The Anchor belongs to a different document identity.");
+          }
+          return unsigned;
+        }
+        async function list(docKey) {
+          const directory = directoryFor(docKey);
+          if (!await adapter.exists(directory)) return { anchors: [], errors: [] };
+          const listing = await adapter.list(directory);
+          const anchors = [];
+          const errors = [];
+          for (const path of listing.files || []) {
+            const name = path.slice(path.lastIndexOf("/") + 1);
+            if (!name.endsWith(".json")) continue;
+            const anchorId = name.slice(0, -5);
+            if (!ANCHOR_ID.test(anchorId)) {
+              errors.push({ path, code: "READER_ANCHOR_ID_INVALID" });
+              continue;
+            }
+            try {
+              const anchor = await get(docKey, anchorId);
+              if (anchor) anchors.push(anchor);
+            } catch (error) {
+              errors.push({ path, code: error.code || "READER_ANCHOR_INVALID" });
+            }
+          }
+          anchors.sort((left, right) => left.anchorId.localeCompare(right.anchorId));
+          return { anchors, errors };
+        }
+        return Object.freeze({ root, directoryFor, pathFor, create, get, list });
+      }
+      module.exports = {
+        ROOT,
+        parseReaderLinkFragment,
+        parseReaderLinkDestination,
+        encodeReaderLinkFragment,
+        validateSelectionAnchor,
+        createReaderAnchorStore
+      };
+    }
+  });
+
+  // plugin/learning/scheduler.cjs
+  var require_scheduler = __commonJS({
+    "plugin/learning/scheduler.cjs"(exports, module) {
+      "use strict";
+      var LEITNER_INTERVAL_DAYS = Object.freeze([1, 3, 7, 14, 30]);
+      var LEITNER_SCHEDULER_VERSION = "leitner-utc-v1";
+      var ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+      function schedulerError(code, message) {
+        const error = new Error(message);
+        error.name = "LearningSchedulerError";
+        error.code = code;
+        return error;
+      }
+      function parseUtc(value, name) {
+        if (typeof value !== "string" || !ISO_UTC.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
+          throw schedulerError("LEARNING_TIME_INVALID", `${name} must be a valid UTC ISO timestamp.`);
+        }
+        return Date.parse(value);
+      }
+      function clone(value) {
+        return value == null ? value : JSON.parse(JSON.stringify(value));
+      }
+      function validateState(state) {
+        if (!state || typeof state !== "object" || Array.isArray(state) || !Number.isInteger(state.box) || state.box < 1 || state.box > LEITNER_INTERVAL_DAYS.length || !Number.isSafeInteger(state.reviewCount) || state.reviewCount < 0 || !Number.isSafeInteger(state.lapseCount) || state.lapseCount < 0 || !(state.lastReviewedAt === null || typeof state.lastReviewedAt === "string")) {
+          throw schedulerError("LEARNING_SCHEDULE_INVALID", "The learning schedule state is malformed.");
+        }
+        parseUtc(state.dueAt, "dueAt");
+        if (state.lastReviewedAt !== null) parseUtc(state.lastReviewedAt, "lastReviewedAt");
+        return state;
+      }
+      var LeitnerScheduler = class {
+        constructor() {
+          this.version = LEITNER_SCHEDULER_VERSION;
+          Object.freeze(this);
+        }
+        initialState(createdAtUTC) {
+          parseUtc(createdAtUTC, "createdAtUTC");
+          return { box: 1, dueAt: createdAtUTC, lastReviewedAt: null, reviewCount: 0, lapseCount: 0 };
+        }
+        rate(state, rating, reviewedAtUTC) {
+          validateState(state);
+          const reviewedAtMs = parseUtc(reviewedAtUTC, "reviewedAtUTC");
+          if (rating === "skip") return { changed: false, state: clone(state) };
+          if (rating !== "remember" && rating !== "forget") {
+            throw schedulerError("LEARNING_RATING_INVALID", "Rating must be remember, forget, or skip.");
+          }
+          const box = rating === "remember" ? Math.min(LEITNER_INTERVAL_DAYS.length, state.box + 1) : 1;
+          const days = rating === "remember" ? LEITNER_INTERVAL_DAYS[box - 1] : LEITNER_INTERVAL_DAYS[0];
+          const next = {
+            box,
+            dueAt: new Date(reviewedAtMs + days * 24 * 60 * 60 * 1e3).toISOString(),
+            lastReviewedAt: reviewedAtUTC,
+            reviewCount: state.reviewCount + 1,
+            lapseCount: state.lapseCount + (rating === "forget" ? 1 : 0)
+          };
+          validateState(next);
+          return { changed: true, state: next };
+        }
+        schedule(state, rating, nowUTC) {
+          return this.rate(state, rating, nowUTC);
+        }
+        isDue(state, atUTC) {
+          validateState(state);
+          parseUtc(atUTC, "atUTC");
+          return state.dueAt <= atUTC;
+        }
+        describe(state) {
+          validateState(state);
+          return {
+            version: this.version,
+            box: state.box,
+            dueAt: state.dueAt,
+            intervalDays: LEITNER_INTERVAL_DAYS[state.box - 1]
+          };
+        }
+      };
+      module.exports = { LEITNER_INTERVAL_DAYS, LEITNER_SCHEDULER_VERSION, LeitnerScheduler };
+    }
+  });
+
+  // plugin/learning/service.cjs
+  var require_service = __commonJS({
+    "plugin/learning/service.cjs"(exports, module) {
+      "use strict";
+      var { canonicalStringify, hashText } = require_canonical();
+      var {
+        createShardedStore,
+        prepareShardedReplacement,
+        manifestPathFor,
+        readShardedStore,
+        hasShardFilesFromAdapter
+      } = require_sharded_store();
+      var { encodeReaderLinkFragment } = require_reader_anchor_store();
+      var { LeitnerScheduler, LEITNER_SCHEDULER_VERSION } = require_scheduler();
+      var LEARNING_STORE_ID = "learning-items-v1";
+      var LEARNING_ROOT = "00_Archive/21_VocabularyData/learning/items";
+      var LEARNING_KIND = "learning-item";
+      var DEFAULT_PAGE_SIZE = 50;
+      var MAX_PAGE_SIZE = 100;
+      var REVIEW_HISTORY_FIELDS = /* @__PURE__ */ new Set(["reviewState", "lastReviewEvent"]);
+      var ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+      function codedError(code, message, details, cause) {
+        const error = new Error(message, cause ? { cause } : void 0);
+        error.name = "LearningServiceError";
+        error.code = code;
+        if (details !== void 0) error.details = details;
+        return error;
+      }
+      function clone(value) {
+        return value == null ? value : JSON.parse(JSON.stringify(value));
+      }
+      function same(left, right) {
+        return canonicalStringify(left) === canonicalStringify(right);
+      }
+      function readUtcNow(now) {
+        let value;
+        try {
+          value = now();
+        } catch (error) {
+          throw codedError("LEARNING_CLOCK_FAILED", "Could not read the current UTC time.", void 0, error);
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        if (!Number.isFinite(date.getTime())) throw codedError("LEARNING_CLOCK_INVALID", "The current UTC time is invalid.");
+        return date.toISOString();
+      }
+      function validateUtc(value, name) {
+        if (typeof value !== "string" || !ISO_UTC.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
+          throw codedError("LEARNING_TIME_INVALID", `${name} must be a valid UTC ISO timestamp.`);
+        }
+        return value;
+      }
+      function validateActionId(actionId) {
+        if (typeof actionId !== "string" || !actionId || actionId.length > 256 || /[\\/\u0000-\u001f\u007f]/.test(actionId)) {
+          throw codedError("LEARNING_ACTION_ID_INVALID", "A stable path-safe learning action ID is required.");
+        }
+        return actionId;
+      }
+      function validateItemId(itemId) {
+        if (typeof itemId !== "string" || !itemId.startsWith("learning:v1:") || itemId.length > 256 || /[\u0000-\u001f\u007f]/.test(itemId)) {
+          throw codedError("LEARNING_ITEM_ID_INVALID", "A valid learning item ID is required.");
+        }
+        return itemId;
+      }
+      function validateSource(source) {
+        if (!source || typeof source !== "object" || Array.isArray(source)) {
+          throw codedError("LEARNING_SOURCE_INVALID", "A SemanticAnchor provenance object is required.");
+        }
+        try {
+          canonicalStringify(source);
+        } catch (error) {
+          throw codedError("LEARNING_SOURCE_INVALID", "Source provenance must be JSON data.", void 0, error);
+        }
+        const target = source.target;
+        if (!target || typeof target !== "object" || Array.isArray(target) || typeof target.kind !== "string" || !target.kind || typeof target.id !== "string" || !target.id || typeof source.sourcePath !== "string" || !source.sourcePath || typeof source.targetText !== "string") {
+          throw codedError("LEARNING_SOURCE_INVALID", "SemanticAnchor must include a stable target, source path, and targetText snapshot.");
+        }
+        const markdownEvidence = target.kind === "markdown" || source.evidenceKind === "markdown";
+        const noteEvidence = markdownEvidence || source.evidenceKind === "backlink";
+        if (!noteEvidence && (typeof source.documentId !== "string" || !source.documentId || typeof source.docKey !== "string" || !source.docKey || typeof source.sourceHash !== "string" || !source.sourceHash || typeof source.pageIdentity !== "string" || !source.pageIdentity || !Number.isSafeInteger(source.pageIndex) || source.pageIndex < 0)) {
+          throw codedError("LEARNING_SOURCE_INVALID", "PDF SemanticAnchor must include stable document, source, page, and targetText evidence.");
+        }
+        if (!noteEvidence) {
+          try {
+            encodeReaderLinkFragment({ docKey: source.docKey, documentId: source.documentId, target: source.target });
+          } catch (error) {
+            throw codedError("LEARNING_SOURCE_INVALID", "PDF source must use the existing Reader identity protocol.", void 0, error);
+          }
+        }
+        if (source.targetTextSource !== void 0 && !["captured", "stored", "recovered", "unavailable"].includes(source.targetTextSource)) {
+          throw codedError("LEARNING_SOURCE_INVALID", "SemanticAnchor targetTextSource is unsupported.");
+        }
+        if (source.sourceRange !== void 0 && source.sourceRange !== null) {
+          const range = source.sourceRange;
+          if (!range || typeof range !== "object" || Array.isArray(range) || range.startOffset !== null && range.startOffset !== void 0 && (!Number.isSafeInteger(range.startOffset) || range.startOffset < 0) || range.endOffset !== null && range.endOffset !== void 0 && (!Number.isSafeInteger(range.endOffset) || range.endOffset < 0) || range.line !== null && range.line !== void 0 && (!Number.isSafeInteger(range.line) || range.line < 0) || range.text !== null && range.text !== void 0 && typeof range.text !== "string" || Number.isSafeInteger(range.startOffset) && Number.isSafeInteger(range.endOffset) && range.endOffset < range.startOffset) {
+            throw codedError("LEARNING_SOURCE_INVALID", "SemanticAnchor sourceRange is malformed.");
+          }
+        }
+        if (markdownEvidence) {
+          const range = source.sourceRange;
+          if (!range || !Number.isSafeInteger(range.startOffset) || range.startOffset < 0 || !Number.isSafeInteger(range.endOffset) || range.endOffset <= range.startOffset || typeof range.text !== "string" || range.text !== source.targetText) {
+            throw codedError("LEARNING_SOURCE_INVALID", "Markdown SemanticAnchor requires exact sourceRange text matching targetText.");
+          }
+        }
+        if (source.evidenceKind !== void 0 && source.evidenceKind !== null && !["annotation", "reader-anchor", "context", "backlink", "markdown"].includes(source.evidenceKind)) {
+          throw codedError("LEARNING_SOURCE_INVALID", "SemanticAnchor evidenceKind is unsupported.");
+        }
+        return clone(source);
+      }
+      function validateText(value, name, { allowEmpty = false } = {}) {
+        if (typeof value !== "string" || !allowEmpty && !value.trim() || value.length > 1e5) {
+          throw codedError("LEARNING_TEXT_INVALID", `${name} must be non-empty text of at most 100,000 characters.`);
+        }
+        return value;
+      }
+      function validateReviewState(state) {
+        if (!state || typeof state !== "object" || Array.isArray(state) || !Number.isInteger(state.box) || state.box < 1 || state.box > 5 || !Number.isSafeInteger(state.reviewCount) || state.reviewCount < 0 || !Number.isSafeInteger(state.lapseCount) || state.lapseCount < 0 || !(state.lastReviewedAt === null || typeof state.lastReviewedAt === "string")) {
+          throw codedError("LEARNING_ITEM_INVALID", "Learning item review state is malformed.");
+        }
+        validateUtc(state.dueAt, "reviewState.dueAt");
+        if (state.lastReviewedAt !== null) validateUtc(state.lastReviewedAt, "reviewState.lastReviewedAt");
+      }
+      function validateItem(item, expectedId = item?.itemId) {
+        if (!item || typeof item !== "object" || Array.isArray(item) || item.schemaVersion !== 1 || item.itemId !== expectedId || typeof item.externalId !== "string" || !item.externalId || typeof item.createActionId !== "string" || !item.createActionId || typeof item.prompt !== "string" || !item.prompt.trim() || typeof item.answer !== "string" || !item.answer.trim() || typeof item.targetText !== "string" || !item.source || !item.reviewState || !(item.lastReviewEvent === null || typeof item.lastReviewEvent === "object")) {
+          throw codedError("LEARNING_ITEM_INVALID", `Learning item ${expectedId} is malformed.`);
+        }
+        validateItemId(item.itemId);
+        validateSource(item.source);
+        validateUtc(item.createdAt, "createdAt");
+        validateReviewState(item.reviewState);
+        if (item.lastReviewEvent !== null) validateEvent(item.lastReviewEvent, item.itemId);
+        canonicalStringify(item);
+        return item;
+      }
+      function validateEvent(event, itemId) {
+        if (!event || typeof event !== "object" || Array.isArray(event) || event.schemaVersion !== 1 || event.itemId !== itemId || typeof event.eventId !== "string" || !event.eventId || typeof event.actionId !== "string" || !event.actionId || !["remember", "forget"].includes(event.rating) || !Number.isSafeInteger(event.sequence) || event.sequence < 1 || !(event.previousEventId === null || typeof event.previousEventId === "string") || event.schedulerVersion !== LEITNER_SCHEDULER_VERSION) {
+          throw codedError("LEARNING_REVIEW_EVENT_INVALID", "The learning review event is malformed.");
+        }
+        validateUtc(event.reviewedAtUTC, "reviewedAtUTC");
+        return event;
+      }
+      function normalizePageSize(value) {
+        const limit = value == null ? DEFAULT_PAGE_SIZE : value;
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) {
+          throw codedError("LEARNING_PAGE_SIZE_INVALID", `Learning page size must be from 1 to ${MAX_PAGE_SIZE}.`);
+        }
+        return limit;
+      }
+      function encodeCursor(item) {
+        const text = canonicalStringify({ dueAt: item.reviewState.dueAt, itemId: item.itemId });
+        const binary = [...new TextEncoder().encode(text)].map((byte) => String.fromCharCode(byte)).join("");
+        return "learning-due-v1." + btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+      }
+      function decodeCursor(cursor) {
+        if (cursor == null || cursor === "") return null;
+        if (typeof cursor !== "string" || !cursor.startsWith("learning-due-v1.")) {
+          throw codedError("LEARNING_CURSOR_INVALID", "The learning due cursor is invalid.");
+        }
+        try {
+          const binary = atob(cursor.slice("learning-due-v1.".length).replaceAll("-", "+").replaceAll("_", "/"));
+          const text = new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
+          const value = JSON.parse(text);
+          if (!value || typeof value.itemId !== "string" || !value.itemId || typeof value.dueAt !== "string") throw new Error("invalid cursor value");
+          validateUtc(value.dueAt, "cursor dueAt");
+          return value;
+        } catch (error) {
+          if (error?.code === "LEARNING_CURSOR_INVALID") throw error;
+          throw codedError("LEARNING_CURSOR_INVALID", "The learning due cursor is malformed.", void 0, error);
+        }
+      }
+      function actionBatchId(prefix, actionId) {
+        return `${prefix}-${hashText(actionId).slice("sha256-v1:".length)}`;
+      }
+      function pathForItem(manifest, itemId) {
+        const digest = hashText(itemId).slice("sha256-v1:".length);
+        const shard = manifest?.shards?.find((entry) => digest.startsWith(entry.prefix));
+        return shard?.path || manifestPathFor(LEARNING_ROOT);
+      }
+      function makeHistoryStores(plan) {
+        return plan.writes.map((write) => {
+          const value = JSON.parse(write.text);
+          return {
+            storeId: LEARNING_STORE_ID,
+            path: write.path,
+            baseRevision: write.expectedRevision,
+            resultRevision: value.revision,
+            baseHash: write.expectedHash,
+            resultHash: hashText(write.text)
+          };
+        });
+      }
+      function makeIdentityChange({ path, itemId, kind, beforeExists, before, afterExists, after, field }) {
+        const fieldPath = kind === "entityCreate" || kind === "entityDelete" ? ["records", itemId] : ["records", itemId, field];
+        return {
+          storeId: LEARNING_STORE_ID,
+          path,
+          entityId: itemId,
+          kind,
+          fieldPath,
+          beforeExists,
+          ...beforeExists ? { before: clone(before) } : {},
+          afterExists,
+          ...afterExists ? { after: clone(after) } : {},
+          ...field ? { field } : {}
+        };
+      }
+      function sourceLinkFor(item) {
+        const source = item.source;
+        const sourcePath = safeVaultPath(source.sourcePath);
+        if (!sourcePath) return "";
+        if (source.evidenceKind === "markdown" || source.evidenceKind === "backlink" || source.target?.kind === "markdown") {
+          const line = source.sourceRange?.line;
+          return Number.isSafeInteger(line) && line >= 0 ? `${sourcePath} (line ${line})` : sourcePath;
+        }
+        const fragment = encodeReaderLinkFragment({
+          pageNumber: Number.isSafeInteger(source.pageIndex) && source.pageIndex >= 0 ? source.pageIndex + 1 : void 0,
+          docKey: source.docKey,
+          documentId: source.documentId,
+          target: source.target
+        });
+        return fragment ? `${sourcePath}#${fragment}` : sourcePath;
+      }
+      function safeVaultPath(value) {
+        if (typeof value !== "string" || !value || /[\u0000-\u001f\u007f#?]/.test(value) || value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || value.split(/[\\/]/).some((segment) => !segment || segment === "." || segment === "..")) return "";
+        return value.replaceAll("\\", "/");
+      }
+      function validateVaultPath(value, name) {
+        if (typeof value !== "string") {
+          throw codedError("LEARNING_SOURCE_PATH_INVALID", `${name} must be a safe vault-relative path.`);
+        }
+        const normalized = safeVaultPath(value);
+        if (!normalized) {
+          throw codedError("LEARNING_SOURCE_PATH_INVALID", `${name} must be a safe vault-relative path.`);
+        }
+        return normalized;
+      }
+      function csvCell(value) {
+        const text = String(value ?? "");
+        return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+      }
+      function tsvCell(value) {
+        return String(value ?? "").replaceAll("\\", "\\\\").replaceAll("	", "\\t").replaceAll("\r", "\\r").replaceAll("\n", "\\n");
+      }
+      function markdownCell(value) {
+        return String(value ?? "").replaceAll("|", "\\|").replaceAll("\r\n", "<br>").replaceAll("\n", "<br>").replaceAll("\r", "<br>");
+      }
+      function createLearningService({
+        runtime,
+        verifySource,
+        now = () => /* @__PURE__ */ new Date(),
+        makeId = defaultMakeId,
+        maxRecords,
+        maxBytes
+      } = {}) {
+        const coordinator = runtime?.coordinator;
+        const history = runtime?.history;
+        if (!coordinator || typeof coordinator.readSnapshot !== "function" || typeof coordinator.commit !== "function" || !history || typeof history.registerStoreHandler !== "function" || typeof history.readBatch !== "function" || typeof history.listBatches !== "function") {
+          throw new TypeError("Learning requires the existing runtime coordinator and History.");
+        }
+        if (typeof runtime.exclusive !== "function") throw new TypeError("Learning requires runtime.exclusive().");
+        if (typeof verifySource !== "function" || typeof now !== "function" || typeof makeId !== "function") {
+          throw new TypeError("Learning requires verifySource, clock, and ID factory functions.");
+        }
+        const scheduler = new LeitnerScheduler();
+        const store = createShardedStore({
+          transaction: coordinator,
+          storeId: LEARNING_STORE_ID,
+          root: LEARNING_ROOT,
+          kind: LEARNING_KIND,
+          idOf: (item) => item?.itemId,
+          ...maxRecords == null ? {} : { maxRecords },
+          ...maxBytes == null ? {} : { maxBytes }
+        });
+        const drafts = /* @__PURE__ */ new Map();
+        const skippedForSession = /* @__PURE__ */ new Set();
+        let serial = Promise.resolve();
+        let localDraftSequence = 0;
+        function enqueue(task) {
+          const result = serial.then(() => runtime.exclusive(task));
+          serial = result.catch(() => void 0);
+          return result;
+        }
+        async function load() {
+          const loaded = await store.load();
+          for (const item of loaded.records) validateItem(item, item.itemId);
+          return loaded;
+        }
+        async function verifyExactSource(source) {
+          let result;
+          try {
+            result = await verifySource(clone(source));
+          } catch (error) {
+            throw codedError(
+              "LEARNING_SOURCE_STALE",
+              "The selected source is no longer verified; the draft remains available.",
+              { source },
+              error
+            );
+          }
+          const returned = result?.anchor ?? result?.source ?? result?.semanticAnchor;
+          if (result?.status !== "verified" || result.sourceCurrent !== true || result.pageCurrent !== true || !returned || !same(returned, source)) {
+            throw codedError(
+              "LEARNING_SOURCE_STALE",
+              "The selected source is no longer verified; the draft remains available.",
+              { status: result?.status || "unverified", source }
+            );
+          }
+          return result;
+        }
+        function makeDraftItem(draft, actionId, createdAt) {
+          return {
+            schemaVersion: 1,
+            itemId: draft.itemId,
+            externalId: draft.externalId,
+            createActionId: actionId,
+            prompt: draft.prompt,
+            answer: draft.answer,
+            targetText: draft.targetText,
+            source: clone(draft.source),
+            createdAt,
+            reviewState: scheduler.initialState(createdAt),
+            lastReviewEvent: null
+          };
+        }
+        function findCreateChange(batch) {
+          return batch?.changes?.find((change) => change.storeId === LEARNING_STORE_ID && change.kind === "entityCreate" && change.fieldPath?.length === 2 && change.fieldPath[0] === "records");
+        }
+        async function duplicateCreateFor(actionId, draft) {
+          const batchId = actionBatchId("learning-confirm", actionId);
+          const batch = await history.readBatch(batchId);
+          if (!batch) return null;
+          const change = findCreateChange(batch);
+          const prior = change?.after;
+          if (batch.actionKind !== "learning-confirm" || !prior || prior.createActionId !== actionId || prior.prompt !== draft.prompt || prior.answer !== draft.answer || prior.targetText !== draft.targetText || !same(prior.source, draft.source)) {
+            throw codedError("LEARNING_ACTION_ID_REUSE", "A confirmation action ID cannot be reused for another draft.");
+          }
+          const loaded = await load();
+          const current = loaded.records.find((item) => item.itemId === prior.itemId);
+          return { status: current ? "duplicate" : "already-undone", actionId, item: clone(current || prior), writes: 0 };
+        }
+        function createDraft({ source, prompt = "", answer } = {}) {
+          const savedSource = validateSource(source);
+          const targetText = savedSource.targetText;
+          const draftId = `learning-draft:${++localDraftSequence}:${makeId()}`;
+          const entropy = makeId();
+          const itemId = `learning:v1:${entropy}`;
+          const draft = {
+            draftId,
+            itemId,
+            externalId: `obreader-learning:v1:${entropy}`,
+            source: savedSource,
+            prompt: validateText(prompt, "prompt", { allowEmpty: true }),
+            answer: validateText(answer === void 0 ? targetText : answer, "answer", { allowEmpty: true }),
+            targetText
+          };
+          drafts.set(draftId, draft);
+          return clone(draft);
+        }
+        function updateDraft(draftId, changes = {}) {
+          const current = drafts.get(draftId);
+          if (!current) throw codedError("LEARNING_DRAFT_MISSING", "The learning draft is no longer available.");
+          const next = {
+            ...current,
+            ...Object.hasOwn(changes, "prompt") ? { prompt: validateText(changes.prompt, "prompt", { allowEmpty: true }) } : {},
+            ...Object.hasOwn(changes, "answer") ? { answer: validateText(changes.answer, "answer", { allowEmpty: true }) } : {}
+          };
+          drafts.set(draftId, next);
+          return clone(next);
+        }
+        function cancelDraft(draftId) {
+          return { status: drafts.delete(draftId) ? "cancelled" : "missing", writes: 0 };
+        }
+        async function confirmDraft(draftId, { actionId } = {}) {
+          const selectedActionId = validateActionId(actionId);
+          return enqueue(async () => {
+            const draft = drafts.get(draftId);
+            if (!draft) throw codedError("LEARNING_DRAFT_MISSING", "The learning draft is no longer available.");
+            const prompt = validateText(draft.prompt, "prompt");
+            const answer = validateText(draft.answer, "answer");
+            const normalizedDraft = { ...draft, prompt, answer };
+            const duplicate = await duplicateCreateFor(selectedActionId, normalizedDraft);
+            if (duplicate) {
+              drafts.delete(draftId);
+              return duplicate;
+            }
+            await verifyExactSource(draft.source);
+            const loaded = await load();
+            const existing = loaded.records.find((item2) => item2.createActionId === selectedActionId);
+            if (existing) {
+              if (existing.prompt !== prompt || existing.answer !== answer || existing.targetText !== draft.targetText || !same(existing.source, draft.source)) {
+                throw codedError("LEARNING_ACTION_ID_REUSE", "A confirmation action ID cannot be reused for another draft.");
+              }
+              drafts.delete(draftId);
+              return { status: "duplicate", actionId: selectedActionId, item: clone(existing), writes: 0 };
+            }
+            const createdAt = readUtcNow(now);
+            const item = makeDraftItem(normalizedDraft, selectedActionId, createdAt);
+            validateItem(item);
+            const plan = await prepareShardedReplacement({
+              readSnapshot: (path2) => coordinator.readSnapshot(path2),
+              loaded,
+              records: [...loaded.records, item],
+              storeId: LEARNING_STORE_ID,
+              root: LEARNING_ROOT,
+              kind: LEARNING_KIND,
+              idOf: (candidate) => candidate?.itemId,
+              ...maxRecords == null ? {} : { maxRecords },
+              ...maxBytes == null ? {} : { maxBytes }
+            });
+            const batchId = actionBatchId("learning-confirm", selectedActionId);
+            const path = pathForItem(plan.manifest, item.itemId);
+            const change = makeIdentityChange({
+              path,
+              itemId: item.itemId,
+              kind: "entityCreate",
+              beforeExists: false,
+              afterExists: true,
+              after: item
+            });
+            const historySummary = {
+              batchId,
+              sessionId: coordinator.sessionId,
+              kind: "learning-confirm",
+              entities: [{ storeId: LEARNING_STORE_ID, entityId: item.itemId, kind: "entityCreate" }],
+              stores: makeHistoryStores(plan),
+              changes: [change]
+            };
+            const result = await coordinator.commit({
+              actionId: selectedActionId,
+              writes: plan.writes,
+              deletes: plan.deletes,
+              historySummary,
+              entities: historySummary.entities
+            });
+            if (result.status === "conflict") {
+              const recovered = await duplicateCreateFor(selectedActionId, normalizedDraft);
+              if (recovered) {
+                drafts.delete(draftId);
+                return recovered;
+              }
+              throw codedError("LEARNING_TX_CONFLICT", "Learning item confirmation conflicted with another writer; the draft remains available.", result);
+            }
+            if (result.status !== "committed") throw codedError("LEARNING_TX_FAILED", "Learning item confirmation did not commit.", result);
+            drafts.delete(draftId);
+            return { ...result, status: "committed", actionId: selectedActionId, item: clone(item), writes: plan.writes.length };
+          });
+        }
+        async function getItem(itemId) {
+          validateItemId(itemId);
+          return runtime.exclusive(async () => {
+            const loaded = await load();
+            const item = loaded.records.find((candidate) => candidate.itemId === itemId);
+            return item ? clone(item) : void 0;
+          });
+        }
+        async function listDue(options = {}) {
+          const limit = normalizePageSize(options.limit);
+          const cursor = decodeCursor(options.cursor);
+          return runtime.exclusive(async () => {
+            const loaded = await load();
+            const atUTC = readUtcNow(now);
+            const due = loaded.records.filter((item) => item.reviewState.dueAt <= atUTC && !skippedForSession.has(item.itemId)).sort((left, right) => left.reviewState.dueAt.localeCompare(right.reviewState.dueAt) || left.itemId.localeCompare(right.itemId));
+            const after = due.filter((item) => !cursor || item.reviewState.dueAt > cursor.dueAt || item.reviewState.dueAt === cursor.dueAt && item.itemId > cursor.itemId);
+            const page = after.slice(0, limit);
+            return {
+              items: page.map((item) => ({
+                itemId: item.itemId,
+                externalId: item.externalId,
+                dueAt: item.reviewState.dueAt,
+                prompt: item.prompt,
+                answer: item.answer,
+                targetText: item.targetText,
+                source: clone(item.source),
+                state: clone(item.reviewState),
+                item: clone(item)
+              })),
+              nextCursor: after.length > limit ? encodeCursor(page.at(-1)) : null,
+              total: due.length
+            };
+          });
+        }
+        function findRatingChange(batch, field = "lastReviewEvent") {
+          return batch?.changes?.find((change) => change.storeId === LEARNING_STORE_ID && change.field === field && change.fieldPath?.[0] === "records" && change.fieldPath?.[2] === field);
+        }
+        async function duplicateRatingFor(actionId, itemId, rating) {
+          const batch = await history.readBatch(actionBatchId("learning-rating", actionId));
+          if (!batch) return null;
+          const change = findRatingChange(batch);
+          const event = change?.after;
+          if (batch.actionKind !== "learning-rating" || event?.actionId !== actionId || event?.itemId !== itemId || event?.rating !== rating) {
+            throw codedError("LEARNING_ACTION_ID_REUSE", "A review action ID cannot be reused for another item or rating.");
+          }
+          return { status: "duplicate", actionId, itemId, event: clone(event), writes: 0 };
+        }
+        async function rate(itemId, rating, { actionId } = {}) {
+          validateItemId(itemId);
+          if (!["remember", "forget", "skip"].includes(rating)) {
+            throw codedError("LEARNING_RATING_INVALID", "Rating must be remember, forget, or skip.");
+          }
+          if (rating === "skip") {
+            return runtime.exclusive(async () => {
+              skippedForSession.add(itemId);
+              return { status: "skipped", itemId, writes: 0 };
+            });
+          }
+          const selectedActionId = validateActionId(actionId);
+          return enqueue(async () => {
+            const duplicate = await duplicateRatingFor(selectedActionId, itemId, rating);
+            if (duplicate) return duplicate;
+            const loaded = await load();
+            const current = loaded.records.find((candidate) => candidate.itemId === itemId);
+            if (!current) throw codedError("LEARNING_ITEM_MISSING", "The learning item no longer exists.");
+            const reviewedAtUTC = readUtcNow(now);
+            const transition = scheduler.rate(current.reviewState, rating, reviewedAtUTC);
+            const previous = current.lastReviewEvent;
+            const event = {
+              schemaVersion: 1,
+              eventId: `learning-event:v1:${hashText(`${itemId}\0${selectedActionId}`).slice("sha256-v1:".length)}`,
+              itemId,
+              actionId: selectedActionId,
+              rating,
+              reviewedAtUTC,
+              sequence: (previous?.sequence || 0) + 1,
+              previousEventId: previous?.eventId || null,
+              schedulerVersion: LEITNER_SCHEDULER_VERSION
+            };
+            const updated = { ...clone(current), reviewState: transition.state, lastReviewEvent: event };
+            validateItem(updated);
+            const records = loaded.records.map((candidate) => candidate.itemId === itemId ? updated : candidate);
+            const plan = await prepareShardedReplacement({
+              readSnapshot: (path2) => coordinator.readSnapshot(path2),
+              loaded,
+              records,
+              storeId: LEARNING_STORE_ID,
+              root: LEARNING_ROOT,
+              kind: LEARNING_KIND,
+              idOf: (candidate) => candidate?.itemId,
+              ...maxRecords == null ? {} : { maxRecords },
+              ...maxBytes == null ? {} : { maxBytes }
+            });
+            const batchId = actionBatchId("learning-rating", selectedActionId);
+            const path = pathForItem(plan.manifest, itemId);
+            const historySummary = {
+              batchId,
+              sessionId: coordinator.sessionId,
+              kind: "learning-rating",
+              entities: [{ storeId: LEARNING_STORE_ID, entityId: itemId, kind: "record" }],
+              stores: makeHistoryStores(plan),
+              changes: ["reviewState", "lastReviewEvent"].map((field) => makeIdentityChange({
+                path,
+                itemId,
+                kind: "field",
+                field,
+                beforeExists: true,
+                before: current[field],
+                afterExists: true,
+                after: updated[field]
+              }))
+            };
+            const result = await coordinator.commit({
+              actionId: selectedActionId,
+              writes: plan.writes,
+              deletes: plan.deletes,
+              historySummary,
+              entities: historySummary.entities
+            });
+            if (result.status === "conflict") {
+              const recovered = await duplicateRatingFor(selectedActionId, itemId, rating);
+              if (recovered) return recovered;
+              throw codedError("LEARNING_TX_CONFLICT", "Learning rating conflicted with another writer; no stale state was applied.", result);
+            }
+            if (result.status !== "committed") throw codedError("LEARNING_TX_FAILED", "Learning rating did not commit.", result);
+            skippedForSession.delete(itemId);
+            return { ...result, status: "committed", actionId: selectedActionId, itemId, state: clone(updated.reviewState), event: clone(event), writes: plan.writes.length };
+          });
+        }
+        async function endReviewSession() {
+          return runtime.exclusive(async () => {
+            const dismissed = skippedForSession.size;
+            skippedForSession.clear();
+            return { status: "ended", dismissed, writes: 0 };
+          });
+        }
+        async function renameMarkdownSource(fromPath, toPath, { actionId } = {}) {
+          const from = validateVaultPath(fromPath, "fromPath");
+          const to = validateVaultPath(toPath, "toPath");
+          if (from === to) return { status: "unchanged", movedItems: 0, writes: 0 };
+          const selectedActionId = validateActionId(actionId || `learning-source-rename:${hashText(`${from}\0${to}\0${makeId()}`).slice("sha256-v1:".length)}`);
+          return enqueue(async () => {
+            const batchId = actionBatchId("learning-source-rename", selectedActionId);
+            const prior = await history.readBatch(batchId);
+            const loaded = await load();
+            if (prior) {
+              const priorChanges = prior.changes?.filter((change) => change.storeId === LEARNING_STORE_ID && change.field === "source") || [];
+              if (prior.actionKind !== "learning-source-rename" || !priorChanges.length || priorChanges.some((change) => {
+                const before = change.before?.sourcePath;
+                const after = change.after?.sourcePath;
+                return typeof before !== "string" || typeof after !== "string" || !(before === from || before.startsWith(`${from}/`)) || after !== `${to}${before.slice(from.length)}`;
+              })) {
+                throw codedError("LEARNING_ACTION_ID_REUSE", "A source-rename action ID cannot be reused for another move.");
+              }
+              const currentById = new Map(loaded.records.map((item) => [item.itemId, item]));
+              const isAt = (change, sourcePath) => currentById.get(change.entityId)?.source?.sourcePath === sourcePath;
+              if (priorChanges.every((change) => isAt(change, change.after.sourcePath))) {
+                return {
+                  status: "duplicate",
+                  actionId: selectedActionId,
+                  itemIds: priorChanges.map((change) => change.entityId),
+                  movedItems: priorChanges.length,
+                  writes: 0
+                };
+              }
+              if (priorChanges.every((change) => isAt(change, change.before.sourcePath))) {
+                return {
+                  status: "already-undone",
+                  actionId: selectedActionId,
+                  itemIds: priorChanges.map((change) => change.entityId),
+                  movedItems: 0,
+                  writes: 0
+                };
+              }
+              throw codedError("LEARNING_ACTION_ID_REUSE", "The learning source no longer matches the original rename action.");
+            }
+            const moved = [];
+            const prefix = `${from}/`;
+            for (const item of loaded.records) {
+              const source = item.source;
+              if (!source || !["markdown", "backlink"].includes(source.evidenceKind)) continue;
+              const oldSourcePath = source.sourcePath;
+              if (oldSourcePath !== from && !oldSourcePath.startsWith(prefix)) continue;
+              const nextPath = validateVaultPath(`${to}${oldSourcePath.slice(from.length)}`, "renamed sourcePath");
+              const updated = { ...clone(item), source: { ...clone(source), sourcePath: nextPath } };
+              validateItem(updated);
+              moved.push({ before: item, after: updated });
+            }
+            if (!moved.length) return { status: "unchanged", actionId: selectedActionId, movedItems: 0, writes: 0 };
+            const updatedById = new Map(moved.map(({ after }) => [after.itemId, after]));
+            const records = loaded.records.map((item) => updatedById.get(item.itemId) || item);
+            const plan = await prepareShardedReplacement({
+              readSnapshot: (path) => coordinator.readSnapshot(path),
+              loaded,
+              records,
+              storeId: LEARNING_STORE_ID,
+              root: LEARNING_ROOT,
+              kind: LEARNING_KIND,
+              idOf: (item) => item?.itemId,
+              ...maxRecords == null ? {} : { maxRecords },
+              ...maxBytes == null ? {} : { maxBytes }
+            });
+            const changes = moved.map(({ before, after }) => makeIdentityChange({
+              path: pathForItem(plan.manifest, before.itemId),
+              itemId: before.itemId,
+              kind: "field",
+              field: "source",
+              beforeExists: true,
+              before: before.source,
+              afterExists: true,
+              after: after.source
+            }));
+            const entities = moved.map(({ before }) => ({ storeId: LEARNING_STORE_ID, entityId: before.itemId, kind: "record" }));
+            const historySummary = {
+              batchId,
+              sessionId: coordinator.sessionId,
+              kind: "learning-source-rename",
+              entities,
+              stores: makeHistoryStores(plan),
+              changes
+            };
+            const result = await coordinator.commit({
+              actionId: selectedActionId,
+              writes: plan.writes,
+              deletes: plan.deletes,
+              historySummary,
+              entities
+            });
+            if (result.status === "conflict") {
+              throw codedError("LEARNING_TX_CONFLICT", "Learning source rename conflicted with another writer; no stale path was applied.", result);
+            }
+            if (result.status !== "committed") throw codedError("LEARNING_TX_FAILED", "Learning source rename did not commit.", result);
+            return {
+              ...result,
+              status: "committed",
+              actionId: selectedActionId,
+              itemIds: moved.map(({ before }) => before.itemId),
+              movedItems: moved.length,
+              writes: plan.writes.length
+            };
+          });
+        }
+        async function loadFromSnapshots(snapshots = /* @__PURE__ */ new Map()) {
+          const manifestPath = manifestPathFor(LEARNING_ROOT);
+          const loaded = await readShardedStore({
+            readSnapshot: async (path) => snapshots.get(path) || coordinator.readSnapshot(path),
+            hasShardFiles: (root) => hasShardFilesFromAdapter(coordinator.adapter, root),
+            storeId: LEARNING_STORE_ID,
+            root: LEARNING_ROOT,
+            kind: LEARNING_KIND,
+            idOf: (item) => item?.itemId,
+            ...maxRecords == null ? {} : { maxRecords },
+            ...maxBytes == null ? {} : { maxBytes }
+          });
+          const latestManifest = await coordinator.readSnapshot(manifestPath);
+          if (latestManifest.revision !== loaded.manifestSnapshot.revision || latestManifest.hash !== loaded.manifestSnapshot.hash) {
+            throw codedError("LEARNING_RESTORE_SNAPSHOT_MISMATCH", "The learning manifest changed while resolving History state.");
+          }
+          for (const item of loaded.records) validateItem(item, item.itemId);
+          return loaded;
+        }
+        function createHistoryRestoreHandler() {
+          return Object.freeze({
+            async resolveField({ change } = {}) {
+              if (!change || change.storeId !== LEARNING_STORE_ID || typeof change.entityId !== "string" || !Array.isArray(change.fieldPath) || change.fieldPath[0] !== "records" || change.fieldPath[1] !== change.entityId || typeof change.path !== "string" || !change.path.startsWith(`${LEARNING_ROOT}/`)) {
+                throw codedError("LEARNING_RESTORE_FIELD_INVALID", "Learning History refers to an unsupported identity or path.");
+              }
+              const loaded = await loadFromSnapshots();
+              const item = loaded.records.find((candidate) => candidate.itemId === change.entityId) || null;
+              if (change.kind === "entityCreate" || change.kind === "entityDelete") {
+                if (change.fieldPath.length !== 2) throw codedError("LEARNING_RESTORE_FIELD_INVALID", "Learning lifecycle History must target one complete item.");
+                return { exists: Boolean(item), ...item ? { value: clone(item) } : {}, entityExists: Boolean(item) };
+              }
+              const field = change.fieldPath[2];
+              if (!item || change.fieldPath.length !== 3 || !(REVIEW_HISTORY_FIELDS.has(field) || field === "source") || change.field !== field) {
+                throw codedError("LEARNING_RESTORE_FIELD_INVALID", "Learning History may restore review state, event head, or soft source provenance fields.");
+              }
+              return { exists: true, value: clone(item[field]), entityExists: true };
+            },
+            async planRestore({ batch, selectedChanges, snapshots, overwriteConflictIds = [] } = {}) {
+              if (!batch || batch.kind !== "vocabulary-history-batch" || !["learning-confirm", "learning-rating", "learning-source-rename", "restore"].includes(batch.actionKind) || !Array.isArray(selectedChanges) || !(snapshots instanceof Map)) {
+                throw codedError("LEARNING_RESTORE_BATCH_INVALID", "A learning History batch and its verified snapshots are required.");
+              }
+              const overwrite = new Set(overwriteConflictIds);
+              const loaded = await loadFromSnapshots(snapshots);
+              const byId = new Map(loaded.records.map((item) => [item.itemId, clone(item)]));
+              const groups = /* @__PURE__ */ new Map();
+              for (const change of selectedChanges) {
+                if (change.storeId !== LEARNING_STORE_ID || !validateItemId(change.entityId) || !Array.isArray(change.fieldPath) || change.fieldPath[0] !== "records" || change.fieldPath[1] !== change.entityId || typeof change.path !== "string" || !change.path.startsWith(`${LEARNING_ROOT}/`) || !["field", "entityCreate", "entityDelete"].includes(change.kind) || typeof change.beforeExists !== "boolean" || typeof change.afterExists !== "boolean" || change.status !== "clean" && !(change.status === "conflict" && overwrite.has(change.changeId))) {
+                  throw codedError("LEARNING_RESTORE_CHANGE_INVALID", "Learning History selected an unsupported or unapproved change.");
+                }
+                const lifecycle = change.kind === "entityCreate" || change.kind === "entityDelete";
+                if (lifecycle && change.fieldPath.length !== 2 || !lifecycle && (change.fieldPath.length !== 3 || !(REVIEW_HISTORY_FIELDS.has(change.fieldPath[2]) || change.fieldPath[2] === "source") || change.field !== change.fieldPath[2])) {
+                  throw codedError("LEARNING_RESTORE_FIELD_INVALID", "Learning History may restore a full item lifecycle, paired review fields, or soft source provenance.");
+                }
+                const group = groups.get(change.entityId) || [];
+                group.push(change);
+                groups.set(change.entityId, group);
+              }
+              const changes = [];
+              for (const [itemId, group] of groups) {
+                const kinds = new Set(group.map((change) => change.kind));
+                if (kinds.size !== 1) throw codedError("LEARNING_RESTORE_CHANGE_INVALID", "One learning item cannot mix lifecycle and field restore changes.");
+                const kind = group[0].kind;
+                let item = byId.get(itemId) || null;
+                if (kind === "entityCreate") {
+                  if (group.length !== 1 || group[0].beforeExists || !group[0].afterExists || !item) {
+                    throw codedError("LEARNING_RESTORE_LIFECYCLE_INVALID", "Learning item creation undo requires the complete item lifecycle change.");
+                  }
+                  if (group[0].status === "clean" && !same(item, group[0].after)) {
+                    throw codedError("LEARNING_RESTORE_SNAPSHOT_MISMATCH", "The learning item no longer matches its creation History snapshot.");
+                  }
+                  changes.push(makeIdentityChange({
+                    path: group[0].path,
+                    itemId,
+                    kind: "entityDelete",
+                    beforeExists: true,
+                    before: item,
+                    afterExists: false
+                  }));
+                  byId.delete(itemId);
+                  continue;
+                }
+                if (kind === "entityDelete") {
+                  if (group.length !== 1 || !group[0].beforeExists || group[0].afterExists || item) {
+                    throw codedError("LEARNING_RESTORE_LIFECYCLE_INVALID", "Learning item creation redo requires an absent item and complete snapshot.");
+                  }
+                  item = validateItem(clone(group[0].before), itemId);
+                  changes.push(makeIdentityChange({
+                    path: group[0].path,
+                    itemId,
+                    kind: "entityCreate",
+                    beforeExists: false,
+                    afterExists: true,
+                    after: item
+                  }));
+                  byId.set(itemId, item);
+                  continue;
+                }
+                if (!item) throw codedError("LEARNING_RESTORE_ITEM_MISSING", "A learning review restore requires the current item.");
+                const fieldNames = group.map((change) => change.field);
+                const hasReviewField = fieldNames.some((field) => REVIEW_HISTORY_FIELDS.has(field));
+                if (new Set(fieldNames).size !== fieldNames.length || hasReviewField && fieldNames.includes("reviewState") !== fieldNames.includes("lastReviewEvent") || fieldNames.includes("source") && fieldNames.length !== 1) {
+                  throw codedError("LEARNING_RESTORE_REVIEW_PAIR_REQUIRED", "Review state and event head must be restored together.");
+                }
+                for (const change of group) {
+                  const field = change.field;
+                  const current = item[field];
+                  if (change.status === "clean" && !same(current, change.after)) {
+                    throw codedError("LEARNING_RESTORE_SNAPSHOT_MISMATCH", `Learning ${field} no longer matches its History snapshot.`);
+                  }
+                  const afterValue = clone(change.before);
+                  const inverseKind = "field";
+                  changes.push(makeIdentityChange({
+                    path: change.path,
+                    itemId,
+                    kind: inverseKind,
+                    field,
+                    beforeExists: true,
+                    before: current,
+                    afterExists: change.beforeExists,
+                    after: afterValue
+                  }));
+                  if (change.beforeExists) item[field] = afterValue;
+                  else delete item[field];
+                }
+                validateItem(item, itemId);
+                byId.set(itemId, item);
+              }
+              const records = [...byId.values()];
+              const plan = await prepareShardedReplacement({
+                readSnapshot: (path) => snapshots.get(path) || coordinator.readSnapshot(path),
+                loaded,
+                records,
+                storeId: LEARNING_STORE_ID,
+                root: LEARNING_ROOT,
+                kind: LEARNING_KIND,
+                idOf: (item) => item?.itemId,
+                ...maxRecords == null ? {} : { maxRecords },
+                ...maxBytes == null ? {} : { maxBytes }
+              });
+              for (const change of changes) change.path = pathForItem(plan.manifest, change.entityId) || manifestPathFor(LEARNING_ROOT);
+              const entities = [...groups.keys()].sort().map((entityId) => ({
+                storeId: LEARNING_STORE_ID,
+                entityId,
+                kind: groupKindInverse(groups.get(entityId)[0].kind)
+              }));
+              return { writes: plan.writes, changes, entities };
+            }
+          });
+        }
+        function groupKindInverse(kind) {
+          return kind === "entityCreate" ? "entityDelete" : kind === "entityDelete" ? "entityCreate" : "record";
+        }
+        history.registerStoreHandler(LEARNING_STORE_ID, createHistoryRestoreHandler());
+        async function exportItems(format = "json") {
+          const supported = /* @__PURE__ */ new Set(["json", "markdown", "csv", "anki-tsv"]);
+          if (!supported.has(format)) throw codedError("LEARNING_EXPORT_FORMAT_INVALID", "Export format must be json, markdown, csv, or anki-tsv.");
+          return runtime.exclusive(async () => {
+            const loaded = await load();
+            const batches = await history.listBatches({ deviceIds: [coordinator.deviceId] });
+            const allEvents = [];
+            const eventById = /* @__PURE__ */ new Map();
+            for (const batch of batches) {
+              if (batch.actionKind !== "learning-rating") continue;
+              const change = findRatingChange(batch);
+              const event = change?.after;
+              if (!event || typeof event.eventId !== "string") continue;
+              validateEvent(event, event.itemId);
+              if (!eventById.has(event.eventId)) eventById.set(event.eventId, clone(event));
+            }
+            allEvents.push(...eventById.values());
+            const items = loaded.records.slice().sort((left, right) => left.externalId.localeCompare(right.externalId)).map((item) => {
+              const history2 = allEvents.filter((event) => event.itemId === item.itemId).sort((left, right) => left.sequence - right.sequence || left.reviewedAtUTC.localeCompare(right.reviewedAtUTC) || left.eventId.localeCompare(right.eventId));
+              const activeEventIds = /* @__PURE__ */ new Set();
+              let head = item.lastReviewEvent;
+              while (head && !activeEventIds.has(head.eventId)) {
+                activeEventIds.add(head.eventId);
+                head = eventById.get(head.previousEventId) || null;
+              }
+              return {
+                externalId: item.externalId,
+                itemId: item.itemId,
+                prompt: item.prompt,
+                answer: item.answer,
+                targetText: item.targetText,
+                sourceLink: sourceLinkFor(item),
+                source: clone(item.source),
+                reviewState: clone(item.reviewState),
+                lastReviewEvent: clone(item.lastReviewEvent),
+                reviewHistory: history2.map((event) => ({ ...clone(event), onCurrentBranch: activeEventIds.has(event.eventId) }))
+              };
+            });
+            let content;
+            if (format === "json") {
+              content = JSON.stringify({ schemaVersion: 1, kind: "learning-items-export", schedulerVersion: scheduler.version, items }, null, 2);
+            } else if (format === "markdown") {
+              content = ["# Learning items", "", ...items.flatMap((item) => [
+                `## ${markdownCell(item.prompt)}`,
+                "",
+                `- ExternalID: ${markdownCell(item.externalId)}`,
+                `- Answer: ${markdownCell(item.answer)}`,
+                `- Target text: ${markdownCell(item.targetText)}`,
+                `- Source: ${markdownCell(item.sourceLink)}`,
+                `- Due: ${markdownCell(item.reviewState.dueAt)}`,
+                ""
+              ])].join("\n");
+            } else if (format === "csv") {
+              const headers = ["ExternalID", "Prompt", "Answer", "TargetText", "SourceLink", "Box", "DueAt", "ReviewHistory"];
+              content = [headers.join(","), ...items.map((item) => [
+                item.externalId,
+                item.prompt,
+                item.answer,
+                item.targetText,
+                item.sourceLink,
+                item.reviewState.box,
+                item.reviewState.dueAt,
+                JSON.stringify(item.reviewHistory)
+              ].map(csvCell).join(","))].join("\r\n");
+            } else {
+              const headers = ["ExternalID", "Prompt", "Answer", "TargetText", "SourceLink"];
+              content = [headers.join("	"), ...items.map((item) => [
+                item.externalId,
+                item.prompt,
+                item.answer,
+                item.targetText,
+                item.sourceLink
+              ].map(tsvCell).join("	"))].join("\n");
+            }
+            return { format, content, itemCount: items.length };
+          });
+        }
+        return Object.freeze({
+          root: LEARNING_ROOT,
+          storeId: LEARNING_STORE_ID,
+          scheduler,
+          createDraft,
+          updateDraft,
+          cancelDraft,
+          confirmDraft,
+          getItem,
+          listDue,
+          rate,
+          endReviewSession,
+          renameMarkdownSource,
+          exportItems,
+          getDraft: (draftId) => drafts.has(draftId) ? clone(drafts.get(draftId)) : void 0
+        });
+      }
+      function defaultMakeId() {
+        return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      }
+      module.exports = {
+        LEARNING_STORE_ID,
+        LEARNING_ROOT,
+        LEARNING_KIND,
+        createLearningService,
+        validateSource,
+        validateItem
+      };
+    }
+  });
+
+  // plugin/learning/today-review.cjs
+  var require_today_review = __commonJS({
+    "plugin/learning/today-review.cjs"(exports, module) {
+      "use strict";
+      var MAX_PAGE_SIZE = 100;
+      var DEFAULT_PAGE_SIZE = 50;
+      var MAX_PAGE_FETCHES_PER_CALL = 100;
+      var ISO_UTC = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+      function reviewError(code, message) {
+        const error = new Error(message);
+        error.name = "TodayReviewError";
+        error.code = code;
+        return error;
+      }
+      function itemIdOf(providerId, item) {
+        const value = providerId === "vocabulary" ? item?.familyKey : item?.itemId;
+        return typeof value === "string" && value ? value : null;
+      }
+      function dueAtOf(item) {
+        return typeof item?.dueAt === "string" ? item.dueAt : item?.state?.dueAt;
+      }
+      function compareRows(left, right) {
+        return String(dueAtOf(left.item)).localeCompare(String(dueAtOf(right.item))) || left.providerId.localeCompare(right.providerId) || left.itemId.localeCompare(right.itemId);
+      }
+      function normalizePageSize(value, fallback = DEFAULT_PAGE_SIZE) {
+        const limit = value == null ? fallback : value;
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE) {
+          throw reviewError("TODAY_REVIEW_PAGE_SIZE_INVALID", `Today Review page size must be from 1 to ${MAX_PAGE_SIZE}.`);
+        }
+        return limit;
+      }
+      function createTodayReviewAggregator({ vocabulary, learning, pageSize = DEFAULT_PAGE_SIZE } = {}) {
+        const size = normalizePageSize(pageSize);
+        const providers = [
+          { id: "vocabulary", service: vocabulary },
+          { id: "learning", service: learning }
+        ];
+        for (const entry of providers) {
+          if (!entry.service || typeof entry.service.listDue !== "function") {
+            throw new TypeError(`Today Review requires ${entry.id}.listDue().`);
+          }
+        }
+        function openSession() {
+          const state = new Map(providers.map(({ id }) => [id, {
+            cursor: null,
+            buffer: [],
+            nextCursor: null,
+            fetched: false,
+            done: false,
+            seenCursors: /* @__PURE__ */ new Set()
+          }]));
+          const emitted = /* @__PURE__ */ new Set();
+          let sessionGeneration = 0;
+          let nextSerial = Promise.resolve();
+          async function fill(providerId, generation, fetchCounts) {
+            const entry = providers.find((candidate) => candidate.id === providerId);
+            const current = state.get(providerId);
+            if (current.buffer.length || current.done) return;
+            if (current.fetched) current.cursor = current.nextCursor;
+            if (current.fetched && !current.cursor) {
+              current.done = true;
+              return;
+            }
+            fetchCounts[providerId] = (fetchCounts[providerId] || 0) + 1;
+            if (fetchCounts[providerId] > MAX_PAGE_FETCHES_PER_CALL) {
+              throw reviewError("TODAY_REVIEW_PROVIDER_PAGE_INVALID", `${providerId}.listDue() exceeded the bounded page-fetch allowance.`);
+            }
+            const requestedCursor = current.cursor;
+            const page = await entry.service.listDue({ limit: size, cursor: current.cursor });
+            if (generation !== sessionGeneration) {
+              throw reviewError("TODAY_REVIEW_SESSION_INVALIDATED", "Today Review changed while a provider page was loading; request the next page again.");
+            }
+            if (!page || !Array.isArray(page.items) || page.nextCursor != null && typeof page.nextCursor !== "string") {
+              throw reviewError("TODAY_REVIEW_PROVIDER_PAGE_INVALID", `${providerId}.listDue() returned an invalid page.`);
+            }
+            if (page.items.length > size || page.items.length === 0 && page.nextCursor != null || page.nextCursor != null && (page.nextCursor === requestedCursor || current.seenCursors.has(page.nextCursor))) {
+              throw reviewError("TODAY_REVIEW_PROVIDER_PAGE_INVALID", `${providerId}.listDue() returned an oversized page or non-advancing cursor.`);
+            }
+            const normalized = page.items.map((item) => {
+              const itemId = itemIdOf(providerId, item);
+              const dueAt = dueAtOf(item);
+              if (!itemId || typeof dueAt !== "string" || !ISO_UTC.test(dueAt) || !Number.isFinite(Date.parse(dueAt)) || new Date(dueAt).toISOString() !== dueAt) {
+                throw reviewError("TODAY_REVIEW_PROVIDER_ITEM_INVALID", `${providerId}.listDue() returned an item without a stable ID or dueAt.`);
+              }
+              return { providerId, itemId, dueAt, item };
+            });
+            const pageIds = /* @__PURE__ */ new Set();
+            for (let index = 0; index < normalized.length; index += 1) {
+              const row = normalized[index];
+              const key = `${row.providerId}\0${row.itemId}`;
+              if (pageIds.has(key) || index > 0 && compareRows(normalized[index - 1], row) > 0) {
+                throw reviewError("TODAY_REVIEW_PROVIDER_PAGE_INVALID", `${providerId}.listDue() returned duplicate or unsorted items.`);
+              }
+              pageIds.add(key);
+            }
+            if (page.nextCursor != null) current.seenCursors.add(page.nextCursor);
+            current.buffer = normalized.filter((row) => !emitted.has(`${row.providerId}\0${row.itemId}`));
+            current.nextCursor = page.nextCursor;
+            current.fetched = true;
+            if (!current.buffer.length && !current.nextCursor) current.done = true;
+          }
+          async function ensureHead(providerId, generation, fetchCounts) {
+            const current = state.get(providerId);
+            while (!current.buffer.length && !current.done) {
+              if (generation !== sessionGeneration) {
+                throw reviewError("TODAY_REVIEW_SESSION_INVALIDATED", "Today Review changed while loading; request the next page again.");
+              }
+              await fill(providerId, generation, fetchCounts);
+            }
+            return current.buffer[0] || null;
+          }
+          async function nextPageUnlocked({ limit } = {}) {
+            const requested = normalizePageSize(limit, size);
+            const generation = sessionGeneration;
+            const fetchCounts = /* @__PURE__ */ Object.create(null);
+            const output = [];
+            while (output.length < requested) {
+              const heads = await Promise.all(providers.map(({ id }) => ensureHead(id, generation, fetchCounts)));
+              if (generation !== sessionGeneration) {
+                throw reviewError("TODAY_REVIEW_SESSION_INVALIDATED", "Today Review changed while loading; request the next page again.");
+              }
+              const candidates = heads.filter(Boolean);
+              if (!candidates.length) break;
+              candidates.sort(compareRows);
+              const chosen = candidates[0];
+              state.get(chosen.providerId).buffer.shift();
+              emitted.add(`${chosen.providerId}\0${chosen.itemId}`);
+              output.push(chosen);
+            }
+            if (generation !== sessionGeneration) {
+              throw reviewError("TODAY_REVIEW_SESSION_INVALIDATED", "Today Review changed while loading; request the next page again.");
+            }
+            return {
+              items: output,
+              hasMore: [...state.values()].some((current) => current.buffer.length > 0 || current.nextCursor != null),
+              cursor: Object.fromEntries(providers.map(({ id }) => {
+                const current = state.get(id);
+                return [id, { providerCursor: current.cursor, buffered: current.buffer.length, done: current.done }];
+              })),
+              generation: sessionGeneration
+            };
+          }
+          function nextPage(options = {}) {
+            const pending = nextSerial.then(() => nextPageUnlocked(options));
+            nextSerial = pending.catch(() => void 0);
+            return pending;
+          }
+          async function rate(providerId, itemId, rating, options = {}) {
+            const entry = providers.find((candidate) => candidate.id === providerId);
+            if (!entry) throw reviewError("TODAY_REVIEW_PROVIDER_INVALID", `Unknown review provider ${providerId}.`);
+            let result;
+            if (providerId === "vocabulary") {
+              const method = rating === "remember" ? "remember" : rating === "forget" ? "forget" : rating === "skip" ? "skip" : null;
+              if (!method || typeof entry.service[method] !== "function") {
+                throw reviewError("TODAY_REVIEW_RATING_INVALID", `Vocabulary does not support rating ${rating}.`);
+              }
+              result = await entry.service[method](itemId, options);
+            } else {
+              if (typeof entry.service.rate !== "function") throw reviewError("TODAY_REVIEW_RATING_UNAVAILABLE", "Learning provider does not expose rate().");
+              result = await entry.service.rate(itemId, rating, options);
+            }
+            invalidate();
+            return result;
+          }
+          function invalidate() {
+            sessionGeneration += 1;
+            emitted.clear();
+            for (const current of state.values()) {
+              current.cursor = null;
+              current.buffer = [];
+              current.nextCursor = null;
+              current.fetched = false;
+              current.done = false;
+              current.seenCursors.clear();
+            }
+          }
+          return Object.freeze({ nextPage, rate, invalidate });
+        }
+        return Object.freeze({ openSession, pageSize: size });
+      }
+      module.exports = { createTodayReviewAggregator, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE };
+    }
+  });
+
+  // plugin/learning/provider.cjs
+  var require_provider = __commonJS({
+    "plugin/learning/provider.cjs"(exports, module) {
+      "use strict";
+      var LEARNING_ASSISTANT_CAPABILITIES = Object.freeze([
+        "explain",
+        "translate",
+        "generateQuestions",
+        "generateCards",
+        "summarize"
+      ]);
+      function requireSourceText(source) {
+        const targetText = typeof source?.targetText === "string" ? source.targetText.trim() : "";
+        if (!targetText) {
+          throw Object.assign(new Error("A captured targetText is required by the deterministic draft provider."), {
+            code: "LEARNING_PROVIDER_TARGET_REQUIRED"
+          });
+        }
+        return targetText;
+      }
+      function createDeterministicLearningProvider() {
+        return Object.freeze({
+          id: "deterministic-mock",
+          capabilities: LEARNING_ASSISTANT_CAPABILITIES,
+          async generateDraft({ source } = {}) {
+            const targetText = requireSourceText(source);
+            return { status: "draft", prompt: `Recall the meaning of: ${targetText}`, answer: targetText };
+          },
+          async explain({ source } = {}) {
+            const targetText = requireSourceText(source);
+            return { status: "draft", text: `Explain this captured text: ${targetText}` };
+          },
+          async translate({ source, targetLanguage = "English" } = {}) {
+            const targetText = requireSourceText(source);
+            return { status: "draft", text: `Translate to ${String(targetLanguage)}: ${targetText}` };
+          },
+          async generateQuestions({ source, count = 3 } = {}) {
+            const targetText = requireSourceText(source);
+            const questionCount = Number.isSafeInteger(count) ? Math.max(1, Math.min(count, 10)) : 3;
+            return {
+              status: "draft",
+              questions: Array.from({ length: questionCount }, (_, index) => ({
+                prompt: index === 0 ? `Recall the meaning of: ${targetText}` : `Question ${index + 1} about: ${targetText}`,
+                answer: targetText
+              }))
+            };
+          },
+          async generateCards({ source } = {}) {
+            const targetText = requireSourceText(source);
+            return { status: "draft", cards: [{ prompt: `Recall the meaning of: ${targetText}`, answer: targetText }] };
+          },
+          async summarize({ source } = {}) {
+            const targetText = requireSourceText(source);
+            return { status: "draft", summary: `Captured text: ${targetText}` };
+          }
+        });
+      }
+      async function createDraftWithProvider({ service, provider, source } = {}) {
+        if (!service || typeof service.createDraft !== "function") throw new TypeError("A learning service with createDraft() is required.");
+        if (!provider || typeof provider.generateDraft !== "function") throw new TypeError("A draft provider with generateDraft() is required.");
+        const generated = await provider.generateDraft({ source: source == null ? source : JSON.parse(JSON.stringify(source)) });
+        if (!generated || typeof generated !== "object" || Array.isArray(generated)) {
+          throw Object.assign(new Error("The draft provider must return prompt and answer text."), { code: "LEARNING_PROVIDER_OUTPUT_INVALID" });
+        }
+        return service.createDraft({ source, prompt: generated.prompt, answer: generated.answer });
+      }
+      module.exports = {
+        LEARNING_ASSISTANT_CAPABILITIES,
+        createDeterministicLearningProvider,
+        createDraftWithProvider
+      };
+    }
+  });
+
+  // plugin/learning/draft-modal.cjs
+  var require_draft_modal = __commonJS({
+    "plugin/learning/draft-modal.cjs"(exports, module) {
+      "use strict";
+      function defaultActionId() {
+        return `learning-confirm:${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
+      }
+      function showNotice(Notice, message) {
+        if (typeof Notice !== "function") return;
+        try {
+          new Notice(message);
+        } catch {
+          Notice(message);
+        }
+      }
+      function createLearningDraftModal({ Modal, Notice } = {}) {
+        if (typeof Modal !== "function") throw new TypeError("Learning draft modal requires the host Modal constructor.");
+        return class LearningDraftModal extends Modal {
+          constructor(app, { service, source, prompt = "", answer, makeActionId = defaultActionId } = {}) {
+            super(app);
+            if (!service || typeof service.createDraft !== "function" || typeof service.updateDraft !== "function" || typeof service.confirmDraft !== "function" || typeof service.cancelDraft !== "function") {
+              throw new TypeError("Learning draft modal requires the learning draft service API.");
+            }
+            if (typeof makeActionId !== "function") throw new TypeError("Learning draft modal requires an action ID factory.");
+            this.service = service;
+            this.source = source;
+            this.initialPrompt = prompt;
+            this.initialAnswer = answer;
+            this.makeActionId = makeActionId;
+            this.draft = null;
+            this.actionId = null;
+            this.confirmPromise = null;
+            this.confirmed = false;
+            this.lastError = null;
+          }
+          onOpen() {
+            try {
+              this.draft = this.service.createDraft({ source: this.source, prompt: this.initialPrompt, answer: this.initialAnswer });
+              this.render();
+            } catch (error) {
+              showNotice(Notice, error.message || "Could not create the learning draft.");
+              this.close();
+            }
+          }
+          render() {
+            this.contentEl.empty();
+            this.titleEl.textContent = "\u65B0\u5EFA\u5B66\u4E60\u6761\u76EE";
+            this.contentEl.createEl("p", { text: "\u68C0\u67E5\u95EE\u9898\u4E0E\u7B54\u6848\u540E\u786E\u8BA4\u52A0\u5165\u590D\u4E60\u3002" });
+            const promptLabel = this.contentEl.createEl("label", { text: "\u95EE\u9898" });
+            this.promptInput = this.contentEl.createEl("textarea", {
+              attr: { "aria-label": "\u95EE\u9898", rows: "3" }
+            });
+            this.promptInput.value = this.draft.prompt;
+            promptLabel.appendChild?.(this.promptInput);
+            const answerLabel = this.contentEl.createEl("label", { text: "\u7B54\u6848" });
+            this.answerInput = this.contentEl.createEl("textarea", {
+              attr: { "aria-label": "\u7B54\u6848", rows: "4" }
+            });
+            this.answerInput.value = this.draft.answer;
+            answerLabel.appendChild?.(this.answerInput);
+            this.statusEl = this.contentEl.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+            const footer = this.contentEl.createEl("div", { cls: "learning-draft-modal-actions" });
+            this.cancelButton = footer.createEl("button", { text: "\u53D6\u6D88", attr: { type: "button" } });
+            this.confirmButton = footer.createEl("button", { text: "\u786E\u8BA4\u52A0\u5165\u590D\u4E60", attr: { type: "button" } });
+            const update = () => {
+              this.draft = this.service.updateDraft(this.draft.draftId, {
+                prompt: this.promptInput.value,
+                answer: this.answerInput.value
+              });
+              this.syncConfirmButton();
+            };
+            this.promptInput.addEventListener("input", update);
+            this.answerInput.addEventListener("input", update);
+            this.cancelButton.addEventListener("click", () => this.cancel());
+            this.confirmButton.addEventListener("click", () => {
+              void this.confirm().catch((error) => {
+                this.lastError = error;
+                if (this.statusEl && !this.statusEl.textContent) {
+                  this.statusEl.textContent = error?.message || "\u5B66\u4E60\u6761\u76EE\u672A\u80FD\u4FDD\u5B58\u3002";
+                }
+              });
+            });
+            this.syncConfirmButton();
+          }
+          syncConfirmButton() {
+            const valid = Boolean(this.promptInput?.value.trim() && this.answerInput?.value.trim());
+            if (this.confirmButton) this.confirmButton.disabled = !valid || Boolean(this.confirmPromise);
+          }
+          cancel() {
+            if (this.confirmPromise) return { status: "busy" };
+            if (this.draft) this.service.cancelDraft(this.draft.draftId);
+            this.draft = null;
+            this.close();
+            return { status: "cancelled", writes: 0 };
+          }
+          confirm() {
+            if (this.confirmPromise) return this.confirmPromise;
+            if (!this.draft || !this.promptInput?.value.trim() || !this.answerInput?.value.trim()) {
+              this.syncConfirmButton();
+              return Promise.resolve({ status: "invalid", writes: 0 });
+            }
+            this.draft = this.service.updateDraft(this.draft.draftId, {
+              prompt: this.promptInput.value,
+              answer: this.answerInput.value
+            });
+            this.actionId ||= this.makeActionId();
+            this.lastError = null;
+            this.confirmButton.disabled = true;
+            this.cancelButton.disabled = true;
+            this.statusEl.textContent = "\u6B63\u5728\u9A8C\u8BC1\u6765\u6E90\u5E76\u4FDD\u5B58\u2026";
+            const pending = Promise.resolve().then(() => this.service.confirmDraft(this.draft.draftId, { actionId: this.actionId })).then((result) => {
+              this.confirmed = true;
+              this.draft = null;
+              this.statusEl.textContent = "\u5DF2\u52A0\u5165\u590D\u4E60\u3002";
+              this.close();
+              return result;
+            }, (error) => {
+              this.lastError = error;
+              const message = error?.code === "LEARNING_SOURCE_STALE" ? "\u6765\u6E90\u5DF2\u53D8\u5316\uFF0C\u8349\u7A3F\u548C\u6587\u5B57\u4ECD\u4FDD\u7559\u5728\u8FD9\u91CC\uFF1B\u8BF7\u91CD\u65B0\u68C0\u67E5\u540E\u518D\u8BD5\u3002" : error?.message || "\u5B66\u4E60\u6761\u76EE\u672A\u80FD\u4FDD\u5B58\u3002";
+              this.statusEl.textContent = message;
+              showNotice(Notice, message);
+              throw error;
+            }).finally(() => {
+              this.confirmPromise = null;
+              if (!this.confirmed) {
+                if (this.cancelButton) this.cancelButton.disabled = false;
+                this.syncConfirmButton();
+              }
+            });
+            this.confirmPromise = pending;
+            return pending;
+          }
+          onClose() {
+            if (this.draft && !this.confirmed) this.service.cancelDraft(this.draft.draftId);
+            this.draft = null;
+            this.contentEl.empty();
+          }
+        };
+      }
+      module.exports = { createLearningDraftModal };
+    }
+  });
+
+  // plugin/learning/workspace.cjs
+  var require_workspace = __commonJS({
+    "plugin/learning/workspace.cjs"(exports, module) {
+      "use strict";
+      module.exports = {
+        ...require_service(),
+        ...require_scheduler(),
+        ...require_today_review(),
+        ...require_provider(),
+        ...require_draft_modal()
+      };
+    }
+  });
+
+  // plugin/learning/host.cjs
+  var require_host = __commonJS({
+    "plugin/learning/host.cjs"(exports, module) {
+      var { canonicalHash } = require_canonical();
+      var {
+        fromAnnotation,
+        fromContext,
+        fromMarkdown,
+        matchesMarkdownSourceSlice,
+        createSemanticSourceResolver
+      } = require_semantic_anchor();
+      var { createLearningService, createLearningDraftModal, createTodayReviewAggregator, LEARNING_ROOT } = require_workspace();
+      var unresolved = (reason) => Object.assign(new Error(reason === "save-highlight-before-review" ? "\u8BF7\u7B49\u5F85\u6279\u6CE8\u81EA\u52A8\u4FDD\u5B58\u5E76\u786E\u8BA4\u540E\u91CD\u8BD5\uFF08save-highlight-before-review\uFF09\u3002" : `\u6765\u6E90\u6682\u4E0D\u53EF\u7CBE\u786E\u5B9A\u4F4D\uFF1A${reason}`), { code: "TARGET_UNRESOLVED" });
+      var rowsOf = (snapshot) => Array.isArray(snapshot?.annotations) ? snapshot.annotations : Object.values(snapshot?.annotations || {});
+      function createLearningHost({ plugin, Modal, Notice } = {}) {
+        if (!plugin?.app) throw new TypeError("Learning host requires the existing plugin.");
+        const DraftModal = createLearningDraftModal({ Modal, Notice });
+        let servicePromise = null;
+        let disposed = false;
+        const drafts = /* @__PURE__ */ new Set();
+        const liveView = (anchor) => [...plugin.views].find((view) => !view.teardownStarted && view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true && view.annotationSyncPending !== true && view.annotationStorageUnavailable !== true && view.annotationDocument?.documentId === anchor.documentId && view.annotationDocument?.docKey === anchor.docKey && view.annotationSourceHash === anchor.sourceHash && view.annotationPageIdentity?.orderedPageIdentities?.[anchor.pageIndex] === anchor.pageIdentity);
+        const verified = (anchor) => ({ status: "verified", sourceCurrent: true, pageCurrent: true, anchor });
+        const failed = (code) => ({ status: "unresolved", code, sourceCurrent: false, pageCurrent: false });
+        async function routeFor(anchor) {
+          const route = await plugin.annotationHost.store.documentForIdentity(anchor);
+          if (!route || route.documentId !== anchor.documentId || route.docKey !== anchor.docKey || route.source?.sourceHash !== anchor.sourceHash || route.source?.orderedPageIdentities?.[anchor.pageIndex] !== anchor.pageIdentity || !plugin.app.vault.getAbstractFileByPath(route.sourcePath)) throw unresolved("source-or-page-mismatch");
+          return route;
+        }
+        async function annotationRow(anchor) {
+          const view = liveView(anchor);
+          if (!view || view.annotationSyncPending || view.annotationStorageUnavailable) return null;
+          return rowsOf(view.annotationSnapshot).find((row) => row.uuid === anchor.target.id && row.deleted !== true && row.pageIndex === anchor.pageIndex) || null;
+        }
+        async function markdownValue(anchor) {
+          const file = plugin.app.vault.getAbstractFileByPath(anchor.sourcePath);
+          if (!file || file.extension !== "md") return null;
+          const leaf = plugin.app.workspace.getLeavesOfType?.("markdown")?.find((entry) => entry.view?.file?.path === anchor.sourcePath && entry.view.editor);
+          return leaf ? leaf.view.editor.getValue() : plugin.app.vault.read(file);
+        }
+        const resolve = createSemanticSourceResolver({
+          verifyRouting: async (anchor) => {
+            await routeFor(anchor);
+            return liveView(anchor) ? verified(anchor) : failed("source-not-currently-verified");
+          },
+          verifyAnnotation: async (anchor) => await annotationRow(anchor) ? verified(anchor) : failed("annotation-deleted-or-unavailable"),
+          verifyReaderAnchor: async (anchor) => {
+            const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
+            return liveView(anchor) && stored && stored.sourceHash === anchor.sourceHash && stored.pageIdentity === anchor.pageIdentity ? verified(anchor) : failed("selection-anchor-mismatch");
+          },
+          verifyContext: async (anchor) => {
+            const runtime = await plugin.getVocabularyRuntime();
+            const context = await runtime.contexts.getContext(anchor.contextId);
+            if (!context || context.anchorId !== anchor.target.id || context.documentId !== anchor.documentId || context.sourceFingerprint !== anchor.sourceHash || context.pageIdentity !== anchor.pageIdentity) {
+              return failed("context-source-mismatch");
+            }
+            const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
+            return liveView(anchor) && stored && stored.sourceHash === anchor.sourceHash && stored.pageIdentity === anchor.pageIdentity ? verified(anchor) : failed("context-anchor-mismatch");
+          },
+          verifyMarkdown: async (anchor) => matchesMarkdownSourceSlice(anchor, await markdownValue(anchor)) ? verified(anchor) : failed("markdown-excerpt-changed")
+        });
+        async function getService() {
+          if (!servicePromise) {
+            const pending = plugin.getVocabularyRuntime().then((runtime) => createLearningService({ runtime, verifySource: resolve }));
+            servicePromise = pending;
+            pending.catch(() => {
+              if (servicePromise === pending) servicePromise = null;
+            });
+          }
+          return servicePromise;
+        }
+        async function openDraft(source, guard = async () => true) {
+          if (disposed || plugin.isUnloading) throw unresolved("workspace-closed");
+          if (!source?.targetText?.trim()) throw unresolved("target-text-unavailable");
+          const service = await getService();
+          if (disposed || plugin.isUnloading || !await guard()) throw unresolved("source-changed-before-draft");
+          const checkedService = { ...service, confirmDraft: async (...args) => {
+            if (disposed || plugin.isUnloading || !await guard()) throw Object.assign(new Error("\u6765\u6E90\u5DF2\u53D8\u5316\uFF0C\u8349\u7A3F\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u91CD\u65B0\u6838\u5BF9\u6765\u6E90\u3002"), { code: "LEARNING_SOURCE_STALE" });
+            return service.confirmDraft(...args);
+          } };
+          const modal = new DraftModal(plugin.app, { service: checkedService, source });
+          const onClose = modal.onClose?.bind(modal);
+          modal.onClose = () => {
+            drafts.delete(modal);
+            onClose?.();
+          };
+          drafts.add(modal);
+          modal.open();
+          return modal;
+        }
+        async function fromAnnotationRequest(view, message) {
+          const identity = {
+            documentId: view.documentId,
+            openRequest: view.openRequest,
+            rendererGeneration: view.rendererGeneration
+          };
+          const isCurrent = () => view.isCurrentReaderAnchorIdentity(identity) && message.documentId === identity.documentId && message.openRequest === identity.openRequest && message.rendererGeneration === identity.rendererGeneration && view.annotationHydrationAllowed === true && !view.annotationSourceMismatch && message.sourceHash === view.annotationSourceHash && view.annotationPageIdentity?.orderedPageIdentities?.[message.pageIndex] === message.pageIdentity;
+          if (!isCurrent() || typeof message.uuid !== "string" || message.uuid.length > 512 || !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0 || typeof message.targetText !== "string" || message.targetText.length > 1e5 || !["captured", "stored", "recovered"].includes(message.targetTextSource)) throw unresolved("reader-session-mismatch");
+          if (!Number.isSafeInteger(message.revision) || message.revision < 0 || !Number.isSafeInteger(message.confirmedRevision) || message.confirmedRevision < 0 || message.revision !== message.confirmedRevision || message.dirty !== false || message.pending !== false) {
+            throw unresolved("save-highlight-before-review");
+          }
+          const row = rowsOf(view.annotationSnapshot).find((entry) => entry.uuid === message.uuid && entry.deleted !== true && entry.kind === "Highlight" && entry.pageIndex === message.pageIndex);
+          if (!row) throw unresolved("save-highlight-before-review");
+          const before = canonicalHash(row);
+          const source = fromAnnotation({
+            ...row,
+            targetText: row.payload?.editor?.text || message.targetText,
+            targetTextSource: row.payload?.editor?.text ? "stored" : message.targetTextSource
+          }, {
+            documentId: view.annotationDocument.documentId,
+            docKey: view.annotationDocument.docKey,
+            sourcePath: view.documentFile?.path || view.file?.path,
+            sourceHash: view.annotationSourceHash,
+            pageIdentity: message.pageIdentity
+          });
+          return openDraft(source, async () => isCurrent() && canonicalHash(await annotationRow(source)) === before);
+        }
+        async function fromContextId(contextId) {
+          const runtime = await plugin.getVocabularyRuntime();
+          const context = await runtime.contexts.getContext(contextId);
+          if (!context) throw unresolved("context-missing");
+          const route = await plugin.annotationHost.store.documentForIdentity(context);
+          const source = fromContext(context, { sourcePath: route.sourcePath });
+          const expected = canonicalHash(context);
+          if (!liveView(source)) await plugin.openVocabularyContext(contextId);
+          return openDraft(source, async () => canonicalHash(await runtime.contexts.getContext(contextId)) === expected);
+        }
+        async function fromMarkdownEditor(editor, view) {
+          const start = editor.getCursor("from"), end = editor.getCursor("to");
+          const source = fromMarkdown({
+            sourcePath: view.file?.path,
+            offset: editor.posToOffset(start),
+            endOffset: editor.posToOffset(end),
+            line: start.line,
+            text: editor.getSelection()
+          });
+          if (!source) throw unresolved("select-markdown-excerpt-first");
+          return openDraft(source, async () => matchesMarkdownSourceSlice(source, await markdownValue(source)));
+        }
+        async function openItemSource(itemId) {
+          const item = await (await getService()).getItem(itemId);
+          if (!item) throw unresolved("learning-item-missing");
+          const anchor = item.source;
+          if (anchor.target.kind === "markdown") {
+            if (!matchesMarkdownSourceSlice(anchor, await markdownValue(anchor))) throw unresolved("markdown-excerpt-changed");
+            const opened = await plugin.openReaderBacklinkSource({
+              sourcePath: anchor.sourcePath,
+              offset: anchor.sourceRange.startOffset,
+              endOffset: anchor.sourceRange.endOffset,
+              line: anchor.sourceRange.line,
+              sourceText: anchor.sourceRange.text
+            }, { source: "learning-item", requireExact: true });
+            if (!opened) throw unresolved("markdown-excerpt-changed-during-open");
+            return { status: "opening", message: "\u5DF2\u5B9A\u4F4D\u5230\u6765\u6E90\u6458\u5F55\u3002" };
+          }
+          const route = await routeFor(anchor);
+          if (anchor.evidenceKind === "context") {
+            const context = await (await plugin.getVocabularyRuntime()).contexts.getContext(anchor.contextId);
+            if (!context || context.anchorId !== anchor.target.id || context.sourceFingerprint !== anchor.sourceHash) {
+              throw unresolved("context-source-missing-or-changed");
+            }
+          }
+          if (anchor.target.kind === "annotation") {
+            const view = liveView(anchor);
+            if (view && (view.annotationSyncPending || view.annotationStorageUnavailable || !rowsOf(view.annotationSnapshot).some((row) => row.uuid === anchor.target.id && row.deleted !== true && row.pageIndex === anchor.pageIndex))) {
+              throw unresolved("annotation-deleted-or-unavailable");
+            }
+          } else if (anchor.target.kind === "selection") {
+            const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
+            if (!stored || stored.sourceHash !== anchor.sourceHash || stored.pageIdentity !== anchor.pageIdentity) {
+              throw unresolved("selection-anchor-mismatch");
+            }
+          }
+          const file = plugin.app.vault.getAbstractFileByPath(route.sourcePath);
+          await plugin.openPdf(file, { ...anchor.target, docKey: anchor.docKey, documentId: anchor.documentId });
+          return { status: "opening", message: "\u5DF2\u8BF7\u6C42\u6253\u5F00\u6765\u6E90\uFF1BReader \u5C06\u518D\u6B21\u9A8C\u8BC1 PDF \u4E0E\u7CBE\u786E\u76EE\u6807\u3002" };
+        }
+        async function createReviewSession() {
+          const runtime = await plugin.getVocabularyRuntime();
+          const vocabulary = Object.fromEntries(["listDue", "remember", "forget", "skip"].map((method) => [method, (...args) => runtime.exclusive(async () => (await runtime.ensureReviewSession())[method](...args))]));
+          const learning = await getService();
+          return createTodayReviewAggregator({ vocabulary, learning }).openSession();
+        }
+        async function createWorkbenchReviewPager() {
+          let session = await createReviewSession();
+          let epoch = 0, index = -1, pageSize = null, page = null, highestIssuedPage = 0;
+          let serial = Promise.resolve();
+          const enqueue = (task) => {
+            const pending = serial.then(task);
+            serial = pending.catch(() => void 0);
+            return pending;
+          };
+          const flatten = (row) => ({
+            ...row.item,
+            providerId: row.providerId,
+            itemId: row.itemId,
+            dueAt: row.dueAt,
+            ...row.providerId === "learning" ? { reviewState: row.item.state } : {}
+          });
+          const reset = () => {
+            epoch++;
+            index = -1;
+            page = null;
+            pageSize = null;
+            highestIssuedPage = 0;
+            session.invalidate();
+          };
+          return Object.freeze({
+            listDue: (options) => enqueue(async () => {
+              const { limit = 100, cursor = null } = options || {};
+              if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError("Review page size must be 1\u2013100.");
+              let requested = 0;
+              if (cursor != null) {
+                const match = /^learning-review:(\d+):(\d+):(\d+)$/.exec(cursor);
+                if (!match || Number(match[1]) !== epoch || Number(match[2]) !== limit || !Number.isSafeInteger(Number(match[3])) || Number(match[3]) > highestIssuedPage) {
+                  throw new TypeError("Review cursor is invalid or belongs to a previous generation.");
+                }
+                requested = Number(match[3]);
+              }
+              if (pageSize !== null && pageSize !== limit) {
+                if (cursor != null) throw new TypeError("Review cursor page size changed.");
+                reset();
+              }
+              if (requested < index) {
+                session = await createReviewSession();
+                index = -1;
+                page = null;
+              }
+              pageSize = limit;
+              while (index < requested) {
+                const result = await session.nextPage({ limit });
+                if (typeof result.hasMore !== "boolean") throw new TypeError("Review provider pagination evidence is missing.");
+                page = { items: result.items.map(flatten), hasMore: result.hasMore };
+                index++;
+                if (index < requested && page.items.length < limit) throw new TypeError("Review cursor is past the available pages.");
+              }
+              if (page.hasMore) highestIssuedPage = Math.max(highestIssuedPage, index + 1);
+              return { items: [...page.items], nextCursor: page.hasMore ? `learning-review:${epoch}:${limit}:${index + 1}` : null };
+            }),
+            rate: (input) => enqueue(async () => {
+              const { providerId = "vocabulary", itemId, familyKey, kind, actionId } = input || {};
+              const result = await session.rate(providerId, itemId || familyKey, kind, { actionId });
+              reset();
+              return result;
+            }),
+            invalidate: () => enqueue(reset)
+          });
+        }
+        async function openVocabularySource(familyKey) {
+          const runtime = await plugin.getVocabularyRuntime();
+          const page = await runtime.contexts.listFamily(familyKey, { limit: 2 });
+          if (!page.contexts.length) return { status: "missing", message: "\u8FD9\u4E2A\u8BCD\u65CF\u5C1A\u672A\u5173\u8054\u6765\u6E90\u8BED\u5883\u3002" };
+          if (page.contexts.length === 1 && !page.nextCursor) return plugin.openVocabularyContext(page.contexts[0].contextId);
+          return { status: "choose-context", familyKey, message: "\u8BF7\u9009\u62E9\u4E00\u4E2A\u5DF2\u4FDD\u5B58\u8BED\u5883\u4F5C\u4E3A\u6765\u6E90\u3002" };
+        }
+        async function renamed(fromPath, toPath) {
+          if (disposed || typeof fromPath !== "string" || typeof toPath !== "string" || fromPath === toPath) return { status: "noop" };
+          if (!await plugin.app.vault.adapter.exists(`${LEARNING_ROOT}/manifest.json`)) return { status: "noop" };
+          return (await getService()).renameMarkdownSource(fromPath, toPath);
+        }
+        async function endReviewSession() {
+          if (!servicePromise) return { status: "noop", writes: 0 };
+          return (await servicePromise).endReviewSession();
+        }
+        function dispose() {
+          disposed = true;
+          for (const modal of drafts) modal.close();
+          drafts.clear();
+        }
+        return Object.freeze({
+          getService,
+          resolveSource: resolve,
+          fromAnnotationRequest,
+          fromContextId,
+          fromMarkdownEditor,
+          openItemSource,
+          openVocabularySource,
+          createReviewSession,
+          createWorkbenchReviewPager,
+          endReviewSession,
+          renamed,
+          dispose
+        });
+      }
+      module.exports = { createLearningHost };
+    }
+  });
+  return require_host();
+})();
+  return __PDFReaderLearningHost;
 })();
 const { VocabularyDictionary } = (() => {
 var __PDFReaderVocabularyDictionary = (() => {
@@ -31107,7 +34401,7 @@ var __PDFReaderRecovery = (() => {
 })();
   return __PDFReaderRecovery;
 })();
-const { createReaderAnchorStore, parseReaderLinkFragment, encodeReaderLinkFragment } = (() => {
+const { createReaderAnchorStore, parseReaderLinkFragment, parseReaderLinkDestination, encodeReaderLinkFragment } = (() => {
 "use strict";
 var __PDFReaderAnchorStore = (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -31303,9 +34597,16 @@ var __PDFReaderAnchorStore = (() => {
         };
       }
       function encodeReaderLinkFragment(options = {}) {
-        const { pageNumber, target } = options;
+        const { pageNumber, target, docKey, documentId } = options;
         const params = new URLSearchParams();
         if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
+        if (docKey !== void 0 || documentId !== void 0) {
+          if (!DOC_KEY.test(typeof docKey === "string" ? docKey : "") || typeof documentId !== "string" || !documentId || documentId.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(documentId)) {
+            throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
+          }
+          params.set("docKey", docKey.toLowerCase());
+          params.set("obdoc", documentId);
+        }
         if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" && target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
           const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";
           params.set("obreader", `${prefix}.${target.id}`);
@@ -31444,7 +34745,7 @@ var __PDFReaderAnchorStore = (() => {
 })();
   return __PDFReaderAnchorStore;
 })();
-const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex } = (() => {
+const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath } = (() => {
 "use strict";
 var __PDFReaderBacklinkIndex = (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -31641,9 +34942,16 @@ var __PDFReaderBacklinkIndex = (() => {
         };
       }
       function encodeReaderLinkFragment(options = {}) {
-        const { pageNumber, target } = options;
+        const { pageNumber, target, docKey, documentId } = options;
         const params = new URLSearchParams();
         if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
+        if (docKey !== void 0 || documentId !== void 0) {
+          if (!DOC_KEY.test(typeof docKey === "string" ? docKey : "") || typeof documentId !== "string" || !documentId || documentId.length > 512 || /[\u0000-\u001f\u007f-\u009f]/.test(documentId)) {
+            throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
+          }
+          params.set("docKey", docKey.toLowerCase());
+          params.set("obdoc", documentId);
+        }
         if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" && target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
           const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";
           params.set("obreader", `${prefix}.${target.id}`);
@@ -32003,6 +35311,7 @@ var __PDFReaderBacklinkIndex = (() => {
               pageNumber: parsed.pageNumber,
               selection: parsed.selection,
               displayText: typeof link.displayText === "string" && link.displayText ? link.displayText : null,
+              sourceText: typeof link.original === "string" && link.original ? link.original : null,
               line: Number.isSafeInteger(link.position?.start?.line) ? link.position.start.line : null,
               offset: start,
               endOffset: end
@@ -32049,12 +35358,19 @@ var __PDFReaderBacklinkIndex = (() => {
           }
           return result.sort(rowSort);
         }
+        function getSourcePathsUnder(folderPath) {
+          const folder = typeof folderPath === "string" ? folderPath.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "") : "";
+          if (!folder) return [];
+          const prefix = `${folder}/`;
+          return [...bySource.keys()].filter((sourcePath) => sourcePath.startsWith(prefix)).sort();
+        }
         return Object.freeze({
           replaceFile,
           removeFile,
           get,
           getDocument,
           getByPdfPath,
+          getSourcePathsUnder,
           get size() {
             return byTarget.size + byPdfRoute.size;
           },
@@ -35130,6 +38446,17 @@ class PdfReaderView extends EditableFileView {
     const target = normalizeReaderTarget(pendingTarget);
     const document = this.annotationDocument;
     const pageIdentities = this.annotationPageIdentity?.orderedPageIdentities;
+    if (target && document && this.annotationSourceMismatch === true) {
+      this.pendingReaderTarget = null;
+      const { readerTarget: _readerTarget, ...state } = this.navigationState || {};
+      this.navigationState = state;
+      const pageNumber = Number.isSafeInteger(target.pageNumber) && target.pageNumber > 0
+        ? target.pageNumber : this.currentPageNumber;
+      this.plugin.sessionLog?.record("readerAnchor", { event: "target-unresolved", code: "TARGET_UNRESOLVED",
+        documentId: document.documentId, sourcePath: document.sourcePath, pageNumber });
+      new Notice(`TARGET_UNRESOLVED：PDF 来源身份不匹配，未应用旧页面身份或几何目标；仅保留第 ${pageNumber || 1} 页码回退。`, 7000);
+      return false;
+    }
     if (!target || !document || this.annotationHydrationAllowed !== true ||
         !Array.isArray(pageIdentities) || pageIdentities.length === 0 || !this.ready || !this.openAcknowledged) return false;
     const identity = { documentId: this.documentId, openRequest: this.openRequest,
@@ -35682,6 +39009,13 @@ class PdfReaderView extends EditableFileView {
         type: "reader-anchor-occurrence-result", requestId: message.requestId,
         documentId: message.documentId, openRequest: message.openRequest,
         ok: false, message: "当前 PDF 身份尚未准备好。" });
+      return;
+    }
+    if (message.type === 'learning-review-draft-request') {
+      if(message.rendererGeneration!==this.rendererGeneration||message.documentId!==this.documentId||
+          message.openRequest!==this.openRequest||this.teardownStarted)return;
+      void this.plugin.getLearningHost().fromAnnotationRequest(this,message).catch(error=>
+        new Notice(error.message||'无法建立学习草稿。',7000));
       return;
     }
     if (message.type === "reader-backlink-page-request") {
@@ -36285,6 +39619,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.vocabularyUnsubscribe = null;
     this.vocabularyRuntime = null;
     this.vocabularyWorkbench = null;
+    this.learningHost = null;
     this.isUnloading = false;
     // Startup migration is confined to the personal vocabulary snapshot.
     // An absent store stays absent; PDF startup does not wait for this work.
@@ -36439,6 +39774,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       callback: () => this.openVocabularyWorkbench(),
     });
     this.addCommand({
+      id:'add-markdown-selection-to-review',name:'将 Markdown 选中摘录加入复习',
+      editorCallback:(editor,view)=>void this.getLearningHost().fromMarkdownEditor(editor,view)
+        .catch(error=>new Notice(error.message||'无法建立学习草稿。',7000)),
+    });
+    this.addCommand({
       id: "export-mobile-pdf-diagnostics",
       name: "导出 PDF 阅读器诊断 JSON",
       callback: () => void this.exportMobileDiagnostics().catch(error => new Notice(`诊断导出失败：${error.message || error}`)),
@@ -36520,6 +39860,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          if(typeof oldPath==='string'&&(oldPath.toLowerCase().endsWith('.md')||
+              file?.path?.toLowerCase().endsWith('.md')||Array.isArray(file?.children))) {
+            void this.getLearningHost().renamed(oldPath,file.path).catch(error=>
+              this.sessionLog?.record('learning',{event:'source-rename-failed',code:error.code||'unknown'}));
+          }
           if (isVocabularyDictionaryResourcePath(file?.path) || isVocabularyDictionaryResourcePath(oldPath)) {
             this.handleVocabularyDictionaryResourceChange(file?.path, oldPath);
           }
@@ -36528,6 +39873,23 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           }
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
+          } else if (!isPdfFile(file) && typeof oldPath === "string" && typeof file?.path === "string") {
+            const oldFolderPath = normalizePath(oldPath).replace(/\/+$/g, "");
+            const newFolderPath = normalizePath(file.path).replace(/\/+$/g, "");
+            const sourcePaths = this.readerBacklinkIndex?.getSourcePathsUnder?.(oldFolderPath) || [];
+            let changed = false;
+            for (const oldSourcePath of sourcePaths) {
+              this.removeReaderBacklinkFile(oldSourcePath, { notify: false });
+              changed = true;
+              const movedPath = `${newFolderPath}${oldSourcePath.slice(oldFolderPath.length)}`;
+              const movedFile = this.app.vault.getAbstractFileByPath?.(movedPath);
+              if (movedFile?.path === movedPath) {
+                this.refreshReaderBacklinkFile(movedFile, { notify: false });
+              }
+            }
+            if (changed && this.readerBacklinkIndexReady) {
+              for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+            }
           }
           if (!isPdfFile(file)) {
             void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
@@ -36776,10 +40138,65 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 
-  async openReaderBacklinkSource(row, { source = "backlink" } = {}) {
+  readerBacklinkSourceEvidence(row, sourceFile) {
+    if (!row || row.sourcePath !== sourceFile?.path ||
+        typeof row.sourcePath !== "string" || !row.sourcePath.toLowerCase().endsWith(".md")) return null;
+    if (row.target !== undefined && row.target !== null) {
+      const target = row.target;
+      if (!target || !["page", "selection", "annotation"].includes(target.kind) ||
+          typeof target.id !== "string" || !target.id) return null;
+      const cache = this.app.metadataCache?.getFileCache?.(sourceFile);
+      const links = Array.isArray(cache?.links) ? cache.links : [];
+      const matched = links.find((link) => {
+        if (typeof link?.link !== "string") return false;
+        const parsed = parseReaderLinkDestination(link.link);
+        if (parsed.target?.kind !== target.kind || parsed.target?.id !== target.id ||
+            parsed.docKey !== (row.docKey || null) || parsed.documentId !== (row.documentId || null) ||
+            normalizePdfRoutePath(parsed.routePath, row.sourcePath) !==
+              normalizePdfRoutePath(row.routePath, row.sourcePath)) return false;
+        if (typeof row.sourceText === "string" && row.sourceText && link.original !== row.sourceText) return false;
+        const offset = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
+        const endOffset = Number.isSafeInteger(link.position?.end?.offset) ? link.position.end.offset : null;
+        return offset === row.offset && endOffset === row.endOffset;
+      });
+      if (!matched) return null;
+      return {
+        kind: "reader-link",
+        offset: Number.isSafeInteger(matched.position?.start?.offset) ? matched.position.start.offset : -1,
+        endOffset: Number.isSafeInteger(matched.position?.end?.offset) ? matched.position.end.offset : null,
+        line: Number.isSafeInteger(matched.position?.start?.line) ? matched.position.start.line : null,
+        sourceText: typeof matched.original === "string" && matched.original ? matched.original : null,
+      };
+    }
+    if (row.sourceText !== undefined) {
+      if (typeof row.sourceText !== "string" || !row.sourceText || row.sourceText.length > 4096 ||
+          !Number.isSafeInteger(row.offset) || row.offset < 0 ||
+          !Number.isSafeInteger(row.endOffset) || row.endOffset <= row.offset ||
+          row.endOffset - row.offset !== row.sourceText.length) return null;
+      return { kind: "source-text", offset: row.offset, endOffset: row.endOffset,
+        line: Number.isSafeInteger(row.line) ? row.line : null, sourceText: row.sourceText };
+    }
+    return null;
+  }
+
+  async openReaderBacklinkSource(row, { source = "backlink", requireExact = false } = {}) {
     const sourcePath = typeof row?.sourcePath === "string" ? row.sourcePath : "";
     const workspace = this.app.workspace;
     if (!sourcePath || typeof workspace?.openLinkText !== "function") return false;
+    const sourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
+    if (sourceFile?.path !== sourcePath || !sourcePath.toLowerCase().endsWith(".md")) return false;
+    let evidence = this.readerBacklinkSourceEvidence(row, sourceFile);
+    if (!evidence) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
+      return false;
+    }
+    const requireExactSourceText = requireExact === true && evidence.kind === "source-text";
+    const rejectUnresolvedSourceText = () => {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: "TARGET_UNRESOLVED" });
+      return false;
+    };
     try {
       await workspace.openLinkText(sourcePath, "", true);
     } catch (error) {
@@ -36789,34 +40206,64 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return false;
     }
 
+    const currentSourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
+    evidence = currentSourceFile?.path === sourcePath
+      ? this.readerBacklinkSourceEvidence(row, currentSourceFile) : null;
+    if (!evidence) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
+      return false;
+    }
+
     const leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
     const view = leaf?.view;
     const editor = view?.editor;
-    if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) return true;
+    if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) {
+      return requireExactSourceText ? rejectUnresolvedSourceText() : true;
+    }
 
     let position = null;
     let endPosition = null;
     let value = null;
     try { value = editor.getValue?.(); } catch { /* Fall back to the metadata line. */ }
-    if (typeof value === "string" && typeof editor.offsetToPos === "function" &&
-        Number.isSafeInteger(row.offset) && row.offset >= 0 && row.offset <= value.length) {
+    const sourceTextMatches = typeof evidence.sourceText === "string" && evidence.sourceText.length > 0 &&
+      typeof value === "string" && Number.isSafeInteger(evidence.offset) && Number.isSafeInteger(evidence.endOffset) &&
+      evidence.offset >= 0 && evidence.endOffset <= value.length && evidence.endOffset > evidence.offset &&
+      value.slice(evidence.offset, evidence.endOffset) === evidence.sourceText;
+    let positionKind = "file";
+    if (sourceTextMatches && typeof value === "string" && typeof editor.offsetToPos === "function" &&
+        Number.isSafeInteger(evidence.offset) && evidence.offset >= 0 && evidence.offset <= value.length) {
       try {
-        const candidate = editor.offsetToPos(row.offset);
-        if (isValidEditorPosition(candidate)) position = candidate;
-        if (position && Number.isSafeInteger(row.endOffset) && row.endOffset > row.offset &&
-            row.endOffset <= value.length) {
-          const candidateEnd = editor.offsetToPos(row.endOffset);
-          if (isValidEditorPosition(candidateEnd)) endPosition = candidateEnd;
+        const candidate = editor.offsetToPos(evidence.offset);
+        if (isValidEditorPosition(candidate)) {
+          position = candidate;
+          positionKind = "exact-start";
         }
-      } catch { position = null; endPosition = null; }
+        if (position && Number.isSafeInteger(evidence.endOffset) && evidence.endOffset > evidence.offset &&
+            evidence.endOffset <= value.length) {
+          const candidateEnd = editor.offsetToPos(evidence.endOffset);
+          if (isValidEditorPosition(candidateEnd)) {
+            endPosition = candidateEnd;
+            positionKind = "exact";
+          }
+        }
+      } catch { position = null; endPosition = null; positionKind = "file"; }
     }
-    if (!position && Number.isSafeInteger(row.line) && row.line >= 0) {
+    if (requireExactSourceText && (!sourceTextMatches || !position)) return rejectUnresolvedSourceText();
+    if (!position && Number.isSafeInteger(evidence.line) && evidence.line >= 0) {
       let lineCount = null;
       try { lineCount = editor.lineCount?.(); } catch { /* Use the already available text when possible. */ }
       if (!Number.isSafeInteger(lineCount) && typeof value === "string") lineCount = value.split("\n").length;
-      if (Number.isSafeInteger(lineCount) && row.line < lineCount) position = { line: row.line, ch: 0 };
+      if (Number.isSafeInteger(lineCount) && evidence.line < lineCount) {
+        position = { line: evidence.line, ch: 0 };
+        positionKind = "line";
+      }
     }
-    if (!position) return true;
+    if (!position) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-opened", source,
+        positioned: false, selected: false, positionKind: "file" });
+      return true;
+    }
 
     try {
       if (endPosition && typeof editor.setSelection === "function") editor.setSelection(position, endPosition);
@@ -36826,7 +40273,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } catch (error) {
       this.sessionLog?.record("readerBacklinks", { event: "source-position-failed", source,
         code: error?.code || "unknown" });
-      return true;
+      return requireExactSourceText ? false : true;
     }
     for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
 
@@ -36852,7 +40299,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       timer = ownerWindow.setTimeout?.(() => {
         try {
           if (!userInteracted && !this.isUnloading && leaf?.view === view && view.editor === editor &&
-              view.file?.path === sourcePath && editor.getSelection?.() === value.slice(row.offset, row.endOffset) &&
+              view.file?.path === sourcePath && editor.getSelection?.() === value.slice(evidence.offset, evidence.endOffset) &&
               sameEditorPosition(editor.getCursor("from"), from) && sameEditorPosition(editor.getCursor("to"), to)) {
             editor.setCursor(endPosition);
           }
@@ -36860,7 +40307,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       }, 1400);
     }
     this.sessionLog?.record("readerBacklinks", { event: "source-opened", source,
-      positioned: Boolean(position), selected: Boolean(endPosition) });
+      positioned: Boolean(position), selected: Boolean(endPosition), positionKind });
     return true;
   }
 
@@ -36957,15 +40404,28 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!parsed?.target && !parsed?.pageNumber) throw new Error("链接没有可识别的 Reader 目标。");
     let route = null;
     let file = null;
-    if (parsed.docKey && parsed.documentId) {
+    if (parsed.docKey || parsed.documentId) {
+      if (!parsed.docKey || !parsed.documentId) {
+        const error = new Error("TARGET_UNRESOLVED：链接中的 PDF 身份字段不完整；不会退回历史路径。");
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
+      }
       // Legacy links keep resolving by stable identity, including after a PDF
-      // rename. New compact links intentionally carry only the PDF path.
-      route = await this.annotationHost.store.documentForIdentity({
-        docKey: parsed.docKey,
-        documentId: parsed.documentId,
-      });
-      if (route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
-        throw new Error("链接中的 PDF 文档身份无法验证。");
+      // rename. Legacy compact links may still carry only the PDF path.
+      try {
+        route = await this.annotationHost.store.documentForIdentity({
+          docKey: parsed.docKey,
+          documentId: parsed.documentId,
+        });
+      } catch (cause) {
+        const error = new Error(`TARGET_UNRESOLVED：链接中的 PDF 身份当前无法验证；不会退回历史路径。${cause?.message ? ` ${cause.message}` : ""}`);
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
+      }
+      if (!route || route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
+        const error = new Error("TARGET_UNRESOLVED：链接中的 PDF 文档身份无法验证；不会退回历史路径。");
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
       }
       file = route.sourcePath ? this.app.vault.getAbstractFileByPath(route.sourcePath) : null;
       const pathFile = this.resolveLinkedPdfFile(linkPath, sourcePath);
@@ -36977,7 +40437,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       if (!file) throw new Error("链接中的 PDF 路径当前无法解析。");
       route = await this.annotationHost.store.documentForPath(file.path);
     }
-    if (!isPdfFile(file)) throw new Error("链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+    if (!isPdfFile(file)) {
+      const error = new Error(parsed.docKey || parsed.documentId
+        ? "TARGET_UNRESOLVED：身份路由指向的 PDF 当前不可用；不会按旧路径猜测其他文件。"
+        : "链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+      if (parsed.docKey || parsed.documentId) error.code = "TARGET_UNRESOLVED";
+      throw error;
+    }
     const needsDocumentIdentity = parsed.target?.kind === "selection" || parsed.target?.kind === "annotation";
     if (needsDocumentIdentity && !route) {
       throw new Error("此稳定目标尚无已验证的 PDF 身份；可以使用原生页码回退。");
@@ -37030,16 +40496,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pageNumber = Number.isSafeInteger(parsed?.pageNumber) && parsed.pageNumber > 0
       ? parsed.pageNumber : 1;
     let file = null;
-    if (parsed?.docKey && parsed?.documentId) {
+    if (parsed?.docKey || parsed?.documentId) {
+      if (!parsed.docKey || !parsed.documentId) return null;
       try {
         const route = await this.annotationHost.store.documentForIdentity({
           docKey: parsed.docKey,
           documentId: parsed.documentId,
         });
+        if (!route || route.docKey !== parsed.docKey || route.documentId !== parsed.documentId ||
+            typeof route.sourcePath !== "string") return null;
         file = this.app.vault.getAbstractFileByPath(route.sourcePath);
-      } catch { /* The native path fallback below remains available. */ }
-    }
-    if (!isPdfFile(file) && linkPath) {
+      } catch { return null; }
+    } else if (linkPath) {
       file = this.resolveLinkedPdfFile(linkPath, sourcePath);
     }
     return isPdfFile(file)
@@ -37441,6 +40909,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    this.learningHost?.dispose();
     for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
     this.readerBacklinkFocusCleanups?.clear?.();
     this.vocabularyUnsubscribe?.();
@@ -38053,6 +41522,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.vocabularyDictionary;
   }
 
+  getLearningHost() {
+    if(this.isUnloading)throw new Error('阅读工作区正在关闭。');
+    if(!this.learningHost)this.learningHost=createLearningHost({plugin:this,Modal,Notice});
+    return this.learningHost;
+  }
+
   async getVocabularyRuntime() {
     await this.initializeVocabulary();
     if (this.isUnloading) throw new Error("词汇工作台正在关闭。");
@@ -38165,6 +41640,16 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   createVocabularyWorkbenchApi() {
     const get = () => this.getVocabularyRuntime();
+    let reviewPagerPromise=null;
+    const getReviewPager=()=>{
+      if(!reviewPagerPromise){
+        const pending=this.getLearningHost().createWorkbenchReviewPager();
+        reviewPagerPromise=pending;
+        pending.catch(()=>{if(reviewPagerPromise===pending)reviewPagerPromise=null;});
+      }
+      return reviewPagerPromise;
+    };
+    const invalidateReview=async()=>{if(reviewPagerPromise)await(await reviewPagerPromise).invalidate();};
     return {
       listFamilies: async (options) => this.getVocabularyService().listFamilies(options),
       getFamilyDetails: async (familyKey) => {
@@ -38205,28 +41690,44 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       },
       listContexts: async (familyKey, options) => (await get()).contexts.listFamily(familyKey, options),
       openContext: async (contextId) => this.openVocabularyContext(contextId),
-      listDueReview: async (options) => {
-        const runtime = await get();
-        return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
+      addContextToReview: async contextId=>{
+        await this.getLearningHost().fromContextId(contextId);
+        return {status:'draft',message:'学习草稿已打开；确认前不会加入复习。'};
       },
-      applyReviewAction: async ({ kind, familyKey, actionId } = {}) => {
+      openReviewSource: async ({providerId='vocabulary',itemId,familyKey}={})=>{
+        if(providerId==='learning')return this.getLearningHost().openItemSource(itemId);
+        if(providerId==='vocabulary')return this.getLearningHost().openVocabularySource(familyKey||itemId);
+        throw new TypeError('复习来源类型无效。');
+      },
+      listDueReview: async (options) => {
+        const pager=await getReviewPager();
+        if(options?.cursor==null)await pager.invalidate();
+        return pager.listDue(options);
+      },
+      applyReviewAction: async ({ kind, familyKey, itemId, providerId='vocabulary', actionId } = {}) => {
         if (!["remember", "forget", "skip"].includes(kind)) throw new TypeError("复习操作必须是 remember、forget 或 skip。");
-        if (typeof familyKey !== "string" || !familyKey || familyKey.length > 4096) throw new TypeError("复习词族身份无效。");
+        const id=itemId||familyKey;
+        if(!['vocabulary','learning'].includes(providerId)||typeof id!=='string'||!id||id.length>4096)throw new TypeError('复习条目身份无效。');
         if (typeof actionId !== "string" || !actionId || actionId.length > 256 || /[\\/\u0000-\u001f\u007f]/.test(actionId)) {
           throw new TypeError("复习操作需要稳定且安全的 action ID。");
         }
-        const runtime = await get();
-        return runtime.exclusive(async () => {
-          const review = await runtime.ensureReviewSession();
-          return review[kind](familyKey, { actionId });
-        });
+        return (await getReviewPager()).rate({providerId,itemId:id,kind,actionId});
       },
       listHistory: async () => ({ batches: await (await get()).history.listBatches() }),
-      previewHistory: async (batchId, options) => (await get()).history.previewRestore(batchId, options),
-      restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => (await get()).restore(batchId, { selected: selectedCleanIds, deviceId }),
+      previewHistory: async (batchId, options) => {
+        await this.getLearningHost().getService();
+        return (await get()).history.previewRestore(batchId, options);
+      },
+      restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => {
+        await this.getLearningHost().getService();
+        const result=await(await get()).restore(batchId,{selected:selectedCleanIds,deviceId});
+        if(result.status==='committed')await invalidateReview();
+        return result;
+      },
       importJson: (text, policy) => this.importVocabulary(text, "json", policy),
       importCsv: (text, policy) => this.importVocabulary(text, "csv", policy),
       exportCsv: () => this.getVocabularyService().exportCsv(),
+      exportLearning:async format=>(await this.getLearningHost().getService()).exportItems(format),
       exportJson: async () => {
         const runtime = await get();
         return runtime.exclusive(async () => {
@@ -38235,7 +41736,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           return createVocabularyTransfer({ runtime }).exportBundle();
         });
       },
-      close: async () => { if (this.vocabularyRuntime) await this.vocabularyRuntime.close(); },
+      close: async () => {
+        await invalidateReview();
+        await this.learningHost?.endReviewSession();
+        if(this.vocabularyRuntime)await this.vocabularyRuntime.close();
+      },
     };
   }
 

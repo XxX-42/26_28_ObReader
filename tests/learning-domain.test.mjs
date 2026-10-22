@@ -22,7 +22,7 @@ const {
 const SOURCE = Object.freeze({
   target: { kind: "annotation", id: "annotation-1" },
   documentId: "doc-1",
-  docKey: "a".repeat(64),
+  docKey: "a".repeat(12),
   sourcePath: "Library/Book.pdf",
   sourceHash: "b".repeat(64),
   pageIndex: 1,
@@ -81,6 +81,13 @@ async function confirm(service, { source = SOURCE, prompt = "What does it mean?"
   const draft = service.createDraft({ source, prompt, answer });
   return service.confirmDraft(draft.draftId, { actionId });
 }
+
+test('learning rejects a PDF source which cannot use the existing Reader identity protocol', () => {
+  const f=createFixture(),service=f.createService();
+  assert.throws(()=>service.createDraft({source:{...SOURCE,docKey:'a'.repeat(64)},prompt:'Question'}),
+    error=>error.code==='LEARNING_SOURCE_INVALID');
+  assert.equal(f.adapter.files.size,0);
+});
 
 test("Draft cancellation performs no writes; confirmation is idempotent and allows multiple items per source", async () => {
   const fixture = createFixture();
@@ -295,7 +302,7 @@ test("Due paging is stable and bounded, skip writes nothing, and exports include
   const csv = await service.exportItems("csv");
   const tsv = await service.exportItems("anki-tsv");
   assert.match(markdown.content, /obreader-learning:v1:/);
-  assert.match(markdown.content, /Library\/Book\.pdf#page=2&obreader=ann\.annotation-1/);
+  assert.match(markdown.content, /Library\/Book\.pdf#page=2&docKey=aaaaaaaaaaaa&obdoc=doc-1&obreader=ann\.annotation-1/);
   assert.match(csv.content, /ExternalID,Prompt,Answer,TargetText,SourceLink/);
   assert.match(tsv.content, /ExternalID\tPrompt\tAnswer\tTargetText\tSourceLink/);
   assert.equal(markdown.itemCount, 5);

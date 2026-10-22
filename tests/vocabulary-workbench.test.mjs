@@ -101,6 +101,29 @@ async function settle(modal, ms = 0) {
   await pause(0);
 }
 
+test('returning from History starts fresh Review pagination without resetting session skips', async()=>{
+  const requests=[];
+  const {api,families}=makeApi({listDueReview:async options=>{
+    requests.push(options);
+    return {items:[{familyKey:families[0].familyKey,family:families[0],state:{box:1},dueAt:'2026-10-18T00:00:00.000Z'}],
+      nextCursor:options.cursor?null:'page-two'};
+  }});
+  const modal=createModal(api);
+  await settle(modal);
+  modal._activateTab('review'); await settle(modal);
+  findAction(modal.panel,'review-next').click(); await settle(modal);
+  assert.equal(requests.at(-1).cursor,'page-two');
+  modal.reviewSkippedItemKeys.add('learning\u0000skipped');
+  modal._activateTab('history'); await settle(modal);
+  modal._activateTab('review'); await settle(modal);
+  assert.equal(requests.at(-1).cursor,undefined,'the first-page API uses an omitted cursor, not a stale generation');
+  assert.equal(requests.at(-1).limit,100);
+  assert.deepEqual(modal.reviewPageState.cursors,[null]);
+  assert.equal(modal.reviewPageState.index,0);
+  assert.ok(modal.reviewSkippedItemKeys.has('learning\u0000skipped'));
+  modal.onClose();
+});
+
 function makeFamily(index, { status = 1 } = {}) {
   const surface = `term-${index}`;
   return {

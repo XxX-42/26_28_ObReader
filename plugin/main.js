@@ -33,6 +33,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:VOCABULARY_CANONICAL_REQUIRE */ const { canonicalHash } = require('./vocabulary/canonical.cjs');
 /* BUILD:VOCABULARY_WORKSPACE_REQUIRE */ const { createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer } = require('./vocabulary/workspace.cjs');
 /* BUILD:VOCABULARY_WORKBENCH_REQUIRE */ const { createVocabularyWorkbench } = require('./vocabulary/workbench.cjs');
+/* BUILD:LEARNING_HOST_REQUIRE */ const { createLearningHost } = require('./learning/host.cjs');
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
@@ -3513,6 +3514,13 @@ class PdfReaderView extends EditableFileView {
         ok: false, message: "当前 PDF 身份尚未准备好。" });
       return;
     }
+    if (message.type === 'learning-review-draft-request') {
+      if(message.rendererGeneration!==this.rendererGeneration||message.documentId!==this.documentId||
+          message.openRequest!==this.openRequest||this.teardownStarted)return;
+      void this.plugin.getLearningHost().fromAnnotationRequest(this,message).catch(error=>
+        new Notice(error.message||'无法建立学习草稿。',7000));
+      return;
+    }
     if (message.type === "reader-backlink-page-request") {
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
           message.openRequest !== this.openRequest) return;
@@ -4114,6 +4122,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.vocabularyUnsubscribe = null;
     this.vocabularyRuntime = null;
     this.vocabularyWorkbench = null;
+    this.learningHost = null;
     this.isUnloading = false;
     // Startup migration is confined to the personal vocabulary snapshot.
     // An absent store stays absent; PDF startup does not wait for this work.
@@ -4268,6 +4277,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       callback: () => this.openVocabularyWorkbench(),
     });
     this.addCommand({
+      id:'add-markdown-selection-to-review',name:'将 Markdown 选中摘录加入复习',
+      editorCallback:(editor,view)=>void this.getLearningHost().fromMarkdownEditor(editor,view)
+        .catch(error=>new Notice(error.message||'无法建立学习草稿。',7000)),
+    });
+    this.addCommand({
       id: "export-mobile-pdf-diagnostics",
       name: "导出 PDF 阅读器诊断 JSON",
       callback: () => void this.exportMobileDiagnostics().catch(error => new Notice(`诊断导出失败：${error.message || error}`)),
@@ -4349,6 +4363,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          if(typeof oldPath==='string'&&(oldPath.toLowerCase().endsWith('.md')||
+              file?.path?.toLowerCase().endsWith('.md')||Array.isArray(file?.children))) {
+            void this.getLearningHost().renamed(oldPath,file.path).catch(error=>
+              this.sessionLog?.record('learning',{event:'source-rename-failed',code:error.code||'unknown'}));
+          }
           if (isVocabularyDictionaryResourcePath(file?.path) || isVocabularyDictionaryResourcePath(oldPath)) {
             this.handleVocabularyDictionaryResourceChange(file?.path, oldPath);
           }
@@ -4895,7 +4914,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         throw error;
       }
       // Legacy links keep resolving by stable identity, including after a PDF
-      // rename. New compact links intentionally carry only the PDF path.
+      // rename. Legacy compact links may still carry only the PDF path.
       try {
         route = await this.annotationHost.store.documentForIdentity({
           docKey: parsed.docKey,
@@ -5393,6 +5412,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   onunload() {
     this.isUnloading = true;
+    this.learningHost?.dispose();
     for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
     this.readerBacklinkFocusCleanups?.clear?.();
     this.vocabularyUnsubscribe?.();
@@ -6005,6 +6025,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.vocabularyDictionary;
   }
 
+  getLearningHost() {
+    if(this.isUnloading)throw new Error('阅读工作区正在关闭。');
+    if(!this.learningHost)this.learningHost=createLearningHost({plugin:this,Modal,Notice});
+    return this.learningHost;
+  }
+
   async getVocabularyRuntime() {
     await this.initializeVocabulary();
     if (this.isUnloading) throw new Error("词汇工作台正在关闭。");
@@ -6117,6 +6143,16 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   createVocabularyWorkbenchApi() {
     const get = () => this.getVocabularyRuntime();
+    let reviewPagerPromise=null;
+    const getReviewPager=()=>{
+      if(!reviewPagerPromise){
+        const pending=this.getLearningHost().createWorkbenchReviewPager();
+        reviewPagerPromise=pending;
+        pending.catch(()=>{if(reviewPagerPromise===pending)reviewPagerPromise=null;});
+      }
+      return reviewPagerPromise;
+    };
+    const invalidateReview=async()=>{if(reviewPagerPromise)await(await reviewPagerPromise).invalidate();};
     return {
       listFamilies: async (options) => this.getVocabularyService().listFamilies(options),
       getFamilyDetails: async (familyKey) => {
@@ -6157,28 +6193,44 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       },
       listContexts: async (familyKey, options) => (await get()).contexts.listFamily(familyKey, options),
       openContext: async (contextId) => this.openVocabularyContext(contextId),
-      listDueReview: async (options) => {
-        const runtime = await get();
-        return runtime.exclusive(async () => (await runtime.ensureReviewSession()).listDue(options));
+      addContextToReview: async contextId=>{
+        await this.getLearningHost().fromContextId(contextId);
+        return {status:'draft',message:'学习草稿已打开；确认前不会加入复习。'};
       },
-      applyReviewAction: async ({ kind, familyKey, actionId } = {}) => {
+      openReviewSource: async ({providerId='vocabulary',itemId,familyKey}={})=>{
+        if(providerId==='learning')return this.getLearningHost().openItemSource(itemId);
+        if(providerId==='vocabulary')return this.getLearningHost().openVocabularySource(familyKey||itemId);
+        throw new TypeError('复习来源类型无效。');
+      },
+      listDueReview: async (options) => {
+        const pager=await getReviewPager();
+        if(options?.cursor==null)await pager.invalidate();
+        return pager.listDue(options);
+      },
+      applyReviewAction: async ({ kind, familyKey, itemId, providerId='vocabulary', actionId } = {}) => {
         if (!["remember", "forget", "skip"].includes(kind)) throw new TypeError("复习操作必须是 remember、forget 或 skip。");
-        if (typeof familyKey !== "string" || !familyKey || familyKey.length > 4096) throw new TypeError("复习词族身份无效。");
+        const id=itemId||familyKey;
+        if(!['vocabulary','learning'].includes(providerId)||typeof id!=='string'||!id||id.length>4096)throw new TypeError('复习条目身份无效。');
         if (typeof actionId !== "string" || !actionId || actionId.length > 256 || /[\\/\u0000-\u001f\u007f]/.test(actionId)) {
           throw new TypeError("复习操作需要稳定且安全的 action ID。");
         }
-        const runtime = await get();
-        return runtime.exclusive(async () => {
-          const review = await runtime.ensureReviewSession();
-          return review[kind](familyKey, { actionId });
-        });
+        return (await getReviewPager()).rate({providerId,itemId:id,kind,actionId});
       },
       listHistory: async () => ({ batches: await (await get()).history.listBatches() }),
-      previewHistory: async (batchId, options) => (await get()).history.previewRestore(batchId, options),
-      restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => (await get()).restore(batchId, { selected: selectedCleanIds, deviceId }),
+      previewHistory: async (batchId, options) => {
+        await this.getLearningHost().getService();
+        return (await get()).history.previewRestore(batchId, options);
+      },
+      restoreHistory: async (batchId, { selectedCleanIds, deviceId } = {}) => {
+        await this.getLearningHost().getService();
+        const result=await(await get()).restore(batchId,{selected:selectedCleanIds,deviceId});
+        if(result.status==='committed')await invalidateReview();
+        return result;
+      },
       importJson: (text, policy) => this.importVocabulary(text, "json", policy),
       importCsv: (text, policy) => this.importVocabulary(text, "csv", policy),
       exportCsv: () => this.getVocabularyService().exportCsv(),
+      exportLearning:async format=>(await this.getLearningHost().getService()).exportItems(format),
       exportJson: async () => {
         const runtime = await get();
         return runtime.exclusive(async () => {
@@ -6187,7 +6239,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           return createVocabularyTransfer({ runtime }).exportBundle();
         });
       },
-      close: async () => { if (this.vocabularyRuntime) await this.vocabularyRuntime.close(); },
+      close: async () => {
+        await invalidateReview();
+        await this.learningHost?.endReviewSession();
+        if(this.vocabularyRuntime)await this.vocabularyRuntime.close();
+      },
     };
   }
 

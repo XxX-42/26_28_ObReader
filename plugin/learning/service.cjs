@@ -88,6 +88,13 @@ function validateSource(source) {
       !Number.isSafeInteger(source.pageIndex) || source.pageIndex < 0)) {
     throw codedError("LEARNING_SOURCE_INVALID", "PDF SemanticAnchor must include stable document, source, page, and targetText evidence.");
   }
+  if (!noteEvidence) {
+    try {
+      encodeReaderLinkFragment({docKey:source.docKey,documentId:source.documentId,target:source.target});
+    } catch(error) {
+      throw codedError('LEARNING_SOURCE_INVALID','PDF source must use the existing Reader identity protocol.',undefined,error);
+    }
+  }
   if (source.targetTextSource !== undefined && !["captured", "stored", "recovered", "unavailable"].includes(source.targetTextSource)) {
     throw codedError("LEARNING_SOURCE_INVALID", "SemanticAnchor targetTextSource is unsupported.");
   }

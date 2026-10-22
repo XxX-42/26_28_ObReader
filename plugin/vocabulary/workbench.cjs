@@ -118,6 +118,9 @@ function createVocabularyWorkbench({ Modal, Notice } = {}) {
 
     _activateTab(id) {
       if (!TABS.some(([key]) => key === id)) return;
+      if(id==='review'&&this.activeTab!=='review') {
+        this.reviewPageState={cursors:[null],index:0,nextCursor:null,generation:this.reviewPageState.generation+1};
+      }
       this.activeTab = id;
       for (const [key, button] of this.tabButtons) {
         button.setAttribute?.("aria-selected", key === id ? "true" : "false");

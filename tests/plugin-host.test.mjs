@@ -4651,7 +4651,12 @@ test("Vocabulary workbench host keeps list/dictionary/hot-path stores separate a
   assert.equal((await service.getTerm("walk")).note, "工作台编辑");
   const result = await api.setReviewEnrollment([walk.familyKey, known.familyKey], { enrolled: true });
   assert.equal(result.results[1].status, "skipped-known");
-  assert.equal((await api.listDueReview({ limit: 100 })).total, 1);
+  const duePage=await api.listDueReview({limit:100});
+  assert.equal(duePage.items.length,1);
+  assert.equal(duePage.items[0].providerId,'vocabulary');
+  assert.equal(duePage.items[0].familyKey,walk.familyKey);
+  assert.equal(duePage.nextCursor,null);
+  assert.equal(duePage.total,undefined,'mixed providers do not invent an exact global total');
   const beforeMatch = new Map(harness.storedFiles);
   await service.matchPageTokens(["walking", "known"]);
   assert.deepEqual([...harness.storedFiles], [...beforeMatch], "matching cannot mutate Review or history");
@@ -4666,7 +4671,12 @@ test("Vocabulary workbench host keeps list/dictionary/hot-path stores separate a
   const imported = await restored.plugin.importVocabulary(JSON.stringify(bundle), "json", { defaultStatus: 1 });
   assert.equal(imported.status, "committed");
   assert.equal((await restored.plugin.getVocabularyService().getTerm("walk")).note, "工作台编辑");
-  assert.equal((await restored.plugin.createVocabularyWorkbenchApi().listDueReview({ limit: 100 })).total, 1);
+  const restoredDue=await restored.plugin.createVocabularyWorkbenchApi().listDueReview({limit:100});
+  assert.equal(restoredDue.items.length,1);
+  assert.equal(restoredDue.items[0].familyKey,walk.familyKey);
+  assert.equal(restoredDue.items[0].state.box,duePage.items[0].state.box);
+  assert.equal(restoredDue.items[0].dueAt,duePage.items[0].dueAt);
+  assert.equal(restoredDue.nextCursor,null);
   await restored.plugin.createVocabularyWorkbenchApi().close();
   restored.plugin.onunload();
   assert.ok([...harness.storedFiles.keys()].filter((path) => path.startsWith("00_Archive/")).every((path) => path.startsWith("00_Archive/21_VocabularyData/")));
@@ -4691,7 +4701,9 @@ test("Review host applies stable acknowledged ratings without rewriting personal
   assert.equal(retry.status, "duplicate");
   assert.equal(retry.state.box, 2, "retrying the acknowledged action does not advance twice");
   assert.equal(harness.storedFiles.get(corePath), coreBefore, "Review ratings never rewrite en.vocab.json");
-  assert.equal((await api.listDueReview({ limit: 100 })).total, 0, "remembering moves the card to its next UTC interval");
+  const afterRating=await api.listDueReview({limit:100});
+  assert.equal(afterRating.items.length,0,'remembering moves the card to its next UTC interval');
+  assert.equal(afterRating.nextCursor,null);
 
   const runtime = harness.plugin.vocabularyRuntime;
   await Promise.all([api.close(), api.close(), runtime.close()]);
@@ -4713,6 +4725,37 @@ test("Workbench command opens the shared factory class with a narrow lazy host f
   await assert.rejects(modal.api.setReviewEnrollment(Array(101).fill("family"), { enrolled: true }), RangeError);
   assert.equal([...harness.storedFiles.keys()].some((path) => path.startsWith("00_Archive/21_VocabularyData/")), false,
     "oversized bulk input is rejected before any vocabulary data writes");
+  harness.plugin.onunload();
+});
+
+test('learning Host wiring stays lazy and accepts only the authenticated current Reader request', async () => {
+  const harness=createHarness({storageProtocol:'wal'});
+  await harness.plugin.onload();
+  assert.equal(typeof harness.plugin.getLearningHost,'function');
+  assert.equal(harness.plugin.learningHost,null);
+  const api=harness.plugin.createVocabularyWorkbenchApi();
+  for(const name of ['addContextToReview','openReviewSource','exportLearning'])assert.equal(typeof api[name],'function');
+  assert.equal(harness.plugin.learningHost,null,'workbench shell must not initialize learning state');
+  assert.ok(harness.plugin.commands.has('add-markdown-selection-to-review'));
+  const reader=await createSidecarReader(harness,new harness.TFile('Books/learning-message.pdf'));
+  const calls=[];
+  harness.plugin.getLearningHost=()=>({fromAnnotationRequest:async(view,message)=>calls.push({view,message})});
+  const {view,frame}=reader;
+  const message={channel:'pdf-web-reader',token:view.token,type:'learning-review-draft-request',
+    documentId:view.documentId,openRequest:view.openRequest,rendererGeneration:view.rendererGeneration,
+    uuid:'exact-highlight',pageIndex:0,targetText:'quote'};
+  for(const invalid of [{token:'wrong'},{documentId:'old'},{openRequest:-1},{rendererGeneration:'old'}]) {
+    view.onMessage({source:frame,data:{...message,...invalid}});
+  }
+  view.onMessage({source:{},data:message});
+  await settleMicrotasks();
+  assert.equal(calls.length,0);
+  view.onMessage({source:frame,data:message});
+  await settleMicrotasks();
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].view,view);
+  assert.equal(calls[0].message,message);
+  assert.equal(harness.storedFiles.has('00_Archive/21_VocabularyData/learning/items/manifest.json'),false);
   harness.plugin.onunload();
 });
 
