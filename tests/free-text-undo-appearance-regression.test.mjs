@@ -1,4 +1,4 @@
-import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
+import { isInlineResource } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser, getTestBrowserLaunchMetadata } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -672,7 +672,7 @@ test(
         if (message.type() === "error") consoleErrors.push(message.text());
       });
       page.on("request", (request) => {
-        if (!isInlineToolbarIcon(request.url()) && new URL(request.url()).origin !== baseUrl) externalRequests.push(request.url());
+        if (!isInlineResource(request.url()) && new URL(request.url()).origin !== baseUrl) externalRequests.push(request.url());
       });
       await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
       const viewer = page.frames().find((frame) => frame.name() === "pdf-reader");

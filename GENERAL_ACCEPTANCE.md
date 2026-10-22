@@ -1,3 +1,24 @@
+# Viewer CSS icon resource loading — 0.12.2 candidate
+
+The desktop and mobile srcdoc loaders now inline verified Viewer CSS image
+assets as data URLs. This addresses blank PDF.js toolbar icons caused by CSS
+image requests from the sandboxed `about:srcdoc` iframe failing against Obsidian
+`app://` resource URLs. The frozen PDF.js vendor files are unchanged.
+
+Validation: `mobile-main.test.mjs` plus `asset-runtime.test.mjs` passed 18/18;
+`npm run build` passed with exactly three release files, 406 embedded runtime
+assets, and 402 frozen vendor files; `npm run test:offline` passed including a
+browser assertion that the zoom and five annotation tool pseudo-element masks
+are inline SVG data URLs with non-zero button geometry; `npm run test:browser`
+passed 27/27. `npm test` is not fully green on this Windows host: its fast gate
+reported 99 passed and one gate failure because `browser-test-cleanup.test.mjs`
+contains five POSIX/macOS-only skips, which the runner treats as ineligible.
+The test-Vault package remains at 0.12.1 and was not replaced because the
+Reader is currently open and the plugin is enabled; deployment preflight will
+not unload a live Reader. No user PDF or sidecar was changed.
+
+---
+
 # PDF Highlight row-collision avoidance — 0.12.1 candidate
 
 The current candidate applies LingQ's shared pure rectangle-collision geometry

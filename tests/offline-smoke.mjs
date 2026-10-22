@@ -1,4 +1,4 @@
-import { isInlineToolbarIcon } from "./inline-toolbar-icons.mjs";
+import { isInlineResource } from "./inline-toolbar-icons.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -175,7 +175,7 @@ try {
     }
   });
   page.on("request", (request) => {
-    if (!isInlineToolbarIcon(request.url()) && new URL(request.url()).origin !== baseUrl) {
+    if (!isInlineResource(request.url()) && new URL(request.url()).origin !== baseUrl) {
       externalRequests.push(request.url());
     }
   });
@@ -362,6 +362,30 @@ try {
   const viewer = page.frames().find((frame) => frame.name() === "pdf-reader");
   assert.ok(viewer, "Expected the isolated viewer frame");
   await viewer.waitForSelector(".textLayer span");
+  const toolbarIcons = await viewer.evaluate(() => [
+    "zoomInButton",
+    "editorUnderlineButton",
+    "editorSquareButton",
+    "editorHighlightButton",
+    "editorInkButton",
+    "editorFreeTextButton",
+  ].map((id) => {
+    const button = document.getElementById(id);
+    const rect = button?.getBoundingClientRect();
+    const icon = getComputedStyle(button, "::before");
+    return {
+      id,
+      maskImage: icon.maskImage || icon.webkitMaskImage,
+      width: rect?.width || 0,
+      height: rect?.height || 0,
+    };
+  }));
+  for (const icon of toolbarIcons) {
+    assert.match(icon.maskImage, /^url\(["']?data:image\/svg\+xml/i,
+      `${icon.id} must use an inline SVG mask inside the sandboxed Viewer`);
+    assert.ok(icon.width > 0 && icon.height > 0,
+      `${icon.id} must have a visible toolbar box`);
+  }
   await viewer.evaluate(() => {
     const app = window.PDFViewerApplication;
     window.__offlineOpenEvents = [];

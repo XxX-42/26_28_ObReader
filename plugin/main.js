@@ -2336,6 +2336,36 @@ class PdfReaderView extends EditableFileView {
     return this.resourcePromise;
   }
 
+  async inlineViewerCssImageResources(css) {
+    const imagePaths = new Set();
+    const imageUrlPattern = /url\(\s*(["']?)(images\/[^)"'\s]+)\1\s*\)/giu;
+    for (const match of css.matchAll(imageUrlPattern)) imagePaths.add(match[2]);
+    if (!imagePaths.size) return css;
+
+    const mimeTypes = new Map([
+      [".gif", "image/gif"],
+      [".jpeg", "image/jpeg"],
+      [".jpg", "image/jpeg"],
+      [".png", "image/png"],
+      [".svg", "image/svg+xml;charset=utf-8"],
+      [".webp", "image/webp"],
+    ]);
+    const replacements = new Map();
+    await Promise.all([...imagePaths].map(async (imagePath) => {
+      const extension = imagePath.slice(imagePath.lastIndexOf(".")).toLowerCase();
+      const mimeType = mimeTypes.get(extension);
+      if (!mimeType || imagePath.split("/").some((part) => !part || part === "." || part === "..")) {
+        throw new Error(`Unsupported bundled Viewer image: ${imagePath}`);
+      }
+      const bytes = await this.plugin.readVerifiedAsset(`web/${imagePath}`);
+      const encoded = Array.from(bytes, (byte) => `%${byte.toString(16).padStart(2, "0")}`).join("");
+      replacements.set(imagePath, `url("data:${mimeType},${encoded}")`);
+    }));
+
+    return css.replace(imageUrlPattern, (original, _quote, imagePath) =>
+      replacements.get(imagePath) || original);
+  }
+
   async loadViewerDocument() {
     const started = Date.now();
     if (this.plugin.isMobileRuntime) this.setMobileLoaderStage("assets-loading");
@@ -2358,10 +2388,11 @@ class PdfReaderView extends EditableFileView {
       this.plugin.readVerifiedAssetText("web/viewer.css"),
       this.plugin.readVerifiedAssetText("web/bridge.css"),
     ]);
+    const viewerCssWithInlineImages = await this.inlineViewerCssImageResources(viewerCss);
     const viewerUrl = this.app.vault.adapter.getResourcePath(viewerHtmlPath);
     const webBase = new URL("./", viewerUrl).href;
     return this.plugin.runtimeAdapter.createViewerDocument(this, {
-      assets, viewerHtml, viewerCss, bridgeCss, viewerUrl, webBase,
+      assets, viewerHtml, viewerCss: viewerCssWithInlineImages, bridgeCss, viewerUrl, webBase,
     });
   }
 

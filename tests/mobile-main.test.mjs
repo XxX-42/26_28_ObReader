@@ -23,7 +23,9 @@ function makeAssets() {
         <script src="viewer.mjs" type="module"></script>
         </head><body><main id="viewer"></main></body></html>`,
     ],
-    ["web/viewer.css", "#viewer { color: black; }"],
+    ["web/viewer.css", `#viewer { color: black; background-image: url(images/test-toolbar.svg); }
+      .loading { background-image: url(\"images/loading-icon.gif\"); }
+      .local { mask-image: url(#local-mask); }`],
     ["web/bridge.css", ".bridge { display: block; }"],
   ]);
   const binary = new Map([
@@ -31,6 +33,8 @@ function makeAssets() {
     ["build/pdf.mjs", encoder.encode("globalThis.pdfjsLib = { version: 'test' };")],
     ["web/viewer.mjs", encoder.encode("globalThis.viewerLoaded = true;")],
     ["build/pdf.worker.mjs", encoder.encode("globalThis.workerLoaded = true;")],
+    ["web/images/test-toolbar.svg", encoder.encode("<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0h1v1H0z\"/></svg>")],
+    ["web/images/loading-icon.gif", Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00])],
   ]);
   const files = [...strings, ...binary].map(([assetPath, value]) => {
     const bytes = typeof value === "string" ? encoder.encode(value) : value;
@@ -43,6 +47,30 @@ function makeAssets() {
   });
   return { strings, binary, payload: { schema: 1, id: "test", contentHash: "a".repeat(64), files } };
 }
+
+test("desktop and mobile srcdoc inline verified PDF.js CSS image assets", async () => {
+  for (const config of [
+    { appMobile: false, platformDesktop: true },
+    { appMobile: true },
+  ]) {
+    const harness = makeHarness(config);
+    await harness.plugin.onload();
+    const view = harness.makeView();
+    view.iframe = {
+      contentWindow: { parent: {} },
+      ownerDocument: { defaultView: harness.makeWindow() },
+      srcdoc: "",
+      remove() {},
+    };
+    const html = await view.createViewerDocument();
+
+    assert.match(html, /data:image\/svg\+xml;charset=utf-8,%3c%73%76%67/i);
+    assert.match(html, /data:image\/gif,%47%49%46/i);
+    assert.doesNotMatch(html, /url\(\s*["']?images\/(?:test-toolbar\.svg|loading-icon\.gif)/i);
+    assert.match(html, /url\(#local-mask\)/, "non-resource fragment URLs remain unchanged");
+    harness.plugin.onunload();
+  }
+});
 
 function makeHarness({ appMobile = true, platformMobile = false, platformIos = false, platformDesktop = false, savedData = null } = {}) {
   const { strings, binary, payload } = makeAssets();
