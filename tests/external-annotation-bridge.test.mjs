@@ -288,6 +288,16 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     assert.deepEqual(reviewRequests, [{ uuid: "b", pageIndex: 1, targetText: "selected JavaScript target text",
       targetTextSource: "stored", current: true }], "the review action carries one read-only text snapshot");
     assert.equal(navigated.length, 0, "review button clicks do not also activate Reader navigation");
+    list.dispatch("click", { target: unavailableReviewButton });
+    assert.equal(navigated.length, 0, "disabled review actions do not fall through to row navigation");
+    assert.equal(reviewRequests.length, 1, "disabled review actions do not create a draft");
+    const bareHighlightRow = refreshedRows.find(row => row.dataset.uuid === "b");
+    list.dispatch("click", { target: bareHighlightRow });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(navigated, [["b", 1]], "bare row padding retains exact UUID and page navigation");
+    assert.equal(bareHighlightRow.classList.contains("selected"), true, "bare row activation updates selected state");
+    assert.equal(reviewRequests.length, 1, "bare row navigation does not create a learning draft");
+    navigated = [];
 
     const collectBeforeSearch = collectCalls;
     searchInput.value = "javascript";

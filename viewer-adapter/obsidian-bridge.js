@@ -2144,8 +2144,6 @@
           targetText: item.targetText, targetTextSource: item.targetTextSource }, guard);
         return;
       }
-      const navigateButton = event.target?.closest?.(".pdfReaderAnnotationSidebarNavigate");
-      if (!navigateButton) return;
       const row = event.target?.closest?.("li.sidebarComment");
       if (!row || !list.contains(row)) return;
       void activate(row, false);
