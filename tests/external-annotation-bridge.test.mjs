@@ -71,6 +71,30 @@ function evaluateHelpers(names, body, exposed = []) {
   return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
 
+test("highlight sidebar ignores hydrated accessibility labels and retains captured or stored quotes", () => {
+  const helpers = evaluateHelpers(
+    ["getLiveAnnotationSidebarTexts", "getAnnotationSidebarTargetTextEvidence"],
+    `const state = {
+      app: { pdfViewer: { _layerProperties: { annotationEditorUIManager: {
+        getEditor: () => ({ editorType: "Highlight", div: { getAttribute: () => "高亮编辑器" } }),
+      } } } },
+      annotationUuidByRuntimeId: new Map([["runtime-1", "quote-1"]]),
+      annotationTargetTextByRuntimeId: new Map(),
+    };
+    function normalizeSyncKind(value) { return value; }
+    function getLegacyHighlightSidebarTargetText() { throw new Error("stored text must avoid geometry recovery"); }`,
+    ["state"],
+  );
+  const targets = new Map([["quote-1", { uuid: "quote-1", kind: "Highlight", pageIndex: 0,
+    editorPayload: { text: "Dynamic languages such as JavaScript" } }]]);
+  assert.equal(helpers.getLiveAnnotationSidebarTexts().size, 0);
+  assert.deepEqual(helpers.getAnnotationSidebarTargetTextEvidence(targets).get("quote-1"),
+    { text: "Dynamic languages such as JavaScript", source: "stored" });
+  helpers.state.annotationTargetTextByRuntimeId.set("runtime-1", "new exact selection");
+  assert.deepEqual(helpers.getAnnotationSidebarTargetTextEvidence(targets).get("quote-1"),
+    { text: "new exact selection", source: "captured" });
+});
+
 test("annotation sidebar is lazy, uses sorted active targets, and refreshes only while open", async () => {
   const helpers = evaluateHelpers(
     ["getLiveAnnotationSidebarTexts", "getAnnotationSidebarTargetTexts", "getLegacyHighlightSidebarTargetText",
@@ -979,6 +1003,7 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     const state = {
       app: { pdfDocument: { numPages: 1, annotationStorage: { serializable: { map: new Map([["editor-1", stale]]) } } }, pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } },
       annotationUuidByRuntimeId: new Map([["editor-1", "annotation-1"]]),
+      annotationTargetTextByRuntimeId: new Map([["editor-1", "  exact selected quote  "]]),
       annotationRefByRuntimeId: new Map(), annotationUuidByPdfRef: new Map(), syncState: null,
       annotationSnapshot: new Map([["editor-1", { runtimeId: "editor-1", uuid: "annotation-1", reference: null, operationReference: null, annotationElementId: null, pageIndex: 0, kind: "Highlight", deleted: false, value: stale, signature: JSON.stringify(stale) }]]),
       annotationOperations: [], dirtyAnnotationRevisions: new Map(), dirtyPageRevisions: new Map(),
@@ -1013,6 +1038,17 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
   assert.deepEqual(snapshot.missingDirtyIds, []);
   assert.equal(scope.logs.at(-1).liveEditorCount, 1);
   assert.equal(scope.logs.at(-1).operationCount, 1);
+  // After hydration, the localized accessibility label describes the editor.
+  // A later color edit must retain the quote already saved in the prior row.
+  scope.state.annotationTargetTextByRuntimeId.clear();
+  scope.state.app.pdfViewer._layerProperties.annotationEditorUIManager.getEditor("editor-1").div.getAttribute = () => "高亮编辑器";
+  scope.state.annotationSnapshot.get("editor-1").value = { ...scope.state.annotationSnapshot.get("editor-1").value,
+    text: "  exact selected quote  " };
+  scope.setLive({ annotationType: 9, pageIndex: 0, color: [255, 0, 0],
+    quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] });
+  const hydratedSnapshot = scope.captureOperationSnapshot(10, "save");
+  assert.equal(hydratedSnapshot.operations[0].payload.editor.text, "  exact selected quote  ",
+    "a later edit retains the stored quote instead of persisting the generic accessibility label");
   // PDF.js publishes deletion placeholders without a type. Exact UUID-bound
   // previous metadata supplies the original kind instead of Unknown.
   scope.state.app.pdfDocument.annotationStorage.serializable.map.set("editor-1", { deleted: true });

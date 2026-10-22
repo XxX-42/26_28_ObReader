@@ -1850,8 +1850,10 @@
       if (typeof uuid !== "string" || !uuid) continue;
       const editor = manager.getEditor?.(runtimeId);
       if (normalizeSyncKind(editor?.editorType) !== "Highlight") continue;
-      const text = editor.div?.getAttribute?.("aria-label")?.trim();
-      if (text) texts.set(uuid, text);
+      // Accessibility labels can become localized editor role descriptions
+      // after hydration. Only the exact selection capture is live quote evidence.
+      const text = state.annotationTargetTextByRuntimeId?.get(runtimeId);
+      if (typeof text === "string" && text.trim()) texts.set(uuid, text);
     }
     return texts;
   }
@@ -3616,7 +3618,7 @@
       }
       if (value?.deleted !== true && normalizeSyncKind(kind) === "Highlight") {
         const targetText = state.annotationTargetTextByRuntimeId?.get(runtimeId) ||
-          editor.div?.getAttribute?.("aria-label") || value?.text ||
+          value?.text ||
           exactRow?.editorPayload?.text || priorRow?.value?.text;
         if (typeof targetText === "string" && targetText.trim()) {
           // PDF.js captures Selection.toString() for a Highlight, but its
