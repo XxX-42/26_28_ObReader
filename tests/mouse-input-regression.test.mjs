@@ -2823,6 +2823,28 @@ test(
       // Schedule both PDF.js resume callbacks in the trusted pointerdown task,
       // before the browser's normal button focus action and before timers run.
       button.addEventListener("pointerdown", () => {
+        // A queued PDF.js render can call show() and pause(false) after the
+        // earlier readiness sample but before this trusted click. Start the
+        // toolbar assertion window at the input boundary, not at that older
+        // async render boundary.
+        const pauseEntries = window.__mousePdfEditorLifecycleTrace
+          .filter((entry) => entry.method === "layer.pause.begin");
+        window.__mouseToolbarPauseTraceStart = pauseEntries.length;
+        window.__mouseToolbarPreClickPauseEvents = pauseEntries
+          .slice(state.pauseCountBeforeHide);
+        const toolbarEditor = manager.getEditor(state.editorId);
+        const toolbarInternal = toolbarEditor?.div?.querySelector(".internal");
+        window.__mouseToolbarPointerdownState = {
+          activeElementIsEditor:document.activeElement === toolbarInternal,
+          editorConnected:Boolean(toolbarEditor?.div?.isConnected),
+          editorSelected:Boolean(toolbarEditor?.div?.classList.contains("selectedEditor")),
+          editorEditing:Boolean(toolbarEditor?.isInEditMode?.()),
+          text:toolbarInternal?.textContent?.replace(/\u200b/g, "") ?? null,
+          annotationStorageModified:Boolean(app._annotationStorageModified),
+          hasChanges:typeof app._hasChanges === "function"
+            ? Boolean(app._hasChanges())
+            : null,
+        };
         window.__mouseManualPauseResumeCalls.push("pause(true)");
         pageLayer.pause(true);
         window.__mouseManualPauseResumeCalls.push("show()");
@@ -2955,13 +2977,16 @@ test(
         focusIsInEditor:Boolean(editor?.div?.contains(document.activeElement)),
         editorConnected:Boolean(editor?.div?.isConnected),
         text:internal?.textContent?.replace(/\u200b/g, "") ?? null,
+        toolbarPauseTraceStart:window.__mouseToolbarPauseTraceStart ?? null,
+        toolbarPointerdownState:window.__mouseToolbarPointerdownState ?? null,
+        preClickPauseEvents:window.__mouseToolbarPreClickPauseEvents ?? [],
         pauseCalls:window.__mousePdfEditorLifecycleTrace
           ?.filter((entry) => entry.method === "layer.pause.begin")
-          .slice(pausedState.pauseCountBeforeResumeProbe)
+          .slice(window.__mouseToolbarPauseTraceStart ?? pausedState.pauseCountBeforeResumeProbe)
           .map((entry) => entry.callArgs?.paused ?? null) ?? [],
         pauseEvents:window.__mousePdfEditorLifecycleTrace
           ?.filter((entry) => entry.method === "layer.pause.begin")
-          .slice(pausedState.pauseCountBeforeResumeProbe)
+          .slice(window.__mouseToolbarPauseTraceStart ?? pausedState.pauseCountBeforeResumeProbe)
           .map((entry) => ({
             paused:entry.callArgs?.paused ?? null,
             stack:entry.stack || [],
@@ -2977,6 +3002,33 @@ test(
     assert.equal(resumedFreeText.focusIsInEditor, false, JSON.stringify(resumedFreeText));
     assert.equal(resumedFreeText.editorConnected, true, JSON.stringify(resumedFreeText));
     assert.equal(resumedFreeText.text, typedFreeText.text, JSON.stringify(resumedFreeText));
+    assert.ok(Number.isInteger(resumedFreeText.toolbarPauseTraceStart),
+      `The pause trace boundary must be captured at trusted toolbar pointerdown: ${JSON.stringify(resumedFreeText)}`);
+    assert.equal(resumedFreeText.toolbarPointerdownState?.activeElementIsEditor, true,
+      JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.toolbarPointerdownState?.editorConnected, true,
+      JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.toolbarPointerdownState?.editorSelected, true,
+      JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.toolbarPointerdownState?.editorEditing, true,
+      JSON.stringify(resumedFreeText));
+    assert.equal(resumedFreeText.toolbarPointerdownState?.text, typedFreeText.text,
+      JSON.stringify(resumedFreeText));
+    assert.equal(typeof resumedFreeText.toolbarPointerdownState?.annotationStorageModified,
+      "boolean", JSON.stringify(resumedFreeText));
+    const preClickShowPauses = resumedFreeText.preClickPauseEvents.filter((event) =>
+      event.callArgs?.paused === false && event.stack.some((frame) =>
+        frame.includes("AnnotationEditorLayerBuilder.show"),
+      ),
+    );
+    assert.ok(preClickShowPauses.every((event) =>
+      event.activeEditor?.id === pausedFreeText.editorId &&
+      event.activeEditor?.attached === true &&
+      event.activeEditor?.selected === true &&
+      event.activeEditor?.editing === true &&
+      event.activeEditor?.empty === false &&
+      event.activeElement?.editable === true,
+    ), `Any pre-click builder.show pause(false) must preserve the live dirty editor: ${JSON.stringify(preClickShowPauses)}`);
     assert.deepEqual(
       resumedFreeText.pauseCalls.slice(0, 3),
       [true, false, false],
@@ -2984,12 +3036,10 @@ test(
     );
     const explicitToolbarPause = resumedFreeText.pauseEvents[0];
     assert.equal(explicitToolbarPause?.paused, true, JSON.stringify(resumedFreeText));
-    const additionalPauses = resumedFreeText.pauseEvents.slice(3).filter((event) =>
-      event.paused === true,
-    );
-    assert.ok(additionalPauses.every((event) => event.stack.some((frame) =>
-      frame.includes("PDFPageView.reset"),
-    )), `Any additional pause must be attributable to PDF.js page reset: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
+    const additionalPauses = resumedFreeText.pauseEvents.slice(3);
+    assert.ok(additionalPauses.every((event) => event.paused === true &&
+      event.stack.some((frame) => frame.includes("PDFPageView.reset"))),
+    `Every pause after the three captured toolbar calls must be an explicitly traced PDF.js page reset: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.equal(resumedFreeText.pauseEvents.at(-1)?.paused, false,
       `Both toolbar and redraw pauses must finish with the layer resumed: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.deepEqual(
@@ -3084,6 +3134,8 @@ test(
             window.__mouseTestMilestones.inactivePagePrepared ?? null,
           beforeFirstFreeTextClick:
             window.__mouseTestMilestones.beforeFirstFreeTextClick ?? null,
+          pauseResumeToolbarFocus:
+            window.__mouseTestMilestones.pauseResumeToolbarFocus ?? null,
           modeActivationBeforeTyping:
             window.__mouseTestMilestones.modeActivationBeforeTyping ?? null,
           focusBeforeTyping:
