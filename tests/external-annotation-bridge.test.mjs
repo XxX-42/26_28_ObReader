@@ -990,6 +990,8 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     "canonicalPdfAnnotationRef",
     "pdfAnnotationRefKey",
     "getPdfAnnotationRef",
+    "getLiveAnnotationSidebarTexts",
+    "getAnnotationSidebarTargetTextEvidence",
   ].map(functionSource).join("\n");
   const scope = vm.runInThisContext(`(() => {
     const stale = { annotationType: 9, pageIndex: 0, quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] };
@@ -1022,7 +1024,8 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     function findLiveSavedEditor() { return null; }
     function runtimeLogRecord(kind, fields) { logs.push({ kind, ...fields }); }
     ${helpers}
-    return { state, logs, captureOperationSnapshot, getAnnotationStorageRows, setLive(value) { live = value; } };
+    return { state, logs, captureOperationSnapshot, getAnnotationStorageRows,
+      getAnnotationSidebarTargetTextEvidence, setLive(value) { live = value; } };
   })()`);
 
   scope.setLive({ annotationType: 9, pageIndex: 0, quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] });
@@ -1049,6 +1052,23 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
   const hydratedSnapshot = scope.captureOperationSnapshot(10, "save");
   assert.equal(hydratedSnapshot.operations[0].payload.editor.text, "  exact selected quote  ",
     "a later edit retains the stored quote instead of persisting the generic accessibility label");
+  // A reopened sidecar uses editor.text; its hydrated runtime serialization
+  // and previous runtime snapshot can both omit the original selection.
+  scope.state.annotationSnapshot.get("editor-1").value = { annotationType: 9, pageIndex: 0 };
+  scope.state.externalAnnotationRows = new Map([["annotation-1", {
+    uuid: "annotation-1", kind: "Highlight", pageIndex: 0,
+    editor: { annotationType: 9, pageIndex: 0, text: "persisted sidecar quote" },
+  }]]);
+  scope.setLive({ annotationType: 9, pageIndex: 0, color: [0, 255, 0],
+    quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] });
+  const reopenedRow = scope.getAnnotationStorageRows(scope.state.app, { includeLiveEditors: true }).get("editor-1");
+  assert.equal(reopenedRow.value.text, "persisted sidecar quote",
+    "the exact UUID-bound sidecar editor payload supplies the stored quote after reopening");
+  assert.deepEqual(scope.getAnnotationSidebarTargetTextEvidence(new Map([[reopenedRow.uuid,
+    { ...reopenedRow, editorPayload: reopenedRow.value }]])).get("annotation-1"),
+  { text: "persisted sidecar quote", source: "stored" });
+  assert.equal(scope.captureOperationSnapshot(11, "save").operations[0].payload.editor.text,
+    "persisted sidecar quote", "a later color save retains the original sidecar quote");
   // PDF.js publishes deletion placeholders without a type. Exact UUID-bound
   // previous metadata supplies the original kind instead of Unknown.
   scope.state.app.pdfDocument.annotationStorage.serializable.map.set("editor-1", { deleted: true });

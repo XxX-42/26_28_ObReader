@@ -3619,7 +3619,7 @@
       if (value?.deleted !== true && normalizeSyncKind(kind) === "Highlight") {
         const targetText = state.annotationTargetTextByRuntimeId?.get(runtimeId) ||
           value?.text ||
-          exactRow?.editorPayload?.text || priorRow?.value?.text;
+          exactRow?.editor?.text || exactRow?.editorPayload?.text || priorRow?.value?.text;
         if (typeof targetText === "string" && targetText.trim()) {
           // PDF.js captures Selection.toString() for a Highlight, but its
           // serialize() omits that private text. Keep it in the existing
