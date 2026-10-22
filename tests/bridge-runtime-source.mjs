@@ -24,7 +24,8 @@ export async function readBridgeRuntimeSource(bridgePath = path.join(
   "obsidian-bridge.js",
 ), { gitRef = null } = {}) {
   const normalizeRepoPath = (absolutePath) =>
-    path.relative(testRoot, absolutePath).split(path.sep).join("/");
+    path.relative(testRoot, absolutePath instanceof URL ? fileURLToPath(absolutePath) : absolutePath)
+      .split(path.sep).join("/");
   const readRepoSource = async (relativePath) => gitRef
     ? execFileSync("git", ["show", `${gitRef}:${relativePath}`], {
       cwd: testRoot,
