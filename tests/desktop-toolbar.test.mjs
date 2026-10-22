@@ -1,6 +1,7 @@
 import { browserSidecarHarnessScript } from "./browser-sidecar-harness.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -61,7 +62,29 @@ function hostHtml() {
       window.__openedDocuments = [];
       window.__bridgeErrors = [];
       window.__bulkSeedAnnotations = [];
+      window.__bulkSeedTombstones = [];
       window.__bulkSavedOperations = [];
+      window.__snapshotRevision = 0;
+      window.__sendExternalAnnotationSnapshot = (annotations, tombstones = []) => {
+        const identity = window.__lastAnnotationSourceIdentity;
+        if (!identity) return false;
+        frame.contentWindow.postMessage({
+          channel, token, type: "external-annotations-update",
+          documentId: identity.documentId, openRequest: identity.openRequest,
+          readOnly: readOnlyByDocumentId.get(identity.documentId) === true,
+          identityConfirmed: true, sourceMatch: "BASELINE_ESTABLISHED",
+          externalAnnotations: {
+            schemaVersion: 2, kind: "pdf-annotation-snapshot",
+            documentId: identity.documentId, revision: ++window.__snapshotRevision,
+            source: {
+              sourcePath: "Tests/tracemonkey.pdf", sourceHash: identity.sourceHash ?? null,
+              pageCount: identity.pageCount, orderedPageIdentities: identity.orderedPageIdentities,
+            },
+            legacyIdentities: [], annotations, tombstones,
+          },
+        }, "*");
+        return true;
+      };
       window.__openPdf = async (readOnly) => {
         const data = await fetch("/fixtures/tracemonkey.pdf").then((response) => {
           if (!response.ok) throw new Error("Could not fetch PDF fixture");
@@ -91,6 +114,7 @@ function hostHtml() {
             filename: message.filename,
           });
         } else if (message.type === "annotation-source-identity") {
+          window.__lastAnnotationSourceIdentity = message;
           frame.contentWindow.postMessage({
             channel,
             token,
@@ -113,7 +137,7 @@ function hostHtml() {
               },
               legacyIdentities: [],
               annotations: window.__bulkSeedAnnotations,
-              tombstones: [],
+              tombstones: window.__bulkSeedTombstones,
             },
           }, "*");
         } else if (message.type === "save") {
@@ -498,6 +522,7 @@ test(
     skip: browserPath ? false : "Chrome or Edge is required for DOM geometry checks",
   },
   async (t) => {
+    const sourcePdfHashBefore = createHash("sha256").update(await readFile(fixturePath)).digest("hex");
     const vendorViewerHtml = viewerHtml(
       await readFile(path.join(vendorWeb, "viewer.html"), "utf8"),
     );
@@ -670,6 +695,34 @@ test(
         }));
         throw new Error(`${error.message}; toolbar=${JSON.stringify(toolbarState)}; pageErrors=${pageErrors.join(" | ")}`, { cause: error });
       }
+
+      const initialSidebar = await viewer.evaluate(() => ({
+        buttonExists: !!document.getElementById("pdfReaderAnnotationSidebarButton"),
+        buttonDisabled: document.getElementById("pdfReaderAnnotationSidebarButton")?.disabled,
+        menuHidden: document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden"),
+        listCount: document.getElementById("editorCommentsSidebarList")?.children.length,
+        count: document.getElementById("editorCommentsSidebarCount")?.textContent,
+        commentModeWrapperHidden: document.getElementById("editorComment")?.hidden,
+        originalCommentButtonHidden: document.getElementById("editorCommentButton")?.closest("#editorComment")?.hidden,
+        resizerHidden: document.getElementById("editorCommentsSidebarResizer")?.hidden,
+      }));
+      assert.equal(initialSidebar.buttonExists, true);
+      assert.equal(initialSidebar.buttonDisabled, false);
+      assert.equal(initialSidebar.menuHidden, true, "the annotation sidebar stays closed during PDF open");
+      assert.equal(initialSidebar.listCount, 0, "opening a PDF does not build annotation list rows");
+      assert.equal(initialSidebar.count, "0");
+      assert.equal(initialSidebar.commentModeWrapperHidden, true);
+      assert.equal(initialSidebar.originalCommentButtonHidden, true,
+        "PDF.js comment mode remains hidden and is not reused");
+      assert.equal(initialSidebar.resizerHidden, true, "the unsupported PDF.js resize handle stays hidden");
+      await viewer.$eval("#pdfReaderAnnotationSidebarButton", (button) => button.click());
+      await viewer.waitForFunction(() =>
+        !document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden"),
+      );
+      assert.equal(await viewer.$eval("#editorCommentsSidebarList", (list) => list.children.length), 0,
+        "opening an empty effective annotation set uses the existing sidebar DOM without creating placeholders");
+      await viewer.$eval("#editorCommentsSidebarCloseButton", (button) => button.click());
+      assert.equal(await viewer.$eval("#pdfReaderAnnotationSidebarMenu", (menu) => menu.classList.contains("hidden")), true);
 
       const wide = await measureToolbar(viewer);
       assert.equal(wide.toolbarHeight, 32);
@@ -1145,6 +1198,10 @@ test(
           makeRow("visible-square", 0, 45),
           makeRow("offscreen-square", pageCount - 1, 75),
         ];
+        parent.__bulkSeedTombstones = [{
+          uuid: "deleted-square", kind: "Square", pageIndex: 0, embeddedRef: null,
+          clock: { timestamp: 2, logical: 0, deviceId: "toolbar-test", opId: "deleted-square" },
+        }];
         return { pageCount, offscreenPageIndex: pageCount - 1 };
       });
       await page.evaluate(() => window.__openPdf(false));
@@ -1173,6 +1230,100 @@ test(
         throw new Error(`${error.message}; bulkFixture=${JSON.stringify(state)}; pageErrors=${pageErrors.join(" | ")}`, { cause: error });
       }
 
+      await viewer.$eval("#pdfReaderAnnotationSidebarButton", (button) => button.click());
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "2",
+      );
+      const sidebarFixture = await viewer.evaluate(() => ({
+        ids: [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .map((row) => row.dataset.uuid),
+        pageIndexes: [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .map((row) => Number(row.dataset.pageIndex)),
+        hiddenResizer: document.getElementById("editorCommentsSidebarResizer")?.hidden,
+      }));
+      assert.deepEqual(sidebarFixture.ids, ["visible-square", "offscreen-square"]);
+      assert.deepEqual(sidebarFixture.pageIndexes, [0, bulkDeleteFixture.offscreenPageIndex]);
+      assert.equal(sidebarFixture.hiddenResizer, true);
+      await viewer.$eval("#editorCommentsSidebarCloseButton", (button) => button.click());
+      assert.equal(await viewer.$eval("#pdfReaderAnnotationSidebarMenu", (menu) => menu.classList.contains("hidden")), true);
+      await viewer.$eval("#pdfReaderAnnotationSidebarButton", (button) => button.click());
+      await viewer.waitForFunction(() =>
+        !document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden") &&
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "2",
+      );
+
+      const externalUpdateSent = await page.evaluate((offscreenPageIndex) => {
+        const makeRow = (uuid, pageIndex) => ({
+          uuid, kind: "Square", pageIndex, embeddedRef: null, deleted: false,
+          clock: { timestamp: 3, logical: 0, deviceId: "external-update", opId: uuid },
+          payload: { editor: {
+            annotationType: 5, pageIndex, rect: [160, 90, 205, 135], rotation: 0,
+            color: [0, 0, 1], thickness: 2, opacity: 1, isCopy: true,
+          } },
+        });
+        return window.__sendExternalAnnotationSnapshot([
+          makeRow("visible-square", 0), makeRow("offscreen-square", offscreenPageIndex),
+          makeRow("external-added", 0),
+        ]);
+      }, bulkDeleteFixture.offscreenPageIndex);
+      assert.equal(externalUpdateSent, true);
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "3" &&
+        [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .some((row) => row.dataset.uuid === "external-added"),
+        { timeout: 10_000 },
+      );
+      const externalDeleteSent = await page.evaluate((offscreenPageIndex) => window.__sendExternalAnnotationSnapshot(
+        [
+          { uuid: "visible-square", kind: "Square", pageIndex: 0, embeddedRef: null, deleted: false,
+            clock: { timestamp: 3, logical: 0, deviceId: "external-update", opId: "visible-square" },
+            payload: { editor: { annotationType: 5, pageIndex: 0, rect: [45, 90, 90, 135],
+              rotation: 0, color: [1, 0, 0], thickness: 2, opacity: 1, isCopy: true } } },
+          { uuid: "offscreen-square", kind: "Square", pageIndex: offscreenPageIndex,
+            embeddedRef: null, deleted: false,
+            clock: { timestamp: 3, logical: 0, deviceId: "external-update", opId: "offscreen-square" },
+            payload: { editor: { annotationType: 5, pageIndex: offscreenPageIndex,
+              rect: [75, 90, 120, 135], rotation: 0, color: [1, 0, 0], thickness: 2,
+              opacity: 1, isCopy: true } } },
+        ],
+        [{ uuid: "external-added", kind: "Square", pageIndex: 0, embeddedRef: null,
+          clock: { timestamp: 4, logical: 0, deviceId: "external-update", opId: "external-added-delete" } }],
+      ), bulkDeleteFixture.offscreenPageIndex);
+      assert.equal(externalDeleteSent, true);
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "2" &&
+        ![...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .some((row) => row.dataset.uuid === "external-added"),
+        { timeout: 10_000 },
+      );
+
+      await viewer.$eval(
+        '#editorCommentsSidebarList li.sidebarComment[data-uuid="offscreen-square"]',
+        (row) => row.click(),
+      );
+      try {
+        await viewer.waitForFunction(({ pageIndex }) => {
+          const viewer = PDFViewerApplication.pdfViewer;
+          const manager = viewer._layerProperties.annotationEditorUIManager;
+          const row = document.querySelector('#editorCommentsSidebarList li.sidebarComment[data-uuid="offscreen-square"]');
+          return viewer.currentPageNumber === pageIndex + 1 && row?.classList.contains("selected") &&
+            [...manager.getEditors(pageIndex)].some((editor) => editor.pageIndex === pageIndex);
+        }, { timeout: 20_000 }, { pageIndex: bulkDeleteFixture.offscreenPageIndex });
+      } catch (error) {
+        const navigationState = await viewer.evaluate((pageIndex) => ({
+          pageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+          targetPageRendered: !!document.querySelector(`.page[data-page-number="${pageIndex + 1}"]`),
+          rowSelected: document.querySelector('#editorCommentsSidebarList li.sidebarComment[data-uuid="offscreen-square"]')?.classList.contains("selected"),
+          editors: [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(pageIndex)]
+            .map((editor) => ({ id: editor.id, pageIndex: editor.pageIndex, type: editor.editorType })),
+          comments: document.getElementById("editorCommentsSidebarCount")?.textContent,
+          bridgeErrors: parent.__bridgeErrors,
+        }), bulkDeleteFixture.offscreenPageIndex);
+        throw new Error(`${error.message}; annotationSidebarNavigation=${JSON.stringify(navigationState)}`, { cause: error });
+      }
+      await viewer.evaluate(() => { PDFViewerApplication.pdfViewer.currentPageNumber = 1; });
+      await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.currentPageNumber === 1);
+
       const latestSavedOperation = async (uuid, expectedDeleted) => {
         await viewer.waitForFunction(({ targetUuid, deleted }) => {
           const operations = (parent.__bulkSavedOperations || [])
@@ -1191,8 +1342,57 @@ test(
         await viewer.$eval(selector, (button) => button.click());
       };
 
+      await viewer.$eval("#editorSquareButton", (button) => button.click());
+      await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 5,
+        { timeout: 5_000 });
+      const squareGesture = await viewer.evaluate(() => {
+        const page = document.querySelector('.page[data-page-number="1"]');
+        const rect = page?.getBoundingClientRect();
+        if (!rect?.width || !rect?.height) throw new Error("The first page is not rendered for the local square gesture.");
+        return {
+          x1: rect.x + rect.width * 0.48,
+          y1: rect.y + rect.height * 0.55,
+          x2: rect.x + rect.width * 0.56,
+          y2: rect.y + rect.height * 0.63,
+        };
+      });
+      const iframeRect = await page.$eval("#pdf-reader", (iframe) => {
+        const rect = iframe.getBoundingClientRect();
+        return { x: rect.x, y: rect.y };
+      });
+      await page.mouse.move(iframeRect.x + squareGesture.x1, iframeRect.y + squareGesture.y1, { steps: 2 });
+      await page.mouse.down();
+      await page.mouse.move(iframeRect.x + squareGesture.x2, iframeRect.y + squareGesture.y2, { steps: 3 });
+      await page.mouse.up();
+      await viewer.waitForFunction(() =>
+        [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)]
+          .filter((editor) => editor.editorType === "square").length >= 2,
+        { timeout: 10_000 },
+      );
+      await viewer.waitForFunction(() => document.getElementById("editorCommentsSidebarCount")?.textContent === "3",
+        { timeout: 10_000 });
+      const addedLocalUuid = await viewer.evaluate(() => {
+        const ids = [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .map((row) => row.dataset.uuid);
+        return ids.find((uuid) => !["visible-square", "offscreen-square"].includes(uuid)) || null;
+      });
+      assert.ok(addedLocalUuid, "the newly created local square appears in the open sidebar before persistence");
+      await viewer.waitForFunction(() => !document.getElementById("pdfReaderBridgeUndoButton")?.disabled,
+        { timeout: 5_000 });
+      await viewer.$eval("#pdfReaderBridgeUndoButton", (button) => button.click());
+      await viewer.waitForFunction(({ uuid }) =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "2" &&
+        ![...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")]
+          .some((row) => row.dataset.uuid === uuid),
+        { timeout: 10_000 }, { uuid: addedLocalUuid });
+
       await clickMenuAction("#pdfReaderBridgeDeletePageAnnotationsButton");
       await latestSavedOperation("visible-square", true);
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "1" &&
+        document.querySelector('#editorCommentsSidebarList li.sidebarComment[data-uuid="offscreen-square"]'),
+        { timeout: 10_000 },
+      );
       assert.equal(
         await viewer.evaluate(() => [...PDFViewerApplication.pdfViewer._layerProperties
           .annotationEditorUIManager.getEditors(0)].length),
@@ -1201,6 +1401,10 @@ test(
       );
       await viewer.$eval("#pdfReaderBridgeUndoButton", (button) => button.click());
       await latestSavedOperation("visible-square", false);
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "2",
+        { timeout: 10_000 },
+      );
 
       const savesBeforeCancel = await page.evaluate(() => window.__bulkSavedOperations.length);
       await clickMenuAction("#pdfReaderBridgeDeleteAllAnnotationsButton");
@@ -1232,6 +1436,23 @@ test(
       await viewer.$eval("#pdfReaderBridgeRedoButton", (button) => button.click());
       await latestSavedOperation("visible-square", true);
       await latestSavedOperation("offscreen-square", true);
+      await viewer.waitForFunction(() =>
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "0",
+        { timeout: 10_000 },
+      );
+      await page.evaluate(() => {
+        window.__bulkSeedAnnotations = [];
+        window.__bulkSeedTombstones = [];
+        void window.__openPdf(false);
+      });
+      await page.waitForFunction(() => window.__openedDocuments?.length === 4, { timeout: 45_000 });
+      await viewer.waitForFunction(() =>
+        !document.getElementById("pdfReaderAnnotationSidebarButton")?.disabled &&
+        document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden") &&
+        document.getElementById("editorCommentsSidebarList")?.children.length === 0 &&
+        document.getElementById("editorCommentsSidebarCount")?.textContent === "0",
+        { timeout: 15_000 },
+      );
       assert.ok(bulkDeleteFixture.offscreenPageIndex > 0);
       assert.deepEqual(pageErrors, [], "The real vendor viewer should remain error-free");
     } catch (error) {
@@ -1249,6 +1470,8 @@ test(
       t.diagnostic(`Cleanup report: ${artifact}`);
     }
     const finalError = attachCleanupErrors(primaryError, cleanupReport);
+    const sourcePdfHashAfter = createHash("sha256").update(await readFile(fixturePath)).digest("hex");
+    assert.equal(sourcePdfHashAfter, sourcePdfHashBefore, "viewer and sidebar operations never write the PDF fixture");
     if (finalError) throw finalError;
   },
 );

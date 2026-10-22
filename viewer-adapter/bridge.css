@@ -581,6 +581,46 @@ body {
   margin-inline: 4px;
 }
 
+.pdfReaderAnnotationSidebarControl {
+  z-index: 30000;
+}
+
+#pdfReaderAnnotationSidebarButton::before {
+  -webkit-mask-image: var(--toolbarButton-editorComment-icon);
+          mask-image: var(--toolbarButton-editorComment-icon);
+  transform: scaleX(var(--dir-factor));
+}
+
+.pdfReaderAnnotationSidebarMenu {
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  width: min(360px, calc(100vw - 16px));
+  min-width: min(280px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(var(--viewer-container-height) - var(--toolbar-height) - 12px);
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.pdfReaderAnnotationSidebarMenu > #editorCommentsSidebar {
+  width: 100%;
+  height: min(68vh, calc(var(--viewer-container-height) - var(--toolbar-height) - 12px));
+  max-height: inherit;
+  overflow: hidden;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+#editorCommentsSidebarResizer {
+  display: none !important;
+}
+
+#editorCommentsSidebarListContainer {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 #scaleSelectContainer {
   width: 64px;
   min-width: 0;

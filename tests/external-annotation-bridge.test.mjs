@@ -71,6 +71,199 @@ function evaluateHelpers(names, body, exposed = []) {
   return vm.runInThisContext(`(() => { ${body}\n${helpers}\nreturn { ${[...names, ...exposed].join(", ")} }; })()`);
 }
 
+test("annotation sidebar is lazy, uses sorted active targets, and refreshes only while open", async () => {
+  const helpers = evaluateHelpers(
+    ["buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
+    "function normalizeSyncKind(value) { return value; }",
+  );
+  const previousDocument = globalThis.document;
+  const previousRaf = globalThis.requestAnimationFrame;
+  const previousCancelRaf = globalThis.cancelAnimationFrame;
+  const pendingFrames = [];
+
+  class Element {
+    constructor(tagName = "div") {
+      this.tagName = tagName;
+      this.children = [];
+      this.dataset = {};
+      this.attributes = new Map();
+      this.listeners = new Map();
+      this.parentElement = null;
+      this._classes = new Set();
+      this.textContent = "";
+      this.disabled = false;
+      this.tabIndex = -1;
+      this.classList = {
+        add: name => this._classes.add(name),
+        remove: name => this._classes.delete(name),
+        contains: name => this._classes.has(name),
+        toggle: (name, force) => {
+          const enabled = force ?? !this._classes.has(name);
+          if (enabled) this._classes.add(name);
+          else this._classes.delete(name);
+          return enabled;
+        },
+      };
+    }
+    set className(value) { this._classes = new Set(String(value).split(/\s+/).filter(Boolean)); }
+    get className() { return [...this._classes].join(" "); }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    addEventListener(type, listener) {
+      const listeners = this.listeners.get(type) || [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    }
+    removeEventListener(type, listener) {
+      this.listeners.set(type, (this.listeners.get(type) || []).filter(item => item !== listener));
+    }
+    dispatch(type, event = {}) {
+      for (const listener of this.listeners.get(type) || []) listener({ target: this, preventDefault() {}, ...event });
+    }
+    append(...nodes) {
+      for (const node of nodes) {
+        if (node.tagName === "#fragment") {
+          this.append(...node.children);
+          node.children = [];
+        } else {
+          node.parentElement = this;
+          this.children.push(node);
+        }
+      }
+    }
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+    querySelector() { return null; }
+    querySelectorAll(selector) {
+      const matches = [];
+      const visit = node => {
+        for (const child of node.children) {
+          if (selector === "li.sidebarComment" && child.tagName === "li" && child.classList.contains("sidebarComment")) matches.push(child);
+          visit(child);
+        }
+      };
+      visit(this);
+      return matches;
+    }
+    closest(selector) { return selector === "li.sidebarComment" && this.tagName === "li" ? this : null; }
+    contains(node) { return this.querySelectorAll("li.sidebarComment").includes(node); }
+    focus() { this.focused = true; }
+  }
+
+  globalThis.document = {
+    createElement: tagName => new Element(tagName),
+    createDocumentFragment: () => new Element("#fragment"),
+  };
+  globalThis.requestAnimationFrame = callback => { pendingFrames.push(callback); return pendingFrames.length; };
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const button = new Element("button");
+    const menu = new Element("div");
+    menu.className = "hidden";
+    const sidebar = new Element("div");
+    const list = new Element("ul");
+    const count = new Element("span");
+    const closeButton = new Element("button");
+    const editorPayload = { text: "not displayed or interpreted by the sidebar" };
+    const targets = new Map([
+      ["b", { uuid: "b", pageIndex: 1, kind: "Square", editorPayload }],
+      ["a", { uuid: "a", pageIndex: 0, kind: "Underline", editorPayload: null }],
+      ["deleted", { uuid: "deleted", pageIndex: 0, kind: "Highlight", deleted: true }],
+    ]);
+    let collectCalls = 0;
+    let navigated = [];
+    const controller = helpers.createAnnotationSidebarController({
+      button, menu, sidebar, list, count, closeButton,
+      collectTargets: () => { collectCalls += 1; return targets; },
+      createSessionGuard: () => () => true,
+      navigate: async (uuid, pageIndex) => { navigated.push([uuid, pageIndex]); return { ok: true }; },
+    });
+
+    assert.equal(collectCalls, 0, "constructing the controller and initial PDF view do not collect rows");
+    assert.equal(controller.refreshIfOpen(), false, "closed sidebar ignores state refreshes");
+    button.dispatch("click");
+    assert.equal(collectCalls, 1, "the first toolbar activation builds the list");
+    assert.equal(count.textContent, "2", "deleted records are excluded from the visible count");
+    const rows = list.querySelectorAll("li.sidebarComment");
+    assert.deepEqual(rows.map(row => row.dataset.uuid), ["a", "b"], "rows use page then UUID ordering");
+    assert.equal(rows[0].children[0].tagName, "time");
+    assert.equal(rows[0].children[1].className, "sidebarCommentText");
+    assert.equal(rows[0].children[1].textContent, "第 1 页 · Underline");
+
+    targets.set("c", { uuid: "c", pageIndex: 0, kind: "Highlight", editorPayload: null });
+    assert.equal(controller.refreshIfOpen(), true);
+    assert.equal(controller.refreshIfOpen(), false, "multiple changes coalesce into one animation frame");
+    assert.equal(collectCalls, 1, "refresh waits for the coalesced frame");
+    pendingFrames.shift()();
+    assert.equal(collectCalls, 2);
+    assert.equal(count.textContent, "3");
+
+    const refreshedRows = list.querySelectorAll("li.sidebarComment");
+    list.dispatch("click", { target: refreshedRows[0] });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(navigated[0], ["a", 0], "list activation resolves through the supplied shared navigator");
+    list.dispatch("keydown", { target: refreshedRows[0], key: "ArrowDown" });
+    assert.equal(refreshedRows[1].focused, true, "arrow navigation focuses the next list item");
+    list.dispatch("keydown", { target: refreshedRows[1], key: "Enter" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(navigated[1], ["c", 0], "Enter activates the focused annotation");
+
+    closeButton.dispatch("click");
+    assert.equal(controller.isOpen(), false);
+    assert.equal(menu.classList.contains("hidden"), true);
+    controller.closeAndClear();
+    assert.equal(list.querySelectorAll("li.sidebarComment").length, 0, "session replacement clears prior-document rows");
+    assert.equal(count.textContent, "0");
+    controller.dispose();
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousRaf === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRaf;
+    if (previousCancelRaf === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = previousCancelRaf;
+  }
+});
+
+test("annotation UUID navigation uses the existing rendered editor and page identity", async () => {
+  const { navigateToAnnotationUuid, state } = evaluateHelpers(
+    ["navigateToAnnotationUuid"],
+    `
+      const state = {
+        annotationUuidByRuntimeId: new Map([["runtime-1", "durable-uuid"]]),
+        app: { pdfViewer: {
+          currentPageNumber: 1,
+          _layerProperties: { annotationEditorUIManager: {
+            getEditor(id) { return id === "runtime-1" ? { pageIndex: 3, div: { scrollIntoView(value) { state.scrolled = value; } } } : null; },
+          } },
+        } },
+      };
+      function documentElement() {}
+    `,
+    ["state"],
+  );
+  const result = await navigateToAnnotationUuid("durable-uuid", 3, () => true);
+  assert.deepEqual(result, { ok: true, reason: null });
+  assert.equal(state.app.pdfViewer.currentPageNumber, 4, "navigation targets the correct PDF.js page");
+  assert.deepEqual(state.scrolled, { block: "center", inline: "nearest", behavior: "smooth" });
+  assert.deepEqual(await navigateToAnnotationUuid("durable-uuid", 3, () => false), {
+    ok: false, reason: "stale-session",
+  });
+  assert.match(functionSource("navigateReaderAnchor"), /navigateToAnnotationUuid\(target\.id, pageIndex, isCurrent\)/,
+    "Markdown annotation backlinks and the sidebar share the same UUID navigation helper");
+});
+
+test("comment sidebar keeps PDF.js comments disabled and refreshes only at existing state boundaries", () => {
+  assert.doesNotMatch(bridge, /enableComment\s*[:=]\s*true|new\s+CommentManager|AnnotationEditorType\.POPUP/);
+  assert.match(functionSource("installBridgeControls"), /getElementById\("editorCommentsSidebar"\)/);
+  assert.match(functionSource("installBridgeControls"), /menu\.append\(annotationSidebar\)/);
+  assert.doesNotMatch(functionSource("installBridgeControls"), /getElementById\("editorCommentButton"\)/,
+    "the hidden PDF.js comment-mode button is never exposed");
+  assert.match(functionSource("applyExternalAnnotationsSnapshot"), /annotationSidebarController\?\.refreshIfOpen\(\)/);
+  assert.match(functionSource("noteMutation"), /annotationSidebarController\?\.refreshIfOpen\(\)/);
+  assert.match(functionSource("handleAnnotationSourceMismatch"), /annotationSidebarController\?\.closeAndClear\(\)/);
+  assert.match(functionSource("openDocument"), /annotationSidebarController\?\.closeAndClear\(\)/);
+  assert.match(functionSource("dispose"), /annotationSidebarController\?\.dispose\(\)/);
+});
+
 test("history reveals only newly restored Sidecar FreeText in the current editor layer", () => {
   const helpers = evaluateHelpers(
     ["liveSidecarFreeTextEditors", "showRestoredSidecarFreeTextEditors"],

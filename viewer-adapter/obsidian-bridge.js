@@ -108,6 +108,7 @@
       hasSelection: false,
     },
     bridgeControls: null,
+    annotationSidebarController: null,
     toolbarLayoutResizeObserver: null,
     toolbarLayoutMutationObserver: null,
     toolbarLayoutFrame: 0,
@@ -512,6 +513,40 @@
     return true;
   }
 
+  async function navigateToAnnotationUuid(uuid, pageIndex, sessionGuard = () => true) {
+    if (typeof uuid !== "string" || !uuid || !Number.isSafeInteger(pageIndex) || pageIndex < 0) {
+      return { ok: false, reason: "invalid-annotation-target" };
+    }
+    if (!sessionGuard()) return { ok: false, reason: "stale-session" };
+    const pdfViewer = state.app?.pdfViewer;
+    const targetPageNumber = pageIndex + 1;
+    if (!pdfViewer || !Number.isSafeInteger(targetPageNumber)) {
+      return { ok: false, reason: "pdf-viewer-navigation-unavailable" };
+    }
+    pdfViewer.currentPageNumber = targetPageNumber;
+    if (pdfViewer.currentPageNumber !== targetPageNumber) {
+      return { ok: false, reason: "pdf-viewer-navigation-rejected" };
+    }
+    const manager = pdfViewer._layerProperties?.annotationEditorUIManager;
+    let editorNode = null;
+    for (let attempt = 0; attempt < 40 && !editorNode; attempt += 1) {
+      if (!sessionGuard()) return { ok: false, reason: "stale-session" };
+      for (const [runtimeId, mappedUuid] of state.annotationUuidByRuntimeId) {
+        if (mappedUuid !== uuid) continue;
+        const editor = manager?.getEditor?.(runtimeId);
+        if (editor && editor.pageIndex === pageIndex) {
+          editorNode = editor.div || document.getElementById?.(String(runtimeId)) || null;
+          break;
+        }
+      }
+      if (!editorNode && attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!sessionGuard()) return { ok: false, reason: "stale-session" };
+    if (!editorNode) return { ok: false, reason: "annotation-rendered-target-unresolved" };
+    editorNode.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+    return { ok: true, reason: null };
+  }
+
   async function navigateReaderAnchor(message) {
     const startedAt = performanceNow();
     const target = message?.target;
@@ -526,6 +561,8 @@
       const pageIndex = current.orderedPageIdentities.indexOf(target.pageIdentity);
       if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || pageIndex !== target.pageIndex) {
         result.reason = "page-identity-unresolved";
+      } else if (target.kind === "annotation") {
+        result = await navigateToAnnotationUuid(target.id, pageIndex, isCurrent);
       } else {
         const pdfViewer = state.app?.pdfViewer;
         const targetPageNumber = pageIndex + 1;
@@ -573,30 +610,6 @@
                     result = focused ? { ok: true, reason: null } : { ok: false, reason: "selection-owner-unavailable" };
                   }
                 }
-              }
-            } else if (target.kind === "annotation") {
-              const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
-              let editorNode = null;
-              for (let attempt = 0; attempt < 40 && !editorNode; attempt += 1) {
-                if (!isCurrent()) {
-                  result.reason = "stale-session";
-                  break;
-                }
-                for (const [runtimeId, uuid] of state.annotationUuidByRuntimeId) {
-                  if (uuid !== target.id) continue;
-                  const editor = manager?.getEditor?.(runtimeId);
-                  if (editor && editor.pageIndex === pageIndex) {
-                    editorNode = editor.div || document.getElementById?.(String(runtimeId)) || null;
-                    break;
-                  }
-                }
-                if (!editorNode && attempt < 39) await new Promise((resolve) => setTimeout(resolve, 50));
-              }
-              if (isCurrent()) {
-                editorNode?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
-                result = editorNode
-                  ? { ok: true, reason: null }
-                  : { ok: false, reason: "annotation-rendered-target-unresolved" };
               }
             } else if (target.kind === "page-number" && typeof target.selection === "string") {
               let textLayer = textLayerForPage(pageRoot);
@@ -1309,6 +1322,15 @@
       !canEdit || state.bulkDeleteInProgress;
     controls.saveButton.disabled =
       !canEdit || !hasUnsavedAnnotationChanges();
+    if (controls.annotationSidebarButton) {
+      controls.annotationSidebarButton.disabled = !(
+        hasDocument && state.externalSourceConfirmed && !state.externalSourceMismatch &&
+        state.actualSourceIdentity?.identityStatus === "KNOWN"
+      );
+    }
+    if (controls.annotationSidebarButton?.disabled && state.annotationSidebarController?.isOpen()) {
+      state.annotationSidebarController.closeAndClear();
+    }
     syncVocabularyMenuButton();
   }
 
@@ -1521,6 +1543,182 @@
 
   function countKnownAnnotationDeletionTargets(pageIndex = null) {
     return collectKnownAnnotationDeletionTargets(pageIndex).size;
+  }
+
+  function buildAnnotationSidebarViewModels(targets) {
+    return [...(targets?.values?.() || [])]
+      .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
+        row.uuid && Number.isSafeInteger(row.pageIndex) && row.pageIndex >= 0)
+      .map((row) => ({
+        uuid: row.uuid,
+        pageIndex: row.pageIndex,
+        kind: normalizeSyncKind(row.kind),
+        editorPayload: row.editorPayload && typeof row.editorPayload === "object"
+          ? row.editorPayload
+          : null,
+      }))
+      .sort((left, right) => left.pageIndex - right.pageIndex ||
+        (left.uuid < right.uuid ? -1 : left.uuid > right.uuid ? 1 : 0));
+  }
+
+  function createAnnotationSidebarController({
+    button,
+    menu,
+    sidebar,
+    list,
+    count,
+    closeButton,
+    collectTargets,
+    createSessionGuard,
+    navigate,
+  }) {
+    let open = false;
+    let refreshFrame = 0;
+    let selectedUuid = null;
+    let items = [];
+
+    function setSelected(uuid, focus = false) {
+      selectedUuid = uuid;
+      for (const row of list.querySelectorAll("li.sidebarComment")) {
+        const selected = row.dataset.uuid === uuid;
+        row.classList.toggle("selected", selected);
+        row.setAttribute("aria-pressed", String(selected));
+        row.tabIndex = selected ? 0 : -1;
+        if (selected && focus) row.focus();
+      }
+    }
+
+    async function activate(row, focus = false) {
+      const item = items.find((candidate) => candidate.uuid === row?.dataset?.uuid);
+      if (!open || !item) return false;
+      const guard = createSessionGuard();
+      const result = await navigate(item.uuid, item.pageIndex, guard);
+      if (!open || !guard() || result?.ok !== true) return false;
+      setSelected(item.uuid, focus);
+      return true;
+    }
+
+    function render() {
+      if (!open) return;
+      items = buildAnnotationSidebarViewModels(collectTargets());
+      if (selectedUuid && !items.some((item) => item.uuid === selectedUuid)) selectedUuid = null;
+      const fragment = document.createDocumentFragment();
+      for (const item of items) {
+        const row = document.createElement("li");
+        row.className = "sidebarComment";
+        row.setAttribute("role", "button");
+        row.setAttribute("aria-pressed", String(item.uuid === selectedUuid));
+        row.tabIndex = item.uuid === selectedUuid ? 0 : -1;
+        row.dataset.uuid = item.uuid;
+        row.dataset.pageIndex = String(item.pageIndex);
+
+        const pageLabel = `第 ${item.pageIndex + 1} 页`;
+        const page = document.createElement("time");
+        page.textContent = pageLabel;
+        page.setAttribute("aria-hidden", "true");
+        const text = document.createElement("div");
+        text.className = "sidebarCommentText";
+        text.textContent = `${pageLabel} · ${item.kind}`;
+        row.append(page, text);
+        fragment.append(row);
+      }
+      list.replaceChildren(fragment);
+      count.textContent = String(items.length);
+      setSelected(selectedUuid);
+    }
+
+    function openSidebar() {
+      if (button.disabled) return false;
+      open = true;
+      menu.classList.remove("hidden");
+      button.setAttribute("aria-expanded", "true");
+      render();
+      return true;
+    }
+
+    function close() {
+      open = false;
+      if (refreshFrame) cancelAnimationFrame(refreshFrame);
+      refreshFrame = 0;
+      menu.classList.add("hidden");
+      button.setAttribute("aria-expanded", "false");
+      return true;
+    }
+
+    function closeAndClear() {
+      close();
+      selectedUuid = null;
+      items = [];
+      list.replaceChildren();
+      count.textContent = "0";
+    }
+
+    function refreshIfOpen() {
+      if (!open || refreshFrame) return false;
+      refreshFrame = requestAnimationFrame(() => {
+        refreshFrame = 0;
+        render();
+      });
+      return true;
+    }
+
+    function onButtonClick() {
+      if (open) close();
+      else openSidebar();
+    }
+
+    function onCloseClick() {
+      close();
+      button.focus();
+    }
+
+    function onListClick(event) {
+      const row = event.target?.closest?.("li.sidebarComment");
+      if (!row || !list.contains(row)) return;
+      void activate(row, false);
+    }
+
+    function onListKeyDown(event) {
+      const row = event.target?.closest?.("li.sidebarComment");
+      const index = items.findIndex((item) => item.uuid === row?.dataset?.uuid);
+      let nextIndex = index;
+      if (event.key === "ArrowDown") nextIndex = Math.min(items.length - 1, Math.max(0, index + 1));
+      else if (event.key === "ArrowUp") nextIndex = Math.max(0, index < 0 ? 0 : index - 1);
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = items.length - 1;
+      else if (event.key === "Enter" || event.key === " ") {
+        if (row) {
+          event.preventDefault();
+          void activate(row, true);
+        }
+        return;
+      } else return;
+      if (!items.length) return;
+      event.preventDefault();
+      const next = [...list.querySelectorAll("li.sidebarComment")]
+        .find((candidate) => candidate.dataset.uuid === items[nextIndex].uuid);
+      next?.focus();
+    }
+
+    button.addEventListener("click", onButtonClick);
+    closeButton.addEventListener("click", onCloseClick);
+    list.addEventListener("click", onListClick);
+    list.addEventListener("keydown", onListKeyDown);
+    sidebar.querySelector("#editorCommentsSidebarResizer")?.setAttribute("hidden", "");
+    return {
+      open: openSidebar,
+      close,
+      closeAndClear,
+      refreshIfOpen,
+      isOpen: () => open,
+      dispose() {
+        closeAndClear();
+        button.removeEventListener("click", onButtonClick);
+        closeButton.removeEventListener("click", onCloseClick);
+        list.removeEventListener("click", onListClick);
+        list.removeEventListener("keydown", onListKeyDown);
+      },
+    };
   }
 
   function latestPendingAnnotationOperation(uuid) {
@@ -1743,6 +1941,7 @@
         }
       }, 0);
     }
+    state.annotationSidebarController?.refreshIfOpen();
     syncBridgeControls();
     return true;
   }
@@ -1991,6 +2190,53 @@
     group.className = "toolbarHorizontalGroup pdfReaderBridgeControls";
     group.setAttribute("aria-label", "PDF 撤销与重做");
 
+    const annotationSidebar = document.getElementById("editorCommentsSidebar");
+    const annotationSidebarList = document.getElementById("editorCommentsSidebarList");
+    const annotationSidebarCount = document.getElementById("editorCommentsSidebarCount");
+    const annotationSidebarClose = document.getElementById("editorCommentsSidebarCloseButton");
+    let annotationSidebarButton = null;
+    if (annotationSidebar && annotationSidebarList && annotationSidebarCount && annotationSidebarClose) {
+      const container = document.createElement("div");
+      container.className = "toolbarButtonWithContainer pdfReaderAnnotationSidebarControl";
+      annotationSidebarButton = document.createElement("button");
+      annotationSidebarButton.id = "pdfReaderAnnotationSidebarButton";
+      annotationSidebarButton.type = "button";
+      annotationSidebarButton.className = "toolbarButton pdfReaderAnnotationSidebarButton";
+      annotationSidebarButton.title = "批注";
+      annotationSidebarButton.setAttribute("aria-label", "批注");
+      annotationSidebarButton.setAttribute("aria-expanded", "false");
+      annotationSidebarButton.setAttribute("aria-haspopup", "true");
+      annotationSidebarButton.setAttribute("aria-controls", "pdfReaderAnnotationSidebarMenu");
+
+      const menu = document.createElement("div");
+      menu.id = "pdfReaderAnnotationSidebarMenu";
+      menu.className = "editorParamsToolbar hidden menu pdfReaderAnnotationSidebarMenu";
+      menu.setAttribute("aria-label", "批注列表");
+      annotationSidebar.setAttribute("aria-label", "批注列表");
+      menu.append(annotationSidebar);
+      container.append(annotationSidebarButton, menu);
+      group.append(container);
+      state.annotationSidebarController = createAnnotationSidebarController({
+        button: annotationSidebarButton,
+        menu,
+        sidebar: annotationSidebar,
+        list: annotationSidebarList,
+        count: annotationSidebarCount,
+        closeButton: annotationSidebarClose,
+        collectTargets: () => collectKnownAnnotationDeletionTargets(),
+        createSessionGuard: () => {
+          const documentId = state.activeDocumentId;
+          const openRequest = state.activeOpenRequest;
+          const source = state.actualSourceIdentity;
+          return () => !state.disposed && state.activeDocumentId === documentId &&
+            state.activeOpenRequest === openRequest && state.actualSourceIdentity === source &&
+            state.externalSourceConfirmed && !state.externalSourceMismatch &&
+            source?.identityStatus === "KNOWN";
+        },
+        navigate: navigateToAnnotationUuid,
+      });
+    }
+
     const historyButtons = {};
     for (const [action, symbol, label, id] of [
       ["undo", "↶", "撤销", "pdfReaderBridgeUndoButton"],
@@ -2090,6 +2336,7 @@
       deleteAllAnnotationsButton,
       vocabularyToggleButton,
       vocabularyDisplayModeButton,
+      annotationSidebarButton,
       saveButton,
     };
     installAdaptiveToolbarLayout();
@@ -4147,6 +4394,7 @@
     }
     state.externalSourceConfirmed = true;
     for (const row of merged.values()) seedSyncClock({ identities: [row.clock] });
+    state.annotationSidebarController?.refreshIfOpen();
     return {
       pages: [...new Set([...incoming.values(), ...guards.values()].map((row) => row.pageIndex))],
       deferredUuids,
@@ -5840,6 +6088,7 @@
     state.lastRecoveredRevision = null;
     state.lastCloseWritebackAck = null;
     runAnnotationObserver("mutation.capture", () => refreshAnnotationOperations(state.revision));
+    state.annotationSidebarController?.refreshIfOpen();
     const app = state.app;
     if (app) {
       app._annotationStorageModified = true;
@@ -9127,6 +9376,7 @@
     state.autoSavePaused = true;
     state.externalSourceConfirmed = false;
     state.externalSourceMismatch = true;
+    state.annotationSidebarController?.closeAndClear();
     state.readOnly = true;
     const loadedSource = state.externalSource;
     clearExternalHydration({
@@ -9732,6 +9982,7 @@
         state.hostHeavyLeaseRequired = message.heavyLeaseRequired;
       }
       state.activeDocumentId = null;
+      state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
       clearReaderBacklinkPresentation();
       clearExternalHydration({ clearRows: true, restoreEmbedded: true });
@@ -9898,6 +10149,7 @@
       }
       cleanupStorageObserver();
       state.activeDocumentId = null;
+      state.annotationSidebarController?.closeAndClear();
       updatePageNumberWidth(0);
       clearReaderBacklinkPresentation();
       clearExternalHydration({ clearRows: true, restoreEmbedded: true });
@@ -10885,6 +11137,8 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    state.annotationSidebarController?.dispose();
+    state.annotationSidebarController = null;
     state.vocabularyController?.dispose?.();
     state.vocabularyController = null;
     state.restoredSavedAnnotations.clear();
