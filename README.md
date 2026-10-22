@@ -2,6 +2,12 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
+**0.13.0 开发候选**在 `9c361330` 上加入只读语义锚点适配、批注列表搜索／类型筛选，以及明确确认后才落盘的学习草稿。独立学习条目复用现有事务、分片存储和 History，Today Review 聚合词汇与学习条目，Source 复用已有 PDF UUID／Reader Anchor 和 Markdown 精确定位。没有新增批注数据库、改写 PDF、改变 WAL 或迁移 Vocabulary 身份。新 Reader 链接保留现有 `docKey/obdoc` 字段以支持路径变化，旧精简链接仍可读。
+
+默认调度仍为 UTC Leitner `1/3/7/14/30` 天；固定版本 FSRS 只用于开发期回放和可逆迁移模拟。AI Provider 目前只有确定性草稿 mock，不会自动创建卡片或修改权威状态。学习内容可独立导出 JSON、Markdown、CSV 和 Anki TSV，包含稳定 ExternalID 与来源证据。
+
+候选尚不能据此声称跨平台／跨设备验收完成。Windows Native 与 Chromium、实体 iPad、macOS、真实 Sync 的结果分开记录；旧高亮文字只在已渲染页面按需恢复，搜索不触发全文扫描。完整阶段证据、失败历史和当前限制见 [0.13 实施合同](docs/learning-system/IMPLEMENTATION_CONTRACT.md)及[验收记录](GENERAL_ACCEPTANCE.md)。
+
 **0.12.2 候选版**在 0.12.1 的基础上，将 PDF.js Viewer CSS 引用的本地 SVG/GIF 资源以内联 data URL 注入 srcdoc，修复 Obsidian 中工具栏图标因隔离 iframe 无法加载 app:// 图片而显示空白的问题；桌面与移动端共用此处理。0.12.1 的 Highlight 行间碰撞避让保持不变。
 
 **0.12.1 版**在 0.12.0 的基础上，为标准文字选择型 PDF Highlight 增加同页行间碰撞避让；与 LingQ 共用纯几何规则，绘制前按页合并重算。只改变屏幕外观，标准 QuadPoints、保存／导出数据及自由手绘高亮不变。

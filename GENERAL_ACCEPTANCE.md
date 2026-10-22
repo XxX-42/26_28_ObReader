@@ -1,3 +1,50 @@
+# Reading → understanding → memory — 0.13.0 candidate
+
+Integration baseline: `9c361330388cbc929ef76bcc53b83f49a7360c04` on
+`feature/reading-learning-loop-20261022`. The implementation contract and
+stage receipts live under `docs/learning-system/`. Historical results below
+are retained, not re-labelled as current acceptance.
+
+This stage preserves the frozen PDF.js vendor, InputRouter architecture,
+annotation WAL/sidecar protocol, immutable source PDFs, Vocabulary canonical
+schema and generic transaction/History formats. SemanticAnchor is a view model,
+not another database. Learning items are a separate logical store over the
+existing coordinator/shards/History; explicit draft confirmation is required.
+Default scheduling remains compatible UTC Leitner. FSRS is dev-only replay.
+
+Current verified stage evidence:
+
+- Real Windows Obsidian test-Vault staging package: five-tools, FreeText and
+  Underline Native scenarios passed with exact UUID close/reopen, source
+  SHA-256/XXH64 unchanged, zero source writes and ordinary `saveDocument()`
+  calls, and 366 protected pre-existing sidecar files unchanged. These runs
+  used the earlier 0.12.2-labelled staging bundle, not the final 0.13 package.
+  See `P0_NATIVE_ROOT_ACCEPTANCE.md` for hashes, runs and retained failures.
+- Six unprofiled input A/B runs collected all 18 declared gesture sequences;
+  none violated 80 ms in those captures. B2 still failed a later page-readiness
+  condition. A separate CPU-profiled run failed at 169–188 ms, with timestamps
+  preceding profiler startup; it is not replaced by the successful unprofiled
+  results and does not prove a candidate production regression. See
+  `P0_INPUT_LONGTAIL.md`. No latency threshold was increased.
+- Source-validity loss after asynchronous draft planning and missing other-
+  device export history were both reproduced red, minimally repaired, then
+  the learning Host/domain suites passed 24/24. Validation is immediately
+  before commit, not a globally atomic transaction with external source files.
+- Backlink/LingQ pointer ownership, explicit touch badges and visibility
+  refresh have focused red/green tests. InputRouter and persistence unchanged.
+- A packaged build verifies exactly three files, 406 embedded assets and
+  all 402 frozen vendor hashes. Final Fast/Browser/Race/Offline results and
+  final 0.13 Native/deployment receipts are not yet claimed here.
+
+Still open at this checkpoint: the full browser learning/backlink suite has a
+retained late badge-click failure (screenshot proves an occluding Highlight
+parameter popup); its trusted outside-dismissal fixture correction awaits
+execution. E2E-5 LingQ→Review→Context→PDF, dictionary cold measurements,
+25k actual I/O, final Native, macOS/physical iPad and real Sync remain separate
+gates. Do not call this architecture or release accepted from targeted passes.
+
+---
+
 # Viewer CSS icon resource loading — 0.12.2 candidate
 
 The desktop and mobile srcdoc loaders now inline verified Viewer CSS image

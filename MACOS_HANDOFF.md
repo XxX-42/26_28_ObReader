@@ -1,6 +1,27 @@
 # PDF Web Reader 苹果平台开发交接上下文
 
-## 当前 0.5.10 连续笔迹保存（2026-10-13）
+## 当前 0.13.0 candidate（2026-10-22）
+
+当前开发分支为 `feature/reading-learning-loop-20261022`，来源基线
+`9c361330388cbc929ef76bcc53b83f49a7360c04`。同一三文件包仍服务桌面和移动端，
+PDF.js vendor、InputRouter、WAL v3.2 JSONL、不可变 PDF 与 Vocabulary canonical
+schema 未作本阶段重构。旧 0.5.x 的写回说明仅是下方历史，不代表当前日常保存。
+
+本候选新增纯 SemanticAnchor 适配、懒构建批注列表过滤、精确来源回跳、显式学习
+草稿、独立学习条目和混合 Today Review。默认仍是 UTC Leitner；FSRS 5.4.2 仅
+dev replay。普通编辑不得调用 PDF `saveDocument()` 或修改源文件；只有明确导出
+独立 PDF 可序列化。不要把本地 Adapter 原子性解释为分布式同步保证。
+
+本阶段 Windows 测试库已取得五工具、Underline、FreeText 的原生阶段证据，详见
+`docs/learning-system/P0_NATIVE_ROOT_ACCEPTANCE.md`；不能据此声称最终 0.13
+包、macOS 或实体 iPad 已通过。macOS Native、实体 iPad/Apple Pencil、真实多端
+Sync 仍需各自实机执行。Chromium/CDP 模拟不替代 WKWebView 证据。
+
+后续只使用隔离测试 Vault、新 PDF 副本和自己的 sidecar 命名空间；不得自动部署
+「远程仓库1」、强制关闭脏 Reader 或清除旧 WAL。当前验收状态以
+`GENERAL_ACCEPTANCE.md` 顶部为准，历史失败不得删掉。
+
+## 历史 0.5.10 连续笔迹保存（2026-10-13）
 
 同一组三文件服务 Windows、macOS、iPadOS。修复 ACK 后保留 Storage 却读取原始 Worker 字节导致 Ink 绑定失败；各序列化入口包含当前编辑。保存期间完成的 Ink 在每轮安全边界和重任务许可后复核提交，避免同一修订重复保存并阻塞关闭。恢复仅确认校验后的原始或准备完成草稿，未提交笔迹不满足关闭条件。原始失败及实机限制见 GENERAL_ACCEPTANCE.md。保留 0.5.9 回滚包、旧恢复、缓存与设置，不升级依赖，不修改冻结 Viewer。
 
