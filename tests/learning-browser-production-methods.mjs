@@ -27,7 +27,8 @@ export async function readLearningBrowserProductionMethods(mainPath) {
     return declaration[0];
   };
   const viewNames = ['isCurrentReaderAnchorIdentity', 'requestReaderAnchorCapture',
-    'applyPendingReaderTarget', 'isCurrentVocabularyIdentity', 'handleVocabularyBridgeMessage', 'updatePendingVocabularyEntryPersonalRecord'];
+    'applyPendingReaderTarget', 'isCurrentVocabularyIdentity', 'cancelVocabularyEntryLookups',
+    'handleVocabularyBridgeMessage', 'updatePendingVocabularyEntryPersonalRecord'];
   const pluginNames = ['handleReaderAnchorCapture', 'handleReaderVocabularyContextSave',
     'commitReaderVocabularyContextSave', 'openVocabularyContext'];
   const declarations = ['MAX_VOCABULARY_QUERY_TEXT_CHARS', 'MAX_VOCABULARY_SURFACE_CHARS',

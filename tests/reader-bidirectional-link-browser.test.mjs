@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 import { build } from "esbuild";
 import { createHash } from "node:crypto";
+import { readLearningBrowserProductionMethods } from './learning-browser-production-methods.mjs';
+import { runLearningContextBrowserFlow } from './learning-context-browser-flow.mjs';
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import { cleanupBrowserTestResources, attachCleanupErrors } from "./browser-test-cleanup.mjs";
 import { resolveBrowserPath } from "./browser-path.mjs";
@@ -210,6 +212,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
   const bridgeSource = instrumentedBridgeSource;
   const sourceHash = hashRuntime.fingerprint(fixtureBytes);
   const sourceSha256 = createHash('sha256').update(fixtureBytes).digest('hex');
+  const productionMethodSource = await readLearningBrowserProductionMethods(path.join(root, 'plugin/main.js'));
   const learningBundle = await build({ entryPoints: [path.join(root, 'tests/learning-browser-host-fixture.mjs')],
     bundle: true, format: 'iife', globalName: 'LearningBrowserFixture', platform: 'browser', write: false });
   const host = createHostHarness(hashRuntime);
@@ -301,6 +304,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.exposeFunction("__readerBacklinkHost", (message) => host.handleViewerMessage(message));
+    await page.exposeFunction('__learningFingerprint', bytes => hashRuntime.fingerprint(Uint8Array.from(bytes)));
     await page.goto(`http://127.0.0.1:${server.address().port}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction((id) => window.__readerBacklinkE2E?.opened?.some((row) => row.documentId === id && row.type === "opened") || window.__readerBacklinkE2E?.errors?.length,
       { timeout: 40_000 }, documentId);
@@ -735,6 +739,9 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     await frame.click('.pdfReaderAnnotationBacklinkBadge');
     await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "annotation", { timeout: 5_000 });
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Annotation.md");
+    const contextLearningEvidence = await runLearningContextBrowserFlow({ page, frame, methodSource: productionMethodSource, sourceHash });
+    assert.equal(createHash('sha256').update(await readFile(fixture)).digest('hex'), sourceSha256);
+    assert.equal(await frame.evaluate(() => window.__learningSourceSaveCalls), 0);
 
     host.state.annotations = [];
     host.state.tombstones = [{ uuid: annotationId, pageIndex: annotationCapture.pageIndex }];
@@ -769,7 +776,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       learning: { itemId: learned.itemId, source: learned.source, answer: learned.answer,
         canonicalFiles: learningEvidence.files, sourceSha256,
         boundary: 'mocked Obsidian Modal/Workspace/DataAdapter; real Host/draft/Workbench/coordinator/shards/History',
-        gaps: ['mixed vocabulary Today provider', 'E2E-5 LingQ vocabulary Context Source chain'] },
+        contextFlow: contextLearningEvidence },
       sourceOpenings: host.state.openedSources,
       modalRows: host.state.modalRows,
       currentPdfPathAfterRename: host.state.currentPdfPath,
