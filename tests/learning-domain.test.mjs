@@ -132,6 +132,33 @@ test("A stale source leaves the editable draft intact and source deletion never 
   assert.equal((await service.listDue()).items.length, 1, "source disappearance does not delete the card or due state");
 });
 
+test("skip lasts only for one review session and reset is memory-only", async () => {
+  const fixture = createFixture();
+  const service = fixture.createService();
+  const saved = await confirm(service, { actionId: "session-skip-confirm" });
+  const writesBeforeSkip = fixture.adapter.measured().writes;
+  const batchesBeforeSkip = await fixture.history.listBatches({ deviceIds: [fixture.coordinator.deviceId] });
+
+  const skipped = await service.rate(saved.item.itemId, "skip");
+  assert.equal(skipped.status, "skipped");
+  assert.equal(skipped.writes, 0);
+  assert.equal((await service.listDue()).items.length, 0, "skip dismisses the item in this session");
+  assert.equal(fixture.adapter.measured().writes, writesBeforeSkip);
+  assert.deepEqual(await fixture.history.listBatches({ deviceIds: [fixture.coordinator.deviceId] }), batchesBeforeSkip,
+    "skip creates no immutable History batch");
+
+  const reopened = fixture.createService();
+  assert.equal((await reopened.listDue()).items[0].itemId, saved.item.itemId,
+    "a new service session has no inherited skip state");
+  assert.deepEqual(await service.endReviewSession(), { status: "ended", dismissed: 1, writes: 0 });
+  const afterEnd = await service.listDue();
+  assert.equal(afterEnd.items[0].itemId, saved.item.itemId,
+    "ending a session re-exposes unreviewed due items on the same service instance");
+  assert.equal(afterEnd.items[0].state.reviewCount, 0);
+  assert.equal(fixture.adapter.measured().writes, writesBeforeSkip);
+  assert.deepEqual(await fixture.history.listBatches({ deviceIds: [fixture.coordinator.deviceId] }), batchesBeforeSkip);
+});
+
 test("Learning items survive runtime restart with state and immutable History available", async () => {
   const fixture = createFixture();
   const service = fixture.createService();

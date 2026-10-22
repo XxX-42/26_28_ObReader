@@ -607,6 +607,14 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     });
   }
 
+  async function endReviewSession() {
+    return runtime.exclusive(async () => {
+      const dismissed = skippedForSession.size;
+      skippedForSession.clear();
+      return { status: "ended", dismissed, writes: 0 };
+    });
+  }
+
   async function renameMarkdownSource(fromPath, toPath, { actionId } = {}) {
     const from = validateVaultPath(fromPath, "fromPath");
     const to = validateVaultPath(toPath, "toPath");
@@ -906,6 +914,7 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     getItem,
     listDue,
     rate,
+    endReviewSession,
     renameMarkdownSource,
     exportItems,
     getDraft: (draftId) => drafts.has(draftId) ? clone(drafts.get(draftId)) : undefined,

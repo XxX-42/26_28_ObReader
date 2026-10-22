@@ -31,7 +31,7 @@ For Markdown move/rename notifications, `renameMarkdownSource(fromPath,toPath,{a
 
 ## Scheduling, History, and due pages
 
-`listDue({limit?,cursor?})` returns a deterministic page ordered by due UTC timestamp and item ID. `limit` is 1–100. Cursors are opaque and scoped to the current due sort; `rate(itemId,"skip")` only suppresses that item in the current service session and does not write.
+`listDue({limit?,cursor?})` returns a deterministic page ordered by due UTC timestamp and item ID. `limit` is 1–100. Cursors are opaque and scoped to the current due sort; `rate(itemId,"skip")` only suppresses that item in the current service session and does not write. `endReviewSession()` clears the service's in-memory skip set and returns `{status:"ended",dismissed,writes:0}`; call it when the Workbench review session closes and before opening a new session. Rebuilding a page within the same session must not call it. Creating a new service instance also starts with an empty skip set.
 
 `LeitnerScheduler` exposes the pure `schedule(state,rating,nowUTC)`, `isDue(state,atUTC)`, and `describe(state)` interface; legacy `rate()` remains available as the same transition API. It applies UTC Leitner intervals (1/3/7/14/30 days). `rate(itemId,"remember"|"forget",{actionId})` commits `reviewState` plus `lastReviewEvent` in the same regular coordinator transaction. The immutable History domain event contains `actionId`, `rating`, `reviewedAtUTC`, `sequence`, `previousEventId`, and `schedulerVersion`. Undo restores the state and event head together while retaining the original History event; a later rating can branch from the restored head. Review event enumeration happens only during explicit export.
 
