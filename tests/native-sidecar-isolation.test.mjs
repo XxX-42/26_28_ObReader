@@ -11,6 +11,18 @@ import {
 const sourceRoot = "00_Archive/20_PDFData";
 const targetRoot = ".obsidian/plugins/pdf-web-reader/.native-test-output/run-1/sidecar";
 
+test("Native PDF guard scope survives CLI serialization and rejects omitted or unrelated fixture folders", () => {
+  const fixtureFolder = "PDF迁移测试/sidecar-native-0.12.2-test";
+  const file = `${fixtureFolder}/immutable-source.pdf`;
+  const context = { file, fixtureFolder };
+  runInNewContext(`${serializeNativeSidecarAdapterMapper()};
+    globalThis.valid = assertNativeFixtureScope({ file, fixtureFolder });`, context);
+  assert.equal(context.valid, true);
+  assert.throws(() => sidecarIsolation.assertNativeFixtureScope({ file }), /explicit isolated/);
+  assert.throws(() => sidecarIsolation.assertNativeFixtureScope({ file, fixtureFolder: "12_books" }), /explicit isolated/);
+  assert.throws(() => sidecarIsolation.assertNativeFixtureScope({ file: "12_books/book.pdf", fixtureFolder }), /explicit isolated/);
+});
+
 test("Native sidecar redirect maps only the exact annotation root", () => {
   assert.equal(mapNativeSidecarPath(sourceRoot, sourceRoot, targetRoot), targetRoot);
   assert.equal(

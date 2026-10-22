@@ -162,6 +162,7 @@ async function state() {
       });
     return { ready: v.ready, revision: v.currentRevision, confirmed: v.confirmedRevision, pending: v.pendingSaves,
       dirty: !!a?._hasChanges?.(), mode: a?.pdfViewer?.annotationEditorMode, docKey: v.annotationDocument?.docKey,
+      protocol: app.plugins.plugins['pdf-web-reader'].annotationHost?.store?.sourceProtocol || null,
       documentId: v.annotationDocument?.documentId, sourceHash: v.annotationDocument?.source?.sourceHash,
       snapshot: v.annotationSnapshot, editors, buttonsReady: !d.getElementById("editorUnderlineButton")?.disabled,
       visibility: d.visibilityState, pageRendered: a?.pdfViewer?.getPageView(0)?.renderingState };
@@ -182,6 +183,8 @@ async function open() {
     return true;
   }, file);
   await wait("Viewer source confirmed and rendered", state, s => s?.ready && s.buttonsReady && s.pageRendered === 3, 60_000);
+  assert.equal((await state()).protocol, 'wal-sidecar-v3.2-jsonl',
+    'This acceptance requires the current JSONL store, not a legacy compatibility fallback');
   await doc(({ v, w, a, d, arg }) => {
     a.pdfViewer.currentScaleValue = arg;
     d.getElementById("viewerContainer").scrollTop = 0;
@@ -273,7 +276,7 @@ async function saved(label, expectedTypes) {
   const ck = await wait(`WAL replay ${label}`, checkpoint, evidence => {
     const rows = evidence?.annotations || [];
     const typesMatch = JSON.stringify(rows.map(row => row.kind).sort()) === JSON.stringify([...expectedTypes].sort());
-    return typesMatch && (evidence.protocol === "legacy-checkpoint" || evidence.durableWal?.status === "replayed");
+    return typesMatch && evidence.protocol === 'wal-sidecar-v3.2-jsonl' && evidence.durableWal?.status === "replayed";
   });
   assert.deepEqual(ck.annotations.map(row => row.kind).sort(), [...expectedTypes].sort(),
     "Independently replayed durable annotation kinds must match the expected state");
@@ -306,6 +309,8 @@ async function controlledDetach(label, targetToken = null, expectedRemaining = 0
 async function close() {
   const result = await controlledDetach("Reader controlled close");
   assert.equal(result.alreadyAbsent, undefined, "Reader controlled close requires the exact fixture Reader to be open");
+  assert.equal(result.before.protocol, 'wal-sidecar-v3.2-jsonl');
+  assert.equal(result.walAfterClose.walStatus, 'replayed');
   return result;
 }
 async function closeFailedFixtureSafely() {
@@ -332,6 +337,7 @@ async function closeFailedFixtureSafely() {
   return { alreadyAbsent: true, maintenance, walAfterClose: { snapshotStatus: wal.snapshot?.status, walStatus: wal.durableWal?.status } };
 }
 async function exportCopy(expectedTypes) {
+  const expectedRows = (await checkpoint()).annotations;
   const expectedPath = `${folder}/immutable-source (PDF Reader Export).pdf`;
   const targetState = await run(async p => ({
     exists: await app.vault.adapter.exists(p),
@@ -352,6 +358,15 @@ async function exportCopy(expectedTypes) {
   const supported=['Underline','Square','Highlight','Ink','FreeText'];
   for(const [pageIndex,page] of pdf.getPages().entries()){const list=page.node.Annots();if(!list)continue;for(let i=0;i<list.size();i++){const dict=list.lookup(i), subtype=dict.get(PDFName.of('Subtype'))?.toString().slice(1);if(supported.includes(subtype))annotations.push({pageIndex,subtype,rect:dict.get(PDFName.of('Rect'))?.toString(),contents:dict.get(PDFName.of('Contents'))?.decodeText?.()});}}
   assert.deepEqual(annotations.map(x=>x.subtype).sort(),[...expectedTypes].sort());
+  for (const annotation of annotations) {
+    const row = expectedRows.find(row => row.kind === annotation.subtype && row.pageIndex === annotation.pageIndex);
+    assert.ok(row, 'Each exported annotation must retain its acknowledged kind and page');
+    const rect = annotation.rect?.replace(/[\[\]]/g, '').trim().split(/\s+/).map(Number);
+    assert.ok(rect?.length === 4 && rect.every(Number.isFinite));
+    assert.ok(rect.every((value, index) => Math.abs(value-row.payload.editor.rect[index]) < 0.01),
+      'Explicit PDF export must preserve the acknowledged PDF rectangle');
+    if (row.kind === 'FreeText') assert.equal(annotation.contents, row.payload.editor.value);
+  }
   report.export={path:exported,hashes:hashes(exportBytes),annotations,authorization:report.exportAuthorization};
   report.sourceAfter=await sourceHashes('after-explicit-export');assert.deepEqual(report.sourceAfter,report.sourceBefore);
 }
@@ -377,6 +392,7 @@ async function freeTextVisual(label) {
   const before = await state();
   const ft = before.editors.find(e => e.type === 3);
   assert.ok(ft?.rect.width > 0 && ft.rect.height > 0 && ft.text?.includes("SIDECAR NATIVE"));
+  assert.equal(ft.text, text, 'The composed FreeText DOM must contain the complete acknowledged text');
   assert.notEqual(ft.display, "none"); assert.notEqual(ft.visibility, "hidden"); assert.ok(Number(ft.opacity) > 0);
   await doc(({ d, arg }) => { const e=d.getElementById(arg); e.dataset.nativePriorVisibility=e.style.visibility; e.style.visibility="hidden"; return true; }, ft.id);
   let hidden;
@@ -511,6 +527,7 @@ try {
   report.fixtureHash = report.sourceBefore;
   instrumented=true;
   run(async ({file,prefix,protectedPaths,isolatedRoot,fixtureFolder})=>{
+    assertNativeFixtureScope({file,fixtureFolder});
     if(globalThis.__sidecarNative07)throw Error("Previous Native instrumentation still present");
     const a=app.vault.adapter, p=app.plugins.plugins["pdf-web-reader"], protectedSet=new Set(protectedPaths), originals=[];
     const originalAdapterExists=a.exists;
@@ -531,7 +548,7 @@ try {
     for(const name of adapterMethods){if(typeof a[name]!=="function")continue;const original=a[name];originals.push({object:a,name,original});a[name]=async function(...args){const target=String(args[0]||'');const mappedArgs=mapNativeSidecarAdapterArgs(name,args,prefix,isolatedRoot);const mappedTarget=String(mappedArgs[0]||'');const writing=!["read","readBinary","exists","list"].includes(name);if(writing&&(target===file||String(args[1]||'')===file)){trace.sourceWriteAttempts.push({name,target});throw Error("Source PDF mutation forbidden");}if(writing&&!mappedTarget.startsWith(isolatedRoot)&&protectedSet.has(target)){trace.blockedExistingWrites.push(target);throw Error("Existing annotation data is protected");}if(name==='rename'&&protectedSet.has(String(args[1]))&&!String(mappedArgs[1]||'').startsWith(isolatedRoot)){trace.blockedExistingWrites.push(String(args[1]));throw Error('Existing target protected');}const t=performance.now();try{const result=await original.apply(this,mappedArgs);if(target===file||target===prefix||target.startsWith(prefix+'/'))trace.io.push({name,path:target,storagePath:mappedTarget,at:t,ms:performance.now()-t,bytes:typeof args[1]==='string'?new TextEncoder().encode(args[1]).length:args[1]?.byteLength??(typeof result==='string'?new TextEncoder().encode(result).length:result?.byteLength??0)});return result;}catch(e){trace.io.push({name,path:target,storagePath:mappedTarget,at:t,error:String(e)});throw e;}};}
     for(const name of ['modifyBinary','appendBinary','modify','append','createBinary','create','delete','rename']){if(typeof app.vault[name]!=='function')continue;const original=app.vault[name];originals.push({object:app.vault,name,original});app.vault[name]=function(target,...args){if(String(target?.path||target)===file){trace.sourceWriteAttempts.push({name,path:file});throw Error('Source PDF mutation forbidden');}return original.call(this,target,...args);};}
     return true;
-  },{file,prefix:storeRoot,isolatedRoot:isolatedStoreRoot,protectedPaths:[...protectedFiles.keys()]});
+  },{file,fixtureFolder:folder,prefix:storeRoot,isolatedRoot:isolatedStoreRoot,protectedPaths:[...protectedFiles.keys()]});
   await open();
   if(benchmarking){
     report.benchmark=[];
@@ -667,9 +684,9 @@ try {
   assert.equal(underlineEditors.length,1); assert.equal(underlineRows.length,1);
   assert.equal(underlineRows[0].uuid,report.initialUuids.Underline);
   const underlineEditor=underlineEditors[0];
-  assert.ok(Math.max(...underlineEditor.serialized.rect.map((value,index)=>
-    Math.abs(value-underlineRows[0].payload.editor.rect[index])))<0.1,
-    'The delete gesture must target the acknowledged Underline UUID and geometry');
+  assert.ok(underlineRows[0].payload.editor.rect.length===4&&
+    underlineRows[0].payload.editor.rect.every(Number.isFinite),
+    'The acknowledged Underline must retain its complete persisted PDF geometry');
   await doc(({a})=>{a.eventBus.dispatch('switchannotationeditormode',{mode:0});return true;});
   const underlinePoint=await wait('saved Underline is hit-testable in mode NONE',()=>doc(({v,d,a,arg})=>{
     const e=d.getElementById(arg),r=e?.getBoundingClientRect(),layer=e?.closest('.annotationEditorLayer');
@@ -682,7 +699,39 @@ try {
     const manager=a.pdfViewer._layerProperties.annotationEditorUIManager,e=d.getElementById(arg),editor=e&&manager.getEditor(e.id);
     return !!editor&&editor.constructor._editorType===10&&manager.isSelected(editor)&&e.classList.contains('selectedEditor');
   },underlineEditor.id));
-  report.deletePrecondition={uuid:report.initialUuids.Underline,editorId:underlineEditor.id,mode:'NONE-then-native-selection'};
+  // PDF.js may return null when serializing an unchanged hydrated markup
+  // editor. Read its stable UUID through the existing capture protocol instead
+  // of treating that changed-row optimization as missing annotation state.
+  const captureRequestId=`native-delete-${traceRunId}`;
+  const captureSession=await doc(({v,arg})=>{
+    const t=globalThis.__sidecarNative07;
+    const identity={documentId:v.documentId,openRequest:v.openRequest,rendererGeneration:v.rendererGeneration};
+    const listener=e=>{
+      const m=e.data;
+      if(e.source!==v.iframe?.contentWindow||m?.channel!=='pdf-web-reader'||m.token!==v.token||
+        m.type!=='reader-anchor-capture'||m.requestId!==arg||m.documentId!==identity.documentId||
+        m.openRequest!==identity.openRequest||m.rendererGeneration!==identity.rendererGeneration)return;
+      t.deleteCapture={...identity,requestId:arg,capture:m.capture||null,error:m.error||null};
+      window.removeEventListener('message',listener,true);
+    };
+    window.addEventListener('message',listener,true);
+    t.listeners.push({target:window,type:'message',listener});
+    if(!v.postToViewer({channel:'pdf-web-reader',token:v.token,type:'reader-anchor-capture-request',
+      mode:'annotation',requestId:arg,...identity}))throw Error('Native capture request was not sent');
+    return identity;
+  },captureRequestId);
+  const capture=await wait('selected Underline stable UUID capture',()=>run(({requestId})=>{
+    const value=globalThis.__sidecarNative07.deleteCapture;
+    return value?.requestId===requestId?value:null;
+  },{requestId:captureRequestId}));
+  assert.equal(capture.error,null);
+  assert.equal(capture.capture?.annotationUuid,report.initialUuids.Underline);
+  assert.equal(capture.capture?.pageIndex,underlineRows[0].pageIndex);
+  assert.equal(capture.capture?.sourceHash,(await state()).sourceHash);
+  assert.equal(capture.documentId,captureSession.documentId);
+  assert.ok(capture.capture.pageIdentity);
+  report.deletePrecondition={uuid:report.initialUuids.Underline,editorId:underlineEditor.id,
+    mode:'NONE-then-native-selection',capture};
   await key('Delete','Delete',46);
   const four=five.filter(t=>t!=='Underline'); await saved('delete',four);
   await button('#pdfReaderBridgeUndoButton'); await saved('undo',five);

@@ -4,6 +4,15 @@ const ADAPTER_PATH_METHODS = new Set([
   "removeFile", "update", "copy", "copyRecursive",
 ]);
 
+export function assertNativeFixtureScope({ file, fixtureFolder } = {}) {
+  if (typeof fixtureFolder !== "string" || !fixtureFolder.startsWith("PDF迁移测试/sidecar-native-") ||
+      fixtureFolder.includes("..") || typeof file !== "string" ||
+      !file.startsWith(`${fixtureFolder}/`) || !file.endsWith(".pdf")) {
+    throw new Error("Native PDF guards require an explicit isolated fixture folder");
+  }
+  return true;
+}
+
 export function mapNativeSidecarPath(value, sourceRoot, targetRoot) {
   if (typeof value !== "string") return value;
   const source = sourceRoot.replace(/\/+$/, "");
@@ -41,5 +50,6 @@ export function serializeNativeSidecarAdapterMapper() {
     `const mapNativeSidecarPath = (${mapNativeSidecarPath.toString()});`,
     `const mapNativeSidecarAdapterArgs = (${mapNativeSidecarAdapterArgs.toString()});`,
     `const mapNativeSidecarListResult = (${mapNativeSidecarListResult.toString()});`,
+    `const assertNativeFixtureScope = (${assertNativeFixtureScope.toString()});`,
   ].join("\n");
 }
