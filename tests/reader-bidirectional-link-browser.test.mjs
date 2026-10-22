@@ -787,7 +787,8 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       { timeout: 5_000 }, beforeKeyboardBadgeOpen);
     assert.equal(await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), 0,
       'keyboard badge focus must not activate its containing Highlight tool');
-    const contextLearningEvidence = await runLearningContextBrowserFlow({ page, frame, methodSource: productionMethodSource, sourceHash });
+    const contextLearningEvidence = await runLearningContextBrowserFlow({ page, frame, methodSource: productionMethodSource,
+      sourceHash, documentId, docKey, sourcePath: initialPdfPath });
     assert.equal(createHash('sha256').update(await readFile(fixture)).digest('hex'), sourceSha256);
     assert.equal(await frame.evaluate(() => window.__learningSourceSaveCalls), 0);
 
@@ -834,6 +835,8 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     diagnosticDirectory = successDirectory;
     await mkdir(successDirectory, { recursive: true });
     await writeFile(path.join(successDirectory, "trace.json"), JSON.stringify({ gestureDiagnostics,
+      contextLearningEvidence,
+      annotationBadgeRouting: await frame.evaluate(() => window.__annotationBadgeRouting),
       learning: { itemId: learned.itemId, source: learned.source, answer: learned.answer, canonicalFiles: learningEvidence.files, sourceSha256 },
       host: await page.evaluate(() => window.__readerBacklinkE2E) }, null, 2));
     t.diagnostic(`Success artifacts: ${successDirectory}`);

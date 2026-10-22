@@ -115,7 +115,7 @@ export function installLearningBrowserHost({ documentId, docKey, rendererGenerat
       hashOrderedPages: pages => fingerprint(new TextEncoder().encode(JSON.stringify(pages))),
     });
     const vocabularyRuntime = runtimeModule.createVocabularyRuntime({ adapter, personalService,
-      deviceId: 'browser-vocabulary', sessionId: 'browser-context', verifySource });
+      deviceId: 'browser-vocabulary', sessionId: 'browser-context', verifySource: ({ anchor }) => verifySource(anchor) });
     plugin.getVocabularyService = () => personalService;
     plugin.getVocabularyRuntime = async () => vocabularyRuntime;
     plugin.initializeVocabulary = () => vocabularyRuntime.ready();
@@ -147,7 +147,7 @@ export function installLearningBrowserHost({ documentId, docKey, rendererGenerat
           const review = await vocabularyRuntime.ensureReviewSession();
           const results = [];
           for (const familyKey of keys) results.push({ familyKey, ...await review[enrolled ? 'enroll' : 'unenroll'](familyKey) });
-          await review.flush(); return { results };
+          await review.flush(); state.enrollmentReceipt = { results }; return state.enrollmentReceipt;
         }),
         listDueReview: options => pager.listDue(options),
         openReviewSource: item => item.providerId === 'vocabulary'

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 // Called only inside the real Viewer browser harness. This flow has no seeded
 // Vocabulary, Context or Review rows and uses the production Host methods.
-export async function runLearningContextBrowserFlow({ page, frame, methodSource, sourceHash }) {
+export async function runLearningContextBrowserFlow({ page, frame, methodSource, sourceHash, documentId, docKey, sourcePath }) {
   await page.evaluate(methodSource => window.__learningBrowser.enableRealVocabulary({ methodSource,
     fingerprint: bytes => window.__learningFingerprint(Array.from(bytes)) }), methodSource);
   await frame.waitForFunction(() => window.__pdfReaderBridgeState.vocabularyEnabled &&
@@ -47,12 +47,18 @@ export async function runLearningContextBrowserFlow({ page, frame, methodSource,
   });
   assert.equal(context.sentence, selected);
   assert.equal(context.sourceFingerprint, sourceHash);
+  assert.equal(context.documentId, documentId);
+  assert.equal(context.docKey, docKey);
+  assert.equal(context.anchor.exactQuote, selected);
+  assert.equal(context.anchor.textPosition.end - context.anchor.textPosition.start, selected.length,
+    'the persisted selection offsets span exactly the original PDF text');
   assert.ok(context.anchor.textPosition.end > context.anchor.textPosition.start);
   await page.evaluate(() => window.__learningBrowser.openVocabularyReview('vocabulary'));
   await page.waitForSelector('[data-action="select-family"]', { timeout: 10_000 });
   await page.click('[data-action="select-family"]');
   await page.click('[data-action="bulk-enroll"]');
-  await page.waitForFunction(() => /已处理 1/.test(document.querySelector('.vocabulary-workbench__status')?.textContent), { timeout: 10_000 });
+  await page.waitForFunction(() => window.__learningBrowser.enrollmentReceipt, { timeout: 10_000 });
+  assert.equal(await page.evaluate(() => window.__learningBrowser.enrollmentReceipt.results.length), 1);
   await page.click('[data-action="tab-review"]');
   await page.waitForSelector('[data-role="review-row"][data-provider-id="vocabulary"]', { timeout: 10_000 });
   assert.equal(await page.$$eval('[data-role="review-row"][data-provider-id="learning"]', nodes => nodes.length), 1,
@@ -61,6 +67,9 @@ export async function runLearningContextBrowserFlow({ page, frame, methodSource,
   await page.waitForFunction(id => window.__learningBrowser.opened.some(row => row.target.id === id), { timeout: 8_000 }, context.anchorId);
   await frame.waitForFunction(() => window.CSS?.highlights?.get('pdfReaderAnchorFocusText')?.size > 0, { timeout: 8_000 });
   assert.equal(await frame.evaluate(() => [...CSS.highlights.get('pdfReaderAnchorFocusText')].map(range => range.toString()).join('')), context.anchor.exactQuote);
+  const sourceOpening = await page.evaluate(() => window.__learningBrowser.opened.at(-1));
+  assert.deepEqual(sourceOpening, { path: sourcePath,
+    target: { kind: 'selection', id: context.anchorId, docKey, documentId } });
   await page.evaluate(familyKey => window.__learningBrowser.openVocabularyReview('contexts', familyKey), context.familyKey);
   await page.waitForSelector('[data-action^="context-add-review-"]', { timeout: 10_000 });
   await page.click('[data-action^="context-add-review-"]');
