@@ -1795,6 +1795,33 @@ test("Reader backlink pages use a document cache and invalidate it when Markdown
   harness.plugin.onunload();
 });
 
+test("Reader backlink page lookup cannot publish a superseded same-page result", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const messages = [], pending = [];
+  const view = {
+    documentId: "doc", openRequest: 1, rendererGeneration: "generation",
+    annotationDocument: { docKey: "aabbccddeeff" },
+    annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+    annotationSourceHash: "xxh64-v1:0000000000000000", annotationHydrationAllowed: true,
+    isCurrentReaderAnchorIdentity: () => true, postToViewer: message => messages.push(message),
+  };
+  harness.plugin.collectReaderBacklinksForPage = () => new Promise(resolve => pending.push(resolve));
+  const request = { documentId: "doc", openRequest: 1, rendererGeneration: "generation",
+    pageNumber: 1, pageIndex: 0, pageIdentity: "page-one", sourceHash: view.annotationSourceHash };
+  const old = harness.plugin.handleReaderBacklinkPageRequest(view, { ...request, requestId: "old" });
+  const current = harness.plugin.handleReaderBacklinkPageRequest(view, { ...request, requestId: "current" });
+  pending[1]({ rows: [{ sourcePath: "Current.md" }], markers: [{ id: "current" }] });
+  assert.equal(await current, true);
+  pending[0]({ rows: [], markers: [] });
+  assert.equal(await old, false, "a late empty result cannot erase the newer page markers");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].requestId, "current");
+  assert.equal(messages[0].backlinkCount, 1);
+  assert.equal(await harness.plugin.handleReaderBacklinkPageRequest(view, { ...request, requestId: "" }), false);
+  harness.plugin.onunload();
+});
+
 test("Reader backlink source navigation focuses the exact Markdown link and never overwrites user movement", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

@@ -4548,14 +4548,25 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const document = view.annotationDocument;
     if (!document || view.annotationHydrationAllowed !== true || message.pageIdentity !== pageIdentities?.[message.pageIndex] ||
         message.sourceHash !== view.annotationSourceHash) return false;
+    const requestId = message.requestId;
+    if (requestId !== undefined && (typeof requestId !== "string" || !requestId || requestId.length > 128)) return false;
+    const queryGeneration = (view.readerBacklinkQueryGeneration || 0) + 1;
+    view.readerBacklinkQueryGeneration = queryGeneration;
+    view.readerBacklinkPageRequest = { requestId, documentId: message.documentId,
+      openRequest: message.openRequest, rendererGeneration: message.rendererGeneration,
+      pageIndex: message.pageIndex, pageIdentity: message.pageIdentity };
+    const indexRevision = this.readerBacklinkIndexReady ? this.readerBacklinkIndex?.revision || 0 : null;
     const identity = { documentId: view.documentId, openRequest: view.openRequest,
       rendererGeneration: view.rendererGeneration };
     const result = await this.collectReaderBacklinksForPage(view, message.pageIndex, identity);
-    if (!result || !view.isCurrentReaderAnchorIdentity(identity)) return false;
+    if (!result || !view.isCurrentReaderAnchorIdentity(identity) ||
+        view.readerBacklinkQueryGeneration !== queryGeneration ||
+        indexRevision !== null && (this.readerBacklinkIndex?.revision || 0) !== indexRevision) return false;
     view.postToViewer({ channel: CHANNEL, token: view.token, type: "reader-backlink-page-results",
       documentId: identity.documentId, openRequest: identity.openRequest,
       rendererGeneration: identity.rendererGeneration, pageNumber: message.pageNumber,
       pageIndex: message.pageIndex, pageIdentity: message.pageIdentity,
+      ...(requestId ? { requestId } : {}),
       backlinkCount: result.rows.length, markers: result.markers.slice(0, 64),
       backlinkLookupMs: result.backlinkLookupMs, anchorResolveMs: result.anchorResolveMs,
       pageIndexCacheHit: result.pageIndexCacheHit });
@@ -4570,10 +4581,15 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pageIndex = pageNumber - 1;
     const pageIdentity = view.annotationPageIdentity.orderedPageIdentities[pageIndex];
     if (!pageIdentity) return false;
+    const pending = view.readerBacklinkPageRequest;
+    const requestId = pending?.documentId === view.documentId && pending.openRequest === view.openRequest &&
+      pending.rendererGeneration === view.rendererGeneration && pending.pageIndex === pageIndex &&
+      pending.pageIdentity === pageIdentity ? pending.requestId : undefined;
     return this.handleReaderBacklinkPageRequest(view, {
       documentId: view.documentId, openRequest: view.openRequest,
       rendererGeneration: view.rendererGeneration, pageNumber, pageIndex,
       pageIdentity, sourceHash: view.annotationSourceHash,
+      ...(requestId ? { requestId } : {}),
     });
   }
 
