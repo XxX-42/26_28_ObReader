@@ -36,8 +36,8 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
-/* BUILD:READER_ANCHOR_STORE_REQUIRE */ const { createReaderAnchorStore, parseReaderLinkFragment, encodeReaderLinkFragment } = require('./reader-anchor-store.cjs');
-/* BUILD:READER_BACKLINK_INDEX_REQUIRE */ const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex } = require('./reader-backlink-index.cjs');
+/* BUILD:READER_ANCHOR_STORE_REQUIRE */ const { createReaderAnchorStore, parseReaderLinkFragment, parseReaderLinkDestination, encodeReaderLinkFragment } = require('./reader-anchor-store.cjs');
+/* BUILD:READER_BACKLINK_INDEX_REQUIRE */ const { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath } = require('./reader-backlink-index.cjs');
 /* BUILD:VIEWER_ASSET_PAYLOAD */ const VIEWER_ASSET_PAYLOAD = null;
 
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -4346,6 +4346,23 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           }
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
+          } else if (!isPdfFile(file) && typeof oldPath === "string" && typeof file?.path === "string") {
+            const oldFolderPath = normalizePath(oldPath).replace(/\/+$/g, "");
+            const newFolderPath = normalizePath(file.path).replace(/\/+$/g, "");
+            const sourcePaths = this.readerBacklinkIndex?.getSourcePathsUnder?.(oldFolderPath) || [];
+            let changed = false;
+            for (const oldSourcePath of sourcePaths) {
+              this.removeReaderBacklinkFile(oldSourcePath, { notify: false });
+              changed = true;
+              const movedPath = `${newFolderPath}${oldSourcePath.slice(oldFolderPath.length)}`;
+              const movedFile = this.app.vault.getAbstractFileByPath?.(movedPath);
+              if (movedFile?.path === movedPath) {
+                this.refreshReaderBacklinkFile(movedFile, { notify: false });
+              }
+            }
+            if (changed && this.readerBacklinkIndexReady) {
+              for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+            }
           }
           if (!isPdfFile(file)) {
             void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
@@ -4594,16 +4611,72 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 
+  readerBacklinkSourceEvidence(row, sourceFile) {
+    if (!row || row.sourcePath !== sourceFile?.path ||
+        typeof row.sourcePath !== "string" || !row.sourcePath.toLowerCase().endsWith(".md")) return null;
+    if (row.target !== undefined && row.target !== null) {
+      const target = row.target;
+      if (!target || !["page", "selection", "annotation"].includes(target.kind) ||
+          typeof target.id !== "string" || !target.id) return null;
+      const cache = this.app.metadataCache?.getFileCache?.(sourceFile);
+      const links = Array.isArray(cache?.links) ? cache.links : [];
+      const matched = links.find((link) => {
+        if (typeof link?.link !== "string") return false;
+        const parsed = parseReaderLinkDestination(link.link);
+        if (parsed.target?.kind !== target.kind || parsed.target?.id !== target.id ||
+            parsed.docKey !== (row.docKey || null) || parsed.documentId !== (row.documentId || null) ||
+            normalizePdfRoutePath(parsed.routePath, row.sourcePath) !==
+              normalizePdfRoutePath(row.routePath, row.sourcePath)) return false;
+        const offset = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
+        const endOffset = Number.isSafeInteger(link.position?.end?.offset) ? link.position.end.offset : null;
+        return offset === row.offset && endOffset === row.endOffset;
+      });
+      if (!matched) return null;
+      return {
+        kind: "reader-link",
+        offset: Number.isSafeInteger(matched.position?.start?.offset) ? matched.position.start.offset : -1,
+        endOffset: Number.isSafeInteger(matched.position?.end?.offset) ? matched.position.end.offset : null,
+        line: Number.isSafeInteger(matched.position?.start?.line) ? matched.position.start.line : null,
+      };
+    }
+    if (row.sourceText !== undefined) {
+      if (typeof row.sourceText !== "string" || !row.sourceText || row.sourceText.length > 4096 ||
+          !Number.isSafeInteger(row.offset) || row.offset < 0 ||
+          !Number.isSafeInteger(row.endOffset) || row.endOffset <= row.offset ||
+          row.endOffset - row.offset !== row.sourceText.length) return null;
+      return { kind: "source-text", offset: row.offset, endOffset: row.endOffset,
+        line: Number.isSafeInteger(row.line) ? row.line : null, sourceText: row.sourceText };
+    }
+    return null;
+  }
+
   async openReaderBacklinkSource(row, { source = "backlink" } = {}) {
     const sourcePath = typeof row?.sourcePath === "string" ? row.sourcePath : "";
     const workspace = this.app.workspace;
     if (!sourcePath || typeof workspace?.openLinkText !== "function") return false;
+    const sourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
+    if (sourceFile?.path !== sourcePath || !sourcePath.toLowerCase().endsWith(".md")) return false;
+    let evidence = this.readerBacklinkSourceEvidence(row, sourceFile);
+    if (!evidence) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
+      return false;
+    }
     try {
       await workspace.openLinkText(sourcePath, "", true);
     } catch (error) {
       this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
         code: error?.code || "unknown" });
       new Notice(`无法打开 Markdown 来源：${error?.message || error}`);
+      return false;
+    }
+
+    const currentSourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
+    evidence = currentSourceFile?.path === sourcePath
+      ? this.readerBacklinkSourceEvidence(row, currentSourceFile) : null;
+    if (!evidence) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
+        code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
       return false;
     }
 
@@ -4616,23 +4689,26 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     let endPosition = null;
     let value = null;
     try { value = editor.getValue?.(); } catch { /* Fall back to the metadata line. */ }
-    if (typeof value === "string" && typeof editor.offsetToPos === "function" &&
-        Number.isSafeInteger(row.offset) && row.offset >= 0 && row.offset <= value.length) {
+    const sourceTextMatches = evidence.kind !== "source-text" ||
+      (typeof value === "string" && evidence.offset <= value.length && evidence.endOffset <= value.length &&
+        value.slice(evidence.offset, evidence.endOffset) === evidence.sourceText);
+    if (sourceTextMatches && typeof value === "string" && typeof editor.offsetToPos === "function" &&
+        Number.isSafeInteger(evidence.offset) && evidence.offset >= 0 && evidence.offset <= value.length) {
       try {
-        const candidate = editor.offsetToPos(row.offset);
+        const candidate = editor.offsetToPos(evidence.offset);
         if (isValidEditorPosition(candidate)) position = candidate;
-        if (position && Number.isSafeInteger(row.endOffset) && row.endOffset > row.offset &&
-            row.endOffset <= value.length) {
-          const candidateEnd = editor.offsetToPos(row.endOffset);
+        if (position && Number.isSafeInteger(evidence.endOffset) && evidence.endOffset > evidence.offset &&
+            evidence.endOffset <= value.length) {
+          const candidateEnd = editor.offsetToPos(evidence.endOffset);
           if (isValidEditorPosition(candidateEnd)) endPosition = candidateEnd;
         }
       } catch { position = null; endPosition = null; }
     }
-    if (!position && Number.isSafeInteger(row.line) && row.line >= 0) {
+    if (!position && Number.isSafeInteger(evidence.line) && evidence.line >= 0) {
       let lineCount = null;
       try { lineCount = editor.lineCount?.(); } catch { /* Use the already available text when possible. */ }
       if (!Number.isSafeInteger(lineCount) && typeof value === "string") lineCount = value.split("\n").length;
-      if (Number.isSafeInteger(lineCount) && row.line < lineCount) position = { line: row.line, ch: 0 };
+      if (Number.isSafeInteger(lineCount) && evidence.line < lineCount) position = { line: evidence.line, ch: 0 };
     }
     if (!position) return true;
 
@@ -4670,7 +4746,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       timer = ownerWindow.setTimeout?.(() => {
         try {
           if (!userInteracted && !this.isUnloading && leaf?.view === view && view.editor === editor &&
-              view.file?.path === sourcePath && editor.getSelection?.() === value.slice(row.offset, row.endOffset) &&
+              view.file?.path === sourcePath && editor.getSelection?.() === value.slice(evidence.offset, evidence.endOffset) &&
               sameEditorPosition(editor.getCursor("from"), from) && sameEditorPosition(editor.getCursor("to"), to)) {
             editor.setCursor(endPosition);
           }

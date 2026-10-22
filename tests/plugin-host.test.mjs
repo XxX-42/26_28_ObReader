@@ -26,6 +26,8 @@ function createHarness({
   const leaves = [];
   const vaultEvents = new Map();
   const workspaceEvents = new Map();
+  const metadataCacheEvents = new Map();
+  const metadataCaches = new Map();
   let viewFactory;
 
   function addListener(collection, name, listener) {
@@ -426,6 +428,8 @@ function createHarness({
     vault: {
       configDir: ".obsidian",
       getAbstractFileByPath: (filePath) => files.get(filePath) || null,
+      getMarkdownFiles: () => [...files.values()].filter((file) =>
+        typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")),
       on: (name, listener) => addListener(vaultEvents, name, listener),
       readBinary: async (file) => {
         file.reads += 1;
@@ -538,6 +542,10 @@ function createHarness({
         return root;
       },
     },
+    metadataCache: {
+      on: (name, listener) => addListener(metadataCacheEvents, name, listener),
+      getFileCache: (file) => metadataCaches.get(file?.path) || null,
+    },
   };
 
   withAtomicProcess(app.vault.adapter, storedFiles);
@@ -559,8 +567,12 @@ function createHarness({
     storedFiles,
     workspaceEvents,
     vaultEvents,
+    metadataCacheEvents,
+    metadataCaches,
     emitWorkspace: (name, ...args) => emit(workspaceEvents, name, ...args),
     emitVault: (name, ...args) => emit(vaultEvents, name, ...args),
+    emitMetadataCache: (name, ...args) => emit(metadataCacheEvents, name, ...args),
+    setFileCache(file, cache) { metadataCaches.set(file.path, cache); },
     makeWindow,
     createView() {
       const leaf = new WorkspaceLeaf(app);
@@ -1795,6 +1807,83 @@ test("Reader backlink pages use a document cache and invalidate it when Markdown
   harness.plugin.onunload();
 });
 
+test("Reader backlink index follows actual Markdown cache and folder rename events without scanning the Vault", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  await harness.plugin.rebuildReaderBacklinkIndex();
+  const link = (page) => ({ link: `Books/Book.pdf#page=1&obreader=page.${page}`,
+    position: { start: { offset: 0, line: 0 }, end: { offset: 24, line: 0 } } });
+  const note = new harness.TFile("Notes/Nested/Reference.md");
+  const sibling = new harness.TFile("Notes-old/Reference.md");
+  harness.files.set(note.path, note);
+  harness.files.set(sibling.path, sibling);
+  harness.setFileCache(note, { links: [link("page-one")] });
+  harness.setFileCache(sibling, { links: [link("sibling-page")] });
+  harness.emitMetadataCache("changed", note);
+  harness.emitMetadataCache("changed", sibling);
+  assert.deepEqual(harness.plugin.readerBacklinkIndex.getByPdfPath("Books/Book.pdf")
+    .map((row) => row.sourcePath).sort(), ["Notes-old/Reference.md", "Notes/Nested/Reference.md"].sort());
+
+  let vaultScans = 0;
+  const getMarkdownFiles = harness.app.vault.getMarkdownFiles;
+  harness.app.vault.getMarkdownFiles = () => { vaultScans += 1; return getMarkdownFiles(); };
+  const oldNotePath = note.path;
+  harness.files.delete(oldNotePath);
+  harness.metadataCaches.delete(oldNotePath);
+  note.path = "Archive/Nested/Reference.md";
+  harness.files.set(note.path, note);
+  harness.setFileCache(note, { links: [link("page-one")] });
+  harness.emitVault("rename", { path: "Archive" }, "Notes");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const routes = harness.plugin.readerBacklinkIndex.getByPdfPath("Books/Book.pdf");
+  assert.deepEqual(routes.map((row) => row.sourcePath).sort(),
+    ["Archive/Nested/Reference.md", "Notes-old/Reference.md"].sort(),
+    "folder rename removes old source rows and refreshes relocated indexed Markdown files");
+  assert.equal(vaultScans, 0, "folder rename uses the index's existing source set, not another Vault scan");
+  harness.plugin.onunload();
+});
+
+test("Reader backlink source jump rejects a changed MetadataCache target or source span", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const note = new harness.TFile("Notes/Source.md");
+  harness.files.set(note.path, note);
+  const expected = { kind: "page", id: "page-one" };
+  const fragment = encodeReaderLinkFragment({ pageNumber: 1, docKey: "aabbccddeeff",
+    documentId: "xxh64-v1:0123456789abcdef", target: expected });
+  const link = (target, start = 10, end = 40) => ({
+    link: `Books/Book.pdf#${target === expected ? fragment : encodeReaderLinkFragment({ pageNumber: 1,
+      docKey: "aabbccddeeff", documentId: "xxh64-v1:0123456789abcdef", target })}`,
+    position: { start: { offset: start, line: 2 }, end: { offset: end, line: 2 } },
+  });
+  let openCalls = 0;
+  harness.app.workspace.openLinkText = async () => { openCalls += 1; };
+  const row = { sourcePath: note.path, routePath: "Books/Book.pdf", docKey: "aabbccddeeff",
+    documentId: "xxh64-v1:0123456789abcdef", target: expected, offset: 10, endOffset: 40, line: 2 };
+
+  harness.setFileCache(note, { links: [link({ kind: "page", id: "page-two" })] });
+  assert.equal(await harness.plugin.openReaderBacklinkSource(row), false,
+    "the current source at the old span no longer names the clicked Reader target");
+  assert.equal(openCalls, 0, "a stale source row is rejected before changing the active Markdown leaf");
+  harness.setFileCache(note, { links: [link(expected, 11, 41)] });
+  assert.equal(await harness.plugin.openReaderBacklinkSource(row), false,
+    "a moved MetadataCache span is not treated as the stale indexed source row");
+  assert.equal(openCalls, 0);
+  const unresolved = [];
+  const originalRecord = harness.plugin.sessionLog.record.bind(harness.plugin.sessionLog);
+  harness.plugin.sessionLog.record = (category, details) => {
+    if (category === "readerBacklinks" && details?.event === "source-open-failed") unresolved.push(details.code);
+    return originalRecord(category, details);
+  };
+  harness.setFileCache(note, { links: [link({ kind: "page", id: "page-two" })] });
+  assert.equal(await harness.plugin.openReaderBacklinkSource(row), false);
+  assert.deepEqual(unresolved, ["TARGET_UNRESOLVED"],
+    "a changed Reader target is explicitly reported as TARGET_UNRESOLVED");
+  assert.equal(openCalls, 0);
+  harness.plugin.onunload();
+});
+
 test("Reader backlink page lookup cannot publish a superseded same-page result", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
@@ -1825,10 +1914,22 @@ test("Reader backlink page lookup cannot publish a superseded same-page result",
 test("Reader backlink source navigation focuses the exact Markdown link and never overwrites user movement", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
-  const content = "A quote.\n[[Books/Book.pdf#page=2|Reader source]]\nLater text.";
+  const noteFile = new harness.TFile("Notes/Source.md");
+  harness.files.set(noteFile.path, noteFile);
+  const docKey = "aabbccddeeff";
+  const documentId = "xxh64-v1:0123456789abcdef";
+  const target = { kind: "page", id: "page-two" };
+  const fragment = encodeReaderLinkFragment({ pageNumber: 2, docKey, documentId, target });
+  const content = `A quote.\n[[Books/Book.pdf#${fragment}|Reader source]]\nLater text.`;
   const start = content.indexOf("[[Books/");
   const end = content.indexOf("]]", start) + 2;
   const selected = content.slice(start, end);
+  const metadataLink = { link: `Books/Book.pdf#${fragment}`, displayText: "Reader source",
+    position: { start: { offset: start, line: 1 }, end: { offset: end, line: 1 } } };
+  harness.setFileCache(noteFile, { links: [metadataLink] });
+  harness.plugin.readerBacklinkIndex.replaceFile(noteFile, { links: [metadataLink] });
+  const [row] = harness.plugin.readerBacklinkIndex.get(docKey, target, documentId);
+  assert.ok(row, "navigation starts from the same indexed MetadataCache link row");
   const timers = new Map();
   let timerId = 0;
   const listeners = new Map();
@@ -1887,15 +1988,13 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
     removeEventListener(name, listener) { listeners.get(name)?.delete(listener); },
     dispatch(name) { for (const listener of [...(listeners.get(name) || [])]) listener({ type: name }); },
   };
-  const markdownLeaf = { view: { file: { path: "Notes/Source.md" }, editor, containerEl,
+  const markdownLeaf = { view: { file: noteFile, editor, containerEl,
     getViewType: () => "markdown" } };
   const openCalls = [];
   harness.app.workspace.openLinkText = async (...args) => {
     openCalls.push(args);
     harness.app.workspace.activeLeaf = markdownLeaf;
   };
-  const row = { sourcePath: "Notes/Source.md", offset: start, endOffset: end, line: 1 };
-
   assert.equal(await harness.plugin.openReaderBacklinkSource(row, { source: "unit-test" }), true);
   assert.deepEqual(openCalls, [["Notes/Source.md", "", true]]);
   assert.equal(editor.getSelection(), selected);
@@ -1934,10 +2033,23 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
 
   editor.scrolls.length = 0;
   markdownLeaf.view.file.path = "Notes/Source.md";
-  await harness.plugin.openReaderBacklinkSource({ ...row, offset: content.length + 1, line: 0 },
+  const invalidLink = { ...metadataLink, position: { start: { offset: content.length + 1, line: 0 },
+    end: { offset: content.length + 2, line: 0 } } };
+  harness.setFileCache(noteFile, { links: [invalidLink] });
+  harness.plugin.readerBacklinkIndex.replaceFile(noteFile, { links: [invalidLink] });
+  const [invalidRow] = harness.plugin.readerBacklinkIndex.get(docKey, target, documentId);
+  await harness.plugin.openReaderBacklinkSource(invalidRow,
     { source: "invalid-offset-test" });
   assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "an invalid offset safely falls back to the indexed line");
   assert.deepEqual(editor.scrolls, [{ position: { line: 0, ch: 0 }, center: true }]);
+
+  const excerpt = { sourcePath: noteFile.path, offset: 0, endOffset: 8, line: 0, sourceText: "A quote." };
+  await harness.plugin.openReaderBacklinkSource(excerpt, { source: "learning-excerpt" });
+  assert.equal(editor.getSelection(), "A quote.", "a Markdown excerpt selects only its exact sourceText span");
+  await harness.plugin.openReaderBacklinkSource({ ...excerpt, offset: 1, endOffset: 9 },
+    { source: "stale-learning-excerpt" });
+  assert.equal(editor.getSelection(), "", "a mismatch is never repaired by searching for similar text elsewhere");
+  assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "the stale excerpt falls back only to its verified line");
   harness.plugin.onunload();
 });
 
@@ -2108,7 +2220,8 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   file.path = "Archive/renamed-link.pdf";
   file.basename = "renamed-link";
   harness.files.set(file.path, file);
-  await harness.plugin.annotationHost.renamed(file, oldPath);
+  harness.emitVault("rename", file, oldPath);
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   const legacyAnnotationLink = `page=2&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`;
   const annotation = await harness.plugin.resolveReaderLinkDocument(
@@ -2121,14 +2234,28 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   assert.equal(view.annotationDocument.docKey, document.docKey);
 
   const compactAnnotationLink = link({ kind: "annotation", id: annotationId }, 2);
-  assert.equal(compactAnnotationLink, `page=2&obreader=ann.${annotationId}`,
-    "newly copied links expose only the native page fallback and stable target ID");
+  assert.equal(compactAnnotationLink,
+    `page=2&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`,
+    "newly copied links keep the stable document identity as well as the native fallback and target ID");
   const compactAnnotation = await harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(compactAnnotationLink), file.path,
   );
   assert.equal(compactAnnotation.file, file, "the compact link resolves through its current PDF route");
   assert.equal(compactAnnotation.readerTarget.documentId, document.documentId);
   assert.equal(compactAnnotation.readerTarget.docKey, document.docKey);
+
+  const copy = new harness.TFile(oldPath, originalBytes);
+  harness.files.set(copy.path, copy);
+  const copyReader = await createSidecarReader(harness, copy, {
+    pageCount: 2, orderedPageIdentities: ["page-one", "page-two"],
+  });
+  assert.notEqual(copyReader.view.annotationDocument.documentId, document.documentId,
+    "a PDF copy at the former route receives its own path-derived identity");
+  const originalFromStaleRoute = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(compactAnnotationLink), oldPath,
+  );
+  assert.equal(originalFromStaleRoute.file, file,
+    "the embedded original identity wins over a different copied PDF at the stale path");
 
   await saveSidecarOperations(reader, {
     requestId: "rename-link-delete-annotation",
