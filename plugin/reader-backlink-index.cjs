@@ -237,6 +237,7 @@ function createReaderBacklinkIndex() {
         pageNumber: parsed.pageNumber,
         selection: parsed.selection,
         displayText: typeof link.displayText === "string" && link.displayText ? link.displayText : null,
+        sourceText: typeof link.original === "string" && link.original ? link.original : null,
         line: Number.isSafeInteger(link.position?.start?.line) ? link.position.start.line : null,
         offset: start,
         endOffset: end,

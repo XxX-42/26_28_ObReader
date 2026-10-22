@@ -1924,7 +1924,7 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   const start = content.indexOf("[[Books/");
   const end = content.indexOf("]]", start) + 2;
   const selected = content.slice(start, end);
-  const metadataLink = { link: `Books/Book.pdf#${fragment}`, displayText: "Reader source",
+  const metadataLink = { link: `Books/Book.pdf#${fragment}`, original: selected, displayText: "Reader source",
     position: { start: { offset: start, line: 1 }, end: { offset: end, line: 1 } } };
   harness.setFileCache(noteFile, { links: [metadataLink] });
   harness.plugin.readerBacklinkIndex.replaceFile(noteFile, { links: [metadataLink] });
@@ -2050,6 +2050,34 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
     { source: "stale-learning-excerpt" });
   assert.equal(editor.getSelection(), "", "a mismatch is never repaired by searching for similar text elsewhere");
   assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "the stale excerpt falls back only to its verified line");
+
+  const positionReports = [];
+  const originalRecord = harness.plugin.sessionLog.record.bind(harness.plugin.sessionLog);
+  harness.plugin.sessionLog.record = (category, details) => {
+    if (category === "readerBacklinks" && details?.event === "source-opened") positionReports.push(details);
+    return originalRecord(category, details);
+  };
+  harness.setFileCache(noteFile, { links: [metadataLink] });
+  harness.plugin.readerBacklinkIndex.replaceFile(noteFile, { links: [metadataLink] });
+  const [currentRow] = harness.plugin.readerBacklinkIndex.get(docKey, target, documentId);
+  editor.value = `Unsaved text moved the link.\n${content}`;
+  await harness.plugin.openReaderBacklinkSource(currentRow, { source: "unsaved-link-move" });
+  assert.equal(editor.getSelection(), "",
+    "stale MetadataCache offsets cannot select unrelated unsaved text from the editor buffer");
+  assert.deepEqual(editor.getCursor("to"), { line: 1, ch: 0 },
+    "a stale raw link span degrades only to the MetadataCache line position");
+  assert.equal(positionReports.at(-1)?.positionKind, "line",
+    "the host reports line fallback distinctly from exact source positioning");
+  const noLineLink = { ...metadataLink, position: { start: { offset: start, line: null },
+    end: { offset: end, line: null } } };
+  harness.setFileCache(noteFile, { links: [noLineLink] });
+  harness.plugin.readerBacklinkIndex.replaceFile(noteFile, { links: [noLineLink] });
+  const [noLineRow] = harness.plugin.readerBacklinkIndex.get(docKey, target, documentId);
+  await harness.plugin.openReaderBacklinkSource(noLineRow, { source: "unsaved-link-move-no-line" });
+  assert.equal(positionReports.at(-1)?.positionKind, "file",
+    "without an exact raw span or verified line the host reports file-only navigation");
+  assert.equal(positionReports.at(-1)?.positioned, false);
+  assert.equal(positionReports.at(-1)?.selected, false);
   harness.plugin.onunload();
 });
 
@@ -2271,6 +2299,74 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   );
   assert.deepEqual(file.bytes, originalBytes, "link resolution and rename never write source PDF bytes");
   assert.equal(file.writes, 0);
+  harness.plugin.onunload();
+});
+
+test("identity-bearing Reader links keep closed-file navigation but report replacement targets unresolved", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const original = new harness.TFile("Books/identity-replaced.pdf", [37, 80, 68, 70, 1, 2, 3]);
+  const originalReader = await createSidecarReader(harness, original, {
+    pageCount: 1, orderedPageIdentities: ["original-page-one"],
+  });
+  const identity = { docKey: originalReader.view.annotationDocument.docKey,
+    documentId: originalReader.view.annotationDocument.documentId };
+  const parsed = parseReaderLinkFragment(encodeReaderLinkFragment({ pageNumber: 1, ...identity,
+    target: { kind: "page", id: "original-page-one" } }));
+
+  // A closed Reader still resolves its identity route; source verification is
+  // performed by the normal open/initialize handshake, not a second click hash.
+  harness.plugin.views.delete(originalReader.view);
+  harness.plugin.annotationHost.releaseView(originalReader.view);
+  const readsBeforeLinkResolution = original.reads;
+  const closedRoute = await harness.plugin.resolveReaderLinkDocument(parsed, original.path);
+  assert.equal(closedRoute.file, original);
+  assert.equal(closedRoute.readerTarget.kind, "page");
+  assert.equal(original.reads, readsBeforeLinkResolution,
+    "closed-file identity routing does not reread or fingerprint the PDF on the interaction path");
+
+  const replacement = new harness.TFile(original.path, [37, 80, 68, 70, 9, 8, 7]);
+  harness.files.set(replacement.path, replacement);
+  const resolved = await harness.plugin.resolveReaderLinkDocument(parsed, original.path);
+  assert.equal(resolved.file, replacement, "identity routing may open the current file shell for normal source verification");
+  assert.equal(resolved.readerTarget.id, "original-page-one");
+
+  const replacementReader = await createSidecarReader(harness, replacement, {
+    pageCount: 1, orderedPageIdentities: ["replacement-page-one"],
+  });
+  assert.equal(replacementReader.view.annotationSourceMismatch, true,
+    "the ordinary open handshake detects that the same-path PDF has different bytes");
+  const unresolved = [];
+  const originalRecord = harness.plugin.sessionLog.record.bind(harness.plugin.sessionLog);
+  harness.plugin.sessionLog.record = (category, details) => {
+    if (category === "readerAnchor" && details?.event === "target-unresolved") unresolved.push(details.code);
+    return originalRecord(category, details);
+  };
+  await replacementReader.view.setState({ path: replacement.path, readerTarget: resolved.readerTarget });
+  assert.deepEqual(unresolved, ["TARGET_UNRESOLVED"],
+    "a source mismatch is reported explicitly after the existing verified open gate");
+  assert.equal(replacementReader.view.pendingReaderTarget, null,
+    "a mismatched identity target is discarded after preserving only the native page-number fallback");
+  assert.equal(replacementReader.view.currentPageNumber, 1);
+  assert.equal(replacementReader.sent.some((message) => message.type === "reader-anchor-navigate"), false,
+    "the old page identity is never sent to the replacement PDF");
+  assert.ok(harness.notices.some((message) => message.includes("TARGET_UNRESOLVED") && message.includes("页码回退")));
+  harness.plugin.onunload();
+});
+
+test("identity route absence never falls back to an unrelated PDF at the historical link path", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const unrelated = new harness.TFile("Books/historical-route.pdf", [37, 80, 68, 70, 1]);
+  harness.files.set(unrelated.path, unrelated);
+  const parsed = parseReaderLinkFragment(
+    "page=3&docKey=abcdef123456&obdoc=missing-route-identity&obreader=page=old-page",
+  );
+  assert.equal(await harness.plugin.resolveReaderLinkFallback(parsed, unrelated.path), null,
+    "a missing stable identity cannot silently downgrade to the path now occupied by another PDF");
+  await assert.rejects(harness.plugin.resolveReaderLinkDocument(parsed, unrelated.path),
+    (error) => error.code === "TARGET_UNRESOLVED",
+    "the unresolved identity is surfaced explicitly to the link handler");
   harness.plugin.onunload();
 });
 

@@ -160,12 +160,16 @@ test("backlink index preserves MetadataCache link end offsets for exact source f
   const sourcePath = "Notes/Exact Source.md";
   index.replaceFile({ path: sourcePath }, { links: [{
     link: "Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two",
+    original: "[[Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two|page reference]]",
     displayText: "page reference",
     position: { start: { offset: 17, line: 1 }, end: { offset: 42, line: 1 } },
   }] });
   const [row] = index.get("aabbccddeeff", { kind: "page", id: "page-two" });
   assert.equal(row.offset, 17);
   assert.equal(row.endOffset, 42);
+  assert.equal(row.sourceText,
+    "[[Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two|page reference]]",
+    "the exact original MetadataCache link span is retained for editor-buffer validation");
 
   index.replaceFile({ path: sourcePath }, { links: [{
     link: "Book.pdf#page=2&docKey=aabbccddeeff&obreader=page.page-two",
@@ -173,6 +177,8 @@ test("backlink index preserves MetadataCache link end offsets for exact source f
   }] });
   assert.equal(index.get("aabbccddeeff", { kind: "page", id: "page-two" })[0].endOffset, null,
     "missing end offsets stay absent instead of being inferred from display text");
+  assert.equal(index.get("aabbccddeeff", { kind: "page", id: "page-two" })[0].sourceText, null,
+    "missing original syntax stays unavailable instead of being reconstructed from the destination");
 });
 
 test("path-only Reader links are indexed by their resolved vault PDF route", async () => {

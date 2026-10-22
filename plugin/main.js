@@ -2948,6 +2948,17 @@ class PdfReaderView extends EditableFileView {
     const target = normalizeReaderTarget(pendingTarget);
     const document = this.annotationDocument;
     const pageIdentities = this.annotationPageIdentity?.orderedPageIdentities;
+    if (target && document && this.annotationSourceMismatch === true) {
+      this.pendingReaderTarget = null;
+      const { readerTarget: _readerTarget, ...state } = this.navigationState || {};
+      this.navigationState = state;
+      const pageNumber = Number.isSafeInteger(target.pageNumber) && target.pageNumber > 0
+        ? target.pageNumber : this.currentPageNumber;
+      this.plugin.sessionLog?.record("readerAnchor", { event: "target-unresolved", code: "TARGET_UNRESOLVED",
+        documentId: document.documentId, sourcePath: document.sourcePath, pageNumber });
+      new Notice(`TARGET_UNRESOLVED：PDF 来源身份不匹配，未应用旧页面身份或几何目标；仅保留第 ${pageNumber || 1} 页码回退。`, 7000);
+      return false;
+    }
     if (!target || !document || this.annotationHydrationAllowed !== true ||
         !Array.isArray(pageIdentities) || pageIdentities.length === 0 || !this.ready || !this.openAcknowledged) return false;
     const identity = { documentId: this.documentId, openRequest: this.openRequest,
@@ -4627,6 +4638,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             parsed.docKey !== (row.docKey || null) || parsed.documentId !== (row.documentId || null) ||
             normalizePdfRoutePath(parsed.routePath, row.sourcePath) !==
               normalizePdfRoutePath(row.routePath, row.sourcePath)) return false;
+        if (typeof row.sourceText === "string" && row.sourceText && link.original !== row.sourceText) return false;
         const offset = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
         const endOffset = Number.isSafeInteger(link.position?.end?.offset) ? link.position.end.offset : null;
         return offset === row.offset && endOffset === row.endOffset;
@@ -4637,6 +4649,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         offset: Number.isSafeInteger(matched.position?.start?.offset) ? matched.position.start.offset : -1,
         endOffset: Number.isSafeInteger(matched.position?.end?.offset) ? matched.position.end.offset : null,
         line: Number.isSafeInteger(matched.position?.start?.line) ? matched.position.start.line : null,
+        sourceText: typeof matched.original === "string" && matched.original ? matched.original : null,
       };
     }
     if (row.sourceText !== undefined) {
@@ -4689,28 +4702,43 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     let endPosition = null;
     let value = null;
     try { value = editor.getValue?.(); } catch { /* Fall back to the metadata line. */ }
-    const sourceTextMatches = evidence.kind !== "source-text" ||
-      (typeof value === "string" && evidence.offset <= value.length && evidence.endOffset <= value.length &&
-        value.slice(evidence.offset, evidence.endOffset) === evidence.sourceText);
+    const sourceTextMatches = typeof evidence.sourceText === "string" && evidence.sourceText.length > 0 &&
+      typeof value === "string" && Number.isSafeInteger(evidence.offset) && Number.isSafeInteger(evidence.endOffset) &&
+      evidence.offset >= 0 && evidence.endOffset <= value.length && evidence.endOffset > evidence.offset &&
+      value.slice(evidence.offset, evidence.endOffset) === evidence.sourceText;
+    let positionKind = "file";
     if (sourceTextMatches && typeof value === "string" && typeof editor.offsetToPos === "function" &&
         Number.isSafeInteger(evidence.offset) && evidence.offset >= 0 && evidence.offset <= value.length) {
       try {
         const candidate = editor.offsetToPos(evidence.offset);
-        if (isValidEditorPosition(candidate)) position = candidate;
+        if (isValidEditorPosition(candidate)) {
+          position = candidate;
+          positionKind = "exact-start";
+        }
         if (position && Number.isSafeInteger(evidence.endOffset) && evidence.endOffset > evidence.offset &&
             evidence.endOffset <= value.length) {
           const candidateEnd = editor.offsetToPos(evidence.endOffset);
-          if (isValidEditorPosition(candidateEnd)) endPosition = candidateEnd;
+          if (isValidEditorPosition(candidateEnd)) {
+            endPosition = candidateEnd;
+            positionKind = "exact";
+          }
         }
-      } catch { position = null; endPosition = null; }
+      } catch { position = null; endPosition = null; positionKind = "file"; }
     }
     if (!position && Number.isSafeInteger(evidence.line) && evidence.line >= 0) {
       let lineCount = null;
       try { lineCount = editor.lineCount?.(); } catch { /* Use the already available text when possible. */ }
       if (!Number.isSafeInteger(lineCount) && typeof value === "string") lineCount = value.split("\n").length;
-      if (Number.isSafeInteger(lineCount) && evidence.line < lineCount) position = { line: evidence.line, ch: 0 };
+      if (Number.isSafeInteger(lineCount) && evidence.line < lineCount) {
+        position = { line: evidence.line, ch: 0 };
+        positionKind = "line";
+      }
     }
-    if (!position) return true;
+    if (!position) {
+      this.sessionLog?.record("readerBacklinks", { event: "source-opened", source,
+        positioned: false, selected: false, positionKind: "file" });
+      return true;
+    }
 
     try {
       if (endPosition && typeof editor.setSelection === "function") editor.setSelection(position, endPosition);
@@ -4754,7 +4782,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       }, 1400);
     }
     this.sessionLog?.record("readerBacklinks", { event: "source-opened", source,
-      positioned: Boolean(position), selected: Boolean(endPosition) });
+      positioned: Boolean(position), selected: Boolean(endPosition), positionKind });
     return true;
   }
 
@@ -4851,15 +4879,28 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!parsed?.target && !parsed?.pageNumber) throw new Error("链接没有可识别的 Reader 目标。");
     let route = null;
     let file = null;
-    if (parsed.docKey && parsed.documentId) {
+    if (parsed.docKey || parsed.documentId) {
+      if (!parsed.docKey || !parsed.documentId) {
+        const error = new Error("TARGET_UNRESOLVED：链接中的 PDF 身份字段不完整；不会退回历史路径。");
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
+      }
       // Legacy links keep resolving by stable identity, including after a PDF
       // rename. New compact links intentionally carry only the PDF path.
-      route = await this.annotationHost.store.documentForIdentity({
-        docKey: parsed.docKey,
-        documentId: parsed.documentId,
-      });
-      if (route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
-        throw new Error("链接中的 PDF 文档身份无法验证。");
+      try {
+        route = await this.annotationHost.store.documentForIdentity({
+          docKey: parsed.docKey,
+          documentId: parsed.documentId,
+        });
+      } catch (cause) {
+        const error = new Error(`TARGET_UNRESOLVED：链接中的 PDF 身份当前无法验证；不会退回历史路径。${cause?.message ? ` ${cause.message}` : ""}`);
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
+      }
+      if (!route || route.documentId !== parsed.documentId || route.docKey !== parsed.docKey) {
+        const error = new Error("TARGET_UNRESOLVED：链接中的 PDF 文档身份无法验证；不会退回历史路径。");
+        error.code = "TARGET_UNRESOLVED";
+        throw error;
       }
       file = route.sourcePath ? this.app.vault.getAbstractFileByPath(route.sourcePath) : null;
       const pathFile = this.resolveLinkedPdfFile(linkPath, sourcePath);
@@ -4871,7 +4912,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       if (!file) throw new Error("链接中的 PDF 路径当前无法解析。");
       route = await this.annotationHost.store.documentForPath(file.path);
     }
-    if (!isPdfFile(file)) throw new Error("链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+    if (!isPdfFile(file)) {
+      const error = new Error(parsed.docKey || parsed.documentId
+        ? "TARGET_UNRESOLVED：身份路由指向的 PDF 当前不可用；不会按旧路径猜测其他文件。"
+        : "链接目标 PDF 当前未找到；不会按旧路径猜测其他文件。");
+      if (parsed.docKey || parsed.documentId) error.code = "TARGET_UNRESOLVED";
+      throw error;
+    }
     const needsDocumentIdentity = parsed.target?.kind === "selection" || parsed.target?.kind === "annotation";
     if (needsDocumentIdentity && !route) {
       throw new Error("此稳定目标尚无已验证的 PDF 身份；可以使用原生页码回退。");
@@ -4924,16 +4971,18 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pageNumber = Number.isSafeInteger(parsed?.pageNumber) && parsed.pageNumber > 0
       ? parsed.pageNumber : 1;
     let file = null;
-    if (parsed?.docKey && parsed?.documentId) {
+    if (parsed?.docKey || parsed?.documentId) {
+      if (!parsed.docKey || !parsed.documentId) return null;
       try {
         const route = await this.annotationHost.store.documentForIdentity({
           docKey: parsed.docKey,
           documentId: parsed.documentId,
         });
+        if (!route || route.docKey !== parsed.docKey || route.documentId !== parsed.documentId ||
+            typeof route.sourcePath !== "string") return null;
         file = this.app.vault.getAbstractFileByPath(route.sourcePath);
-      } catch { /* The native path fallback below remains available. */ }
-    }
-    if (!isPdfFile(file) && linkPath) {
+      } catch { return null; }
+    } else if (linkPath) {
       file = this.resolveLinkedPdfFile(linkPath, sourcePath);
     }
     return isPdfFile(file)
