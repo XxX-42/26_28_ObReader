@@ -8,7 +8,7 @@ const source = await readFile(
   "utf8",
 );
 
-function harness() {
+function harness(options = {}) {
   const listeners = new Map();
   const timers = new Map();
   const posted = [];
@@ -33,6 +33,7 @@ function harness() {
     postToHost(type, fields) { posted.push({ type, ...fields }); return true; },
     setTimeoutFn(callback) { const id = ++timerId; timers.set(id, callback); return id; },
     clearTimeoutFn(id) { timers.delete(id); },
+    ...options,
   });
   const message = {
     documentId: "doc-1", openRequest: 7, rendererGeneration: "generation-9",
@@ -204,6 +205,25 @@ test("dispose removes delegated listeners and modifier-hover has no preview side
   const h = harness();
   assert.equal(h.listeners.has("pointermove"), false,
     "unsupported modifier-hover preview does not install a polling/hover handler");
+  h.controller.dispose();
+  assert.equal(h.listeners.size, 0);
+});
+
+test("routed pointers use the existing input owner and do not register parallel pointer listeners", () => {
+  let allowed = true;
+  const h = harness({ routedPointerEvents: true, canActivate: () => allowed });
+  for (const type of ["click", "dblclick", "pointerdown"]) assert.equal(h.listeners.has(type), false);
+  h.documentRef.elementFromPoint = () => ({ closest: () => null });
+  const intent = { type: "click", button: 0, detail: 1, clientPoint: { x: 30, y: 27 } };
+  assert.equal(h.controller.handleRoutedPointerEvent(intent, {}), true);
+  allowed = false;
+  h.advanceTimers();
+  assert.equal(h.posted.length, 0, "switching tools while click is pending revokes navigation");
+  assert.equal(h.controller.handleRoutedPointerEvent(intent, {}), false);
+  allowed = true;
+  assert.equal(h.controller.handleRoutedPointerEvent(intent, {}), true);
+  h.advanceTimers();
+  assert.equal(h.posted.length, 1);
   h.controller.dispose();
   assert.equal(h.listeners.size, 0);
 });

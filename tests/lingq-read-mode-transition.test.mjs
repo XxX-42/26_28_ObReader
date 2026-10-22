@@ -175,6 +175,31 @@ test("enabling LingQ from Ink enters READ and makes the guarded lookup path avai
     "the existing annotation/Pencil-priority guard still suppresses lookup in tool mode");
 });
 
+test("one guarded click belongs to backlink or LingQ, never both, and pan/tool clicks navigate neither", () => {
+  const api = makeBridgeHarness();
+  api.setVocabularyEnabled(true);
+  const owned = [];
+  api.state.backlinkInteractionController = {
+    handleRoutedPointerEvent(intent) { owned.push(intent.type); return true; },
+  };
+  const intent = { type: "click", pointerType: "mouse", pageIndex: 2, clientPoint: { x: 20, y: 30 } };
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(owned, ["click"]);
+  assert.equal(api.calls.filter(({ type }) => type === "lookup").length, 0);
+  api.setEditorMode(9);
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(owned, ["click"], "Highlight/Pencil mode keeps ownership before backlink lookup");
+  api.setEditorMode(0);
+  api.state.inputPolicy = { handlePanClick: () => true, lastPenPanClickTarget: 2 };
+  api.onBridgeIosClick(intent, {});
+  assert.deepEqual(owned, ["click"], "a completed pan must not queue delayed backlink navigation");
+  api.state.inputPolicy = { handlePanClick: () => false };
+  api.state.backlinkInteractionController.handleRoutedPointerEvent = () => false;
+  api.onBridgeIosClick(intent, {});
+  assert.equal(api.calls.filter(({ type }) => type === "lookup").length, 1,
+    "an unlinked token still follows the existing LingQ path");
+});
+
 test("an Ink gesture defers READ until its safe boundary, including on mobile", () => {
   for (const mobile of [false, true]) {
     const api = makeBridgeHarness({ mobile });

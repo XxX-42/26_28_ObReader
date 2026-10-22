@@ -12,6 +12,8 @@
       documentRef = globalThis.document,
       getCurrentPageState = () => null,
       postToHost = () => false,
+      routedPointerEvents = false,
+      canActivate = () => true,
       setTimeoutFn = globalThis.setTimeout?.bind(globalThis),
       clearTimeoutFn = globalThis.clearTimeout?.bind(globalThis),
       clickDelayMs = SINGLE_CLICK_DELAY_MS,
@@ -19,6 +21,8 @@
       this.document = documentRef;
       this.getCurrentPageState = getCurrentPageState;
       this.postToHost = postToHost;
+      this.canActivate = canActivate;
+      this.routedPointerEvents = routedPointerEvents;
       this.setTimeout = setTimeoutFn;
       this.clearTimeout = clearTimeoutFn;
       this.clickDelayMs = clickDelayMs;
@@ -36,10 +40,12 @@
       this.onVisibilityChange = () => {
         if (this.document?.visibilityState === "hidden") this.clearPage();
       };
-      this.document?.addEventListener?.("click", this.onClick, true);
-      this.document?.addEventListener?.("dblclick", this.onDoubleClick, true);
+      if (!routedPointerEvents) {
+        this.document?.addEventListener?.("click", this.onClick, true);
+        this.document?.addEventListener?.("dblclick", this.onDoubleClick, true);
+        this.document?.addEventListener?.("pointerdown", this.onPointerDown, true);
+      }
       this.document?.addEventListener?.("keydown", this.onKeyDown, true);
-      this.document?.addEventListener?.("pointerdown", this.onPointerDown, true);
       this.document?.addEventListener?.("visibilitychange", this.onVisibilityChange);
     }
 
@@ -126,8 +132,33 @@
         current.pageIdentity === page.pageIdentity;
     }
 
+    // Pointer policy stays in the existing Bridge/InputRouter ownership hook.
+    // Intents carry coordinates, never a retained native event or DOM target.
+    handleRoutedPointerEvent(intent, controls) {
+      if (!this.canActivate() || !["click", "dblclick", "pointerdown"].includes(intent?.type)) {
+        this.cancelPendingClick();
+        return false;
+      }
+      const point = intent.clientPoint;
+      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+      const event = {
+        target: this.document?.elementFromPoint?.(point.x, point.y),
+        clientX: point.x, clientY: point.y, button: intent.button, detail: intent.detail,
+        preventDefault: () => controls?.preventDefault?.(),
+        stopPropagation: () => controls?.stopImmediatePropagation?.(),
+      };
+      if (intent.type === "pointerdown") return this.handlePointerDown(event);
+      if (!this.targetFromEvent(event)) {
+        this.cancelPendingClick();
+        return false;
+      }
+      if (intent.type === "dblclick") this.handleDoubleClick(event);
+      else this.handleClick(event);
+      return true;
+    }
+
     targetFromEvent(event) {
-      if (!this.currentPageMatches()) return null;
+      if (!this.canActivate() || !this.currentPageMatches()) return null;
       const page = this.page;
       const element = event?.target?.closest?.(
         ".pdfReaderAnnotationBacklinkBadge, .pdfReaderBacklinkPageBadge",
@@ -266,10 +297,11 @@
         // preventDefault so the browser still emits the later click event.
         event.stopPropagation?.();
       }
+      return !!badge;
     }
 
     sendTarget(target, page = this.page, activation = "pointer") {
-      if (!target || !page || this.page !== page || !this.currentPageMatches()) return false;
+      if (!target || !page || !this.canActivate() || this.page !== page || !this.currentPageMatches()) return false;
       const requestId = `backlink-open-${page.openRequest}-${++this.requestSequence}`;
       try {
         const sent = this.postToHost("reader-backlink-target-open", {

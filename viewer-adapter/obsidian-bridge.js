@@ -996,6 +996,9 @@
     if (typeof Controller !== "function") return null;
     state.backlinkInteractionController = new Controller({
       documentRef: document,
+      routedPointerEvents: true,
+      canActivate: () => !state.disposed && !state.closeControl && state.editorMode === 0 &&
+        !annotationToolIsActive() && !state.iosDirectManipulationController?.hasActivePenEditorGesture?.(),
       getCurrentPageState: () => {
         const pageNumber = state.app?.pdfViewer?.currentPageNumber;
         const actual = state.actualSourceIdentity;
@@ -9078,11 +9081,15 @@
     if (panClickSuppressed && knownPanClick && !touchTap) return;
     if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
     if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
+    if (state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     state.vocabularyController?.handleTap?.(intent);
   }
 
   function onBridgeIosDoubleClick(intent, controls) {
-    state.inputPolicy?.handlePanClick?.(intent, controls, { doubleClick: true });
+    if (state.inputPolicy?.handlePanClick?.(intent, controls, { doubleClick: true })) return;
+    if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
+    if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
+    state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls);
   }
 
   function pointerInteractionKind(intent) {
@@ -9247,6 +9254,7 @@
   }
 
   function onBridgePointerDown(intent, controls) {
+    if (state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     cancelManualMomentum();
     invalidatePendingPenHighlight();
     dismissToolbarParameterPopups(intent);
