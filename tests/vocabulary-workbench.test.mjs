@@ -91,6 +91,7 @@ class FakeModal {
     this.contentEl = new FakeElement("div");
     this.modalEl = new FakeElement("div");
   }
+  close() { this.onClose(); }
 }
 
 const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -115,7 +116,7 @@ function findAction(root, action) {
 }
 
 function makeApi(overrides = {}) {
-  const calls = { listFamilies: [], details: [], enrollment: [], contexts: [], openContext: [], due: [], history: [], preview: [], restore: [], imports: [], exports: [] };
+  const calls = { listFamilies: [], details: [], enrollment: [], contexts: [], openContext: [], addContextToReview: [], due: [], openReviewSource: [], history: [], preview: [], restore: [], imports: [], exports: [], learningExports: [] };
   const families = Array.from({ length: 105 }, (_, index) => makeFamily(index + 1));
   const api = {
     async listFamilies(options) {
@@ -143,10 +144,14 @@ function makeApi(overrides = {}) {
       return { total: 1, contexts: [{ contextId: "context:v1:1", surface: "term-1", sentence: "A sentence with term-1.", documentId: "vault://book.pdf", pageNumberHint: 2, createdAt: "2026-10-18T00:00:00.000Z" }] };
     },
     async openContext(contextId) { calls.openContext.push(contextId); return { status: "opening", message: "Reader will verify the source." }; },
+    async addContextToReview(contextId) { calls.addContextToReview.push(contextId); return { status: "draft-opened" }; },
     async listDueReview(options) {
       calls.due.push(options);
       return { total: 1, items: [{ familyKey: families[0].familyKey, dueAt: "2026-10-18T00:00:00.000Z", family: families[0] }] };
     },
+    async applyReviewAction() { return { status: "committed" }; },
+    async openReviewSource(input) { calls.openReviewSource.push(input); return { status: "opening" }; },
+    async exportLearning(format) { calls.learningExports.push(format); return { format, content: `learning:${format}`, itemCount: 1 }; },
     async listHistory(options) {
       calls.history.push(options);
       return { batches: [{ batchId: "batch-a", deviceId: "device-1", kind: "review-final", createdAt: "2026-10-18T00:00:00.000Z", changes: [{ changeId: "raw-1" }] }] };
@@ -378,6 +383,181 @@ test("Today Review offers ratings and session-only skip with stable retry ID and
   assert.equal(modal.panel.querySelectorAll('[data-role="review-row"]').length, 0);
   assert.match(modal.panel.textContent, /本页到期词族已在本次会话中跳过/);
   assert.equal(dueCalls.length, 3);
+  modal.onClose();
+});
+
+test("mixed Review renders learning Q/A and routes ratings with provider-scoped stable identities", async () => {
+  const actions = [];
+  const vocab = makeFamily(1);
+  const learningId = "learning:v1:shared";
+  const { api, calls } = makeApi({
+    async listDueReview(options) {
+      calls.due.push(options);
+      return { total: 2, items: [
+        { providerId: "vocabulary", itemId: "shared", familyKey: "shared", record: { surface: "verb", translation: "meaning" }, state: { box: 1 }, dueAt: "2026-10-18T00:00:00.000Z" },
+        { providerId: "learning", itemId: learningId, prompt: "What does it mean?", answer: "A saved answer", targetText: "captured quote", reviewState: { box: 2 }, dueAt: "2026-10-18T00:00:00.000Z" },
+      ] };
+    },
+    async applyReviewAction(input) { actions.push(input); return { status: "committed" }; },
+  });
+  const modal = createModal(api);
+  await settle(modal);
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+
+  const rows = modal.panel.querySelectorAll('[data-role="review-row"]');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /verb/);
+  assert.match(rows[1].textContent, /What does it mean\?/);
+  assert.match(rows[1].textContent, /A saved answer/);
+  assert.match(rows[1].textContent, /captured quote/);
+  assert.ok(modal.panel.querySelector('[data-action^="review-source-learning-"]'));
+
+  modal.panel.querySelectorAll('[data-action^="review-remember-"]')[0].click();
+  await settle(modal);
+  modal.panel.querySelectorAll('[data-action^="review-remember-"]')[1].click();
+  await settle(modal);
+  assert.equal(actions.length, 2);
+  assert.deepEqual(actions.map(({ providerId, itemId, familyKey }) => ({ providerId, itemId, familyKey })), [
+    { providerId: "vocabulary", itemId: "shared", familyKey: "shared" },
+    { providerId: "learning", itemId: learningId, familyKey: undefined },
+  ]);
+  assert.notEqual(actions[0].actionId, actions[1].actionId, "same kind and raw item key across providers cannot share retry identity");
+  modal.onClose();
+});
+
+test("review Source opens and closes only for accepted navigation; choose-context stays in the existing tab", async () => {
+  let sourceResult = { status: "opening", message: "Reader accepted the request." };
+  const row = { providerId: "learning", itemId: "learning:v1:source", prompt: "Prompt", answer: "Answer", targetText: "Quote", dueAt: "2026-10-18T00:00:00.000Z" };
+  const { api, calls } = makeApi({
+    async listDueReview(options) { calls.due.push(options); return { items: [row], total: 1, nextCursor: null }; },
+    async openReviewSource(input) { calls.openReviewSource.push(input); return sourceResult; },
+    async listContexts(familyKey, options) {
+      calls.contexts.push({ familyKey, options });
+      return { total: 1, contexts: [{ contextId: "context:v1:review", surface: "term-1", sentence: "A review context." }] };
+    },
+    async addContextToReview(contextId) { calls.addContextToReview.push(contextId); return { status: "cancelled" }; },
+  });
+  const modal = createModal(api);
+  await settle(modal);
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+  modal.panel.querySelector('[data-action^="review-source-learning-"]').click();
+  await settle(modal);
+  assert.equal(modal.closed, true, "accepted source navigation closes the workbench so it cannot cover the PDF");
+  assert.deepEqual(calls.openReviewSource[0], { providerId: "learning", itemId: row.itemId });
+  assert.equal(calls.closed, 1);
+
+  const choose = createModal(api);
+  await settle(choose);
+  choose.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(choose);
+  sourceResult = { status: "choose-context", familyKey: "family-for-context" };
+  choose.panel.querySelector('[data-action^="review-source-learning-"]').click();
+  await settle(choose);
+  assert.equal(choose.closed, false);
+  assert.equal(choose.activeTab, "contexts");
+  assert.equal(choose.selectedFamilyKey, "family-for-context");
+  const addContext = choose.panel.querySelector('[data-action^="context-add-review-"]');
+  assert.ok(addContext, "existing Context tab offers an explicit add-to-review action");
+  addContext.click();
+  await settle(choose);
+  assert.deepEqual(calls.addContextToReview, ["context:v1:review"]);
+  assert.match(choose.statusEl.textContent, /已取消.*未加入复习/);
+  assert.equal(choose.closed, false, "canceling the draft flow leaves the workbench open and unchanged");
+
+  const missing = createModal(api);
+  await settle(missing);
+  missing.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(missing);
+  sourceResult = { status: "missing" };
+  missing.panel.querySelector('[data-action^="review-source-learning-"]').click();
+  await settle(missing);
+  assert.equal(missing.closed, false);
+  assert.match(missing.statusEl.textContent, /来源.*不可用|不可用.*来源/);
+  modal.onClose();
+  choose.onClose();
+  missing.onClose();
+});
+
+test("vocabulary review Source uses provider and family identity; unknown totals stay explicitly unknown", async () => {
+  let sourceResult = { status: "opening" };
+  const family = makeFamily(1);
+  const { api, calls } = makeApi({
+    async listDueReview(options) {
+      calls.due.push(options);
+      return { items: [{ providerId: "vocabulary", itemId: family.familyKey, familyKey: family.familyKey,
+        record: family.records[0], state: { box: 1 }, dueAt: "2026-10-18T00:00:00.000Z" }], nextCursor: "more" };
+    },
+    async openReviewSource(input) { calls.openReviewSource.push(input); return sourceResult; },
+  });
+  const modal = createModal(api);
+  await settle(modal);
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+  assert.match(modal.statusEl.textContent, /本页 1 个复习项.*总数未知/);
+
+  modal.panel.querySelector('[data-action^="review-source-vocabulary-"]').click();
+  await settle(modal);
+  assert.deepEqual(calls.openReviewSource[0], { providerId: "vocabulary", familyKey: family.familyKey });
+  assert.equal(modal.closed, true);
+
+  const choose = createModal(api);
+  await settle(choose);
+  choose.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(choose);
+  sourceResult = { status: "choose-context", familyKey: family.familyKey };
+  choose.panel.querySelector('[data-action^="review-source-vocabulary-"]').click();
+  await settle(choose);
+  assert.equal(choose.closed, false);
+  assert.equal(choose.activeTab, "contexts");
+  assert.equal(calls.contexts.at(-1).familyKey, family.familyKey);
+  modal.onClose();
+  choose.onClose();
+});
+
+test("review session close resets local skips on reopen without changing review pagination behavior", async () => {
+  const family = makeFamily(1);
+  const { api, calls } = makeApi({ async listDueReview(options) {
+    calls.due.push(options);
+    return { items: [{ familyKey: family.familyKey, itemId: family.familyKey, providerId: "vocabulary", record: family.records[0], state: { box: 1 }, dueAt: "2026-10-18T00:00:00.000Z" }], total: 1 };
+  }, async applyReviewAction(input) { return { status: input.kind === "skip" ? "skipped" : "committed" }; } });
+  const modal = createModal(api);
+  await settle(modal);
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+  modal.panel.querySelector('[data-action^="review-skip-vocabulary-"]').click();
+  await settle(modal);
+  assert.equal(modal.panel.querySelectorAll('[data-role="review-row"]').length, 0);
+  modal.onClose();
+  await pause();
+  modal.onOpen();
+  await settle(modal);
+  assert.equal(modal.panel.querySelectorAll('[data-role="review-row"]').length, 1,
+    "a new modal session clears local skip suppression; ordinary page refresh remains session-local");
+  assert.equal(calls.closed, 1);
+  modal.onClose();
+});
+
+test("learning exports use the independent API and existing transfer textarea; mixed review rejects over 100 items", async () => {
+  const { api, calls } = makeApi({ async listDueReview() {
+    return { items: Array.from({ length: 101 }, (_, index) => ({
+      providerId: "learning", itemId: `learning:v1:${index}`, prompt: `P${index}`, answer: `A${index}`, dueAt: "2026-10-18T00:00:00.000Z",
+    })), total: 101 };
+  } });
+  const modal = createModal(api);
+  await settle(modal);
+  const textarea = modal.panel.querySelector('[data-action="transfer-text"]');
+  for (const format of ["json", "markdown", "csv", "anki-tsv"]) {
+    modal.panel.querySelector(`[data-action="export-learning-${format}"]`).click();
+    await settle(modal);
+    assert.equal(calls.learningExports.at(-1), format);
+    assert.equal(textarea.value, `learning:${format}`);
+  }
+  modal.contentEl.querySelector('[data-action="tab-review"]').click();
+  await settle(modal);
+  assert.equal(modal.panel.querySelectorAll('[data-role="review-row"]').length, 0);
+  assert.match(modal.errorEl.textContent, /超过每页 100 条上限/);
   modal.onClose();
 });
 
