@@ -772,9 +772,21 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         return result;
       };
     });
+    const beforeReadBadgeOpen = await targetOpenCount();
     await frame.click('.pdfReaderAnnotationBacklinkBadge');
     await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "annotation", { timeout: 5_000 });
+    assert.equal(await targetOpenCount(), beforeReadBadgeOpen + 1, 'one owned badge gesture opens its exact source once');
+    const ownedBadgeTrace = await frame.evaluate(() => window.__annotationBadgeRouting.filter(row => row.router && ['pointerdown', 'pointerup', 'click'].includes(row.type)));
+    assert.ok(ownedBadgeTrace.some(row => row.type === 'click'));
+    assert.ok(ownedBadgeTrace.every(row => row.mode === 0), JSON.stringify(ownedBadgeTrace));
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Annotation.md");
+    const beforeKeyboardBadgeOpen = await targetOpenCount();
+    await frame.focus('.pdfReaderAnnotationBacklinkBadge');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(count => window.__readerBacklinkE2E.messages.filter(message => message.type === 'reader-backlink-target-open').length === count + 1,
+      { timeout: 5_000 }, beforeKeyboardBadgeOpen);
+    assert.equal(await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode), 0,
+      'keyboard badge focus must not activate its containing Highlight tool');
     const contextLearningEvidence = await runLearningContextBrowserFlow({ page, frame, methodSource: productionMethodSource, sourceHash });
     assert.equal(createHash('sha256').update(await readFile(fixture)).digest('hex'), sourceSha256);
     assert.equal(await frame.evaluate(() => window.__learningSourceSaveCalls), 0);

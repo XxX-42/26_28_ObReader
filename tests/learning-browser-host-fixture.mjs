@@ -99,7 +99,7 @@ export function installLearningBrowserHost({ documentId, docKey, rendererGenerat
       readerTargetApplySequence: 0, postToViewer: message => { window.__readerHostPost(message); return true; } });
     Object.assign(plugin, methods.plugin, { settings: { vocabularyEnabled: true },
       pdfHashRuntime: { fingerprint },
-      readerAnchorStore: anchorModule.createReaderAnchorStore({ adapter, hash: fingerprint }),
+      readerAnchorStore: anchorModule.createReaderAnchorStore({ adapter, hash: fingerprint, makeId: () => crypto.randomUUID() }),
       getVocabularyDictionary: () => ({ lookup: async () => {
         throw Object.assign(Error('External ECDICT resource is outside this fixture'), { code: 'dictionary-unavailable' });
       } }),
