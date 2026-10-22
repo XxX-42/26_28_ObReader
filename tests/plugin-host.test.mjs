@@ -4813,6 +4813,66 @@ test("selection Reader navigation stops if source verification changes during an
   harness.plugin.onunload();
 });
 
+test("learning Markdown Source opens exact large excerpts without widening generic backlink limits", async () => {
+  const { fromMarkdown } = sourceRequire("./semantic/semantic-anchor.cjs");
+  for (const length of [4097, 100000]) {
+    const harness = createHarness();
+    await harness.plugin.onload();
+    const noteFile = new harness.TFile("Notes/Large Learning.md");
+    harness.files.set(noteFile.path, noteFile);
+    const excerpt = "x".repeat(length);
+    const editor = {
+      value: `prefix ${excerpt} suffix`, selections: [], cursors: [], focuses: 0,
+      getValue() { return this.value; },
+      offsetToPos(offset) { return { line: 0, ch: offset }; },
+      setSelection(from, to) { this.selections.push([{ ...from }, { ...to }]); },
+      setCursor(pos) { this.cursors.push({ ...pos }); },
+      scrollIntoView() {}, focus() { this.focuses++; },
+    };
+    harness.app.workspace.activeLeaf = { view: {
+      file: noteFile, editor, containerEl: {}, getViewType: () => "markdown",
+    } };
+    harness.app.workspace.getLeavesOfType = type => type === "markdown" ? [harness.app.workspace.activeLeaf] : [];
+    let opens = 0;
+    harness.app.workspace.openLinkText = async () => { opens++; };
+    const row = { sourcePath: noteFile.path, offset: 7, endOffset: 7 + length,
+      line: 0, sourceText: excerpt };
+    const exactOptions = { source: "learning-item", requireExact: true };
+    let host, saved;
+    if (length === 4097) {
+      host = harness.plugin.getLearningHost();
+      const service = await host.getService();
+      const source = fromMarkdown({ sourcePath: noteFile.path, offset: 7,
+        endOffset: 7 + length, line: 0, text: excerpt });
+      const draft = service.createDraft({ source, prompt: "Large excerpt?" });
+      saved = await service.confirmDraft(draft.draftId, { actionId: `large-${length}` });
+      assert.equal(saved.status, "committed");
+      assert.equal((await host.openItemSource(saved.item.itemId)).status, "opening");
+    } else {
+      // Exercise the navigation boundary directly: the existing shard byte cap
+      // can reject a 100k item with several duplicated text snapshots.
+      assert.equal(await harness.plugin.openReaderBacklinkSource(row, exactOptions), true);
+    }
+    assert.equal(opens, 1);
+    assert.deepEqual(editor.selections, [[{ line: 0, ch: 7 }, { line: 0, ch: 7 + length }]]);
+    assert.equal(await harness.plugin.openReaderBacklinkSource(row), false);
+    assert.equal(await harness.plugin.openReaderBacklinkSource(row, { source: "learning-item" }), false);
+    assert.equal(await harness.plugin.openReaderBacklinkSource(row, { requireExact: true }), false);
+    assert.equal(opens, 1, "generic and nonexact calls reject before opening the note");
+    harness.app.workspace.openLinkText = async () => { opens++; editor.value = `prefix y${excerpt.slice(1)} suffix`; };
+    if (host) await assert.rejects(host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
+    else assert.equal(await harness.plugin.openReaderBacklinkSource(row, exactOptions), false);
+    assert.equal(opens, 2, "changed literal is detected after the asynchronous open");
+    assert.equal(editor.selections.length, 1, "the changed source is never reselected");
+    assert.equal(editor.focuses, 1, "failed source validation does not steal focus");
+    assert.deepEqual(editor.cursors, [], "failed exact validation never falls back to a cursor");
+    const tooLong = { ...row, sourceText: "x".repeat(100001), endOffset: row.offset + 100001 };
+    assert.equal(await harness.plugin.openReaderBacklinkSource(tooLong, exactOptions), false);
+    assert.equal(opens, 2, "the learning navigation bound still rejects oversized evidence before opening");
+    harness.plugin.onunload();
+  }
+});
+
 test("learning Markdown Source requires its exact editor span after the asynchronous note open", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

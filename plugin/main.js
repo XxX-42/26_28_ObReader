@@ -4641,7 +4641,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 
-  readerBacklinkSourceEvidence(row, sourceFile) {
+  readerBacklinkSourceEvidence(row, sourceFile, { allowLearningExcerpt = false } = {}) {
     if (!row || row.sourcePath !== sourceFile?.path ||
         typeof row.sourcePath !== "string" || !row.sourcePath.toLowerCase().endsWith(".md")) return null;
     if (row.target !== undefined && row.target !== null) {
@@ -4672,7 +4672,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       };
     }
     if (row.sourceText !== undefined) {
-      if (typeof row.sourceText !== "string" || !row.sourceText || row.sourceText.length > 4096 ||
+      const maxSourceTextLength = allowLearningExcerpt === true ? 100_000 : 4096;
+      if (typeof row.sourceText !== "string" || !row.sourceText || row.sourceText.length > maxSourceTextLength ||
           !Number.isSafeInteger(row.offset) || row.offset < 0 ||
           !Number.isSafeInteger(row.endOffset) || row.endOffset <= row.offset ||
           row.endOffset - row.offset !== row.sourceText.length) return null;
@@ -4688,7 +4689,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!sourcePath || typeof workspace?.openLinkText !== "function") return false;
     const sourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
     if (sourceFile?.path !== sourcePath || !sourcePath.toLowerCase().endsWith(".md")) return false;
-    let evidence = this.readerBacklinkSourceEvidence(row, sourceFile);
+    const evidenceOptions = { allowLearningExcerpt: source === "learning-item" && requireExact === true };
+    let evidence = this.readerBacklinkSourceEvidence(row, sourceFile, evidenceOptions);
     if (!evidence) {
       this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
         code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
@@ -4711,7 +4713,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
     const currentSourceFile = this.app.vault.getAbstractFileByPath?.(sourcePath);
     evidence = currentSourceFile?.path === sourcePath
-      ? this.readerBacklinkSourceEvidence(row, currentSourceFile) : null;
+      ? this.readerBacklinkSourceEvidence(row, currentSourceFile, evidenceOptions) : null;
     if (!evidence) {
       this.sessionLog?.record("readerBacklinks", { event: "source-open-failed", source,
         code: row?.target ? "TARGET_UNRESOLVED" : "SOURCE_UNVERIFIED" });
