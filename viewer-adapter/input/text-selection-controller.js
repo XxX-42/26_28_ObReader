@@ -226,11 +226,19 @@
     }
 
     rangesForAnchors(textLayer, anchors) {
+      return this.rangeEntriesForAnchors(textLayer, anchors).map((entry) => entry.range);
+    }
+
+    rangeEntriesForAnchors(textLayer, anchors) {
       const flattened = flattenTextLayer(textLayer);
       if (!flattened) return [];
       return (Array.isArray(anchors) ? anchors : [])
-        .map((anchor) => this.rangeForAnchor(textLayer, anchor, flattened))
-        .filter(Boolean);
+        .map((anchor, index) => ({
+          anchor,
+          index,
+          range: this.rangeForAnchor(textLayer, anchor, flattened),
+        }))
+        .filter((entry) => entry.range);
     }
 
     selectRange(textLayer, range) {

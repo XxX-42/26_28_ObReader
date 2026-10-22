@@ -166,6 +166,11 @@ test("TextSelectionController resolves stable text anchors and owns applying the
   assert.equal(controller.selectRange(textLayer, range), true);
   assert.equal(selection.range, range);
   assert.equal(controller.rangesForAnchors(textLayer, [anchor, { ...anchor, exactQuote: "missing" }]).length, 1);
+  const entries = controller.rangeEntriesForAnchors(textLayer, [anchor, { ...anchor, exactQuote: "missing" }]);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].anchor, anchor);
+  assert.equal(entries[0].index, 0);
+  assert.equal(entries[0].range.startOffset, 7);
 });
 
 test("TextSelectionController captures quote, text position, native selector, and normalized geometry", () => {

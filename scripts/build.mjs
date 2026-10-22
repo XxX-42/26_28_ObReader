@@ -28,6 +28,7 @@ const inputRuntimeFiles = [
   "input/viewport-controller.js",
   "input/ios-direct-manipulation-controller.js",
   "input/text-selection-controller.js",
+  "input/backlink-interaction-controller.js",
   "input/annotation-controller.js",
   "input/desktop-input-policy.js",
   "input/ios-input-policy.js",

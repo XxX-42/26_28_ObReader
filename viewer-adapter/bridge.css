@@ -210,7 +210,8 @@ body {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .pdfReaderAnnotationBacklinkBadge {
@@ -227,7 +228,8 @@ body {
   font-size: 10px;
   line-height: 1.2;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .pdfReaderVocabularyPillHeading {

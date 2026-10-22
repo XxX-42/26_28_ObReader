@@ -216,6 +216,7 @@
     readerBacklinkPageKey: null,
     readerBacklinkPageResults: null,
     readerBacklinkRetryTimer: null,
+    backlinkInteractionController: null,
     preferredAnnotationToolMode: 0,
     restoredAnnotationToolIdentity: null,
     vocabularyReadModeToolChoice: null,
@@ -675,6 +676,7 @@
     state.readerBacklinkHighlights = null;
     state.readerBacklinkPageKey = null;
     state.readerBacklinkPageResults = null;
+    state.backlinkInteractionController?.clearPage?.();
     if (state.readerBacklinkRetryTimer) clearTimeout(state.readerBacklinkRetryTimer);
     state.readerBacklinkRetryTimer = null;
   }
@@ -728,12 +730,20 @@
     priorBadge?.remove?.();
     const markers = message.markers.slice(0, 256);
     pageRoot.querySelectorAll?.(".pdfReaderAnnotationBacklinkBadge").forEach((node) => node.remove());
-    const ranges = [];
-    if (textLayer && markers.some((marker) => marker?.kind === "selection")) {
-      const anchors = markers.filter((marker) => marker?.kind === "selection" && marker.anchor)
-        .map((marker) => marker.anchor);
-      ranges.push(...(state.textSelectionController?.rangesForAnchors?.(textLayer, anchors) || []));
-    }
+    const selectionMarkers = markers.filter((marker) => marker?.kind === "selection" &&
+      typeof marker.id === "string" && marker.anchor);
+    const rangeEntries = textLayer
+      ? (state.textSelectionController?.rangeEntriesForAnchors?.(
+        textLayer,
+        selectionMarkers.map((marker) => marker.anchor),
+      ) || [])
+      : [];
+    const rangeTargets = rangeEntries.map((entry) => ({
+      kind: "selection",
+      id: selectionMarkers[entry.index]?.id,
+      range: entry.range,
+    })).filter((target) => typeof target.id === "string" && target.range);
+    const ranges = rangeTargets.map((target) => target.range);
     const HighlightCtor = window.Highlight || globalThis.Highlight;
     let paintedRanges = 0;
     if (ranges.length && typeof HighlightCtor === "function" && window.CSS?.highlights?.set) {
@@ -754,19 +764,30 @@
         const badge = document.createElement?.("span");
         if (!badge) continue;
         badge.className = "pdfReaderAnnotationBacklinkBadge";
-        badge.setAttribute("aria-hidden", "true");
-      const count = Number.isSafeInteger(marker.backlinkCount) ? marker.backlinkCount : 1;
+        badge.dataset.backlinkTargetKind = "annotation";
+        badge.dataset.backlinkTargetId = marker.id;
+        badge.setAttribute("role", "button");
+        badge.setAttribute("tabindex", "0");
+        const count = Number.isSafeInteger(marker.backlinkCount) ? marker.backlinkCount : 1;
         badge.textContent = count > 1 ? `↗${count}` : "↗";
-        badge.title = count === 1 ? "1 条 Markdown 反向链接" : `${count} 条 Markdown 反向链接`;
+        badge.title = count === 1
+          ? "1 条 Markdown 反向链接；点击定位（Ctrl/Cmd 悬停预览不可用）"
+          : `${count} 条 Markdown 反向链接；点击查看来源（Ctrl/Cmd 悬停预览不可用）`;
+        badge.setAttribute("aria-label", badge.title);
         editorNode.appendChild(badge);
       }
     }
     const badge = Number(message.backlinkCount) > 0 ? document.createElement?.("div") : null;
     if (badge) {
       badge.className = "pdfReaderBacklinkPageBadge";
-      badge.setAttribute("aria-hidden", "true");
+      badge.dataset.backlinkTargetKind = "page";
+      badge.dataset.backlinkTargetId = message.pageIdentity;
+      badge.setAttribute("role", "button");
+      badge.setAttribute("tabindex", "0");
       const count = Number.isSafeInteger(message.backlinkCount) ? message.backlinkCount : markers.length;
       badge.textContent = count === 1 ? "1 条 Markdown 引用" : `${count} 条 Markdown 引用`;
+      badge.title = `${badge.textContent}；点击查看来源（Ctrl/Cmd 悬停预览不可用）`;
+      badge.setAttribute("aria-label", badge.title);
       pageRoot.appendChild(badge);
     }
     runtimeLogRecord("reader-backlinks.paint", {
@@ -779,7 +800,38 @@
       paintMs: Math.max(0, performanceNow() - startedAt),
     });
     state.readerBacklinkPageResults = message;
+    state.backlinkInteractionController?.setPageResults?.(message, rangeTargets);
     return true;
+  }
+
+  function ensureBacklinkInteractionController() {
+    if (state.backlinkInteractionController || state.disposed) {
+      return state.backlinkInteractionController;
+    }
+    const Controller = window.PdfReaderInputRuntime?.BacklinkInteractionController;
+    if (typeof Controller !== "function") return null;
+    state.backlinkInteractionController = new Controller({
+      documentRef: document,
+      getCurrentPageState: () => {
+        const pageNumber = state.app?.pdfViewer?.currentPageNumber;
+        const actual = state.actualSourceIdentity;
+        if (!state.activeDocumentId || !Number.isSafeInteger(state.activeOpenRequest) ||
+            !Number.isSafeInteger(pageNumber) || pageNumber < 1 ||
+            actual?.identityStatus !== "KNOWN") return null;
+        const pageIndex = pageNumber - 1;
+        const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
+        if (typeof pageIdentity !== "string") return null;
+        return {
+          documentId: state.activeDocumentId,
+          openRequest: state.activeOpenRequest,
+          rendererGeneration,
+          pageNumber,
+          pageIdentity,
+        };
+      },
+      postToHost,
+    });
+    return state.backlinkInteractionController;
   }
 
   function ensureVocabularyController() {
@@ -10918,6 +10970,7 @@
         clearTimeout(state.startupTimer);
         state.eventAbortController = new AbortController();
         if (state.vocabularyEnabled) ensureVocabularyController();
+        ensureBacklinkInteractionController();
         app.eventBus?._on(
           "pagerendered",
           ({ pageNumber }) => runAnnotationObserver("viewer.page-rendered", () => {
@@ -11236,6 +11289,8 @@
     state.disposed = true;
     state.annotationSidebarController?.dispose();
     state.annotationSidebarController = null;
+    state.backlinkInteractionController?.dispose?.();
+    state.backlinkInteractionController = null;
     state.vocabularyController?.dispose?.();
     state.vocabularyController = null;
     state.restoredSavedAnnotations.clear();
