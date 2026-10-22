@@ -18,3 +18,11 @@ current session and current tool eligibility before posting navigation.
 No InputRouter, InteractionIntent, annotation state, index or persistence API
 changed. Browser verification of this integration is required separately from
 these unit results.
+
+Independent review then exposed an explicit touch-badge regression: a badge
+pointerdown intentionally bypasses page-pan tracking, so it has no LingQ
+text-tap candidate. A new Windows/iOS-policy regression failed before repair.
+Native role=button activations now reach the same controller before that
+text-tap-only gate, while retaining tool/Pencil guards. The three targeted
+suites subsequently passed 35/35. This is simulated policy evidence, not a
+physical iPad claim.

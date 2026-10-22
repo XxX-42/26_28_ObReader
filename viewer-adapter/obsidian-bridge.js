@@ -9065,6 +9065,12 @@
     // different highlighted token can open the next card in this same event.
     state.vocabularyController?.dismissEntryPill?.();
     const panClickSuppressed = state.inputPolicy?.handlePanClick?.(intent, controls) === true;
+    if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
+    if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
+    // Explicit role=button badges are native activations, not text-tap
+    // candidates. Their pointerdown deliberately does not start a page pan.
+    if (intent.nativeActivationTarget === true &&
+        state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     const pageIndex = Number.isInteger(intent?.pageIndex) ? intent.pageIndex : null;
     const touchTap = state.iosDirectManipulationController
       ?.consumeVocabularyTapCandidate?.(intent) === true;
@@ -9079,8 +9085,6 @@
     // controller did not classify it as a completed page pan.
     if ((intent.pointerType === "touch" || knownTouchContact) && !touchTap) return;
     if (panClickSuppressed && knownPanClick && !touchTap) return;
-    if (state.editorMode !== 0 || annotationToolIsActive() || state.closeControl || state.disposed) return;
-    if (state.iosDirectManipulationController?.hasActivePenEditorGesture?.()) return;
     if (state.backlinkInteractionController?.handleRoutedPointerEvent?.(intent, controls)) return;
     state.vocabularyController?.handleTap?.(intent);
   }

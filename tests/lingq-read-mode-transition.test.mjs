@@ -200,6 +200,22 @@ test("one guarded click belongs to backlink or LingQ, never both, and pan/tool c
     "an unlinked token still follows the existing LingQ path");
 });
 
+test("an explicit touch backlink badge needs no LingQ text-tap candidate on Windows or iOS", () => {
+  for (const mobile of [false, true]) {
+    const api = makeBridgeHarness({ mobile });
+    api.setVocabularyEnabled(true);
+    let activated = 0;
+    api.state.backlinkInteractionController = { handleRoutedPointerEvent() { activated++; return true; } };
+    const badgeClick = { type: "click", pointerType: "touch", pageIndex: 2,
+      nativeActivationTarget: true, clientPoint: { x: 20, y: 30 } };
+    api.onBridgeIosClick(badgeClick, {});
+    assert.equal(activated, 1, "a native role=button badge is not a text-layer tap");
+    api.setEditorMode(15);
+    api.onBridgeIosClick(badgeClick, {});
+    assert.equal(activated, 1, "explicit badges still respect an active annotation tool");
+  }
+});
+
 test("an Ink gesture defers READ until its safe boundary, including on mobile", () => {
   for (const mobile of [false, true]) {
     const api = makeBridgeHarness({ mobile });

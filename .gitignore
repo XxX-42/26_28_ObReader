@@ -2,6 +2,7 @@ node_modules/
 dist/
 tests/output/
 tests/artifacts/
+test-results/
 .deploy-backups/
 *.log
 test-vault/**/.asset-cache/
