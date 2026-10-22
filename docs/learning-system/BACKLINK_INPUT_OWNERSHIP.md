@@ -26,3 +26,9 @@ Native role=button activations now reach the same controller before that
 text-tap-only gate, while retaining tool/Pencil guards. The three targeted
 suites subsequently passed 35/35. This is simulated policy evidence, not a
 physical iPad claim.
+
+The same review found a pre-existing hide/show gap: controller page state was
+cleared but the Bridge retained its request key and visible badges. The existing
+visibility hook now clears presentation on hide and requests the verified
+current page on return. A failing lifecycle regression was added before this
+two-line repair. It adds no listener, polling or persistent cache.

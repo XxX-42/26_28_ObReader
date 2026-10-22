@@ -9038,6 +9038,8 @@
 
   function onManualDocumentVisibilityChange() {
     state.iosDirectManipulationController?.onDocumentVisibilityChange();
+    if (document.visibilityState === "hidden") clearReaderBacklinkPresentation();
+    else if (document.visibilityState === "visible") requestReaderBacklinksForPage();
   }
 
   function clearManualPointerSessions({ clearClickTargets = true } = {}) {

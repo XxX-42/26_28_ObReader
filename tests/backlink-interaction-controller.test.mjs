@@ -227,3 +227,20 @@ test("routed pointers use the existing input owner and do not register parallel 
   h.controller.dispose();
   assert.equal(h.listeners.size, 0);
 });
+
+test("visibility lifecycle invalidates presentation and refreshes the same page on return", async () => {
+  const bridge = await readFile(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
+  const handler = bridge.match(/  function onManualDocumentVisibilityChange\(\) \{[\s\S]*?\n  \}/)?.[0];
+  assert.ok(handler);
+  const calls = [];
+  const document = { visibilityState: "hidden" };
+  const context = { document, state: { iosDirectManipulationController: {
+    onDocumentVisibilityChange() { calls.push("motion"); },
+  } }, clearReaderBacklinkPresentation() { calls.push("clear"); },
+  requestReaderBacklinksForPage() { calls.push("request-current-page"); } };
+  vm.runInNewContext(`${handler}; onManualDocumentVisibilityChange();`, context);
+  assert.deepEqual(calls, ["motion", "clear"]);
+  document.visibilityState = "visible";
+  vm.runInNewContext("onManualDocumentVisibilityChange();", context);
+  assert.deepEqual(calls, ["motion", "clear", "motion", "request-current-page"]);
+});
