@@ -58,5 +58,23 @@ The runner now explicitly requires `wal-sidecar-v3.2-jsonl`, independent WAL
 replay at saved and close boundaries, and exported page/rectangle/content
 checks. The general legacy evidence reader remains available to migration tests.
 
-Dedicated three-Underline/lifecycle evidence is appended after its actual run.
+## Dedicated Underline and Reader lifecycle
+
+`tests/artifacts/0.7-sidecar-native-acceptance-20261022133723949.json`: PASS.
+
+- Single line → save → controlled close/reopen; adjacent line and multiline →
+  save → complete close/reopen: exactly three distinct persistent UUIDs and
+  three visible editors, no duplication.
+- UUIDs: `b6612640-b2e6-4e0c-9437-8cf1fc567f1a`,
+  `a95ccdfb-7529-438f-8c3d-34644718793f`,
+  `ea5c42ed-5cce-4ace-9023-dfd27e30a16b`.
+- Real selection consumers observe non-collapsed ranges (36, 36 and 100
+  selected characters). Composed ROI changes: 745 pixels for the first reopened
+  Underline and 3,809 pixels for all three after the final reopen.
+- Independent Reader A/B iframe lifecycle completed without losing B's selection
+  listeners. This is not a backport of upstream #22129.
+- Source dual hashes unchanged, zero ordinary PDF serialization/write attempts,
+  366/366 protected files unchanged; 878,226-byte trace checksum verified,
+  controlled closes complete and instrumentation restored.
+
 macOS, physical iPad and real multi-client Sync remain NOT_RUN.

@@ -848,7 +848,11 @@ test(
           let fixtureBytes;
           const sendOpen=(data,label)=>{
             state.opensSent.push({label,documentId,byteLength:data.byteLength,openRequest:null,rendererGeneration:state.readyGenerations.at(-1)??null});
-            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false,autoSave:false},'*',[data]);
+            // Match the real Host reopen contract: carry the known snapshot
+            // (including its verified source hash) into this renderer session.
+            const externalAnnotations=window.__browserSidecarHost.snapshotFor(documentId);
+            iframe.contentWindow.postMessage({channel,type:'open',token,data,documentId,readOnly:false,autoSave:false,
+              ...(externalAnnotations?{externalAnnotations}:{} )},'*',[data]);
           };
           window.addEventListener('message',event=>{
             if(event.source!==iframe.contentWindow)return;
@@ -1104,11 +1108,13 @@ test(
         );
       });
 
-      const iframeBox = await page.$eval("iframe", (iframe) => {
+      const readIframeBox = () => page.$eval("iframe", (iframe) => {
         const rect = iframe.getBoundingClientRect();
         return { x: rect.x, y: rect.y };
       });
+      let iframeBox = await readIframeBox();
       const mouseMove = async (start, end, steps = 10) => {
+        iframeBox = await readIframeBox();
         await page.mouse.move(iframeBox.x + start.x, iframeBox.y + start.y, {
           steps: 2,
         });
@@ -1119,6 +1125,7 @@ test(
         await page.mouse.up({ button: "left" });
       };
       const mouseInkStroke = async (rect) => {
+        iframeBox = await readIframeBox();
         const points = [
           { x: rect.x + 8, y: rect.y + 4 },
           { x: rect.x + rect.width * 0.25, y: rect.y + rect.height * 0.25 },
@@ -1851,9 +1858,9 @@ test(
       };
       const createTextMarkup = async (type) => {
         const before = await storageCounts();
-        const target = await getTextDragPoints();
         await clearProbe();
         await setMode(type);
+        const target = await getTextDragPoints();
         const modeBefore = await viewer.evaluate(
           () => PDFViewerApplication.pdfViewer.annotationEditorMode,
         );
@@ -2924,16 +2931,34 @@ test(
       assert.ok(savedHighlight.uuid, "the real Highlight is present in the Sidecar snapshot after save/reopen");
       assert.ok(savedHighlight.targetText?.includes("Dynamic languages"), JSON.stringify(savedHighlight));
       assert.equal(typeof savedHighlight.pageIdentity, "string");
+      assert.equal(await page.evaluate(() => window.__browserSidecarHost.identityRequests.at(-1)?.sourceHash),
+        savedHighlight.sourceHash, 'The reopened fixture must carry the same source identity as the real Host');
+      results.at(-1).savedHighlight = savedHighlight;
       await viewer.$eval("#pdfReaderAnnotationSidebarButton", (button) => button.click());
       await viewer.waitForFunction(() =>
         !document.getElementById("pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden") &&
         document.getElementById("pdfReaderAnnotationSidebarSearch")?.isConnected &&
         document.getElementById("pdfReaderAnnotationSidebarTypeFilter")?.isConnected,
       { timeout: 10_000 });
+      results.at(-1).sidebarBeforeSearch = await viewer.evaluate(async () => {
+        await new Promise(requestAnimationFrame);
+        return { count: document.getElementById('editorCommentsSidebarCount')?.textContent,
+          rows: [...document.querySelectorAll('#editorCommentsSidebarList li.sidebarComment')]
+            .map(row => ({uuid:row.dataset.uuid,text:row.querySelector('.sidebarCommentText')?.textContent})) };
+      });
       const normalizedTargetText = savedHighlight.targetText.replace(/\s+/gu, " ").trim();
       const searchTerm = normalizedTargetText.slice(0, Math.min(24, normalizedTargetText.length));
       await viewer.type("#pdfReaderAnnotationSidebarSearch", searchTerm);
       await viewer.select("#pdfReaderAnnotationSidebarTypeFilter", "Highlight");
+      results.at(-1).sidebarAfterSearch = await viewer.evaluate(async () => {
+        await new Promise(requestAnimationFrame);
+        return { count:document.getElementById('editorCommentsSidebarCount')?.textContent,
+          term:document.getElementById('pdfReaderAnnotationSidebarSearch')?.value,
+          kind:document.getElementById('pdfReaderAnnotationSidebarTypeFilter')?.value,
+          rows:[...document.querySelectorAll('#editorCommentsSidebarList li.sidebarComment')]
+            .map(row=>({uuid:row.dataset.uuid,text:row.querySelector('.sidebarCommentText')?.textContent})) };
+      });
+      await persistProgress();
       await viewer.waitForFunction(({ uuid, targetText }) => {
         const rows = [...document.querySelectorAll("#editorCommentsSidebarList li.sidebarComment")];
         return document.getElementById("editorCommentsSidebarCount")?.textContent === "1" &&
@@ -2979,6 +3004,15 @@ test(
       results.at(-1).semanticSidebar = { savedHighlight, reviewRequest };
       await persistProgress();
       await viewer.$eval("#editorCommentsSidebarCloseButton", (button) => button.click());
+      // The preceding exact navigation intentionally starts a smooth scroll.
+      // Restore this drawing fixture's viewport before deriving pointer points;
+      // otherwise the page moves between the geometry read and trusted drag.
+      await viewer.evaluate(async () => {
+        const container=document.getElementById('viewerContainer');
+        container.scrollTo({top:0,left:0,behavior:'instant'});
+        await new Promise(requestAnimationFrame);
+        if(container.scrollTop!==0)throw Error('Drawing fixture viewport was not restored');
+      });
       const highlightOverHighlight = await createTextMarkup(9);
       results.at(-1).highlightOverHighlight = highlightOverHighlight;
       await persistProgress();
