@@ -708,6 +708,14 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     assert.equal(await targetOpenCount(), beforeToolBadge, 'active Highlight tool owns the pointer and cannot open a backlink');
     await frame.evaluate(() => PDFViewerApplication.eventBus.dispatch('switchannotationeditormode', { mode: 0 }));
     await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 8_000 });
+    // The earlier Highlight gesture opens its real parameter popup. Close it
+    // through an outside trusted click before attempting the badge underneath.
+    const badgeBeforeDismiss = await frame.$eval('.pdfReaderAnnotationBacklinkBadge', node => {
+      const rect = node.getBoundingClientRect();
+      return { rect: rect.toJSON(), hit: document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.outerHTML };
+    });
+    gestureDiagnostics.push({ annotationBadgeBeforePopupDismiss: badgeBeforeDismiss });
+    await frame.click('#pageNumber');
     await frame.evaluate(() => { window.__annotationBadgeSettlement = { rect: null, stable: 0 }; });
     await frame.waitForFunction(() => {
       const badge = document.querySelector('.pdfReaderAnnotationBacklinkBadge');
@@ -717,6 +725,13 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       state.stable = state.rect === rect ? state.stable + 1 : 0; state.rect = rect;
       return state.stable >= 8;
     }, { timeout: 5_000, polling: 'raf' });
+    const badgeAfterDismiss = await frame.$eval('.pdfReaderAnnotationBacklinkBadge', node => {
+      const rect = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return { rect: rect.toJSON(), hit: hit?.outerHTML, hitsBadge: hit === node || node.contains(hit) };
+    });
+    gestureDiagnostics.push({ annotationBadgeAfterPopupDismiss: badgeAfterDismiss });
+    assert.equal(badgeAfterDismiss.hitsBadge, true, JSON.stringify(badgeAfterDismiss));
     await frame.click('.pdfReaderAnnotationBacklinkBadge');
     await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "annotation", { timeout: 5_000 });
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Annotation.md");
