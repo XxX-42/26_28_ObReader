@@ -935,6 +935,37 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
 
 });
 
+test("selecting a saved Square from NONE enters native editing without weakening creation priority", () => {
+  const scope = evaluateHelpers(["observeEditorManager", "wrapMethod"], `
+    const state = { readOnly: false };
+    let mode = 0;
+    const calls = [];
+    const original = function(options) { calls.push({ receiver: this === manager, options }); return "native-result"; };
+    const manager = { getMode: () => mode, updateToolbar: original };
+    const app = { pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } };
+    function setMode(value) { mode = value; }
+  `, ["state", "manager", "app", "calls", "setMode", "original"]);
+  scope.observeEditorManager(scope.app);
+  const selection = { mode: 5, editId: "saved-square" };
+  assert.equal(scope.manager.updateToolbar(selection), "native-result");
+  assert.equal(scope.calls.at(-1).options.mustEnterInEditMode, true,
+    "a selected existing Square must use PDF.js's own explicit editing route");
+  assert.equal(Object.hasOwn(selection, "mustEnterInEditMode"), false, "caller options are not mutated");
+  assert.equal(scope.calls.at(-1).receiver, true);
+  for (const options of [{ mode: 5 }, { mode: 3, editId: "saved-text" }, { mode: 15, editId: "saved-ink" }]) {
+    scope.manager.updateToolbar(options);
+    assert.equal(scope.calls.at(-1).options, options, "tool creation and other editor modes retain native semantics");
+  }
+  scope.setMode(5);
+  scope.manager.updateToolbar(selection);
+  assert.equal(scope.calls.at(-1).options, selection, "already-active creation mode is not changed");
+  scope.setMode(0); scope.state.readOnly = true;
+  scope.manager.updateToolbar(selection);
+  assert.equal(scope.calls.at(-1).options, selection, "read-only mode cannot be promoted to editing");
+  scope.state.editorManagerCleanup();
+  assert.equal(scope.manager.updateToolbar, scope.original, "session cleanup restores the exact native method");
+});
+
 test("empty undo/redo does not mark the PDF dirty, while an editor change still does", () => {
   const helpers = [
     "observeEditorManager",

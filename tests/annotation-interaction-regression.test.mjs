@@ -2999,6 +2999,34 @@ test(
         "The trusted pointerdown must target the intended sidecar editor, not a native PDF annotation node");
       assert.equal(firstPointerDown?.targetInEditorLayer, true);
 
+      // Selection must leave this durable object reachable by the next real
+      // pointer gesture. A test-only editId dispatch must not conceal a broken
+      // NONE -> selected Square transition behind creation-priority CSS.
+      const squareBeforeNativeMove = await viewer.evaluate((id) => {
+        const node = document.getElementById(id), rect = node.getBoundingClientRect();
+        const editor = PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(id);
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return { rect: editor.serialize(true).rect, hitSameEditor: hit === node || node.contains(hit),
+          point: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } };
+      }, firstSquare.id);
+      assert.equal(squareBeforeNativeMove.hitSameEditor, true,
+        "A genuinely selected Square must remain pointer-hittable without a test-only editId override");
+      await page.mouse.move(iframeBox.x + squareBeforeNativeMove.point.x, iframeBox.y + squareBeforeNativeMove.point.y);
+      await page.mouse.down();
+      await page.mouse.move(iframeBox.x + squareBeforeNativeMove.point.x + 20,
+        iframeBox.y + squareBeforeNativeMove.point.y + 14, { steps: 12 });
+      await page.mouse.up();
+      await viewer.waitForFunction(({ id, before }) => {
+        const editor = PDFViewerApplication.pdfDocument.annotationStorage.getRawValue(id);
+        return editor && JSON.stringify(editor.serialize(true).rect) !== JSON.stringify(before);
+      }, { timeout: 8_000 }, { id: firstSquare.id, before: squareBeforeNativeMove.rect });
+      const squaresAfterNativeMove = await squareEditors();
+      assert.equal(squaresAfterNativeMove.length, squaresBeforeEdit.length,
+        "Moving a selected durable Square must not create another annotation");
+      const movedSquare = squaresAfterNativeMove.find(editor => editor.id === firstSquare.id);
+      assert.equal(movedSquare?.uid, firstSquare.uid, "Native movement retains the exact selected editor identity");
+      firstSquare.rect = movedSquare.rect;
+
       // A click in NONE selects the durable sidecar editor and activates its
       // matching tool. Use PDF.js's explicit editId route to test the toolbar
       // state independently of the obsolete PDF-annotation double-click path.

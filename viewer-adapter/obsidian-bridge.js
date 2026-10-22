@@ -7511,6 +7511,17 @@
     }
     const cleanups = [];
 
+    // A NONE-mode click selects a saved Square and activates its tool. Without
+    // the native editId flag, creation-priority CSS then makes that very object
+    // unreachable for the next drag. Tool activation/new drawing has no editId
+    // at this boundary and must keep the normal creation-priority behavior.
+    wrapMethod(manager, "updateToolbar", (original, [options]) => {
+      const selectSavedSquare = !state.readOnly && manager.getMode?.() === 0 &&
+        options?.mode === 5 && typeof options.editId === "string" && options.editId.length > 0;
+      return original.call(manager, selectSavedSquare
+        ? { ...options, mustEnterInEditMode: true } : options);
+    }, cleanups);
+
     // PDF.js's HighlightEditor keeps Selection.toString() in a private field,
     // then drops it from serialize(). Capture the exact selection before the
     // native handler empties it; addEditor associates it with the new runtime
