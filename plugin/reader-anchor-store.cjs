@@ -43,13 +43,21 @@ function parseReaderLinkFragment(value) {
 }
 
 function encodeReaderLinkFragment(options = {}) {
-  const { pageNumber, target } = options;
+  const { pageNumber, target, docKey, documentId } = options;
   const params = new URLSearchParams();
   if (Number.isSafeInteger(pageNumber) && pageNumber > 0) params.set("page", String(pageNumber));
-  // Stable document identity remains in the Vault Anchor Store. Keep copied
-  // links human-readable and natively useful: page is the fallback and
-  // obreader is the enhanced target. Legacy selection/docKey/obdoc values are
-  // still accepted by the parser below, but are never emitted again.
+  // Keep the existing protocol identity alongside the human-readable page
+  // fallback and enhanced target so a copied link continues to name the same
+  // PDF after its Vault path changes.
+  if (docKey !== undefined || documentId !== undefined) {
+    if (!DOC_KEY.test(typeof docKey === "string" ? docKey : "") ||
+        typeof documentId !== "string" || !documentId || documentId.length > 512 ||
+        /[\u0000-\u001f\u007f-\u009f]/.test(documentId)) {
+      throw codedError("READER_LINK_IDENTITY_INVALID", "A valid document key and document identity are required together.");
+    }
+    params.set("docKey", docKey.toLowerCase());
+    params.set("obdoc", documentId);
+  }
   if (target && ANCHOR_KINDS.has(target.kind) && typeof target.id === "string" &&
       target.id.length > 0 && target.id.length <= 512 && !/[\u0000-\u001f\u007f-\u009f&#?]/.test(target.id)) {
     const prefix = target.kind === "selection" ? "sel" : target.kind === "annotation" ? "ann" : "page";

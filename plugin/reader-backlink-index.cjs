@@ -291,7 +291,16 @@ function createReaderBacklinkIndex() {
     return result.sort(rowSort);
   }
 
+  function getSourcePathsUnder(folderPath) {
+    const folder = typeof folderPath === "string"
+      ? folderPath.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "") : "";
+    if (!folder) return [];
+    const prefix = `${folder}/`;
+    return [...bySource.keys()].filter((sourcePath) => sourcePath.startsWith(prefix)).sort();
+  }
+
   return Object.freeze({ replaceFile, removeFile, get, getDocument, getByPdfPath,
+    getSourcePathsUnder,
     get size() { return byTarget.size + byPdfRoute.size; }, get revision() { return revision; } });
 }
 

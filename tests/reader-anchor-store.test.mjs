@@ -37,7 +37,7 @@ const anchorFixture = {
   createdAt: 1792200000000,
 };
 
-test("copied Reader fragments expose only the native page fallback and enhanced stable target", () => {
+test("copied Reader fragments preserve validated document identity with native page fallback and stable target", () => {
   const fragment = encodeReaderLinkFragment({
     pageNumber: 42,
     selection: "15,3,18,9",
@@ -45,16 +45,32 @@ test("copied Reader fragments expose only the native page fallback and enhanced 
     documentId: "xxh64-v1:0123456789abcdef",
     target: { kind: "selection", id: "anchor-abc_123" },
   });
-  assert.equal(fragment, "page=42&obreader=sel.anchor-abc_123");
-  assert.doesNotMatch(fragment, /(?:^|&)(?:selection|docKey|obdoc)=/);
+  assert.equal(fragment,
+    "page=42&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=sel.anchor-abc_123");
   const parsed = parseReaderLinkFragment(fragment);
   assert.deepEqual(parsed, {
     pageNumber: 42,
     selection: null,
-    docKey: null,
-    documentId: null,
+    docKey: "aabbccddeeff",
+    documentId: "xxh64-v1:0123456789abcdef",
     target: { kind: "selection", id: "anchor-abc_123" },
   });
+  assert.deepEqual(parseReaderLinkFragment("page=42&obreader=sel.anchor-abc_123"), {
+    pageNumber: 42, selection: null, docKey: null, documentId: null,
+    target: { kind: "selection", id: "anchor-abc_123" },
+  }, "the previously emitted compact path-only fragment remains readable");
+  assert.throws(() => encodeReaderLinkFragment({ pageNumber: 42, docKey: "short",
+    documentId: "xxh64-v1:0123456789abcdef", target: { kind: "selection", id: "anchor-abc_123" } }),
+  (error) => error.code === "READER_LINK_IDENTITY_INVALID",
+  "a malformed identity cannot silently downgrade into a path-only link");
+  assert.throws(() => encodeReaderLinkFragment({ pageNumber: 42, docKey: "aabbccddeeff",
+    target: { kind: "selection", id: "anchor-abc_123" } }),
+  (error) => error.code === "READER_LINK_IDENTITY_INVALID",
+  "docKey and obdoc are emitted only as a validated pair");
+  assert.throws(() => encodeReaderLinkFragment({ pageNumber: 42, docKey: "aabbccddeeff",
+    documentId: "x".repeat(513), target: { kind: "selection", id: "anchor-abc_123" } }),
+  (error) => error.code === "READER_LINK_IDENTITY_INVALID",
+  "identity values over the existing parser limit cannot be emitted");
   const legacy = parseReaderLinkFragment(
     "page=42&selection=15%2C3%2C18%2C9&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=sel.anchor-abc_123",
   );
@@ -127,6 +143,18 @@ test("backlink index updates only the changed Markdown file and can be rebuilt",
   assert.equal(index.getDocument("aabbccddeeff").length, 1);
 });
 
+test("backlink index exposes a read-only exact folder-prefix source set", () => {
+  const index = createReaderBacklinkIndex();
+  const link = { link: "Books/Book.pdf#page=1&obreader=page.page-one",
+    position: { start: { offset: 0, line: 0 } } };
+  for (const sourcePath of ["Notes/Nested/One.md", "Notes/Two.md", "Notes-old/Three.md"]) {
+    index.replaceFile({ path: sourcePath }, { links: [link] });
+  }
+  assert.deepEqual(index.getSourcePathsUnder("Notes"), ["Notes/Nested/One.md", "Notes/Two.md"]);
+  assert.deepEqual(index.getSourcePathsUnder("Notes/"), ["Notes/Nested/One.md", "Notes/Two.md"]);
+  assert.deepEqual(index.getSourcePathsUnder("Notes-old"), ["Notes-old/Three.md"]);
+});
+
 test("backlink index preserves MetadataCache link end offsets for exact source focus", () => {
   const index = createReaderBacklinkIndex();
   const sourcePath = "Notes/Exact Source.md";
@@ -154,7 +182,7 @@ test("path-only Reader links are indexed by their resolved vault PDF route", asy
   const pageIdentities = ["page-one"];
   const source = { path: "Notes/Quote.md" };
   const fragment = encodeReaderLinkFragment({
-    pageNumber: 1, docKey, documentId, target: { kind: "selection", id: "anchor-path" },
+    pageNumber: 1, target: { kind: "selection", id: "anchor-path" },
   });
   index.replaceFile(source, { links: [{
     link: `Books/Book%20A.pdf#${fragment}`,
