@@ -741,6 +741,37 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     });
     gestureDiagnostics.push({ annotationBadgeAfterPopupDismiss: badgeAfterDismiss });
     assert.equal(badgeAfterDismiss.hitsBadge, true, JSON.stringify(badgeAfterDismiss));
+    await frame.evaluate(() => {
+      const state = window.__pdfReaderBridgeState;
+      window.__annotationBadgeRouting = [];
+      const routerIntent = state.inputRouter.onIntent;
+      state.inputRouter.onIntent = (intent, controls) => {
+        const point = intent.clientPoint;
+        window.__annotationBadgeRouting.push({ router: true, type: intent.type,
+          targetRole: intent.targetRole, targetRegion: intent.targetRegion, point,
+          mode: state.editorMode, managerMode: PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode(),
+          hit: Number.isFinite(point?.x) && Number.isFinite(point?.y) ? document.elementFromPoint(point.x, point.y)?.outerHTML?.slice(0, 1000) : null,
+          activeElement: document.activeElement?.outerHTML?.slice(0, 500) });
+        return routerIntent(intent, controls);
+      };
+      for (const type of ['focusin', 'focusout']) window.addEventListener(type, event => {
+        window.__annotationBadgeRouting.push({ focus: type, target: event.target?.outerHTML?.slice(0, 500), mode: state.editorMode });
+      }, true);
+      const controller = state.backlinkInteractionController;
+      const routed = controller.handleRoutedPointerEvent.bind(controller);
+      controller.handleRoutedPointerEvent = (intent, controls) => {
+        const point = intent.clientPoint;
+        const before = { type: intent.type, point, targetRegion: intent.targetRegion,
+          canActivate: controller.canActivate(), mode: state.editorMode,
+          pdfMode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+          hit: point && document.elementFromPoint(point.x, point.y)?.outerHTML,
+          selectedEditor: document.querySelector('.selectedEditor')?.id };
+        const result = routed(intent, controls);
+        window.__annotationBadgeRouting.push({ ...before, result, afterMode: state.editorMode,
+          afterHit: point && document.elementFromPoint(point.x, point.y)?.outerHTML });
+        return result;
+      };
+    });
     await frame.click('.pdfReaderAnnotationBacklinkBadge');
     await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "annotation", { timeout: 5_000 });
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Annotation.md");
@@ -809,6 +840,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         iframeRect: document.querySelector("iframe")?.getBoundingClientRect().toJSON() }));
       const viewer = page.frames().find((candidate) => candidate.url().includes("/web/viewer.html"));
       const viewerTrace = viewer && await viewer.evaluate(() => ({ clicks: window.__backlinkE2EClicks,
+        annotationBadgeRouting: window.__annotationBadgeRouting,
         currentPage: PDFViewerApplication.pdfViewer.currentPageNumber,
         selection: getSelection()?.toString(),
         highlights: [...(CSS.highlights.get("pdfReaderMarkdownBacklinks") || [])].map((range) => ({
