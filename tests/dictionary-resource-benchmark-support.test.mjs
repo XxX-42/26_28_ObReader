@@ -7,10 +7,43 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
 import { createDictionaryBenchmarkPlan, createDictionaryBenchmarkPlugin,
-  DICTIONARY_BENCHMARK_VARIANTS, DICTIONARY_BENCHMARK_REPETITIONS } from "./dictionary-resource-benchmark-support.mjs";
+  DICTIONARY_BENCHMARK_VARIANTS, DICTIONARY_BENCHMARK_REPETITIONS,
+  withDictionaryBenchmarkBrowser } from "./dictionary-resource-benchmark-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
+
+test("each trial gets a fresh ordinary browser, including after timeout; setup failures close it", async () => {
+  const contexts = [];
+  let failSetup = false;
+  const launch = async () => {
+      const databaseNames = new Set();
+      const context = { closed: false, databaseNames, async close() { this.closed = true; },
+        async createBrowserContext() { assert.fail("off-record contexts change storage backing"); },
+        async newPage() {
+          if (failSetup) throw new Error("page setup failed");
+          return { databaseNames, async setViewport(value) { assert.deepEqual(value, { width: 1000, height: 760 }); },
+            async setCacheEnabled(value) { assert.equal(value, false); } };
+        } };
+      contexts.push(context);
+      return context;
+  };
+  const timeout = new Error("Runtime.callFunctionOn timed out");
+  await assert.rejects(withDictionaryBenchmarkBrowser(launch, async page => {
+    page.databaseNames.add("failed-trial-database");
+    throw timeout;
+  }), error => error === timeout);
+  assert.equal(contexts[0].closed, true);
+  assert.equal(await withDictionaryBenchmarkBrowser(launch, async page => {
+    assert.equal(page.databaseNames.has("failed-trial-database"), false);
+    return "complete";
+  }), "complete");
+  assert.equal(contexts[1].closed, true);
+  failSetup = true;
+  await assert.rejects(withDictionaryBenchmarkBrowser(launch, () => assert.fail("setup failed")), /page setup failed/u);
+  assert.equal(contexts.length, 3);
+  assert.ok(contexts.every(context => context.closed));
+});
 
 test("the 20-run cold-cache order is fixed before outcomes are observed", () => {
   const plan = createDictionaryBenchmarkPlan();
@@ -124,6 +157,38 @@ test("membership-tail experiment preserves sorted membership across cancellation
     const row = await cache.db.membership.get([ready.id, "wo"]);
     assert.deepEqual(row.keys, entries.map(({ key }) => key));
     assert.equal(await cache.entryCount(ready.id), entries.length);
+
+    const corrupted = Buffer.from(compressed);
+    corrupted[0] ^= 1;
+    await assert.rejects(cache.prepare(manifest, async () => corrupted, { force: true }),
+      (error) => error.code === "DICTIONARY_RESOURCE_CORRUPT");
+    assert.equal((await cache.active()).id, ready.id,
+      "a corrupt replacement must leave the previous verified generation active");
+
+    const sharedIdb = new IDBFactory();
+    const name = "dictionary-tail-fence-" + crypto.randomUUID();
+    const options = { name, indexedDB: sharedIdb, IDBKeyRange, batchSize: 2,
+      leaseMs: 100, yieldControl: async () => {} };
+    const oldOwner = new DictionaryQueryCache({ ...options, ownerId: "old", now: () => 1000 });
+    const newOwner = new DictionaryQueryCache({ ...options, ownerId: "new", now: () => 1101 });
+    let releaseOld, startedOld;
+    const gate = new Promise(resolve => { releaseOld = resolve; });
+    const started = new Promise(resolve => { startedOld = resolve; });
+    try {
+      const stale = oldOwner.prepare(manifest, async () => {
+        startedOld(); await gate; return compressed;
+      });
+      await started;
+      const takeover = await newOwner.prepare(manifest, async () => compressed);
+      releaseOld();
+      await assert.rejects(stale, error => error.code === "DICTIONARY_CACHE_LEASE_LOST");
+      assert.equal((await newOwner.active()).id, takeover.id);
+      assert.equal((await newOwner.ready(manifest)).owner, null);
+      assert.deepEqual((await newOwner.db.membership.get([takeover.id, "wo"])).keys,
+        entries.map(({ key }) => key));
+    } finally {
+      releaseOld(); oldOwner.close(); newOwner.close();
+    }
   } finally {
     cache.close();
   }

@@ -1,7 +1,8 @@
 // Explicit 20-run resource-v2 benchmark. It uses isolated IndexedDB names and
 // never opens a real Vault or modifies the copied source resource.
 import assert from "node:assert/strict";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createReadStream } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -12,7 +13,7 @@ import puppeteer from "puppeteer-core";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import { resolveBrowserPath } from "./browser-path.mjs";
 import { DICTIONARY_BENCHMARK_REPETITIONS, DICTIONARY_BENCHMARK_VARIANTS,
-  createDictionaryBenchmarkPlan, createDictionaryBenchmarkPlugin } from "./dictionary-resource-benchmark-support.mjs";
+  createDictionaryBenchmarkPlan, createDictionaryBenchmarkPlugin, withDictionaryBenchmarkBrowser } from "./dictionary-resource-benchmark-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const resourceRoot = path.resolve(process.argv[2] || path.join(root, "tests/artifacts/resource-v2"));
@@ -29,6 +30,7 @@ const resultsPath = path.join(reportDirectory, "run-results.jsonl");
 const summaryPath = path.join(reportDirectory, "summary.json");
 const plan = createDictionaryBenchmarkPlan();
 const predeclaredPlan = {
+  protocolVersion: 3,
   runSetId,
   status: "PREDECLARED; no benchmark run has started",
   resource: { entryCount: manifest.entryCount, compressedBytes: manifest.compressedBytes,
@@ -37,7 +39,7 @@ const predeclaredPlan = {
   variantOrder: DICTIONARY_BENCHMARK_VARIANTS.map(({ id, batchSize, membershipTail }) => ({ id, batchSize, membershipTail })),
   runs: plan,
   invariants: [
-    "One fresh IndexedDB database name per cold run; database is deleted after cold and reopened-warm checks.",
+    "One fresh owned ordinary on-disk Chrome profile and browser per cold run; browser closes in finally on success or failure. No off-record context.",
     "Chromium HTTP cache is disabled and benchmark responses use Cache-Control: no-store; OS filesystem cache is not flushed.",
     "No run retry, skip, timeout extension, or selection by outcome.",
     "The same worker path and instrumentation run for all variants; only batch size and the declared membership-tail variant differ.",
@@ -240,25 +242,58 @@ const server = createServer((request, response) => {
 });
 
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-let browser;
 let failedRuns = 0;
 const finishedRuns = [];
 try {
-  browser = await launchTestBrowser(puppeteer, { executablePath: resolveBrowserPath(), headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage"] }, { testName: "dictionary-resource-benchmark" });
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1000, height: 760 });
-  await page.setCacheEnabled(false);
   for (const planned of plan) {
     const variant = DICTIONARY_BENCHMARK_VARIANTS.find(({ id }) => id === planned.variant);
     const cacheName = `obreader-f-${runSetId}-${String(planned.sequence).padStart(2, "0")}`;
     const run = { ...planned, runSetId, cacheName, status: "started", startedAt: new Date().toISOString() };
     await appendFile(resultsPath, `${JSON.stringify(run)}\n`);
     console.log(JSON.stringify({ event: "run-start", ...planned }));
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "pdf-reader-dictionary-profile-"));
+    run.userDataDir = userDataDir;
+    await withDictionaryBenchmarkBrowser(() => launchTestBrowser(puppeteer, {
+      executablePath: resolveBrowserPath(), headless: true, userDataDir,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    }, { testName: `dictionary-resource-benchmark-${planned.sequence}` }), async page => {
+    const observations = [];
+    let observing = false;
+    const observe = async () => {
+      if (observing) return;
+      observing = true;
+      try {
+        const workers = [];
+        for (const worker of page.workers()) {
+          workers.push(await worker.evaluate(() => {
+            const metrics = globalThis.__dictionaryBenchMetrics;
+            if (!metrics) return null;
+            const { membershipBucketUtf8Bytes, ...stages } = metrics;
+            return stages;
+          }));
+        }
+        const directory = path.join(userDataDir, "Default", "IndexedDB");
+        const diskFiles = [];
+        try {
+          for (const entry of await readdir(directory, { recursive: true, withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            const filename = path.join(entry.parentPath, entry.name);
+            diskFiles.push({ path: path.relative(userDataDir, filename), bytes: (await stat(filename)).size });
+          }
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        observations.push({ at: new Date().toISOString(), workerCount: page.workers().length, workers,
+          storageBacking: "ordinary-profile-on-disk", indexedDbDirectory: directory, diskFiles });
+      } catch (error) {
+        observations.push({ at: new Date().toISOString(), error: String(error) });
+      } finally { observing = false; }
+    };
+    const observationTimer = setInterval(() => { void observe(); }, 30000);
     try {
       await page.goto(`http://127.0.0.1:${server.address().port}/?variant=${encodeURIComponent(variant.id)}`);
       const result = await page.evaluate((args) => window.runDictionaryBenchmark(args), { cacheName });
-      const completed = { ...run, status: "passed", completedAt: new Date().toISOString(), result };
+      const completed = { ...run, status: "passed", completedAt: new Date().toISOString(), observations, result };
       finishedRuns.push(completed);
       await appendFile(resultsPath, `${JSON.stringify(completed)}\n`);
       console.log(JSON.stringify({ event: "run-result", sequence: planned.sequence,
@@ -266,14 +301,19 @@ try {
         fullReadyMs: result.fullReadyMs, warmLookupP95Ms: result.reopenedWarm.lookupP95Ms,
         elapsedMs: result.elapsedMs }));
     } catch (error) {
+      await observe();
       failedRuns += 1;
       const failed = { ...run, status: "failed", completedAt: new Date().toISOString(),
+        observations,
         error: { name: error?.name || "Error", message: String(error?.message || error), stack: error?.stack || null } };
       finishedRuns.push(failed);
       await appendFile(resultsPath, `${JSON.stringify(failed)}\n`);
       console.error(JSON.stringify({ event: "run-result", sequence: planned.sequence,
         variant: planned.variant, status: failed.status, error: failed.error }));
+    } finally {
+      clearInterval(observationTimer);
     }
+    });
   }
 } catch (error) {
   const record = { event: "harness-failed", at: new Date().toISOString(),
@@ -281,7 +321,6 @@ try {
   await appendFile(resultsPath, `${JSON.stringify(record)}\n`);
   throw error;
 } finally {
-  await browser?.close();
   await new Promise(resolve => server.close(resolve));
 }
 

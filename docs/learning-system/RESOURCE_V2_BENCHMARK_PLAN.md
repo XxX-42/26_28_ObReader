@@ -2,7 +2,7 @@
 
 ## Status
 
-Preparation only. No Chromium, full dictionary import, or 25k transfer has run in this worktree. The public ECDICT resource was copied to the ignored tests/artifacts/resource-v2/ directory and its SHA-256 was checked against the frozen implementation contract. Execute the browser and large-transfer measurements only after the root task grants the P2 performance lease.
+Protocol 1 ran partially and was stopped because failed trials left shared-origin IndexedDB residue. The 25k baseline passed. See RESOURCE_V2_BENCHMARK_RESULTS.md for all outcomes. Protocol 2 (off-record contexts) was rejected before execution; protocol 3 (a fresh ordinary on-disk profile and browser per trial) is prepared but NOT_RUN pending root review and a new performance lease. The public ECDICT resource was copied only from the prior isolated test artifact to ignored tests/artifacts/resource-v2/ and its SHA-256 was verified.
 
 ## Frozen resource
 
@@ -10,7 +10,7 @@ The benchmark requires resource-v2 with 770,611 entries, 16,734,703 compressed b
 
 ## Predeclared cold-run order
 
-Run each row five times, in the listed order, with a unique IndexedDB database per run. The harness writes this complete order to run-plan.json before launching Chromium. It records failed runs, does not retry or skip, and never chooses runs based on outcome.
+Run each row five times, in the listed order, with a unique IndexedDB database and fresh owned ordinary Chrome on-disk profile per run. Browser closure runs in finally even on timeout. The harness writes this complete order to run-plan.json before launching Chromium. It records failed runs, does not retry or skip, and never chooses runs based on outcome. The 180-second protocol deadline is unchanged.
 
 | Sequence | Variant | Batch size | Membership-tail reuse |
 | --- | --- | ---: | --- |

@@ -10,6 +10,18 @@ export const DICTIONARY_BENCHMARK_VARIANTS = Object.freeze([
 
 export const DICTIONARY_BENCHMARK_REPETITIONS = 5;
 
+export async function withDictionaryBenchmarkBrowser(launchFreshBrowser, run) {
+  const browser = await launchFreshBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1000, height: 760 });
+    await page.setCacheEnabled(false);
+    return await run(page);
+  } finally {
+    await browser.close();
+  }
+}
+
 export function createDictionaryBenchmarkPlan() {
   return DICTIONARY_BENCHMARK_VARIANTS.flatMap((variant, variantIndex) =>
     Array.from({ length: DICTIONARY_BENCHMARK_REPETITIONS }, (_, repetition) => ({
