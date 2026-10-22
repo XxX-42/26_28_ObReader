@@ -1887,7 +1887,26 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   assert.equal(timers.has(secondTimer), false, "real user input cancels temporary focus cleanup immediately");
   assert.deepEqual(editor.getCursor("to"), { line: 2, ch: 3 }, "user movement is never reset");
 
+  await harness.plugin.openReaderBacklinkSource(row, { source: "same-target-first" });
+  const supersededTimer = [...timers.keys()][0];
+  await harness.plugin.openReaderBacklinkSource(row, { source: "same-target-second" });
+  assert.equal(timers.size, 1, "a repeated exact jump replaces its older temporary-focus timer");
+  assert.equal(timers.has(supersededTimer), false, "the older timer cannot clear a newer identical selection");
+  const repeatedFocusTimer = [...timers.keys()][0];
+  harness.app.workspace.activeLeaf = { view: { file: { path: "Notes/Other.md" } } };
+  assert.equal(ownerWindow.fireTimeout(repeatedFocusTimer), true);
+  assert.equal(editor.getSelection(), "", "temporary focus expires in its original leaf after the user switches tabs");
+
+  harness.app.workspace.activeLeaf = markdownLeaf;
+  await harness.plugin.openReaderBacklinkSource(row, { source: "same-view-new-file" });
+  const switchedDocumentTimer = [...timers.keys()][0];
+  markdownLeaf.view.file.path = "Notes/Other.md";
+  assert.equal(ownerWindow.fireTimeout(switchedDocumentTimer), true);
+  assert.equal(editor.getSelection(), selected,
+    "the cleanup must not alter a reused Markdown view after it has switched to another file");
+
   editor.scrolls.length = 0;
+  markdownLeaf.view.file.path = "Notes/Source.md";
   await harness.plugin.openReaderBacklinkSource({ ...row, offset: content.length + 1, line: 0 },
     { source: "invalid-offset-test" });
   assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "an invalid offset safely falls back to the indexed line");
@@ -1900,17 +1919,16 @@ test("Reader backlink target-open reuses the page index and routes one exact sou
   await harness.plugin.onload();
   const view = {
     annotationDocument: { docKey: "doc-key", documentId: "document-id" },
-    annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+    annotationPageIdentity: { orderedPageIdentities: ["page-one", "page-two"] },
     annotationHydrationAllowed: true,
     isCurrentReaderAnchorIdentity: () => true,
   };
   const row = { sourcePath: "Notes/Source.md", target: { kind: "annotation", id: "annotation-id" } };
   const selectionRow = { sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "anchor-id" } };
-  let requestedAnchorIds = null;
   let opened = null;
+  harness.plugin.readerBacklinkIndexReady = true;
   harness.plugin.getReaderBacklinkPageIndex = async () => ({ value: {
-    forPage: () => ({ rows: [row] }),
-    forAnchorIds: (ids) => { requestedAnchorIds = ids; return [selectionRow]; },
+    forPage: (pageIdentity) => ({ rows: pageIdentity === "page-one" ? [row, selectionRow] : [] }),
   } });
   harness.plugin.openReaderBacklinkSource = async (actual, options) => { opened = { actual, options }; return true; };
   const identity = { documentId: "document-id", openRequest: 3, rendererGeneration: "generation" };
@@ -1925,12 +1943,76 @@ test("Reader backlink target-open reuses the page index and routes one exact sou
     ...identity, requestId: "target-open-selection", targetKind: "selection", targetId: "anchor-id",
     pageNumber: 1, pageIdentity: "page-one",
   });
-  assert.deepEqual(requestedAnchorIds, ["anchor-id"]);
   assert.equal(opened.actual, selectionRow);
+  opened = null;
+  await harness.plugin.handleReaderBacklinkTargetOpen(view, {
+    ...identity, requestId: "target-open-selection-wrong-page", targetKind: "selection", targetId: "anchor-id",
+    pageNumber: 2, pageIdentity: "page-two",
+  });
+  assert.equal(opened, null, "a selection from another page is never opened from this page's marker intent");
+  harness.plugin.readerBacklinkIndexReady = false;
+  let pageIndexReads = 0;
+  const getPageIndex = harness.plugin.getReaderBacklinkPageIndex;
+  harness.plugin.getReaderBacklinkPageIndex = async (...args) => {
+    pageIndexReads += 1;
+    return getPageIndex(...args);
+  };
+  assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(view, {
+    ...identity, requestId: "target-open-index-cold", targetKind: "annotation", targetId: "annotation-id",
+    pageNumber: 1, pageIdentity: "page-one",
+  }), false, "an unexpected target-open cannot trigger a cold full-Vault index build");
+  assert.equal(pageIndexReads, 0);
+  harness.plugin.readerBacklinkIndexReady = true;
   assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(view, {
     ...identity, requestId: "target-open-stale", targetKind: "annotation", targetId: "annotation-id",
     pageNumber: 2, pageIdentity: "stale-page",
   }), false, "a stale or mismatched page identity fails closed");
+  harness.plugin.onunload();
+});
+
+test("LingQ occurrence backlink query never starts a cold full-Vault index scan", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  harness.plugin.readerBacklinkIndexReady = false;
+  let indexReads = 0;
+  harness.plugin.getReaderBacklinkPageIndex = async () => {
+    indexReads += 1;
+    throw new Error("a cold occurrence interaction must not rebuild the Vault index");
+  };
+  const replies = [];
+  const view = {
+    annotationDocument: { docKey: "doc-key", documentId: "document-id" },
+    annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+    annotationHydrationAllowed: true,
+    token: "reader-token",
+    isCurrentReaderAnchorIdentity: () => true,
+    postToViewer: (message) => replies.push(message),
+  };
+  const handled = await harness.plugin.handleReaderBacklinkOccurrenceMessage(view, {
+    type: "reader-backlink-occurrence-query",
+    requestId: "cold-occurrence-query",
+    documentId: "document-id",
+    openRequest: 3,
+    rendererGeneration: "renderer-generation",
+    pageNumber: 1,
+    startIndex: 0,
+    endIndex: 6,
+  });
+  assert.equal(handled, false);
+  assert.equal(indexReads, 0, "a LingQ click cannot trigger a full-Vault index build on the interaction path");
+  assert.deepEqual(replies, [{
+    channel: "pdf-web-reader",
+    token: "reader-token",
+    type: "reader-backlink-occurrence-result",
+    requestId: "cold-occurrence-query",
+    documentId: "document-id",
+    openRequest: 3,
+    rendererGeneration: "renderer-generation",
+    ok: false,
+    count: 0,
+    anchorIds: [],
+    message: "反向链接索引仍在准备中，请稍后重试。",
+  }]);
   harness.plugin.onunload();
 });
 

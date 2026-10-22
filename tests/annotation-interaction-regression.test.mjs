@@ -2836,6 +2836,10 @@ test(
       );
       assert.equal(freeTextOnSquare.events.mode, 3);
       const freeTextSave = await saveAndReopen();
+      await viewer.waitForFunction(() => [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)]
+        .some(editor => (editor.constructor?._editorType === 3 || editor.editorType === "freetext") &&
+          (editor.value || editor.div?.querySelector(".internal")?.textContent || "").includes("12345")),
+      { timeout: 5_000 });
       const savedFreeText = await viewer.evaluate(async () => {
         const manager = PDFViewerApplication.pdfViewer._layerProperties
           .annotationEditorUIManager;

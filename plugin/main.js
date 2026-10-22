@@ -4629,6 +4629,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         code: error?.code || "unknown" });
       return true;
     }
+    for (const cleanup of [...(this.readerBacklinkFocusCleanups || [])]) cleanup();
 
     // A brief selection makes the source link easy to spot without editing the note.
     // Any user input or a changed leaf/editor cancels cleanup, so we never restore an old cursor.
@@ -4651,9 +4652,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       focusCleanups.add(clearFocusGuard);
       timer = ownerWindow.setTimeout?.(() => {
         try {
-          const activeLeaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
-          if (!userInteracted && !this.isUnloading && activeLeaf === leaf && activeLeaf?.view === view &&
-              view.editor === editor && editor.getSelection?.() === value.slice(row.offset, row.endOffset) &&
+          if (!userInteracted && !this.isUnloading && leaf?.view === view && view.editor === editor &&
+              view.file?.path === sourcePath && editor.getSelection?.() === value.slice(row.offset, row.endOffset) &&
               sameEditorPosition(editor.getCursor("from"), from) && sameEditorPosition(editor.getCursor("to"), to)) {
             editor.setCursor(endPosition);
           }
@@ -4675,17 +4675,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!document?.docKey || !document.documentId || !isCurrent() || !targetKinds.has(message.targetKind) ||
         typeof message.targetId !== "string" || !message.targetId || message.targetId.length > 512 ||
         !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
-        pageIdentities?.[message.pageNumber - 1] !== message.pageIdentity) return false;
+        pageIdentities?.[message.pageNumber - 1] !== message.pageIdentity || !this.readerBacklinkIndexReady) return false;
     const backlinkPageIndex = await this.getReaderBacklinkPageIndex(view, { documentId, openRequest, rendererGeneration });
     if (!backlinkPageIndex || !isCurrent()) return false;
-    let rows;
-    if (message.targetKind === "selection") {
-      rows = backlinkPageIndex.value.forAnchorIds([message.targetId]);
-    } else {
-      rows = backlinkPageIndex.value.forPage(message.pageIdentity).rows.filter((row) =>
-        row.target?.kind === message.targetKind && row.target?.id === message.targetId &&
-        !(message.targetKind === "annotation" && row.targetStatus === "deleted"));
-    }
+    const rows = backlinkPageIndex.value.forPage(message.pageIdentity).rows.filter((row) =>
+      row.target?.kind === message.targetKind && row.target?.id === message.targetId &&
+      !(message.targetKind === "annotation" && row.targetStatus === "deleted"));
     if (!isCurrent()) return false;
     if (rows.length === 1) {
       await this.openReaderBacklinkSource(rows[0], { source: "viewer" });
@@ -4705,6 +4700,15 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!document?.docKey || !document.documentId || !isCurrent()) return false;
     const identity = { documentId: message.documentId, openRequest: message.openRequest,
       rendererGeneration: message.rendererGeneration };
+    if (!this.readerBacklinkIndexReady) {
+      if (message.type === "reader-backlink-occurrence-query") {
+        view.postToViewer({ channel: CHANNEL, token: view.token, type: "reader-backlink-occurrence-result",
+          requestId: message.requestId, documentId: message.documentId, openRequest: message.openRequest,
+          rendererGeneration: message.rendererGeneration, ok: false, count: 0, anchorIds: [],
+          message: "反向链接索引仍在准备中，请稍后重试。" });
+      }
+      return false;
+    }
     const backlinkPageIndex = await this.getReaderBacklinkPageIndex(view, identity);
     if (!backlinkPageIndex || !isCurrent()) return false;
     let rows = [];

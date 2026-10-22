@@ -88,8 +88,10 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
       await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1, pointerType: "pen" });
       for (let n = 1; n <= 6; n++) await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x + n * 8, y: point.y + n * 6, button: "left", buttons: 1, pointerType: "pen" });
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x + 48, y: point.y + 36, button: "left", buttons: 0, clickCount: 1, pointerType: "pen" });
-      await frame.evaluate(() => new Promise(resolve => setTimeout(resolve, 50)));
       await frame.evaluate(() => PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0).endDrawingSession(false));
+      const expectedInkCount = strokes.length + 1;
+      await frame.waitForFunction(expected => [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)]
+        .filter(editor => editor.editorType === "ink").length === expected, { timeout: 5_000 }, expectedInkCount);
       strokes.push(await frame.evaluate(point => ({ point, mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
         editors: [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].map(editor => ({ id: editor.id, type: editor.editorType })),
         errors: observerErrors, hit: document.elementFromPoint(point.x, point.y)?.outerHTML?.slice(0, 300),

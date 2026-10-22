@@ -29,6 +29,12 @@
       "vendor/pdfjs-generic-legacy/build/pdf.mjs": "dcfc3b2e89d8754872f3d332cf30e2c232279d193b0da0cfc1f4b99984d8848f"
     }
   },
+  "reviewedBacklinkOverrides": {
+    "reason": "2026-10-22: minimal anchor-to-Range pairing helper required by the read-only PDF backlink interaction controller; no persistence or navigation semantics changed.",
+    "sha256": {
+      "viewer-adapter/input/text-selection-controller.js": "012af2d686bb5bcf8bfe5a5f67bb399a5e2b315d71edbc6cc55f76d8cbb3f51b"
+    }
+  },
   "sha256": {
     "plugin/pdf-annotation-host.cjs": "9f9340e9d57fce9fa4d79c6392022705923534bdfc40e3267f31f9d4f9b7b2de",
     "plugin/pdf-annotation-store.cjs": "96924d0682f53e799501673b1a180481d263d4e1e6ad7a9ca4529c4b7eb78d53",

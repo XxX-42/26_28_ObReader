@@ -193,9 +193,8 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
   skip: !browserPath && "Chrome or Edge is required for this browser regression",
   timeout: 180_000,
 }, async (t) => {
-  const [bridgeRuntimeSource, backlinkControllerSource, bridgeCss, viewerHtml, fixtureBytes, hashRuntime] = await Promise.all([
+  const [bridgeRuntimeSource, bridgeCss, viewerHtml, fixtureBytes, hashRuntime] = await Promise.all([
     readBridgeRuntimeSource(path.join(root, "viewer-adapter", "obsidian-bridge.js")),
-    readFile(path.join(root, "viewer-adapter", "input", "backlink-interaction-controller.js"), "utf8"),
     readFile(path.join(root, "viewer-adapter", "bridge.css"), "utf8"),
     readFile(path.join(vendorRoot, "web", "viewer.html"), "utf8"),
     readFile(fixture),
@@ -203,7 +202,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
   ]);
   const instrumentedBridgeSource = bridgeRuntimeSource.replace("  const state = {", "  const state = window.__pdfReaderBridgeState = {");
   assert.notEqual(instrumentedBridgeSource, bridgeRuntimeSource, "test instrumentation must expose the actual bridge state object");
-  const bridgeSource = `${backlinkControllerSource}\n${instrumentedBridgeSource}`;
+  const bridgeSource = instrumentedBridgeSource;
   const sourceHash = hashRuntime.fingerprint(fixtureBytes);
   const host = createHostHarness(hashRuntime);
   const sidecarHarness = browserSidecarHarnessScript({ channel, token, sourceHash, sourcePath: initialPdfPath });
@@ -415,7 +414,23 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     const pageBadge = await pageBadgePoint(pageCapture.pageNumber, pageCapture.pageIdentity);
     assert.equal(typeof pageBadge.hit, "undefined", `page badge must receive a real pointer hit: ${JSON.stringify(pageBadge)}`);
     await clickFramePoint(pageBadge);
-    await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "page", { timeout: 5_000 });
+    try {
+      await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "page", { timeout: 5_000 });
+    } catch (error) {
+      const trace = await page.evaluate(() => ({
+        clicks: window.__readerBacklinkE2EClicks,
+        targetMessages: window.__readerBacklinkE2E.messages.filter((message) => message.type === "reader-backlink-target-open"),
+        targetResult: window.__readerBacklinkE2E.lastTargetResult,
+        errors: window.__readerBacklinkE2E.errors,
+      }));
+      const viewerTrace = await frame.evaluate(() => ({
+        currentPageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
+        bridgePageResults: window.__pdfReaderBridgeState?.readerBacklinkPageResults,
+        controllerPage: window.__pdfReaderBridgeState?.backlinkInteractionController?.page,
+      }));
+      error.message += `\nPage badge interaction trace: ${JSON.stringify({ trace, viewerTrace, pageBadge })}`;
+      throw error;
+    }
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Page.md");
     assert.equal(host.state.openedSources.at(-1)?.offset, 120);
 
