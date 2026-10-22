@@ -180,6 +180,26 @@ test("stale page identity and replaced session never open an old backlink", () =
   h.controller.dispose();
 });
 
+test("same-page page-query results reject an older response that arrives last", () => {
+  const h = harness();
+  const olderRequest = { ...h.message, requestId: "reader-page-request-1" };
+  const currentRequest = { ...h.message, requestId: "reader-page-request-2" };
+
+  assert.equal(typeof h.controller.beginPageRequest, "function",
+    "the interaction controller must remember the latest page-query request ID");
+  h.controller.beginPageRequest(olderRequest);
+  h.controller.beginPageRequest(currentRequest);
+  assert.equal(h.controller.setPageResults({ ...currentRequest, backlinkCount: 1 }), true);
+  assert.equal(h.controller.setPageResults({ ...olderRequest, backlinkCount: 0 }), false,
+    "an older same-page lookup must not replace the newer marker snapshot");
+  assert.equal(h.controller.page.requestId, currentRequest.requestId,
+    "the active interaction snapshot must remain on the latest result");
+  h.controller.clearPage();
+  assert.equal(h.controller.setPageResults(h.message), true,
+    "legacy fixture results without requestId remain supported when no correlated request is active");
+  h.controller.dispose();
+});
+
 test("dispose removes delegated listeners and modifier-hover has no preview side effect", () => {
   const h = harness();
   assert.equal(h.listeners.has("pointermove"), false,

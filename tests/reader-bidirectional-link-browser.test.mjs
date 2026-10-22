@@ -62,6 +62,7 @@ function createHostHarness(hashRuntime) {
   const state = {
     identity: null,
     currentPdfPath: initialPdfPath,
+    backlinkPageQueryGeneration: 0,
     annotations: [],
     tombstones: [],
     captures: new Map(),
@@ -151,11 +152,13 @@ function createHostHarness(hashRuntime) {
       return null;
     }
     if (message.type === "reader-backlink-page-request") {
+      const queryGeneration = ++state.backlinkPageQueryGeneration;
       const pageIndex = await pageIndexFor();
-      if (!pageIndex) return null;
+      if (!pageIndex || queryGeneration !== state.backlinkPageQueryGeneration) return null;
       const result = pageIndex.forPage(message.pageIdentity);
       return {
         type: "reader-backlink-page-results",
+        requestId: message.requestId,
         documentId, openRequest: 1, rendererGeneration,
         pageNumber: message.pageNumber, pageIndex: message.pageIndex,
         pageIdentity: message.pageIdentity,
@@ -225,7 +228,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
           window.__readerHostRefreshPage=async()=>{
             const identity=host.identity;if(!identity||identity.identityStatus!=='KNOWN')throw new Error('Viewer page identity is not confirmed');
             const pageNumber=Number(host.lastPageRequest?.pageNumber)||1;
-            const message={type:'reader-backlink-page-request',documentId,openRequest:1,rendererGeneration,pageNumber,pageIndex:pageNumber-1,pageIdentity:identity.orderedPageIdentities[pageNumber-1],sourceHash:identity.sourceHash};
+            const message={type:'reader-backlink-page-request',requestId:host.lastPageRequest?.requestId,documentId,openRequest:1,rendererGeneration,pageNumber,pageIndex:pageNumber-1,pageIdentity:identity.orderedPageIdentities[pageNumber-1],sourceHash:identity.sourceHash};
             const result=await window.__readerBacklinkHost(message);if(result)window.__readerHostPostPageResult(result);return result;
           };
           window.addEventListener('message',async event=>{
@@ -419,6 +422,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     } catch (error) {
       const trace = await page.evaluate(() => ({
         clicks: window.__readerBacklinkE2EClicks,
+        pageRequests: window.__readerBacklinkE2E.messages.filter((message) => message.type === "reader-backlink-page-request").map(({ requestId, pageNumber, pageIdentity }) => ({ requestId, pageNumber, pageIdentity })),
         targetMessages: window.__readerBacklinkE2E.messages.filter((message) => message.type === "reader-backlink-target-open"),
         targetResult: window.__readerBacklinkE2E.lastTargetResult,
         errors: window.__readerBacklinkE2E.errors,
@@ -426,6 +430,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       const viewerTrace = await frame.evaluate(() => ({
         currentPageNumber: PDFViewerApplication.pdfViewer.currentPageNumber,
         bridgePageResults: window.__pdfReaderBridgeState?.readerBacklinkPageResults,
+        activePageRequest: window.__pdfReaderBridgeState?.readerBacklinkActiveRequest,
         controllerPage: window.__pdfReaderBridgeState?.backlinkInteractionController?.page,
       }));
       error.message += `\nPage badge interaction trace: ${JSON.stringify({ trace, viewerTrace, pageBadge })}`;

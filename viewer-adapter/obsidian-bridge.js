@@ -218,6 +218,8 @@
     readerBacklinkHighlights: null,
     readerBacklinkPageKey: null,
     readerBacklinkPageResults: null,
+    readerBacklinkRequestSequence: 0,
+    readerBacklinkActiveRequest: null,
     readerBacklinkRetryTimer: null,
     backlinkInteractionController: null,
     preferredAnnotationToolMode: 0,
@@ -832,6 +834,7 @@
     state.readerBacklinkHighlights = null;
     state.readerBacklinkPageKey = null;
     state.readerBacklinkPageResults = null;
+    state.readerBacklinkActiveRequest = null;
     state.backlinkInteractionController?.clearPage?.();
     if (state.readerBacklinkRetryTimer) clearTimeout(state.readerBacklinkRetryTimer);
     state.readerBacklinkRetryTimer = null;
@@ -848,25 +851,50 @@
     if (state.readerBacklinkPageKey === key) return false;
     clearReaderBacklinkPresentation();
     state.readerBacklinkPageKey = key;
-    const sent = postToHost("reader-backlink-page-request", {
+    const request = {
+      requestId: `reader-backlink-page-${state.activeOpenRequest}-${++state.readerBacklinkRequestSequence}`,
       documentId: state.activeDocumentId,
       openRequest: state.activeOpenRequest,
+      rendererGeneration,
       pageNumber,
       pageIndex,
       pageIdentity,
+    };
+    state.readerBacklinkActiveRequest = request;
+    const controller = state.backlinkInteractionController || ensureBacklinkInteractionController();
+    controller?.beginPageRequest?.(request);
+    const sent = postToHost("reader-backlink-page-request", {
+      ...request,
       sourceHash: actual.sourceHash,
     });
-    if (!sent && state.readerBacklinkPageKey === key) state.readerBacklinkPageKey = null;
+    if (!sent && state.readerBacklinkPageKey === key) {
+      state.readerBacklinkPageKey = null;
+      state.readerBacklinkActiveRequest = null;
+      controller?.clearPage?.();
+    }
     return sent;
   }
 
   async function applyReaderBacklinkPageResults(message, attempt = 0) {
     const startedAt = performanceNow();
     const actual = state.actualSourceIdentity;
+    const activeRequest = state.readerBacklinkActiveRequest;
+    const isCorrelatedRequest = activeRequest
+      ? message?.requestId === activeRequest.requestId &&
+        message?.documentId === activeRequest.documentId &&
+        message?.openRequest === activeRequest.openRequest &&
+        message?.rendererGeneration === activeRequest.rendererGeneration &&
+        message?.pageNumber === activeRequest.pageNumber &&
+        message?.pageIndex === activeRequest.pageIndex &&
+        message?.pageIdentity === activeRequest.pageIdentity
+      : !message?.requestId;
+    if (!isCorrelatedRequest ||
+        state.backlinkInteractionController?.isCurrentPageRequest?.(message) === false) return false;
     const isCurrent = () => !state.disposed &&
       message?.rendererGeneration === rendererGeneration &&
       message?.documentId === state.activeDocumentId &&
       message?.openRequest === state.activeOpenRequest &&
+      state.readerBacklinkActiveRequest === activeRequest &&
       actual === state.actualSourceIdentity &&
       state.app?.pdfViewer?.currentPageNumber === message.pageNumber &&
       actual?.orderedPageIdentities?.[message.pageIndex] === message.pageIdentity;

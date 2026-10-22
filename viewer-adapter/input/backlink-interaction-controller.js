@@ -27,6 +27,7 @@
       this.recentActivation = null;
       this.lastPointerClick = null;
       this.doubleClickDisposition = null;
+      this.latestPageRequest = null;
       this.requestSequence = 0;
       this.onClick = (event) => this.handleClick(event);
       this.onDoubleClick = (event) => this.handleDoubleClick(event);
@@ -43,6 +44,7 @@
     }
 
     setPageResults(message, rangeTargets = []) {
+      if (!this.isCurrentPageRequest(message)) return false;
       this.cancelPendingClick();
       if (!message || typeof message.documentId !== "string" ||
           !Number.isSafeInteger(message.openRequest) ||
@@ -60,6 +62,7 @@
         pageNumber: message.pageNumber,
         pageIndex: message.pageIndex,
         pageIdentity: message.pageIdentity,
+        requestId: typeof message.requestId === "string" ? message.requestId : null,
         rangeTargets: Array.isArray(rangeTargets)
           ? rangeTargets.filter((target) => target?.kind === "selection" &&
               typeof target.id === "string" && target.range)
@@ -68,9 +71,44 @@
       return true;
     }
 
+    beginPageRequest(message) {
+      if (!message || typeof message.requestId !== "string" || !message.requestId ||
+          message.requestId.length > 128 || typeof message.documentId !== "string" ||
+          !Number.isSafeInteger(message.openRequest) ||
+          typeof message.rendererGeneration !== "string" || !message.rendererGeneration ||
+          !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+          !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0 ||
+          typeof message.pageIdentity !== "string" || !message.pageIdentity) return false;
+      this.cancelPendingClick();
+      this.page = null;
+      this.latestPageRequest = {
+        requestId: message.requestId,
+        documentId: message.documentId,
+        openRequest: message.openRequest,
+        rendererGeneration: message.rendererGeneration,
+        pageNumber: message.pageNumber,
+        pageIndex: message.pageIndex,
+        pageIdentity: message.pageIdentity,
+      };
+      return true;
+    }
+
+    isCurrentPageRequest(message) {
+      const request = this.latestPageRequest;
+      if (!request) return !message?.requestId;
+      return message?.requestId === request.requestId &&
+        message?.documentId === request.documentId &&
+        message?.openRequest === request.openRequest &&
+        message?.rendererGeneration === request.rendererGeneration &&
+        message?.pageNumber === request.pageNumber &&
+        message?.pageIndex === request.pageIndex &&
+        message?.pageIdentity === request.pageIdentity;
+    }
+
     clearPage() {
       this.cancelPendingClick();
       this.page = null;
+      this.latestPageRequest = null;
       this.recentActivation = null;
       this.lastPointerClick = null;
       this.doubleClickDisposition = null;
