@@ -660,8 +660,30 @@ try {
   assert.equal(persistedMovedSquare[0].uuid,squareUuid,'Moving the Square must preserve its original UUID');
   report.squareMove.rectAfter=movedState.editors.find(editor=>editor.id===squareEditor.id).serialized.rect;
   report.squareMove.persistedUuid=persistedMovedSquare[0].uuid;
-  const underlinePoint=await doc(({v,d,a})=>{const m=a.pdfViewer._layerProperties.annotationEditorUIManager;const e=[...d.querySelectorAll('.annotationEditorLayer > div[id]')].find(e=>m.getEditor(e.id)?.constructor._editorType===10);const r=e.getBoundingClientRect(),f=v.iframe.getBoundingClientRect();return{x:f.x+r.x+r.width/2,y:f.y+r.y+r.height/2};});
-  await click(underlinePoint); await key('Delete','Delete',46);
+  // The active Square tool intentionally draws over existing markup. Return
+  // to NONE and prove the exact old Underline is selected before Delete.
+  const underlineEditors=(await state()).editors.filter(editor=>editor.type===10);
+  const underlineRows=(await checkpoint()).annotations.filter(row=>row.kind==='Underline');
+  assert.equal(underlineEditors.length,1); assert.equal(underlineRows.length,1);
+  assert.equal(underlineRows[0].uuid,report.initialUuids.Underline);
+  const underlineEditor=underlineEditors[0];
+  assert.ok(Math.max(...underlineEditor.serialized.rect.map((value,index)=>
+    Math.abs(value-underlineRows[0].payload.editor.rect[index])))<0.1,
+    'The delete gesture must target the acknowledged Underline UUID and geometry');
+  await doc(({a})=>{a.eventBus.dispatch('switchannotationeditormode',{mode:0});return true;});
+  const underlinePoint=await wait('saved Underline is hit-testable in mode NONE',()=>doc(({v,d,a,arg})=>{
+    const e=d.getElementById(arg),r=e?.getBoundingClientRect(),layer=e?.closest('.annotationEditorLayer');
+    if(!e||!r||a.pdfViewer.annotationEditorMode!==0||layer?.classList.contains('creationPriority'))return null;
+    const x=r.x+r.width/2,y=r.y+r.height/2,hit=d.elementFromPoint(x,y),f=v.iframe.getBoundingClientRect();
+    return hit===e||e.contains(hit)?{x:f.x+x,y:f.y+y,editorId:e.id}:null;
+  },underlineEditor.id));
+  await click(underlinePoint);
+  await wait('exact Underline selected before Delete',()=>doc(({a,d,arg})=>{
+    const manager=a.pdfViewer._layerProperties.annotationEditorUIManager,e=d.getElementById(arg),editor=e&&manager.getEditor(e.id);
+    return !!editor&&editor.constructor._editorType===10&&manager.isSelected(editor)&&e.classList.contains('selectedEditor');
+  },underlineEditor.id));
+  report.deletePrecondition={uuid:report.initialUuids.Underline,editorId:underlineEditor.id,mode:'NONE-then-native-selection'};
+  await key('Delete','Delete',46);
   const four=five.filter(t=>t!=='Underline'); await saved('delete',four);
   await button('#pdfReaderBridgeUndoButton'); await saved('undo',five);
   assert.equal((await checkpoint()).annotations.find(r=>r.kind==='Underline').uuid,report.initialUuids.Underline);
