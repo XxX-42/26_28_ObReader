@@ -109,6 +109,9 @@
     },
     bridgeControls: null,
     annotationSidebarController: null,
+    annotationSidebarTextGeometryCache: new WeakMap(),
+    annotationTargetTextByRuntimeId: new Map(),
+    pendingHighlightSelection: null,
     toolbarLayoutResizeObserver: null,
     toolbarLayoutMutationObserver: null,
     toolbarLayoutFrame: 0,
@@ -338,6 +341,159 @@
 
   function textLayerForPage(pageRoot) {
     return pageRoot?.querySelector?.(".textLayer") || null;
+  }
+
+  function annotationSidebarTextGlyphs(textLayer, pageRoot, viewport) {
+    const ownerDocument = textLayer?.ownerDocument;
+    const pageRect = pageRoot?.getBoundingClientRect?.();
+    if (!ownerDocument?.createTreeWalker || !ownerDocument?.createRange ||
+        !pageRect?.width || !pageRect?.height || !viewport?.width || !viewport?.height ||
+        typeof viewport.convertToViewportPoint !== "function") return null;
+    const cacheKey = [viewport.scale, viewport.rotation, viewport.width, viewport.height,
+      pageRect.width, pageRect.height, textLayer.textContent?.length].join(":");
+    const cached = state.annotationSidebarTextGeometryCache?.get(textLayer);
+    if (cached?.key === cacheKey) return cached.glyphs;
+    const glyphs = [];
+    const walker = ownerDocument.createTreeWalker(textLayer, 4);
+    const range = ownerDocument.createRange();
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.parentElement?.closest?.(".endOfContent")) continue;
+      const value = typeof node.nodeValue === "string" ? node.nodeValue : "";
+      let offset = 0;
+      for (const character of value) {
+        const start = offset;
+        offset += character.length;
+        let rects = [];
+        try {
+          range.setStart(node, start);
+          range.setEnd(node, offset);
+          rects = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0)
+            .map(rect => ({
+              left: rect.left - pageRect.left,
+              top: rect.top - pageRect.top,
+              right: rect.right - pageRect.left,
+              bottom: rect.bottom - pageRect.top,
+            }));
+        } catch {
+          // A stale text node should not block opening the annotation list.
+          rects = [];
+        }
+        glyphs.push({ character, rects });
+      }
+    }
+    state.annotationSidebarTextGeometryCache?.set(textLayer, { key: cacheKey, glyphs });
+    return glyphs;
+  }
+
+  function recoverHighlightTextFromTextLayer(textLayer, pageRoot, viewport, rawQuadPoints) {
+    const quadPoints = ArrayBuffer.isView(rawQuadPoints)
+      ? Array.from(rawQuadPoints)
+      : Array.isArray(rawQuadPoints) ? rawQuadPoints
+        : Array.isArray(rawQuadPoints?.values) ? rawQuadPoints.values : null;
+    if (!textLayer || !pageRoot || !viewport || !quadPoints || quadPoints.length < 8 ||
+        quadPoints.length % 8 !== 0) return null;
+    const pageRect = pageRoot.getBoundingClientRect?.();
+    if (!pageRect?.width || !pageRect?.height || !viewport.width || !viewport.height) return null;
+    const scaleX = pageRect.width / viewport.width;
+    const scaleY = pageRect.height / viewport.height;
+    const quads = [];
+    for (let index = 0; index < quadPoints.length; index += 8) {
+      const points = [];
+      for (let point = 0; point < 8; point += 2) {
+        const x = quadPoints[index + point];
+        const y = quadPoints[index + point + 1];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        let viewportPoint;
+        try { viewportPoint = viewport.convertToViewportPoint(x, y); }
+        catch { return null; }
+        if (!Array.isArray(viewportPoint) || viewportPoint.length < 2 ||
+            !Number.isFinite(viewportPoint[0]) || !Number.isFinite(viewportPoint[1])) return null;
+        points.push([viewportPoint[0] * scaleX, viewportPoint[1] * scaleY]);
+      }
+      const left = Math.min(...points.map(point => point[0]));
+      const right = Math.max(...points.map(point => point[0]));
+      const top = Math.min(...points.map(point => point[1]));
+      const bottom = Math.max(...points.map(point => point[1]));
+      if (!(right > left && bottom > top)) return null;
+      quads.push({ left, right, top, bottom });
+    }
+    const glyphs = annotationSidebarTextGlyphs(textLayer, pageRoot, viewport);
+    if (!glyphs?.length) return null;
+    const textRects = glyphs.map(glyph => glyph.rects);
+    const lines = [];
+    for (const quad of quads) {
+      let line = lines.find(candidate => {
+        const overlap = Math.min(candidate.bottom, quad.bottom) - Math.max(candidate.top, quad.top);
+        return overlap > 0 && overlap / Math.min(candidate.bottom - candidate.top, quad.bottom - quad.top) >= 0.45;
+      });
+      if (!line) {
+        line = { ...quad, quads: [quad] };
+        lines.push(line);
+      } else {
+        line.top = Math.min(line.top, quad.top);
+        line.bottom = Math.max(line.bottom, quad.bottom);
+        line.quads.push(quad);
+      }
+    }
+    lines.sort((left, right) => left.top - right.top || left.left - right.left);
+
+    const fragments = [];
+    for (const line of lines) {
+      const selected = new Set();
+      for (let index = 0; index < glyphs.length; index += 1) {
+        if (/^\s+$/u.test(glyphs[index].character)) continue;
+        const hit = textRects[index].some(rect => line.quads.some(quad => {
+          const width = rect.right - rect.left;
+          if (!(width > 0 && rect.bottom > rect.top)) return false;
+          const overlapWidth = Math.max(0, Math.min(rect.right, quad.right) - Math.max(rect.left, quad.left));
+          const horizontalOverlapRatio = overlapWidth / width;
+          const centerX = (rect.left + rect.right) / 2;
+          const centerY = (rect.top + rect.bottom) / 2;
+          const centerInsideVertical = centerY >= quad.top - 1 && centerY <= quad.bottom + 1;
+          return centerInsideVertical && (horizontalOverlapRatio >= 0.35 ||
+            (centerX >= quad.left && centerX <= quad.right));
+        }));
+        if (hit) selected.add(index);
+      }
+      if (!selected.size) continue;
+      const indexes = [...selected].sort((left, right) => left - right);
+      const first = indexes[0];
+      const last = indexes.at(-1);
+      let value = "";
+      let previousGlyph = null;
+      for (let index = first; index <= last; index += 1) {
+        const glyph = glyphs[index];
+        if (selected.has(index)) {
+          const rect = glyph.rects[0];
+          if (previousGlyph && rect && previousGlyph.rect) {
+            const gap = Math.max(0, rect.left - previousGlyph.rect.right, previousGlyph.rect.left - rect.right);
+            const fontHeight = Math.min(rect.bottom - rect.top,
+              previousGlyph.rect.bottom - previousGlyph.rect.top);
+            if (gap > Math.max(1, fontHeight * 0.24) && !/\s$/u.test(value)) value += " ";
+          }
+          value += glyph.character;
+          previousGlyph = { rect };
+        } else if (/^\s+$/u.test(glyph.character) &&
+            [...selected].some(selectedIndex => selectedIndex < index) &&
+            [...selected].some(selectedIndex => selectedIndex > index)) {
+          value += glyph.character;
+        }
+      }
+      const fragment = value.replace(/\s+/gu, " ").trim();
+      if (fragment) fragments.push(fragment);
+    }
+    const recovered = fragments.join("\n").trim();
+    return recovered || null;
+  }
+
+  function getLegacyHighlightSidebarTargetText(pageIndex, editorPayload) {
+    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || !editorPayload) return null;
+    const pageView = state.app?.pdfViewer?.getPageView?.(pageIndex);
+    const pageRoot = pageElementForIndex(pageIndex);
+    const textLayer = textLayerForPage(pageRoot);
+    return recoverHighlightTextFromTextLayer(textLayer, pageRoot, pageView?.viewport,
+      editorPayload.quadPoints);
   }
 
   function readerPageNumberForRoot(pageRoot) {
@@ -1670,6 +1826,20 @@
     return texts;
   }
 
+  function getAnnotationSidebarTargetTexts(targets) {
+    const texts = getLiveAnnotationSidebarTexts();
+    if (typeof state === "undefined" || !state?.app || !targets?.values) return texts;
+    for (const row of targets.values()) {
+      if (row?.deleted === true || normalizeSyncKind(row?.kind) !== "Highlight" ||
+          typeof row?.uuid !== "string" || !row.uuid || texts.has(row.uuid)) continue;
+      const storedText = row.editorPayload?.text;
+      if (typeof storedText === "string" && storedText.trim()) continue;
+      const text = getLegacyHighlightSidebarTargetText(row.pageIndex, row.editorPayload);
+      if (text) texts.set(row.uuid, text);
+    }
+    return texts;
+  }
+
   function resolveAnnotationSidebarTargetText(row, liveTexts) {
     const payload = row?.editorPayload && typeof row.editorPayload === "object"
       ? row.editorPayload
@@ -1687,7 +1857,7 @@
     return "（目标文字暂不可用）";
   }
 
-  function buildAnnotationSidebarViewModels(targets, liveTexts = getLiveAnnotationSidebarTexts()) {
+  function buildAnnotationSidebarViewModels(targets, liveTexts = getAnnotationSidebarTargetTexts(targets)) {
     return [...(targets?.values?.() || [])]
       .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
         row.uuid && Number.isSafeInteger(row.pageIndex) && row.pageIndex >= 0)
@@ -3233,6 +3403,19 @@
         kind = [identity?.kind, exactRow?.kind, priorRow?.kind, runtimeBinding?.kind]
           .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
       }
+      if (value?.deleted !== true && normalizeSyncKind(kind) === "Highlight") {
+        const targetText = state.annotationTargetTextByRuntimeId?.get(runtimeId) ||
+          editor.div?.getAttribute?.("aria-label") || value?.text ||
+          exactRow?.editorPayload?.text || priorRow?.value?.text;
+        if (typeof targetText === "string" && targetText.trim()) {
+          // PDF.js captures Selection.toString() for a Highlight, but its
+          // serialize() omits that private text. Keep it in the existing
+          // external annotation payload without mutating AnnotationStorage or
+          // the PDF.js editor, so the operation signature and durable sidecar
+          // capture include the quote immediately after the committed edit.
+          value = { ...value, text: targetText };
+        }
+      }
       if (value.deleted === true && (!uuid || !EXTERNAL_ANNOTATION_KINDS.has(kind) ||
           !Number.isSafeInteger(pageIndex) ||
           (Number.isSafeInteger(exactRow?.pageIndex) && exactRow.pageIndex !== pageIndex))) {
@@ -3472,6 +3655,8 @@
       : normalizedSyncState;
     if (reset) {
       state.annotationUuidByRuntimeId.clear();
+      state.annotationTargetTextByRuntimeId.clear();
+      state.pendingHighlightSelection = null;
       state.annotationRefByRuntimeId.clear();
       state.annotationUuidByPdfRef.clear();
       state.annotationRuntimeBindings?.clear();
@@ -7298,12 +7483,51 @@
     }
     const cleanups = [];
 
+    // PDF.js's HighlightEditor keeps Selection.toString() in a private field,
+    // then drops it from serialize(). Capture the exact selection before the
+    // native handler empties it; addEditor associates it with the new runtime
+    // ID before the existing addCommands mutation observer persists a row.
+    wrapMethod(manager, "highlightSelection", (original, args) => {
+      const selection = state.textSelectionController?.snapshot?.();
+      const text = !selection?.isCollapsed && selection?.rangeCount === 1
+        ? selection.text
+        : null;
+      const anchor = selection?.anchorNode;
+      const anchorElement = anchor?.nodeType === 3 ? anchor.parentElement : anchor;
+      const textLayer = anchorElement?.closest?.(".textLayer");
+      const pageRoot = textLayer?.closest?.(".page");
+      const pageNumber = readerPageNumberForRoot(pageRoot);
+      const pageIndex = Number.isSafeInteger(pageNumber) ? pageNumber - 1 : null;
+      const isHighlightMode = Number(app.pdfViewer?.annotationEditorMode) === 9;
+      const previousPending = state.pendingHighlightSelection;
+      const pending = isHighlightMode && typeof text === "string" && text.trim() &&
+        Number.isSafeInteger(pageIndex) && pageIndex >= 0
+        ? { text, pageIndex, assigned: false }
+        : null;
+      if (pending) state.pendingHighlightSelection = pending;
+      try {
+        return original.apply(manager, args);
+      } finally {
+        if (pending && state.pendingHighlightSelection === pending) {
+          state.pendingHighlightSelection = previousPending;
+        }
+      }
+    }, cleanups);
+
     // A live editor can be removed before its first serializable snapshot.
     // Capture identity/type at registration, never manufacture an identity
     // later from a deleted placeholder or guess its geometry.
     wrapMethod(manager, "addEditor", (original, [editor]) => {
       const result = original.call(manager, editor);
       runAnnotationObserver("editor.identity", () => rememberAnnotationEditorIdentity(editor));
+      const pendingSelection = state.pendingHighlightSelection;
+      const runtimeId = String(editor?.id ?? "");
+      if (pendingSelection?.text && !pendingSelection.assigned &&
+          normalizeSyncKind(editor?.editorType) === "Highlight" &&
+          editor?.pageIndex === pendingSelection.pageIndex && runtimeId) {
+        state.annotationTargetTextByRuntimeId.set(runtimeId, pendingSelection.text);
+        pendingSelection.assigned = true;
+      }
       return result;
     }, cleanups);
 
@@ -10986,6 +11210,8 @@
         app.eventBus?._on(
           "textlayerrendered",
           ({ pageNumber }) => runAnnotationObserver("viewer.text-layer", () => {
+            state.annotationSidebarTextGeometryCache = new WeakMap();
+            state.annotationSidebarController?.refreshIfOpen();
             const results = state.readerBacklinkPageResults;
             if (results?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(results);
           }),

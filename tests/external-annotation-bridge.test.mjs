@@ -73,7 +73,7 @@ function evaluateHelpers(names, body, exposed = []) {
 
 test("annotation sidebar is lazy, uses sorted active targets, and refreshes only while open", async () => {
   const helpers = evaluateHelpers(
-    ["getLiveAnnotationSidebarTexts", "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
+    ["getLiveAnnotationSidebarTexts", "getAnnotationSidebarTargetTexts", "resolveAnnotationSidebarTargetText", "buildAnnotationSidebarViewModels", "createAnnotationSidebarController"],
     "function normalizeSyncKind(value) { return value; }",
   );
   const previousDocument = globalThis.document;
@@ -233,6 +233,91 @@ test("annotation sidebar is lazy, uses sorted active targets, and refreshes only
     if (previousCancelRaf === undefined) delete globalThis.cancelAnimationFrame;
     else globalThis.cancelAnimationFrame = previousCancelRaf;
   }
+});
+
+test("legacy Highlight sidebar text is recovered only from text covered by its quads", () => {
+  const helpers = evaluateHelpers(
+    ["annotationSidebarTextGlyphs", "recoverHighlightTextFromTextLayer", "getLiveAnnotationSidebarTexts",
+      "getLegacyHighlightSidebarTargetText", "getAnnotationSidebarTargetTexts", "resolveAnnotationSidebarTargetText",
+      "buildAnnotationSidebarViewModels"],
+      `const state = { annotationSidebarTextGeometryCache: new WeakMap(), app: null };
+     function normalizeSyncKind(value) { return value; }
+     function pageElementForIndex(index) { return state.pageRoots?.get(index) || null; }
+     function textLayerForPage(root) { return root?.querySelector?.(".textLayer") || null; }`,
+    ["state"],
+  );
+
+  const fixture = ({ nodes, transform = (x, y) => [x, y], width = 240, height = 160 }) => {
+    const ownerDocument = {
+      createTreeWalker(_root, _whatToShow) {
+        let index = -1;
+        return { nextNode() { index += 1; return nodes[index] || null; } };
+      },
+      createRange() {
+        let node = null;
+        let start = 0;
+        let end = 0;
+        return {
+          setStart(value, offset) { node = value; start = offset; },
+          setEnd(value, offset) { node = value; end = offset; },
+          getClientRects() { return node.charRects.slice(start, end).filter(Boolean); },
+        };
+      },
+    };
+    const textLayer = { ownerDocument, textContent: nodes.map(node => node.nodeValue).join("") };
+    const pageRoot = {
+      querySelector: selector => selector === ".textLayer" ? textLayer : null,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
+    };
+    const viewport = { width, height, scale: 1, rotation: 0, convertToViewportPoint: transform };
+    return { textLayer, pageRoot, viewport };
+  };
+  const textNode = (text, left, top, { charWidth = 6, glyphWidth = 5, lineHeight = 14 } = {}) => ({
+    nodeValue: text,
+    parentElement: { closest: () => null },
+    charRects: Array.from(text, (_character, index) => ({
+      left: left + index * charWidth, right: left + index * charWidth + glyphWidth,
+      top, bottom: top + lineHeight, width: glyphWidth, height: lineHeight,
+    })),
+  });
+  const quad = (left, right, top, bottom) => [left, bottom, right, bottom, left, top, right, top];
+
+  const oneLine = fixture({ nodes: [textNode("selected outside", 10, 20)] });
+  assert.equal(helpers.recoverHighlightTextFromTextLayer(oneLine.textLayer, oneLine.pageRoot,
+    oneLine.viewport, quad(10, 58, 18, 36)), "selected",
+  "a legacy quad does not capture adjacent unhighlighted words");
+
+  const multipleLines = fixture({ nodes: [textNode("alpha beta", 10, 20), textNode("gamma delta", 10, 52)] });
+  assert.equal(helpers.recoverHighlightTextFromTextLayer(multipleLines.textLayer, multipleLines.pageRoot,
+    multipleLines.viewport, [...quad(10, 36, 18, 36), ...quad(10, 38, 50, 68)]), "alpha\ngamma",
+  "separate QuadPoints recover only their covered words in line order");
+
+  const columns = fixture({ nodes: [textNode("LEFT", 10, 20), textNode("RIGHT", 150, 20)] });
+  assert.equal(helpers.recoverHighlightTextFromTextLayer(columns.textLayer, columns.pageRoot,
+    columns.viewport, quad(10, 36, 18, 36)), "LEFT",
+  "nearby text in a different column is not captured");
+
+  const rotated = fixture({ nodes: [textNode("TURN", 142, 10)], transform: (x, y) => [160 - y, x] });
+  assert.equal(helpers.recoverHighlightTextFromTextLayer(rotated.textLayer, rotated.pageRoot,
+    rotated.viewport, quad(10, 36, 0, 18)), "TUR",
+  "PDF user-space coordinates are transformed through the current rotated page viewport");
+
+  const targets = new Map([[
+    "legacy",
+    { uuid: "legacy", pageIndex: 0, kind: "Highlight", editorPayload: { quadPoints: quad(10, 58, 18, 36) } },
+  ]]);
+  helpers.state.pageRoots = new Map([[0, oneLine.pageRoot]]);
+  helpers.state.app = {
+    pdfViewer: {
+      getPageView: () => ({ viewport: oneLine.viewport }),
+      _layerProperties: { annotationEditorUIManager: null },
+    },
+  };
+  assert.equal(helpers.buildAnnotationSidebarViewModels(targets)[0].targetText, "selected",
+    "a legacy sidecar row without text can show its recoverable quote in the sidebar");
+  assert.equal(helpers.recoverHighlightTextFromTextLayer(oneLine.textLayer, oneLine.pageRoot,
+    oneLine.viewport, [10, 20, NaN, 20, 10, 10, 20, 10]), null,
+  "malformed geometry fails closed instead of guessing text");
 });
 
 test("annotation UUID navigation uses the existing rendered editor and page identity", async () => {
@@ -793,15 +878,19 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     "getPdfAnnotationRef",
   ].map(functionSource).join("\n");
   const scope = vm.runInThisContext(`(() => {
-    const stale = { annotationType: 15, pageIndex: 0, points: [0, 1] };
-    let live = { annotationType: 15, pageIndex: 0, points: [0, 1] };
-    const editor = { id: "editor-1", pageIndex: 0, editorType: "Ink", serialize: () => live };
+    const stale = { annotationType: 9, pageIndex: 0, quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] };
+    let live = { annotationType: 9, pageIndex: 0, quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] };
+    const editor = {
+      id: "editor-1", pageIndex: 0, editorType: "Highlight",
+      div: { getAttribute: name => name === "aria-label" ? "  exact selected quote  " : null },
+      serialize: () => live,
+    };
     const manager = { getEditor: id => id === editor.id ? editor : null, getEditors: page => page === 0 ? [editor] : [] };
     const state = {
       app: { pdfDocument: { numPages: 1, annotationStorage: { serializable: { map: new Map([["editor-1", stale]]) } } }, pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } },
       annotationUuidByRuntimeId: new Map([["editor-1", "annotation-1"]]),
       annotationRefByRuntimeId: new Map(), annotationUuidByPdfRef: new Map(), syncState: null,
-      annotationSnapshot: new Map([["editor-1", { runtimeId: "editor-1", uuid: "annotation-1", reference: null, operationReference: null, annotationElementId: null, pageIndex: 0, kind: "Ink", deleted: false, value: stale, signature: JSON.stringify(stale) }]]),
+      annotationSnapshot: new Map([["editor-1", { runtimeId: "editor-1", uuid: "annotation-1", reference: null, operationReference: null, annotationElementId: null, pageIndex: 0, kind: "Highlight", deleted: false, value: stale, signature: JSON.stringify(stale) }]]),
       annotationOperations: [], dirtyAnnotationRevisions: new Map(), dirtyPageRevisions: new Map(),
       dirtyNewAnnotationIds: new Set(), dirtyDeletedAnnotationIds: new Set(),
       restoredSavedAnnotations: new Map(), syncActorId: "actor-1", syncDeviceId: "device-1",
@@ -809,7 +898,7 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     };
     const logs = [];
     function normalizeSyncValue(value) { return JSON.parse(JSON.stringify(value)); }
-    function normalizeSyncKind(value) { return value === 15 ? "Ink" : value; }
+    function normalizeSyncKind(value) { return value === 9 ? "Highlight" : value === 15 ? "Ink" : value; }
     function externalKindForEditor(value, liveEditor) { return liveEditor?.editorType || normalizeSyncKind(value?.annotationType); }
     const EXTERNAL_ANNOTATION_KINDS = new Set(["Underline", "Square", "Highlight", "Ink", "InkHighlight", "FreeText"]);
     function makeSyncUuid() { return "unexpected-new-uuid"; }
@@ -821,11 +910,15 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
     return { state, logs, captureOperationSnapshot, getAnnotationStorageRows, setLive(value) { live = value; } };
   })()`);
 
-  scope.setLive({ annotationType: 15, pageIndex: 0, points: [0, 1, 2, 3], paths: { points: [[0, 1, 2, 3]] } });
+  scope.setLive({ annotationType: 9, pageIndex: 0, quadPoints: [10, 20, 30, 20, 10, 10, 30, 10] });
   const snapshot = scope.captureOperationSnapshot(9, "save");
   assert.equal(snapshot.operations.length, 1);
   assert.equal(snapshot.operations[0].uuid, "annotation-1");
-  assert.equal(snapshot.operations[0].serialized.points.length, 4);
+  assert.equal(snapshot.operations[0].serialized.quadPoints.length, 8);
+  assert.equal(snapshot.operations[0].serialized.text, "  exact selected quote  ",
+    "the live Highlight's original selection is captured in the durable editor payload");
+  assert.equal(snapshot.operations[0].payload.editor.text, "  exact selected quote  ",
+    "the quote is persisted in the existing operation payload, not only held by the editor");
   assert.deepEqual(snapshot.dirtyState.dirtyPageIndices, [0]);
   assert.deepEqual(snapshot.missingDirtyIds, []);
   assert.equal(scope.logs.at(-1).liveEditorCount, 1);
@@ -836,7 +929,7 @@ test("save-boundary capture snapshots the live committed editor when AnnotationS
   scope.setLive(null);
   scope.state.app.pdfViewer._layerProperties.annotationEditorUIManager.getEditor = () => null;
   const deleted = scope.getAnnotationStorageRows().get("editor-1");
-  assert.equal(deleted.kind, "Ink");
+  assert.equal(deleted.kind, "Highlight");
   assert.equal(deleted.uuid, "annotation-1");
   assert.equal(deleted.deleted, true);
 

@@ -65,7 +65,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
   const bridgeSource = await readBridgeRuntimeSource(bridgePath);
   const instrumentedBridge = bridgeSource.replace(
     "  if (iosInputPolicy) {",
-    "  window.__highlightMultilineBridgeState = state;\n  if (iosInputPolicy) {",
+    "  window.__highlightMultilineBridgeState = state;\n  window.__highlightMultilineBridgeTestHooks = { recoverLegacyHighlightTargetText: getLegacyHighlightSidebarTargetText, buildAnnotationSidebarViewModels };\n  if (iosInputPolicy) {",
   );
   assert.notEqual(instrumentedBridge, bridgeSource, "The test should expose bridge state only for diagnostics");
   const oldCaptureSource = legacyCaptureDiagnostic(instrumentedBridge);
@@ -80,7 +80,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
       legacyCaptureDiagnostic: "Test-only transform restores the previous mouse-text-selection capture predicate; not a byte-identical old bridge build.",
     },
     results: [],
-    privacy: "Artifacts retain selected-text lengths, range endpoints, geometry, quads, and sidecar payloads; they do not store selected PDF text.",
+    privacy: "Artifacts retain selected-text lengths, range endpoints, geometry, quads, and sidecar payload summaries; selected PDF text is compared in memory and omitted from the saved trace.",
   };
   const artifactPath = path.join(artifacts, `highlight-multiline-regression-${Date.now()}-${process.pid}.json`);
   let browser;
@@ -206,6 +206,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
         sessionStorage.clear();
       });
       const result = { variant, interactions: [], errors: [] };
+      const selectedQuotes = [];
       trace.results.push(result);
       page.on("pageerror", (error) => result.errors.push({ source: "pageerror", phase: result.currentPhase || "startup", message: String(error.message).slice(0, 400), stack: String(error.stack).slice(0, 3000) }));
       page.on("console", (message) => { if (message.type() === "error") result.errors.push({ source: "console", message: String(message.text()).slice(0, 400) }); });
@@ -258,6 +259,17 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
         const install = (0, eval)(`(${source})`);
         window.__highlightMultilineProbe.cleanup = install({ d: document, w: window, a: PDFViewerApplication, trace: window.__highlightMultilineProbe.trace });
       }, installNativeSelectionProbe.toString());
+      await frame.evaluate(() => {
+        const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+        const original = manager.highlightSelection;
+        window.__highlightMultilineSelectedTexts = [];
+        manager.highlightSelection = function (...args) {
+          const text = document.getSelection()?.toString() || "";
+          const value = original.apply(this, args);
+          window.__highlightMultilineSelectedTexts.push(text);
+          return value;
+        };
+      });
 
       await frame.evaluate(() => PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", { mode: 9 }));
       await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
@@ -385,7 +397,16 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
           const serialized = newEditors.map((editor) => {
             const value = editor.serialize?.() || null;
             const bounds = editor.div?.getBoundingClientRect();
+            const selectedText = window.__highlightMultilineSelectedTexts[before.consumers] || "";
+            const recoveredLegacyText = value?.quadPoints
+              ? window.__highlightMultilineBridgeTestHooks.recoverLegacyHighlightTargetText(pageIndex, value)
+              : null;
+            const normalize = text => typeof text === "string" ? text.replace(/\s+/gu, " ").trim() : "";
             return value ? { runtimeId: String(editor.id), editorClass: editor.div?.className || null,
+              targetText: selectedText,
+              recoveredLegacyText,
+              legacyRecoveredTextLength: typeof recoveredLegacyText === "string" ? recoveredLegacyText.length : 0,
+              legacyRecoveryMatches: Boolean(selectedText && recoveredLegacyText && normalize(selectedText) === normalize(recoveredLegacyText)),
               visible: Boolean(bounds?.width > 0 && bounds?.height > 0), ...value }
               : { runtimeId: String(editor.id), serializeReturnedNull: true };
           });
@@ -434,6 +455,10 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
             newEditorCount: newEditors.length,
             newEditors: serialized.map((editor) => ({
               runtimeId: editor.runtimeId,
+              targetText: editor.targetText ?? null,
+              recoveredLegacyText: editor.recoveredLegacyText ?? null,
+              legacyRecoveryMatches: editor.legacyRecoveryMatches ?? false,
+              legacyRecoveredTextLength: editor.legacyRecoveredTextLength ?? 0,
               annotationType: editor.annotationType ?? null,
               annotationEditorType: editor.annotationEditorType ?? null,
               textLength: typeof editor.text === "string" ? editor.text.length : null,
@@ -453,6 +478,12 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
             textLayerSelectingAfterUp: Boolean(document.querySelector('.page[data-page-number="1"] .textLayer')?.classList.contains("selecting")),
           };
         }, { variant, requestedLines, pageNumber, pageIndex, target, before });
+        for (const editor of interaction.newEditors) {
+          if (editor.targetText) selectedQuotes.push(editor.targetText);
+          editor.targetTextLength = typeof editor.targetText === "string" ? editor.targetText.length : 0;
+          delete editor.targetText;
+          delete editor.recoveredLegacyText;
+        }
         result.interactions.push(interaction);
         await persistEvidence(`${variant}-${requestedLines}-line-complete`);
       }
@@ -462,11 +493,58 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
         window.__highlightMultilineHost?.saves?.some((save) => save.documentId === documentId) ||
         window.__highlightMultilineHost?.errors?.length > 0,
       { timeout: 20_000 }, hostInfo.documentId);
-      const saveRecord = await page.evaluate((documentId) => ({
+      const rawSaveRecord = await page.evaluate((documentId) => ({
         saves: window.__highlightMultilineHost.saves,
         durableWrites: window.__browserSidecarHost.durableWrites.filter((row) => row.documentId === documentId),
         operations: window.__browserSidecarHost.operationsFor(documentId),
       }), hostInfo.documentId);
+      if (variant === "candidate") {
+        const savedHighlights = rawSaveRecord.operations.filter((operation) =>
+          String(operation.kind || "").toLowerCase() === "highlight" && operation.deleted !== true);
+        assert.equal(savedHighlights.length, 3, "all three new Highlights should have a durable operation");
+        assert.deepEqual(savedHighlights.map(operation => operation.payload?.editor?.text).sort(),
+          [...selectedQuotes].sort(),
+          "the sidecar must preserve each exact selection text captured before PDF.js clears Selection");
+        assert.ok(result.interactions.every(interaction => interaction.newEditors.every(editor =>
+          editor.legacyRecoveryMatches === true)),
+        "legacy QuadPoints recovery should reconstruct the selection from the rendered text layer");
+        const legacyRows = savedHighlights.map(operation => {
+          const editorPayload = { ...operation.payload.editor };
+          delete editorPayload.text;
+          return { uuid: operation.uuid, pageIndex: operation.pageIndex, kind: operation.kind, editorPayload };
+        });
+        const legacySidebarRows = await frame.evaluate((rows) => {
+          const bridge = window.__highlightMultilineBridgeState;
+          const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+          const savedBindings = bridge.annotationUuidByRuntimeId;
+          const originalGetEditor = manager.getEditor;
+          bridge.annotationUuidByRuntimeId = new Map();
+          manager.getEditor = () => null;
+          try {
+            return window.__highlightMultilineBridgeTestHooks
+              .buildAnnotationSidebarViewModels(new Map(rows.map(row => [row.uuid, row])))
+              .map(row => ({ uuid: row.uuid, targetText: row.targetText }));
+          } finally {
+            bridge.annotationUuidByRuntimeId = savedBindings;
+            manager.getEditor = originalGetEditor;
+          }
+        }, legacyRows);
+        const normalizeQuote = text => String(text || "").replace(/\s+/gu, " ").trim();
+        assert.deepEqual(legacySidebarRows.map(row => normalizeQuote(row.targetText)).sort(),
+          selectedQuotes.map(normalizeQuote).sort(),
+          "legacy sidecar Highlights without text should show text recovered from their existing QuadPoints");
+      }
+      const saveRecord = {
+        ...rawSaveRecord,
+        operations: rawSaveRecord.operations.map(operation => ({
+          uuid: operation.uuid,
+          kind: operation.kind,
+          pageIndex: operation.pageIndex,
+          deleted: operation.deleted,
+          textLength: typeof operation.payload?.editor?.text === "string" ? operation.payload.editor.text.length : null,
+          quadPointCount: Math.floor((operation.payload?.editor?.quadPoints?.length || 0) / 8),
+        })),
+      };
       result.save = saveRecord;
       await persistEvidence(`${variant}-save-complete`);
 
