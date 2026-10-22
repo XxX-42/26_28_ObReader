@@ -2,7 +2,9 @@
 
 这是一个可离线使用的 Obsidian 插件，内含经过修改的 Mozilla PDF.js Viewer。它可以打开 Vault 中的 PDF，并将本插件的批注保存到可同步的外部操作日志中。日常编辑期间，原始 PDF 的字节内容保持不变。运行时不需要本地 Web 服务器、外部浏览器、Python、单独安装的 Node.js 或网络服务。
 
-**0.12.0 候选版**整合 Vocabulary v2 工作台、语境、今日复习与可逆历史，并吸收 0.11.9 的编辑器观察隔离和 LingQ 阅读模式协调，以及 0.11.7/0.11.8 的词根显示和 Dexie 词典缓存。旧格式迁移、同步恢复与桌面／移动回归均保留独立边界；词典仍只在词条详情中按需查询，不进入 PDF 页面匹配或缩放热路径。
+**0.12.1 候选版**在 0.12.0 的基础上，为标准文字选择型 PDF Highlight 增加同页行间碰撞避让；与 LingQ 共用纯几何规则，绘制前按页合并重算。只改变屏幕外观，标准 QuadPoints、保存／导出数据及自由手绘高亮不变。
+
+**0.12.0 版**整合 Vocabulary v2 工作台、语境、今日复习与可逆历史，并吸收 0.11.9 的编辑器观察隔离和 LingQ 阅读模式协调，以及 0.11.7/0.11.8 的词根显示和 Dexie 词典缓存。旧格式迁移、同步恢复与桌面／移动回归均保留独立边界；词典仍只在词条详情中按需查询，不进入 PDF 页面匹配或缩放热路径。
 
 **0.11.8 版**改用单个压缩词典资源＋本机 Dexie 4 / IndexedDB 查询缓存。Vault 的 `00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2/` 只保存 `manifest.json` 和 `entries.<SHA-256>.jsonl.gz`，ECDICT 许可证保留在上级目录。各设备首次使用时校验资源、在后台建立缓存并显示进度，后续查词按 key 读取 IndexedDB；缓存可删除重建，不参与 Sync。个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。资源构建、旧分片迁移与回滚说明见 [词典资源与缓存](DICTIONARY_RESOURCE.md)。
 

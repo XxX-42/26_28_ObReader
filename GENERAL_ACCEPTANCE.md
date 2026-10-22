@@ -1,3 +1,41 @@
+# PDF Highlight row-collision avoidance — 0.12.1 candidate
+
+The current candidate applies LingQ's shared pure rectangle-collision geometry
+to standard PDF text Highlights across independent annotations on the same
+page. A real Chromium/PDF.js browser fixture confirms first display, scale
+recomputation, 0/90/180/270-degree rotation, deletion, and close/reopen. The
+rendered adjacent rows retain a one-CSS-pixel gap; same-line and separate-column
+controls keep their full geometry. QuadPoints before/after editor serialization
+are identical, and the independent PDF Ink control is unchanged. The
+357-row x 12-box geometry fixture completed in about 15 ms in the current Node
+test run; this is a local microbenchmark, not a platform latency promise.
+
+Validation for this candidate:
+
+- `npm run build` passed: exactly three release assets, 406 embedded runtime
+  assets, and 402 frozen vendor files verified.
+- `npm run test:browser` passed **27/27**, including the browser collision
+  fixture and offline-smoke script.
+- Standalone `npm run test:offline` passed, including open, tools 1–5,
+  save/reopen, and bulk-delete non-resurrection.
+- `npm test` stopped at its fast gate: **99 passed, 1 gate failure, 5 skipped**.
+  The sole reported test is `browser-test-cleanup.test.mjs`; its five skips are
+  explicitly POSIX/macOS-only cases, and this runner treats any skip as a gate
+  failure. No product assertion failed, but the full `npm test` gate is not
+  green on this Windows host.
+- Test-Vault deployment and native Obsidian validation are **NOT RUN**. The
+  Obsidian `dev:cdp` CLI command is unavailable, and the deployment preflight
+  requires the plugin to be disabled with all Reader tabs closed. The test
+  Vault currently has `pdf-web-reader` enabled, so its installed files were
+  left untouched rather than replacing a live plugin.
+
+No production vault, user PDF, or existing annotation data has been changed.
+The candidate is not yet accepted for deployment; repeat the host-level gate
+after safely disabling the test-Vault plugin and closing Reader tabs, and run
+the platform-specific cleanup cases on their supported operating systems.
+
+---
+
 # 0.9.0 JSONL WAL integration — candidate built, release gate not passed (2026-10-17)
 
 Historical candidate and evidence ZIPs referenced in this record have been removed from the repository tree and preserved in an external, checksum-verified archive. Their names and hashes below are historical records; the ZIP files are no longer downloadable from this Git repository.

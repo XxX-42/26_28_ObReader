@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const dist = path.join(root, "dist", "pdf-web-reader");
-const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19";
+const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19-highlight-row-collision-0.12.1";
 
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
@@ -128,7 +128,7 @@ test("community release output is exactly the three installer assets", async () 
     await readFile(path.join(root, "versions.json"), "utf8"),
   );
   assert.equal(manifest.id, "pdf-web-reader");
-  assert.equal(manifest.version, "0.12.0");
+  assert.equal(manifest.version, "0.12.1");
   assert.equal(manifest.isDesktopOnly, false);
   assert.deepEqual(manifest, rootManifest);
   assert.deepEqual(manifest, sourceManifest);

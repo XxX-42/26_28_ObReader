@@ -20,7 +20,7 @@ const pluginSource = path.join(root, "plugin");
 const vendor = path.join(root, "vendor", "pdfjs-generic-legacy");
 const adapters = path.join(root, "viewer-adapter");
 const output = path.join(root, "dist", "pdf-web-reader");
-const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19";
+const assetBundleId = "pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19-highlight-row-collision-0.12.1";
 const bundledRuntimeFileCount = 406;
 const inputRuntimeFiles = [
   "input/interaction-intent.js",

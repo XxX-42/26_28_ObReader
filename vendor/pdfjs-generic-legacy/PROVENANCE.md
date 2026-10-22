@@ -114,3 +114,13 @@ grant neither permission remain read-only. Ordinary edits continue to persist
 through the external sidecar and do not write the source PDF. This is a local
 permission-policy correction, not an upstream PDF.js backport, and is pinned in
 `SHA256SUMS.json`.
+
+## Local standard Highlight row-collision avoidance: plugin 0.12.1
+
+The frozen `build/pdf.mjs` coordinates standard text-selection Highlight paint
+geometry per page and frame, using the same pure rectangle-separation helper as
+LingQ vocabulary highlights. It preserves each editor's original QuadPoints,
+storage state, and focus outline; freehand Highlight/Ink paths are excluded.
+Scale, rotation, editor rebuild, and removal reschedule the page calculation.
+This is a local display-only adaptation, not an upstream PDF.js backport; the
+updated vendored bundle is pinned in `SHA256SUMS.json`.

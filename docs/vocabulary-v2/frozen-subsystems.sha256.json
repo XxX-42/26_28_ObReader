@@ -21,6 +21,14 @@
       "vendor/pdfjs-generic-legacy/web/viewer.mjs": "9d49b93b72403ffd1a596a2225341598411286c50ced21477a0e71caaa80b710"
     }
   },
+  "reviewedDisplayOverrides": {
+    "reason": "2026-10-22: plugin 0.12.1 standard text Highlight collision avoidance; local PDF.js display-only adaptation, no upstream upgrade.",
+    "sha256": {
+      "vendor/pdfjs-generic-legacy/PROVENANCE.md": "14d7e15cf44e847b038a34ad3c0b186324225927f1b59fead35d2c88bf187947",
+      "vendor/pdfjs-generic-legacy/SHA256SUMS.json": "dd6869112e1df1af19fd669a8a861cc592b6154b0523a636829c34205ff44a97",
+      "vendor/pdfjs-generic-legacy/build/pdf.mjs": "dcfc3b2e89d8754872f3d332cf30e2c232279d193b0da0cfc1f4b99984d8848f"
+    }
+  },
   "sha256": {
     "plugin/pdf-annotation-host.cjs": "9f9340e9d57fce9fa4d79c6392022705923534bdfc40e3267f31f9d4f9b7b2de",
     "plugin/pdf-annotation-store.cjs": "96924d0682f53e799501673b1a180481d263d4e1e6ad7a9ca4529c4b7eb78d53",

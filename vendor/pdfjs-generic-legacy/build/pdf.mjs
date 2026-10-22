@@ -9558,6 +9558,17 @@ class AnnotationEditorUIManager {
   removeShouldRescale(editor) {
     this.#editorsToRescale.delete(editor);
   }
+  #scheduleHighlightLayoutRefreshes() {
+    const pageIndexes = new Set();
+    for (const editor of this.#allEditors.values()) {
+      if (editor instanceof HighlightEditor) {
+        pageIndexes.add(editor.pageIndex);
+      }
+    }
+    for (const pageIndex of pageIndexes) {
+      HighlightEditor.schedulePagePaintRefresh(this, pageIndex);
+    }
+  }
   onScaleChanging({
     scale
   }) {
@@ -9567,12 +9578,14 @@ class AnnotationEditorUIManager {
       editor.onScaleChanging();
     }
     this.#currentDrawingSession?.onScaleChanging();
+    this.#scheduleHighlightLayoutRefreshes();
   }
   onRotationChanging({
     pagesRotation
   }) {
     this.commitOrRemove();
     this.viewParameters.rotation = pagesRotation;
+    this.#scheduleHighlightLayoutRefreshes();
   }
   #getAnchorElementForSelection({
     anchorNode
@@ -30626,6 +30639,8 @@ class HighlightEditor extends AnnotationEditor {
   #focusOffset = 0;
   #highlightDiv = null;
   #highlightOutlines = null;
+  #paintHighlightOutlines = null;
+  #paintBoxesKey = null;
   #id = null;
   #isFreeHighlight = false;
   #firstPoint = null;
@@ -30642,6 +30657,7 @@ class HighlightEditor extends AnnotationEditor {
   static _freeHighlightId = -1;
   static _freeHighlight = null;
   static _freeHighlightClipId = "";
+  static #layoutRefreshState = new WeakMap();
   static get _keyboardManager() {
     const proto = HighlightEditor.prototype;
     return shadow(this, "_keyboardManager", new KeyboardManager([[["ArrowLeft", "mac+ArrowLeft"], proto._moveCaret, {
@@ -30718,12 +30734,249 @@ class HighlightEditor extends AnnotationEditor {
       lastPoint
     } = this.#focusOutlines;
     this.#lastPoint = [(lastPoint[0] - this.x) / this.width, (lastPoint[1] - this.y) / this.height];
+    HighlightEditor.schedulePagePaintRefresh(this._uiManager, this.pageIndex);
+  }
+  static #toViewRect(box, viewWidth, viewHeight, rotation) {
+    switch (rotation) {
+      case 90:
+        return {
+          x: box.y * viewWidth,
+          y: (1 - box.x - box.width) * viewHeight,
+          width: box.height * viewWidth,
+          height: box.width * viewHeight
+        };
+      case 180:
+        return {
+          x: (1 - box.x - box.width) * viewWidth,
+          y: (1 - box.y - box.height) * viewHeight,
+          width: box.width * viewWidth,
+          height: box.height * viewHeight
+        };
+      case 270:
+        return {
+          x: (1 - box.y - box.height) * viewWidth,
+          y: box.x * viewHeight,
+          width: box.height * viewWidth,
+          height: box.width * viewHeight
+        };
+      default:
+        return {
+          x: box.x * viewWidth,
+          y: box.y * viewHeight,
+          width: box.width * viewWidth,
+          height: box.height * viewHeight
+        };
+    }
+  }
+  static #fromViewRect(rect, viewWidth, viewHeight, rotation) {
+    switch (rotation) {
+      case 90:
+        return {
+          x: 1 - (rect.y + rect.height) / viewHeight,
+          y: rect.x / viewWidth,
+          width: rect.height / viewHeight,
+          height: rect.width / viewWidth
+        };
+      case 180:
+        return {
+          x: 1 - (rect.x + rect.width) / viewWidth,
+          y: 1 - (rect.y + rect.height) / viewHeight,
+          width: rect.width / viewWidth,
+          height: rect.height / viewHeight
+        };
+      case 270:
+        return {
+          x: rect.y / viewHeight,
+          y: 1 - (rect.x + rect.width) / viewWidth,
+          width: rect.height / viewHeight,
+          height: rect.width / viewWidth
+        };
+      default:
+        return {
+          x: rect.x / viewWidth,
+          y: rect.y / viewHeight,
+          width: rect.width / viewWidth,
+          height: rect.height / viewHeight
+        };
+    }
+  }
+  static #toCollisionRect(rect, viewWidth, viewHeight, rotation) {
+    switch (rotation) {
+      case 90:
+        return {
+          x: rect.y,
+          y: viewWidth - rect.x - rect.width,
+          width: rect.height,
+          height: rect.width
+        };
+      case 270:
+        return {
+          x: viewHeight - rect.y - rect.height,
+          y: rect.x,
+          width: rect.height,
+          height: rect.width
+        };
+      default:
+        return rect;
+    }
+  }
+  static #fromCollisionRect(rect, viewWidth, viewHeight, rotation) {
+    switch (rotation) {
+      case 90:
+        return {
+          x: viewWidth - rect.y - rect.height,
+          y: rect.x,
+          width: rect.height,
+          height: rect.width
+        };
+      case 270:
+        return {
+          x: rect.y,
+          y: viewHeight - rect.x - rect.width,
+          width: rect.height,
+          height: rect.width
+        };
+      default:
+        return rect;
+    }
+  }
+  static schedulePagePaintRefresh(uiManager, pageIndex) {
+    if (!uiManager || !Number.isInteger(pageIndex)) {
+      return;
+    }
+    let state = this.#layoutRefreshState.get(uiManager);
+    if (!state) {
+      state = {
+        pending: new Map(),
+        signatures: new Map()
+      };
+      this.#layoutRefreshState.set(uiManager, state);
+    }
+    if (state.pending.has(pageIndex)) {
+      return;
+    }
+    const refresh = () => {
+      state.pending.delete(pageIndex);
+      this.#refreshPagePaintOutlines(uiManager, pageIndex, state);
+    };
+    const requestFrame = globalThis.window?.requestAnimationFrame?.bind(globalThis.window);
+    if (requestFrame) {
+      state.pending.set(pageIndex, requestFrame(refresh));
+    } else {
+      state.pending.set(pageIndex, true);
+      queueMicrotask(refresh);
+    }
+  }
+  static #refreshPagePaintOutlines(uiManager, pageIndex, state) {
+    const editors = [...uiManager.getEditors(pageIndex)].filter(editor =>
+      editor instanceof HighlightEditor && !editor.#isFreeHighlight && editor.#boxes?.length
+    );
+    if (editors.length === 0) {
+      state.signatures.delete(pageIndex);
+      return;
+    }
+    const first = editors[0];
+    const [pageWidth, pageHeight] = first.pageDimensions;
+    const rotation = ((uiManager.viewParameters.rotation % 360) + 360) % 360;
+    const scale = uiManager.viewParameters.realScale || 1;
+    const rotated = rotation === 90 || rotation === 270;
+    const viewWidth = first.parent?.viewport?.width || (rotated ? pageHeight : pageWidth) * scale;
+    const viewHeight = first.parent?.viewport?.height || (rotated ? pageWidth : pageHeight) * scale;
+    const records = [];
+    const editorById = new Map();
+    const signature = [pageWidth, pageHeight, viewWidth, viewHeight, rotation];
+    for (const editor of editors) {
+      editorById.set(editor.id, editor);
+      signature.push(editor.id, editor.#boxes.length);
+      for (let boxIndex = 0; boxIndex < editor.#boxes.length; boxIndex += 1) {
+        const box = editor.#boxes[boxIndex];
+        signature.push(box.x, box.y, box.width, box.height);
+        const viewRect = HighlightEditor.#toViewRect(box, viewWidth, viewHeight, rotation);
+        records.push({
+          ...HighlightEditor.#toCollisionRect(viewRect, viewWidth, viewHeight, rotation),
+          editorId: editor.id,
+          boxIndex
+        });
+      }
+    }
+    const signatureText = JSON.stringify(signature);
+    if (state.signatures.get(pageIndex) === signatureText) {
+      return;
+    }
+    state.signatures.set(pageIndex, signatureText);
+    const separate = globalThis.PdfReaderVocabularyRuntimeModule?.separateOverlappingRangeRects;
+    if (typeof separate !== "function" || records.length < 2 || !(viewWidth > 0) || !(viewHeight > 0)) {
+      for (const editor of editors) {
+        editor.#setPaintBoxes(null);
+      }
+      return;
+    }
+    let result;
+    try {
+      // HighlightOutliner grows its path by 0.001 of the page dimensions on
+      // each side. Reserve that paint-only bleed so the rendered gap remains
+      // one CSS pixel after the outline is built.
+      result = separate(records, {
+        gapPx: 1 + 2 * Math.max(viewWidth, viewHeight) * 0.001
+      });
+    } catch {
+      for (const editor of editors) {
+        editor.#setPaintBoxes(null);
+      }
+      return;
+    }
+    if (!result.changed) {
+      for (const editor of editors) {
+        editor.#setPaintBoxes(null);
+      }
+      return;
+    }
+    const nextBoxes = new Map(editors.map(editor => [
+      editor,
+      editor.#boxes.map(box => ({ ...box }))
+    ]));
+    for (const rect of result.rectangles) {
+      const editor = editorById.get(rect.editorId);
+      const boxes = editor && nextBoxes.get(editor);
+      if (!boxes || !Number.isInteger(rect.boxIndex) || !boxes[rect.boxIndex]) {
+        continue;
+      }
+      const viewRect = HighlightEditor.#fromCollisionRect(rect, viewWidth, viewHeight, rotation);
+      boxes[rect.boxIndex] = HighlightEditor.#fromViewRect(viewRect, viewWidth, viewHeight, rotation);
+    }
+    for (const editor of editors) {
+      editor.#setPaintBoxes(nextBoxes.get(editor));
+    }
+  }
+  #setPaintBoxes(boxes) {
+    if (this.#isFreeHighlight) {
+      return;
+    }
+    const key = boxes ? JSON.stringify(boxes.map(({ x, y, width, height }) => [x, y, width, height])) : "";
+    if (key === this.#paintBoxesKey) {
+      return;
+    }
+    this.#paintBoxesKey = key;
+    this.#paintHighlightOutlines = boxes?.length
+      ? new HighlightOutliner(boxes, 0.001).getOutlines()
+      : null;
+    const outlines = this.#paintHighlightOutlines || this.#highlightOutlines;
+    if (this.#id !== null && this.parent) {
+      this.parent.drawLayer.updateProperties(this.#id, {
+        bbox: HighlightEditor.#rotateBbox(outlines.box, this.parent.viewport.rotation),
+        path: {
+          d: outlines.toSVGPath()
+        }
+      });
+    }
   }
   #createFreeOutlines({
     highlightOutlines,
     highlightId,
     clipPathId
   }) {
+    this.#paintHighlightOutlines = null;
+    this.#paintBoxesKey = null;
     this.#highlightOutlines = highlightOutlines;
     const extraThickness = 1.5;
     this.#focusOutlines = highlightOutlines.getNewOutline(this.#thickness / 2 + extraThickness, 0.0025);
@@ -30927,11 +31180,14 @@ class HighlightEditor extends AnnotationEditor {
     }
   }
   remove() {
+    const uiManager = this._uiManager;
+    const pageIndex = this.pageIndex;
     this.#cleanDrawLayer();
     this._reportTelemetry({
       action: "deleted"
     });
     super.remove();
+    HighlightEditor.schedulePagePaintRefresh(uiManager, pageIndex);
   }
   rebuild() {
     if (!this.parent) {
@@ -30987,7 +31243,7 @@ class HighlightEditor extends AnnotationEditor {
       id: this.#id,
       clipPathId: this.#clipPathId
     } = parent.drawLayer.draw({
-      bbox: this.#highlightOutlines.box,
+      bbox: (this.#paintHighlightOutlines || this.#highlightOutlines).box,
       root: {
         viewBox: "0 0 1 1",
         fill: this.color,
@@ -30998,7 +31254,7 @@ class HighlightEditor extends AnnotationEditor {
         free: this.#isFreeHighlight
       },
       path: {
-        d: this.#highlightOutlines.toSVGPath()
+        d: (this.#paintHighlightOutlines || this.#highlightOutlines).toSVGPath()
       }
     }, false, true));
     this.#outlineId = parent.drawLayer.drawOutline({
@@ -31013,6 +31269,9 @@ class HighlightEditor extends AnnotationEditor {
     }, this.#isFreeHighlight);
     if (this.#highlightDiv) {
       this.#highlightDiv.style.clipPath = this.#clipPathId;
+    }
+    if (!this.#isFreeHighlight) {
+      HighlightEditor.schedulePagePaintRefresh(this._uiManager, this.pageIndex);
     }
   }
   static #rotateBbox([x, y, width, height], angle) {
@@ -31035,7 +31294,7 @@ class HighlightEditor extends AnnotationEditor {
       angle = (angle - this.rotation + 360) % 360;
       box = HighlightEditor.#rotateBbox(this.#highlightOutlines.box, angle);
     } else {
-      box = HighlightEditor.#rotateBbox([this.x, this.y, this.width, this.height], angle);
+      box = HighlightEditor.#rotateBbox((this.#paintHighlightOutlines || this.#highlightOutlines).box, angle);
     }
     drawLayer.updateProperties(this.#id, {
       bbox: box,
@@ -31049,6 +31308,9 @@ class HighlightEditor extends AnnotationEditor {
         "data-main-rotation": angle
       }
     });
+    if (!this.#isFreeHighlight) {
+      HighlightEditor.schedulePagePaintRefresh(this._uiManager, this.pageIndex);
+    }
   }
   render() {
     if (this.div) {
@@ -33946,6 +34208,7 @@ class AnnotationEditorLayer {
     await this.#uiManager.findClonesForPage(this);
     this.div.hidden = this.isEmpty;
     this.updateMode();
+    HighlightEditor.schedulePagePaintRefresh(this.#uiManager, this.pageIndex);
   }
   update({
     viewport
@@ -33963,6 +34226,7 @@ class AnnotationEditorLayer {
         editor.rotate(rotation);
       }
     }
+    HighlightEditor.schedulePagePaintRefresh(this.#uiManager, this.pageIndex);
   }
   get pageDimensions() {
     const {

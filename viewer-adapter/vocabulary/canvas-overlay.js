@@ -20,7 +20,7 @@ let nextRendererId = 0;
  * highlight to a page-wide guessed row. The input is rebuilt from live Ranges
  * on every draw, so the same calculation follows PDF.js zoom and reflow.
  */
-function separateOverlappingRangeRects(rectangles) {
+export function separateOverlappingRangeRects(rectangles, { gapPx = HIGHLIGHT_ROW_GAP_PX } = {}) {
   const ordered = rectangles
     .filter((rect) => [rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite) &&
       rect.width > 0 && rect.height > 0)
@@ -28,39 +28,81 @@ function separateOverlappingRangeRects(rectangles) {
     .sort((left, right) => left.y - right.y || left.x - right.x);
   let changed = false;
 
-  for (let index = 0; index < ordered.length; index += 1) {
-    const upper = ordered[index];
-    const upperBottom = upper.y + upper.height;
-    for (let nextIndex = index + 1; nextIndex < ordered.length; nextIndex += 1) {
-      const lower = ordered[nextIndex];
-      if (lower.y >= upperBottom) break;
+  // Group boxes whose centers are certainly on the same visual line. Skipping
+  // comparisons inside a row avoids quadratic work for pages with many marks
+  // on one line, while leaving the pair-specific tolerance authoritative across
+  // different rows.
+  let rowId = -1;
+  let rowCenter = -Infinity;
+  let rowMinHeight = Infinity;
+  for (const rect of [...ordered].sort((left, right) =>
+    left.centerY - right.centerY || left.x - right.x)) {
+    const nextMinHeight = Math.min(rowMinHeight, rect.height);
+    if (rowId < 0 || rect.centerY - rowCenter > nextMinHeight * SAME_LINE_CENTER_RATIO) {
+      rowId += 1;
+      rowCenter = rect.centerY;
+      rowMinHeight = rect.height;
+    } else {
+      rowMinHeight = nextMinHeight;
+    }
+    rect.rowId = rowId;
+  }
 
-      const centerDistance = Math.abs(lower.centerY - upper.centerY);
-      const rowTolerance = Math.min(upper.height, lower.height) * SAME_LINE_CENTER_RATIO;
-      if (centerDistance <= rowTolerance) continue;
+  const rowGroups = new Map();
+  for (const rect of ordered) {
+    let group = rowGroups.get(rect.rowId);
+    if (!group) {
+      group = { rectangles: [], top: Infinity, bottom: -Infinity };
+      rowGroups.set(rect.rowId, group);
+    }
+    group.rectangles.push(rect);
+    group.top = Math.min(group.top, rect.y);
+    group.bottom = Math.max(group.bottom, rect.y + rect.height);
+  }
+  const rowsByTop = [...rowGroups.values()]
+    .map((group) => ({
+      ...group,
+      rectangles: group.rectangles.sort((left, right) => left.y - right.y || left.x - right.x),
+    }))
+    .sort((left, right) => left.top - right.top);
 
-      const horizontalOverlap = Math.min(upper.x + upper.width, lower.x + lower.width) -
-        Math.max(upper.x, lower.x);
-      if (horizontalOverlap < MIN_HORIZONTAL_OVERLAP_PX) continue;
+  for (let rowIndex = 0; rowIndex < rowsByTop.length; rowIndex += 1) {
+    const upperRow = rowsByTop[rowIndex];
+    for (let nextRowIndex = rowIndex + 1; nextRowIndex < rowsByTop.length; nextRowIndex += 1) {
+      const lowerRow = rowsByTop[nextRowIndex];
+      if (lowerRow.top >= upperRow.bottom) break;
+      for (const upper of upperRow.rectangles) {
+        const upperBottom = upper.y + upper.height;
+        for (const lower of lowerRow.rectangles) {
+          if (lower.y >= upperBottom) break;
+          const centerDistance = Math.abs(lower.centerY - upper.centerY);
+          const rowTolerance = Math.min(upper.height, lower.height) * SAME_LINE_CENTER_RATIO;
+          if (centerDistance <= rowTolerance) continue;
 
-      const upperTop = upper.centerY - upper.paintHeight / 2;
-      const upperPaintBottom = upper.centerY + upper.paintHeight / 2;
-      const lowerTop = lower.centerY - lower.paintHeight / 2;
-      const lowerPaintBottom = lower.centerY + lower.paintHeight / 2;
-      if (upperPaintBottom <= lowerTop || lowerPaintBottom <= upperTop) continue;
+          const horizontalOverlap = Math.min(upper.x + upper.width, lower.x + lower.width) -
+            Math.max(upper.x, lower.x);
+          if (horizontalOverlap < MIN_HORIZONTAL_OVERLAP_PX) continue;
 
-      const availableHeight = Math.max(1, centerDistance - HIGHLIGHT_ROW_GAP_PX);
-      if (upper.paintHeight > availableHeight || lower.paintHeight > availableHeight) {
-        upper.paintHeight = Math.min(upper.paintHeight, availableHeight);
-        lower.paintHeight = Math.min(lower.paintHeight, availableHeight);
-        changed = true;
+          const upperTop = upper.centerY - upper.paintHeight / 2;
+          const upperPaintBottom = upper.centerY + upper.paintHeight / 2;
+          const lowerTop = lower.centerY - lower.paintHeight / 2;
+          const lowerPaintBottom = lower.centerY + lower.paintHeight / 2;
+          if (upperPaintBottom <= lowerTop || lowerPaintBottom <= upperTop) continue;
+
+          const availableHeight = Math.max(1, centerDistance - Math.max(0, gapPx));
+          if (upper.paintHeight > availableHeight || lower.paintHeight > availableHeight) {
+            upper.paintHeight = Math.min(upper.paintHeight, availableHeight);
+            lower.paintHeight = Math.min(lower.paintHeight, availableHeight);
+            changed = true;
+          }
+        }
       }
     }
   }
 
   return {
     changed,
-    rectangles: ordered.map(({ centerY, paintHeight, ...rect }) => ({
+    rectangles: ordered.map(({ centerY, paintHeight, rowId: _rowId, ...rect }) => ({
       ...rect,
       y: centerY - paintHeight / 2,
       height: paintHeight,
