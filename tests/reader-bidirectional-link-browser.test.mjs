@@ -7,6 +7,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
+import { build } from "esbuild";
+import { createHash } from "node:crypto";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import { cleanupBrowserTestResources, attachCleanupErrors } from "./browser-test-cleanup.mjs";
 import { resolveBrowserPath } from "./browser-path.mjs";
@@ -207,6 +209,9 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
   assert.notEqual(instrumentedBridgeSource, bridgeRuntimeSource, "test instrumentation must expose the actual bridge state object");
   const bridgeSource = instrumentedBridgeSource;
   const sourceHash = hashRuntime.fingerprint(fixtureBytes);
+  const sourceSha256 = createHash('sha256').update(fixtureBytes).digest('hex');
+  const learningBundle = await build({ entryPoints: [path.join(root, 'tests/learning-browser-host-fixture.mjs')],
+    bundle: true, format: 'iife', globalName: 'LearningBrowserFixture', platform: 'browser', write: false });
   const host = createHostHarness(hashRuntime);
   const sidecarHarness = browserSidecarHarnessScript({ channel, token, sourceHash, sourcePath: initialPdfPath });
   const viewerWithBridge = viewerHtml.replace(/<head\b[^>]*>/i, (head) =>
@@ -219,9 +224,11 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       response.end(`<!doctype html><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{width:100%;height:100%;border:0}</style>
         <iframe title="PDF Web Reader backlink E2E" src="/vendor/pdfjs-generic-legacy/web/viewer.html"></iframe>
         ${sidecarHarness}
+        <script>${learningBundle.outputFiles[0].text}</script>
         <script>(()=>{
           const channel=${JSON.stringify(channel)},token=${JSON.stringify(token)},rendererGeneration=${JSON.stringify(rendererGeneration)},documentId=${JSON.stringify(documentId)},pdfPath=${JSON.stringify(initialPdfPath)},sourceHash=${JSON.stringify(sourceHash)};
           const iframe=document.querySelector('iframe');
+          LearningBrowserFixture.installLearningBrowserHost({documentId,docKey:${JSON.stringify(docKey)},rendererGeneration,sourcePath:pdfPath});
           const host=window.__readerBacklinkE2E={messages:[],opened:[],identity:null,openSent:false,sourceBytes:null,errors:[],lastTargetResult:null};
           window.__readerHostPost=fields=>iframe.contentWindow.postMessage({channel,token,rendererGeneration,...fields},'*');
           window.__readerHostPostPageResult=result=>window.__readerHostPost(result);
@@ -311,6 +318,11 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     await frame.waitForFunction(() => PDFViewerApplication?.pdfDocument && PDFViewerApplication?.pdfViewer?.getPageView(0)?.renderingState === 3,
       { timeout: 40_000 });
     await frame.waitForSelector('.page[data-page-number="1"] .textLayer span', { timeout: 35_000 });
+    await frame.evaluate(() => {
+      window.__learningSourceSaveCalls = 0;
+      const original = PDFViewerApplication.pdfDocument.saveDocument.bind(PDFViewerApplication.pdfDocument);
+      PDFViewerApplication.pdfDocument.saveDocument = (...args) => { window.__learningSourceSaveCalls++; return original(...args); };
+    });
     await page.waitForFunction(() => window.__readerBacklinkE2E.identity?.identityStatus === "KNOWN", { timeout: 20_000 });
     const frameOffset = await page.$eval("iframe", (iframe) => { const rect = iframe.getBoundingClientRect(); return { x: rect.x, y: rect.y }; });
 
@@ -573,10 +585,10 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         zIndex: getComputedStyle(node).zIndex, pointerEvents: getComputedStyle(node).pointerEvents,
         html: node.outerHTML };
     });
-    const clickCountBeforeRenameBadge = await frame.evaluate(() => window.__backlinkE2EClicks.length);
+    const opensBeforeRenameBadge = await targetOpenCount();
     await frame.click(refreshedPageSelector);
-    await frame.waitForFunction((count) => window.__backlinkE2EClicks.length > count,
-      { timeout: 5_000 }, clickCountBeforeRenameBadge);
+    await page.waitForFunction(count => window.__readerBacklinkE2E.messages.filter(message => message.type === 'reader-backlink-target-open').length === count + 1,
+      { timeout: 5_000 }, opensBeforeRenameBadge);
     const renameBadgeClicks = await frame.evaluate(() => window.__backlinkE2EClicks.slice(-2));
     const badgeDiagAfter = await frame.evaluate(() => ({
       lastClick: window.__backlinkE2EClicks.at(-1),
@@ -630,6 +642,54 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     const annotationCapture = await requestCapture("capture-annotation-target", "annotation");
     const annotationId = annotationCapture.annotationUuid;
     assert.ok(annotationId, "the Viewer must return the stable UUID of a selected live annotation");
+    // E2E-4: trusted Viewer Highlight -> real Sidebar -> real learning draft and
+    // durable coordinator/History -> actual Workbench -> exact Viewer UUID.
+    // Obsidian Modal/Workspace and Vault DataAdapter are explicit test boundaries.
+    await frame.$eval('#secondaryToolbarToggleButton', button => button.click());
+    await frame.click('#secondaryDownload');
+    await page.waitForFunction(id => window.__browserSidecarHost.snapshotFor(id)?.annotations.some(row => row.payload?.editor?.text), { timeout: 10_000 }, documentId);
+    const persistedHighlight = await page.evaluate(({ id, uuid }) => window.__browserSidecarHost.snapshotFor(id).annotations.find(row => row.uuid === uuid), { id: documentId, uuid: annotationId });
+    assert.ok(persistedHighlight?.payload.editor.text, 'actual captured targetText must be persisted');
+    await frame.$eval('#pdfReaderAnnotationSidebarButton', button => button.click());
+    const reviewSelector = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${annotationId}"] .pdfReaderAnnotationReviewButton`;
+    await frame.waitForFunction(selector => { const button = document.querySelector(selector); return button && !button.disabled; }, { timeout: 10_000 }, reviewSelector);
+    await frame.click(reviewSelector);
+    await page.waitForFunction(() => window.__learningBrowser.draft || window.__learningBrowser.errors.length, { timeout: 10_000 });
+    assert.deepEqual(await page.evaluate(() => window.__learningBrowser.errors), []);
+    assert.equal(await page.$eval('textarea[aria-label="答案"]', node => node.value), persistedHighlight.payload.editor.text);
+    assert.equal(await page.evaluate(() => window.__learningBrowser.adapter.files.size), 0, 'draft opening performs no canonical writes');
+    await page.type('textarea[aria-label="问题"]', 'What is this exact Highlight?');
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '确认加入复习').click());
+    await page.waitForFunction(() => window.__learningBrowser.draft.confirmed || window.__learningBrowser.draft.lastError, { timeout: 10_000 });
+    assert.equal(await page.evaluate(() => window.__learningBrowser.draft.lastError?.message || null), null);
+    const learningEvidence = await page.evaluate(async () => {
+      const state = window.__learningBrowser;
+      const service = await state.host.getService();
+      const page = await service.listDue({ limit: 10 });
+      return { items: page.items, files: [...state.adapter.files.keys()], request: state.request };
+    });
+    assert.equal(learningEvidence.items.length, 1);
+    const learned = learningEvidence.items[0];
+    assert.equal(learned.source.target.id, annotationId);
+    assert.equal(learned.source.sourceHash, sourceHash);
+    assert.equal(learned.source.pageIdentity, annotationCapture.pageIdentity);
+    assert.equal(learned.source.documentId, documentId);
+    assert.equal(learned.source.docKey, docKey);
+    assert.equal(learned.answer, persistedHighlight.payload.editor.text);
+    assert.equal(learningEvidence.request.uuid, annotationId);
+    assert.ok(learningEvidence.files.some(name => name.includes('/history/')), 'confirmation creates real immutable History');
+    assert.ok(learningEvidence.files.every(name => !name.endsWith('.pdf') && !name.includes('20_PDFData')));
+    await page.evaluate(() => window.__learningBrowser.openReview());
+    await page.waitForSelector('[data-role="review-row"][data-provider-id="learning"]', { timeout: 10_000 });
+    await page.click('[data-role="review-row"][data-provider-id="learning"] button');
+    await page.waitForFunction(uuid => window.__learningBrowser.opened.some(row => row.target.id === uuid), { timeout: 8_000 }, annotationId);
+    await frame.waitForFunction(uuid => {
+      const editor = document.querySelector('.annotationEditorLayer .selectedEditor');
+      return editor && window.__pdfReaderBridgeState.annotationUuidByRuntimeId.get(editor.id) === uuid;
+    }, { timeout: 8_000 }, annotationId);
+    assert.equal(createHash('sha256').update(await readFile(fixture)).digest('hex'), sourceSha256, 'source SHA-256 remains unchanged');
+    assert.equal(await frame.evaluate(() => window.__learningSourceSaveCalls), 0, 'ordinary annotation/learning saves never call PDF saveDocument');
+    await frame.$eval('#editorCommentsSidebarCloseButton', button => button.click());
     host.state.annotationIds.push(annotationId);
     host.state.annotations.push({ uuid: annotationId, pageIndex: annotationCapture.pageIndex, deleted: false });
     const annotationLink = host.addMarkdownLink({ sourcePath: "Notes/Annotation.md", target: { kind: "annotation", id: annotationId },
@@ -642,7 +702,22 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     await refreshPage();
     await frame.waitForSelector(".pdfReaderAnnotationBacklinkBadge", { timeout: 8_000 });
     const annotationBadge = await frame.$eval(".pdfReaderAnnotationBacklinkBadge", (node) => { const r = node.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    const beforeToolBadge = await targetOpenCount();
     await clickFramePoint(annotationBadge);
+    await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await targetOpenCount(), beforeToolBadge, 'active Highlight tool owns the pointer and cannot open a backlink');
+    await frame.evaluate(() => PDFViewerApplication.eventBus.dispatch('switchannotationeditormode', { mode: 0 }));
+    await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 8_000 });
+    await frame.evaluate(() => { window.__annotationBadgeSettlement = { rect: null, stable: 0 }; });
+    await frame.waitForFunction(() => {
+      const badge = document.querySelector('.pdfReaderAnnotationBacklinkBadge');
+      if (!badge) return false;
+      const rect = JSON.stringify(badge.getBoundingClientRect().toJSON());
+      const state = window.__annotationBadgeSettlement;
+      state.stable = state.rect === rect ? state.stable + 1 : 0; state.rect = rect;
+      return state.stable >= 8;
+    }, { timeout: 5_000, polling: 'raf' });
+    await frame.click('.pdfReaderAnnotationBacklinkBadge');
     await page.waitForFunction(() => window.__readerBacklinkE2E.lastTargetResult?.targetKind === "annotation", { timeout: 5_000 });
     assert.equal(host.state.openedSources.at(-1)?.sourcePath, "Notes/Annotation.md");
 
@@ -676,6 +751,10 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
       hostBoundary: "mocked Obsidian Workspace/editor; actual reader-anchor-store and reader-backlink-index modules",
       selectionAnchorId: anchor.anchorId,
       annotationUuid: annotationId,
+      learning: { itemId: learned.itemId, source: learned.source, answer: learned.answer,
+        canonicalFiles: learningEvidence.files, sourceSha256,
+        boundary: 'mocked Obsidian Modal/Workspace/DataAdapter; real Host/draft/Workbench/coordinator/shards/History',
+        gaps: ['mixed vocabulary Today provider', 'E2E-5 LingQ vocabulary Context Source chain'] },
       sourceOpenings: host.state.openedSources,
       modalRows: host.state.modalRows,
       currentPdfPathAfterRename: host.state.currentPdfPath,
@@ -685,6 +764,7 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     diagnosticDirectory = successDirectory;
     await mkdir(successDirectory, { recursive: true });
     await writeFile(path.join(successDirectory, "trace.json"), JSON.stringify({ gestureDiagnostics,
+      learning: { itemId: learned.itemId, source: learned.source, answer: learned.answer, canonicalFiles: learningEvidence.files, sourceSha256 },
       host: await page.evaluate(() => window.__readerBacklinkE2E) }, null, 2));
     t.diagnostic(`Success artifacts: ${successDirectory}`);
   } catch (error) {
