@@ -37,13 +37,13 @@ class MemoryAdapter {
   }
   async read(file) {
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     return Buffer.isBuffer(value) ? value.toString("utf8") : value;
   }
   async readBinary(file) {
     this.readBinaryCount.set(file, (this.readBinaryCount.get(file) || 0) + 1);
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     return value;
   }
 }

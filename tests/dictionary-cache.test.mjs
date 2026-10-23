@@ -257,7 +257,7 @@ test("missing or corrupt source bytes during force rebuild retain the prior read
       const readBinary = adapter.readBinary.bind(adapter);
       adapter.readBinary = async () => {
         adapter.readBinaryCount += 1;
-        if (failureKind === "missing") throw new Error("fixture resource is not synchronized");
+        if (failureKind === "missing") throw Object.assign(new Error("fixture resource is not synchronized"), { code: "ENOENT" });
         const damaged = Buffer.from(resource.compressed);
         damaged[damaged.length - 1] ^= 0xff;
         return damaged;

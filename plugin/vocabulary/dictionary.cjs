@@ -4,6 +4,20 @@ const { DEFAULT_DICTIONARY_ROOT, LEGACY_DICTIONARY_ROOT, VocabularyDictionaryErr
   validateManifest, generationId, verifyManifestIndex, decodeBlockResource, asBytes } = require("./dictionary-resource.cjs");
 const WORKER_SOURCE = typeof __PDF_DICTIONARY_WORKER_SOURCE__ === "string" ? __PDF_DICTIONARY_WORKER_SOURCE__ : null;
 
+// Only explicit adapter/DOM not-found signals permit compatibility fallback.
+// Permissions, transient I/O and unknown failures must remain observable.
+function dictionaryReadError(cause, manifest = false) {
+  const missing = cause?.code === "ENOENT" || cause?.name === "NotFoundError";
+  if (missing) return dictionaryError(manifest
+    ? "Dictionary resource manifest has not synchronized yet."
+    : "Dictionary resource has not synchronized yet.",
+    manifest ? "DICTIONARY_INDEX_MISSING" : "DICTIONARY_RESOURCE_MISSING", cause);
+  return dictionaryError(manifest
+    ? "Dictionary resource manifest could not be read."
+    : "Dictionary resource could not be read.",
+    manifest ? "DICTIONARY_INDEX_READ_FAILED" : "DICTIONARY_RESOURCE_READ_FAILED", cause);
+}
+
 class VocabularyDictionary {
   constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, legacyRoot, cache, cacheName = DEFAULT_CACHE_NAME,
     workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {},
@@ -98,7 +112,7 @@ class VocabularyDictionary {
   async readManifestAt(root) {
     let raw;
     try { raw = await this.adapter.read(`${root}/manifest.json`); }
-    catch (cause) { throw dictionaryError("Dictionary resource manifest has not synchronized yet.", "DICTIONARY_INDEX_MISSING", cause); }
+    catch (cause) { throw dictionaryReadError(cause, true); }
     let manifest;
     try { manifest = validateManifest(JSON.parse(raw)); }
     catch (cause) {
@@ -108,8 +122,10 @@ class VocabularyDictionary {
     return verifyManifestIndex(manifest);
   }
   async loadBytes(manifest) {
-    try { return asBytes(await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`)); }
-    catch (cause) { throw dictionaryError("Dictionary resource has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
+    let raw;
+    try { raw = await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`); }
+    catch (cause) { throw dictionaryReadError(cause); }
+    return asBytes(raw);
   }
   async lookup(term) {
     const key = normalizeDictionaryKey(term);
@@ -281,8 +297,9 @@ class VocabularyDictionary {
     if (this.blockLoads.has(key)) return this.blockLoads.get(key);
     const loading = (async () => {
       let bytes;
-      try { bytes = asBytes(await this.adapter.readBinary(`${baseRoot}/${block.resourceFile}`)); }
-      catch (cause) { throw dictionaryError("Dictionary block has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
+      try { bytes = await this.adapter.readBinary(`${baseRoot}/${block.resourceFile}`); }
+      catch (cause) { throw dictionaryReadError(cause); }
+      bytes = asBytes(bytes);
       this.assertCurrent(revision);
       const decoded = await this.decodeBlock(block, bytes, revision);
       this.assertCurrent(revision);

@@ -26,13 +26,13 @@ class MemoryAdapter {
   constructor(files = new Map()) { this.files = files; this.readBinaryCount = new Map(); this.beforeReadBinary = null; }
   async read(file) {
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     return Buffer.isBuffer(value) ? value.toString("utf8") : value;
   }
   async readBinary(file) {
     this.readBinaryCount.set(file, (this.readBinaryCount.get(file) || 0) + 1);
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     if (this.beforeReadBinary) await this.beforeReadBinary(file);
     return value;
   }
@@ -471,4 +471,61 @@ test("invalidation fences an awaited ready v2 cache lookup", async (t) => {
   release();
   assert.equal((await pending).translation, "new");
   assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V3_READY");
+});
+
+for (const failure of [
+  () => Object.assign(new Error("permission denied"), { code: "EACCES" }),
+  () => Object.assign(new Error("I/O failure"), { code: "EIO" }),
+  () => new Error("adapter unavailable"),
+  () => new DOMException("permission denied", "NotAllowedError"),
+]) {
+  for (const stage of ["manifest", "block"]) {
+    test(`${stage} ${failure().code || failure().name}: read failures never invoke legacy fallback`, async t => {
+      const v2 = makeV2Files();
+      const v3 = makeV3Files(ROWS, 2, { format: "resource-v2", sha256: v2.manifest.sha256,
+        entryCount: v2.manifest.entryCount, compressedBytes: v2.manifest.compressedBytes,
+        uncompressedBytes: v2.manifest.uncompressedBytes, source: v2.manifest.source });
+      const adapter = new MemoryAdapter(new Map([...v2.files, ...v3.files]));
+      const cache = makeCache();
+      await cache.prepare(v2.manifest, async () => v2.compressed);
+      const originalRead = adapter.read.bind(adapter);
+      const originalBinary = adapter.readBinary.bind(adapter);
+      const cause = failure();
+      let legacyReads = 0;
+      adapter.read = async path => {
+        if (path.startsWith(LEGACY_ROOT)) legacyReads++;
+        if (stage === "manifest" && path === `${ROOT}/manifest.json`) throw cause;
+        return originalRead(path);
+      };
+      adapter.readBinary = async path => {
+        if (stage === "block" && path.startsWith(`${ROOT}/blocks/`)) throw cause;
+        return originalBinary(path);
+      };
+      const dictionary = dictionaryFor(t, adapter, { cache });
+      const code = stage === "manifest" ? "DICTIONARY_INDEX_READ_FAILED" : "DICTIONARY_RESOURCE_READ_FAILED";
+      await assert.rejects(dictionary.lookup("alpha"), error => error.code === code && error.cause === cause);
+      assert.equal(legacyReads, 0);
+      assert.equal(dictionary.getStatus().code, code);
+      if (stage === "manifest") {
+        await assert.rejects(dictionary.checkAvailability(), error => error.code === code);
+        assert.equal(legacyReads, 0);
+      }
+      // Transient failures are retryable without losing the available resource.
+      adapter.read = originalRead;
+      adapter.readBinary = originalBinary;
+      assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
+    });
+  }
+}
+
+test("DOM NotFoundError preserves missing-manifest compatibility fallback", async t => {
+  const v2 = makeV2Files();
+  const adapter = new MemoryAdapter(v2.files);
+  const read = adapter.read.bind(adapter);
+  adapter.read = path => path === `${ROOT}/manifest.json`
+    ? Promise.reject(new DOMException("not found", "NotFoundError")) : read(path);
+  const cache = makeCache();
+  await cache.prepare(v2.manifest, async () => v2.compressed);
+  const dictionary = dictionaryFor(t, adapter, { cache });
+  assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
 });
