@@ -58,6 +58,9 @@ try {
       workerConstructor: typeof Worker === "function",
       webAssembly: typeof WebAssembly === "object" && WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       sharedArrayBuffer: typeof SharedArrayBuffer === "function",
+      atomics: typeof Atomics === "object",
+      atomicsWait: typeof Atomics === "object" && typeof Atomics.wait === "function",
+      atomicsWaitAsync: typeof Atomics === "object" && typeof Atomics.waitAsync === "function",
       crossOriginIsolated,
       opfsInMainThread: typeof navigator.storage?.getDirectory === "function",
       webLocks: typeof navigator.locks?.request === "function",
@@ -87,6 +90,9 @@ try {
       workerGlobal: typeof WorkerGlobalScope === "function" && self instanceof WorkerGlobalScope,
       webAssembly: typeof WebAssembly === "object" && WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       sharedArrayBuffer: typeof SharedArrayBuffer === "function",
+      atomics: typeof Atomics === "object",
+      atomicsWait: typeof Atomics === "object" && typeof Atomics.wait === "function",
+      atomicsWaitAsync: typeof Atomics === "object" && typeof Atomics.waitAsync === "function",
       crossOriginIsolated: self.crossOriginIsolated,
       opfsGetDirectory: typeof navigator.storage?.getDirectory === "function",
       opfsSyncAccessHandle: typeof FileSystemFileHandle === "function" && typeof FileSystemFileHandle.prototype?.createSyncAccessHandle === "function",
@@ -166,6 +172,10 @@ try {
           }).catch(e => self.postMessage({stage:'wasm-instantiate-error', error:{name:e?.name||'Error',message:e?.message||String(e),stack:e?.stack||null}}));
           return {};
         };
+        // Keep sqlite3.opfs available after init so its feature-check function
+        // can be called without installing a VFS. This is diagnostic-only;
+        // OPFS auto-install remains disabled in sqlite3ApiConfig.
+        sqlite3InitModule.__isUnderTest = true;
         const sqlite3 = await sqlite3InitModule({ wasmBinary, instantiateWasm });
         const api = {
           ...workerApis,
@@ -177,8 +187,13 @@ try {
           databaseOpened: false,
           vfsInstalled: false
         };
-        try { sqlite3.opfs.vfsInstallationFeatureCheck('opfs'); api.sqliteStandardOpfsPrerequisites = true; }
-        catch(e) { api.sqliteStandardOpfsPrerequisites = false; api.sqliteStandardOpfsPrerequisiteError = e?.message || String(e); }
+        if (sqlite3.opfs?.vfsInstallationFeatureCheck) {
+          try { sqlite3.opfs.vfsInstallationFeatureCheck('opfs'); api.sqliteStandardOpfsPrerequisites = true; }
+          catch(e) { api.sqliteStandardOpfsPrerequisites = false; api.sqliteStandardOpfsPrerequisiteError = e?.message || String(e); }
+        } else {
+          api.sqliteStandardOpfsPrerequisites = null;
+          api.sqliteStandardOpfsPrerequisiteStatus = 'NOT_CHECKED_DIAGNOSTIC_HELPER_UNAVAILABLE';
+        }
         self.postMessage({stage:'sqlite-ready', api});
       })().catch(e=>self.postMessage({stage:'sqlite-error', error:{name:e?.name||'Error',message:e?.message||String(e),stack:e?.stack||null}}));
     `;
