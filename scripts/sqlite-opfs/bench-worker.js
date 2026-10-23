@@ -59,7 +59,21 @@ async function initialize() {
     ? { disable: { vfs: { "opfs-sahpool": true, "opfs-wl": true } } }
     : { disable: { vfs: { opfs: true, "opfs-vfs": true, "opfs-wl": true } } };
   importScripts("/runtime/sqlite3.js");
-  sqlite3 = await sqlite3InitModule({ locateFile: name => `/runtime/${name}` });
+  const wasmResponse = await fetch("/runtime/sqlite3.wasm");
+  if (!wasmResponse.ok) throw new Error(`SQLite WASM fetch failed: ${wasmResponse.status}`);
+  const wasmBinary = new Uint8Array(await wasmResponse.arrayBuffer());
+  const wasmModule = await WebAssembly.compile(wasmBinary);
+  // Preserve the diagnostic import/unlink helpers used by this harness.
+  sqlite3InitModule.__isUnderTest = true;
+  sqlite3 = await sqlite3InitModule({
+    locateFile: name => `/runtime/${name}`,
+    wasmBinary,
+    instantiateWasm(imports, onSuccess) {
+      const instance = new WebAssembly.Instance(wasmModule, imports);
+      onSuccess(instance, wasmModule);
+      return instance.exports;
+    },
+  });
   if (variant === "opfs-sahpool") {
     pool = await sqlite3.installOpfsSAHPoolVfs({
       name: poolName,
