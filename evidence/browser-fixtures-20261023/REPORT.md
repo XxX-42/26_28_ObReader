@@ -20,6 +20,16 @@ The single diagnostic reproduction passed the complete original test (12,731.001
 
 Successful interaction evidence remains in this worktree's ignored `tests/artifacts/annotation-interaction-da79cb6a6067-1792768236547-66852.json` and partial sibling. It must be considered alongside the original RED rather than replacing it.
 
+## Follow-up: asynchronous scroll completion evidence
+
+The second full-gate interaction RED is preserved at `/Users/jiajia/.codex/worktrees/obreader-0.14/v3-wiring/tests/artifacts/vocabulary-gates/out/6dc5cb02b91b/annotation-interaction-r/annotation-interaction-807f39521f97-1792768751369-70334.partial.json` and its failure screenshot. Its reset went from top 10 to immediate top 0, then to top 3 after the animation frame. The trace captured both scroll and scrollend at time 9895 with top 3. Page renderingState was 3, both modes 0, and browser error arrays were empty. This is direct evidence of an asynchronous scroll write after the fixture's reset; it is not a failed navigation protocol or missing rendered page. The available trace cannot uniquely distinguish the final native smooth-scroll tick from scroll anchoring.
+
+Static source inspection shows `navigateToAnnotationUuid` returns immediately after requesting smooth scroll; sidebar selection waits for that return, not for scroll completion. PDF.js also processes scroll through a requestAnimationFrame callback. A candidate fixture change therefore waits for the already-instrumented navigation scrollend and two unchanged geometry frames before resetting once to zero. It retains the original after-frame exact-zero assertion and every subsequent drawing assertion. It does not repeatedly force the viewport to zero or change production scrolling. The new readiness bound is 5,000 ms; existing timeouts are unchanged.
+
+This follow-up was prepared statically while another heavy matrix owned the lease. No Browser or full-gate run has validated the candidate, and it is not reported as fixed. Original RED evidence remains authoritative until an authorized recheck.
+
+The readiness check runs after closing the sidebar, so its geometry samples include any closing layout change. It also handles a no-scroll navigation without waiting forever for an event that cannot occur: only an empty trace since navigation began, unchanged initial scroll coordinates, and three matching geometry observations may take that branch. Any observed movement instead requires actual scrollend. The artifact records which branch was used and the stable frame count. This is an observational readiness condition, not an assertion that browser-native pending animation internals are exposed; the subsequent exact-zero assertion still rejects an asynchronous write after reset.
+
 ## Lease and scope
 
 Only the two requested diagnostic test files were run, then one explicitly authorized observer correction recheck. All owned browser resources exited through the existing cleanup path; the exclusive Browser diagnosis lease was explicitly released before report/commit work. Native may take the next lease. Further interaction reproduction belongs to a later authorized gate or diagnostic lease.
