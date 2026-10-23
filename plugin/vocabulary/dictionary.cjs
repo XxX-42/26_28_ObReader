@@ -52,10 +52,38 @@ class VocabularyDictionary {
     if (this.disposed) return;
     const percent = value => value.total ? Math.floor(value.count / value.total * 100) : 0;
     const unchanged = this.status.phase === status.phase && this.status.total === status.total &&
-      this.status.code === status.code && percent(this.status) === percent(status);
+      this.status.code === status.code && this.status.entryCount === status.entryCount &&
+      this.status.resourceStatusCode === status.resourceStatusCode && this.status.source === status.source &&
+      percent(this.status) === percent(status);
     this.status = { ...status };
     if (unchanged) return;
     for (const listener of this.listeners) { try { listener(this.getStatus()); } catch {} }
+  }
+  emitResourceAvailable(entryCount) {
+    // A verified v3 manifest makes the dictionary usable without importing a
+    // full IndexedDB generation. Keep a successful lookup's stronger state.
+    if ((this.status.phase === "ready" && this.status.code === "DICTIONARY_RESOURCE_V3_READY") ||
+        (this.status.phase === "degraded" && this.status.code === "DICTIONARY_RESOURCE_V2_FALLBACK")) return;
+    this.emit({ phase: "resource-available", count: 0, total: 0,
+      code: "DICTIONARY_RESOURCE_AVAILABLE", entryCount });
+  }
+  emitResourceReady(entryCount) {
+    this.emit({ phase: "ready", count: 0, total: 0,
+      code: "DICTIONARY_RESOURCE_V3_READY", entryCount });
+  }
+  emitVerifiedV2Fallback(resourceError, generation) {
+    this.emit({ phase: "degraded", count: generation.count, total: generation.count,
+      code: "DICTIONARY_RESOURCE_V2_FALLBACK",
+      resourceStatusCode: resourceError?.code || "DICTIONARY_RESOURCE_UNAVAILABLE",
+      source: "resource-v2-cache" });
+  }
+  emitUnavailable(error) {
+    if (this.disposed || ["DICTIONARY_CACHE_CANCELLED", "DICTIONARY_CACHE_RETRY", "DICTIONARY_CACHE_NOT_REQUIRED"].includes(error?.code)) return;
+    this.emit({ phase: "unavailable", count: 0, total: 0,
+      code: error?.code || "DICTIONARY_CACHE_UNAVAILABLE" });
+  }
+  resourceAvailableResult(manifest) {
+    return { status: "resource-available", count: manifest.entryCount, warmed: false, result: null };
   }
   async manifest() {
     if (!this.manifestPromise) {
@@ -99,7 +127,12 @@ class VocabularyDictionary {
           if (legacyError?.code === "DICTIONARY_INDEX_MISSING") {
             const previous = await this.cache.active("ECDICT").catch(() => null);
             this.assertCurrent(revision);
-            if (previous) return this.cache.lookup(previous.id, key);
+            if (previous) {
+              const result = await this.cache.lookup(previous.id, key);
+              this.assertCurrent(revision);
+              this.emitVerifiedV2Fallback(primaryError, previous);
+              return result;
+            }
             throw primaryError;
           }
           throw legacyError;
@@ -107,7 +140,21 @@ class VocabularyDictionary {
       }
       this.assertCurrent(revision);
       if (manifest.schemaVersion === 3) {
-        return await this.lookupV3(manifest, baseRoot, key, revision);
+        this.emitResourceAvailable(manifest.entryCount);
+        let result;
+        try {
+          result = await this.lookupV3(manifest, baseRoot, key, revision);
+        } catch (blockError) {
+          if (!["DICTIONARY_RESOURCE_MISSING", "DICTIONARY_RESOURCE_CORRUPT",
+            "DICTIONARY_GZIP_UNAVAILABLE", "DICTIONARY_INTEGRITY_UNAVAILABLE"].includes(blockError?.code)) throw blockError;
+          const fallback = await this.lookupCompatibleReadyV2(manifest, key, revision);
+          if (!fallback) throw blockError;
+          this.emitVerifiedV2Fallback(blockError, fallback.generation);
+          return fallback.result;
+        }
+        this.assertCurrent(revision);
+        this.emitResourceReady(manifest.entryCount);
+        return result;
       }
       // A v2 resource remains readable through a previously verified Dexie
       // generation. A lookup never starts the legacy full-resource import.
@@ -125,6 +172,7 @@ class VocabularyDictionary {
         "DICTIONARY_CACHE_NOT_READY");
     } catch (error) {
       if (error?.code === "DICTIONARY_CACHE_RETRY" && retries < 1 && !this.disposed) return this.lookupKey(key, retries + 1);
+      this.emitUnavailable(error);
       if (error?.code) throw error;
       throw dictionaryError("The dictionary query is unavailable.", "DICTIONARY_CACHE_UNAVAILABLE", error);
     }
@@ -132,6 +180,25 @@ class VocabularyDictionary {
   assertCurrent(revision) {
     if (this.disposed) throw dictionaryError("Dictionary service has been disposed.", "DICTIONARY_CACHE_CANCELLED");
     if (revision !== this.revision) throw dictionaryError("Dictionary generation changed; retry the lookup.", "DICTIONARY_CACHE_RETRY");
+  }
+  async lookupCompatibleReadyV2(v3Manifest, key, revision) {
+    let legacyManifest;
+    try { legacyManifest = await this.readManifestAt(this.legacyRoot); }
+    catch { return null; }
+    const source = v3Manifest.source;
+    if (legacyManifest.schemaVersion !== 1 || legacyManifest.dictionaryId !== v3Manifest.dictionaryId ||
+        legacyManifest.normalization !== v3Manifest.normalization || legacyManifest.sha256 !== source.sha256 ||
+        legacyManifest.entryCount !== source.entryCount || legacyManifest.compressedBytes !== source.compressedBytes ||
+        legacyManifest.uncompressedBytes !== source.uncompressedBytes) return null;
+    this.assertCurrent(revision);
+    let generation;
+    try { generation = await this.cache.ready(legacyManifest); }
+    catch { return null; }
+    this.assertCurrent(revision);
+    if (!generation) return null;
+    const result = await this.cache.lookup(generation.id, key);
+    this.assertCurrent(revision);
+    return { generation, result };
   }
   async lookupV3(manifest, baseRoot, key, revision) {
     const block = this.findBlock(manifest.blocks, key);
@@ -304,9 +371,9 @@ class VocabularyDictionary {
     this.pendingForce = force;
     const task = (async () => {
       const manifest = await this.manifest();
+      this.assertCurrent(revision);
       if (manifest.schemaVersion === 3) {
-        throw dictionaryError("Resource-v3 uses bounded on-demand block lookup and does not need a full IndexedDB import.",
-          "DICTIONARY_CACHE_NOT_REQUIRED");
+        return this.resourceAvailableResult(manifest);
       }
       const existing = !force && await this.cache.ready(manifest);
       if (existing) return existing;
@@ -324,13 +391,15 @@ class VocabularyDictionary {
       });
     })().then(ready => {
       if (revision === this.revision) {
-        this.readyGeneration = ready;
-        this.emit({ phase: "ready", count: ready.count, total: ready.count });
+        if (ready?.status === "resource-available") this.emitResourceAvailable(ready.entryCount ?? ready.count);
+        else {
+          this.readyGeneration = ready;
+          this.emit({ phase: "ready", count: ready.count, total: ready.count });
+        }
       }
       return ready;
     }).catch(error => {
-      this.emit({ phase: "unavailable", count: this.status.count, total: this.status.total,
-        code: error?.code || "DICTIONARY_CACHE_UNAVAILABLE" });
+      if (revision === this.revision) this.emitUnavailable(error);
       throw error;
     }).finally(() => {
       if (this.pending === task) this.pending = null;
@@ -392,6 +461,7 @@ class VocabularyDictionary {
     this.manifestPromise = null;
     this.readyGeneration = null;
     this.revision += 1;
+    this.emit({ phase: "idle", count: 0, total: 0 });
     this.blockCache.clear();
     this.blockCacheBytes = 0;
     // Old loads are fenced by revision checks. Remove their coalescing slots so
@@ -400,15 +470,14 @@ class VocabularyDictionary {
   }
   async rebuildCache(options = {}) {
     this.invalidate();
-    const manifest = await this.manifest();
-    if (manifest.schemaVersion === 3) {
-      this.emit({ phase: "resource-available", count: 0, total: manifest.entryCount, code: "DICTIONARY_RESOURCE_AVAILABLE" });
+    const result = await this.ensureReady({ force: true });
+    if (result?.status === "resource-available") {
       const warmTerm = typeof options?.warmTerm === "string" ? options.warmTerm : "";
       const warmed = Boolean(normalizeDictionaryKey(warmTerm));
-      const result = warmed ? await this.lookup(warmTerm) : null;
-      return { status: "resource-available", count: manifest.entryCount, warmed, result };
+      const warmedResult = warmed ? await this.lookup(warmTerm) : null;
+      return { ...result, warmed, result: warmedResult };
     }
-    return this.ensureReady({ force: true });
+    return result;
   }
   clearCache() { this.invalidate(); }
   dispose() {
