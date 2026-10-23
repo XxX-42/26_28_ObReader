@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Write the full five-profile-by-five-process run order before any cold run.
+// Write the full five-fresh-profile-by-five-process run order before any cold run.
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ const runs = options.flatMap((option, optionIndex) => Array.from({ length: repea
 })));
 const runSetId = `${new Date().toISOString().replace(/[:.]/gu, "-")}-${randomUUID()}`;
 const plan = {
-  protocol: "sqlite-wasm-opfs-benchmark-v1",
+  protocol: "sqlite-wasm-opfs-isolated-chromium-benchmark-v1",
   runSetId,
   createdAt: new Date().toISOString(),
   status: "PREDECLARED; no cold trials have started",
@@ -25,20 +25,20 @@ const plan = {
   options,
   runs,
   executionRequirements: [
-    "Each run uses a fresh ordinary owned Obsidian process and profile; no off-record/incognito profile.",
-    "Run only after the native-browser owner releases the profile and root grants the benchmark lease.",
+    "Each run uses a fresh ordinary Chromium process and persistent user-data directory; no off-record/incognito profile.",
+    "Run only after root grants the dedicated benchmark lease; the local harness never targets Obsidian or a Vault.",
     "Keep all attempted failures and timeouts in sequence; do not retry, skip, extend deadlines, or select passes.",
     "Use the same prebuilt read-only ECDICT database and pinned SQLite WASM release for both VFS options.",
     "No runtime INSERT or construction of the 770,611 resource rows; transfer the prebuilt SQLite bytes into OPFS.",
-    "The opfs-sahpool second-window outcome is recorded as a capability limitation if it cannot open concurrently.",
+    "The opfs-sahpool second-window/worker outcome is recorded as a capability limitation if it cannot open concurrently.",
     "Do not change Obsidian scheme, response headers, security settings, or any production Vault contents.",
   ],
   measuredPhases: [
     "SQLite JS/WASM load and initialization, OPFS VFS install, main-thread long tasks, optional memory snapshot.",
-    "Prebuilt DB adapter read/copy duration and bytes, SHA-256 duration/result, OPFS import duration and bytes, storage estimate delta.",
+    "Prebuilt DB fetch/copy duration and bytes, SHA-256 duration/result, OPFS import duration and bytes, storage estimate delta.",
     "Database open, first exact-key query, 20 warm exact-key queries (individual latency and p50/p95/max), and missing-key query.",
     "Close, reopen, reopened first query, and a second-window/worker concurrency attempt while the first handle remains open.",
-    "Corrupt only a disposable OPFS copy, record detection, remove that copy, re-import the intact prebuilt DB, and verify count/hash/sample rows.",
+    "Corrupt only a disposable DB header, record importer/open/integrity detection, rebuild from the intact prebuilt DB, and verify count/sample rows.",
     "Profile directory total bytes and OPFS storage usage before/after, plus runtime/bundle bytes; report API-unavailable values as null.",
   ],
   fixture: {

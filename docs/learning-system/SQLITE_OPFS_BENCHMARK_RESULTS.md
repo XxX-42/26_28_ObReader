@@ -2,7 +2,7 @@
 
 ## Status
 
-**OFFLINE FIXTURE VERIFIED. APP-ORIGIN CAPABILITY PROBE: NOT_RUN while the native acceptance lease owns CDP 60096. COLD BENCHMARKS: NOT_RUN pending release of that lease and a separate benchmark lease.** No performance result or production recommendation is claimed. Return this workstream to the queue after the native acceptance owner releases its profile.
+**OFFLINE FIXTURE VERIFIED. APP-ORIGIN READ-ONLY PROBE ATTEMPTED; SQLITE WASM INITIALIZATION REMAINS UNRESOLVED. FIVE-COLD RUNNER IMPLEMENTED BUT NOT_STARTED pending a separate benchmark lease.** No performance result or production recommendation is claimed.
 
 This is a benchmark-only experiment. It makes no production dependency, main, bridge, vocabulary-canonical, WAL, schema, or Vault changes. The 151 MB SQLite file, source copy, pinned SQLite archive, and generated build report are ignored under `tests/artifacts/sqlite-opfs-2026-10-23/`; only the reproducible Python/Node tooling and report are tracked.
 
@@ -32,21 +32,41 @@ The official SQLite download `sqlite-wasm-3540100.zip` (SQLite 3.54.1) was acqui
 
 The preserved SQLite JavaScript/WASM bundle contains its SQLite public-domain notice and Emscripten MIT / University of Illinois-NCSA notice; a copy of that notice is retained beside the ignored archive. The copied ECDICT MIT license is also retained with the ignored source fixture.
 
-SQLite's official [OPFS documentation](https://www.sqlite.org/wasm/doc/trunk/persistence.md) says standard `opfs` requires a worker and SharedArrayBuffer, which depends on COOP/COEP isolation; `opfs-sahpool` can work without those headers but does not support concurrent connections to a database by default. The app-origin probe therefore records actual worker APIs, secure-context status, cross-origin isolation, storage estimates, and SQLite WASM initialization. It does not change headers or install the SAH pool. A SAH-pool candidate requires a later disposable-profile write probe before it is classified as usable.
+SQLite's official [OPFS documentation](https://www.sqlite.org/wasm/doc/trunk/persistence.md) describes standard `opfs` as worker- and SharedArrayBuffer-backed, and `opfs-sahpool` as an alternative with limited concurrent-connection support by default. The Apple-Test app-origin renderer reports `crossOriginIsolated=false` while still exposing `SharedArrayBuffer`; this Electron-specific combination means COI alone does not classify the host. The read-only probe records these facts, tests a minimal Blob worker, and attempts pinned SQLite WASM initialization with automatic OPFS VFS installation disabled. It never opens a database or writes to OPFS. VFS installation and write/copy benchmarks remain separate steps.
 
 ## Harness and cold-run protocol
 
-`capability-probe.mjs` connects to an existing owned Obsidian CDP endpoint, selects exactly one existing `app://obsidian.md` page, and runs a temporary Blob worker there. It loads the pinned SQLite JS/WASM code with automatic OPFS VFS installation disabled, checks worker/storage/WASM APIs, and tears down the worker and CDP connection. It opens no database, installs no SAH pool, writes no OPFS files, and does not navigate or close the app. Its default output is ignored at `tests/output/sqlite-opfs/host-capability.json`.
+`capability-probe.mjs` connects to an existing owned Obsidian CDP endpoint and selects exactly one existing `app://obsidian.md` page. It first runs a minimal Blob Worker echo, then attempts pinned SQLite WASM initialization in a temporary Blob Worker. The worker URL must remain the exact Blob URL; adding a query suffix invalidates it. The corrected probe disables VFS auto-installation before loading SQLite, passes WASM bytes directly, captures intermediate worker messages and CSP violation events, and opens no database. It never installs a VFS, writes OPFS files, navigates, or closes the app. Output is ignored under `tests/output/sqlite-opfs/`.
 
-`predeclare-runs.mjs` writes the complete 10-row trial plan before execution: five fresh ordinary Obsidian processes and profiles for `opfs`, followed by five for `opfs-sahpool`. Each profile/process is an independent cold trial. The planned browser harness phases record:
+### Actual Apple-Test app-origin evidence
+
+The target was `app://obsidian.md/index.html` in the owned Apple-Test Obsidian renderer (Electron 39.8.3 / Chromium 142). The first requested endpoint, `127.0.0.1:64276`, refused the connection before any page inspection. The current endpoint `127.0.0.1:65046` was then used during B's explicit safe UI pause; CDP disconnected cleanly without navigating or closing the app.
+
+| App-origin observation | Result |
+| --- | --- |
+| Secure context / WebAssembly / Worker constructor | `true` / `true` / available |
+| Main-thread OPFS getter / Web Locks | available / available |
+| Main-thread SharedArrayBuffer / `crossOriginIsolated` | available / `false` |
+| Storage estimate / persisted | quota about 64.26 GB, usage 115,594,542 bytes (IndexedDB reported) / `true`; estimate is transient |
+| Minimal exact-Blob Worker echo | PASS; worker reports secure context, WASM, SAB, OPFS getter, sync access handles, Locks; no `securitypolicyviolation` events |
+| First SQLite Blob Worker attempt | HARNESS ERROR: it appended `?opfs-disable&opfs-wl-disable` to a Blob URL; this invalidated the worker URL and is not platform evidence |
+| Corrected SQLite WASM initialization with VFS auto-install disabled | timed out at the first bounded 1.8-second retry before a ready/error message; no database or OPFS mutation occurred |
+| Corrected VFS initialization result | NOT_RUN; script now captures intermediate worker messages and permits a 15-second bound at the next safe checkpoint |
+| Native `opfs` / `opfs-sahpool` VFS installation or write probe | NOT_RUN; no support/unsupported conclusion yet |
+
+The minimal worker success rules out a generic Blob Worker or CSP prohibition. The 1.8-second SQLite timeout is not proof that WASM or either VFS is unsupported. After the native UI owner finishes, one corrected SQLite initialization probe may run with a 15-second bound; it disables OPFS VFS auto-install and remains read-only. Local Chromium results below do not prove app-origin support.
+
+`predeclare-runs.mjs` writes a ten-row plan for five fresh processes/profiles per option. `run-cold-benchmark.mjs` is the runnable isolated normal-Chromium harness, using persistent user-data directories rather than incognito. Without `--run` it creates a plan only; `--run` launches ten fresh Chromium processes/profiles on a local test origin. The local `opfs` origin adds COOP/COEP headers only to that test server; the `opfs-sahpool` origin does not. The harness does not access Obsidian or any Vault, and its results cannot establish app-origin support.
+
+The browser phases record:
 
 - JS/WASM load and initialization, VFS setup, runtime bytes, available main-thread memory, and main-thread Long Tasks;
-- prebuilt database read/copy/hash/import times and bytes, storage-usage delta, and profile-directory growth;
+- prebuilt database fetch/copy/hash/import times and bytes, storage-usage delta, and profile-directory growth;
 - open, first exact-key query, 20 warm query latencies, missing-key behavior, close/reopen, and reopened first query;
-- a second-window/worker concurrent-open attempt while the first connection remains open;
-- corruption detection on a disposable OPFS copy, rebuild from the intact prebuilt database, and post-rebuild count/hash/sample checks.
+- a second real browser-window/worker concurrent-open attempt while the first connection remains open;
+- corrupt the first header byte in a separate disposable database image, record detection during import/open/integrity check, rebuild from intact prebuilt bytes, and verify post-rebuild integrity/count/sample rows.
 
-The plan keeps all failures and timeouts in order, forbids retries or selected passes, and never writes to a production Vault. It records API-unavailable memory and Long Task metrics as `null`. For each option, no cold trial may start until the native browser owner releases CDP 60096 and root grants a dedicated benchmark lease. iPad/WKWebView is deferred, and even a repeatable SQLite win would not replace the current production cache in this round.
+The plan keeps all failures and timeouts in order, forbids retries or selected passes, and never writes to a production Vault. It records unavailable memory and Long Task metrics as `null`. No cold trial may start until root grants the dedicated benchmark lease. iPad/WKWebView is deferred, and even a repeatable SQLite win would not replace the current production cache in this round.
 
 ## Checks and outcomes
 
@@ -56,11 +76,15 @@ The plan keeps all failures and timeouts in order, forbids retries or selected p
 | Build offline SQLite fixture, count rows, run `integrity_check`, and hash full ordered readback | PASS |
 | Verify keys with product v2 normalization and compare canonical JSONL to full SQLite readback | PASS |
 | `node --check` for the app-origin probe, logical equivalence verifier, and predeclaration tool | PASS |
+| `node --check` for isolated benchmark page, worker, and runner | PASS |
 | Python syntax check for offline fixture builder | PASS |
-| Actual app-origin `app://` worker capability probe on CDP 60096 | NOT_RUN; native lease active |
-| `opfs` five fresh-process cold trials | NOT_RUN; capability and benchmark lease pending |
-| `opfs-sahpool` five fresh-process cold trials | NOT_RUN; write-capability probe and benchmark lease pending |
-| Multiple-window, close/reopen, and disposable-copy corrupt/rebuild checks | NOT_RUN; cold benchmark pending |
+| Actual app-origin API probe on Apple-Test CDP 65046 | PASS; facts above |
+| Actual app-origin minimal Blob Worker echo | PASS; no CSP violations |
+| Actual app-origin SQLite WASM initialization | TIMED_OUT at 1.8 seconds; unresolved, not unsupported |
+| Standalone Chromium runner plan-only mode | PASS; wrote a ten-row plan and started no browser/trials |
+| `opfs` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
+| `opfs-sahpool` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
+| Second-window reader, close/reopen, and disposable-copy corrupt/rebuild trials | NOT_RUN; cold benchmark pending |
 
 Reproduction commands (the source defaults to the test Vault path if copied into artifacts first):
 
@@ -72,6 +96,9 @@ python3 scripts/sqlite-opfs/build-fixture.py \
 node scripts/sqlite-opfs/verify-normalized-v2.mjs \
   tests/artifacts/sqlite-opfs-2026-10-23/resource-v2/entries.b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126.jsonl.gz \
   tests/artifacts/sqlite-opfs-2026-10-23/fixture-report.json
-node scripts/sqlite-opfs/capability-probe.mjs --cdp-url http://127.0.0.1:60096
+node scripts/sqlite-opfs/capability-probe.mjs --cdp-url "$OWNED_OBSIDIAN_CDP_URL"
 node scripts/sqlite-opfs/predeclare-runs.mjs
+node scripts/sqlite-opfs/run-cold-benchmark.mjs --output tests/output/sqlite-opfs
+# Only after a dedicated benchmark lease is granted:
+node scripts/sqlite-opfs/run-cold-benchmark.mjs --output tests/output/sqlite-opfs --chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --run
 ```
