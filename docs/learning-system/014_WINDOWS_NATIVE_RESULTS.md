@@ -328,3 +328,15 @@ Between stages, only fixture-prefix Markdown leaves are detached and layout
 saved, preventing accumulated duplicate fixture tabs. No other notes or Vaults
 are closed. The stage-5 pair has physically moved into `stage5/`; its UI matrix
 has not yet been counted. No move is repeated on resume.
+
+### Stage 5 complete
+
+Both fixtures were moved through real Vault rename events into `stage5/`.
+After interruption, their actual paths and saved transition receipts were
+verified before resuming; no move was repeated. All five UI directions pass
+with renderer `d3e8d620-3bad-427d-a73a-d0405339a7bc`: Context request 1,
+Review annotation request 2, Markdown selection request 3. Backlink focuses
+`stage5/roundtrip-stage3.md` exact `0..202`; Sidebar selects the original UUID.
+Controlled Reader close, fixture Markdown cleanup, independent WAL replay,
+source dual hashes, all 371 default files and 11 canonical non-route hashes pass.
+`stage5-verified-matrix.json` is the machine-checked five-direction receipt.
