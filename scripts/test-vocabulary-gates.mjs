@@ -136,6 +136,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/asset-runtime-stat-index.test.mjs",
     "tests/asset-runtime.test.mjs",
     "tests/backlink-interaction-controller.test.mjs",
+    "tests/backlink-refresh-bridge.test.mjs",
     "tests/browser-test-cleanup.test.mjs",
     "tests/browser-test-launch.test.mjs",
     "tests/bulk-annotation-delete.test.mjs",
