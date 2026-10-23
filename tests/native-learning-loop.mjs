@@ -142,6 +142,7 @@ const { h64Raw } = await xxhash();
 report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
+const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
 const installedManifestPath = absoluteVaultPath(".obsidian/plugins/pdf-web-reader/manifest.json");
 const installedManifest = JSON.parse(await readFile(installedManifestPath, "utf8"));
 assert.equal(installedManifest.id, PLUGIN_ID);
@@ -150,6 +151,7 @@ assert.equal(installedManifest.version, expectedManifest.version,
 
 let browser;
 let page;
+let settingsPage;
 let isolationPlan;
 let originalSettings;
 let baseVocabularySnapshot;
@@ -336,10 +338,10 @@ async function installMaintenanceLogger() {
   report.nativeMaintenanceLogger = result;
 }
 
-async function recordScreen(name) {
+async function recordScreen(name, target = page) {
   await mkdir(screenshotDirectory, { recursive: true });
   const screenshotPath = path.join(screenshotDirectory, `${name}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: false, animations: "disabled" });
+  await target.screenshot({ path: screenshotPath, fullPage: false, animations: "disabled" });
   report.screenshots.push(screenshotPath);
   await persistReport();
   return screenshotPath;
@@ -563,8 +565,8 @@ async function clickVisibleButtonByExactText(label) {
   await matches[0].dispose();
 }
 
-async function clickVisibleElementContainingText(selector, text) {
-  const candidates = await page.$$(selector);
+async function clickVisibleElementContainingText(selector, text, target = page) {
+  const candidates = await target.$$(selector);
   const matches = [];
   for (const candidate of candidates) {
     const state = await candidate.evaluate(node => ({
@@ -580,50 +582,64 @@ async function clickVisibleElementContainingText(selector, text) {
   await matches[0].dispose();
 }
 
-async function visibleText(selector) {
-  return page.$$eval(selector, nodes => nodes.filter(node => {
+async function visibleText(selector, target = page) {
+  return target.$$eval(selector, nodes => nodes.filter(node => {
     const rect = node.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
       getComputedStyle(node).display !== "none";
   }).map(node => (node.innerText || node.textContent || "").replace(/\s+/gu, " ").trim()));
 }
 
+async function findSettingsWindow() {
+  const pages = await browser.pages();
+  for (const candidate of pages) {
+    const isSettings = await candidate.evaluate(() => Boolean(
+      document.body?.classList.contains("is-popout-modal") &&
+      document.querySelector(".modal.mod-settings"),
+    )).catch(() => false);
+    if (isSettings) return candidate;
+  }
+  return null;
+}
+
 async function openPluginSettingsThroughUI() {
-  let entries = await visibleText(".vertical-tab-nav-item");
-  if (!entries.some(label => label.includes("PDF Web Reader"))) {
-    const ribbon = await page.$$(".side-dock-ribbon-action");
+  settingsPage = await findSettingsWindow();
+  if (!settingsPage) {
+    const ribbon = await page.$$(".workspace-drawer-vault-actions .clickable-icon");
     const matches = [];
     for (const button of ribbon) {
       const state = await button.evaluate(node => {
         const rect = node.getBoundingClientRect();
         return {
-          label: [node.getAttribute("aria-label"), node.getAttribute("title"), node.innerText]
-            .filter(Boolean).join(" ").replace(/\s+/gu, " ").trim(),
+          label: [node.getAttribute("aria-label"), node.getAttribute("title"),
+            node.querySelector("svg")?.getAttribute("class")].filter(Boolean).join(" ").trim(),
           visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
             getComputedStyle(node).display !== "none",
         };
       });
-      if (state.visible && /settings|设置/iu.test(state.label)) matches.push(button);
+      if (state.visible && /lucide-settings|settings|设置/iu.test(state.label)) matches.push(button);
       else await button.dispose();
     }
-    assert.equal(matches.length, 1, `Expected one visible Settings ribbon control; found ${matches.length}.`);
+    assert.equal(matches.length, 1, `Expected one visible vault-footer Settings control; found ${matches.length}.`);
+    await recordScreen("settings-vault-footer-control");
     await matches[0].click();
     await matches[0].dispose();
-    await waitFor("visible Obsidian Settings navigation", () => visibleText(".vertical-tab-nav-item"),
-      labels => labels.length > 0, 10_000);
-    entries = await visibleText(".vertical-tab-nav-item");
+    settingsPage = await waitFor("native Obsidian Settings window", findSettingsWindow, Boolean, 10_000);
   }
+  settingsPage.setDefaultTimeout(15_000);
+  let entries = await visibleText(".vertical-tab-nav-item", settingsPage);
+  assert.ok(entries.length > 0, "The native Settings window must expose its visible navigation tabs.");
   if (!entries.some(label => label.includes("PDF Web Reader"))) {
     const community = entries.filter(label => /community plugins|第三方插件|社区插件/iu.test(label));
     assert.equal(community.length, 1, `Expected one Community Plugins settings section; found ${community.length}.`);
-    await clickVisibleElementContainingText(".vertical-tab-nav-item", community[0]);
-    await waitFor("PDF Web Reader settings tab", () => visibleText(".vertical-tab-nav-item"),
+    await clickVisibleElementContainingText(".vertical-tab-nav-item", community[0], settingsPage);
+    await waitFor("PDF Web Reader settings tab", () => visibleText(".vertical-tab-nav-item", settingsPage),
       labels => labels.some(label => label.includes("PDF Web Reader")), 10_000);
   }
-  await clickVisibleElementContainingText(".vertical-tab-nav-item", "PDF Web Reader");
-  await waitFor("Workbench setting row", () => visibleText(".setting-item"),
+  await clickVisibleElementContainingText(".vertical-tab-nav-item", "PDF Web Reader", settingsPage);
+  await waitFor("Workbench setting row", () => visibleText(".setting-item", settingsPage),
     rows => rows.some(label => label.includes("词汇学习工作台")), 10_000);
-  const rows = await page.$$(".setting-item");
+  const rows = await settingsPage.$$(".setting-item");
   const matchingRows = [];
   for (const row of rows) {
     const state = await row.evaluate(node => {
@@ -649,46 +665,75 @@ async function openPluginSettingsThroughUI() {
     else await button.dispose();
   }
   assert.equal(openButtons.length, 1, `Expected one visible Workbench Settings Open button; found ${openButtons.length}.`);
-  await recordScreen("settings-workbench-open-control");
+  await recordScreen("settings-workbench-open-control", settingsPage);
   await openButtons[0].click();
   await openButtons[0].dispose();
   await matchingRows[0].dispose();
-  await waitFor("Workbench opened from visible Settings UI", () => page.$eval(
-    ".vocabulary-workbench [data-action=\"tab-review\"]", () => true).catch(() => false), Boolean, 15_000);
+  await waitFor("Workbench opened from visible Settings UI", async () => {
+    const target = settingsPage && !settingsPage.isClosed() ? settingsPage : page;
+    return target.$eval(".vocabulary-workbench [data-action=\"tab-review\"]", () => true).catch(() => false);
+  }, Boolean, 15_000);
   report.workbenchOpenMethod = "visible Settings > PDF Web Reader > 词汇学习工作台 > 打开";
-  await recordScreen("workbench-opened-from-settings");
+  await recordScreen("workbench-opened-from-settings", settingsPage && !settingsPage.isClosed() ? settingsPage : page);
 }
 
 async function closeSettingsThroughUIIfVisible() {
-  await page.waitForFunction(() => !document.querySelector(".vocabulary-workbench"), { timeout: 8_000 });
-  const modals = await page.$$(".modal");
-  const settings = [];
+  if (!settingsPage || settingsPage.isClosed()) return false;
+  await settingsPage.waitForFunction(() => !document.querySelector(".vocabulary-workbench"), { timeout: 8_000 });
+  const settingsOpen = await settingsPage.$eval(".modal.mod-settings", node => node.getBoundingClientRect().width > 0)
+    .catch(() => false);
+  if (!settingsOpen) return false;
+  await settingsPage.keyboard.down("Meta");
+  try {
+    await settingsPage.keyboard.press("w");
+  } finally {
+    await settingsPage.keyboard.up("Meta");
+  }
+  await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
+  settingsPage = null;
+  return true;
+}
+
+async function closeWorkbenchThroughUI() {
+  const target = settingsPage && !settingsPage.isClosed() ? settingsPage : page;
+  const modals = await target.$$(".modal");
+  const workbenches = [];
   for (const modal of modals) {
     const state = await modal.evaluate(node => {
       const rect = node.getBoundingClientRect();
-      return { text: (node.innerText || "").replace(/\s+/gu, " ").trim(),
+      return { hasWorkbench: Boolean(node.querySelector(".vocabulary-workbench")),
         visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
           getComputedStyle(node).display !== "none" };
     });
-    if (state.visible && state.text.includes("词汇学习工作台")) settings.push(modal);
+    if (state.hasWorkbench && state.visible) workbenches.push(modal);
     else await modal.dispose();
   }
-  if (settings.length === 0) return false;
-  assert.equal(settings.length, 1, `Expected one visible Settings modal after Source; found ${settings.length}.`);
-  const closeButton = await settings[0].$(".modal-close-button");
-  assert.ok(closeButton, "The underlying Settings modal must expose its normal visible close control.");
-  const visible = await closeButton.evaluate(node => {
-    const rect = node.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
-      getComputedStyle(node).display !== "none";
-  });
-  assert.equal(visible, true, "Settings close control must be visible before closing through the UI.");
-  await closeButton.click();
-  await closeButton.dispose();
-  await settings[0].dispose();
-  await page.waitForFunction(() => ![...document.querySelectorAll(".modal")]
-    .some(node => (node.innerText || "").includes("词汇学习工作台")), { timeout: 8_000 });
+  assert.equal(workbenches.length, 1, `Expected one visible Workbench modal to close; found ${workbenches.length}.`);
+  const closeButton = await workbenches[0].$(".modal-close-button");
+  if (closeButton) {
+    const visible = await closeButton.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+        getComputedStyle(node).display !== "none";
+    });
+    assert.equal(visible, true, "The Workbench close control must be visible before closing through the UI.");
+    await closeButton.click();
+    await closeButton.dispose();
+  } else {
+    await target.keyboard.press("Escape");
+  }
+  await workbenches[0].dispose();
+  await target.waitForFunction(() => !document.querySelector(".vocabulary-workbench"), { timeout: 8_000 });
+  if (settingsPage && !settingsPage.isClosed()) {
+    await recordScreen("workbench-closed-through-ui", settingsPage);
+  }
   return true;
+}
+
+async function prepareEmptyIsolationRoots() {
+  for (const root of isolationPlan.roots) {
+    await mkdir(absoluteVaultPath(root.physicalRoot), { recursive: true });
+  }
 }
 
 async function queryFamilyKey(surface) {
@@ -1411,6 +1456,27 @@ async function main() {
   await restoreOwnedStaleIsolation();
   await clearStaleNativeMaintenanceLogger();
   await installNativeIsolation();
+  if (settingsUiPreflight) {
+    await prepareEmptyIsolationRoots();
+    await enablePluginAfterIsolation();
+    await openPluginSettingsThroughUI();
+    await closeWorkbenchThroughUI();
+    const settingsClosed = await closeSettingsThroughUIIfVisible();
+    assert.equal(settingsClosed, true, "The Settings overlay must close through its visible UI control.");
+    await assertIsolationEvidence();
+    report.settingsUiPreflight = {
+      status: "passed",
+      workbenchEntry: report.workbenchOpenMethod,
+      workbenchClosedThroughUI: true,
+      settingsClosedThroughUI: true,
+      fixtureCount: 0,
+      at: new Date().toISOString(),
+    };
+    report.status = "passed";
+    report.completedAt = new Date().toISOString();
+    report.recommendation = "Settings UI navigation preflight passed with storage isolation installed and no learning fixtures created.";
+    return;
+  }
   const fixtures = await createFixtures();
   await enablePluginAfterIsolation();
   await createHighlightLearningItem(fixtures.pdfPath);
