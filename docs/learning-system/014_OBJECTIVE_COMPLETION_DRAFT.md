@@ -5,10 +5,9 @@ Snapshot audit: 2026-10-24 Asia/Shanghai. Document-only branch based on integrat
 advance after this snapshot. The auditor performed no test, Native/UI/browser,
 benchmark, deployment or production-file change. ROOT owns live Native work.
 
-This maps the A–G workflow scope and explicit acceptance requirements available
-in the project reports and ROOT handoff. The original user prompt is not stored
-in this document; final owner must reconcile its exact wording before calling
-this an exhaustive sign-off. Numbers of scenarios, tests and process restarts
+This maps the approved A–G requirements supplied by ROOT, including the exact
+§9 eight-stage/five-direction requirement. The authority supplement at the end
+records requirements that must not disappear behind aggregate PASS counts. Numbers of scenarios, tests and process restarts
 are not interchangeable acceptance evidence.
 
 ## Draft decision table
@@ -42,12 +41,14 @@ are not interchangeable acceptance evidence.
 
 ## Eight-stage acceptance must be a matrix
 
-Stages are `pdfrename`, `foldermove`, `mdrename`, `mdmove`, `bothmove`,
-`closedmove`, `openmove`, and restart. Each requires identity/path and byte
-invariant evidence plus the five navigation directions. Current additional
-navigation harness separately exercises Markdown→PDF, PDF page-badge→Markdown,
-and Sidebar→same Highlight; old stage receipts principally checked Review/
-Context→PDF and Markdown Review Source. These additional directions must be
+Approved §9 stages are PDF rename, PDF folder move, Markdown rename, Markdown
+move, both move, closed move, open move, and restart. At every stage the exact
+five directions are **Review→Source, Backlink→Markdown, Markdown→PDF,
+Sidebar→same UUID Highlight, and Context→PDF**. Each requires identity/path and
+byte-invariant evidence. Current additional navigation harness separately
+exercises Markdown→PDF, PDF page-badge→Markdown, and Sidebar→same Highlight;
+old stage receipts principally checked Review/Context→PDF and Markdown Review
+Source. These additional directions must be
 recorded at each required stage, not merely once after all moves.
 
 | Stage | Existing recorded scope | Full five directions / process proof |
@@ -124,7 +125,47 @@ not satisfy it. ROOT coordinates that work; this auditor sends it no messages.
 Cannot finish from current evidence alone: both platforms' full eight-by-five
 matrix, actual process restart receipts where required, new controlled default-
 tree before/after coverage, Native v3 measurements and controlled startup added
-blocking, final capacity/rollout decision, and exact reconciliation with the
-original user objective. Existing third gate PASS and research rejections are
+blocking, final capacity/rollout decision, and outstanding cases in the
+approved requirement supplement below. Existing third gate PASS and research rejections are
 complete findings; do not rerun them merely to hide unrelated acceptance gaps.
 Semantic contract final acceptance remains **PENDING**, not FROZEN.
+
+
+## Approved requirement supplement and remaining coverage ledger
+
+This supplement follows ROOT's supplied original-plan requirements. “Code/test
+exists” establishes implementation or regression coverage only. It does not
+supply an unexecuted platform result. Native work is live; new receipts must be
+package-bound and independently reviewed before changing these states.
+
+| Approved requirement | Evidence / explicit remaining qualification |
+| --- | --- |
+| A–G independent branch/worktree/evidence, root-only shared entrypoints | Original workflow branches and A–G index above; follow-up audit/test branches are separate. Subsequent agents use gpt-6.1-sol/low. Keep the original seven Luna workflows' actual provenance. |
+| Production integration order Native→Contract→ECDICT | REQUIRED. c080 is the Native/Contract integration snapshot; 962a6f9 is private C candidate. Passing private gates does not authorize early ECDICT integration or rollout before Native/Contract acceptance. |
+| Native A exact durable Highlight identity and explicit UI chain | Must retain same UUID, documentId, docKey, sourceHash, pageIdentity, text and durable revision through Sidebar→AddReview→Today→Source. Old and current partial receipts support individual chains; full stage matrix remains PENDING. |
+| Native B actual LingQ status and complete sentence | Must use real status UI, complete-sentence selection, Context, Review, Today and precise Source. Current full-sentence chain supersedes old phrase-only scope but does not cover every stage. No seed/domain API may replace any creation or confirmation action. |
+| Isolation before plugin initialization | Must cover annotation, Vocabulary, Context, Review, History, transactions and routes before plugin init; dictionary stays read-only. Independent JSONL replay and source PDF/old-data hashes are separate required evidence. Disclosed default-tree setup incident is an exception, not evidence of full historical isolation. |
+| §9 eight stages × five directions | Exact directions listed above. For each stage retain correlated runtime identity, route paths and non-route Review/Context/History hashes. Old eight flags are insufficient. Closed/unobserved move cannot guess a route; duplicate events are idempotent, conflicting/missing-parent facts fail closed. |
+| Semantic flat existing fields and external ContractV1 | Existing flat fields and target `{ kind, id }`; external descriptor must not create a new library/store. Sidebar methods: list/get/navigate/createReviewDraft; Backlink: resolve/openPdfTarget/openMarkdownSource/listSources. Current code supplies these seams. |
+| Backlink/draft/source correctness | Exact backlink slice plus Reader route; quote verifies only, no fuzzy search. Precise draft confirmation, exact requestId+target ACK, VERIFIED / explicit RECOVERABLE page fallback / TARGET_UNRESOLVED. Same/cross-page duplicate quote, source/text/hash change, page reorder, legacy Highlight and tombstone negatives plus rename gate must all be covered before FROZEN. Existing unit/browser coverage is indexed in earlier audit, Native completion pending. |
+| **New real Native badge requestId RED** | ROOT reports badge message without requestId in a real Native run. **OPEN / WAITING FOR ROOT REPAIR AND DETERMINISTIC REGRESSION.** Earlier page aggregation/forged-ID repairs do not close this separate runtime correlation failure. Do not call badge navigation or the full Native gate PASS. |
+| ECDICT exact data/resource contract | Required 770,611-row v2 equivalence, adaptive 128–512KiB blocks, one range manifest, SHA/provenance/license/full-row validation. Builder/runtime and Chrome research provide substantial coverage, but this draft has not independently audited every retained license/provenance artifact; preserve that checklist item for owner verification. Actual Native 67-block resource set still needs authorized staging and hash verification. |
+| ECDICT runtime locality | One-block real DataAdapter+Worker path, coalescing, count/byte LRU 8/16/32 choose smallest passing capacity; optional Dexie, no first full DB build; generation fencing and distinct statuses. Personal-record priority, page/zoom behavior must remain unchanged. No capacity selected pending Native evidence. |
+| Chrome A/B trial discipline | Five cold rounds and 20 warm queries, owned normal persistent profiles, independent processes/DBs, every failure preserved. Completed comparison/residency reports distinguish the actual mixed20 workload from resident-hit repeats. A 20-key mixed workload must not be silently relabeled as 20 warm hits. |
+| Native dictionary matrix | Real NativeAdapter results must stand alone: common/rare/missing/range boundaries/Unicode/reopen/process restart/multiwindow/LRU/corruption. Current attach-only harness's five instance-cold same-key trials do not satisfy this entire matrix or process-cold/restart/multiwindow requirements. These remain NOT_RUN / insufficient Native coverage. |
+| Dictionary numerical/perceived-UI gate | Native startup added blocking <50ms; first lookup p50<300ms, p95<1000ms; resident warm p95<10ms; UI remains usable. Chrome first/resident numbers meet some research targets, but Native startup blocking is NOT_MEASURED and attached lookup cannot prove it. Need controlled startup traces plus actual Native lookup/UI results before selection. |
+| SQLite only experimental | True app-origin capability and lock evidence is required; localhost COI=true results cannot prove Native COI=false compatibility. Do not replace production engine; failures retained. |
+| Bulk acceptance | Total writes at least -40%, CPU/restore within +20%, all semantic/conflict/crash checks. Completed 15-run filesystem matrix rejects both candidates; this is a completed negative decision and preserves production behavior. |
+| FSRS development-only | Replay ordered history, current-state parity; missing history → INSUFFICIENT_HISTORY. Default Leitner remains unchanged. Existing dev experiment satisfies its scope; no production inference. |
+| Final build/vendor/Fast/Browser/Race/Offline/Native | Third private full-gate report is 229/229, zero skipped and stable fingerprint. Build/vendor/final three-file identity need their own receipts. Native remains separate and incomplete. Preserve both earlier failed gate sets; no skip/retry reinterpretation. |
+| LingQ performance boundaries | Fullscan count and perTokenVocabNormalize must remain zero; zoom must add zero query/lexical/lookup work, with bounded LRU. Existing performance regression files cover these counters; this final audit did not execute or independently extract each current counter receipt. Require report linkage for current accepted source fingerprint before final closure. |
+| Candidate deployment | Build 0.14 from source into exactly three files; backup, deploy only to test Vault, compare installed hashes and actual runtime/screenshots. Current package/PDF hashes are above; static three-file equality is not a runtime screenshot. No main/production Vault/Release/cleanup operation is authorized here. |
+| Atomic pushes and final feature remote identity | Individual atomic commits/pushes exist. Final feature normal push must report LOCAL/REMOTE/MATCH on the final accepted SHA. NOT YET CERTIFIED by this draft; a private branch/test fingerprint is not that receipt. |
+| Final report and platform exclusions | Seven workflow report index and decision table are present in this draft. iPad DEFERRED_BY_SCOPE; Sync NOT_VERIFIED. Sync-disabled test isolation never establishes synchronization acceptance. |
+
+The decisive open items are full §9 Native coverage on both required platforms,
+true process restart, the new missing-requestId badge RED, controlled default-
+tree coverage prospectively, the complete Native dictionary/startup/UI matrix,
+and final ordered integration/package/push receipts. Historical missing hash
+baselines remain a permanent evidence limitation, not a task that can be fixed
+by generating a later hash. No such gap is converted into success in this draft.
