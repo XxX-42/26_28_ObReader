@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import vm from 'node:vm';
+import { instrumentStartupOnload, STARTUP_PROBE_KEY, summarizeStartupPairs } from './native-startup-paired-support.mjs';
+test('actual onload invocation keeps return value and measures sync separately from async', async () => {
+  let time = 0, release;
+  const probe = { record: null };
+  const context = { performance: { now: () => time }, Symbol, Promise, gate: new Promise(resolve => { release = resolve; }), advance: () => { time += 3; } };
+  context[Symbol.for(STARTUP_PROBE_KEY)] = probe;
+  const Plugin = vm.runInNewContext(instrumentStartupOnload('(class { async onload() { advance(); await gate; advance(); return 42; } })'), context);
+  const result = new Plugin().onload();
+  assert.equal(probe.record.syncInvocationMs, 3);
+  assert.equal(probe.record.status, 'started');
+  time = 100; release();
+  assert.equal(await result, 42);
+  assert.equal(probe.record.asyncSettledWallMs, 103);
+});
+test('instrumentation rejects ambiguous input and summary requires five complete distinct-package pairs', () => {
+  assert.throws(() => instrumentStartupOnload('async onload() {} async onload() {}'));
+  assert.equal(summarizeStartupPairs([]).syncInvocationUnder50ms, null);
+  const rows = Array.from({ length: 5 }, (_, index) => ['v2-baseline', 'v3-candidate'].map((phase, variant) => ({ pair: index + 1, phase, status: 'MEASURED', packageSha256: phase, record: { status: 'settled', syncInvocationMs: variant ? 20 : 10 } }))).flat();
+  assert.equal(summarizeStartupPairs(rows).syncInvocationUnder50ms, true);
+  rows[0].status = 'FAILED';
+  assert.equal(summarizeStartupPairs(rows).syncInvocationUnder50ms, null);
+  assert.equal(summarizeStartupPairs(rows).fullStartupAddedBlocking, 'NOT_MEASURED');
+});
