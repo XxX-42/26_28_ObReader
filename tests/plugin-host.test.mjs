@@ -2000,7 +2000,7 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   assert.equal(await harness.plugin.openReaderBacklinkSource(row, { source: "unit-test" }), true);
   assert.deepEqual(openCalls, [["Notes/Source.md", "", true]]);
   assert.equal(editor.getSelection(), selected);
-  assert.deepEqual(editor.scrolls, [{ position: fromOffset(start), center: true }]);
+  assert.deepEqual(editor.scrolls, [{ position: { from: fromOffset(start), to: fromOffset(end) }, center: true }]);
   assert.equal(editor.focused, true);
   const [timer] = timers.keys();
   assert.equal(timers.get(timer).delay, 1400);
@@ -2043,7 +2043,7 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   await harness.plugin.openReaderBacklinkSource(invalidRow,
     { source: "invalid-offset-test" });
   assert.deepEqual(editor.getCursor("to"), { line: 0, ch: 0 }, "an invalid offset safely falls back to the indexed line");
-  assert.deepEqual(editor.scrolls, [{ position: { line: 0, ch: 0 }, center: true }]);
+  assert.deepEqual(editor.scrolls, [{ position: { from: { line: 0, ch: 0 }, to: { line: 0, ch: 0 } }, center: true }]);
 
   const excerpt = { sourcePath: noteFile.path, offset: 0, endOffset: 8, line: 0, sourceText: "A quote." };
   await harness.plugin.openReaderBacklinkSource(excerpt, { source: "learning-excerpt" });
@@ -4829,7 +4829,12 @@ test("learning Markdown Source opens exact large excerpts without widening gener
       offsetToPos(offset) { return { line: 0, ch: offset }; },
       setSelection(from, to) { this.selections.push([{ ...from }, { ...to }]); },
       setCursor(pos) { this.cursors.push({ ...pos }); },
-      scrollIntoView() {}, focus() { this.focuses++; },
+      // Match Obsidian's Editor API rather than accepting a bare position.
+      scrollIntoView(range, center) {
+        assert.deepEqual(range, { from: { line: 0, ch: 7 }, to: { line: 0, ch: 7 + length } });
+        assert.equal(center, true);
+      },
+      focus() { this.focuses++; },
     };
     harness.app.workspace.activeLeaf = { view: {
       file: noteFile, editor, containerEl: {}, getViewType: () => "markdown",

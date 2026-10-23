@@ -4794,7 +4794,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     try {
       if (endPosition && typeof editor.setSelection === "function") editor.setSelection(position, endPosition);
       else editor.setCursor?.(position);
-      editor.scrollIntoView?.(position, true);
+      editor.scrollIntoView?.({ from: position, to: endPosition || position }, true);
       editor.focus?.();
     } catch (error) {
       this.sessionLog?.record("readerBacklinks", { event: "source-position-failed", source,
