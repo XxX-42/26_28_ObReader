@@ -289,10 +289,16 @@ test("LingQ settings expose a live cache row, data folder and explicit rebuild c
   tab.display();
   const row = tab.containerEl.settings.find((setting) => setting.buttons?.some((button) => button.text === "重建缓存"));
   assert.ok(row);
-  assert.match(row.description, /dictionaries\/ECDICT\/resource-v2/);
+  assert.match(row.description, /dictionaries\/ECDICT\/resource-v3/);
   assert.equal(row.buttons[0].text, "重建缓存");
   listeners.values().next().value({ phase: "building", count: 500, total: 1000 });
   assert.match(row.name, /正在建立词典缓存 · 50%/);
+  listeners.values().next().value({ phase: "resource-available", entryCount: 770611 });
+  assert.match(row.name, /资源已就绪.*按需查询/);
+  listeners.values().next().value({ phase: "ready", code: "DICTIONARY_RESOURCE_V3_READY", count: 0, entryCount: 770611 });
+  assert.match(row.name, /770,611/);
+  listeners.values().next().value({ phase: "degraded", code: "DICTIONARY_RESOURCE_V2_FALLBACK" });
+  assert.match(row.name, /旧版缓存可查询/);
   row.buttons[0].click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(rebuilds, 1);
@@ -300,7 +306,7 @@ test("LingQ settings expose a live cache row, data folder and explicit rebuild c
   assert.equal(listeners.size, 0);
 });
 
-test("dictionary resource events invalidate only ECDICT resource-v2 files and debounce enabled refresh", () => {
+test("dictionary resource events cover v3 blocks and verified v2 compatibility resources", () => {
   const plugin = Object.create(HostPlugin.prototype);
   let invalidations = 0, refreshes = 0;
   Object.assign(plugin, {
@@ -318,11 +324,18 @@ test("dictionary resource events invalidate only ECDICT resource-v2 files and de
   assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${root}/entries.${"a".repeat(64)}.jsonl.gz`), true);
   assert.equal(invalidations, 2);
   assert.equal(refreshes, 2, "the handler schedules a debounced cache refresh rather than scanning the resource per entry");
+  const v3 = root.replace(/resource-v2$/u, "resource-v3");
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/manifest.json`), true);
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/blocks/block.${"b".repeat(64)}.jsonl.gz`), true);
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/blocks/block.invalid.jsonl.gz`), false);
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/other/block.${"b".repeat(64)}.jsonl.gz`), false);
+  assert.equal(invalidations, 4);
+  assert.equal(refreshes, 4);
 });
 
-test("enabled cache preparation is deferred off the Reader hot path and cancelled at unload", async () => {
+test("enabled dictionary availability is deferred, never starts a full import, and cancels on unload", async () => {
   const plugin = Object.create(HostPlugin.prototype);
-  let initialized = 0, preparations = 0;
+  let initialized = 0, availabilityChecks = 0, preparations = 0;
   Object.assign(plugin, {
     sessionLog: fakeLog,
     settings: { vocabularyEnabled: true },
@@ -331,17 +344,22 @@ test("enabled cache preparation is deferred off the Reader hot path and cancelle
     vocabularyDictionaryRefreshTimer: null,
     getVocabularyDictionary() {
       initialized += 1;
-      return { ensureReady: async () => { preparations += 1; } };
+      return {
+        checkAvailability: async () => { availabilityChecks += 1; },
+        ensureReady: async () => { preparations += 1; throw new Error("startup must not import the full dictionary"); },
+      };
     },
   });
   assert.equal(plugin.scheduleVocabularyDictionaryWarmup(1), true);
   assert.equal(initialized, 0, "the initial PDF interaction never waits for dictionary construction");
   await new Promise((resolve) => setTimeout(resolve, 15));
   assert.equal(initialized, 1);
-  assert.equal(preparations, 1);
+  assert.equal(availabilityChecks, 1);
+  assert.equal(preparations, 0);
 
   plugin.scheduleVocabularyDictionaryWarmup(15);
   plugin.clearVocabularyDictionaryTimers();
   await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(initialized, 1, "unload cleanup cancels a queued preparation timer");
+  assert.equal(preparations, 0);
 });

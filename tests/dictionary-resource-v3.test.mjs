@@ -100,6 +100,25 @@ function dictionaryFor(t, adapter, options = {}) {
 
 function expected(row) { return { ...row, source: "ECDICT" }; }
 
+test("startup availability and no-term warmup never import either resource format", async (t) => {
+  for (const legacy of [false, true]) {
+    const fixture = legacy ? makeV2Files() : makeV3Files();
+    const adapter = new MemoryAdapter(fixture.files);
+    const dictionary = dictionaryFor(t, adapter, { root: legacy ? LEGACY_ROOT : ROOT });
+    let imports = 0;
+    dictionary.cache.prepare = async () => { imports++; throw new Error("full import was not authorized"); };
+    if (legacy) {
+      await assert.rejects(dictionary.checkAvailability(), error => error.code === "DICTIONARY_CACHE_NOT_READY");
+      await assert.rejects(dictionary.warmup(), error => error.code === "DICTIONARY_CACHE_NOT_READY");
+    } else {
+      assert.equal((await dictionary.checkAvailability()).status, "resource-available");
+      assert.equal((await dictionary.warmup()).status, "resource-available");
+    }
+    assert.equal(imports, 0);
+    assert.equal(adapter.readBinaryCount.size, 0);
+  }
+});
+
 test("v3 lookup agrees with every row and resolves range boundaries and Unicode keys", async (t) => {
   const fixture = makeV3Files();
   const adapter = new MemoryAdapter(fixture.files);

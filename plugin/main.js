@@ -44,7 +44,8 @@ function drainViewerRuntimeLog(view) {
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
-const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2";
+const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3";
+const VOCABULARY_LEGACY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2";
 const VOCABULARY_DICTIONARY_MANIFEST = `${VOCABULARY_DICTIONARY_ROOT}/manifest.json`;
 const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
 const DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS = Object.freeze({
@@ -223,10 +224,12 @@ function vocabularyDictionaryPercent(status) {
 
 function vocabularyDictionaryStatusText(status) {
   switch (status?.phase) {
+    case "resource-available": return "词典资源已就绪 · 按需查询";
+    case "degraded": return "已校验的旧版缓存可查询 · 等待词典资源同步";
     case "verifying": return `正在校验词典 · ${vocabularyDictionaryPercent(status)}%`;
     case "building": return `正在建立词典缓存 · ${vocabularyDictionaryPercent(status)}%`;
     case "waiting": return `等待缓存任务 · ${vocabularyDictionaryPercent(status)}%`;
-    case "ready": return `词典缓存已就绪 · ${(Number(status.count) || 0).toLocaleString("zh-CN")} 条`;
+    case "ready": return `${status.code === "DICTIONARY_RESOURCE_V3_READY" ? "词典已就绪" : "词典缓存已就绪"} · ${(Number(status.entryCount ?? status.count) || 0).toLocaleString("zh-CN")} 条`;
     case "unavailable": return "本地词典暂不可用";
     default: return "词典缓存尚未初始化";
   }
@@ -251,9 +254,14 @@ function applyVocabularyDictionaryStatus(plugin, status) {
 function isVocabularyDictionaryResourcePath(value) {
   if (typeof value !== "string") return false;
   const filePath = normalizePath(value);
-  if (filePath === VOCABULARY_DICTIONARY_MANIFEST) return true;
-  const prefix = `${VOCABULARY_DICTIONARY_ROOT}/entries.`;
-  return filePath.startsWith(prefix) && /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(prefix.length));
+  if (filePath === VOCABULARY_DICTIONARY_MANIFEST || filePath === VOCABULARY_DICTIONARY_ROOT ||
+      filePath === `${VOCABULARY_DICTIONARY_ROOT}/blocks`) return true;
+  const blockPrefix = `${VOCABULARY_DICTIONARY_ROOT}/blocks/block.`;
+  if (filePath.startsWith(blockPrefix) && /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(blockPrefix.length))) return true;
+  if (filePath === VOCABULARY_LEGACY_DICTIONARY_ROOT ||
+      filePath === `${VOCABULARY_LEGACY_DICTIONARY_ROOT}/manifest.json`) return true;
+  const legacyPrefix = `${VOCABULARY_LEGACY_DICTIONARY_ROOT}/entries.`;
+  return filePath.startsWith(legacyPrefix) && /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(legacyPrefix.length));
 }
 
 let activePdfHashRuntime = null;
@@ -1132,10 +1140,10 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
       });
     this.vocabularyDictionaryStatusSetting = new Setting(containerEl)
       .setName(vocabularyDictionaryStatusText(this.plugin.vocabularyDictionaryStatus))
-      .setDesc(`词典资源目录：${VOCABULARY_DICTIONARY_ROOT}/；仅建立本地查询缓存。`)
+      .setDesc(`词典资源目录：${VOCABULARY_DICTIONARY_ROOT}/；按需查词，本机缓存可删除重建。`)
       .addButton((button) => {
         button.setButtonText("重建缓存");
-        button.setTooltip?.("重新校验词典资源并重建本地查询缓存");
+        button.setTooltip?.("清除本机块缓存并重新校验词典资源，不导入完整词库");
         button.setDisabled?.(!this.plugin.settings.vocabularyEnabled);
         button.onClick(() => void this.plugin.rebuildVocabularyDictionaryCache().catch((error) =>
           new Notice(`词典缓存重建失败：${error.message || error}`, 8000)));
@@ -6154,7 +6162,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         applyVocabularyDictionaryStatus(this, { phase: "unavailable", count: 0, total: 0 });
         return;
       }
-      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+      Promise.resolve(dictionary.checkAvailability?.()).catch(() => undefined);
     }, Math.max(0, Number(delay) || 0));
     return true;
   }
@@ -6168,7 +6176,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       let dictionary;
       try { dictionary = this.getVocabularyDictionary(); }
       catch { return; }
-      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+      Promise.resolve(dictionary.checkAvailability?.()).catch(() => undefined);
     }, Math.max(0, Number(delay) || 0));
     return true;
   }

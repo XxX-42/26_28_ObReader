@@ -116,7 +116,33 @@ class VocabularyDictionary {
     if (!key) return null;
     return this.lookupKey(key, 0);
   }
-  async warmup(term) { return this.lookup(term); }
+  async warmup(term) { return term === undefined ? this.checkAvailability() : this.lookup(term); }
+  async checkAvailability() {
+    const revision = this.revision;
+    try {
+      let manifest;
+      try { manifest = await this.manifest(); }
+      catch (error) {
+        if (error?.code !== "DICTIONARY_INDEX_MISSING" || this.legacyRoot === this.root) throw error;
+        manifest = await this.readManifestAt(this.legacyRoot);
+      }
+      this.assertCurrent(revision);
+      if (manifest.schemaVersion === 3) {
+        this.emitResourceAvailable(manifest.entryCount);
+        return this.resourceAvailableResult(manifest);
+      }
+      const ready = await this.cache.ready(manifest);
+      this.assertCurrent(revision);
+      if (!ready) throw dictionaryError("A verified resource-v3 or an already prepared matching v2 cache is required.",
+        "DICTIONARY_CACHE_NOT_READY");
+      this.emit({ phase: "ready", count: ready.count, total: ready.count });
+      return ready;
+    } catch (error) {
+      this.assertCurrent(revision);
+      this.emitUnavailable(error);
+      throw error;
+    }
+  }
   async lookupKey(key, retries) {
     const revision = this.revision;
     try {
