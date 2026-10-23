@@ -148,7 +148,7 @@ package-bound and independently reviewed before changing these states.
 | §9 eight stages × five directions | Exact directions listed above. For each stage retain correlated runtime identity, route paths and non-route Review/Context/History hashes. Old eight flags are insufficient. Closed/unobserved move cannot guess a route; duplicate events are idempotent, conflicting/missing-parent facts fail closed. |
 | Semantic flat existing fields and external ContractV1 | Existing flat fields and target `{ kind, id }`; external descriptor must not create a new library/store. Sidebar methods: list/get/navigate/createReviewDraft; Backlink: resolve/openPdfTarget/openMarkdownSource/listSources. Current code supplies these seams. |
 | Backlink/draft/source correctness | Exact backlink slice plus Reader route; quote verifies only, no fuzzy search. Precise draft confirmation, exact requestId+target ACK, VERIFIED / explicit RECOVERABLE page fallback / TARGET_UNRESOLVED. Same/cross-page duplicate quote, source/text/hash change, page reorder, legacy Highlight and tombstone negatives plus rename gate must all be covered before FROZEN. Existing unit/browser coverage is indexed in earlier audit, Native completion pending. |
-| **New real Native badge requestId RED** | ROOT reports badge message without requestId in a real Native run. **OPEN / WAITING FOR ROOT REPAIR AND DETERMINISTIC REGRESSION.** Earlier page aggregation/forged-ID repairs do not close this separate runtime correlation failure. Do not call badge navigation or the full Native gate PASS. |
+| **Real Native initial backlink correlation RED** | Passive wire trace `542fb89` proves Viewer first query has requestId but Host's post-confirmation result has none, after the early query was rejected during asynchronous source confirmation. Correction `d4c6f29` is committed/pushed with `ad2a976` bridge regressions; **NATIVE RE-VERIFICATION PENDING, NOT CLOSED**. Earlier page aggregation repair is separate. |
 | ECDICT exact data/resource contract | Required 770,611-row v2 equivalence, adaptive 128–512KiB blocks, one range manifest, SHA/provenance/license/full-row validation. Builder/runtime and Chrome research provide substantial coverage, but this draft has not independently audited every retained license/provenance artifact; preserve that checklist item for owner verification. Actual Native 67-block resource set still needs authorized staging and hash verification. |
 | ECDICT runtime locality | One-block real DataAdapter+Worker path, coalescing, count/byte LRU 8/16/32 choose smallest passing capacity; optional Dexie, no first full DB build; generation fencing and distinct statuses. Personal-record priority, page/zoom behavior must remain unchanged. No capacity selected pending Native evidence. |
 | Chrome A/B trial discipline | Five cold rounds and 20 warm queries, owned normal persistent profiles, independent processes/DBs, every failure preserved. Completed comparison/residency reports distinguish the actual mixed20 workload from resident-hit repeats. A 20-key mixed workload must not be silently relabeled as 20 warm hits. |
@@ -164,8 +164,61 @@ package-bound and independently reviewed before changing these states.
 | Final report and platform exclusions | Seven workflow report index and decision table are present in this draft. iPad DEFERRED_BY_SCOPE; Sync NOT_VERIFIED. Sync-disabled test isolation never establishes synchronization acceptance. |
 
 The decisive open items are full §9 Native coverage on both required platforms,
-true process restart, the new missing-requestId badge RED, controlled default-
+true process restart, Native re-verification of the initial-query correlation repair, controlled default-
 tree coverage prospectively, the complete Native dictionary/startup/UI matrix,
 and final ordered integration/package/push receipts. Historical missing hash
 baselines remain a permanent evidence limitation, not a task that can be fixed
 by generating a later hash. No such gap is converted into success in this draft.
+
+
+## Read-only follow-up: initial backlink refresh repair at d4c6f29
+
+Reviewed `d4c6f291b157783503b66830bd0de60d556a8dc7` against test commit
+`ad2a976` without executing tests or attaching to UI. Native passive wire receipt
+`542fb89:evidence/native-final-resume/backlink-exact-wire-controller.json`
+shows the authenticated first Viewer request carries `reader-backlink-page-1-1`.
+The Host rejected it before hydration/source confirmation completed, so no
+accepted current request was stored. The subsequent result lacked requestId;
+strict Viewer/controller correlation correctly refused it. Same-page query
+deduplication then prevented recovery. This is more precise than calling the
+Viewer's original query uncorrelated or removing its identity guards.
+
+The committed repair retains accepted-ID refresh behavior. When no accepted
+current-page request exists, Host sends `reader-backlink-page-refresh` over the
+existing authenticated channel. Viewer checks parent event source, channel,
+token, disposed state, documentId, openRequest, rendererGeneration, KNOWN source,
+sourceHash, integer pageIndex, pageNumber/index consistency, currently visible
+page number, and that page's ordered identity. Only then does the existing query
+path create a new Viewer-owned requestId and call controller.beginPageRequest.
+Ordinary same-page deduplication remains active outside explicit refresh.
+
+Result acceptance still requires the active requestId plus runtime/page tuple,
+controller current-request identity and current visible page. A superseded-page
+refresh is rejected before issuing a query; a superseded result cannot match the
+new active request. Host additionally retains query-generation and index-revision
+fences after asynchronous collection. The patch changes neither annotation
+hydration verification nor frozen annotation/storage/WAL/coordinator code.
+
+No unconditional query loop is introduced in the inspected call graph. A
+refresh notification generates one request; the page-request handler returns a
+result and does not call refresh. Refresh callers remain source confirmation and
+external index/resource invalidations. The existing ready-index check prevents
+rebuilding on every response. Repeated external refresh notifications can create
+successive correlated queries, but the patch creates no self-triggering result→
+refresh edge and does not loosen stale-response acceptance.
+
+`ad2a976` tests execute real bridge functions and interaction controller, including
+wrong channel/token/parent, stale runtime/page/hash, disposed and UNKNOWN source,
+fresh request sequence, ordinary deduplication, and rejecting old/missing result
+IDs. ROOT reports 135 focused tests plus one actual Browser test passing; this
+is reported validation, not newly executed by this auditor. The formal 229/229
+full gate still belongs to the earlier private `962a6f9`/a2cfe81… fingerprint;
+it must not be attributed to d4c6f29. No new production defect was found by this
+static review, but the initial-open Native retry is **PENDING** and the repair is
+not acceptance-CLOSED.
+
+All original §9 stages remain required: PDF rename, PDF folder move, Markdown
+rename, Markdown move, both move, closed move, open move, and **true process
+restart**. Each still requires the five exact directions listed above. A plugin
+toggle, page flip workaround or isolated post-matrix navigation check cannot
+replace that matrix or process-restart evidence.
