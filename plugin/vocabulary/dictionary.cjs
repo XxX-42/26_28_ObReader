@@ -1,21 +1,37 @@
 /* Vault resources are authoritative; IndexedDB is a disposable local index. */
 const { DictionaryQueryCache, DEFAULT_CACHE_NAME } = require("./dictionary-cache.cjs");
-const { DEFAULT_DICTIONARY_ROOT, VocabularyDictionaryError, dictionaryError, normalizeDictionaryKey,
-  validateManifest, generationId, asBytes } = require("./dictionary-resource.cjs");
+const { DEFAULT_DICTIONARY_ROOT, LEGACY_DICTIONARY_ROOT, VocabularyDictionaryError, dictionaryError, normalizeDictionaryKey,
+  validateManifest, generationId, verifyManifestIndex, decodeBlockResource, asBytes } = require("./dictionary-resource.cjs");
 const WORKER_SOURCE = typeof __PDF_DICTIONARY_WORKER_SOURCE__ === "string" ? __PDF_DICTIONARY_WORKER_SOURCE__ : null;
 
 class VocabularyDictionary {
-  constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, cache, cacheName = DEFAULT_CACHE_NAME,
-    workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {} } = {}) {
+  constructor({ adapter, root = DEFAULT_DICTIONARY_ROOT, legacyRoot, cache, cacheName = DEFAULT_CACHE_NAME,
+    workerSource = WORKER_SOURCE, WorkerClass = globalThis.Worker, onStatus = () => {},
+    blockCacheMaxBlocks = 16, blockCacheMaxBytes = 8 * 1024 * 1024, workerStartupTimeoutMs = 5000 } = {}) {
     if (!adapter || typeof adapter.read !== "function" || typeof adapter.readBinary !== "function") {
       throw new TypeError("VocabularyDictionary requires a Vault DataAdapter with read() and readBinary().");
     }
     this.adapter = adapter;
     this.root = String(root).replace(/\/+$/u, "");
+    this.legacyRoot = String(legacyRoot || (this.root.endsWith("/resource-v3")
+      ? this.root.replace(/resource-v3$/u, "resource-v2")
+      : this.root === DEFAULT_DICTIONARY_ROOT ? LEGACY_DICTIONARY_ROOT : this.root)).replace(/\/+$/u, "");
     this.cache = cache || new DictionaryQueryCache({ name: cacheName });
     this.cacheName = cacheName;
     this.workerSource = workerSource;
     this.WorkerClass = WorkerClass;
+    this.blockCacheMaxBlocks = Math.max(0, Math.floor(blockCacheMaxBlocks));
+    this.blockCacheMaxBytes = Math.max(0, Math.floor(blockCacheMaxBytes));
+    this.workerStartupTimeoutMs = Math.max(1, Number(workerStartupTimeoutMs) || 5000);
+    this.blockCache = new Map();
+    this.blockCacheBytes = 0;
+    this.blockLoads = new Map();
+    this.blockWorker = null;
+    this.blockWorkerReady = null;
+    this.blockWorkerUrl = null;
+    this.blockWorkerUnavailable = false;
+    this.blockWorkerRequests = new Map();
+    this.blockWorkerSequence = 0;
     this.listeners = new Set([onStatus]);
     this.status = { phase: "idle", count: 0, total: 0 };
     this.manifestPromise = null;
@@ -43,18 +59,21 @@ class VocabularyDictionary {
   }
   async manifest() {
     if (!this.manifestPromise) {
-      this.manifestPromise = (async () => {
-        let raw;
-        try { raw = await this.adapter.read(`${this.root}/manifest.json`); }
-        catch (cause) { throw dictionaryError("Dictionary resource manifest has not synchronized yet.", "DICTIONARY_INDEX_MISSING", cause); }
-        try { return validateManifest(JSON.parse(raw)); }
-        catch (cause) {
-          if (cause?.code) throw cause;
-          throw dictionaryError("Dictionary manifest is invalid JSON.", "DICTIONARY_MANIFEST_CORRUPT", cause);
-        }
-      })().catch(error => { this.manifestPromise = null; throw error; });
+      this.manifestPromise = this.readManifestAt(this.root).catch(error => { this.manifestPromise = null; throw error; });
     }
     return this.manifestPromise;
+  }
+  async readManifestAt(root) {
+    let raw;
+    try { raw = await this.adapter.read(`${root}/manifest.json`); }
+    catch (cause) { throw dictionaryError("Dictionary resource manifest has not synchronized yet.", "DICTIONARY_INDEX_MISSING", cause); }
+    let manifest;
+    try { manifest = validateManifest(JSON.parse(raw)); }
+    catch (cause) {
+      if (cause?.code) throw cause;
+      throw dictionaryError("Dictionary manifest is invalid JSON.", "DICTIONARY_MANIFEST_CORRUPT", cause);
+    }
+    return verifyManifestIndex(manifest);
   }
   async loadBytes(manifest) {
     try { return asBytes(await this.adapter.readBinary(`${this.root}/${manifest.resourceFile}`)); }
@@ -63,37 +82,211 @@ class VocabularyDictionary {
   async lookup(term) {
     const key = normalizeDictionaryKey(term);
     if (!key) return null;
+    return this.lookupKey(key, 0);
+  }
+  async warmup(term) { return this.lookup(term); }
+  async lookupKey(key, retries) {
+    const revision = this.revision;
     try {
-      const manifest = await this.manifest();
+      let manifest, baseRoot = this.root;
+      try { manifest = await this.manifest(); }
+      catch (primaryError) {
+        if (primaryError?.code !== "DICTIONARY_INDEX_MISSING" || this.legacyRoot === this.root) throw primaryError;
+        try {
+          manifest = await this.readManifestAt(this.legacyRoot);
+          baseRoot = this.legacyRoot;
+        } catch (legacyError) {
+          if (legacyError?.code === "DICTIONARY_INDEX_MISSING") {
+            const previous = await this.cache.active("ECDICT").catch(() => null);
+            this.assertCurrent(revision);
+            if (previous) return this.cache.lookup(previous.id, key);
+            throw primaryError;
+          }
+          throw legacyError;
+        }
+      }
+      this.assertCurrent(revision);
+      if (manifest.schemaVersion === 3) {
+        return await this.lookupV3(manifest, baseRoot, key, revision);
+      }
+      // A v2 resource remains readable through a previously verified Dexie
+      // generation. A lookup never starts the legacy full-resource import.
       const ready = await this.cache.ready(manifest);
+      this.assertCurrent(revision);
       if (ready) {
         this.readyGeneration = ready;
         this.emit({ phase: "ready", count: ready.count, total: ready.count });
         return await this.cache.lookup(ready.id, key);
       }
-      // A resource update must not take an already verified dictionary offline.
       const previous = await this.cache.active(manifest.dictionaryId);
-      if (previous) {
-        void this.ensureReady().catch(() => {});
-        return await this.cache.lookup(previous.id, key);
-      }
-      const built = await this.ensureReady();
-      return await this.cache.lookup(built.id, key);
+      this.assertCurrent(revision);
+      if (previous) return await this.cache.lookup(previous.id, key);
+      throw dictionaryError("ECDICT resource-v3 is not installed and no verified resource-v2 cache is ready.",
+        "DICTIONARY_CACHE_NOT_READY");
     } catch (error) {
-      if (error?.code === "DICTIONARY_CACHE_RETRY" && !this.disposed) {
-        const ready = await this.ensureReady();
-        return this.cache.lookup(ready.id, key);
-      }
-      if (error?.code === "DICTIONARY_CACHE_INCOMPLETE" && !this.disposed) {
-        this.readyGeneration = null;
-        const rebuilt = await this.ensureReady({ force: true });
-        return this.cache.lookup(rebuilt.id, key);
-      }
-      const previous = await this.cache.active().catch(() => null);
-      if (previous && !this.disposed) return this.cache.lookup(previous.id, key);
+      if (error?.code === "DICTIONARY_CACHE_RETRY" && retries < 1 && !this.disposed) return this.lookupKey(key, retries + 1);
       if (error?.code) throw error;
-      throw dictionaryError("The local dictionary query cache is unavailable.", "DICTIONARY_CACHE_UNAVAILABLE", error);
+      throw dictionaryError("The dictionary query is unavailable.", "DICTIONARY_CACHE_UNAVAILABLE", error);
     }
+  }
+  assertCurrent(revision) {
+    if (this.disposed) throw dictionaryError("Dictionary service has been disposed.", "DICTIONARY_CACHE_CANCELLED");
+    if (revision !== this.revision) throw dictionaryError("Dictionary generation changed; retry the lookup.", "DICTIONARY_CACHE_RETRY");
+  }
+  async lookupV3(manifest, baseRoot, key, revision) {
+    const block = this.findBlock(manifest.blocks, key);
+    if (!block) return null;
+    const generation = generationId(manifest);
+    const cached = this.getCachedBlock(`${generation}:${block.sha256}`);
+    const decoded = cached || await this.loadBlock(manifest, baseRoot, block, revision);
+    this.assertCurrent(revision);
+    let low = 0, high = decoded.entries.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (decoded.entries[middle].key < key) low = middle + 1;
+      else high = middle;
+    }
+    const entry = decoded.entries[low];
+    return entry?.key === key ? { key: entry.key, translation: entry.translation, phonetic: entry.phonetic, source: "ECDICT" } : null;
+  }
+  findBlock(blocks, key) {
+    let low = 0, high = blocks.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      const block = blocks[middle];
+      if (key < block.firstKey) high = middle;
+      else if (key > block.lastKey) low = middle + 1;
+      else return block;
+    }
+    return null;
+  }
+  getCachedBlock(cacheKey) {
+    const value = this.blockCache.get(cacheKey);
+    if (!value) return null;
+    this.blockCache.delete(cacheKey);
+    this.blockCache.set(cacheKey, value);
+    return value;
+  }
+  rememberBlock(cacheKey, decoded) {
+    if (!this.blockCacheMaxBlocks || !this.blockCacheMaxBytes || decoded.estimatedBytes > this.blockCacheMaxBytes) return;
+    const prior = this.blockCache.get(cacheKey);
+    if (prior) this.blockCacheBytes -= prior.estimatedBytes;
+    this.blockCache.delete(cacheKey);
+    this.blockCache.set(cacheKey, decoded);
+    this.blockCacheBytes += decoded.estimatedBytes;
+    while (this.blockCache.size > this.blockCacheMaxBlocks || this.blockCacheBytes > this.blockCacheMaxBytes) {
+      const oldest = this.blockCache.keys().next().value;
+      const removed = this.blockCache.get(oldest);
+      this.blockCache.delete(oldest);
+      this.blockCacheBytes -= removed.estimatedBytes;
+    }
+  }
+  getBlockCacheStats() {
+    return { blocks: this.blockCache.size, estimatedBytes: this.blockCacheBytes,
+      maxBlocks: this.blockCacheMaxBlocks, maxBytes: this.blockCacheMaxBytes };
+  }
+  async loadBlock(manifest, baseRoot, block, revision) {
+    const key = `${generationId(manifest)}:${block.sha256}`;
+    const cached = this.getCachedBlock(key);
+    if (cached) return cached;
+    if (this.blockLoads.has(key)) return this.blockLoads.get(key);
+    const pending = (async () => {
+      let bytes;
+      try { bytes = asBytes(await this.adapter.readBinary(`${baseRoot}/${block.resourceFile}`)); }
+      catch (cause) { throw dictionaryError("Dictionary block has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
+      this.assertCurrent(revision);
+      const decoded = await this.decodeBlock(block, bytes, revision);
+      this.assertCurrent(revision);
+      this.rememberBlock(key, decoded);
+      return decoded;
+    })().finally(() => this.blockLoads.delete(key));
+    this.blockLoads.set(key, pending);
+    return pending;
+  }
+  async decodeBlock(block, bytes, revision) {
+    const worker = await this.ensureBlockWorker();
+    this.assertCurrent(revision);
+    if (!worker) return decodeBlockResource(block, bytes, { yieldControl: () => new Promise(resolve => setTimeout(resolve, 0)) });
+    const transferable = bytes.slice();
+    try {
+      return await new Promise((resolve, reject) => {
+        const id = ++this.blockWorkerSequence;
+        this.blockWorkerRequests.set(id, { resolve, reject });
+        try { worker.postMessage({ type: "decode-block", id, block, bytes: transferable.buffer }, [transferable.buffer]); }
+        catch (cause) {
+          this.blockWorkerRequests.delete(id);
+          reject(this.workerUnavailableError(cause));
+        }
+      });
+    } catch (error) {
+      if (!error?.workerUnavailable && error?.code !== "DICTIONARY_GZIP_UNAVAILABLE") throw error;
+      return decodeBlockResource(block, bytes, { yieldControl: () => new Promise(resolve => setTimeout(resolve, 0)) });
+    }
+  }
+  workerUnavailableError(cause) {
+    return Object.assign(dictionaryError("Dictionary Worker is unavailable; using cooperative block decoding.",
+      "DICTIONARY_WORKER_UNAVAILABLE", cause), { workerUnavailable: true });
+  }
+  ensureBlockWorker() {
+    if (this.blockWorkerUnavailable || !this.workerSource || typeof this.WorkerClass !== "function") return Promise.resolve(null);
+    if (this.blockWorkerReady) return this.blockWorkerReady;
+    let url, worker;
+    try {
+      url = URL.createObjectURL(new Blob([this.workerSource], { type: "text/javascript" }));
+      worker = new this.WorkerClass(url, { name: "pdf-reader-dictionary-blocks" });
+      this.blockWorker = worker;
+      this.blockWorkerUrl = url;
+    } catch {
+      if (url) URL.revokeObjectURL(url);
+      this.blockWorkerUnavailable = true;
+      return Promise.resolve(null);
+    }
+    this.blockWorkerReady = new Promise((resolve, reject) => {
+      let started = false;
+      const startup = setTimeout(() => {
+        const error = this.workerUnavailableError();
+        worker.terminate?.();
+        if (this.blockWorker === worker) this.blockWorker = null;
+        if (this.blockWorkerUrl) URL.revokeObjectURL(this.blockWorkerUrl);
+        this.blockWorkerUrl = null;
+        reject(error);
+      }, this.workerStartupTimeoutMs);
+      worker.onmessage = ({ data }) => {
+        if (data?.type === "started" && !started) {
+          started = true;
+          clearTimeout(startup);
+          resolve(worker);
+        } else if (data?.type === "block-ready" || data?.type === "block-error") {
+          const request = this.blockWorkerRequests.get(data.id);
+          if (!request) return;
+          this.blockWorkerRequests.delete(data.id);
+          if (data.type === "block-ready") request.resolve(data.decoded);
+          else request.reject(dictionaryError(data.error?.message || "Dictionary block is corrupt.",
+            data.error?.code || "DICTIONARY_RESOURCE_CORRUPT"));
+        }
+      };
+      const unavailable = event => {
+        clearTimeout(startup);
+        this.blockWorkerUnavailable = true;
+        const error = this.workerUnavailableError(event?.message || event);
+        if (!started) reject(error);
+        for (const request of this.blockWorkerRequests.values()) request.reject(error);
+        this.blockWorkerRequests.clear();
+        worker.terminate?.();
+        if (this.blockWorker === worker) this.blockWorker = null;
+        this.blockWorkerReady = null;
+        if (this.blockWorkerUrl) URL.revokeObjectURL(this.blockWorkerUrl);
+        this.blockWorkerUrl = null;
+      };
+      worker.onerror = unavailable;
+      worker.onmessageerror = unavailable;
+    }).catch(() => {
+      this.blockWorkerUnavailable = true;
+      this.blockWorkerReady = null;
+      this.blockWorker = null;
+      return null;
+    });
+    return this.blockWorkerReady;
   }
   async ensureReady({ force = false } = {}) {
     if (this.disposed) throw dictionaryError("Dictionary service has been disposed.", "DICTIONARY_CACHE_CANCELLED");
@@ -107,6 +300,10 @@ class VocabularyDictionary {
     this.pendingForce = force;
     const task = (async () => {
       const manifest = await this.manifest();
+      if (manifest.schemaVersion === 3) {
+        throw dictionaryError("Resource-v3 uses bounded on-demand block lookup and does not need a full IndexedDB import.",
+          "DICTIONARY_CACHE_NOT_REQUIRED");
+      }
       const existing = !force && await this.cache.ready(manifest);
       if (existing) return existing;
       this.emit({ phase: "verifying", count: 0, total: manifest.entryCount });
@@ -198,6 +395,17 @@ class VocabularyDictionary {
     this.disposed = true;
     this.abortController.abort();
     this.worker?.terminate();
+    this.blockWorker?.terminate();
+    this.blockWorker = null;
+    this.blockWorkerReady = null;
+    if (this.blockWorkerUrl) URL.revokeObjectURL(this.blockWorkerUrl);
+    this.blockWorkerUrl = null;
+    for (const request of this.blockWorkerRequests.values()) {
+      request.reject(dictionaryError("Dictionary service was closed.", "DICTIONARY_CACHE_CANCELLED"));
+    }
+    this.blockWorkerRequests.clear();
+    this.blockCache.clear();
+    this.blockCacheBytes = 0;
     this.cache.close();
     this.listeners.clear();
   }

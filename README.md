@@ -14,7 +14,7 @@
 
 **0.12.0 版**整合 Vocabulary v2 工作台、语境、今日复习与可逆历史，并吸收 0.11.9 的编辑器观察隔离和 LingQ 阅读模式协调，以及 0.11.7/0.11.8 的词根显示和 Dexie 词典缓存。旧格式迁移、同步恢复与桌面／移动回归均保留独立边界；词典仍只在词条详情中按需查询，不进入 PDF 页面匹配或缩放热路径。
 
-**0.11.8 版**改用单个压缩词典资源＋本机 Dexie 4 / IndexedDB 查询缓存。Vault 的 `00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2/` 只保存 `manifest.json` 和 `entries.<SHA-256>.jsonl.gz`，ECDICT 许可证保留在上级目录。各设备首次使用时校验资源、在后台建立缓存并显示进度，后续查词按 key 读取 IndexedDB；缓存可删除重建，不参与 Sync。个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。资源构建、旧分片迁移与回滚说明见 [词典资源与缓存](DICTIONARY_RESOURCE.md)。
+**0.14 版**将 ECDICT 资源拆成按 key 范围校验的 resource-v3 块。Vault 的 `00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/` 保存 `manifest.json` 与内容寻址 gzip 块，许可证保留在 ECDICT 上级目录。查词时仅读取并解码命中范围；不会在启动或第一次查词时把整本词典导入内存或 IndexedDB。没有 v3 时，可继续使用已就绪的旧 v2 本机缓存。个人学习记录仍独立保存在 `00_Archive/21_VocabularyData/en.vocab.json`。构建、转换、迁移与回滚说明见 [词典资源与缓存](DICTIONARY_RESOURCE.md)。
 
 **0.11.7 版**增加 LingQ 词条卡的全词／词根显示：点击英语标题展开构词提示和全局模式切换，确认落盘后同步所有 Reader，重新打开保留设置。构词使用原创纯 JS 候选剥离、拼写还原和有限词基验证；不引入 WordDecoder 受限词库，未覆盖词保留完整显示。详见[数据来源与覆盖限制](WORD_MORPHOLOGY_SOURCES.md)。
 
