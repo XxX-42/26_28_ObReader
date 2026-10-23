@@ -263,7 +263,7 @@ test("annotation resolution rejects a changed canonical version for the same UUI
   assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
 });
 
-test("backlink verification checks the exact Markdown link plus current PDF source and Reader target", async () => {
+test("backlink verification checks the exact Markdown link and a closed Reader defers PDF target validation", async () => {
   const f = fixture();
   const target = { kind: "selection", id: "selection-test" };
   const link = `[[Books/fixture.pdf#${encodeReaderLinkFragment({ docKey: f.route.docKey,
@@ -277,9 +277,21 @@ test("backlink verification checks the exact Markdown link plus current PDF sour
   f.plugin.readerAnchorStore.get = async (docKey, id, documentId) => ({ anchorId: id, docKey, documentId,
     sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
   assert.equal((await f.host.resolveSource(anchor)).status, "verified");
+  const openViews = f.plugin.views;
+  f.plugin.views = [];
   const opened = await f.host.openPdfTarget(anchor);
   assert.equal(opened.status, "opening");
   assert.equal(f.opened.at(-1).target.id, target.id);
+  let deferredOpenAttempted = false;
+  const openPdf = f.plugin.openPdf;
+  f.plugin.openPdf = async () => {
+    deferredOpenAttempted = true;
+    throw Object.assign(new Error("the normal Reader byte check rejected a changed PDF"), { code: "SOURCE_CHANGED" });
+  };
+  await assert.rejects(f.host.openPdfTarget(anchor), { code: "SOURCE_CHANGED" });
+  assert.equal(deferredOpenAttempted, true, "closed Reader opens defer current-byte validation to the normal open path");
+  f.plugin.openPdf = openPdf;
+  f.plugin.views = openViews;
 
   f.texts.set("Notes/A.md", link.replace("selection-test", "other-selection"));
   assert.equal((await f.host.resolveSource(anchor)).status, "unresolved",
@@ -343,11 +355,18 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   const saved = await modal.confirm();
   assert.equal(saved.item.source.documentId, null);
   assert.equal(saved.sourceStatus.status, "VERIFIED", "first confirmed Markdown items get a durable external route");
+  const secondModal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  secondModal.promptInput.value = "Second Markdown question";
+  const secondSaved = await secondModal.confirm();
+  assert.equal(secondSaved.sourceStatus.status, "VERIFIED", "a second item from the same note reuses its proven file binding");
   const routing = await f.host.getMarkdownRouting();
   const owner = { ownerKind: "learning-item", ownerId: saved.item.itemId };
+  const secondOwner = { ownerKind: "learning-item", ownerId: secondSaved.item.itemId };
   const firstRoute = await routing.resolve(owner);
   assert.equal(firstRoute.status, "verified");
   assert.equal(firstRoute.currentPath, "Notes/A.md");
+  assert.equal((await routing.resolve(secondOwner)).bindingId, firstRoute.bindingId,
+    "two learning items from one live note share the same stable file binding");
   const contractBefore = await f.host.getSourceContract(saved.item.itemId);
   assert.equal(contractBefore.contract, "SemanticAnchorContractV1");
   assert.equal(contractBefore.status, "VERIFIED");
@@ -363,8 +382,12 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   assert.equal(movedRoute.status, "verified");
   assert.equal(movedRoute.currentPath, "Archive/B.md");
   assert.equal((await f.host.getSourceContract(saved.item.itemId)).sourcePath, "Archive/B.md");
+  assert.equal((await f.host.getSourceContract(secondSaved.item.itemId)).sourcePath, "Archive/B.md",
+    "a note rename moves the shared file binding for every associated learning item");
   const persisted = await (await f.host.getService()).getItem(saved.item.itemId);
   assert.deepEqual(persisted.source, sourceCanonical, "renaming changes only external routing metadata");
+  assert.deepEqual((await (await f.host.getService()).getItem(secondSaved.item.itemId)).source, secondSaved.item.source,
+    "the second learning source remains canonical and unchanged too");
   assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b)), learningBytes,
     "rename leaves canonical Learning shard and manifest bytes unchanged");
   assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b)), historyBytes,

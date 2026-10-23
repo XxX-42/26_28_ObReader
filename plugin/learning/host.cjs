@@ -273,6 +273,40 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
     }, { markdownFile: view.file });
   }
 
+  async function preparePdfTargetOpen(anchor, ownerContext = null) {
+    if (anchor?.evidenceKind === "backlink") {
+      const backlink = await verifyBacklink(anchor, ownerContext);
+      if (backlink.status !== "verified") {
+        throw unresolved(backlink.reason || "backlink-markdown-source-unverified");
+      }
+    }
+    const route = await routeFor(anchor);
+    const file = plugin.app.vault.getAbstractFileByPath(route.sourcePath);
+    if (!file || file.path !== route.sourcePath) throw unresolved("source-file-missing");
+    if (anchor.evidenceKind === "context") {
+      const context = await (await plugin.getVocabularyRuntime()).contexts.getContext(anchor.contextId);
+      if (!context || context.anchorId !== anchor.target.id || context.sourceFingerprint !== anchor.sourceHash) {
+        throw unresolved("context-source-missing-or-changed");
+      }
+    }
+    if (anchor.target.kind === "annotation") {
+      const view = liveView(anchor);
+      // An open Reader can reject stale/deleted rows immediately. A closed
+      // Reader performs its normal single byte-validation and target replay.
+      if (view && (view.annotationSyncPending || view.annotationStorageUnavailable ||
+          !rowsOf(view.annotationSnapshot).some(row => row.uuid === anchor.target.id &&
+            row.deleted !== true && row.pageIndex === anchor.pageIndex))) {
+        throw unresolved("annotation-deleted-or-unavailable");
+      }
+    } else if (anchor.target.kind === "selection") {
+      const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
+      if (!stored || stored.sourceHash !== anchor.sourceHash || stored.pageIdentity !== anchor.pageIdentity) {
+        throw unresolved("selection-anchor-mismatch");
+      }
+    }
+    return { route, file };
+  }
+
   async function openItemSource(itemId) {
     const item = await (await getService()).getItem(itemId);
     if (!item) throw unresolved("learning-item-missing");
@@ -292,29 +326,7 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
       if (!opened) throw unresolved('markdown-excerpt-changed-during-open');
       return { status:'opening', message:'已定位到来源摘录。' };
     }
-    const route = await routeFor(anchor);
-    if (anchor.evidenceKind === "context") {
-      const context = await (await plugin.getVocabularyRuntime()).contexts.getContext(anchor.contextId);
-      if (!context || context.anchorId !== anchor.target.id || context.sourceFingerprint !== anchor.sourceHash) {
-        throw unresolved("context-source-missing-or-changed");
-      }
-    }
-    if (anchor.target.kind === "annotation") {
-      const view = liveView(anchor);
-      // A closed Reader must do its single normal source-validation/replay.
-      // Do not add a second full Sidecar reload to the Source click hot path.
-      if (view && (view.annotationSyncPending || view.annotationStorageUnavailable ||
-          !rowsOf(view.annotationSnapshot).some(row => row.uuid === anchor.target.id &&
-            row.deleted !== true && row.pageIndex === anchor.pageIndex))) {
-        throw unresolved("annotation-deleted-or-unavailable");
-      }
-    } else if (anchor.target.kind === "selection") {
-      const stored = await plugin.readerAnchorStore.get(anchor.docKey, anchor.target.id, anchor.documentId);
-      if (!stored || stored.sourceHash !== anchor.sourceHash || stored.pageIdentity !== anchor.pageIdentity) {
-        throw unresolved("selection-anchor-mismatch");
-      }
-    }
-    const file = plugin.app.vault.getAbstractFileByPath(route.sourcePath);
+    const { route, file } = await preparePdfTargetOpen(anchor);
     // openPdf/applyPendingReaderTarget performs the current-byte and exact
     // UUID/Selection validation. We do not present an opening request as ACK.
     await plugin.openPdf(file, { ...anchor.target, docKey: anchor.docKey, documentId: anchor.documentId });
@@ -376,11 +388,7 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
   }
 
   async function openPdfTarget(anchor, ownerContext = null) {
-    const resolution = await resolve(anchor, ownerContext);
-    if (resolution.status !== "verified" || resolution.exact !== true) throw unresolved(resolution.reason || "target-unresolved");
-    const route = await routeFor(anchor);
-    const file = plugin.app.vault.getAbstractFileByPath(route.sourcePath);
-    if (!file || file.path !== route.sourcePath) throw unresolved("source-file-missing");
+    const { route, file } = await preparePdfTargetOpen(anchor, ownerContext);
     await plugin.openPdf(file, { ...anchor.target, docKey: anchor.docKey, documentId: anchor.documentId });
     return { status: "opening", sourcePath: route.sourcePath };
   }
