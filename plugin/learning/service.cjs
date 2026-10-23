@@ -333,9 +333,9 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     return loaded;
   }
 
-  async function verifyExactSource(source) {
+  async function verifyExactSource(source, verifier = verifySource) {
     let result;
-    try { result = await verifySource(clone(source)); }
+    try { result = await verifier(clone(source)); }
     catch (error) {
       throw codedError("LEARNING_SOURCE_STALE", "The selected source is no longer verified; the draft remains available.",
         { source }, error);
@@ -421,9 +421,10 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     return { status: drafts.delete(draftId) ? "cancelled" : "missing", writes: 0 };
   }
 
-  async function confirmDraft(draftId, { actionId, sourceGuard } = {}) {
+  async function confirmDraft(draftId, { actionId, sourceGuard, sourceVerifier } = {}) {
     const selectedActionId = validateActionId(actionId);
     if (sourceGuard !== undefined && typeof sourceGuard !== "function") throw new TypeError("Learning sourceGuard must be a function.");
+    if (sourceVerifier !== undefined && typeof sourceVerifier !== "function") throw new TypeError("Learning sourceVerifier must be a function.");
     return enqueue(async () => {
       const draft = drafts.get(draftId);
       if (!draft) throw codedError("LEARNING_DRAFT_MISSING", "The learning draft is no longer available.");
@@ -435,7 +436,7 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
         drafts.delete(draftId);
         return duplicate;
       }
-      await verifyExactSource(draft.source);
+      await verifyExactSource(draft.source, sourceVerifier || verifySource);
       const loaded = await load();
       const existing = loaded.records.find((item) => item.createActionId === selectedActionId);
       if (existing) {
@@ -474,7 +475,7 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
       // Planning awaits storage I/O. Recheck both authoritative source evidence
       // and the Host's captured draft identity after those awaits. This is a
       // pre-commit validity check, not an atomic transaction with source files.
-      await verifyExactSource(draft.source);
+      await verifyExactSource(draft.source, sourceVerifier || verifySource);
       if (sourceGuard && !(await sourceGuard())) {
         throw codedError("LEARNING_SOURCE_STALE", "The selected source changed while preparing confirmation; the draft remains available.");
       }
@@ -505,6 +506,13 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
       const loaded = await load();
       const item = loaded.records.find((candidate) => candidate.itemId === itemId);
       return item ? clone(item) : undefined;
+    });
+  }
+
+  async function listAllItems() {
+    return runtime.exclusive(async () => {
+      const loaded = await load();
+      return loaded.records.slice().sort((left, right) => left.itemId.localeCompare(right.itemId)).map(clone);
     });
   }
 
@@ -927,6 +935,7 @@ function createLearningService({ runtime, verifySource, now = () => new Date(), 
     cancelDraft,
     confirmDraft,
     getItem,
+    listAllItems,
     listDue,
     rate,
     endReviewSession,

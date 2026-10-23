@@ -13,6 +13,7 @@ const semanticPath = process.env.OBREADER_SEMANTIC_MODULE || fileURLToPath(new U
 const domainPath = process.env.OBREADER_LEARNING_WORKSPACE || fileURLToPath(new URL("../plugin/learning/workspace.cjs", import.meta.url));
 const semantic = require(semanticPath);
 const domain = require(domainPath);
+const { encodeReaderLinkFragment } = require("../plugin/reader-anchor-store.cjs");
 const hostPath = fileURLToPath(new URL("../plugin/learning/host.cjs", import.meta.url));
 const hostRequire = createRequire(hostPath);
 const hostModule = { exports: {} };
@@ -262,6 +263,36 @@ test("annotation resolution rejects a changed canonical version for the same UUI
   assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
 });
 
+test("backlink verification checks the exact Markdown link plus current PDF source and Reader target", async () => {
+  const f = fixture();
+  const target = { kind: "selection", id: "selection-test" };
+  const link = `[[Books/fixture.pdf#${encodeReaderLinkFragment({ docKey: f.route.docKey,
+    documentId: f.route.documentId, target })}|exact quote]]`;
+  f.texts.set("Notes/A.md", link);
+  const anchor = semantic.fromBacklink({ sourcePath: "Notes/A.md", target, docKey: f.route.docKey,
+    documentId: f.route.documentId, offset: 0, endOffset: link.length, line: 0, sourceText: link }, {
+    sourceHash: f.route.source.sourceHash, pageIndex: 0, pageIdentity: "page-test",
+    targetText: "exact quote", targetTextSource: "stored",
+  });
+  f.plugin.readerAnchorStore.get = async (docKey, id, documentId) => ({ anchorId: id, docKey, documentId,
+    sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
+  assert.equal((await f.host.resolveSource(anchor)).status, "verified");
+  const opened = await f.host.openPdfTarget(anchor);
+  assert.equal(opened.status, "opening");
+  assert.equal(f.opened.at(-1).target.id, target.id);
+
+  f.texts.set("Notes/A.md", link.replace("selection-test", "other-selection"));
+  assert.equal((await f.host.resolveSource(anchor)).status, "unresolved",
+    "a matching quote elsewhere cannot replace the exact linked target");
+  f.texts.set("Notes/A.md", link);
+  f.view.annotationSourceHash = "sha256-v1:changed-source";
+  const changedHash = await f.host.resolveContract(anchor);
+  assert.equal(changedHash.status, "TARGET_UNRESOLVED", "a changed Reader source hash cannot verify the backlink");
+  f.view.annotationSourceHash = f.route.source.sourceHash;
+  f.view.annotationPageIdentity.orderedPageIdentities[0] = "changed-page";
+  assert.equal((await f.host.resolveSource(anchor)).status, "unresolved", "a changed page identity cannot inherit the linked target");
+});
+
 test("mixed Review rows preserve canonical learning state and source fields", async () => {
   const f = fixture();
   const modal = await f.host.fromAnnotationRequest(f.view, f.request);
@@ -311,9 +342,33 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   modal.promptInput.value = "Markdown question";
   const saved = await modal.confirm();
   assert.equal(saved.item.source.documentId, null);
+  assert.equal(saved.sourceStatus.status, "VERIFIED", "first confirmed Markdown items get a durable external route");
+  const routing = await f.host.getMarkdownRouting();
+  const owner = { ownerKind: "learning-item", ownerId: saved.item.itemId };
+  const firstRoute = await routing.resolve(owner);
+  assert.equal(firstRoute.status, "verified");
+  assert.equal(firstRoute.currentPath, "Notes/A.md");
+  const contractBefore = await f.host.getSourceContract(saved.item.itemId);
+  assert.equal(contractBefore.contract, "SemanticAnchorContractV1");
+  assert.equal(contractBefore.status, "VERIFIED");
+  const sourceCanonical = saved.item.source;
+  const learningBytes = [...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b));
+  const historyBytes = [...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b));
+  const originalText = f.texts.get("Notes/A.md");
   f.files.delete("Notes/A.md"); f.files.set("Archive/B.md", { path: "Archive/B.md", extension: "md" });
-  f.texts.set("Archive/B.md", text);
-  await f.host.renamed("Notes/A.md", "Archive/B.md");
+  f.texts.delete("Notes/A.md"); f.texts.set("Archive/B.md", originalText);
+  const renamed = await f.host.renamed("Notes/A.md", "Archive/B.md");
+  assert.equal(renamed.status, "committed");
+  const movedRoute = await routing.resolve(owner);
+  assert.equal(movedRoute.status, "verified");
+  assert.equal(movedRoute.currentPath, "Archive/B.md");
+  assert.equal((await f.host.getSourceContract(saved.item.itemId)).sourcePath, "Archive/B.md");
+  const persisted = await (await f.host.getService()).getItem(saved.item.itemId);
+  assert.deepEqual(persisted.source, sourceCanonical, "renaming changes only external routing metadata");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b)), learningBytes,
+    "rename leaves canonical Learning shard and manifest bytes unchanged");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b)), historyBytes,
+    "rename does not append or rewrite ReviewHistory");
   assert.equal((await f.host.openItemSource(saved.item.itemId)).status,'opening');
   const opened = f.sourceOpenings[0];
   assert.equal(opened.row.sourcePath, "Archive/B.md");
@@ -327,6 +382,55 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   f.texts.set("Archive/B.md", "This source changed");
   await assert.rejects(f.host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
   assert.equal(f.sourceOpenings.length, 1);
+});
+
+test("repeated Markdown quotes stay tied to the captured range and a closed-app move stays unresolved", async () => {
+  const f = fixture();
+  const repeated = "quote here; exact excerpt; and again exact excerpt";
+  f.files.set("Notes/A.md", { path: "Notes/A.md", extension: "md" });
+  f.texts.set("Notes/A.md", repeated);
+  const start = repeated.lastIndexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Repeated quote";
+  const saved = await modal.confirm();
+  assert.equal(saved.sourceStatus.status, "VERIFIED");
+
+  // The same words remain elsewhere, but shifting the captured range cannot
+  // be repaired by quote search or fuzzy matching.
+  f.texts.set("Notes/A.md", `prefix ${repeated}`);
+  await assert.rejects(f.host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
+  f.texts.set("Notes/A.md", repeated);
+  f.files.delete("Notes/A.md");
+  f.files.set("Unobserved/Moved.md", { path: "Unobserved/Moved.md", extension: "md" });
+  f.texts.delete("Notes/A.md"); f.texts.set("Unobserved/Moved.md", repeated);
+  const owner = { ownerKind: "learning-item", ownerId: saved.item.itemId };
+  const route = await (await f.host.getMarkdownRouting()).resolve(owner);
+  assert.equal(route.status, "verified");
+  assert.equal(route.currentPath, "Notes/A.md", "a move without a Vault rename event does not rewrite the route");
+  assert.equal((await f.host.getSourceContract(saved.item.itemId)).status, "TARGET_UNRESOLVED");
+  const manual = await f.host.bindMarkdownSource(saved.item.itemId, "Unobserved/Moved.md");
+  assert.equal(manual.status, "VERIFIED", "only explicit manual binding permits this recovery");
+  assert.equal(manual.sourcePath, "Unobserved/Moved.md");
+});
+
+test("missing first-confirm route metadata is unresolved and never reconstructed from the anchor", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Missing route test";
+  const saved = await modal.confirm();
+  const before = await (await f.host.getMarkdownRouting()).resolve({ ownerKind: "learning-item", ownerId: saved.item.itemId });
+  assert.equal(before.status, "verified");
+  for (const path of [...f.adapter.files.keys()]) if (path.includes("/routing/markdown/")) f.adapter.files.delete(path);
+  const unresolved = await f.host.getSourceContract(saved.item.itemId);
+  assert.equal(unresolved.status, "TARGET_UNRESOLVED");
+  await assert.rejects(f.host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
+  assert.equal([...f.adapter.files.keys()].some(path => path.includes("/routing/markdown/")), false,
+    "missing metadata is not silently reconstructed from the canonical anchor");
 });
 
 test("Vocabulary Source uses one Context directly and the existing Context tab for multiple sources", async () => {

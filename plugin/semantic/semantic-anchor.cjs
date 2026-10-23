@@ -260,7 +260,9 @@ function createSemanticSourceResolver({
     };
   };
 
-  return async function resolveSource(anchor) {
+  // ownerContext is request-scoped routing context (for example a learning
+  // item ID). It is intentionally never copied into the SemanticAnchor.
+  return async function resolveSource(anchor, ownerContext = null) {
     if (!anchor || !anchor.target || !TARGET_KINDS.has(anchor.target.kind) ||
         !nonEmptyString(anchor.target.id) || !EVIDENCE_KINDS.has(anchor.evidenceKind)) {
       return fail(anchor, "semantic-anchor-invalid");
@@ -269,7 +271,7 @@ function createSemanticSourceResolver({
     let routeResult = null;
     if (!isMarkdown) {
       if (typeof verifyRouting !== "function") return fail(anchor, "routing-verifier-unavailable");
-      try { routeResult = await verifyRouting(anchor); }
+      try { routeResult = await verifyRouting(anchor, ownerContext); }
       catch { return fail(anchor, "routing-verifier-failed"); }
       if (!hasVerifiedEvidence(routeResult, anchor, { needsPage: Boolean(anchor.pageIdentity) })) {
         return fail(anchor, routeResult?.code || "source-unverified");
@@ -286,7 +288,7 @@ function createSemanticSourceResolver({
     const verifier = verifiers[anchor.evidenceKind];
     if (typeof verifier !== "function") return fail(anchor, `${anchor.evidenceKind}-verifier-unavailable`, !isMarkdown);
     let targetResult;
-    try { targetResult = await verifier(anchor); }
+    try { targetResult = await verifier(anchor, ownerContext); }
     catch { return fail(anchor, `${anchor.evidenceKind}-verifier-failed`, !isMarkdown); }
     const needsPage = Boolean(anchor.pageIdentity);
     if (!hasVerifiedEvidence(targetResult, anchor, { needsPage })) {
@@ -303,7 +305,7 @@ function createSemanticSourceResolver({
         const targetVerifier = anchor.target.kind === "annotation" ? verifyAnnotation : verifyReaderAnchor;
         if (typeof targetVerifier !== "function") return fail(anchor, "target-verifier-unavailable", true);
         let readerTargetResult;
-        try { readerTargetResult = await targetVerifier(anchor); }
+        try { readerTargetResult = await targetVerifier(anchor, ownerContext); }
         catch { return fail(anchor, "target-verifier-failed", true); }
         if (!hasVerifiedEvidence(readerTargetResult, anchor, { needsPage })) {
           return fail(anchor, readerTargetResult?.code || "target-unverified", true);
