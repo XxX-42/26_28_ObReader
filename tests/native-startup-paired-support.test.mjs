@@ -20,6 +20,12 @@ test('instrumentation rejects ambiguous input and summary requires five complete
   assert.equal(summarizeStartupPairs([]).syncInvocationUnder50ms, null);
   const rows = Array.from({ length: 5 }, (_, index) => ['v2-baseline', 'v3-candidate'].map((phase, variant) => ({ pair: index + 1, phase, status: 'MEASURED', packageSha256: phase, record: { status: 'settled', syncInvocationMs: variant ? 20 : 10 } }))).flat();
   assert.equal(summarizeStartupPairs(rows).syncInvocationUnder50ms, true);
+  assert.equal(summarizeStartupPairs(rows).rendererWindowOccupancyUnder50ms, null);
+  for (const row of rows) row.diagnostics = { rendererTrace: { status: 'MEASURED_RENDERER_WINDOW_OCCUPANCY', pid: 7, taskOccupancyMs: row.phase === 'v3-candidate' ? 45 : 10 } };
+  assert.equal(summarizeStartupPairs(rows).rendererWindowOccupancyUnder50ms, true);
+  assert.equal(summarizeStartupPairs(rows).pairs[0].addedRendererTaskOccupancyMs, 35);
+  rows[0].diagnostics.traceDataLoss = true;
+  assert.equal(summarizeStartupPairs(rows).rendererWindowOccupancyUnder50ms, null);
   rows[0].status = 'FAILED';
   assert.equal(summarizeStartupPairs(rows).syncInvocationUnder50ms, null);
   assert.equal(summarizeStartupPairs(rows).fullStartupAddedBlocking, 'NOT_MEASURED');

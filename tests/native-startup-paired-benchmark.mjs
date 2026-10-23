@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { instrumentStartupOnload, STARTUP_PROBE_KEY, summarizeStartupPairs } from './native-startup-paired-support.mjs';
+import { startStartupDiagnostics, stopStartupDiagnostics, summarizeRendererTrace } from './native-startup-trace-support.mjs';
 const [mode, ...args] = process.argv.slice(2);
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outside = (target, root) => { const relative = path.relative(path.resolve(root), path.resolve(target)); return relative === '..' || relative.startsWith(`..${path.sep}`); };
@@ -34,7 +35,9 @@ if (mode === '--prepare') {
   assert.ok(output && outside(output, repo) && outside(output, nativeConfig.vault));
   await writeFile(output, '', { flag: 'wx' });
   const report = { phase, pair, packageSha256, runId: randomUUID(), status: 'NOT_RUN', record: null, mainThreadCPU: 'NOT_MEASURED', fullStartupAddedBlocking: 'NOT_MEASURED' };
-  let browser, page, armed = false;
+  const collectTrace = process.env.OBREADER_NATIVE_STARTUP_TRACE === '1';
+  if (collectTrace) for (const suffix of ['trace.json', 'cpuprofile.json']) await writeFile(`${output}.${suffix}`, '', { flag: 'wx' });
+  let browser, page, session, diagnosticsState, armed = false;
   try {
     const { default: puppeteer } = await import('puppeteer-core');
     browser = await puppeteer.connect({ browserURL: nativeConfig.cdpUrl, defaultViewport: null });
@@ -44,27 +47,28 @@ if (mode === '--prepare') {
     page = matches[0];
     const identity = await page.evaluate(() => ({ vault: app.vault.adapter.basePath, configDir: app.vault.configDir }));
     assertNativeVaultIdentity(identity); report.identity = identity;
+    if (collectTrace) { session = await page.createCDPSession(); diagnosticsState = await startStartupDiagnostics(session); }
     await page.evaluate(({ key, runId }) => {
       if (app.plugins.plugins['pdf-web-reader'] || app.plugins.enabledPlugins.has('pdf-web-reader')) throw Error('Coordinator must disable plugin before arming');
       if (app.workspace.getLeavesOfType('pdf-web-reader-view').length) throw Error('Readers must be closed');
       const symbol = Symbol.for(key);
       if (globalThis[symbol]) throw Error('Probe already armed');
-      const probe = { runId, record: null, manifests: [], longTasks: [], longTaskSupported: PerformanceObserver.supportedEntryTypes.includes('longtask') };
+      const probe = { runId, mark: suffix => performance.mark(`obreader-startup:${runId}:${suffix}`), record: null, manifests: [], longTasks: [], longTaskSupported: PerformanceObserver.supportedEntryTypes.includes('longtask') };
       const adapter = app.vault.adapter, original = adapter.read;
       const ownDescriptor = Object.getOwnPropertyDescriptor(adapter, 'read');
       const wrapped = function(resourcePath, ...rest) {
         if (!String(resourcePath).endsWith('/manifest.json')) return original.call(this, resourcePath, ...rest);
         const start = performance.now();
         const returned = original.call(this, resourcePath, ...rest);
-        const row = { path: resourcePath, syncInvocationMs: performance.now() - start };
+        const row = { path: resourcePath, startedAt: start, syncInvocationMs: performance.now() - start };
         probe.manifests.push(row);
-        return Promise.resolve(returned).then(value => { row.asyncElapsedMs = performance.now() - start; return value; }, error => { row.asyncElapsedMs = performance.now() - start; row.error = String(error); throw error; });
+        return Promise.resolve(returned).then(value => { row.endedAt = performance.now(); row.asyncElapsedMs = performance.now() - start; return value; }, error => { row.endedAt = performance.now(); row.asyncElapsedMs = performance.now() - start; row.error = String(error); throw error; });
       };
       adapter.read = wrapped;
       let observer;
       if (probe.longTaskSupported) try { observer = new PerformanceObserver(list => { for (const entry of list.getEntries()) probe.longTasks.push({ startTime: entry.startTime, duration: entry.duration }); }); observer.observe({ type: 'longtask' }); } catch (error) { observer?.disconnect(); probe.longTaskSupported = false; probe.longTaskError = String(error); }
-      probe.restore = () => { observer?.disconnect(); if (adapter.read !== wrapped) throw Error('Adapter read changed while armed; refuse overwrite'); if (ownDescriptor) Object.defineProperty(adapter, 'read', ownDescriptor); else delete adapter.read; delete globalThis[symbol]; };
-      globalThis[symbol] = probe;
+      probe.restore = () => { observer?.disconnect(); if (adapter.read !== wrapped) throw Error('Adapter read changed while armed; refuse overwrite'); if (ownDescriptor) Object.defineProperty(adapter, 'read', ownDescriptor); else delete adapter.read; for (const suffix of ['armed', 'onload-start', 'sync-return', 'onload-settled', 'onload-failed', 'quiet-end']) performance.clearMarks(`obreader-startup:${runId}:${suffix}`); delete globalThis[symbol]; };
+      globalThis[symbol] = probe; probe.mark('armed');
     }, { key: STARTUP_PROBE_KEY, runId: report.runId });
     armed = true;
     console.log('ARMED: coordinator may now enable the already-staged instrumented package once; no deployment or toggle is performed by collector.');
@@ -74,15 +78,26 @@ if (mode === '--prepare') {
         if (app.vault.adapter.basePath !== vault) throw Error('Vault changed');
         const probe = globalThis[Symbol.for(key)];
         if (probe?.runId !== runId) throw Error('Probe ownership changed');
-        return { record: probe.record, manifests: probe.manifests, longTasks: probe.longTasks, longTaskSupported: probe.longTaskSupported };
+        const now = performance.now();
+        const latestWork = Math.max(probe.record?.settledAt || now, ...probe.manifests.map(row => row.endedAt || now));
+        const quiet = probe.record?.status === 'settled' && probe.manifests.every(row => Number.isFinite(row.endedAt)) && now - latestWork >= 250;
+        if (quiet && !probe.quietEnd) { probe.quietEnd = now; probe.mark('quiet-end'); }
+        return { quietEnd: probe.quietEnd || null, quietPolicy: 'onload settled + all observed manifest reads settled + 250ms without new observed manifest activity', record: probe.record, manifests: probe.manifests, longTasks: probe.longTasks, longTaskSupported: probe.longTaskSupported };
       }, { key: STARTUP_PROBE_KEY, vault: nativeConfig.vault, runId: report.runId });
       Object.assign(report, snapshot);
-      if (snapshot.record && snapshot.record.status !== 'started') { report.status = snapshot.record.status === 'settled' ? 'MEASURED' : 'FAILED'; break; }
+      if (snapshot.record?.status === 'failed' || snapshot.quietEnd) { report.status = snapshot.record.status === 'settled' ? 'MEASURED' : 'FAILED'; break; }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (report.status === 'NOT_RUN') throw Error('Timed out waiting for actual instrumented onload; no retries');
   } catch (error) { report.status = 'FAILED'; report.error = String(error.stack || error); process.exitCode = 1; }
   finally {
+    if (diagnosticsState) try {
+      const diagnostics = await stopStartupDiagnostics(session, diagnosticsState);
+      if (diagnostics.traceRaw !== undefined) { await writeFile(`${output}.trace.json`, diagnostics.traceRaw); try { diagnostics.rendererTrace = summarizeRendererTrace(JSON.parse(diagnostics.traceRaw), report.runId); } catch (error) { diagnostics.traceParseError = String(error); } delete diagnostics.traceRaw; }
+      if (diagnostics.cpuProfile) { await writeFile(`${output}.cpuprofile.json`, JSON.stringify(diagnostics.cpuProfile)); delete diagnostics.cpuProfile; diagnostics.cpuProfilePath = `${output}.cpuprofile.json`; }
+      diagnostics.tracePath = `${output}.trace.json`;
+      report.diagnostics = diagnostics;
+    } catch (error) { report.diagnosticsError = String(error); }
     if (armed) try { await page.evaluate(({ key, runId }) => { const probe = globalThis[Symbol.for(key)]; if (probe?.runId !== runId) throw Error('Probe ownership changed'); probe.restore(); }, { key: STARTUP_PROBE_KEY, runId: report.runId }); } catch (error) { report.cleanupError = String(error); report.status = 'FAILED'; process.exitCode = 1; }
     await browser?.disconnect();
     await writeFile(output, JSON.stringify(report, null, 2));
