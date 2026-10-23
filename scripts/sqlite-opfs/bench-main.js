@@ -7,7 +7,7 @@ const runId = params.get("runId");
 const mode = params.get("mode") || "primary";
 const sampleKeys = ["on", "mostly", "subscription", "details", "about"];
 const missingKey = "__sqlite_opfs_benchmark_missing_key__";
-const endpoint = `/bench-worker.js?variant=${encodeURIComponent(variant)}&runId=${encodeURIComponent(runId)}`;
+const endpoint = `/bench-worker.js?sqlite3.dir=%2Fruntime&variant=${encodeURIComponent(variant)}&runId=${encodeURIComponent(runId)}`;
 
 function snapshotMemory() {
   const memory = performance.memory;
@@ -196,7 +196,8 @@ if (mode === "secondary") {
     longTasks.stop();
     client.close();
     window.__benchmarkResult = {
-      status: "PASS",
+      status: window.__secondaryResult?.status === "PASS" ? "PASS" : "FAIL",
+      singleWorkerStatus: "PASS",
       variant,
       runId,
       userAgent: navigator.userAgent,
@@ -247,7 +248,7 @@ if (mode === "secondary") {
         .reduce((sum, entry) => sum + (entry.transferSize || entry.encodedBodySize || 0), 0),
       profileBytes: null,
     };
-    window.__benchState = { phase: "done", status: "PASS" };
+    window.__benchState = { phase: "done", status: window.__benchmarkResult.status };
   })().catch(error => {
     longTasks.stop();
     client.close();
