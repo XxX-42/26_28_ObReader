@@ -1533,6 +1533,79 @@ async function assertIsolationEvidence() {
     .filter(file => file.includes("/wal/")).map(file => file.split("/wal/")[1]?.split("/")[0]).filter(Boolean))];
 }
 
+async function diagnoseBacklinkCorrelation() {
+  const pdfPath = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+  const { frame } = await readerFrame(pdfPath);
+  await frame.waitForFunction(() => PDFViewerApplication.pdfDocument && PDFViewerApplication.pdfViewer.pagesCount > 1);
+  await page.evaluate(pluginId => {
+    const plugin = app.plugins.plugins[pluginId];
+    const trace = { wire: [], originals: [] };
+    const copy = value => { const { token, ...fields } = value || {}; return { ...fields, tokenPresent: typeof token === "string" }; };
+    trace.listener = event => {
+      const view = [...plugin.views].find(view => view.iframe?.contentWindow === event.source);
+      if (view && /reader-backlink-page/u.test(event.data?.type || "")) trace.wire.push({ direction: "viewer-to-host",
+        authenticatedSource: true, tokenMatches: event.data.token === view.token, message: copy(event.data) });
+    };
+    window.addEventListener("message", trace.listener, true);
+    for (const view of plugin.views) {
+      const original = view.postToViewer;
+      trace.originals.push({ view, original });
+      view.postToViewer = function(message, ...args) {
+        if (/reader-backlink-page/u.test(message?.type || "")) trace.wire.push({ direction: "host-to-viewer",
+          tokenMatches: message.token === this.token, message: copy(message) });
+        return original.call(this, message, ...args);
+      };
+    }
+    window.__nativeBacklinkWireDiag = trace;
+  }, PLUGIN_ID);
+  await frame.evaluate(() => {
+    const proto = window.PdfReaderInputRuntime.BacklinkInteractionController.prototype;
+    const trace = { calls: [], originals: {} };
+    for (const name of ["beginPageRequest", "isCurrentPageRequest", "setPageResults"]) {
+      const original = proto[name]; trace.originals[name] = original;
+      proto[name] = function(message, ...args) {
+        const before = this.latestPageRequest ? { ...this.latestPageRequest } : null;
+        const result = original.call(this, message, ...args);
+        trace.calls.push({ name, message: { ...message }, pendingBefore: before,
+          pendingAfter: this.latestPageRequest ? { ...this.latestPageRequest } : null, result });
+        return result;
+      };
+    }
+    window.__nativeBacklinkControllerDiag = trace;
+  });
+  try {
+    for (const number of [2, 1]) {
+      await frame.click("#pageNumber");
+      await page.keyboard.down("Meta"); await page.keyboard.press("a"); await page.keyboard.up("Meta");
+      await page.keyboard.type(String(number)); await page.keyboard.press("Enter");
+      await frame.waitForFunction(number => PDFViewerApplication.pdfViewer.currentPageNumber === number, {}, number);
+      await waitFor(`real page ${number} request wire`, () => page.evaluate(() => window.__nativeBacklinkWireDiag.wire),
+        rows => rows.some(row => row.direction === "host-to-viewer" && row.message.pageNumber === number), 8000).catch(error => {
+          report.backlinkDiagnosticWaitErrors ||= []; report.backlinkDiagnosticWaitErrors.push(String(error));
+        });
+    }
+    report.backlinkCorrelationDiagnostic = {
+      wire: await page.evaluate(() => window.__nativeBacklinkWireDiag.wire),
+      controllerCalls: await frame.evaluate(() => window.__nativeBacklinkControllerDiag.calls),
+      finalBadgeState: await frame.evaluate(() => ({ page: PDFViewerApplication.pdfViewer.currentPageNumber,
+        badges: [...document.querySelectorAll(".pdfReaderBacklinkPageBadge")].map(node => node.textContent) })),
+    };
+    await recordScreen("backlink-correlation-diagnostic-page1");
+  } finally {
+    await frame.evaluate(() => {
+      const trace = window.__nativeBacklinkControllerDiag;
+      for (const [name, original] of Object.entries(trace.originals)) window.PdfReaderInputRuntime.BacklinkInteractionController.prototype[name] = original;
+      delete window.__nativeBacklinkControllerDiag;
+    });
+    await page.evaluate(() => {
+      const trace = window.__nativeBacklinkWireDiag;
+      window.removeEventListener("message", trace.listener, true);
+      for (const { view, original } of trace.originals) view.postToViewer = original;
+      delete window.__nativeBacklinkWireDiag;
+    });
+  }
+}
+
 async function exerciseNavigationDirections() {
   const pdfRoute = await currentPdfRoute(learningItems.highlight);
   const mdFlow = report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
@@ -1885,11 +1958,12 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
-  if (process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only")) {
+  if (process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic")) {
     report.sourceCheckpointOnly = true;
     report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
     report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
-    if (process.argv.includes("--navigation-directions-only")) await exerciseNavigationDirections();
+    if (process.argv.includes("--backlink-correlation-diagnostic")) await diagnoseBacklinkCorrelation();
+    else if (process.argv.includes("--navigation-directions-only")) await exerciseNavigationDirections();
     else for (const flow of report.uiFlows) {
       const item = await readItem(flow.itemId);
       assert.ok(item, "Source checkpoint reuses an existing confirmed Review item.");
