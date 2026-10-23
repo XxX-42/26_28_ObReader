@@ -50,7 +50,10 @@ Independent Node `readNativeWalEvidence` validated the persisted JSONL/anchor
 integrity and recovered exactly the expected Highlight UUID. Source PDF SHA-256
 after rename/move remains
 `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`.
-All 371 pre-existing PDFData/VocabularyData files retain their original hashes.
+The 371-file count refers to the default `00_Archive/20_PDFData` tree. The
+default `00_Archive/21_VocabularyData` directory was absent in the frozen
+pre-initialization inventory; isolated Vocabulary/Context/Review data is checked
+separately under the plugin's test-only Native isolation directory.
 No domain APIs created or confirmed annotations, Context or Review records.
 
 Full local evidence and before/after hashes:
@@ -140,7 +143,8 @@ window and plugin reloads are not substituted for this gate.
 
 At the final location source PDF SHA-256 is still the original value above.
 Independent WAL replay passes, original non-route Context/Review/History bytes
-match the historical RED baseline, and all 371 pre-existing files are unchanged.
+match the historical RED baseline, and all 371 files in the default
+`00_Archive/20_PDFData` tree are unchanged.
 Combined moves are now verified; remaining blockers are aggregate page badge
 and the independently owned-process restart coverage.
 
@@ -372,3 +376,104 @@ listeners were explicitly removed afterward. No product code was changed.
 All five current receipts now validate. Controlled close/replay, source dual
 hashes, 371 default-tree and 11 canonical non-route hash checks pass. Stage7 is
 not a claim that the stale receipt or interrupted clicks passed.
+
+## Stage 8 complete and final integrity — 2026-10-24 CST
+
+The final stage used an independently owned Obsidian process and the same
+existing Test Vault. Process identity was main PID `35280`, renderer PID
+`12696`, CDP port `11871`, profile
+`windows-native-014-evidence/owned-profile-20261023-1546`; the app page identified
+`D:/Documents/Obsidian/测试插件`. At cold start, the installed plugin registry
+was `0.14.0`, disabled/unloaded, and the isolation installer had not yet run.
+The 1433 isolation was installed before enabling the plugin. After the stage
+matrix and exact Markdown source check, the plugin was disabled/unloaded and
+fixture Markdown leaves were cleaned up. The shared Obsidian process and other
+Vault were not used for this test.
+
+Installed runtime and release package binding was checked on disk. All three
+installed files match the built `dist/pdf-web-reader` files byte-for-byte:
+
+| File | SHA-256 |
+|---|---|
+| `main.js` | `a7d74076383c4dc0cbc5c161021cfb72cc0556ad48a663a8b79dd6f3fd78137b` |
+| `manifest.json` | `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675` |
+| `styles.css` | `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea` |
+
+All five real UI directions passed again after the process restart:
+
+1. Today Review → the persisted Highlight UUID.
+2. Context tab → the persisted full-sentence Context anchor.
+3. Annotation Sidebar → the same selected Highlight UUID.
+4. Page backlink badge → the exact current Markdown link range.
+5. Rendered Markdown link → the persisted PDF Selection Anchor.
+
+The final exact Markdown slice check used the already-persisted companion run
+1515 item. The actual source-opening entry returned `result: true` for
+`source-fixed-closedmove.md`, selected the exact 65-character text
+`Windows Native queued Markdown routes preserve this exact source.` at
+`{line:0,ch:0}`–`{line:0,ch:65}`. This was a source-location readback; it did not
+create a learning item or edit the Markdown file.
+
+| Stage | Real Vault transition | Renderer generation | Matrix |
+|---|---|---|---|
+| 1 | Rename PDF to `closed-pair/reader-stage1.pdf` | `4da8ea68-ded1-47da-b19d-105c2beafd3a` | 5/5 PASS |
+| 2 | Move PDF into `stage2/` | `2d8a03ea-b36c-4712-934d-fb89851b39e3` | 5/5 PASS |
+| 3 | Rename Markdown to `roundtrip-stage3.md` | `75c3e414-8e0f-41d6-b1f1-db1e25319dfc` | 5/5 PASS |
+| 4 | Move Markdown into `stage4/` | `e33634b4-fb89-4deb-9b13-5bded528036b` | 5/5 PASS |
+| 5 | Move open PDF and Markdown into `stage5/` | `d3e8d620-3bad-427d-a73a-d0405339a7bc` | 5/5 PASS |
+| 6 | Close Reader/Markdown, then move both into `stage6/` | `e8571741-e02b-4c7a-a613-2b7bfbfa0360` | 5/5 PASS |
+| 7 | Move open PDF and Markdown into `stage7/` | `2a61b1b2-b1ec-46b7-b710-e9ee38be9e40` | 5/5 PASS |
+| 8 | Cold restart owned process; reopen at `stage7/` paths | `6981c55d-3f94-45bc-8a99-9684c97c88fb` | 5/5 PASS |
+
+The stage 1–7 UI receipts use owned main PID `39052`; stage 8 uses PID `35280`.
+Each matrix receipt reports `passed:true` and is bound by the test-only
+`native-windows-stage-receipts.mjs` validator to its own process, PDF target,
+Markdown path/range and Sidebar UUID. It rejects stale prior-stage backlink
+receipts. The earlier stage 7 stale-receipt REDs and interrupted clicks remain
+preserved; only the later fresh stage 7 badge click is counted.
+
+The final independent disk integrity receipt
+`final-eight-stage-integrity.json` reports:
+
+- Exact membership and original SHA-256 match for all 371 files under the
+  default `00_Archive/20_PDFData` tree; `21_VocabularyData` remains absent,
+  matching the pre-test inventory.
+- Zero changes across 11 original isolated canonical files and 3 companion-run
+  canonical files.
+- WAL v3.2 JSONL replay is complete; the verified snapshot matches replay and
+  watermarks; one live annotation is recovered with the original UUID
+  `a2d1ef04-6750-4d3a-97a4-c67a0ed0b148`.
+- Source PDF SHA-256 remains
+  `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`; XXH64
+  remains `xxh64-v1:ffbe0d4d212547e5`.
+
+One earlier integrity-check attempt incorrectly treated the absent default
+`00_Archive/21_VocabularyData` folder as a test failure. That was a test
+precondition mistake, not a product failure. The corrected checker compares the
+exact pre-test `existing-data-before.json` inventory against the actual
+`20_PDFData` tree, explicitly verifies that the absent `21_VocabularyData`
+folder is still absent, and checks isolated canonical data separately. The
+corrected final check passed; no Vault data was created, removed or rewritten
+to satisfy it.
+
+Evidence files remain in the external test evidence folder
+`D:/Documents/Codes/2026_7_PdfWebReader/windows-native-014-evidence/`; the
+following SHA-256 values bind the committed report to the saved receipts:
+
+| Receipt | SHA-256 |
+|---|---|
+| `final-eight-stage-integrity.json` | `5c244eb825dc3db3957cec104aab54530ddf4e68911982dbc40b6232c55daa2e` |
+| `stage1-verified-matrix.json` | `c582c4d93d22ceed80a0eb9a6d72c22bd63ebb199392e077b16da359f148b48a` |
+| `stage2-verified-matrix.json` | `9c7e752608d0615e2453dc27d479e2706aad0df459d17db027753d3cd3a23406` |
+| `stage3-verified-matrix.json` | `c437e63db0185271ae8fe188850c38bd8532da3f4c43c32f0522f254205956c3` |
+| `stage4-verified-matrix.json` | `d60cbd6d2dfdc685ffae952217bb9a4b3c4e8874cae502eb2bd68c6f95264350` |
+| `stage5-verified-matrix.json` | `9d497a3aeffd0ef760f81928c3b7d9ab7045a63b27c0915866f7629a5a765e6a` |
+| `stage6-verified-matrix.json` | `2e72ee0e6ae001f244ebeeff9ff3ec5cc646d22ce7ce2d66700c787d800805b4` |
+| `stage7-verified-matrix.json` | `073e900787de178e7710d74f0445c509227ff3b17f48b8a8a25bdfa00a60bfb4` |
+| `stage8-verified-matrix.json` | `2eedb023b7f80b3e5e1747b4b5b279cbcca29eb6ddcdf3535ec808d724f9437d` |
+| `stage8-markdown-learning-35280-source-evidence.json` | `c076f13501078f23be413b38941a27dd3f1d169c5b6617c53dc949b304958877` |
+
+This closes the Windows Native eight-stage, five-direction navigation matrix
+for this existing test fixture. It does not validate Windows Editor-mode
+Cmd-click, macOS, physical iPadOS, or real multi-client Sync. No full `npm test`
+or UI rerun was performed during this report-only continuation.
