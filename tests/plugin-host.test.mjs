@@ -24,6 +24,7 @@ function createHarness({
   storageProtocol = "format3",
 } = {}) {
   const notices = [];
+  const openedModals = [];
   const files = new Map();
   const leaves = [];
   const vaultEvents = new Map();
@@ -375,10 +376,20 @@ function createHarness({
   class Modal {
     constructor(app) {
       this.app = app;
-      this.contentEl = { empty() {}, createEl() { return {}; } };
+      this.contentEl = {
+        children: [],
+        empty() { this.children = []; },
+        createEl(tag, options = {}) {
+          const listeners = new Map();
+          const element = { tag, textContent: options.text || "", listeners,
+            addEventListener(type, callback) { listeners.set(type, callback); } };
+          this.children.push(element);
+          return element;
+        },
+      };
     }
-    open() { this.onOpen?.(); }
-    close() { this.onClose?.(); }
+    open() { openedModals.push(this); this.onOpen?.(); }
+    close() { this.closed = true; this.onClose?.(); }
   }
 
   const obsidian = {
@@ -563,6 +574,7 @@ function createHarness({
     files,
     leaves,
     notices,
+    openedModals,
     plugin,
     TFile,
     WorkspaceLeaf,
@@ -5049,5 +5061,103 @@ test("Sidebar and Backlink facades delegate to the current effective Reader with
     assert.equal(api.get(uuid), null);
     assert.equal(await api.navigate(uuid), false);
     assert.equal(api.createReviewDraft(uuid), false);
+  } finally { harness.plugin.onunload(); }
+});
+
+
+function pageBadgeFixture(harness, rows) {
+  const identity = { documentId: "page-badge-runtime", openRequest: 3, rendererGeneration: "page-badge-generation" };
+  const view = {
+    annotationDocument: { docKey: "page-badge-doc", documentId: "page-badge-stable-document" },
+    annotationPageIdentity: { orderedPageIdentities: ["page-badge-one", "page-badge-two"] },
+    annotationHydrationAllowed: true,
+    isCurrentReaderAnchorIdentity: candidate => Object.keys(identity).every(key => candidate[key] === identity[key]),
+  };
+  const opened = [];
+  let indexReads = 0;
+  harness.plugin.readerBacklinkIndexReady = true;
+  harness.plugin.getReaderBacklinkPageIndex = async () => {
+    indexReads++;
+    return { value: { forPage: page => ({ rows: page === "page-badge-one" ? rows : [] }) } };
+  };
+  harness.plugin.openReaderBacklinkSource = async (row, options) => { opened.push({ row, options }); return true; };
+  const message = { ...identity, requestId: "page-badge-open", targetKind: "page", targetId: "page-badge-one",
+    pageNumber: 1, pageIdentity: "page-badge-one" };
+  return { view, message, opened, indexReads: () => indexReads };
+}
+
+test("page backlink badge opens the page's sole selection source", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const row = { sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "selection-one" } };
+    const f = pageBadgeFixture(harness, [row]);
+    assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(f.view, f.message), true);
+    assert.deepEqual(f.opened, [{ row, options: { source: "viewer" } }],
+      "page aggregation must include a selection backlink even without any page-kind link");
+    assert.equal(f.indexReads(), 1);
+    assert.equal(harness.openedModals.length, 0);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("page backlink badge lists every page target source and opens the chosen row", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const rows = [
+      { sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "selection-one" } },
+      { sourcePath: "Notes/Annotation.md", target: { kind: "annotation", id: "annotation-one" } },
+      { sourcePath: "Notes/Page.md", target: { kind: "page", id: "page-badge-one" } },
+    ];
+    const f = pageBadgeFixture(harness, rows);
+    assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(f.view, f.message), true);
+    assert.equal(f.opened.length, 0, "multiple sources require an explicit choice");
+    assert.equal(harness.openedModals.length, 1);
+    const modal = harness.openedModals[0];
+    assert.deepEqual(modal.rows, rows);
+    const buttons = modal.contentEl.children.filter(element => element.tag === "button");
+    assert.deepEqual(buttons.map(button => button.textContent), rows.map(row => row.sourcePath));
+    buttons[1].listeners.get("click")();
+    assert.deepEqual(f.opened, [{ row: rows[1], options: { source: "viewer-modal" } }]);
+    assert.equal(modal.closed, true);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("page backlink badge rejects forged target IDs and preserves current-page and warm-index guards", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const f = pageBadgeFixture(harness, [{ sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "selection-one" } }]);
+    for (const altered of [
+      { rendererGeneration: "old-generation" }, { openRequest: 2 },
+      { pageIdentity: "page-badge-two" }, { pageNumber: 2 },
+    ]) {
+      assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(f.view, { ...f.message, ...altered }), false);
+    }
+    harness.plugin.readerBacklinkIndexReady = false;
+    assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(f.view, f.message), false);
+    assert.equal(f.indexReads(), 0, "rejected/cold requests cannot start a full-Vault index scan");
+    harness.plugin.readerBacklinkIndexReady = true;
+    assert.equal(await harness.plugin.handleReaderBacklinkTargetOpen(f.view, { ...f.message, targetId: "forged-page" }), false,
+      "aggregation must require page target ID to equal the verified page identity");
+    assert.equal(f.opened.length, 0);
+    assert.equal(harness.openedModals.length, 0);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("page backlink badge cannot open sources after asynchronous session revocation", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const row = { sourcePath: "Notes/Selection.md", target: { kind: "selection", id: "selection-one" } };
+    const f = pageBadgeFixture(harness, [row]);
+    let release;
+    harness.plugin.getReaderBacklinkPageIndex = () => new Promise(resolve => { release = resolve; });
+    const pending = harness.plugin.handleReaderBacklinkTargetOpen(f.view, f.message);
+    f.view.annotationHydrationAllowed = false;
+    release({ value: { forPage: () => ({ rows: [row] }) } });
+    assert.equal(await pending, false);
+    assert.equal(f.opened.length, 0);
+    assert.equal(harness.openedModals.length, 0);
   } finally { harness.plugin.onunload(); }
 });
