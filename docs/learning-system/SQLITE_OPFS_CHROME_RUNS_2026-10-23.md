@@ -35,10 +35,15 @@ Both complete ten-trial sets are retained; no failed trials were removed or repl
 
 SAHpool's second worker cannot acquire a SyncAccessHandle while the primary owns one: `NoModificationAllowedError: Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file.` The failure occurs during pool initialization. It does not invalidate the separately recorded single-worker query and rebuild results, but prevents declaring complete acceptance.
 
+The cold user-facing work includes database installation/copy, open, and first query; the 13.8–19.475 ms OPFS query alone is not a first-user-lookup latency. The table preserves copy/open/query and broader cold-start sums reconstructed from sequential recorded stage durations. They exclude page navigation, fixture-report fetch, browser startup, and uninstrumented gaps; no continuous navigation-to-result timer was recorded.
+
 All timings below are the minimum–maximum of five per-trial values, milliseconds. First exact-key query ran immediately after initial open, before integrity/count/sample scans. Warm latencies are worker round-trip wall times and include message scheduling. Zero/submillisecond values are limited by browser clock resolution.
 
 | Metric | Standard OPFS | SAHpool |
 | --- | ---: | ---: |
+| Cold install/copy + open + first query, round-trip sum | 33.680–60.430 | 27.5–42.0 |
+| Cold DB fetch + hash + install/open + first query, stage sum | 204.000–306.560 | 230.7–303.9 |
+| Above plus worker runtime initialization, stage sum | 311.800–532.810 | 346.8–450.0 |
 | SQLite runtime init | 72.680–249.535 | 113.6–158.1 |
 | Prebuilt import | 15.305–32.425 | 14.7–19.3 |
 | Initial open | 3.985–6.535 | 2.6–8.4 |
@@ -60,6 +65,6 @@ All timings below are the minimum–maximum of five per-trial values, millisecon
 
 Storage estimates are browser accounting snapshots before terminating the main worker; they are not identical to physical file sizes or post-cleanup steady-state size. Profile bytes are the resulting fresh-profile footprint, with no empty-profile baseline subtraction. Reported runtime bytes are server response-body sizes, not wire headers or compressed network cost. Raw logs include individual query times, optional main-page JS heap snapshots, requests, all failures, and per-trial profiles.
 
-CPU time was not measured: inspection found no CPU instrumentation in this harness. Wall times and Long Tasks must not be presented as CPU time. Main-page heap snapshots also do not measure worker/WASM memory. No Native compatibility conclusion follows from these ordinary-Chrome results.
+CPU time is `NOT_MEASURED`: inspection found no CPU instrumentation in this harness. Wall times and Long Tasks must not be presented as CPU time. Main-page heap snapshots also do not measure worker/WASM memory. The separately recorded Native app probe had crossOriginIsolated=false. Standard OPFS here used local COOP/COEP with crossOriginIsolated=true, so its PASS does not establish Native compatibility. SAHpool's multi-window failures mean it has not met production acceptance. No Native compatibility conclusion follows from these ordinary-Chrome results.
 
 Validation: both scripts passed `node --check`; `git diff --check` passed; both actual predeclared ten-trial sets completed. All large evidence remains outside Git.
