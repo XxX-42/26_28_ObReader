@@ -1,0 +1,12 @@
+{
+  "at": "2026-10-23T19:35:04.633Z",
+  "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-exclusive-20261024-0120",
+  "sharedPid": 99806,
+  "disabledTestState": {
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "loaded": false,
+    "enabled": [],
+    "readers": 0
+  },
+  "defaultFiles": 127
+}

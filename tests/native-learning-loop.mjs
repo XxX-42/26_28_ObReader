@@ -38,7 +38,9 @@ const FIXTURE_PDF = path.join(ROOT, "tests", "fixtures", "tracemonkey.pdf");
 const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
 const CONTEXT_WORD = "Dynamic";
+const attachedExistingTestVault = process.argv.includes("--attached-existing-test-vault");
 const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
+assert.ok(!attachedExistingTestVault || !resumePath, "Attached mode requires a fresh unique run and must not mutate the preserved run.");
 const resumeEvidence = resumePath ? JSON.parse(await readFile(resumePath, "utf8")) : null;
 if (resumeEvidence) {
   assert.equal(resumeEvidence.cleanup?.status, "complete");
@@ -582,9 +584,10 @@ async function findOwnedVisibleDialog(selector) {
   native.assertNativeVaultIdentity(await appIdentity(), native.nativeConfig);
   const candidates = await browser.pages();
   const hosts = candidates.filter(candidate => candidate.url() === APP_URL);
-  assert.equal(hosts.length, 1, "Dialog ownership requires exactly one owned vault renderer.");
+  if (!attachedExistingTestVault) assert.equal(hosts.length, 1, "Dialog ownership requires exactly one owned vault renderer.");
   const matches = [];
   for (const candidate of candidates) {
+    if (attachedExistingTestVault && candidate !== page && !(await candidate.title()).includes(" - ObReader-Apple-Test - ")) continue;
     const state = await candidate.evaluate(selector => {
       const nodes = [...document.querySelectorAll(selector)];
       return { title: document.title, popout: document.body?.classList.contains("is-popout-modal"),
@@ -679,6 +682,7 @@ async function visibleText(selector, target = page) {
 async function findSettingsWindow() {
   const pages = await browser.pages();
   for (const candidate of pages) {
+    if (attachedExistingTestVault && candidate !== page && !(await candidate.title()).includes(" - ObReader-Apple-Test - ")) continue;
     const isSettings = await candidate.evaluate(() => Boolean(
       document.body?.classList.contains("is-popout-modal") &&
       document.querySelector(".modal.mod-settings"),
@@ -2118,6 +2122,9 @@ async function cleanupNativeRun() {
     return;
   }
 
+  if (attachedExistingTestVault && report.fixtures?.markdownPath) {
+    report.attachedMode.finalMarkdownCleanup = await closeOwnedMarkdownTabs(report.fixtures.markdownPath, "attached-final-cleanup");
+  }
   await page.evaluate(async pluginId => { await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
   const disabled = await appIdentity();
   if (disabled.pluginActive || disabled.enabledPlugins.includes(PLUGIN_ID) || disabled.readerViews.length !== 0) {
@@ -2138,6 +2145,46 @@ async function cleanupNativeRun() {
     isolationRestored: restored, disabledStatePersisted: true, at: new Date().toISOString() };
 }
 
+async function assertAttachedSiblingProcessesQuiescent() {
+  const siblingProfile = path.join(OWNED_PROFILE_PARENT, "macos-native-profile-exclusive-20261024-0120");
+  const processLines = execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }).split(/\r?\n/u)
+    .filter(line => line.includes(APP_EXECUTABLE) && line.includes(`--user-data-dir=${siblingProfile}`));
+  report.attachedMode.siblingPreflight = [];
+  if (!processLines.length) return;
+  assert.equal(processLines.length, 1, "Unexpected sibling process ownership ambiguity");
+  const marker = JSON.parse(await readFile(path.join(siblingProfile, ".codex-native-profile.json"), "utf8"));
+  assert.equal(marker.kind, "codex-owned-native-test-profile");
+  assert.equal(marker.allowedVault, EXPECTED_VAULT);
+  const port = Number((await readFile(path.join(siblingProfile, "DevToolsActivePort"), "utf8")).split(/\r?\n/u)[0]);
+  const siblingBrowser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null });
+  try {
+    const candidates = (await siblingBrowser.pages()).filter(candidate => candidate.url() === APP_URL);
+    assert.equal(candidates.length, 1, "Sibling process must contain only the owned test Vault");
+    const state = await candidates[0].evaluate(pluginId => ({ path: app.vault.adapter.basePath, name: app.vault.getName(),
+      title: document.title, loaded: !!app.plugins.plugins[pluginId], enabled: app.plugins.enabledPlugins.has(pluginId),
+      readers: app.workspace.getLeavesOfType("pdf-web-reader-view").length, sync: app.internalPlugins.plugins.sync?.enabled }), PLUGIN_ID);
+    report.attachedMode.siblingPreflight.push({ profile: siblingProfile, port, ...state });
+    assert.equal(state.path, EXPECTED_VAULT);
+    assert.equal(state.name, "ObReader-Apple-Test");
+    assert.equal(state.loaded, false, "Sibling test-Vault plugin must be unloaded before attached writes");
+    assert.equal(state.enabled, false, "Sibling test-Vault plugin must be disabled before attached writes");
+    assert.equal(state.readers, 0);
+    assert.equal(state.sync, false);
+  } finally { siblingBrowser.disconnect(); }
+}
+
+async function attachedReadOnlySnapshot(onlyRoot = null) {
+  const roots = onlyRoot ? [onlyRoot] : ["00_Archive/20_PDFData", "00_Archive/21_VocabularyData"];
+  const files = [];
+  for (const root of roots) for (const relative of await readdir(absoluteVaultPath(root), { recursive: true })) {
+    const file = `${root}/${relative}`;
+    const stat = await import("node:fs/promises").then(fs => fs.stat(absoluteVaultPath(file)));
+    if (!stat.isFile()) continue;
+    const bytes = await readFile(absoluteVaultPath(file)); files.push({ path: file, bytes: bytes.length, sha256: sha256(bytes) });
+  }
+  return files.sort((a,b)=>a.path.localeCompare(b.path));
+}
+
 async function main() {
   await mkdir(path.dirname(reportPath), { recursive: true });
   await mkdir(screenshotDirectory, { recursive: true });
@@ -2145,8 +2192,20 @@ async function main() {
   browser = await puppeteer.connect({ browserURL: native.nativeConfig.cdpUrl, defaultViewport: null });
   const pages = await browser.pages();
   const appPages = pages.filter(candidate => candidate.url() === APP_URL);
-  assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
-  page = appPages[0];
+  if (attachedExistingTestVault) {
+    const matched = [];
+    report.attachedMode = { enabled: true, temporaryHarnessMode: true, processRestart: "NOT_RUN: shared process ownership", excludedRenderers: [] };
+    for (const candidate of appPages) {
+      const identity = await candidate.evaluate(() => ({ path: app.vault.adapter.basePath, name: app.vault.getName() }));
+      if (identity.path === EXPECTED_VAULT && identity.name === "ObReader-Apple-Test") matched.push(candidate);
+      else report.attachedMode.excludedRenderers.push({ url: candidate.url(), ...identity, action: "excluded; no navigation, interaction, content read, or mutation" });
+    }
+    assert.equal(matched.length, 1, "Attached mode requires exactly one exact Apple-Test renderer");
+    page = matched[0];
+  } else {
+    assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
+    page = appPages[0];
+  }
   page.setDefaultTimeout(15_000);
   page.on("console", message => {
     if (message.type() === "error") {
@@ -2164,6 +2223,19 @@ async function main() {
   assert.equal(before.enabledPlugins.includes(PLUGIN_ID), false);
   assert.equal(before.visibility, "visible",
     "Keep the owned Obsidian test window visible; if this is hidden, stop rather than automate another window.");
+  if (attachedExistingTestVault) {
+    assert.ok(await page.evaluate(() => document.hasFocus() && (typeof activeDocument === "undefined" || activeDocument === document) &&
+      (typeof activeWindow === "undefined" || activeWindow === window)), "Attached test window/document owner must already be truly focused before writes");
+    assert.ok((await page.title()).endsWith("ObReader-Apple-Test - Obsidian 1.14.5"));
+    for (const file of ["main.js", "manifest.json", "styles.css"]) {
+      assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
+        sha256(await readFile(path.join(ROOT, "dist", PLUGIN_ID, file))), `Attached bundle ${file} must exactly match integration dist`);
+    }
+    await assertAttachedSiblingProcessesQuiescent();
+    await waitForPersistedPluginState(false, "attached pre-write disabled config stable twice");
+    report.attachedMode.defaultBaseline = await attachedReadOnlySnapshot();
+    report.attachedMode.preservedRunBaseline = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
+  }
   report.identity = before;
   report.sync = { enabled: before.syncEnabled, off: before.syncEnabled === false };
   report.plugin = { ...before, expectedVersion: expectedManifest.version,
@@ -2233,6 +2305,32 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
+  if (attachedExistingTestVault) {
+    const md = await addMarkdownLearningItem(fixtures.markdownPath);
+    learningItems.markdown = md;
+    report.uiFlows.push({ name: "Markdown selected excerpt -> Add Review", status: "passed", itemId: md.itemId,
+      sourcePath: fixtures.markdownPath, exactQuote: md.source.targetText });
+    await createContextLearningItem(fixtures.pdfPath, { completeSentence: true });
+    await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, fixtures.pdfPath);
+    await exerciseNavigationDirections();
+    const baseline = await snapshotVocabularyInvariant();
+    report.attachedMode.postLearningCanonicalBaseline = baseline;
+    const movedPath = `${fixtures.pdfDirectory}/reading-attached-open-move.pdf`;
+    await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, fixtures.pdfPath);
+    await renameOwnedPath(fixtures.pdfPath, movedPath);
+    await waitFor("attached exact open-move identity route", () => currentPdfRoute(learningItems.highlight), route => route.sourcePath === movedPath);
+    const directions = await checkFiveNavigationDirections("attached-openmove");
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), "attached openmove five directions");
+    const closes = await controlledCloseMatrixReaders("attached-openmove");
+    const markdownCleanup = await closeOwnedMarkdownTabs(fixtures.markdownPath, "attached-openmove");
+    assert.equal(sha256(await readFile(absoluteVaultPath(movedPath))), report.fixtures.originalPdfSha256);
+    report.attachedMode.openMove = { status: "passed", directions, closes, markdownCleanup, canonicalUnchanged: true, sourcePdfUnchanged: true };
+    report.fixtures.finalPdfPath = movedPath;
+    await captureNativeEvidence();
+    report.status = "passed";
+    report.recommendation = "Attached E2E and open-move only. Original six-stage run unchanged; real process restart NOT_RUN due shared process.";
+    return;
+  }
   if (process.argv.includes("--markdown-quick-open-diagnostic") || process.argv.includes("--markdown-source-visibility-diagnostic") || process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
     report.sourceCheckpointOnly = true;
     report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
@@ -2329,6 +2427,7 @@ try {
   if (browser) {
     report.failureTargets = [];
     for (const target of await browser.pages()) {
+      if (attachedExistingTestVault && target !== page && !(await target.title()).includes(" - ObReader-Apple-Test - ")) continue;
       const state = await target.evaluate(() => ({ title: document.title,
         bodyClass: document.body?.className || "",
         text: (document.body?.innerText || "").slice(0, 6000),
@@ -2347,6 +2446,15 @@ try {
   await cleanupNativeRun().catch(error => {
     report.cleanup = { status: "failed", error: error?.stack || String(error), at: new Date().toISOString() };
   });
+  if (attachedExistingTestVault && report.attachedMode?.defaultBaseline) {
+    const after = await attachedReadOnlySnapshot();
+    const preservedAfter = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
+    report.attachedMode.defaultAfter = after;
+    report.attachedMode.preservedRunAfter = preservedAfter;
+    report.attachedMode.defaultUnchanged = JSON.stringify(after) === JSON.stringify(report.attachedMode.defaultBaseline);
+    report.attachedMode.preservedRunUnchanged = JSON.stringify(preservedAfter) === JSON.stringify(report.attachedMode.preservedRunBaseline);
+    if (!report.attachedMode.defaultUnchanged || !report.attachedMode.preservedRunUnchanged) report.status = "failed";
+  }
   if (browser) browser.disconnect();
   report.completedAt ||= new Date().toISOString();
   await persistReport().catch((error) => {
