@@ -94,3 +94,52 @@ Remaining NOT RUN: combined PDF+Markdown move in one unified fixture run and a
 dedicated owned-process restart. Window reload and plugin reload have been
 executed, but neither is reported as process restart. Full Native matrix is
 therefore not accepted yet.
+
+## Remaining matrix continuation on the same candidate
+
+Used the actual Copy Reader Link command on a trusted cross-line PDF selection,
+then pasted its clipboard result into the actual Markdown editor. MetadataCache
+indexed `roundtrip.md`; clicking the rendered link returned the exact Selection
+Anchor `0c4c4976-f881-4323-a5a8-a8f5220721dc` with current-session ACK.
+Clicking the CSS selection backlink returned the same Markdown source with exact
+editor selection `0..264` (the original link). This is actual UI navigation,
+not an injected index row or domain-created learning object.
+
+In original run 1433 both PDF and roundtrip Markdown were moved while open into
+`paired/`. Clicking the Markdown link still returned the same Selection Anchor.
+All fixture Markdown leaves and Readers were then closed, both files moved into
+`closed-pair/`, and the Markdown link again reopened the exact same Selection
+Anchor in a new renderer. Its request was `reader-nav-1-1`, renderer
+`503e46a4-3711-4547-86c9-1995eee01fce`, openRequest 1.
+
+The Sidebar row was clicked and its selected `data-uuid` remained
+`a2d1ef04-6750-4d3a-97a4-c67a0ed0b148`. Direct Context-tab "验证并打开来源"
+then returned the original full-sentence context anchor with `reader-nav-1-2`
+and the same exact current document/open/renderer identity. Thus the five
+navigation directions have real UI evidence: Review Source, selection backlink
+to Markdown, Markdown to PDF, Sidebar to Highlight, and Context to PDF.
+
+### Additional deterministic RED: aggregate page badge
+
+The page index contains one selection backlink. The page badge displays one
+Markdown reference, but clicking it sends `targetKind=page` and the Host filters
+rows strictly by matching target kind/id. There is no page-kind row, so no
+Markdown navigation occurs. The target-open message is observed with current
+session identity (`backlink-open-1-1`). The selection backlink itself works.
+Root integration is handling this separately; this branch preserves the RED
+and does not change production code.
+
+### Process restart boundary
+
+Independent owned-process restart remains NOT RUN. Windows process inspection
+shows main PID 39828 using the ordinary Roaming/obsidian profile, with test
+renderer 35696 and another Vault renderer 32536 under that same process. The
+other Vault has its own Reader/settings windows. Killing/restarting the shared
+main would affect that Vault. No owned isolated process identity was available;
+window and plugin reloads are not substituted for this gate.
+
+At the final location source PDF SHA-256 is still the original value above.
+Independent WAL replay passes, original non-route Context/Review/History bytes
+match the historical RED baseline, and all 371 pre-existing files are unchanged.
+Combined moves are now verified; remaining blockers are aggregate page badge
+and the independently owned-process restart coverage.
