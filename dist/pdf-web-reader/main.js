@@ -26747,6 +26747,7 @@ var __PDFReaderLearningHost = (() => {
         let servicePromise = null;
         let routingPromise = null;
         let disposed = false;
+        let renameQueue = Promise.resolve();
         const drafts = /* @__PURE__ */ new Set();
         const liveView = (anchor) => [...plugin.views].find((view) => !view.teardownStarted && view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true && view.annotationSyncPending !== true && view.annotationStorageUnavailable !== true && view.annotationDocument?.documentId === anchor.documentId && view.annotationDocument?.docKey === anchor.docKey && view.annotationSourceHash === anchor.sourceHash && view.annotationPageIdentity?.orderedPageIdentities?.[anchor.pageIndex] === anchor.pageIdentity);
         const verified = (anchor) => ({ status: "verified", sourceCurrent: true, pageCurrent: true, anchor });
@@ -27199,7 +27200,12 @@ var __PDFReaderLearningHost = (() => {
           if (page.contexts.length === 1 && !page.nextCursor) return plugin.openVocabularyContext(page.contexts[0].contextId);
           return { status: "choose-context", familyKey, message: "\u8BF7\u9009\u62E9\u4E00\u4E2A\u5DF2\u4FDD\u5B58\u8BED\u5883\u4F5C\u4E3A\u6765\u6E90\u3002" };
         }
-        async function renamed(fromPath, toPath) {
+        function renamed(fromPath, toPath) {
+          const pending = renameQueue.then(() => recordObservedRename(fromPath, toPath));
+          renameQueue = pending.catch(() => void 0);
+          return pending;
+        }
+        async function recordObservedRename(fromPath, toPath) {
           if (disposed || typeof fromPath !== "string" || typeof toPath !== "string" || fromPath === toPath) return { status: "noop" };
           const from = normalizeVaultPath(fromPath, "Rename source path");
           const to = normalizeVaultPath(toPath, "Rename destination path");
