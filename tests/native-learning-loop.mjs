@@ -1471,6 +1471,12 @@ async function captureNativeEvidence() {
   assert.equal(active.vault, EXPECTED_VAULT);
   assert.equal(active.configDir, ".obsidian");
   await recordScreen("final-today-review");
+  const finalRoute = await currentPdfRoute(learningItems.highlight);
+  assertFixturePath(finalRoute.sourcePath);
+  report.fixtures.finalPdfPath = finalRoute.sourcePath;
+  report.fixtures.finalPdfSha256 = sha256(await readFile(absoluteVaultPath(finalRoute.sourcePath)));
+  assert.equal(report.fixtures.finalPdfSha256, report.fixtures.originalPdfSha256,
+    "The physically moved PDF must remain byte-identical after every UI action and route move.");
   const sourcePdf = await readFile(absoluteVaultPath(report.fixtures.pdfPath)).catch(error => {
     if (error?.code === "ENOENT") return null;
     throw error;
