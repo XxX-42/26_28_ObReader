@@ -119,7 +119,20 @@ function verifyOwnedProfile() {
   return profileRoot;
 }
 
+function assertNativeSessionUnlocked() {
+  const probe = `import subprocess,plistlib,json
+x=plistlib.loads(subprocess.check_output(["ioreg","-a","-n","Root","-d","1"]))
+x=x if isinstance(x,dict) else x[0]
+s=x.get("IOConsoleUsers",[])
+print(json.dumps({"screenLocked":any(v.get("CGSSessionScreenIsLocked",False) for v in s),"onConsole":any(v.get("kCGSSessionOnConsoleKey",False) for v in s)}))`;
+  const state = JSON.parse(execFileSync("python3", ["-c", probe], { encoding: "utf8" }));
+  assert.equal(state.screenLocked, false, "Native UI acceptance stops while macOS is screen-locked; wait for the user to unlock.");
+  assert.equal(state.onConsole, true, "Native UI acceptance requires an active console session.");
+  return state;
+}
+
 async function initializeNativeConfig(profileRoot) {
+  assertNativeSessionUnlocked();
   const canonicalProfile = await realpath(profileRoot);
   const marker = JSON.parse(await readFile(path.join(canonicalProfile, ".codex-native-profile.json"), "utf8"));
   assert.equal(marker.kind, "codex-owned-native-test-profile");
