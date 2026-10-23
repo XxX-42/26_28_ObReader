@@ -153,7 +153,20 @@ try {
       ;(async()=>{
         const sqliteInitStarted = performance.now();
         const wasmBinary = Uint8Array.from(atob(${JSON.stringify(wasmBase64)}), c => c.charCodeAt(0));
-        const sqlite3 = await sqlite3InitModule({ wasmBinary });
+        // SQLite's official JS wrapper installs its own instantiateWasm
+        // hook, which fetches sqlite3.wasm relative to the script location.
+        // In this Blob worker that URL is invalid. Supply the Emscripten hook
+        // explicitly so initialization consumes the already-read pinned bytes.
+        const instantiateWasm = (imports, onSuccess) => {
+          const instantiateStarted = performance.now();
+          self.postMessage({stage:'wasm-instantiate-started', byteLength:wasmBinary.byteLength});
+          WebAssembly.instantiate(wasmBinary, imports).then(({instance, module}) => {
+            onSuccess(instance, module);
+            self.postMessage({stage:'wasm-instantiated', elapsedMs:performance.now()-instantiateStarted});
+          }).catch(e => self.postMessage({stage:'wasm-instantiate-error', error:{name:e?.name||'Error',message:e?.message||String(e),stack:e?.stack||null}}));
+          return {};
+        };
+        const sqlite3 = await sqlite3InitModule({ wasmBinary, instantiateWasm });
         const api = {
           ...workerApis,
           sqliteVersion: sqlite3.capi.sqlite3_libversion(),
@@ -194,14 +207,18 @@ try {
     }
 
     const workerFacts = sqliteWorkerMessage?.api || basicBlobWorker || null;
-    let classification = "UNSUPPORTED";
+    let classification = "SQLITE_WASM_INIT_UNRESOLVED";
     if (sqliteWorkerMessage?.api?.sqliteStandardOpfsPrerequisites) {
       classification = "STANDARD_OPFS_PREREQUISITES_PASS_VFS_NOT_INSTALLED";
     } else if (sqliteWorkerMessage?.api?.sqliteSahpoolInstallerPresent &&
                sqliteWorkerMessage?.api?.opfsSyncAccessHandle) {
       classification = "SAHPOOL_CANDIDATE_REQUIRES_WRITE_PROBE";
-    } else if (!sqliteWorkerMessage && basicBlobWorker) {
-      classification = "SQLITE_WASM_INIT_UNRESOLVED_WORKER_API_AVAILABLE";
+    } else if (sqliteWorkerMessage?.api) {
+      classification = "SQLITE_WASM_INIT_PASS_NO_OPFS_VFS_CANDIDATE";
+    } else if (!pageApis.workerConstructor) {
+      classification = "WORKER_CONSTRUCTOR_UNAVAILABLE";
+    } else if (!basicBlobWorker) {
+      classification = "BLOB_WORKER_PROBE_FAILED";
     }
 
     return {
