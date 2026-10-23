@@ -43,3 +43,10 @@ runtime/page/index guards. No new listener, channel or store is needed.
 
 This is intentionally RED against the baseline. No browser, Native, build,
 benchmark or full gate was run. Native acceptance remains PENDING.
+
+The integration correction now validates the page target ID before index access
+and uses the verified page's existing rows for the page badge. Exact object
+intents retain their previous filtering. Host plus LearningHost tests passed
+119/119 after the correction; output is retained as `page-badge-host-green.log`
+beside the RED receipt. Native UI continuation is still required: this focused
+green result does not retrospectively change the original Windows failure.
