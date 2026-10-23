@@ -1,0 +1,24 @@
+{
+  "status": "waiting-for-user-unlock",
+  "screenLocked": true,
+  "onConsole": true,
+  "nativeLeaseReleased": true,
+  "profilePid": 50203,
+  "cdpPort": 49786,
+  "installedMainSha256": "4254dcf0de2a0153ecf7a10deea71da7c92fe6e69491b127bf13783c40627104",
+  "pendingSourceVerification": "mdrename original RED markdown-excerpt-changed-during-open; Root fixed EditorRange in new installed package, not yet retried under unlocked UI",
+  "resumeReport": "tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023143340167.json",
+  "currentPaths": {
+    "pdf": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+    "markdown": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning-renamed.md"
+  },
+  "lastCleanup": "tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023144153047.json",
+  "lastCleanupVerified": {
+    "status": "complete",
+    "pluginActive": false,
+    "readerCount": 0,
+    "isolationRestored": true
+  },
+  "doNotRun": "No UI until independently confirmed screen unlocked. Native method wrapper is expected and is not evidence of stale production package. Prefer actual Source plus logging-only scroll parameter evidence on continuation.",
+  "caffeinate": "stopped"
+}

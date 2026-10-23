@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,13 +128,22 @@ async function runVariant({ mode, round, bundle, bundleHash }) {
     const clean = preview.items.filter((item) => item.status === "clean").length;
     assert.equal(conflicts, 1);
     assert.equal(clean, COUNT - 1);
+    const conflictItem = preview.items.find((item) => item.status === "conflict");
+    const coreBeforeUndo = JSON.parse(await adapter.read(conflictItem.path));
+    const conflictRecord = coreBeforeUndo.records.find((record) => record.surface === "term00000");
+    assert.equal(conflictRecord.note, "local edit preserved by default conflict handling");
+    const conflictPayloadBytes = Buffer.from(canonicalStringify(conflictRecord));
 
     const undoStartedAt = performance.now();
     const undo = await target.runtime.restore(importBatch.batchId);
     const undoMs = performance.now() - undoStartedAt;
     assert.equal(undo.status, "committed");
     assert.equal(undo.restored.length, COUNT - 1);
-    assert.equal(undo.skipped.length, 1, "default restore leaves the single local conflict untouched");
+    assert.equal(undo.skipped.length, 0, "default selection excludes the conflict before skipped is calculated");
+    const persistedUndo = JSON.parse(await readFile(path.join(adapter.root, ...conflictItem.path.split("/")), "utf8"));
+    assert.equal(persistedUndo.records.length, 1, "all selected clean entities are removed from the real file");
+    assert.deepEqual(Buffer.from(canonicalStringify(persistedUndo.records[0])), conflictPayloadBytes,
+      "the entire unselected conflict payload remains byte-identical in the real file");
     assert.equal((await target.personalService.queryLearningTerms({ limit: COUNT + 10 })).length, 1);
 
     const redoStartedAt = performance.now();
@@ -146,6 +155,10 @@ async function runVariant({ mode, round, bundle, bundleHash }) {
     assert.equal(recordsAfterRedo.length, COUNT);
     assert.equal(recordsAfterRedo.find((record) => record.surface === "term00000")?.note,
       "local edit preserved by default conflict handling");
+    const persistedRedo = JSON.parse(await adapter.read(conflictItem.path));
+    assert.equal(persistedRedo.records.length, COUNT);
+    assert.deepEqual(Buffer.from(canonicalStringify(persistedRedo.records.find((record) => record.key === conflictRecord.key))),
+      conflictPayloadBytes);
     const finalDisk = await adapter.diskUsage();
 
     return {
@@ -177,7 +190,8 @@ async function runVariant({ mode, round, bundle, bundleHash }) {
         semanticHash: historySemanticHash,
       },
       restoreValidation: { conflicts, clean, previewMs, undoMs, redoMs, totalUndoRedoMs: undoMs + redoMs,
-        undone: undo.restored.length, redone: redo.restored.length },
+        undone: undo.restored.length, redone: redo.restored.length, defaultSelectionSkipped: undo.skipped.length,
+        persistedConflictPayloadBytes: conflictPayloadBytes.length, persistedConflictPayloadPreserved: true },
       finalDisk,
       finalHistoryBatches: (await target.runtime.history.listBatches()).length,
       bundleHash,
@@ -260,6 +274,7 @@ function summarize(results, crashChecks) {
       allCrashRecoveryChecksPassed: crashChecks.passed,
       allSemanticChecksPassed: paired.every(({ baseline: base, candidate: row }) => row.passed &&
         row.restoreValidation.conflicts === 1 && row.restoreValidation.clean === COUNT - 1 &&
+        row.restoreValidation.defaultSelectionSkipped === 0 && row.restoreValidation.persistedConflictPayloadPreserved === true &&
         row.history.schemaVersion === 2 && row.history.records === COUNT &&
         row.history.semanticHash === base.history.semanticHash && row.bundleHash === base.bundleHash),
     };

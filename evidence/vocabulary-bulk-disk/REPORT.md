@@ -2,6 +2,10 @@
 
 ## Status
 
+Final 2026-10-23 update: the corrected full matrix completed **15/15 runs**, plus crash/recovery checks, with no discarded samples. See [completed results](25K-COMPLETED-20261023.md). Both candidates are **EXPERIMENT_REJECTED; D unchanged**: A total writes -22.7667% (target -40%); B -13.5571%, with worst CPU +54.4740% and restore +26.6522%. All semantic and crash checks passed. The raw JSON is retained outside Git at the path and checksum recorded in the completed report. This completed research rejection is distinct from the original harness failure below.
+
+2026-10-23 update: the exact 25k command was actually executed on a real Node filesystem adapter and failed in the first baseline restore assertion. See [the preserved attempt and bounded correction](25K-ATTEMPT-20261023.md). Result: **HARNESS_FAILED / benchmark NOT_COMPLETED; D unchanged pending evidence**. Small real-file tests establish the API counting mismatch and validate the corrected harness's payload checks; the complete 25k matrix awaits a new heavy benchmark lease. No candidate performance rejection or acceptance is established. The implementation-stage account below predates that attempt.
+
 The real-disk adapter, three encoding modes, 25,000-record benchmark harness, and focused correctness tests are implemented on `codex/014-f-bulk`, based on `cd6e157`. The five-round 25k run is **NOT RUN**: the native benchmark lease is still occupied. No performance claim is made from the bounded tests, and no production optimization is selected. Decision D remains the default until every hard gate passes.
 
 ## Scope and frozen production contracts

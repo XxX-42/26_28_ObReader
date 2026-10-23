@@ -161,3 +161,21 @@ test("resolveSource requires an exact Markdown source slice and the verifier mus
   });
   assert.equal((await wrongEcho(markdown)).code, "TARGET_UNRESOLVED");
 });
+
+test("identical PDF quotes cannot substitute another UUID on the same or a different page", async () => {
+  const anchor = fromAnnotation({ uuid: "captured-uuid", kind: "Highlight", pageIndex: 1,
+    editorPayload: { text: "identical quote" } }, identity);
+  for (const substitute of [
+    { ...anchor, target: { kind: "annotation", id: "same-page-uuid" } },
+    { ...anchor, target: { kind: "annotation", id: "other-page-uuid" }, pageIndex: 2, pageIdentity: "page-identity-3" },
+  ]) {
+    assert.equal(substitute.targetText, anchor.targetText);
+    const resolve = createSemanticSourceResolver({
+      verifyRouting: async value => verified(value),
+      verifyAnnotation: async () => verified(substitute),
+    });
+    const result = await resolve(anchor);
+    assert.equal(result.code, "TARGET_UNRESOLVED");
+    assert.equal(result.exact, false);
+  }
+});

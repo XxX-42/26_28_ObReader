@@ -1,0 +1,41 @@
+{
+  "reviewStatus": "static-reviewed; no UI or heavy tests while locked",
+  "removed": [
+    "debugger closure introspection",
+    "PDF_READER_NATIVE_REQUIRE_EDITOR_RANGE optional guard",
+    "function.toString as runtime-version proof"
+  ],
+  "evidencePolicy": [
+    "compare installed main.js/manifest.json/styles.css SHA256 with root dist",
+    "safe reload only after unlocked console and plugin inactive/zeroReaders",
+    "actual UI Source exact selection and accepted navigation receipt"
+  ],
+  "preserved": [
+    "screen-lock/on-console preflight before browser attach",
+    "single owned profile and exact Vault checks",
+    "before-plugin-init adapter isolation",
+    "exact requestId/documentId/openRequest/rendererGeneration/kind/targetId/ok receipt checks",
+    "resume existing confirmed Highlight/Context/Markdown items",
+    "original 12-file canonical frozen byte baseline",
+    "full-sentence real pointer-selection case",
+    "physical final PDF SHA assertion"
+  ],
+  "baseAlreadyIntegrated": "6186683 content (root bdfde28)",
+  "pendingResumeEvidence": "/Users/jiajia/.codex/worktrees/obreader-0.14/native-sol-low/evidence/native-sol-low/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023143340167.json",
+  "resumeCommand": "PDF_READER_NATIVE_PROFILE_ROOT=/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-learning-loop-20261023-0642 PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT=/Users/jiajia/.codex/worktrees/obreader-0.14/native-sol-low/evidence/native-sol-low/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023143340167.json npm run test:native:learning-loop",
+  "commandWorkdir": "/Users/jiajia/.codex/worktrees/obreader-0.14/native-sol-low",
+  "mustNotSet": "PDF_READER_NATIVE_REQUIRE_EDITOR_RANGE (removed)",
+  "fixturePaths": {
+    "pdf": "/Users/jiajia/Documents/ObReader-Apple-Test/PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+    "markdown": "/Users/jiajia/Documents/ObReader-Apple-Test/PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning-renamed.md",
+    "isolatedDataset": "/Users/jiajia/Documents/ObReader-Apple-Test/.obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68"
+  },
+  "expectedInstalledMainSha256": "4254dcf0de2a0153ecf7a10deea71da7c92fe6e69491b127bf13783c40627104",
+  "routeResumeBehavior": "Retain pdfrename/foldermove proof, resolve actual moved paths, verify old frozen bytes, retry already-renamed Markdown Source then execute mdmove/bothmove/closedmove/openmove/plugin restart. No new original fixtures or prior learning items.",
+  "notYetExecuted": [
+    "route-resume implementation after root EditorRange fix",
+    "complete-sentence pointer case",
+    "new exact acceptedNavigation assertions"
+  ],
+  "limitation": "restart case is a plugin disable/enable in the same renderer, not an Obsidian application-process restart."
+}
