@@ -2,27 +2,30 @@
 
 ## Status
 
-**OFFLINE FIXTURE VERIFIED. APP-ORIGIN READ-ONLY PROBE ATTEMPTED; SQLITE WASM INITIALIZATION REMAINS UNRESOLVED. FIVE-COLD RUNNER IMPLEMENTED BUT NOT_STARTED pending a separate benchmark lease.** No performance result or production recommendation is claimed.
+**LEAN OFFLINE FIXTURE VERIFIED. APP-ORIGIN READ-ONLY PROBE RAN; SQLITE WASM INITIALIZATION REMAINS UNRESOLVED. FIVE-COLD RUNNER IMPLEMENTED BUT NOT STARTED pending a separate benchmark lease.** No performance result or production recommendation is claimed.
 
-This is a benchmark-only experiment. It makes no production dependency, main, bridge, vocabulary-canonical, WAL, schema, or Vault changes. The 151 MB SQLite file, source copy, pinned SQLite archive, and generated build report are ignored under `tests/artifacts/sqlite-opfs-2026-10-23/`; only the reproducible Python/Node tooling and report are tracked.
+This is a benchmark-only experiment. It makes no production dependency, main, bridge, vocabulary-canonical, WAL, schema, or Vault changes. The prototype and lean SQLite files, source copy, pinned SQLite archive, and generated build reports are ignored under `tests/artifacts/sqlite-opfs-2026-10-23/`; only the reproducible Python/Node tooling and report are tracked. The cold-run harness uses only the lean database.
 
 ## Frozen input and equivalence
 
 The input was copied from the `ObReader-Apple-Test` resource-v2 directory at `00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2/`. The compressed source is 16,734,703 bytes, has SHA-256 `b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126`, and expands to 69,667,588 bytes and 770,611 entries.
 
-`build-fixture.py` builds the database offline with Python's standard-library `sqlite3`; the app benchmark never issues 770,611 inserts. The table stores an ordinal, the exact normalized key, translation, phonetic value, and compact JSON for the full resource row. The builder reads every row, rejects unexpected fields, non-string values, duplicate or unsorted keys, and validates the SQLite integrity check. It then reads the full JSON payload back in source order and hashes the result.
+`build-fixture.py` builds the benchmark database offline with Python's standard-library `sqlite3`; the browser benchmark never issues 770,611 inserts. The lean table is `entries(key TEXT PRIMARY KEY COLLATE BINARY, translation TEXT NOT NULL, phonetic TEXT NOT NULL) WITHOUT ROWID`. It does not store an ordinal or a second copy of each row as JSON. The builder validates the frozen source digest, rejects unexpected fields, non-string values, duplicate or unsorted keys, checks SQLite integrity, then reconstructs canonical compact JSONL from the three columns ordered by key and hashes all rows. The first 151 MB database with the duplicate payload is retained as prototype evidence only and is not used by the runner.
 
 `verify-normalized-v2.mjs` checks each input key with the product's `normalizeDictionaryKey`, requires the resource-v2 field order and compact JSON serialization, and compares the hash to the SQLite ordered readback. The compressed-resource digest and the logical normalized-record digest are different measurements and are reported separately:
 
 | Evidence | Result |
 | --- | ---: |
 | Compressed resource SHA-256 | `b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126` |
-| Normalized v2 JSONL / SQLite ordered readback SHA-256 | `c89eea8a579da1ea743eea9febbe7ecaed63695056d093f2c478b93a265fbd98` |
+| Normalized v2 JSONL / lean SQLite reconstructed readback SHA-256 | `c89eea8a579da1ea743eea9febbe7ecaed63695056d093f2c478b93a265fbd98` |
 | Source and SQLite rows | 770,611 each |
-| SQLite database bytes | 151,461,888 |
-| SQLite database SHA-256 | `9d6f24efe39fb34e8911c5ea0c9a17a253081b78ce5e644ed593479759a8460e` |
+| Prototype database bytes (duplicate `row_json` and ordinal; not benchmarked) | 151,461,888 |
+| Lean benchmark database bytes (`WITHOUT ROWID`, three fields only) | 48,779,264 |
+| Lean benchmark database SHA-256 | `f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c` |
 | SQLite `integrity_check` | `ok` |
-| Build wall time | 6,260 ms (one local fixture build, not a comparative benchmark) |
+| Lean fixture build wall time | 6,601 ms (one local offline build, not a comparative benchmark) |
+
+The lean fixture is 67.8% smaller than the prototype fixture. This is a file-size comparison only, not a browser copy-time or performance claim.
 
 Five exact query rows (`on`, `mostly`, `subscription`, `details`, `about`) and one absent key are saved in the ignored fixture report for browser-side correctness checks. The full-row equivalence check is the ordered 770,611-row logical hash, not a sample-only comparison.
 
@@ -40,21 +43,21 @@ SQLite's official [OPFS documentation](https://www.sqlite.org/wasm/doc/trunk/per
 
 ### Actual Apple-Test app-origin evidence
 
-The target was `app://obsidian.md/index.html` in the owned Apple-Test Obsidian renderer (Electron 39.8.3 / Chromium 142). The first requested endpoint, `127.0.0.1:64276`, refused the connection before any page inspection. The current endpoint `127.0.0.1:65046` was then used during B's explicit safe UI pause; CDP disconnected cleanly without navigating or closing the app.
+The target was `app://obsidian.md/index.html` in the owned Apple-Test Obsidian renderer (Electron 39.8.3 / Chromium 142). The first requested endpoint, `127.0.0.1:64276`, refused the connection before any page inspection. The endpoint `127.0.0.1:65046` was then used during B's explicit safe UI pause; CDP disconnected cleanly without navigating or closing the app.
 
 | App-origin observation | Result |
 | --- | --- |
 | Secure context / WebAssembly / Worker constructor | `true` / `true` / available |
 | Main-thread OPFS getter / Web Locks | available / available |
 | Main-thread SharedArrayBuffer / `crossOriginIsolated` | available / `false` |
-| Storage estimate / persisted | quota about 64.26 GB, usage 115,594,542 bytes (IndexedDB reported) / `true`; estimate is transient |
+| Storage estimate / persisted | quota about 63.11 GB, usage 115,608,340 bytes (IndexedDB reported) / `true`; estimate is transient |
 | Minimal exact-Blob Worker echo | PASS; worker reports secure context, WASM, SAB, OPFS getter, sync access handles, Locks; no `securitypolicyviolation` events |
 | First SQLite Blob Worker attempt | HARNESS ERROR: it appended `?opfs-disable&opfs-wl-disable` to a Blob URL; this invalidated the worker URL and is not platform evidence |
-| Corrected SQLite WASM initialization with VFS auto-install disabled | timed out at the first bounded 1.8-second retry before a ready/error message; no database or OPFS mutation occurred |
-| Corrected VFS initialization result | NOT_RUN; script now captures intermediate worker messages and permits a 15-second bound at the next safe checkpoint |
+| Corrected SQLite WASM initialization with VFS auto-install disabled | timed out after 15 seconds without a ready/error message; no database or OPFS mutation occurred |
+| Corrected SQLite probe classification | `SQLITE_WASM_INIT_UNRESOLVED_WORKER_API_AVAILABLE`; minimal worker passes, but SQLite init did not complete. This does not prove either VFS unsupported. |
 | Native `opfs` / `opfs-sahpool` VFS installation or write probe | NOT_RUN; no support/unsupported conclusion yet |
 
-The minimal worker success rules out a generic Blob Worker or CSP prohibition. The 1.8-second SQLite timeout is not proof that WASM or either VFS is unsupported. After the native UI owner finishes, one corrected SQLite initialization probe may run with a 15-second bound; it disables OPFS VFS auto-install and remains read-only. Local Chromium results below do not prove app-origin support.
+The minimal worker success rules out a generic Blob Worker or observed CSP prohibition. The corrected 15-second SQLite init timed out; this remains unresolved and is not proof that WASM or either VFS is unsupported. The complete current result is retained at ignored `tests/output/sqlite-opfs/host-capability-corrected-20261023.json`. Further app-origin probing requires another explicitly coordinated safe checkpoint. Local Chromium results do not prove app-origin support.
 
 `predeclare-runs.mjs` writes a ten-row plan for five fresh processes/profiles per option. `run-cold-benchmark.mjs` is the runnable isolated normal-Chromium harness, using persistent user-data directories rather than incognito. Without `--run` it creates a plan only; `--run` launches ten fresh Chromium processes/profiles on a local test origin. The local `opfs` origin adds COOP/COEP headers only to that test server; the `opfs-sahpool` origin does not. The harness does not access Obsidian or any Vault, and its results cannot establish app-origin support.
 
@@ -80,7 +83,7 @@ The plan keeps all failures and timeouts in order, forbids retries or selected p
 | Python syntax check for offline fixture builder | PASS |
 | Actual app-origin API probe on Apple-Test CDP 65046 | PASS; facts above |
 | Actual app-origin minimal Blob Worker echo | PASS; no CSP violations |
-| Actual app-origin SQLite WASM initialization | TIMED_OUT at 1.8 seconds; unresolved, not unsupported |
+| Actual app-origin SQLite WASM initialization | TIMED_OUT at 15 seconds; unresolved, not unsupported |
 | Standalone Chromium runner plan-only mode | PASS; wrote a ten-row plan and started no browser/trials |
 | `opfs` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
 | `opfs-sahpool` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
@@ -91,11 +94,11 @@ Reproduction commands (the source defaults to the test Vault path if copied into
 ```sh
 python3 scripts/sqlite-opfs/build-fixture.py \
   tests/artifacts/sqlite-opfs-2026-10-23/resource-v2/entries.b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126.jsonl.gz \
-  tests/artifacts/sqlite-opfs-2026-10-23/ecdict-v2.sqlite \
-  --report tests/artifacts/sqlite-opfs-2026-10-23/fixture-report.json
+  tests/artifacts/sqlite-opfs-2026-10-23/ecdict-v2-lean.sqlite \
+  --report tests/artifacts/sqlite-opfs-2026-10-23/fixture-report-lean.json
 node scripts/sqlite-opfs/verify-normalized-v2.mjs \
   tests/artifacts/sqlite-opfs-2026-10-23/resource-v2/entries.b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126.jsonl.gz \
-  tests/artifacts/sqlite-opfs-2026-10-23/fixture-report.json
+  tests/artifacts/sqlite-opfs-2026-10-23/fixture-report-lean.json
 node scripts/sqlite-opfs/capability-probe.mjs --cdp-url "$OWNED_OBSIDIAN_CDP_URL"
 node scripts/sqlite-opfs/predeclare-runs.mjs
 node scripts/sqlite-opfs/run-cold-benchmark.mjs --output tests/output/sqlite-opfs

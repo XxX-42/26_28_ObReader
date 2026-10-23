@@ -106,8 +106,8 @@ if (mode === "secondary") {
       if (!response.ok) throw new Error(`Fixture report HTTP ${response.status}`);
       return response.json();
     });
-    if (fixture.databaseSha256 !== "9d6f24efe39fb34e8911c5ea0c9a17a253081b78ce5e644ed593479759a8460e" ||
-        fixture.databaseBytes !== 151461888 || fixture.entryCount !== 770611) {
+    if (fixture.databaseSha256 !== "f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c" ||
+        fixture.databaseBytes !== 48779264 || fixture.entryCount !== 770611) {
       throw new Error("Frozen SQLite fixture report does not match expected database identity.");
     }
     const beforeStorage = await navigator.storage.estimate();
