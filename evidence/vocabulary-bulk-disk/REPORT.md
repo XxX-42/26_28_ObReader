@@ -2,6 +2,8 @@
 
 ## Status
 
+2026-10-23 update: the exact 25k command was actually executed on a real Node filesystem adapter and failed in the first baseline restore assertion. See [the preserved attempt](25K-ATTEMPT-20261023.md). Result: **EXPERIMENT_REJECTED; D unchanged**. The implementation-stage account below predates that attempt.
+
 The real-disk adapter, three encoding modes, 25,000-record benchmark harness, and focused correctness tests are implemented on `codex/014-f-bulk`, based on `cd6e157`. The five-round 25k run is **NOT RUN**: the native benchmark lease is still occupied. No performance claim is made from the bounded tests, and no production optimization is selected. Decision D remains the default until every hard gate passes.
 
 ## Scope and frozen production contracts
