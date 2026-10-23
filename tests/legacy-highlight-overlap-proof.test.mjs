@@ -2,45 +2,54 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-// Pure captured-geometry proof. The original browser test still requires exact
-// normalized selected text plus its one/two/four-line geometry assertions.
 const capture = JSON.parse(await readFile(new URL("../evidence/legacy-highlight-protocol/captured-four-line-glyphs.json", import.meta.url)));
 const { lines, mismatch } = capture;
-const glyphs = mismatch.glyphs.toSorted((a, b) => a.index - b.index);
-function eligibleScores(glyph, line) {
-  return glyph.rects.flatMap(rect => line.quads.flatMap(quad => {
-    const width = rect.right - rect.left, height = rect.bottom - rect.top;
-    const overlapWidth = Math.max(0, Math.min(rect.right, quad.right) - Math.max(rect.left, quad.left));
-    const centerX = (rect.left + rect.right) / 2, centerY = (rect.top + rect.bottom) / 2;
-    if (!(width > 0 && height > 0) || centerY < quad.top - 1 || centerY > quad.bottom + 1 ||
-        !(overlapWidth / width >= 0.35 || centerX >= quad.left && centerX <= quad.right)) return [];
-    return [Math.max(0, Math.min(rect.bottom, quad.bottom) - Math.max(rect.top, quad.top)) / height];
-  }));
-}
+const hitGlyphs = mismatch.glyphs.toSorted((a, b) => a.index - b.index);
+const byIndex = new Map(hitGlyphs.map(glyph => [glyph.index, glyph]));
+// The capture retained non-whitespace hit glyphs and their original TreeWalker
+// indexes. Its 26 intervening index gaps are the fixture's literal spaces.
+// Newlines are text-layer layout, not text nodes, and recovery must infer them.
+const firstIndex = hitGlyphs[0].index;
+const lastIndex = hitGlyphs.at(-1).index;
+const glyphs = Array.from({ length: lastIndex - firstIndex + 1 }, (_, offset) => {
+  const captured = byIndex.get(firstIndex + offset);
+  return captured ? { character: captured.character, rects: captured.rects } : { character: " ", rects: [] };
+});
+const normalize = text => text.replace(/\s+/gu, " ").trim();
 
-test("captured legacy quads assign 30 glyphs to adjacent lines under the current predicate", () => {
-  let duplicates = 0;
-  for (const glyph of glyphs) {
-    const eligible = lines.flatMap((line, index) => eligibleScores(glyph, line).length ? [index] : []);
-    assert.deepEqual(eligible, glyph.assignedLines);
-    if (eligible.length > 1) duplicates += 1;
-  }
-  assert.equal(duplicates, 30);
-  assert.equal(glyphs.length, 73);
+// Extract precisely the shipped helper, without reproducing its ownership or
+// hit algorithm. Only the already-captured glyph provider and viewport are injected.
+const bridge = await readFile(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
+const startMarker = "  function recoverHighlightTextFromTextLayer(";
+const endMarker = "\n  function getLegacyHighlightSidebarTargetText(";
+assert.equal(bridge.split(startMarker).length - 1, 1);
+assert.equal(bridge.split(endMarker).length - 1, 1);
+const start = bridge.indexOf(startMarker);
+const end = bridge.indexOf(endMarker, start);
+assert.ok(end > start);
+const helperSource = bridge.slice(start, end).trim();
+const recover = new Function("annotationSidebarTextGlyphs", `return (${helperSource});`)(() => glyphs);
+const pageRoot = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 1000 }) };
+const viewport = { width: 1000, height: 1000, convertToViewportPoint: (x, y) => [x, y] };
+const quadPoints = lines.flatMap(line => line.quads.flatMap(quad => [
+  quad.left, quad.top, quad.right, quad.top, quad.left, quad.bottom, quad.right, quad.bottom,
+]));
+
+test("captured legacy four-line fixture retains the observed duplicate-hit evidence", () => {
+  assert.equal(hitGlyphs.filter(glyph => glyph.assignedLines.length > 1).length, 30);
+  assert.equal(hitGlyphs.length, 73);
   assert.equal(lines.reduce((sum, line) => sum + line.selectedGlyphCount, 0), 103);
+  assert.equal(glyphs.map(glyph => glyph.character).join(""), mismatch.selectedText.replace(/\n/gu, ""),
+    "captured TreeWalker indexes preserve all original characters and literal space positions");
 });
 
-test("maximum vertical overlap uniquely restores the captured non-whitespace glyph order", () => {
-  const owned = lines.map(() => []);
-  for (const glyph of glyphs) {
-    const scores = lines.map(line => Math.max(-1, ...eligibleScores(glyph, line)));
-    const owner = scores.indexOf(Math.max(...scores));
-    assert.ok(scores[owner] >= 0);
-    owned[owner].push(glyph);
-  }
-  const recovered = owned.map(row => row.map(glyph => glyph.character).join("")).join("");
-  assert.equal(recovered, mismatch.selectedText.replace(/\s/gu, ""));
-  assert.deepEqual(owned.map(row => row.map(glyph => glyph.character).join("")),
-    mismatch.selectedText.split("\n").map(line => line.replace(/\s/gu, "")));
-  assert.equal(owned.flat().length, 73);
+test("real bridge legacy recovery preserves exact captured quote, unique glyphs, and line order", () => {
+  const recovered = recover({}, pageRoot, viewport, quadPoints);
+  assert.equal(typeof recovered, "string");
+  assert.equal(normalize(recovered), normalize(mismatch.selectedText),
+    "real legacy helper must reconstruct the exact original four-line selected text");
+  assert.deepEqual(recovered.split("\n").map(normalize), mismatch.selectedText.split("\n").map(normalize),
+    "real legacy helper must preserve each original line in order");
+  assert.equal(recovered.replace(/\s/gu, "").length, 73,
+    "each captured non-whitespace glyph must occur once");
 });
