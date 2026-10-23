@@ -77,7 +77,7 @@ const predeclaredPlan = {
   repetitionsPerVariant: ECDICT_COMPARISON_REPETITIONS,
   variantOrder: ECDICT_COMPARISON_VARIANTS,
   firstRareQuery: queries.firstRareQuery,
-  warmQueries: queries.warmQueries,
+  mixedQueries: queries.mixedQueries,
   protocolTimeoutMs: ECDICT_COMPARISON_PROTOCOL_TIMEOUT_MS,
   nativeStartupMeasurement: nativeStartupBlockingMs === null ? null : {
     applicationStartupBlockingMs: nativeStartupBlockingMs, evidence: nativeStartupEvidence,
@@ -89,7 +89,7 @@ const predeclaredPlan = {
     "Chromium HTTP cache is disabled and every server response is Cache-Control: no-store. The OS filesystem cache is not flushed.",
     "resource-v2 explicitly awaits ensureReady() before its first rare lookup, reproducing the full-import wait from the legacy lookup path; this wait is reported separately and included in end-to-end first-query latency.",
     "resource-v3 performs the first rare lookup directly. It does not call ensureReady() or start a v2 cache build.",
-    "Each run executes the same 20 predeclared warm samples. No retry, skip, timeout extension, or outcome-based selection is permitted; failures and NOT_RUN rows remain in the output.",
+    "Each run executes the same 20 predeclared mixed-workload samples after the initial rare query. This workload includes newly loaded blocks, so it is not a warm-cache-only measurement. No retry, skip, timeout extension, or outcome-based selection is permitted; failures and NOT_RUN rows remain in the output.",
     "The local HTTP server only serves files from the two explicit resource roots. It never writes to a Vault. The output directory must be outside this Git worktree.",
     "The v3 LRU variants hold the byte cap fixed at 8 MiB and vary the decoded-block count cap at 8, 16, and 32; cache statistics report both actual limits and estimated bytes.",
     "Chromium automation does not measure Native Obsidian/WKWebView startup. The separately measured Native startup-blocking value and evidence reference must be supplied before selecting the smallest passing cache limit.",
@@ -97,7 +97,7 @@ const predeclaredPlan = {
   metricDefinitions: {
     firstQueryMs: "v2 full ensureReady() plus its first rare lookup; v3 direct first rare lookup.",
     legacyFullImportWaitMs: "v2 ensureReady() wall time before user-query work; null for v3.",
-    warmLookupPercentiles: "Individual timings from the 20 fixed common, rare, missing, range-boundary, and Unicode queries.",
+    mixed20LookupPercentiles: "Individual timings from 20 fixed common, rare, missing, range-boundary, and Unicode queries. Some query blocks may not be resident, so this is a mixed-cache workload rather than a warm-only metric.",
     readBinary: "Vault-like adapter readBinary wall time and returned compressed bytes, reported per file.",
     worker: "v2 worker full prepare wall time; v3 block worker decode wall time, compressed transfer bytes, and estimated decoded bytes where the browser Worker path is available.",
     lru: "Runtime block count and estimated decoded bytes after the warm sequence; not a browser heap measurement.",
@@ -186,7 +186,7 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
     });
     return dictionary;
   }
-  window.runECDICTTrial = async ({ cacheName, variant, firstRareQuery, warmQueries }) => {
+  window.runECDICTTrial = async ({ cacheName, variant, firstRareQuery, mixedQueries }) => {
     const runStarted = performance.now();
     const longTaskStart = longTaskEntries.length;
     const heapBefore = heapUsed();
@@ -210,19 +210,19 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
     const firstQueryMs = performance.now() - firstStarted;
     if (!firstRare?.translation || firstRare.key !== firstRareQuery.key) throw new Error("first rare correctness sample was missing");
     const heapAfterFirst = heapUsed();
-    const warmLatencies = [];
-    const warmResults = [];
-    for (const query of warmQueries) {
+    const mixedLatencies = [];
+    const mixedResults = [];
+    for (const query of mixedQueries) {
       const started = performance.now();
       const entry = await dictionary.lookup(query.key);
       const durationMs = performance.now() - started;
       const found = entry !== null;
       if (query.expected === "found" && (!found || entry.key !== query.key)) throw new Error("expected dictionary key missing: " + query.category + " " + query.key);
       if (query.expected === "missing" && found) throw new Error("not-found sample unexpectedly exists: " + query.key);
-      warmLatencies.push(durationMs);
-      warmResults.push({ ordinal: query.ordinal, category: query.category, key: query.key, found, durationMs });
+      mixedLatencies.push(durationMs);
+      mixedResults.push({ ordinal: query.ordinal, category: query.category, key: query.key, found, durationMs });
     }
-    const sortedWarm = [...warmLatencies].sort((left, right) => left - right);
+    const sortedMixed = [...mixedLatencies].sort((left, right) => left - right);
     const reopenedReadsStart = reads.length;
     const reopenedStarted = performance.now();
     const warmReopenFirst = await dictionary.lookup(firstRareQuery.key);
@@ -239,7 +239,7 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width, 
     const runResult = {
       constructorMs, legacyFullImportWaitMs, firstLookupMs, firstQueryMs,
       firstRareQuery, firstRare: { key: firstRare.key, translation: firstRare.translation, phonetic: firstRare.phonetic },
-      warm: { count: warmResults.length, p50Ms: percentile(sortedWarm, 0.5), p95Ms: percentile(sortedWarm, 0.95), maxMs: sortedWarm.at(-1), queries: warmResults },
+      mixed20: { count: mixedResults.length, p50Ms: percentile(sortedMixed, 0.5), p95Ms: percentile(sortedMixed, 0.95), maxMs: sortedMixed.at(-1), queries: mixedResults },
       sameInstanceWarmReopenMs: reopenedFirstLookupMs,
       newReaderInstanceReopen: { lookupMs: readerReopenMs, reads: reads.slice(reopenedReadsStart) },
       readBinary: binaryReads,
@@ -365,7 +365,7 @@ try {
         await appendFile(resultsPath, `${JSON.stringify(completed)}\n`);
         console.log(JSON.stringify({ event: "run-result", sequence: planned.sequence, variant: planned.variant,
           status: "passed", firstQueryMs: result.firstQueryMs, legacyFullImportWaitMs: result.legacyFullImportWaitMs,
-          warmP95Ms: result.warm.p95Ms, bytesReadBinary: result.bytesReadBinary }));
+          mixed20P95Ms: result.mixed20.p95Ms, bytesReadBinary: result.bytesReadBinary }));
       });
     } catch (error) {
       failures += 1;
@@ -407,13 +407,14 @@ const perVariant = ECDICT_COMPARISON_VARIANTS.map(variant => {
   const passed = runs.filter(outcome => outcome.status === "passed");
   const sorted = values => values.sort((left, right) => left - right);
   const first = sorted(passed.filter(run => variant.resource === "v3").map(run => run.result.firstQueryMs));
-  const warm = sorted(passed.flatMap(run => run.result.warm.queries.map(query => query.durationMs)));
+  const mixed = sorted(passed.flatMap(run => run.result.mixed20.queries.map(query => query.durationMs)));
   const startupWaits = passed.filter(run => variant.resource === "v2").map(run => run.result.legacyFullImportWaitMs);
   const longestTask = Math.max(0, ...passed.map(run => run.result.mainThreadLongTask.maxMs));
   return { variant, planned: runs.length, passed: passed.length,
   firstRareP50Ms: first.length ? first[Math.ceil(first.length * 0.5) - 1] : null,
     firstRareP95Ms: first.length ? first[Math.ceil(first.length * 0.95) - 1] : null,
-    warmP95Ms: warm.length ? warm[Math.ceil(warm.length * 0.95) - 1] : null,
+    mixed20P95Ms: mixed.length ? mixed[Math.ceil(mixed.length * 0.95) - 1] : null,
+    residentHitP95Ms: null,
     dictionaryReadyWaitP50Ms: startupWaits.length ? sorted(startupWaits)[Math.ceil(startupWaits.length * 0.5) - 1] : null,
     maxMainThreadLongTaskMs: longestTask,
     applicationStartupBlockingMs: nativeStartupBlockingMs,
@@ -430,7 +431,7 @@ const summary = { runSetId, plannedRuns: plan.length, passedRuns: outcomes.filte
   failedRuns: failures, notRun: outcomes.filter(run => run.status === "NOT_RUN").length,
   status: failures || outcomes.some(run => run.status === "NOT_RUN") ? "INCOMPLETE_OR_FAILED" : "COMPLETE_TRIALS_NATIVE_STARTUP_UNMEASURED",
   chosenSmallestPassingV3Limit: chosen,
-  thresholds: { firstRareP50Ms: 300, firstRareP95Ms: 1000, warmP95Ms: 10, applicationStartupBlockingMs: 50 },
+  thresholds: { firstRareP50Ms: 300, firstRareP95Ms: 1000, residentHitP95Ms: 10, applicationStartupBlockingMs: 50 },
   applicationStartupBlockingMeasured: nativeStartupBlockingMs !== null,
   nativeStartupEvidence, perVariant, plan: planPath, results: resultsPath };
 await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
