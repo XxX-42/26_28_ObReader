@@ -340,3 +340,13 @@ Review annotation request 2, Markdown selection request 3. Backlink focuses
 Controlled Reader close, fixture Markdown cleanup, independent WAL replay,
 source dual hashes, all 371 default files and 11 canonical non-route hashes pass.
 `stage5-verified-matrix.json` is the machine-checked five-direction receipt.
+
+### Stage 6 complete
+
+With all fixture Readers and Markdown leaves closed, actual Vault events moved
+both files from stage5 to stage6. FileManager promises resolved normally; no
+timeout increase or restart was used. Five actual UI directions pass under
+renderer `e8571741-e02b-4c7a-a613-2b7bfbfa0360`, requests Context 1 / Review 2 /
+Markdown selection 3. Backlink focuses stage6 Markdown `0..202`; original UUID
+is selected in Sidebar. Controlled close and independent disk replay/hash pass;
+371 default and 11 canonical non-route files remain unchanged.
