@@ -440,23 +440,36 @@
     }
     lines.sort((left, right) => left.top - right.top || left.left - right.left);
 
+    // A glyph can overlap adjacent Highlight lines because PDF.js quads and
+    // DOM font rectangles have different vertical extents. Assign it once to
+    // the eligible line with the greatest vertical overlap before assembling text.
+    const glyphLineOwners = glyphs.map((glyph, index) => {
+      if (/^\s+$/u.test(glyph.character)) return null;
+      let owner = null;
+      let bestOverlap = -1;
+      for (const line of lines) {
+        for (const rect of textRects[index]) {
+          const width = rect.right - rect.left;
+          const height = rect.bottom - rect.top;
+          if (!(width > 0 && height > 0)) continue;
+          for (const quad of line.quads) {
+            const overlapWidth = Math.max(0, Math.min(rect.right, quad.right) - Math.max(rect.left, quad.left));
+            const centerX = (rect.left + rect.right) / 2;
+            const centerY = (rect.top + rect.bottom) / 2;
+            if (centerY < quad.top - 1 || centerY > quad.bottom + 1 ||
+                !(overlapWidth / width >= 0.35 || (centerX >= quad.left && centerX <= quad.right))) continue;
+            const overlap = Math.max(0, Math.min(rect.bottom, quad.bottom) - Math.max(rect.top, quad.top)) / height;
+            if (overlap > bestOverlap) { bestOverlap = overlap; owner = line; }
+          }
+        }
+      }
+      return owner;
+    });
     const fragments = [];
     for (const line of lines) {
       const selected = new Set();
       for (let index = 0; index < glyphs.length; index += 1) {
-        if (/^\s+$/u.test(glyphs[index].character)) continue;
-        const hit = textRects[index].some(rect => line.quads.some(quad => {
-          const width = rect.right - rect.left;
-          if (!(width > 0 && rect.bottom > rect.top)) return false;
-          const overlapWidth = Math.max(0, Math.min(rect.right, quad.right) - Math.max(rect.left, quad.left));
-          const horizontalOverlapRatio = overlapWidth / width;
-          const centerX = (rect.left + rect.right) / 2;
-          const centerY = (rect.top + rect.bottom) / 2;
-          const centerInsideVertical = centerY >= quad.top - 1 && centerY <= quad.bottom + 1;
-          return centerInsideVertical && (horizontalOverlapRatio >= 0.35 ||
-            (centerX >= quad.left && centerX <= quad.right));
-        }));
-        if (hit) selected.add(index);
+        if (glyphLineOwners[index] === line) selected.add(index);
       }
       if (!selected.size) continue;
       const indexes = [...selected].sort((left, right) => left - right);
