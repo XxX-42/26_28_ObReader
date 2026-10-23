@@ -156,13 +156,13 @@ async function initializeNativeConfig(profileRoot) {
   const { nativeConfig, assertNativeVaultIdentity } = await import("./native-config.mjs");
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
-  return { profileRoot: canonicalProfile, marker, port, nativeConfig, assertNativeVaultIdentity };
+  return { profileRoot: canonicalProfile, marker, port, ownerPid: Number(ownerLines[0].trim().split(/\s/u)[0]), nativeConfig, assertNativeVaultIdentity };
 }
 
 const profileRoot = verifyOwnedProfile();
 const native = await initializeNativeConfig(profileRoot);
 const { h64Raw } = await xxhash();
-report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port,
+report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
@@ -763,6 +763,32 @@ async function openPluginSettingsThroughUI() {
   await recordScreen("workbench-opened-from-settings", settingsPage && !settingsPage.isClosed() ? settingsPage : page);
 }
 
+async function activateExactOwnedMainWindow() {
+  assertNativeSessionUnlocked();
+  const identity = await appIdentity();
+  assert.equal(identity.vault, EXPECTED_VAULT);
+  const command = execFileSync("ps", ["-p", String(native.ownerPid), "-o", "command="], { encoding: "utf8" });
+  assert.ok(command.includes(APP_EXECUTABLE) && command.includes(`--user-data-dir=${native.profileRoot}`));
+  const focus = () => page.evaluate(() => ({ activeDocumentIsMain: typeof activeDocument === "undefined" || activeDocument === document,
+    activeWindowIsMain: typeof activeWindow === "undefined" || activeWindow === window, hasFocus: document.hasFocus(),
+    activeDocumentUrl: typeof activeDocument === "undefined" ? null : activeDocument.URL,
+    activeWindowClosed: typeof activeWindow === "undefined" ? null : activeWindow.closed }));
+  const before = await focus();
+  const activate = minimize => execFileSync("osascript", ["-e", `tell application "System Events"
+    tell (first application process whose unix id is ${native.ownerPid})
+      set targetWindow to first window whose name contains "ObReader-Apple-Test"
+      ${minimize ? 'set value of attribute "AXMinimized" of targetWindow to true\nset value of attribute "AXMinimized" of targetWindow to false' : ''}
+      set frontmost to true
+      perform action "AXRaise" of targetWindow
+    end tell
+  end tell`], { encoding: "utf8" });
+  activate(false);
+  let after = await focus(), minimizedAndRestored = false;
+  if (!after.activeDocumentIsMain || !after.activeWindowIsMain || !after.hasFocus) { activate(true); minimizedAndRestored = true; }
+  after = await waitFor("real owned NSWindow and document focus owner", focus, state => state.activeDocumentIsMain && state.activeWindowIsMain && state.hasFocus);
+  (report.nativeMainFocusRepairs ||= []).push({ ownerPid: native.ownerPid, before, after, minimizedAndRestored });
+}
+
 async function closeSettingsThroughUIIfVisible() {
   if (!settingsPage || settingsPage.isClosed()) return false;
   await settingsPage.waitForFunction(() => !document.querySelector(".vocabulary-workbench"), { timeout: 8_000 });
@@ -786,6 +812,7 @@ async function closeSettingsThroughUIIfVisible() {
   }
   await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
   settingsPage = null;
+  await activateExactOwnedMainWindow();
   return true;
 }
 
@@ -1778,6 +1805,23 @@ async function controlledCloseMatrixReaders(label) {
   return results;
 }
 
+async function quickOpenOwnedMarkdown(markdownPath) {
+  assertFixturePath(markdownPath);
+  await closeOwnedMarkdownTabs(markdownPath, "before-fresh-QuickOpen");
+  const openButton = await page.$('.empty-state-action[aria-label="打开文件"]');
+  if (openButton && await openButton.evaluate(node => node.getBoundingClientRect().width > 0)) await openButton.click();
+  else {
+    await page.click(".workspace-tab-header.is-active");
+    await page.keyboard.down("Meta");
+    try { await page.keyboard.press("o"); } finally { await page.keyboard.up("Meta"); }
+  }
+  await page.waitForSelector(".prompt-input", { visible: true });
+  await page.type(".prompt-input", markdownPath, { delay: 1 });
+  await waitFor("QuickOpen exact fixture candidate", () => page.evaluate(() => [...document.querySelectorAll(".suggestion-item")].filter(n=>n.getBoundingClientRect().width).map(n=>n.innerText)), rows => rows.length === 1);
+  await page.keyboard.press("Enter");
+  await waitFor("QuickOpen exact Markdown UI owner", () => page.evaluate(() => ({ path:app.workspace.activeLeaf.view.file?.path, type:app.workspace.activeLeaf.view.getViewType(), visible:app.workspace.activeLeaf.view.containerEl.getBoundingClientRect().width })), state => state.path === markdownPath && state.type === "markdown" && state.visible > 0);
+}
+
 async function closeOwnedMarkdownTabs(markdownPath, label) {
   assertFixturePath(markdownPath);
   const before = await readFile(absoluteVaultPath(markdownPath));
@@ -1965,20 +2009,22 @@ async function runCompleteFiveDirectionMatrix() {
   await stage("full-closedmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-closed.pdf`); });
   await stage("full-openmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdf.sourcePath);
     await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-open.pdf`); });
-  await stage("full-plugin-restart", async () => {
-    await page.evaluate(async pluginId => { await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
-    await waitForPersistedPluginState(false, "full matrix plugin disable stable twice");
-    await page.evaluate(() => { if (!window.__nativeLearningLoopIsolation.restore()) throw Error("Isolation restore failed"); delete window.__sidecarNative07; });
-    const installer = serializeNativeLearningLoopIsolationInstaller(isolationPlan);
-    await page.evaluate(source => (0, eval)(`(function(){${source}})()`), installer);
-    await page.evaluate(async pluginId => { await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
-    await waitFor("full matrix plugin reloaded", appIdentity, state => state.pluginActive);
-    await waitForPersistedPluginState(true, "full matrix plugin enable stable twice");
-    await installMaintenanceLogger();
-    await page.evaluate(pluginId => { app.plugins.plugins[pluginId].settings.autoSave = false; }, PLUGIN_ID);
-  });
+  if (!process.argv.includes("--after-owned-process-restart")) {
+    report.completeDirectionMatrix.status = "awaiting-owned-process-restart";
+    report.completeDirectionMatrix.processRestartPending = { ownerPid: native.ownerPid, cdpPort: native.port, profileRoot: native.profileRoot,
+      note: "ROOT must safely restart the exact owned process after final cleanup; plugin toggles do not satisfy this stage." };
+    await checkpoint("seven-full-stages-awaiting-ROOT-owned-process-restart");
+    return;
+  }
+  const previous = resumeEvidence.completeDirectionMatrix.processRestartPending;
+  assert.ok(previous && Number.isInteger(previous.ownerPid));
+  assert.notEqual(native.ownerPid, previous.ownerPid, "Formal restart requires a different actual owned main PID");
+  assert.equal(native.profileRoot, previous.profileRoot);
+  await stage("full-owned-process-restart", async () => {});
   report.completeDirectionMatrix.status = "passed";
-  report.completeDirectionMatrix.restartScope = "plugin only; ROOT-owned process restart remains pending";
+  report.completeDirectionMatrix.restartScope = "actual owned Obsidian process restart by ROOT, independently verified new main PID";
+  report.completeDirectionMatrix.processRestart = { previous, currentOwnerPid: native.ownerPid, currentCdpPort: native.port };
+
 }
 
 async function captureNativeEvidence() {
@@ -2187,11 +2233,39 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
-  if (process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
+  if (process.argv.includes("--markdown-quick-open-diagnostic") || process.argv.includes("--markdown-source-visibility-diagnostic") || process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
     report.sourceCheckpointOnly = true;
     report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
     report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
-    if (process.argv.includes("--editor-route-passive-diagnostic")) {
+    if (process.argv.includes("--markdown-quick-open-diagnostic")) {
+      const item = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      const route = await currentMarkdownRoute(item.itemId);
+      await controlledCloseMatrixReaders("before-QuickOpen-preview-diagnostic");
+      await quickOpenOwnedMarkdown(route.currentPath);
+      const mode = await page.evaluate(() => { app.workspace.activeLeaf.view.containerEl.dataset.nativeQuickOpen = "true"; return app.workspace.activeLeaf.view.getMode(); });
+      if (mode !== "preview") await page.click('[data-native-quick-open="true"] .view-action[aria-label*="切换至阅读视图"]');
+      try { await page.waitForSelector('[data-native-quick-open="true"] .markdown-preview-view a.internal-link', { visible:true,timeout:10000 }); } finally {
+        report.markdownQuickOpen = await page.evaluate(() => {const v=app.workspace.activeLeaf.view;return{path:v.file?.path,mode:v.getMode(),preview:v.containerEl.querySelector(".markdown-preview-view")?.outerHTML,links:[...v.containerEl.querySelectorAll("a.internal-link")].map(n=>({href:n.getAttribute("data-href"),text:n.textContent,rect:n.getBoundingClientRect().toJSON()}))}});
+        await recordScreen("markdown-fresh-quickopen-preview-once");
+        await closeOwnedMarkdownTabs(route.currentPath, "QuickOpen-preview-diagnostic");
+      }
+    } else if (process.argv.includes("--markdown-source-visibility-diagnostic")) {
+      const item = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      const route = await currentMarkdownRoute(item.itemId);
+      const source = await verifySource(item.itemId, item.source.target, route.currentPath, { markdown: true });
+      report.markdownSourceVisibility = await page.evaluate(() => {
+        const view = app.workspace.activeLeaf.view;
+        const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(), style = getComputedStyle(node); return { x:r.x,y:r.y,width:r.width,height:r.height,display:style.display,visibility:style.visibility,connected:node.isConnected }; };
+        const editor = view.containerEl.querySelector(".cm-content"), preview = view.containerEl.querySelector(".markdown-preview-view");
+        const selection = window.getSelection();
+        return { path:view.file?.path, mode:view.getMode(), editor:rect(editor), preview:rect(preview), previewText:preview?.innerText,
+          editorSelection:view.editor?.getSelection(), domSelection:selection?.toString(), domRangeRects:selection?.rangeCount ? [...selection.getRangeAt(0).getClientRects()].map(r=>({x:r.x,y:r.y,width:r.width,height:r.height})) : [], activeElement:document.activeElement?.outerHTML.slice(0,300) };
+      });
+      report.markdownSourceVisibility.source = source;
+      await recordScreen("markdown-source-visibility-no-toggle");
+      await controlledCloseMatrixReaders("markdown-source-visibility-diagnostic");
+      report.markdownSourceVisibility.cleanup = await closeOwnedMarkdownTabs(route.currentPath, "markdown-source-visibility-diagnostic");
+    } else if (process.argv.includes("--editor-route-passive-diagnostic")) {
       learningItems.markdown = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
       await installEditorRoutePassiveProbe();
       await checkFiveNavigationDirections("passive-editor-route");
