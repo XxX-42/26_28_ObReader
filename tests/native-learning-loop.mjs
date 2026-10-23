@@ -1778,6 +1778,21 @@ async function controlledCloseMatrixReaders(label) {
   return results;
 }
 
+async function closeOwnedMarkdownTabs(markdownPath, label) {
+  assertFixturePath(markdownPath);
+  const before = await readFile(absoluteVaultPath(markdownPath));
+  const result = await page.evaluate(async markdownPath => {
+    const leaves = app.workspace.getLeavesOfType("markdown").filter(leaf => leaf.view?.file?.path === markdownPath);
+    const closedLeafIds = leaves.map(leaf => leaf.id);
+    for (const leaf of leaves) await leaf.detach();
+    await app.workspace.saveLayout();
+    return { closedLeafIds, remaining: app.workspace.getLeavesOfType("markdown").filter(leaf => leaf.view?.file?.path === markdownPath).length };
+  }, markdownPath);
+  assert.equal(result.remaining, 0);
+  assert.deepEqual(await readFile(absoluteVaultPath(markdownPath)), before, `${label} own Markdown tab cleanup preserves exact bytes`);
+  return { label, markdownPath, ...result, bytesUnchanged: true, sha256: sha256(before) };
+}
+
 async function installEditorRoutePassiveProbe() {
   await page.evaluate(pluginId => {
     const state = window.__nativeEditorRouteProbe = { calls: [], restores: [], startedAt: Date.now() };
@@ -1918,10 +1933,11 @@ async function runCompleteFiveDirectionMatrix() {
     const directions = await checkFiveNavigationDirections(name);
     assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), `${name} after five directions`);
     const closes = await controlledCloseMatrixReaders(name);
+    const markdownCleanup = await closeOwnedMarkdownTabs(directions.paths.markdownPath, name);
     assert.deepEqual(await defaultSnapshot(), sortedDefault, `${name} must not write default data trees`);
     const currentPdf = (await currentPdfRoute(learningItems.highlight)).sourcePath;
     assert.equal(sha256(await readFile(absoluteVaultPath(currentPdf))), report.fixtures.originalPdfSha256);
-    report.completeDirectionMatrix.stages.push({ name, status: "passed", directions, closes,
+    report.completeDirectionMatrix.stages.push({ name, status: "passed", directions, closes, markdownCleanup,
       canonicalBytesUnchanged: true, defaultTreesUnchanged: true, sourcePdfUnchanged: true });
     await checkpoint(`complete-five-directions-${name}-passed`);
   };
