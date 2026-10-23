@@ -146,6 +146,29 @@ test("reentrant confirm shares one in-flight request and closes after commit", a
   assert.equal(modal.isOpen, false);
   assert.deepEqual(service.state.cancels, []);
 });
+
+test("an unresolved Markdown route is explained and the modal can still be closed", async () => {
+  const service = makeService({ async confirm() {
+    return { status: "committed", item: { itemId: "item-1" },
+      sourceStatus: { status: "TARGET_UNRESOLVED", code: "markdown-route-bind-failed" }, writes: 1 };
+  } });
+  const DraftModal = createLearningDraftModal({ Modal: FakeModal });
+  const modal = new DraftModal({}, { service, source, prompt: "Question", makeActionId: () => "route-action" });
+  modal.open();
+
+  await modal.confirm();
+  assert.equal(modal.isOpen, true);
+  assert.match(modal.statusEl.textContent, /来源关联未完成/);
+  assert.equal(modal.confirmButton.textContent, "重试来源关联");
+  assert.equal(modal.promptInput.readOnly, true);
+  assert.equal(modal.answerInput.readOnly, true);
+  assert.equal(modal.cancelButton.disabled, false);
+
+  const cancelled = modal.cancel();
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(modal.isOpen, false, "the user can close a modal after the canonical item was saved");
+});
+
 test("clicking a stale confirmation keeps the draft visible without an unhandled rejection", async () => {
   const service = makeService({
     async confirm() {
