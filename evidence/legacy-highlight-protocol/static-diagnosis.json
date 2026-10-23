@@ -22,5 +22,13 @@
     "vendor",
     "storage"
   ],
-  "nextCommandAfterLease": "node --test tests/highlight-multiline-regression.test.mjs"
+  "nextCommandAfterLease": "node --test tests/highlight-multiline-regression.test.mjs",
+  "baselineComparison": {
+    "baseline": "cd6e157",
+    "candidate": "d83b59b",
+    "allThreeHelperSourceIdentical": true,
+    "helperSliceSha256": "88f857a834888e49a7bd62ed5ede5d27cf64934859e3f0ab746d5516a61f401e",
+    "browserTestSourceIdentical": true
+  },
+  "additionalProbe": "Also record non-whitespace lengths and equality ignoring whitespace to distinguish extra glyph hits from spacing heuristics. Exact normalized-text assertion remains unchanged."
 }
