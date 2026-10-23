@@ -1,0 +1,51 @@
+{
+  "agent": "impl_b_native",
+  "workstream": "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
+  "base": "cd6e15743d5065dfe53579d658dde18580c84e9f",
+  "branch": "codex/014-native-sol-low",
+  "planA": "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in an owned Obsidian profile attached only to ObReader-Apple-Test.",
+  "planB": "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity; perform eight PDF/Markdown move/restart cases with exact canonical byte invariants.",
+  "startedAt": "2026-10-23T15:52:56.489Z",
+  "runId": "native-learning-loop-20261023142727241-ab1fac1a68",
+  "fixturePrefix": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68",
+  "status": "failed",
+  "nativeProfile": {
+    "root": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-learning-loop-20261023-0642",
+    "marker": {
+      "kind": "codex-owned-native-test-profile",
+      "runId": "learning-loop-20261023-0642",
+      "allowedVault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "appPath": "/Applications/Obsidian.app",
+      "createdAt": "2026-10-23T12:56:26.199Z"
+    },
+    "cdpPort": 49786,
+    "ownerProcessHash": "618112e389a5cda0d84ee15d4cc2cf3365259c00d2331cc7f59bd72d8a29c93b"
+  },
+  "identity": null,
+  "sync": null,
+  "plugin": null,
+  "stores": null,
+  "uiFlows": [],
+  "routeScenarios": [],
+  "screenshots": [
+    "/Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023155256489/failure-target-1.png"
+  ],
+  "errors": [
+    {
+      "at": "2026-10-23T15:52:56.702Z",
+      "error": "AssertionError [ERR_ASSERTION]: Close all Reader tabs before Native acceptance.\n+ actual - expected\n\n+ [\n+   {\n+     path: 'PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf',\n+     token: '7451e441-f61a-43e2-b4b9-0463c36ab8eb'\n+   }\n+ ]\n- []\n\n    at main (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:1753:10)\n    at async file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:1880:3"
+    }
+  ],
+  "failedAt": "2026-10-23T15:52:56.702Z",
+  "failureTargets": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "title": "reading-open-move - ObReader-Apple-Test - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless is-focused obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header",
+      "text": "ObReader-Apple-Test\n00_Archive\n12_books\n测试插件\nObReader-Bulk-Tests\nPDF Reader Diagnostics\nPDF Recovery\nPDF迁移测试\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nreading-open-move\nPDF迁移测试\n/\nnative-learning-loop-20261023142727241-ab1fac1a68\n/\nReader Both Moved\n/\nreading-open-move\n0 条反向链接",
+      "textareas": []
+    }
+  ],
+  "recommendation": "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.",
+  "completedAt": "2026-10-23T15:52:56.745Z"
+}
