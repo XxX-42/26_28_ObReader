@@ -3017,13 +3017,31 @@ test(
       // The preceding exact navigation intentionally starts a smooth scroll.
       // Restore this drawing fixture's viewport before deriving pointer points;
       // otherwise the page moves between the geometry read and trusted drag.
+      // Sidebar selection confirms navigation was issued, not that native
+      // scrolling finished. Do not compete with its final asynchronous tick.
+      await viewer.waitForFunction(async () => {
+        const container = document.getElementById('viewerContainer');
+        const viewer = PDFViewerApplication.pdfViewer;
+        const trace = window.__drawingFixtureScrollTrace;
+        const lastEvent = trace?.at(-1);
+        if (lastEvent?.type !== 'scrollend' || viewer.getPageView(0)?.renderingState !== 3) return false;
+        const bounds = viewer.getPageView(0).div.getBoundingClientRect();
+        const position = {top:container.scrollTop,left:container.scrollLeft,x:bounds.x,y:bounds.y};
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const after = viewer.getPageView(0).div.getBoundingClientRect();
+        const stable = trace.at(-1) === lastEvent && container.scrollTop === position.top &&
+          container.scrollLeft === position.left && after.x === position.x && after.y === position.y;
+        if (stable) window.__drawingFixtureSettled = {position,scrollEnd:lastEvent};
+        return stable;
+      }, {timeout:5_000});
       results.at(-1).drawingViewportReset = await viewer.evaluate(async () => {
         const container=document.getElementById('viewerContainer');
         const before={top:container.scrollTop,left:container.scrollLeft};
         container.scrollTo({top:0,left:0,behavior:'instant'});
         const immediate={top:container.scrollTop,left:container.scrollLeft};
         await new Promise(requestAnimationFrame);
-        return {before,immediate,afterFrame:{top:container.scrollTop,left:container.scrollLeft},
+        return {settled:window.__drawingFixtureSettled,before,immediate,afterFrame:{top:container.scrollTop,left:container.scrollLeft},
           activeElement:document.activeElement?.outerHTML?.slice(0,300),
           pageNumber:PDFViewerApplication.pdfViewer.currentPageNumber,
           pageBounds:PDFViewerApplication.pdfViewer.getPageView(0)?.div?.getBoundingClientRect()?.toJSON(),
