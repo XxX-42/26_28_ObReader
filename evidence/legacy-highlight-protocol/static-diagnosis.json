@@ -49,5 +49,17 @@
     "proof": "Captured real geometry reproduces all 30 current duplicate assignments. Proposed ownership yields exact original non-whitespace characters on each of the four original lines (23/15/10/25).",
     "tests": "tests/legacy-highlight-overlap-proof.test.mjs 2/2 PASS",
     "limitation": "Full original normalized-text/geometry browser assertions still require a run after root applies the production proposal; offline proof does not claim complete browser acceptance."
+  },
+  "offlineRealHelperRegression": {
+    "file": "tests/legacy-highlight-overlap-proof.test.mjs",
+    "method": "Extract exact actual recoverHighlightTextFromTextLayer function boundaries from the current bridge source. Inject only captured glyphs and identity viewport; no ownership algorithm is repeated.",
+    "fixtureIntegrity": "Captured 73 non-whitespace glyphs plus 26 original TreeWalker index gaps reproduce the complete selected text without its three layout-only newlines. Fixture integrity is independently asserted.",
+    "assertions": [
+      "exact normalized original selected text",
+      "per-line exact normalized text in original order",
+      "73 non-whitespace output characters, no duplicate glyphs"
+    ],
+    "beforeFix": "1 fixture-integrity PASS, 1 real-helper RED in ~105ms; actual recovered text exactly matches the observed Browser failure",
+    "afterFix": "Root must run the same regression against the actual fixed bridge; no production code changed in this branch."
   }
 }
