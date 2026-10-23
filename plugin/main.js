@@ -4857,10 +4857,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!document?.docKey || !document.documentId || !isCurrent() || !targetKinds.has(message.targetKind) ||
         typeof message.targetId !== "string" || !message.targetId || message.targetId.length > 512 ||
         !Number.isSafeInteger(message.pageNumber) || message.pageNumber < 1 ||
+        message.targetKind === "page" && message.targetId !== message.pageIdentity ||
         pageIdentities?.[message.pageNumber - 1] !== message.pageIdentity || !this.readerBacklinkIndexReady) return false;
     const backlinkPageIndex = await this.getReaderBacklinkPageIndex(view, { documentId, openRequest, rendererGeneration });
     if (!backlinkPageIndex || !isCurrent()) return false;
-    const rows = backlinkPageIndex.value.forPage(message.pageIdentity).rows.filter((row) =>
+    const pageRows = backlinkPageIndex.value.forPage(message.pageIdentity).rows;
+    const rows = message.targetKind === "page" ? pageRows : pageRows.filter((row) =>
       row.target?.kind === message.targetKind && row.target?.id === message.targetId &&
       !(message.targetKind === "annotation" && row.targetStatus === "deleted"));
     if (!isCurrent()) return false;
