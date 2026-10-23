@@ -48,7 +48,7 @@ const report = {
   agent: "impl_b_native",
   workstream: "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
   base: "cd6e15743d5065dfe53579d658dde18580c84e9f",
-  branch: "codex/014-b-native",
+  branch: "codex/014-native-sol-low",
   planA: "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in an owned Obsidian profile attached only to ObReader-Apple-Test.",
   planB: "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity; perform eight PDF/Markdown move/restart cases with exact canonical byte invariants.",
   startedAt: startedAt.toISOString(),
@@ -686,8 +686,15 @@ async function closeSettingsThroughUIIfVisible() {
   await settingsPage.keyboard.down("Meta");
   try {
     await settingsPage.keyboard.press("w");
+  } catch (error) {
+    // Cmd+W can destroy the target before its key-up acknowledgement returns.
+    if (!String(error).includes("TargetCloseError")) throw error;
+    await waitFor("Settings target closure after Cmd+W", () => settingsPage.isClosed(), Boolean, 8_000);
   } finally {
-    await settingsPage.keyboard.up("Meta");
+    if (!settingsPage.isClosed()) await settingsPage.keyboard.up("Meta").catch(async error => {
+      if (!String(error).includes("TargetCloseError")) throw error;
+      await waitFor("Settings target closure after Cmd+W key release", () => settingsPage.isClosed(), Boolean, 8_000);
+    });
   }
   await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
   settingsPage = null;
@@ -1493,6 +1500,21 @@ try {
 } catch (error) {
   report.status = "failed";
   report.failedAt = new Date().toISOString();
+  // Capture owned-profile modal targets before cleanup closes them.
+  if (browser) {
+    report.failureTargets = [];
+    for (const target of await browser.pages()) {
+      const state = await target.evaluate(() => ({ title: document.title,
+        bodyClass: document.body?.className || "",
+        text: (document.body?.innerText || "").slice(0, 6000),
+        textareas: [...document.querySelectorAll("textarea")].map(node => ({
+          label: node.getAttribute("aria-label"), value: node.value,
+        })),
+      })).catch(error => ({ error: String(error) }));
+      report.failureTargets.push({ url: target.url(), ...state });
+      await recordScreen(`failure-target-${report.failureTargets.length}`, target).catch(() => {});
+    }
+  }
   report.errors.push({ at: report.failedAt, error: error?.stack || String(error) });
   report.recommendation = "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.";
 } finally {
