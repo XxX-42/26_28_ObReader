@@ -444,7 +444,19 @@ test("Markdown route failure stays visible and retries routing without rewriting
   const historyBytes = [...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b));
   assert.equal(learningCommits, 1);
 
+  assert.equal(modal.promptInput.readOnly, true);
+  assert.equal(modal.answerInput.readOnly, true);
+  // The cached canonical receipt must never authorize a changed excerpt or
+  // an unloading Host to repair routing. Restore the same source to retry.
   failRouteCommit = false;
+  f.texts.set("Notes/A.md", "Before changed excerpt after");
+  await assert.rejects(modal.confirm(), error => error.code === "LEARNING_SOURCE_STALE");
+  assert.equal(modal.closed, false);
+  assert.equal(learningCommits, 1);
+  f.texts.set("Notes/A.md", text);
+  f.plugin.isUnloading = true;
+  await assert.rejects(modal.confirm(), error => error.code === "LEARNING_SOURCE_STALE");
+  f.plugin.isUnloading = false;
   const retried = await modal.confirm();
   assert.equal(retried.item.itemId, itemId);
   assert.equal(retried.sourceStatus.status, "VERIFIED");
