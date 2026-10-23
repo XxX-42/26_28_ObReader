@@ -370,6 +370,9 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   const contractBefore = await f.host.getSourceContract(saved.item.itemId);
   assert.equal(contractBefore.contract, "SemanticAnchorContractV1");
   assert.equal(contractBefore.status, "VERIFIED");
+  assert.deepEqual(contractBefore.owner, { kind: "learning-item", id: saved.item.itemId },
+    "the public source-contract facade supplies its owner context internally");
+  assert.ok(contractBefore.bindingId, "the public contract exposes the durable external binding");
   const sourceCanonical = saved.item.source;
   const learningBytes = [...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b));
   const historyBytes = [...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b));
@@ -405,6 +408,43 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   f.texts.set("Archive/B.md", "This source changed");
   await assert.rejects(f.host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
   assert.equal(f.sourceOpenings.length, 1);
+});
+
+test("malformed Markdown owner contexts cannot fall back to a stale canonical path", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Owner context validation";
+  const saved = await modal.confirm();
+  const sourceBefore = structuredClone(saved.item.source);
+  const persistedBefore = [...f.adapter.files].map(([path, value]) => [path, value]).sort(([a], [b]) => a.localeCompare(b));
+  const fileBefore = f.files.get("Notes/A.md");
+  const textBefore = f.texts.get("Notes/A.md");
+  const malformedContexts = [
+    {},
+    { ownerKind: "learning-item" },
+    "learning-item",
+    [],
+    { ownerKind: "learning-item", ownerId: "../invalid-owner" },
+    { ownerKind: "learning-item", ownerId: "missing-owner" },
+  ];
+
+  for (const ownerContext of malformedContexts) {
+    const resolution = await f.host.resolveSource(saved.item.source, ownerContext);
+    assert.equal(resolution.status, "unresolved", `resolveSource must reject ${JSON.stringify(ownerContext)}`);
+    await assert.rejects(f.host.openMarkdownSource(saved.item.source, ownerContext),
+      error => error.code === "TARGET_UNRESOLVED",
+      `openMarkdownSource must reject ${JSON.stringify(ownerContext)}`);
+  }
+
+  assert.equal(f.sourceOpenings.length, 0, "invalid routing context must not open any source");
+  assert.deepEqual(saved.item.source, sourceBefore, "routing checks must not mutate canonical source data");
+  assert.deepEqual([...f.adapter.files].map(([path, value]) => [path, value]).sort(([a], [b]) => a.localeCompare(b)),
+    persistedBefore, "failed route lookups must not write route facts or ReviewHistory");
+  assert.equal(f.files.get("Notes/A.md"), fileBefore);
+  assert.equal(f.texts.get("Notes/A.md"), textBefore);
 });
 
 test("repeated Markdown quotes stay tied to the captured range and a closed-app move stays unresolved", async () => {
@@ -448,9 +488,14 @@ test("missing first-confirm route metadata is unresolved and never reconstructed
   const saved = await modal.confirm();
   const before = await (await f.host.getMarkdownRouting()).resolve({ ownerKind: "learning-item", ownerId: saved.item.itemId });
   assert.equal(before.status, "verified");
+  const contractBefore = await f.host.getSourceContract(saved.item.itemId);
+  assert.equal(contractBefore.status, "VERIFIED", "the public contract facade reports its internally supplied owner route");
+  assert.deepEqual(contractBefore.owner, { kind: "learning-item", id: saved.item.itemId });
   for (const path of [...f.adapter.files.keys()]) if (path.includes("/routing/markdown/")) f.adapter.files.delete(path);
   const unresolved = await f.host.getSourceContract(saved.item.itemId);
   assert.equal(unresolved.status, "TARGET_UNRESOLVED");
+  assert.deepEqual(unresolved.owner, { kind: "learning-item", id: saved.item.itemId },
+    "the public contract keeps owner identity while accurately reporting missing routing metadata");
   await assert.rejects(f.host.openItemSource(saved.item.itemId), error => error.code === "TARGET_UNRESOLVED");
   assert.equal([...f.adapter.files.keys()].some(path => path.includes("/routing/markdown/")), false,
     "missing metadata is not silently reconstructed from the canonical anchor");

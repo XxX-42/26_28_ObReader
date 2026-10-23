@@ -78,8 +78,23 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
   }
 
   async function markdownPathFor(anchor, ownerContext = null) {
-    if (ownerContext && typeof ownerContext.ownerKind === "string" && typeof ownerContext.ownerId === "string") {
-      const route = await (await getMarkdownRouting()).resolve(ownerContext);
+    // A caller that supplies routing context has opted into the durable route
+    // contract. Never reinterpret malformed or incomplete context as a legacy
+    // sourcePath lookup: that could verify a stale canonical path after the
+    // binding facts were lost or the item was rebound elsewhere.
+    if (ownerContext !== null) {
+      if (!ownerContext || typeof ownerContext !== "object" || Array.isArray(ownerContext)) {
+        throw unresolved("markdown-owner-context-invalid");
+      }
+      let route;
+      try {
+        // resolve() owns validation of ownerKind and ownerId, including their
+        // stable-ID constraints. Preserve its fail-closed behavior at the Host
+        // boundary as the standard unresolved target result.
+        route = await (await getMarkdownRouting()).resolve(ownerContext);
+      } catch {
+        throw unresolved("markdown-owner-context-invalid");
+      }
       if (route.status !== "verified") throw unresolved("markdown-binding-missing");
       return route;
     }
