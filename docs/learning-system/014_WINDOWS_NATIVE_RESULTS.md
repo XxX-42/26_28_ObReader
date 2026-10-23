@@ -350,3 +350,25 @@ renderer `e8571741-e02b-4c7a-a613-2b7bfbfa0360`, requests Context 1 / Review 2 /
 Markdown selection 3. Backlink focuses stage6 Markdown `0..202`; original UUID
 is selected in Sidebar. Controlled close and independent disk replay/hash pass;
 371 default and 11 canonical non-route files remain unchanged.
+
+### Stage 7 complete
+
+Reader and Markdown were both open before real FileManager events moved their
+paths from stage6 to stage7. The existing Reader remained alive. Five actual
+UI directions pass; PDF receipts use renderer
+`2a61b1b2-b1ec-46b7-b710-e9ee38be9e40` (MD selection request 2, Context 3,
+Review annotation 4), and Sidebar selects the original UUID.
+
+Concurrent human input/window resizing interrupted two badge clicks. An early
+diagnostic read therefore retained the previous stage6 source receipt. The
+checker was strengthened to require the exact expected stage path; it correctly
+fails that stale receipt. Its prior overly permissive check output and the stale
+receipt remain as `stage7-checker-stale-receipt-red.json` and
+`stage7-backlink-stale-harness-red.json`, not product PASS evidence. A later
+fresh accessibility-targeted actual click on the existing page badge returned
+stage7 Markdown exact `0..202`. A diagnostic bridge trace is preserved and its
+listeners were explicitly removed afterward. No product code was changed.
+
+All five current receipts now validate. Controlled close/replay, source dual
+hashes, 371 default-tree and 11 canonical non-route hash checks pass. Stage7 is
+not a claim that the stale receipt or interrupted clicks passed.

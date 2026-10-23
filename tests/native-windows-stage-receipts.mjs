@@ -10,6 +10,8 @@ const context=(await load('context','viewer-evidence')).result;checkSession(cont
 const md=(await load('md-pdf','viewer-evidence')).result;checkSession(md);assert.equal(md.last.targetId,'0c4c4976-f881-4323-a5a8-a8f5220721dc');
 const sidebar=(await load('sidebar','viewer-evidence')).result;assert.ok(sidebar.rows.some(r=>r.uuid===review.last.targetId&&r.className.split(' ').includes('selected')));
 const backlink=(await load('backlink','source-evidence')).result;assert.equal(backlink.result,true);assert.equal(backlink.path,backlink.args[0].sourcePath);assert.equal(backlink.selection,backlink.args[0].sourceText);assert.deepEqual(backlink.from,{line:0,ch:backlink.args[0].offset});assert.deepEqual(backlink.to,{line:0,ch:backlink.args[0].endOffset});
+const number=Number(stage.slice(5));const folder=number<=3?'closed-pair':`stage${number===8?7:number}`;const name=number<=2?'roundtrip.md':'roundtrip-stage3.md';
+assert.equal(backlink.path,`PDF迁移测试/native-learning-loop-windows-014-20261023-1433/${folder}/${name}`,'Backlink receipt belongs to a previous stage');
 const integrity=JSON.parse(await readFile(`${root}/${stage}-integrity.json`,'utf8'));assert.equal(integrity.existingMutationCount,0);assert.equal(integrity.canonicalMutationCount,0);
 const report={stage,pid,directions:5,review:review.last,context:context.last,markdown:md.last,backlink:{path:backlink.path,from:backlink.from,to:backlink.to},sha256:integrity.sha256,xxh64:integrity.xxh64,passed:true};
 await writeFile(`${root}/${stage}-verified-matrix.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report));
