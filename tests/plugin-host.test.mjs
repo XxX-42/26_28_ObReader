@@ -4849,6 +4849,9 @@ test("learning Markdown Source opens exact large excerpts without widening gener
       const draft = service.createDraft({ source, prompt: "Large excerpt?" });
       saved = await service.confirmDraft(draft.draftId, { actionId: `large-${length}` });
       assert.equal(saved.status, "committed");
+      // A direct domain fixture is legacy/unbound. Explicitly associate its
+      // confirmed source without changing the canonical item or History.
+      assert.equal((await host.bindMarkdownSource(saved.item.itemId, noteFile.path)).status, "VERIFIED");
       assert.equal((await host.openItemSource(saved.item.itemId)).status, "opening");
     } else {
       // Exercise the navigation boundary directly: the existing shard byte cap
@@ -4999,5 +5002,43 @@ test("a PDF folder rename updates the existing identity route for open and close
     await move("Archive/Folder", "Archive/Closed", false);
     assert.deepEqual(file.bytes, beforeBytes);
     assert.equal(file.writes, 0);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("Sidebar and Backlink facades delegate to the current effective Reader without a second store", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  try {
+    const reader = await createSidecarReader(harness, new harness.TFile("Books/facades.pdf"), {
+      pageCount: 1, orderedPageIdentities: ["facade-page"],
+    });
+    const uuid = "550e8400-e29b-41d4-a716-446655440099";
+    await saveSidecarOperations(reader, { requestId: "facade-create", operations: [{ uuid,
+      kind: "Highlight", pageIndex: 0, deleted: false,
+      payload: { editor: { type: "highlight", text: "current source", color: [1, 1, 0] } } }] });
+    for (let attempt = 0; attempt < 50 && !reader.view.annotationSnapshot?.annotations?.some(row => row.uuid === uuid); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const api = harness.plugin.getAnnotationSidebarService(reader.view);
+    assert.ok(Object.isFrozen(api));
+    assert.equal(api.list().length, 1);
+    assert.equal(api.get(uuid).payload.editor.text, "current source");
+    const copy = api.get(uuid);
+    copy.payload.editor.text = "consumer mutation";
+    assert.equal(api.get(uuid).payload.editor.text, "current source", "view models do not mutate authority");
+    assert.equal(await api.navigate(uuid), true);
+    assert.equal(reader.sent.findLast(row => row.type === "reader-anchor-navigate").target.id, uuid);
+    assert.equal(api.createReviewDraft(uuid), true);
+    const request = reader.sent.findLast(row => row.type === "annotation-sidebar-review-draft");
+    assert.equal(request.uuid, uuid);
+    assert.equal(request.documentId, reader.view.documentId);
+    const backlinks = harness.plugin.getBacklinkService(reader.view);
+    assert.ok(Object.isFrozen(backlinks));
+    assert.deepEqual(await backlinks.listSources({ target: { kind: "page", id: "wrong-page" } }), []);
+    reader.view.annotationHydrationAllowed = false;
+    assert.deepEqual(api.list(), []);
+    assert.equal(api.get(uuid), null);
+    assert.equal(await api.navigate(uuid), false);
+    assert.equal(api.createReviewDraft(uuid), false);
   } finally { harness.plugin.onunload(); }
 });

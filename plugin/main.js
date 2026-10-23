@@ -34,6 +34,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:VOCABULARY_WORKSPACE_REQUIRE */ const { createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer } = require('./vocabulary/workspace.cjs');
 /* BUILD:VOCABULARY_WORKBENCH_REQUIRE */ const { createVocabularyWorkbench } = require('./vocabulary/workbench.cjs');
 /* BUILD:LEARNING_HOST_REQUIRE */ const { createLearningHost } = require('./learning/host.cjs');
+/* BUILD:SEMANTIC_SERVICES_REQUIRE */ const { createAnnotationSidebarService, createBacklinkService } = require('./semantic/services.cjs');
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
@@ -6047,6 +6048,66 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if(this.isUnloading)throw new Error('阅读工作区正在关闭。');
     if(!this.learningHost)this.learningHost=createLearningHost({plugin:this,Modal,Notice});
     return this.learningHost;
+  }
+
+  getAnnotationSidebarService(view) {
+    const current = () => this.views.has(view) && !view.teardownStarted &&
+      view.annotationHydrationAllowed === true && !view.annotationSourceMismatch &&
+      !view.annotationSyncPending && !view.annotationStorageUnavailable;
+    const rows = () => current() ? (Array.isArray(view.annotationSnapshot?.annotations)
+      ? view.annotationSnapshot.annotations : Object.values(view.annotationSnapshot?.annotations || {}))
+      .filter(row => row.deleted !== true) : [];
+    const get = uuid => rows().find(row => row.uuid === uuid) || null;
+    const copy = value => value == null ? value : JSON.parse(JSON.stringify(value));
+    return createAnnotationSidebarService({
+      list: (query = {}) => copy(rows().filter(row => query.pageIndex == null || row.pageIndex === query.pageIndex)),
+      get: uuid => copy(get(uuid)),
+      navigate: async uuid => {
+        if (!get(uuid)) return false;
+        view.pendingReaderTarget = { kind: "annotation", id: uuid,
+          docKey: view.annotationDocument.docKey, documentId: view.annotationDocument.documentId };
+        return view.applyPendingReaderTarget();
+      },
+      createReviewDraft: uuid => {
+        if (get(uuid)?.kind !== "Highlight") return false;
+        return view.postToViewer({ channel: CHANNEL, token: view.token,
+          type: "annotation-sidebar-review-draft", documentId: view.documentId,
+          openRequest: view.openRequest, uuid });
+      },
+    });
+  }
+
+  getBacklinkService(view) {
+    return createBacklinkService({
+      resolve: (anchor, owner) => this.getLearningHost().resolveSource(anchor, owner),
+      openPdfTarget: (anchor, owner) => this.getLearningHost().openPdfTarget(anchor, owner),
+      openMarkdownSource: (anchor, owner) => this.getLearningHost().openMarkdownSource(anchor, owner),
+      listSources: async anchor => {
+        const target = anchor?.target;
+        if (!target || !["annotation", "selection", "page"].includes(target.kind) ||
+            typeof target.id !== "string" || !target.id || target.id.length > 512 ||
+            !this.views.has(view) || view.teardownStarted || view.annotationHydrationAllowed !== true ||
+            (anchor.documentId && anchor.documentId !== view.annotationDocument?.documentId) ||
+            (anchor.docKey && anchor.docKey !== view.annotationDocument?.docKey)) return [];
+        const identity = { documentId: view.documentId, openRequest: view.openRequest,
+          rendererGeneration: view.rendererGeneration };
+        let pageIdentity = anchor.pageIdentity;
+        if (target.kind === "page") pageIdentity = target.id;
+        else if (target.kind === "selection" && !pageIdentity) {
+          pageIdentity = (await this.readerAnchorStore.get(view.annotationDocument.docKey,
+            target.id, view.annotationDocument.documentId))?.pageIdentity;
+        } else if (target.kind === "annotation" && !pageIdentity) {
+          const row = this.getAnnotationSidebarService(view).get(target.id);
+          pageIdentity = view.annotationPageIdentity?.orderedPageIdentities?.[row?.pageIndex];
+        }
+        const pageIndex = view.annotationPageIdentity?.orderedPageIdentities?.indexOf(pageIdentity);
+        if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) return [];
+        const result = await this.collectReaderBacklinksForPage(view, pageIndex, identity);
+        if (!result || !view.isCurrentReaderAnchorIdentity(identity)) return [];
+        return result.rows.filter(row => row.target?.kind === target.kind && row.target?.id === target.id &&
+          row.targetStatus !== "deleted");
+      },
+    });
   }
 
   async getVocabularyRuntime() {
