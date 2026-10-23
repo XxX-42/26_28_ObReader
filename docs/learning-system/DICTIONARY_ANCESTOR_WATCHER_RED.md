@@ -23,3 +23,9 @@ invalidation and scheduled refresh per folder event.
 This is an intentionally RED test-only change. No production implementation,
 build, browser, Native, bulk benchmark, or full gate was run or modified.
 Native gate remains PENDING; this evidence does not select or freeze an LRU.
+
+The integration fix recognizes directory ancestors with an exact `/` boundary
+for both current and compatibility roots. It does not subscribe unrelated
+siblings. Re-running the real Host cases plus resource generation/invalidation
+tests after that two-line predicate fix passed 28/28 on the same machine;
+the three original RED results are retained in the evidence above.

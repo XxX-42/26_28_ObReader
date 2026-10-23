@@ -254,6 +254,8 @@ function applyVocabularyDictionaryStatus(plugin, status) {
 function isVocabularyDictionaryResourcePath(value) {
   if (typeof value !== "string") return false;
   const filePath = normalizePath(value);
+  if (filePath && (VOCABULARY_DICTIONARY_ROOT.startsWith(`${filePath}/`) ||
+      VOCABULARY_LEGACY_DICTIONARY_ROOT.startsWith(`${filePath}/`))) return true;
   if (filePath === VOCABULARY_DICTIONARY_MANIFEST || filePath === VOCABULARY_DICTIONARY_ROOT ||
       filePath === `${VOCABULARY_DICTIONARY_ROOT}/blocks`) return true;
   const blockPrefix = `${VOCABULARY_DICTIONARY_ROOT}/blocks/block.`;
