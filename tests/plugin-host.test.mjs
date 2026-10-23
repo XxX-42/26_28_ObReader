@@ -5277,3 +5277,118 @@ test("Reader backlink metadata refresh cannot publish after a newer page request
     assert.equal(messages[0].pageIndex, 1);
   } finally { harness.plugin.onunload(); }
 });
+
+// Exercise the installed WorkspaceLeaf.prototype route, not a CM DOM surrogate.
+// Native wire capture is still required to establish how Obsidian supplies eState.
+for (const kind of ["page", "selection", "annotation"]) {
+  test(`PDF routing retains enhanced ${kind} identity from eState.subpath RED`, async () => {
+    const harness = createHarness();
+    await harness.plugin.onload();
+    try {
+      const file = new harness.TFile(`Books/ephemeral-${kind}.pdf`, [1, 2, 3]);
+      harness.files.set(file.path, file);
+      const target = { kind, id: kind === "page" ? "ref:2R" : `${kind}-stable-target` };
+      const pageNumber = kind === "page" ? 1 : 2;
+      const identity = { docKey: "aabbccddeeff", documentId: "xxh64-v1:0123456789abcdef" };
+      const fragment = encodeReaderLinkFragment({ pageNumber, ...identity, target });
+      const originalState = { file: file.path, customScroll: 123, nestedPluginState: { preserve: true } };
+      const viewState = { type: "pdf", active: true, pinned: false, state: originalState };
+      const eState = { subpath: `#${fragment}`, focus: true, line: 9, customEphemeral: { preserve: true } };
+      const before = JSON.stringify({ viewState, eState });
+      const leaf = harness.createLeaf();
+      await leaf.setViewState(viewState, eState);
+      assert.equal(leaf.lastViewState.type, "pdf-web-reader-view");
+      assert.equal(leaf.lastViewState.active, true);
+      assert.equal(leaf.lastViewState.pinned, false);
+      assert.equal(leaf.lastViewState.state.file, file.path);
+      assert.equal(leaf.lastViewState.state.path, file.path);
+      assert.equal(leaf.lastViewState.state.customScroll, 123);
+      assert.equal(leaf.lastViewState.state.nestedPluginState, originalState.nestedPluginState);
+      assert.equal(leaf.lastEState, eState, "SDK must receive the original ephemeral state unchanged");
+      assert.equal(JSON.stringify({ viewState, eState }), before, "routing does not mutate caller-owned state");
+      const routed = leaf.lastViewState.state.readerTarget;
+      assert.ok(routed, "enhanced target supplied only through ephemeral state must reach Reader routing");
+      for (const [field, value] of Object.entries({ ...target, ...identity, pageNumber })) assert.equal(routed[field], value, field);
+      assert.equal(leaf.view.pendingReaderTarget?.kind, kind);
+      assert.equal(leaf.view.pendingReaderTarget?.id, target.id);
+      assert.equal(leaf.view.pendingReaderTarget?.documentId, identity.documentId);
+    } finally { harness.plugin.onunload(); }
+  });
+}
+
+test("PDF routing existing state.subpath preserves enhanced identity and SDK ephemeral fields", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/state-fragment-control.pdf", [1, 2, 3]);
+    harness.files.set(file.path, file);
+    const fragment = encodeReaderLinkFragment({ pageNumber: 3, docKey: "aabbccddeeff",
+      documentId: "xxh64-v1:0123456789abcdef", target: { kind: "page", id: "page-three" } });
+    const eState = { focus: true, line: 4 };
+    const leaf = harness.createLeaf();
+    await leaf.setViewState({ type: "pdf", state: { file: file.path, subpath: `#${fragment}`, custom: "kept" } }, eState);
+    assert.equal(leaf.lastViewState.state.readerTarget.kind, "page");
+    assert.equal(leaf.lastViewState.state.readerTarget.id, "page-three");
+    assert.equal(leaf.lastViewState.state.readerTarget.pageNumber, 3);
+    assert.equal(leaf.lastViewState.state.custom, "kept");
+    assert.equal(leaf.lastEState, eState);
+  } finally { harness.plugin.onunload(); }
+});
+
+for (const routeType of ["pdf", "pdf-web-reader-view"]) {
+  test(`PDF routing ${routeType} accepts a new ephemeral target on an existing Reader RED`, async () => {
+    const harness = createHarness();
+    await harness.plugin.onload();
+    try {
+      const file = new harness.TFile("Books/existing-ephemeral.pdf", [1, 2, 3]);
+      harness.files.set(file.path, file);
+      const leaf = harness.createLeaf();
+      await leaf.setViewState({ type: "pdf", state: { file: file.path } });
+      const existing = leaf.view;
+      const oldFragment = encodeReaderLinkFragment({ pageNumber: 1, target: { kind: "page", id: "old-page" } });
+      const fragment = encodeReaderLinkFragment({ pageNumber: 2, docKey: "aabbccddeeff",
+        documentId: "xxh64-v1:0123456789abcdef", target: { kind: "page", id: "new-page" } });
+      const eState = { subpath: `#${fragment}`, focus: true, preserve: "ephemeral" };
+      const state = { file: file.path, subpath: `#${oldFragment}`, preserve: "persistent" };
+      await leaf.setViewState({ type: routeType, active: true, state }, eState);
+      assert.equal(leaf.view, existing, "same-file routing keeps the actual Reader instance");
+      assert.equal(leaf.lastEState, eState);
+      assert.equal(leaf.lastViewState.state.preserve, "persistent");
+      assert.equal(state.subpath, `#${oldFragment}`, "input persistent state is not rewritten");
+      assert.equal(leaf.view.pendingReaderTarget?.id, "new-page", "new ephemeral link takes precedence over stale persistent subpath");
+      assert.equal(leaf.view.pendingReaderTarget?.documentId, "xxh64-v1:0123456789abcdef");
+      assert.equal(leaf.view.pendingReaderTarget?.pageNumber, 2);
+    } finally { harness.plugin.onunload(); }
+  });
+}
+
+test("PDF routing keeps native page-only fallback from eState.subpath RED", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/native-page-fallback.pdf", [1, 2, 3]);
+    harness.files.set(file.path, file);
+    const leaf = harness.createLeaf();
+    const eState = { subpath: "#page=7", focus: true };
+    await leaf.setViewState({ type: "pdf", state: { file: file.path, custom: "kept" } }, eState);
+    assert.equal(leaf.lastEState, eState);
+    assert.equal(leaf.lastViewState.state.custom, "kept");
+    assert.equal(leaf.view.pendingReaderTarget?.kind, "page-number");
+    assert.equal(leaf.view.pendingReaderTarget?.pageNumber, 7);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("PDF routing leaves non-PDF view state and ephemeral links untouched", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const leaf = harness.createLeaf();
+    const viewState = { type: "markdown", active: true, state: { file: "Notes/reference.md", custom: "kept" } };
+    const eState = { subpath: "#page=7&obreader=page.ref%3A2R", focus: true };
+    await leaf.setViewState(viewState, eState);
+    assert.equal(leaf.lastViewState, viewState);
+    assert.equal(leaf.lastEState, eState);
+    assert.equal(leaf.view.getViewType(), "markdown");
+    assert.equal(leaf.lastViewState.state.readerTarget, undefined);
+  } finally { harness.plugin.onunload(); }
+});
