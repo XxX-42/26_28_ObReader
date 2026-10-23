@@ -1778,6 +1778,27 @@ async function controlledCloseMatrixReaders(label) {
   return results;
 }
 
+async function installEditorRoutePassiveProbe() {
+  await page.evaluate(pluginId => {
+    const state = window.__nativeEditorRouteProbe = { calls: [], restores: [], startedAt: Date.now() };
+    const copy = value => { try { return JSON.parse(JSON.stringify(value)); } catch { return String(value); } };
+    const wrap = (owner, name, label) => {
+      if (!owner || typeof owner[name] !== "function") { state.calls.push({ label, missing: true }); return; }
+      const original = owner[name], hadOwn = Object.hasOwn(owner, name);
+      const wrapper = function(...args) {
+        state.calls.push({ label, args: args.map(copy), at: Date.now(), receiverPath: this.view?.file?.path || this.file?.path,
+          target: copy(this.readerPendingNavigationTarget || this.pendingNavigationTarget || this.currentTarget) });
+        return Reflect.apply(original, this, args);
+      };
+      owner[name] = wrapper;
+      state.restores.push(() => { if (owner[name] === wrapper) { if (hadOwn) owner[name] = original; else delete owner[name]; } });
+    };
+    wrap(Object.getPrototypeOf(app.workspace.activeLeaf), "setViewState", "WorkspaceLeaf.setViewState");
+    const reader = [...app.plugins.plugins[pluginId].views][0];
+    wrap(Object.getPrototypeOf(reader), "setEphemeralState", "PdfReaderView.setEphemeralState");
+  }, PLUGIN_ID);
+}
+
 async function checkFiveNavigationDirections(stage) {
   const pdfPath = (await currentPdfRoute(learningItems.highlight)).sourcePath;
   const markdownPath = (await currentMarkdownRoute(learningItems.markdown.itemId)).currentPath;
@@ -1809,6 +1830,17 @@ async function checkFiveNavigationDirections(stage) {
   const oldReceipts = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult), PLUGIN_ID);
   await page.keyboard.down("Meta");
   try { await matches[0].click(); } finally { await page.keyboard.up("Meta"); }
+  if (process.argv.includes("--editor-route-passive-diagnostic")) {
+    await waitFor("passive actual editor open Reader", appIdentity, state => state.readerViews.length === 1);
+    await readerFrame(pdfPath);
+    await recordScreen("editor-route-passive-first-open");
+    report.editorRoutePassive = await page.evaluate(pluginId => ({ calls: window.__nativeEditorRouteProbe.calls,
+      readers: [...app.plugins.plugins[pluginId].views].map(view => ({ path: view.file?.path, documentId: view.documentId,
+        openRequest: view.openRequest, rendererGeneration: view.rendererGeneration, receipt: view.lastReaderNavigationResult,
+        target: view.readerPendingNavigationTarget || view.pendingNavigationTarget || null })) }), PLUGIN_ID);
+    report.editorRoutePassive.link = link;
+    return report.editorRoutePassive;
+  }
   const markdownToPdf = await waitFor(`${stage} exact Markdown-to-PDF receipt`, () => page.evaluate(({ pluginId, documentId }) => {
     const view = [...app.plugins.plugins[pluginId].views].find(view => view.documentId === documentId);
     return view ? { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration,
@@ -2126,11 +2158,16 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
-  if (process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
+  if (process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
     report.sourceCheckpointOnly = true;
     report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
     report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
-    if (process.argv.includes("--complete-direction-matrix")) await runCompleteFiveDirectionMatrix();
+    if (process.argv.includes("--editor-route-passive-diagnostic")) {
+      learningItems.markdown = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      await installEditorRoutePassiveProbe();
+      await checkFiveNavigationDirections("passive-editor-route");
+      await page.evaluate(() => { for (const restore of window.__nativeEditorRouteProbe.restores.reverse()) restore(); delete window.__nativeEditorRouteProbe; });
+    } else if (process.argv.includes("--complete-direction-matrix")) await runCompleteFiveDirectionMatrix();
     else if (process.argv.includes("--backlink-correlation-diagnostic")) await diagnoseBacklinkCorrelation();
     else if (process.argv.includes("--navigation-directions-only")) await exerciseNavigationDirections();
     else for (const flow of report.uiFlows) {
@@ -2203,6 +2240,7 @@ try {
   report.errors.push({ at: report.failedAt, error: error?.stack || String(error) });
   report.recommendation = "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.";
 } finally {
+  if (page) await page.evaluate(() => { const state = window.__nativeEditorRouteProbe; if (state) { for (const restore of state.restores.reverse()) restore(); delete window.__nativeEditorRouteProbe; } }).catch(() => {});
   await cleanupNativeRun().catch(error => {
     report.cleanup = { status: "failed", error: error?.stack || String(error), at: new Date().toISOString() };
   });
