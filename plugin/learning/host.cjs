@@ -32,6 +32,7 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
   let servicePromise = null;
   let routingPromise = null;
   let disposed = false;
+  let renameQueue = Promise.resolve();
   const drafts = new Set();
   const liveView = (anchor) => [...plugin.views].find(view => !view.teardownStarted &&
     view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true &&
@@ -489,7 +490,16 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
     return { status: "choose-context", familyKey, message: "请选择一个已保存语境作为来源。" };
   }
 
-  async function renamed(fromPath, toPath) {
+  function renamed(fromPath, toPath) {
+    // Vault notifications arrive in order, but their asynchronous snapshot
+    // reads and route commits do not. Finish one observed event before the
+    // next can inspect binding heads; otherwise B -> C can miss pending A -> B.
+    const pending = renameQueue.then(() => recordObservedRename(fromPath, toPath));
+    renameQueue = pending.catch(() => undefined);
+    return pending;
+  }
+
+  async function recordObservedRename(fromPath, toPath) {
     if (disposed || typeof fromPath !== "string" || typeof toPath !== "string" || fromPath === toPath) return { status: "noop" };
     const from = normalizeVaultPath(fromPath, "Rename source path");
     const to = normalizeVaultPath(toPath, "Rename destination path");

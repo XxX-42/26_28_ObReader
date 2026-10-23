@@ -158,6 +158,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/highlight-row-collision.test.mjs",
     "tests/input-architecture-boundary.test.mjs",
     "tests/interaction-mode.test.mjs",
+    "tests/legacy-highlight-overlap-proof.test.mjs",
     "tests/lingq-read-mode-transition.test.mjs",
     "tests/ios-direct-manipulation-controller.test.mjs",
     "tests/ios-input-policy.test.mjs",

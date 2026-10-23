@@ -10,6 +10,7 @@ import { readBridgeRuntimeSource } from "./bridge-runtime-source.mjs";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import { cleanupBrowserTestResources, attachCleanupErrors } from "./browser-test-cleanup.mjs";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import { resolveTestArtifactRoot } from "./test-artifact-root.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const browserPath = resolveBrowserPath();
@@ -64,6 +65,12 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
     await frame.waitForFunction(() => !document.documentElement.classList.contains("pdfReaderNativeAnnotationLayersPending"));
     await frame.evaluate(() => {
       window.observerErrors = [];
+      window.observerPointerEvents = [];
+      for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) {
+        window.addEventListener(type, event => observerPointerEvents.push({type, trusted:event.isTrusted,
+          pointerType:event.pointerType,x:event.clientX,y:event.clientY,
+          target:event.target?.outerHTML?.slice(0,300)}), true);
+      }
       window.addEventListener("error", event => observerErrors.push(event.message));
       window.addEventListener("unhandledrejection", event => observerErrors.push(String(event.reason?.message || event.reason)));
       PDFViewerApplication.pdfViewer.currentScale = 1;
@@ -73,6 +80,17 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode() === 15 &&
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0)?.div.classList.contains('inkEditing') &&
       !document.documentElement.hasAttribute('data-pdf-reader-readonly'));
+    // Setting the editor mode can precede page rendering. A trusted pointerdown
+    // on the loading page cannot start Ink; wait for the actual drawing surface.
+    await frame.waitForFunction(() => {
+      const viewer = PDFViewerApplication.pdfViewer;
+      const layer = viewer._layerProperties.annotationEditorUIManager.getLayer(0)?.div;
+      if (!layer || viewer.getPageView(0)?.renderingState !== 3) return false;
+      const bounds = layer.getBoundingClientRect();
+      const x = Math.max(40, bounds.left + 120);
+      const y = Math.max(90, bounds.top + 160);
+      return document.elementFromPoint(x, y) === layer;
+    }, { timeout: 5_000 });
     await frame.evaluate(() => PDFViewerApplication.pdfDocument.annotationStorage
       .setValue("pdfjs_internal_editor_unbound_test", { deleted: true }));
     const cdp = await page.createCDPSession();
@@ -90,8 +108,34 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
       await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x + 48, y: point.y + 36, button: "left", buttons: 0, clickCount: 1, pointerType: "pen" });
       await frame.evaluate(() => PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0).endDrawingSession(false));
       const expectedInkCount = strokes.length + 1;
-      await frame.waitForFunction(expected => [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)]
-        .filter(editor => editor.editorType === "ink").length === expected, { timeout: 5_000 }, expectedInkCount);
+      try {
+        await frame.waitForFunction(expected => [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)]
+          .filter(editor => editor.editorType === "ink").length === expected, { timeout: 5_000 }, expectedInkCount);
+      } catch (error) {
+        const failure = await frame.evaluate(point => {
+          const viewer = PDFViewerApplication.pdfViewer;
+          const manager = viewer._layerProperties.annotationEditorUIManager;
+          const layer = manager.getLayer(0)?.div;
+          const rect = layer?.getBoundingClientRect();
+          return { point, mode: viewer.annotationEditorMode, managerMode: manager.getMode(),
+            readOnly: document.documentElement.hasAttribute('data-pdf-reader-readonly'),
+            scrollTop: document.getElementById('viewerContainer')?.scrollTop,
+            layerClass: layer?.className, layerBounds: rect?.toJSON(),
+            viewport: {width:innerWidth,height:innerHeight,scale:visualViewport?.scale},
+            renderingState: viewer.getPageView(0)?.renderingState,
+            pointerEvents: observerPointerEvents,
+            hit: document.elementFromPoint(point.x, point.y)?.outerHTML?.slice(0, 500),
+            editors: [...manager.getEditors(0)].map(editor => ({ id: editor.id, type: editor.editorType })),
+            errors: observerErrors };
+        }, point);
+        const artifacts = resolveTestArtifactRoot(root);
+        await mkdir(artifacts, { recursive: true });
+        await writeFile(path.join(artifacts, 'annotation-observer-failure.json'), JSON.stringify({
+          expectedInkCount, before, failure, strokes,
+        }, null, 2));
+        await page.screenshot({ path: path.join(artifacts, 'annotation-observer-failure.png') });
+        throw error;
+      }
       strokes.push(await frame.evaluate(point => ({ point, mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
         editors: [...PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getEditors(0)].map(editor => ({ id: editor.id, type: editor.editorType })),
         errors: observerErrors, hit: document.elementFromPoint(point.x, point.y)?.outerHTML?.slice(0, 300),
