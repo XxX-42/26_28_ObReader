@@ -1833,6 +1833,19 @@ async function checkFiveNavigationDirections(stage) {
     view.containerEl.dataset.nativeMatrixActive = "true";
     return { path: view.file.path, mode: view.getMode() };
   }, markdownPath);
+  const oldReceipts = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult), PLUGIN_ID);
+  if (!process.argv.includes("--editor-route-passive-diagnostic")) {
+    if (active.mode !== "preview") await page.click('[data-native-matrix-active="true"] .view-action[aria-label*="切换至阅读视图"]');
+    await page.waitForSelector('[data-native-matrix-active="true"] .markdown-preview-view a.internal-link', { visible: true, timeout: 10000 });
+    const handles = await page.$$('[data-native-matrix-active="true"] .markdown-preview-view a.internal-link');
+    const matches = [];
+    for (const handle of handles) {
+      if (await handle.evaluate((node, destination) => (node.getAttribute("data-href") || node.getAttribute("href")) === destination && node.getBoundingClientRect().width > 0, destination)) matches.push(handle);
+      else await handle.dispose();
+    }
+    assert.equal(matches.length, 1, "Persisted enhanced wiki must match one visible actual ReadingView anchor");
+    await matches[0].click();
+  } else {
   if (active.mode === "preview") await page.click('[data-native-matrix-active="true"] .view-action[aria-label*="切换至编辑视图"]');
   const alias = link.slice(2, -2).split("|")[1];
   const handles = await page.$$('[data-native-matrix-active="true"] .cm-link-alias .cm-underline');
@@ -1842,9 +1855,9 @@ async function checkFiveNavigationDirections(stage) {
     else await handle.dispose();
   }
   assert.equal(matches.length, 1, "Actual persisted wiki alias must be uniquely visible in the owned Markdown editor");
-  const oldReceipts = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult), PLUGIN_ID);
   await page.keyboard.down("Meta");
   try { await matches[0].click(); } finally { await page.keyboard.up("Meta"); }
+  }
   if (process.argv.includes("--editor-route-passive-diagnostic")) {
     await waitFor("passive actual editor open Reader", appIdentity, state => state.readerViews.length === 1);
     await readerFrame(pdfPath);
