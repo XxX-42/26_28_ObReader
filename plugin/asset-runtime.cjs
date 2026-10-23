@@ -614,8 +614,16 @@ function sameStatIndexRows(left, right) {
   );
 }
 
-async function extractOrRepair(adapter, pluginRoot, verifiedPayload, options = {}) {
-  const rootPath = `${pluginRoot}/.asset-cache/${verifiedPayload.id}/${verifiedPayload.contentHash}`;
+function assetCacheRoot(pluginRoot, payload, compactPath) {
+  if (!compactPath) return `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
+  // Windows app:// may reject a long absolute path even when DataAdapter can
+  // read it. Keep the full identity digest and the verified marker, shortening
+  // only the disposable directory name, never the bundle integrity checks.
+  const identityHash = sha256Bytes(encoder.encode(JSON.stringify([payload.id, payload.contentHash])));
+  return `${pluginRoot}/.asset-cache/v2/${identityHash}`;
+}
+
+async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {}) {
   const markerPath = `${rootPath}/.complete.json`;
   const expectedManifest = manifestMarker(verifiedPayload);
   const startedAt = Date.now();
@@ -820,7 +828,7 @@ function ensureViewerAssets(adapter, pluginRoot, payload, options = {}) {
   } catch (error) {
     return Promise.reject(error);
   }
-  const rootPath = `${safePluginRoot}/.asset-cache/${verifiedPayload.id}/${verifiedPayload.contentHash}`;
+  const rootPath = assetCacheRoot(safePluginRoot, verifiedPayload, options?.compactPath === true);
   let adapterLocks = activeLocks.get(adapter);
   if (!adapterLocks) {
     adapterLocks = new Map();
@@ -879,7 +887,7 @@ function startAssetExtraction(
   if (alreadyActive) return alreadyActive;
   const extraction = Promise.resolve()
     .then(() =>
-      extractOrRepair(adapter, safePluginRoot, verifiedPayload, {
+      extractOrRepair(adapter, rootPath, verifiedPayload, {
         forceVerify,
       }),
     )

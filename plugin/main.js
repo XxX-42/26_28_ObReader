@@ -34,6 +34,7 @@ function drainViewerRuntimeLog(view) {
 /* BUILD:VOCABULARY_WORKSPACE_REQUIRE */ const { createVocabularyRuntime, localVocabularyDeviceId, createContextSourceVerifier, createVocabularyTransfer } = require('./vocabulary/workspace.cjs');
 /* BUILD:VOCABULARY_WORKBENCH_REQUIRE */ const { createVocabularyWorkbench } = require('./vocabulary/workbench.cjs');
 /* BUILD:LEARNING_HOST_REQUIRE */ const { createLearningHost } = require('./learning/host.cjs');
+/* BUILD:SEMANTIC_SERVICES_REQUIRE */ const { createAnnotationSidebarService, createBacklinkService } = require('./semantic/services.cjs');
 /* BUILD:VOCABULARY_DICTIONARY_REQUIRE */ const { VocabularyDictionary } = require('./vocabulary/dictionary.cjs');
 /* BUILD:HEAVY_WORK_REQUIRE */ const { createHeavyWorkCoordinator } = require('./heavy-work.cjs');
 /* BUILD:PDF_RECOVERY_REQUIRE */ const { readDeltaRecovery } = require('./pdf-recovery-read.cjs');
@@ -1391,6 +1392,8 @@ class PdfReaderView extends EditableFileView {
     this.readerTargetApplyKey = null;
     this.readerTargetApplyPromise = null;
     this.readerTargetApplyPendingTarget = null;
+    this.readerNavigationRequest = null;
+    this.lastReaderNavigationResult = null;
   }
 
   getViewType() {
@@ -3034,9 +3037,14 @@ class PdfReaderView extends EditableFileView {
         resolved.pageIdentity = pageIdentities[resolved.pageIndex];
       }
       if (!isCurrent() || !Number.isSafeInteger(resolved.pageIndex) || !resolved.pageIdentity) return false;
+      const request = { ...identity, requestId: `reader-nav-${identity.openRequest}-${sequence}`,
+        kind: resolved.kind, targetId: resolved.id || null };
+      this.readerNavigationRequest = request;
+      this.lastReaderNavigationResult = null;
       const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
         type: "reader-anchor-navigate", documentId: identity.documentId,
-        openRequest: identity.openRequest, target: resolved });
+        openRequest: identity.openRequest, requestId: request.requestId, target: resolved });
+      if (!sent && this.readerNavigationRequest === request) this.readerNavigationRequest = null;
       if (sent && isCurrent()) {
         this.pendingReaderTarget = null;
         const { readerTarget: _readerTarget, ...state } = this.navigationState || {};
@@ -3554,10 +3562,18 @@ class PdfReaderView extends EditableFileView {
       return;
     }
     if (message.type === "reader-anchor-navigation-result") {
+      const request = this.readerNavigationRequest;
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
-          message.openRequest !== this.openRequest) return;
+          message.openRequest !== this.openRequest || !request ||
+          request.rendererGeneration !== this.rendererGeneration || request.documentId !== this.documentId ||
+          request.openRequest !== this.openRequest || message.requestId !== request.requestId ||
+          message.kind !== request.kind || message.targetId !== request.targetId) return;
+      this.readerNavigationRequest = null;
+      this.lastReaderNavigationResult = Object.freeze({ ...request, ok: message.ok === true,
+        reason: typeof message.reason === "string" ? message.reason : null });
       if (message.ok !== true) new Notice(message.message || "无法可靠定位此 PDF 链接目标。", 7000);
       this.plugin.sessionLog?.record("readerAnchor", { event: "navigation-result", ok: message.ok === true,
+        requestId: request.requestId, targetId: request.targetId,
         resolveMs: message.resolveMs, kind: message.kind, reason: message.reason || null });
       return;
     }
@@ -4395,6 +4411,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             }
           }
           if (!isPdfFile(file)) {
+            if (Array.isArray(file?.children)) {
+              void this.handleReaderPdfFolderRename(file, oldPath).catch(error =>
+                this.sessionLog?.record("annotationStore", { event: "folder-route-update-failed",
+                  code: error.code || "unknown" }));
+            }
             void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
               event: "sidecar-rename-check-failed", path: safeFileName(file?.path), code: error.code || "unknown",
             }));
@@ -6033,6 +6054,66 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.learningHost;
   }
 
+  getAnnotationSidebarService(view) {
+    const current = () => this.views.has(view) && !view.teardownStarted &&
+      view.annotationHydrationAllowed === true && !view.annotationSourceMismatch &&
+      !view.annotationSyncPending && !view.annotationStorageUnavailable;
+    const rows = () => current() ? (Array.isArray(view.annotationSnapshot?.annotations)
+      ? view.annotationSnapshot.annotations : Object.values(view.annotationSnapshot?.annotations || {}))
+      .filter(row => row.deleted !== true) : [];
+    const get = uuid => rows().find(row => row.uuid === uuid) || null;
+    const copy = value => value == null ? value : JSON.parse(JSON.stringify(value));
+    return createAnnotationSidebarService({
+      list: (query = {}) => copy(rows().filter(row => query.pageIndex == null || row.pageIndex === query.pageIndex)),
+      get: uuid => copy(get(uuid)),
+      navigate: async uuid => {
+        if (!get(uuid)) return false;
+        view.pendingReaderTarget = { kind: "annotation", id: uuid,
+          docKey: view.annotationDocument.docKey, documentId: view.annotationDocument.documentId };
+        return view.applyPendingReaderTarget();
+      },
+      createReviewDraft: uuid => {
+        if (get(uuid)?.kind !== "Highlight") return false;
+        return view.postToViewer({ channel: CHANNEL, token: view.token,
+          type: "annotation-sidebar-review-draft", documentId: view.documentId,
+          openRequest: view.openRequest, uuid });
+      },
+    });
+  }
+
+  getBacklinkService(view) {
+    return createBacklinkService({
+      resolve: (anchor, owner) => this.getLearningHost().resolveSource(anchor, owner),
+      openPdfTarget: (anchor, owner) => this.getLearningHost().openPdfTarget(anchor, owner),
+      openMarkdownSource: (anchor, owner) => this.getLearningHost().openMarkdownSource(anchor, owner),
+      listSources: async anchor => {
+        const target = anchor?.target;
+        if (!target || !["annotation", "selection", "page"].includes(target.kind) ||
+            typeof target.id !== "string" || !target.id || target.id.length > 512 ||
+            !this.views.has(view) || view.teardownStarted || view.annotationHydrationAllowed !== true ||
+            (anchor.documentId && anchor.documentId !== view.annotationDocument?.documentId) ||
+            (anchor.docKey && anchor.docKey !== view.annotationDocument?.docKey)) return [];
+        const identity = { documentId: view.documentId, openRequest: view.openRequest,
+          rendererGeneration: view.rendererGeneration };
+        let pageIdentity = anchor.pageIdentity;
+        if (target.kind === "page") pageIdentity = target.id;
+        else if (target.kind === "selection" && !pageIdentity) {
+          pageIdentity = (await this.readerAnchorStore.get(view.annotationDocument.docKey,
+            target.id, view.annotationDocument.documentId))?.pageIdentity;
+        } else if (target.kind === "annotation" && !pageIdentity) {
+          const row = this.getAnnotationSidebarService(view).get(target.id);
+          pageIdentity = view.annotationPageIdentity?.orderedPageIdentities?.[row?.pageIndex];
+        }
+        const pageIndex = view.annotationPageIdentity?.orderedPageIdentities?.indexOf(pageIdentity);
+        if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) return [];
+        const result = await this.collectReaderBacklinksForPage(view, pageIndex, identity);
+        if (!result || !view.isCurrentReaderAnchorIdentity(identity)) return [];
+        return result.rows.filter(row => row.target?.kind === target.kind && row.target?.id === target.id &&
+          row.targetStatus !== "deleted");
+      },
+    });
+  }
+
   async getVocabularyRuntime() {
     await this.initializeVocabulary();
     if (this.isUnloading) throw new Error("词汇工作台正在关闭。");
@@ -6701,7 +6782,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
-            { forceVerify },
+            { forceVerify, compactPath: Platform?.isWin === true },
           ),
         )
         .then((assets) => {
@@ -6771,6 +6852,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.verifiedAssetTexts.set(relativePath, this.readVerifiedAsset(relativePath).then((bytes) => new TextDecoder().decode(bytes)));
     }
     return this.verifiedAssetTexts.get(relativePath);
+  }
+
+  async handleReaderPdfFolderRename(folder, oldPath) {
+    if (!Array.isArray(folder?.children) || typeof oldPath !== "string") return false;
+    const from = normalizePath(oldPath).replace(/\/+$/g, "");
+    const to = normalizePath(folder.path).replace(/\/+$/g, "");
+    if (!from || !to || from === to) return false;
+    const pending = [...folder.children];
+    const seen = new Set();
+    let changed = false;
+    while (pending.length) {
+      const file = pending.pop();
+      if (!file || seen.has(file)) continue;
+      seen.add(file);
+      if (Array.isArray(file.children)) { pending.push(...file.children); continue; }
+      if (!isPdfFile(file) || !file.path.startsWith(`${to}/`)) continue;
+      const priorPath = `${from}${file.path.slice(to.length)}`;
+      // The existing host verifies whether this old path has an identity.
+      // Descendant file rename events may also arrive; an already moved route
+      // is a no-op. Never create a fresh PDF identity from a folder event.
+      if (!await this.annotationHost.renamed(file, priorPath)) continue;
+      changed = true;
+      for (const view of this.views) view.onDocumentRenamed(file, priorPath);
+    }
+    return changed;
   }
 
   async openPdf(file, readerTarget = null) {

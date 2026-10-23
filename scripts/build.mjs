@@ -358,6 +358,7 @@ const vocabularyCanonicalMarker =
 const vocabularyWorkspaceMarker = /\/\* BUILD:VOCABULARY_WORKSPACE_REQUIRE \*\/\s*const\s*\{[^}]+\}\s*=\s*require\((['"])\.\/vocabulary\/workspace\.cjs\1\);/s;
 const vocabularyWorkbenchMarker = /\/\* BUILD:VOCABULARY_WORKBENCH_REQUIRE \*\/\s*const\s*\{\s*createVocabularyWorkbench\s*\}\s*=\s*require\((['"])\.\/vocabulary\/workbench\.cjs\1\);/s;
 const learningHostMarker = /\/\* BUILD:LEARNING_HOST_REQUIRE \*\/\s*const\s*\{\s*createLearningHost\s*\}\s*=\s*require\((['"])\.\/learning\/host\.cjs\1\);/s;
+const semanticServicesMarker = /\/\* BUILD:SEMANTIC_SERVICES_REQUIRE \*\/\s*const\s*\{\s*createAnnotationSidebarService\s*,\s*createBacklinkService\s*\}\s*=\s*require\((['"])\.\/semantic\/services\.cjs\1\);/s;
 const vocabularyDictionaryMarker =
   /\/\* BUILD:VOCABULARY_DICTIONARY_REQUIRE \*\/\s*const\s*\{\s*VocabularyDictionary\s*\}\s*=\s*require\((['"])\.\/vocabulary\/dictionary\.cjs\1\);/s;
 const vocabularyModalsMarker =
@@ -486,6 +487,8 @@ const inlinedVocabularyWorkspace = await inlineModule("vocabulary/workspace.cjs"
 const inlinedVocabularyWorkbench = await inlineModule("vocabulary/workbench.cjs", "__PDFReaderVocabularyWorkbench", "createVocabularyWorkbench");
 assert.equal([...sourceMain.matchAll(new RegExp(learningHostMarker.source,'gs'))].length,1);
 const inlinedLearningHost = await inlineModule('learning/host.cjs','__PDFReaderLearningHost','createLearningHost');
+assert.equal([...sourceMain.matchAll(new RegExp(semanticServicesMarker.source, 'gs'))].length, 1);
+const inlinedSemanticServices = await inlineModule('semantic/services.cjs', '__PDFReaderSemanticServices', 'createAnnotationSidebarService, createBacklinkService');
 const inlinedVocabularyDictionary = await inlineModule(
   "vocabulary/dictionary.cjs",
   "__PDFReaderVocabularyDictionary",
@@ -527,6 +530,7 @@ const bundledMain = sourceMain
   .replace(vocabularyWorkspaceMarker, () => inlinedVocabularyWorkspace)
   .replace(vocabularyWorkbenchMarker, () => inlinedVocabularyWorkbench)
   .replace(learningHostMarker,()=>inlinedLearningHost)
+  .replace(semanticServicesMarker,()=>inlinedSemanticServices)
   .replace(vocabularyDictionaryMarker, () => inlinedVocabularyDictionary)
   .replace(vocabularyModalsMarker, () => inlinedVocabularyModals)
   .replace(heavyWorkMarker, () => inlinedHeavyWork)

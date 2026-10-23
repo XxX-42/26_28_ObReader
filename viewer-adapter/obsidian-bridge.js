@@ -708,12 +708,15 @@
 
   async function navigateReaderAnchor(message) {
     const startedAt = performanceNow();
+    const navigationSequence = (state.readerAnchorNavigationSequence || 0) + 1;
+    state.readerAnchorNavigationSequence = navigationSequence;
     const target = message?.target;
     let result = { ok: false, reason: "invalid-target" };
     const current = state.actualSourceIdentity;
     const isCurrent = () => message.documentId === state.activeDocumentId &&
       message.openRequest === state.activeOpenRequest &&
-      message.rendererGeneration === rendererGeneration && state.actualSourceIdentity === current;
+      message.rendererGeneration === rendererGeneration && state.actualSourceIdentity === current &&
+      state.readerAnchorNavigationSequence === navigationSequence;
     if (!isCurrent() || !target || !current) {
       result.reason = "stale-session";
     } else {
@@ -817,6 +820,8 @@
       documentId: message.documentId,
       openRequest: message.openRequest,
       rendererGeneration: message.rendererGeneration,
+      requestId: message.requestId,
+      targetId: target?.id || null,
       kind: target?.kind || null,
       ok: result.ok,
       reason: result.reason,
@@ -2135,13 +2140,7 @@
         event.stopPropagation?.();
         if (reviewButton.disabled || !open) return;
         const row = reviewButton.closest?.("li.sidebarComment");
-        const item = items.find((candidate) => candidate.uuid === row?.dataset?.uuid);
-        if (!item || item.kind !== "Highlight" || !item.targetText ||
-            item.targetTextSource === "unavailable" || typeof onAddToReview !== "function") return;
-        const guard = createSessionGuard();
-        if (!guard()) return;
-        void onAddToReview({ uuid: item.uuid, pageIndex: item.pageIndex,
-          targetText: item.targetText, targetTextSource: item.targetTextSource }, guard);
+        void createReviewDraft(row?.dataset?.uuid);
         return;
       }
       const row = event.target?.closest?.("li.sidebarComment");
@@ -2181,12 +2180,22 @@
     searchInput?.addEventListener("input", onSearchInput);
     typeFilter?.addEventListener("change", onTypeFilterChange);
     sidebar.querySelector("#editorCommentsSidebarResizer")?.setAttribute("hidden", "");
+    function createReviewDraft(uuid) {
+      const guard = createSessionGuard();
+      if (!guard()) return false;
+      const item = buildAnnotationSidebarViewModels(collectTargets()).find(candidate => candidate.uuid === uuid);
+      if (!item || item.kind !== "Highlight" || !item.targetText ||
+          item.targetTextSource === "unavailable" || typeof onAddToReview !== "function") return false;
+      return onAddToReview({ uuid: item.uuid, pageIndex: item.pageIndex,
+        targetText: item.targetText, targetTextSource: item.targetTextSource }, guard);
+    }
     return {
       open: openSidebar,
       close,
       closeAndClear,
       refreshIfOpen,
       isOpen: () => open,
+      createReviewDraft,
       dispose() {
         closeAndClear();
         button.removeEventListener("click", onButtonClick);
@@ -10989,6 +10998,14 @@
           message.documentId !== state.activeDocumentId ||
           message.openRequest !== state.activeOpenRequest) return;
       state.vocabularyController?.handleVocabularyContextSaveResult?.(message);
+      return;
+    }
+
+    if (message.type === "annotation-sidebar-review-draft") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId || message.openRequest !== state.activeOpenRequest ||
+          typeof message.uuid !== "string" || !message.uuid || message.uuid.length > 512) return;
+      state.annotationSidebarController?.createReviewDraft?.(message.uuid);
       return;
     }
 

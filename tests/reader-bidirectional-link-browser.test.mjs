@@ -376,17 +376,21 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         backlinkCount: result.backlinkCount });
       return result;
     };
+    let navigationRequestSequence = 0;
     const navigateMarkdownTargetInViewer = async (target) => {
-      const before = await page.evaluate(() => window.__readerBacklinkE2E.opened
-        .filter((row) => row.type === "navigation-result").length);
-      await page.evaluate((target) => {
+      const requestId = `backlink-navigation-${++navigationRequestSequence}`;
+      await page.evaluate(({ target, requestId }) => {
         const identity = window.__readerBacklinkE2E.identity;
         window.__readerHostPost({ type: "reader-anchor-navigate", documentId: identity.documentId,
-          openRequest: identity.openRequest, target });
-      }, target);
+          openRequest: identity.openRequest, requestId, target });
+      }, { target, requestId });
       try {
-        await page.waitForFunction((count) => window.__readerBacklinkE2E.opened
-          .filter((row) => row.type === "navigation-result").length === count + 1, { timeout: 8_000 }, before);
+        await page.waitForFunction(({ requestId, kind, targetId, rendererGeneration }) => {
+          const host = window.__readerBacklinkE2E;
+          return host.opened.filter(row => row.type === "navigation-result" && row.requestId === requestId &&
+            row.kind === kind && row.targetId === targetId && row.documentId === host.identity.documentId &&
+            row.openRequest === host.identity.openRequest && row.rendererGeneration === rendererGeneration).length === 1;
+        }, { timeout: 8_000 }, { requestId, kind: target.kind, targetId: target.id || null, rendererGeneration });
       } catch (error) {
         const trace = await page.evaluate(() => ({
           identity: window.__readerBacklinkE2E.identity,
@@ -411,8 +415,10 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
         state.position = position;
         return state.stableFrames >= 8;
       }, { timeout: 5_000, polling: "raf" });
-      return page.evaluate(() => window.__readerBacklinkE2E.opened
-        .filter((row) => row.type === "navigation-result").at(-1));
+      const matches = await page.evaluate(requestId => window.__readerBacklinkE2E.opened
+        .filter(row => row.type === "navigation-result" && row.requestId === requestId), requestId);
+      assert.equal(matches.length, 1, "one request must produce exactly one correlated navigation result");
+      return matches[0];
     };
     const clickFramePoint = async (point) => {
       const currentFrameOffset = await page.$eval("iframe", (iframe) => iframe.getBoundingClientRect().toJSON());
@@ -795,6 +801,8 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     host.state.annotations = [];
     host.state.tombstones = [{ uuid: annotationId, pageIndex: annotationCapture.pageIndex }];
     await refreshPage();
+    await frame.waitForFunction(() => document.querySelectorAll(".pdfReaderAnnotationBacklinkBadge").length === 0,
+      { timeout: 5_000 });
     assert.equal(await frame.$$eval(".pdfReaderAnnotationBacklinkBadge", (nodes) => nodes.length), 0,
       "a deleted annotation remains in tombstone resolution but must not render an active annotation badge");
     const tombstonePage = await host.pageIndexFor();
@@ -806,13 +814,15 @@ test("PDF Viewer backlinks resolve actual selection/page/annotation markers thro
     const mismatchAnchor = { ...anchor, sourceHash: "xxh64-v1:0000000000000000" };
     await page.evaluate(({ anchor, pageIndex, pageIdentity }) => window.__readerHostPost({
       type: "reader-anchor-navigate", documentId: window.__readerBacklinkE2E.identity.documentId,
+      requestId: "navigation-source-mismatch",
       openRequest: window.__readerBacklinkE2E.identity.openRequest,
       target: { kind: "selection", id: anchor.anchorId,
         pageIndex, pageIdentity, anchor },
     }), { anchor: mismatchAnchor, pageIndex: selectionCapture.pageIndex, pageIdentity: selectionCapture.pageIdentity });
     await page.waitForFunction(() => window.__readerBacklinkE2E.opened.some((row) =>
-      row.type === "navigation-result" && row.kind === "selection"), { timeout: 5_000 });
-    const mismatch = await page.evaluate(() => window.__readerBacklinkE2E.opened.findLast((row) => row.type === "navigation-result" && row.kind === "selection"));
+      row.type === "navigation-result" && row.requestId === "navigation-source-mismatch"), { timeout: 5_000 });
+    const mismatch = await page.evaluate(() => window.__readerBacklinkE2E.opened.find(row =>
+      row.type === "navigation-result" && row.requestId === "navigation-source-mismatch"));
     assert.equal(mismatch.ok, false);
     assert.equal(mismatch.reason, "source-or-page-mismatch");
     assert.equal(host.state.protocolErrors.length, 0, "all Viewer requests must retain the exact active session identity");

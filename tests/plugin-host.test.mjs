@@ -11,6 +11,8 @@ import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 import { VocabularyController } from "../viewer-adapter/vocabulary/controller.js";
 import { scanPageTextLayer } from "../viewer-adapter/vocabulary/page-scanner.js";
 
+
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
 const { encodeReaderLinkFragment, parseReaderLinkFragment } = sourceRequire("./reader-anchor-store.cjs");
@@ -4847,6 +4849,9 @@ test("learning Markdown Source opens exact large excerpts without widening gener
       const draft = service.createDraft({ source, prompt: "Large excerpt?" });
       saved = await service.confirmDraft(draft.draftId, { actionId: `large-${length}` });
       assert.equal(saved.status, "committed");
+      // A direct domain fixture is legacy/unbound. Explicitly associate its
+      // confirmed source without changing the canonical item or History.
+      assert.equal((await host.bindMarkdownSource(saved.item.itemId, noteFile.path)).status, "VERIFIED");
       assert.equal((await host.openItemSource(saved.item.itemId)).status, "opening");
     } else {
       // Exercise the navigation boundary directly: the existing shard byte cap
@@ -4926,4 +4931,118 @@ test("learning Markdown Source requires its exact editor span after the asynchro
   assert.equal(editor.scrolls, 0);
   assert.equal(editor.focuses, 0);
   harness.plugin.onunload();
+});
+
+test("Reader navigation accepts exactly one current request and target acknowledgement", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/navigation-request.pdf", [37, 80, 68, 70, 3]);
+    const reader = await createSidecarReader(harness, file, { pageCount: 1,
+      orderedPageIdentities: ["navigation-request-page"] });
+    const { view, frame } = reader;
+    const outcomes = [];
+    const record = harness.plugin.sessionLog.record.bind(harness.plugin.sessionLog);
+    harness.plugin.sessionLog.record = (category, details) => {
+      if (category === "readerAnchor" && details.event === "navigation-result") outcomes.push(details);
+      return record(category, details);
+    };
+    view.pendingReaderTarget = { kind: "page", id: "navigation-request-page" };
+    assert.equal(await view.applyPendingReaderTarget(), true);
+    const request = reader.sent.findLast(row => row.type === "reader-anchor-navigate");
+    assert.equal(typeof request.requestId, "string", "navigation must carry a runtime correlation ID");
+    const reply = { channel: "pdf-web-reader", token: view.token,
+      type: "reader-anchor-navigation-result", rendererGeneration: view.rendererGeneration,
+      documentId: view.documentId, openRequest: view.openRequest, requestId: request.requestId,
+      kind: "page", targetId: "navigation-request-page", ok: true };
+    for (const altered of [{ requestId: "prior-request" }, { targetId: "other-page" },
+      { rendererGeneration: "old-renderer" }, { openRequest: view.openRequest - 1 }]) {
+      view.onMessage({ source: frame, data: { ...reply, ...altered } });
+    }
+    assert.equal(outcomes.length, 0, "stale or wrong-target results cannot acknowledge navigation");
+    view.onMessage({ source: frame, data: reply });
+    view.onMessage({ source: frame, data: reply });
+    assert.equal(outcomes.length, 1, "duplicate results are consumed only once");
+    assert.equal(outcomes[0].requestId, request.requestId);
+    assert.equal(outcomes[0].targetId, reply.targetId);
+    assert.equal(view.lastReaderNavigationResult.requestId, request.requestId);
+    assert.equal(view.lastReaderNavigationResult.targetId, reply.targetId);
+    assert.equal(view.lastReaderNavigationResult.rendererGeneration, view.rendererGeneration);
+    assert.equal(view.lastReaderNavigationResult.ok, true);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("a PDF folder rename updates the existing identity route for open and closed Readers", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/Folder/book.pdf", [37, 80, 68, 70, 4]);
+    const reader = await createSidecarReader(harness, file, { pageCount: 1,
+      orderedPageIdentities: ["folder-page"] });
+    const identity = { documentId: reader.view.annotationDocument.documentId,
+      docKey: reader.view.annotationDocument.docKey };
+    const beforeBytes = Uint8Array.from(file.bytes);
+    const move = async (fromPath, toPath, open) => {
+      if (!open) {
+        harness.plugin.views.delete(reader.view);
+        harness.plugin.annotationHost.releaseView(reader.view);
+      }
+      const oldPdf = file.path;
+      harness.files.delete(oldPdf);
+      file.path = `${toPath}/book.pdf`;
+      harness.files.set(file.path, file);
+      harness.emitVault("rename", { path: toPath, children: [file] }, fromPath);
+      let route;
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        route = await harness.plugin.annotationHost.store.documentForIdentity(identity);
+        if (route?.sourcePath === file.path) break;
+      }
+      assert.equal(route?.sourcePath, file.path, "a folder event preserves the stable document route");
+      assert.equal(route.documentId, identity.documentId);
+      assert.equal(route.docKey, identity.docKey);
+    };
+    await move("Books/Folder", "Archive/Folder", true);
+    await move("Archive/Folder", "Archive/Closed", false);
+    assert.deepEqual(file.bytes, beforeBytes);
+    assert.equal(file.writes, 0);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("Sidebar and Backlink facades delegate to the current effective Reader without a second store", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  try {
+    const reader = await createSidecarReader(harness, new harness.TFile("Books/facades.pdf"), {
+      pageCount: 1, orderedPageIdentities: ["facade-page"],
+    });
+    const uuid = "550e8400-e29b-41d4-a716-446655440099";
+    await saveSidecarOperations(reader, { requestId: "facade-create", operations: [{ uuid,
+      kind: "Highlight", pageIndex: 0, deleted: false,
+      payload: { editor: { type: "highlight", text: "current source", color: [1, 1, 0] } } }] });
+    for (let attempt = 0; attempt < 50 && !reader.view.annotationSnapshot?.annotations?.some(row => row.uuid === uuid); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const api = harness.plugin.getAnnotationSidebarService(reader.view);
+    assert.ok(Object.isFrozen(api));
+    assert.equal(api.list().length, 1);
+    assert.equal(api.get(uuid).payload.editor.text, "current source");
+    const copy = api.get(uuid);
+    copy.payload.editor.text = "consumer mutation";
+    assert.equal(api.get(uuid).payload.editor.text, "current source", "view models do not mutate authority");
+    assert.equal(await api.navigate(uuid), true);
+    assert.equal(reader.sent.findLast(row => row.type === "reader-anchor-navigate").target.id, uuid);
+    assert.equal(api.createReviewDraft(uuid), true);
+    const request = reader.sent.findLast(row => row.type === "annotation-sidebar-review-draft");
+    assert.equal(request.uuid, uuid);
+    assert.equal(request.documentId, reader.view.documentId);
+    const backlinks = harness.plugin.getBacklinkService(reader.view);
+    assert.ok(Object.isFrozen(backlinks));
+    assert.deepEqual(await backlinks.listSources({ target: { kind: "page", id: "wrong-page" } }), []);
+    reader.view.annotationHydrationAllowed = false;
+    assert.deepEqual(api.list(), []);
+    assert.equal(api.get(uuid), null);
+    assert.equal(await api.navigate(uuid), false);
+    assert.equal(api.createReviewDraft(uuid), false);
+  } finally { harness.plugin.onunload(); }
 });
