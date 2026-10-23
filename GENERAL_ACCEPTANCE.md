@@ -1,10 +1,10 @@
 # Reading → understanding → memory — 0.13.0 candidate
 
-Current worktree: `feature/reading-learning-loop-20261022` at
-`04a85f80e8317ac181262fc610122e0c1a727b23`; implementation contract and
-stage receipts live under `docs/learning-system/`. The previous feature
-baseline was `9c361330388cbc929ef76bcc53b83f49a7360c04`. Historical results
-below are retained, not re-labelled as current acceptance.
+Current candidate branch: `feature/reading-learning-loop-20261022`;
+implementation contract and stage receipts live under
+`docs/learning-system/`. Its previous feature baseline was
+`9c361330388cbc929ef76bcc53b83f49a7360c04`. Historical results below are
+retained, not re-labelled as current acceptance.
 
 This stage preserves the frozen PDF.js vendor, InputRouter architecture,
 annotation WAL/sidecar protocol, immutable source PDFs, Vocabulary canonical
