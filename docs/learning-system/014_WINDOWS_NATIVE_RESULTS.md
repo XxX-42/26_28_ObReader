@@ -174,3 +174,23 @@ The initial paint/request lifecycle needs a separate reproduction; success of
 the badge click after page transition does not clear that observation.
 Independent owned-process restart remains NOT RUN for the shared-process reason
 above. Full Native acceptance is not claimed.
+
+## Owned-process startup attempt
+
+After closing Readers, persistently disabling the test plugin, and closing only
+the test Vault window, the former test renderer 35696 no longer existed. The
+other Vault windows and shared main process 39828 remained running.
+A unique profile `windows-native-014-evidence/owned-profile-20261023-1546`
+was created outside the repository with a marker restricting it to the existing
+test Vault and a one-Vault `obsidian.json` configuration. New main PID 27200 had
+that exact `--user-data-dir` and `--remote-debugging-port=0`; its renderer 26704
+was its own child. The endpoint from that profile's DevToolsActivePort exposed
+one app page for `D:/Documents/Obsidian/测试插件`, registry 0.14.0, plugin unloaded.
+
+Startup stopped at the fresh-profile trust dialog: "你是否信任这个仓库的作者？".
+The task forbids changing application security settings, so trust was not
+confirmed or bypassed and plugin initialization was not attempted in that
+profile. An independently owned process was established, but complete process
+restart/Source recovery remains NOT RUN. Its exact main PID/command line were
+revalidated before stopping only owned PID 27200. Shared main 39828 remained
+running. The normal test Vault was reopened with its plugin still disabled.
