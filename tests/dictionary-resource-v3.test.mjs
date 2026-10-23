@@ -340,7 +340,6 @@ test("a ready v2 cache remains a compatibility fallback when v3 has not synchron
   const cache = makeCache();
   const prepared = await cache.prepare(manifest, async () => compressed);
   assert.equal(prepared.count, 1);
-  files.delete(`${LEGACY_ROOT}/manifest.json`); // the ready local generation still survives a missing Vault manifest
   const dictionary = dictionaryFor(t, adapter, { cache });
   assert.deepEqual(await dictionary.lookup("legacy"), { key: "legacy", translation: "旧释义", phonetic: "", source: "ECDICT" });
 });
@@ -378,4 +377,79 @@ test("the block Worker receives a transferable binary buffer and returns verifie
   const dictionary = dictionaryFor(t, new MemoryAdapter(fixture.files), { workerSource: "worker", WorkerClass: FakeWorker });
   assert.deepEqual(await dictionary.lookup("beta"), expected(ROWS[1]));
   assert.equal(transferred, true);
+});
+
+
+test("unknown active cache is rejected when both manifests are missing", async (t) => {
+  const legacy = makeV2Files();
+  const cache = makeCache();
+  await cache.prepare(legacy.manifest, async () => legacy.files.get(`${LEGACY_ROOT}/${legacy.manifest.resourceFile}`));
+  const dictionary = dictionaryFor(t, new MemoryAdapter(), { cache });
+  await assert.rejects(dictionary.lookup("alpha"), error => error.code === "DICTIONARY_INDEX_MISSING");
+  assert.equal(dictionary.getStatus().phase, "unavailable");
+});
+
+test("a different active v2 generation cannot satisfy the synchronized v2 manifest", async (t) => {
+  const legacy = makeV2Files();
+  const other = makeV2Files([{ key: "alpha", translation: "OTHER RESOURCE", phonetic: "" }]);
+  const cache = makeCache();
+  await cache.prepare(other.manifest, async () => other.files.get(`${LEGACY_ROOT}/${other.manifest.resourceFile}`));
+  const dictionary = dictionaryFor(t, new MemoryAdapter(legacy.files), { cache });
+  await assert.rejects(dictionary.lookup("alpha"), error => error.code === "DICTIONARY_CACHE_NOT_READY");
+});
+
+test("a stale rejected manifest read retries without publishing unavailable", async (t) => {
+  const fixture = makeV3Files();
+  const adapter = new MemoryAdapter(fixture.files);
+  const read = adapter.read.bind(adapter);
+  let rejectOld, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let first = true;
+  adapter.read = file => {
+    if (first) {
+      first = false;
+      entered();
+      return new Promise((resolve, reject) => { rejectOld = reject; });
+    }
+    return read(file);
+  };
+  const statuses = [];
+  const dictionary = dictionaryFor(t, adapter, { legacyRoot: ROOT, onStatus: status => statuses.push(status) });
+  const pending = dictionary.lookup("alpha");
+  await started;
+  dictionary.invalidate();
+  await dictionary.lookup("alpha");
+  rejectOld(new Error("old missing manifest"));
+  assert.equal((await pending).translation, ROWS[0].translation);
+  assert.equal(dictionary.getStatus().phase, "ready");
+  assert.equal(statuses.some(status => status.phase === "unavailable"), false);
+});
+
+
+test("invalidation fences an awaited ready v2 cache lookup", async (t) => {
+  const legacy = makeV2Files();
+  const cache = makeCache();
+  await cache.prepare(legacy.manifest, async () => legacy.files.get(`${LEGACY_ROOT}/${legacy.manifest.resourceFile}`));
+  const adapter = new MemoryAdapter(legacy.files);
+  const lookup = cache.lookup.bind(cache);
+  let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let first = true;
+  cache.lookup = async (...args) => {
+    const result = await lookup(...args);
+    if (first) {
+      first = false;
+      entered();
+      await new Promise(resolve => { release = resolve; });
+    }
+    return result;
+  };
+  const dictionary = dictionaryFor(t, adapter, { cache });
+  const pending = dictionary.lookup("alpha");
+  await started;
+  adapter.files = makeV3Files([{ key: "alpha", translation: "new", phonetic: "" }]).files;
+  dictionary.invalidate();
+  release();
+  assert.equal((await pending).translation, "new");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V3_READY");
 });

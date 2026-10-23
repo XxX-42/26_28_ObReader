@@ -87,7 +87,11 @@ class VocabularyDictionary {
   }
   async manifest() {
     if (!this.manifestPromise) {
-      this.manifestPromise = this.readManifestAt(this.root).catch(error => { this.manifestPromise = null; throw error; });
+      const pending = this.readManifestAt(this.root).catch(error => {
+        if (this.manifestPromise === pending) this.manifestPromise = null;
+        throw error;
+      });
+      this.manifestPromise = pending;
     }
     return this.manifestPromise;
   }
@@ -124,17 +128,7 @@ class VocabularyDictionary {
           manifest = await this.readManifestAt(this.legacyRoot);
           baseRoot = this.legacyRoot;
         } catch (legacyError) {
-          if (legacyError?.code === "DICTIONARY_INDEX_MISSING") {
-            const previous = await this.cache.active("ECDICT").catch(() => null);
-            this.assertCurrent(revision);
-            if (previous) {
-              const result = await this.cache.lookup(previous.id, key);
-              this.assertCurrent(revision);
-              this.emitVerifiedV2Fallback(primaryError, previous);
-              return result;
-            }
-            throw primaryError;
-          }
+          if (legacyError?.code === "DICTIONARY_INDEX_MISSING") throw primaryError;
           throw legacyError;
         }
       }
@@ -161,16 +155,18 @@ class VocabularyDictionary {
       const ready = await this.cache.ready(manifest);
       this.assertCurrent(revision);
       if (ready) {
+        const result = await this.cache.lookup(ready.id, key);
+        this.assertCurrent(revision);
         this.readyGeneration = ready;
         this.emit({ phase: "ready", count: ready.count, total: ready.count });
-        return await this.cache.lookup(ready.id, key);
+        return result;
       }
-      const previous = await this.cache.active(manifest.dictionaryId);
-      this.assertCurrent(revision);
-      if (previous) return await this.cache.lookup(previous.id, key);
       throw dictionaryError("ECDICT resource-v3 is not installed and no verified resource-v2 cache is ready.",
         "DICTIONARY_CACHE_NOT_READY");
     } catch (error) {
+      // An asynchronous failure belongs to the generation that started it.
+      // Fence it before it can publish status or escape as a current failure.
+      try { this.assertCurrent(revision); } catch (currentError) { error = currentError; }
       if (error?.code === "DICTIONARY_CACHE_RETRY" && retries < 1 && !this.disposed) return this.lookupKey(key, retries + 1);
       this.emitUnavailable(error);
       if (error?.code) throw error;
