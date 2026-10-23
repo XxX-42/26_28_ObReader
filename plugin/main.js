@@ -1393,6 +1393,7 @@ class PdfReaderView extends EditableFileView {
     this.readerTargetApplyPromise = null;
     this.readerTargetApplyPendingTarget = null;
     this.readerNavigationRequest = null;
+    this.lastReaderNavigationResult = null;
   }
 
   getViewType() {
@@ -3039,6 +3040,7 @@ class PdfReaderView extends EditableFileView {
       const request = { ...identity, requestId: `reader-nav-${identity.openRequest}-${sequence}`,
         kind: resolved.kind, targetId: resolved.id || null };
       this.readerNavigationRequest = request;
+      this.lastReaderNavigationResult = null;
       const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
         type: "reader-anchor-navigate", documentId: identity.documentId,
         openRequest: identity.openRequest, requestId: request.requestId, target: resolved });
@@ -3567,6 +3569,8 @@ class PdfReaderView extends EditableFileView {
           request.openRequest !== this.openRequest || message.requestId !== request.requestId ||
           message.kind !== request.kind || message.targetId !== request.targetId) return;
       this.readerNavigationRequest = null;
+      this.lastReaderNavigationResult = Object.freeze({ ...request, ok: message.ok === true,
+        reason: typeof message.reason === "string" ? message.reason : null });
       if (message.ok !== true) new Notice(message.message || "无法可靠定位此 PDF 链接目标。", 7000);
       this.plugin.sessionLog?.record("readerAnchor", { event: "navigation-result", ok: message.ok === true,
         requestId: request.requestId, targetId: request.targetId,

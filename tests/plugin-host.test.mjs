@@ -4965,6 +4965,10 @@ test("Reader navigation accepts exactly one current request and target acknowled
     assert.equal(outcomes.length, 1, "duplicate results are consumed only once");
     assert.equal(outcomes[0].requestId, request.requestId);
     assert.equal(outcomes[0].targetId, reply.targetId);
+    assert.equal(view.lastReaderNavigationResult.requestId, request.requestId);
+    assert.equal(view.lastReaderNavigationResult.targetId, reply.targetId);
+    assert.equal(view.lastReaderNavigationResult.rendererGeneration, view.rendererGeneration);
+    assert.equal(view.lastReaderNavigationResult.ok, true);
   } finally { harness.plugin.onunload(); }
 });
 
