@@ -13,7 +13,9 @@ for(const row of existing)assert.equal(sha(await readFile(row.path)),row.sha256,
 const old=JSON.parse(await readFile(evidence+'/markdown-route-red.json','utf8'));
 const canonical=old.hashes.filter(r=>r.path.includes('/VocabularyData/')&&!r.path.includes('/routing/markdown/'));
 for(const row of canonical)assert.equal(sha(await readFile(row.path)),row.sha256,row.path);
-const bytes=await readFile(vault+'/PDF迁移测试/native-learning-loop-windows-014-20261023-1433/closed-pair/reader-renamed.pdf');
+const pdf=process.env.NATIVE_PDF_PATH||'PDF迁移测试/native-learning-loop-windows-014-20261023-1433/closed-pair/reader-renamed.pdf';
+assert.ok(pdf.startsWith('PDF迁移测试/native-learning-loop-windows-014-20261023-1433/')&&!pdf.includes('..'));
+const bytes=await readFile(vault+'/'+pdf);
 assert.equal(sha(bytes),'3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113');
 const {h64Raw}=await xxhash();const hash=b=>'xxh64-v1:'+h64Raw(b).toString(16).padStart(16,'0');
 assert.equal(hash(bytes),'xxh64-v1:ffbe0d4d212547e5');
