@@ -2,7 +2,7 @@
 
 ## Status
 
-**LEAN OFFLINE FIXTURE VERIFIED. APP-ORIGIN READ-ONLY PROBE RAN; SQLITE WASM INITIALIZATION REMAINS UNRESOLVED. FIVE-COLD RUNNER IMPLEMENTED BUT NOT STARTED pending a separate benchmark lease.** No performance result or production recommendation is claimed.
+**LEAN OFFLINE FIXTURE VERIFIED. APP-ORIGIN READ-ONLY SQLITE INIT ATTEMPT WAS INVALIDATED BY A PROBE LOADER BUG; THE FIX PASSES A LOCAL ISOLATED CHROME CHECK BUT STILL NEEDS A SAFE APP-ORIGIN RETRY. FIVE-COLD RUNNER IMPLEMENTED BUT NOT STARTED pending a separate benchmark lease.** No performance result or production recommendation is claimed.
 
 This is a benchmark-only experiment. It makes no production dependency, main, bridge, vocabulary-canonical, WAL, schema, or Vault changes. The prototype and lean SQLite files, source copy, pinned SQLite archive, and generated build reports are ignored under `tests/artifacts/sqlite-opfs-2026-10-23/`; only the reproducible Python/Node tooling and report are tracked. The cold-run harness uses only the lean database.
 
@@ -39,7 +39,7 @@ SQLite's official [OPFS documentation](https://www.sqlite.org/wasm/doc/trunk/per
 
 ## Harness and cold-run protocol
 
-`capability-probe.mjs` connects to an existing owned Obsidian CDP endpoint and selects exactly one existing `app://obsidian.md` page. It first runs a minimal Blob Worker echo, then attempts pinned SQLite WASM initialization in a temporary Blob Worker. The worker URL must remain the exact Blob URL; adding a query suffix invalidates it. The corrected probe disables VFS auto-installation before loading SQLite, passes WASM bytes directly, captures intermediate worker messages and CSP violation events, and opens no database. It never installs a VFS, writes OPFS files, navigates, or closes the app. Output is ignored under `tests/output/sqlite-opfs/`.
+`capability-probe.mjs` connects to an existing owned Obsidian CDP endpoint and selects exactly one existing `app://obsidian.md` page. It first runs a minimal Blob Worker echo, then attempts pinned SQLite WASM initialization in a temporary Blob Worker. The worker URL must remain the exact Blob URL; adding a query suffix invalidates it. The probe disables VFS auto-installation before loading SQLite and supplies an explicit Emscripten `instantiateWasm` callback over pinned bytes, captures intermediate worker messages and CSP violation events, and opens no database. It never installs a VFS, writes OPFS files, navigates, or closes the app. Output is ignored under `tests/output/sqlite-opfs/`.
 
 ### Actual Apple-Test app-origin evidence
 
@@ -53,11 +53,12 @@ The target was `app://obsidian.md/index.html` in the owned Apple-Test Obsidian r
 | Storage estimate / persisted | quota about 63.11 GB, usage 115,608,340 bytes (IndexedDB reported) / `true`; estimate is transient |
 | Minimal exact-Blob Worker echo | PASS; worker reports secure context, WASM, SAB, OPFS getter, sync access handles, Locks; no `securitypolicyviolation` events |
 | First SQLite Blob Worker attempt | HARNESS ERROR: it appended `?opfs-disable&opfs-wl-disable` to a Blob URL; this invalidated the worker URL and is not platform evidence |
-| Corrected SQLite WASM initialization with VFS auto-install disabled | timed out after 15 seconds without a ready/error message; no database or OPFS mutation occurred |
-| Corrected SQLite probe classification | `SQLITE_WASM_INIT_UNRESOLVED_WORKER_API_AVAILABLE`; minimal worker passes, but SQLite init did not complete. This does not prove either VFS unsupported. |
+| App-origin SQLite WASM attempt using `wasmBinary` alone | timed out after 15 seconds without a ready/error message; no database or OPFS mutation occurred. This attempt did not correctly bypass SQLite's script-relative Emscripten loader and is not host capability evidence. |
+| Loader diagnosis in isolated ordinary Chrome | reproduced the hang after the `before-init-call` stage. SQLite's official `sqlite3.js` installs a custom `instantiateWasm` hook that fetches `sqlite3.wasm` relative to the Blob worker URL, overriding `wasmBinary` alone. Supplying the supported `instantiateWasm(imports, onSuccess)` callback with pinned bytes initialized SQLite 3.54.1 and listed core VFSes; no database or OPFS files were created. This local result is harness debugging evidence, not app-origin evidence. |
+| Corrected app-origin SQLite probe | NOT_RUN after loader fix; requires another coordinated safe checkpoint. Probe classification defaults to unresolved and no longer labels a missing worker result unsupported. |
 | Native `opfs` / `opfs-sahpool` VFS installation or write probe | NOT_RUN; no support/unsupported conclusion yet |
 
-The minimal worker success rules out a generic Blob Worker or observed CSP prohibition. The corrected 15-second SQLite init timed out; this remains unresolved and is not proof that WASM or either VFS is unsupported. The complete current result is retained at ignored `tests/output/sqlite-opfs/host-capability-corrected-20261023.json`. Further app-origin probing requires another explicitly coordinated safe checkpoint. Local Chromium results do not prove app-origin support.
+The minimal worker success rules out a generic Blob Worker or observed CSP prohibition. The app-origin 15-second SQLite attempt failed because the probe supplied bytes but did not override SQLite's script-relative loader. The isolated local test confirms the fix, but says nothing about app-origin SQLite or VFS support. Preserve the failed attempt at ignored `tests/output/sqlite-opfs/host-capability-corrected-20261023.json`; rerun the corrected probe only during another explicitly coordinated safe checkpoint.
 
 `predeclare-runs.mjs` writes a ten-row plan for five fresh processes/profiles per option. `run-cold-benchmark.mjs` is the runnable isolated normal-Chromium harness, using persistent user-data directories rather than incognito. Without `--run` it creates a plan only; `--run` launches ten fresh Chromium processes/profiles on a local test origin. The local `opfs` origin adds COOP/COEP headers only to that test server; the `opfs-sahpool` origin does not. The harness does not access Obsidian or any Vault, and its results cannot establish app-origin support.
 
@@ -83,7 +84,9 @@ The plan keeps all failures and timeouts in order, forbids retries or selected p
 | Python syntax check for offline fixture builder | PASS |
 | Actual app-origin API probe on Apple-Test CDP 65046 | PASS; facts above |
 | Actual app-origin minimal Blob Worker echo | PASS; no CSP violations |
-| Actual app-origin SQLite WASM initialization | TIMED_OUT at 15 seconds; unresolved, not unsupported |
+| App-origin SQLite WASM probe with previous loader implementation | TIMED_OUT at 15 seconds; harness bug identified, no host capability conclusion |
+| Corrected SQLite loader in isolated ordinary Chrome | PASS; initialized pinned version 3.54.1; no database or OPFS activity; not app-origin evidence |
+| Corrected app-origin SQLite WASM initialization | NOT_RUN; awaiting safe checkpoint |
 | Standalone Chromium runner plan-only mode | PASS; wrote a ten-row plan and started no browser/trials |
 | `opfs` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
 | `opfs-sahpool` five fresh-process cold trials / 20 warm queries each | NOT_RUN; no benchmark lease |
