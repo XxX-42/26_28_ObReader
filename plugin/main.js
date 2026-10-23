@@ -4406,6 +4406,11 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             }
           }
           if (!isPdfFile(file)) {
+            if (Array.isArray(file?.children)) {
+              void this.handleReaderPdfFolderRename(file, oldPath).catch(error =>
+                this.sessionLog?.record("annotationStore", { event: "folder-route-update-failed",
+                  code: error.code || "unknown" }));
+            }
             void this.annotationHost.handleSidecarChange(file).catch((error) => this.sessionLog?.record("annotationStore", {
               event: "sidecar-rename-check-failed", path: safeFileName(file?.path), code: error.code || "unknown",
             }));
@@ -6782,6 +6787,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.verifiedAssetTexts.set(relativePath, this.readVerifiedAsset(relativePath).then((bytes) => new TextDecoder().decode(bytes)));
     }
     return this.verifiedAssetTexts.get(relativePath);
+  }
+
+  async handleReaderPdfFolderRename(folder, oldPath) {
+    if (!Array.isArray(folder?.children) || typeof oldPath !== "string") return false;
+    const from = normalizePath(oldPath).replace(/\/+$/g, "");
+    const to = normalizePath(folder.path).replace(/\/+$/g, "");
+    if (!from || !to || from === to) return false;
+    const pending = [...folder.children];
+    const seen = new Set();
+    let changed = false;
+    while (pending.length) {
+      const file = pending.pop();
+      if (!file || seen.has(file)) continue;
+      seen.add(file);
+      if (Array.isArray(file.children)) { pending.push(...file.children); continue; }
+      if (!isPdfFile(file) || !file.path.startsWith(`${to}/`)) continue;
+      const priorPath = `${from}${file.path.slice(to.length)}`;
+      // The existing host verifies whether this old path has an identity.
+      // Descendant file rename events may also arrive; an already moved route
+      // is a no-op. Never create a fresh PDF identity from a folder event.
+      if (!await this.annotationHost.renamed(file, priorPath)) continue;
+      changed = true;
+      for (const view of this.views) view.onDocumentRenamed(file, priorPath);
+    }
+    return changed;
   }
 
   async openPdf(file, readerTarget = null) {

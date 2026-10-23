@@ -4964,3 +4964,40 @@ test("Reader navigation accepts exactly one current request and target acknowled
     assert.equal(outcomes[0].targetId, reply.targetId);
   } finally { harness.plugin.onunload(); }
 });
+
+test("a PDF folder rename updates the existing identity route for open and closed Readers", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/Folder/book.pdf", [37, 80, 68, 70, 4]);
+    const reader = await createSidecarReader(harness, file, { pageCount: 1,
+      orderedPageIdentities: ["folder-page"] });
+    const identity = { documentId: reader.view.annotationDocument.documentId,
+      docKey: reader.view.annotationDocument.docKey };
+    const beforeBytes = Uint8Array.from(file.bytes);
+    const move = async (fromPath, toPath, open) => {
+      if (!open) {
+        harness.plugin.views.delete(reader.view);
+        harness.plugin.annotationHost.releaseView(reader.view);
+      }
+      const oldPdf = file.path;
+      harness.files.delete(oldPdf);
+      file.path = `${toPath}/book.pdf`;
+      harness.files.set(file.path, file);
+      harness.emitVault("rename", { path: toPath, children: [file] }, fromPath);
+      let route;
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        route = await harness.plugin.annotationHost.store.documentForIdentity(identity);
+        if (route?.sourcePath === file.path) break;
+      }
+      assert.equal(route?.sourcePath, file.path, "a folder event preserves the stable document route");
+      assert.equal(route.documentId, identity.documentId);
+      assert.equal(route.docKey, identity.docKey);
+    };
+    await move("Books/Folder", "Archive/Folder", true);
+    await move("Archive/Folder", "Archive/Closed", false);
+    assert.deepEqual(file.bytes, beforeBytes);
+    assert.equal(file.writes, 0);
+  } finally { harness.plugin.onunload(); }
+});
