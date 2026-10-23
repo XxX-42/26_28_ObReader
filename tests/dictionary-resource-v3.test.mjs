@@ -127,6 +127,49 @@ test("one cold block read is coalesced across concurrent lookups and warm hits s
     "an evicted block is fetched and decoded again");
 });
 
+test("clearCache drops v3 LRU blocks and rebuildCache reports availability without a full import", async (t) => {
+  const fixture = makeV3Files();
+  const adapter = new MemoryAdapter(fixture.files);
+  const dictionary = dictionaryFor(t, adapter, { blockCacheMaxBlocks: 2, blockCacheMaxBytes: 2048 });
+  assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
+  const alphaBlock = fixture.manifest.blocks.find(block => block.firstKey <= "alpha" && "alpha" <= block.lastKey);
+  const resourcePath = `${ROOT}/${alphaBlock.resourceFile}`;
+  assert.equal(adapter.readBinaryCount.get(resourcePath), 1);
+  assert.equal(dictionary.getBlockCacheStats().blocks, 1);
+
+  dictionary.clearCache();
+  assert.deepEqual(dictionary.getBlockCacheStats(), { blocks: 0, estimatedBytes: 0, maxBlocks: 2, maxBytes: 2048 });
+  assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
+  assert.equal(adapter.readBinaryCount.get(resourcePath), 2, "a cleared LRU block is read on the next lookup");
+
+  const available = await dictionary.rebuildCache();
+  assert.deepEqual(available, { status: "resource-available", count: ROWS.length, warmed: false, result: null });
+  assert.equal(dictionary.getStatus().phase, "resource-available");
+  assert.equal(dictionary.getBlockCacheStats().blocks, 0);
+  assert.equal(adapter.readBinaryCount.get(resourcePath), 2, "v3 rebuild does not read the full resource or any block");
+
+  const warmed = await dictionary.rebuildCache({ warmTerm: "beta" });
+  assert.deepEqual(warmed, { status: "resource-available", count: ROWS.length, warmed: true, result: expected(ROWS[1]) });
+  assert.equal(dictionary.getBlockCacheStats().blocks, 1);
+  assert.equal(adapter.readBinaryCount.get(resourcePath), 3, "optional warmTerm lazily reads only its matching block");
+  assert.equal(await dictionary.cache.active("ECDICT"), null, "resource-v3 warmup never builds a v2 Dexie generation");
+});
+
+test("resource invalidation clears stale block generations before the next lookup", async (t) => {
+  const oldFixture = makeV3Files([{ key: "alpha", translation: "old", phonetic: "" }], 1);
+  const adapter = new MemoryAdapter(oldFixture.files);
+  const dictionary = dictionaryFor(t, adapter);
+  assert.deepEqual(await dictionary.lookup("alpha"), { key: "alpha", translation: "old", phonetic: "", source: "ECDICT" });
+  assert.equal(dictionary.getBlockCacheStats().blocks, 1);
+
+  const newFixture = makeV3Files([{ key: "alpha", translation: "updated", phonetic: "" }], 1);
+  adapter.files = newFixture.files;
+  dictionary.invalidate();
+  assert.deepEqual(dictionary.getBlockCacheStats(), { blocks: 0, estimatedBytes: 0, maxBlocks: 16, maxBytes: 8 * 1024 * 1024 });
+  assert.deepEqual(await dictionary.lookup("alpha"), { key: "alpha", translation: "updated", phonetic: "", source: "ECDICT" });
+  assert.equal(dictionary.getBlockCacheStats().blocks, 1);
+});
+
 test("missing, partial, and corrupt blocks remain distinct from a dictionary miss", async (t) => {
   const fixture = makeV3Files();
   const block = fixture.manifest.blocks[0];

@@ -190,7 +190,7 @@ class VocabularyDictionary {
     const cached = this.getCachedBlock(key);
     if (cached) return cached;
     if (this.blockLoads.has(key)) return this.blockLoads.get(key);
-    const pending = (async () => {
+    const loading = (async () => {
       let bytes;
       try { bytes = asBytes(await this.adapter.readBinary(`${baseRoot}/${block.resourceFile}`)); }
       catch (cause) { throw dictionaryError("Dictionary block has not synchronized yet.", "DICTIONARY_RESOURCE_MISSING", cause); }
@@ -199,7 +199,11 @@ class VocabularyDictionary {
       this.assertCurrent(revision);
       this.rememberBlock(key, decoded);
       return decoded;
-    })().finally(() => this.blockLoads.delete(key));
+    })();
+    let pending;
+    pending = loading.finally(() => {
+      if (this.blockLoads.get(key) === pending) this.blockLoads.delete(key);
+    });
     this.blockLoads.set(key, pending);
     return pending;
   }
@@ -388,8 +392,24 @@ class VocabularyDictionary {
     this.manifestPromise = null;
     this.readyGeneration = null;
     this.revision += 1;
+    this.blockCache.clear();
+    this.blockCacheBytes = 0;
+    // Old loads are fenced by revision checks. Remove their coalescing slots so
+    // a lookup after invalidation can start against the refreshed resource.
+    this.blockLoads.clear();
   }
-  async rebuildCache() { this.invalidate(); return this.ensureReady({ force: true }); }
+  async rebuildCache(options = {}) {
+    this.invalidate();
+    const manifest = await this.manifest();
+    if (manifest.schemaVersion === 3) {
+      this.emit({ phase: "resource-available", count: 0, total: manifest.entryCount, code: "DICTIONARY_RESOURCE_AVAILABLE" });
+      const warmTerm = typeof options?.warmTerm === "string" ? options.warmTerm : "";
+      const warmed = Boolean(normalizeDictionaryKey(warmTerm));
+      const result = warmed ? await this.lookup(warmTerm) : null;
+      return { status: "resource-available", count: manifest.entryCount, warmed, result };
+    }
+    return this.ensureReady({ force: true });
+  }
   clearCache() { this.invalidate(); }
   dispose() {
     this.disposed = true;
@@ -406,6 +426,7 @@ class VocabularyDictionary {
     this.blockWorkerRequests.clear();
     this.blockCache.clear();
     this.blockCacheBytes = 0;
+    this.blockLoads.clear();
     this.cache.close();
     this.listeners.clear();
   }
