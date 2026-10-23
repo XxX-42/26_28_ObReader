@@ -858,7 +858,7 @@
     state.readerBacklinkRetryTimer = null;
   }
 
-  function requestReaderBacklinksForPage(pageNumber = state.app?.pdfViewer?.currentPageNumber) {
+  function requestReaderBacklinksForPage(pageNumber = state.app?.pdfViewer?.currentPageNumber, refresh = false) {
     const actual = state.actualSourceIdentity;
     if (!state.activeDocumentId || !Number.isSafeInteger(state.activeOpenRequest) ||
         actual?.identityStatus !== "KNOWN" || !Number.isSafeInteger(pageNumber) || pageNumber < 1) return false;
@@ -866,7 +866,7 @@
     const pageIdentity = actual.orderedPageIdentities?.[pageIndex];
     if (typeof pageIdentity !== "string") return false;
     const key = `${state.activeDocumentId}:${state.activeOpenRequest}:${pageIndex}:${pageIdentity}`;
-    if (state.readerBacklinkPageKey === key) return false;
+    if (!refresh && state.readerBacklinkPageKey === key) return false;
     clearReaderBacklinkPresentation();
     state.readerBacklinkPageKey = key;
     const request = {
@@ -11027,6 +11027,20 @@
           message.documentId !== state.activeDocumentId ||
           message.openRequest !== state.activeOpenRequest) return;
       void navigateReaderAnchor(message);
+      return;
+    }
+
+    if (message.type === "reader-backlink-page-refresh") {
+      const actual = state.actualSourceIdentity;
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.documentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest ||
+          actual?.identityStatus !== "KNOWN" || message.sourceHash !== actual.sourceHash ||
+          !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0 ||
+          message.pageNumber !== message.pageIndex + 1 ||
+          message.pageNumber !== state.app?.pdfViewer?.currentPageNumber ||
+          message.pageIdentity !== actual.orderedPageIdentities?.[message.pageIndex]) return;
+      requestReaderBacklinksForPage(message.pageNumber, true);
       return;
     }
 
