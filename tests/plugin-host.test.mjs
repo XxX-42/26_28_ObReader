@@ -5161,3 +5161,119 @@ test("page backlink badge cannot open sources after asynchronous session revocat
     assert.equal(harness.openedModals.length, 0);
   } finally { harness.plugin.onunload(); }
 });
+
+// RED: the bridge posts source identity and immediately posts its first page
+// request, while Host identity hydration completes asynchronously. Keep the
+// genuine Host handlers here: no alternate request/correlation implementation.
+test("Reader backlink initial hydration requests a genuine correlated Viewer requery RED", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const messages = [];
+    const view = {
+      ready: true, openAcknowledged: true,
+      documentId: "hydrating-doc", openRequest: 1, rendererGeneration: "generation",
+      annotationDocument: { docKey: "aabbccddeeff" },
+      annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+      annotationSourceHash: "xxh64-v1:0000000000000000", annotationHydrationAllowed: false,
+      isCurrentReaderAnchorIdentity: () => true, postToViewer: message => messages.push(message),
+    };
+    harness.plugin.readerBacklinkIndexReady = true;
+    let queries = 0;
+    harness.plugin.collectReaderBacklinksForPage = async () => {
+      queries += 1;
+      return { rows: [{ sourcePath: "Reference.md" }], markers: [], backlinkLookupMs: 0, anchorResolveMs: 0 };
+    };
+    const request = { documentId: view.documentId, openRequest: view.openRequest,
+      rendererGeneration: view.rendererGeneration, requestId: "reader-backlink-page-1-1",
+      pageNumber: 1, pageIndex: 0, pageIdentity: "page-one", sourceHash: view.annotationSourceHash };
+    // The initial request arrives before the asynchronous source identity handler
+    // allows hydration. It must not read page data before that authorization.
+    await harness.plugin.handleReaderBacklinkPageRequest(view, request);
+    assert.equal(queries, 0, "the hydration guard remains effective");
+    assert.equal(messages.length, 0);
+    // This is the source-identity handler's existing completion refresh path.
+    view.annotationHydrationAllowed = true;
+    await harness.plugin.refreshReaderBacklinksForView(view);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].type, "reader-backlink-page-refresh",
+      "hydration completion must request a genuine Viewer query instead of publishing uncorrelated results");
+    assert.equal(queries, 0, "a refresh notification must not synthesize a Host query");
+    assert.equal(messages[0].requestId, undefined, "the Host must not invent a Viewer request ID");
+    for (const field of ["documentId", "openRequest", "rendererGeneration", "pageNumber", "pageIndex", "pageIdentity", "sourceHash"]) {
+      assert.equal(messages[0][field], request[field], `refresh carries current ${field}`);
+    }
+    // Model only the next authenticated wire input, not Viewer correlation logic.
+    // The real bridge must validate the refresh and issue its own next sequence.
+    const requery = { ...request, requestId: "reader-backlink-page-1-2" };
+    assert.equal(await harness.plugin.handleReaderBacklinkPageRequest(view, requery), true);
+    assert.equal(queries, 1);
+    assert.equal(messages[1].type, "reader-backlink-page-results");
+    assert.equal(messages[1].requestId, requery.requestId);
+    assert.equal(messages[1].backlinkCount, 1);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("Reader backlink metadata refresh preserves an already accepted initial request correlation", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const messages = [], pending = [];
+    const view = {
+      ready: true, openAcknowledged: true,
+      documentId: "hydrated-doc", openRequest: 1, rendererGeneration: "generation",
+      annotationDocument: { docKey: "aabbccddeeff" },
+      annotationPageIdentity: { orderedPageIdentities: ["page-one"] },
+      annotationSourceHash: "xxh64-v1:0000000000000000", annotationHydrationAllowed: true,
+      isCurrentReaderAnchorIdentity: () => true, postToViewer: message => messages.push(message),
+    };
+    harness.plugin.readerBacklinkIndexReady = true;
+    harness.plugin.collectReaderBacklinksForPage = () => new Promise(resolve => pending.push(resolve));
+    const request = { documentId: view.documentId, openRequest: view.openRequest,
+      rendererGeneration: view.rendererGeneration, requestId: "reader-backlink-page-1-1",
+      pageNumber: 1, pageIndex: 0, pageIdentity: "page-one", sourceHash: view.annotationSourceHash };
+    const initial = harness.plugin.handleReaderBacklinkPageRequest(view, request);
+    const refresh = harness.plugin.refreshReaderBacklinksForView(view);
+    pending[1]({ rows: [{ sourcePath: "Reference.md" }], markers: [] });
+    assert.equal(await refresh, true);
+    pending[0]({ rows: [], markers: [] });
+    assert.equal(await initial, false, "superseded initial result remains suppressed");
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].requestId, request.requestId);
+    assert.equal(messages[0].backlinkCount, 1);
+  } finally { harness.plugin.onunload(); }
+});
+
+test("Reader backlink metadata refresh cannot publish after a newer page request", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const messages = [], pending = [];
+    const view = {
+      ready: true, openAcknowledged: true,
+      documentId: "hydrated-doc", openRequest: 1, rendererGeneration: "generation",
+      annotationDocument: { docKey: "aabbccddeeff" },
+      annotationPageIdentity: { orderedPageIdentities: ["page-one", "page-two"] },
+      annotationSourceHash: "xxh64-v1:0000000000000000", annotationHydrationAllowed: true,
+      isCurrentReaderAnchorIdentity: () => true, postToViewer: message => messages.push(message),
+    };
+    harness.plugin.readerBacklinkIndexReady = true;
+    harness.plugin.collectReaderBacklinksForPage = () => new Promise(resolve => pending.push(resolve));
+    const request = { documentId: view.documentId, openRequest: view.openRequest,
+      rendererGeneration: view.rendererGeneration, requestId: "reader-backlink-page-1-1",
+      pageNumber: 1, pageIndex: 0, pageIdentity: "page-one", sourceHash: view.annotationSourceHash };
+    const initial = harness.plugin.handleReaderBacklinkPageRequest(view, request);
+    const refresh = harness.plugin.refreshReaderBacklinksForView(view);
+    const nextPage = harness.plugin.handleReaderBacklinkPageRequest(view, { ...request,
+      requestId: "reader-backlink-page-1-2", pageNumber: 2, pageIndex: 1, pageIdentity: "page-two" });
+    pending[2]({ rows: [{ sourcePath: "PageTwo.md" }], markers: [] });
+    assert.equal(await nextPage, true);
+    pending[1]({ rows: [{ sourcePath: "StalePageOne.md" }], markers: [] });
+    assert.equal(await refresh, false);
+    pending[0]({ rows: [], markers: [] });
+    assert.equal(await initial, false);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].requestId, "reader-backlink-page-1-2");
+    assert.equal(messages[0].pageIndex, 1);
+  } finally { harness.plugin.onunload(); }
+});
