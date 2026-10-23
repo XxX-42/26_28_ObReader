@@ -63,7 +63,18 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
   await mkdir(artifacts, { recursive: true });
   const viewerHtml = await readFile(viewerHtmlPath, "utf8");
   const bridgeSource = await readBridgeRuntimeSource(bridgePath);
-  const instrumentedBridge = bridgeSource.replace(
+  const legacyGeometryDiagnostic = bridgeSource
+    .replace("    const textRects = glyphs.map(glyph => glyph.rects);",
+      `    const textRects = glyphs.map(glyph => glyph.rects);
+    const geometryProbe = { glyphCount: glyphs.length, lines: [] };
+    window.__highlightLegacyGeometryProbe = geometryProbe;`)
+    .replace("      if (!selected.size) continue;",
+      `      geometryProbe.lines.push({ top: line.top, bottom: line.bottom, quadCount: line.quads.length,
+        selectedGlyphIndexes: [...selected], selectedGlyphCount: selected.size });
+      if (!selected.size) continue;`);
+  assert.notEqual(legacyGeometryDiagnostic, bridgeSource,
+    "Geometry diagnostics must instrument the actual recovery function without changing its hit decisions");
+  const instrumentedBridge = legacyGeometryDiagnostic.replace(
     "  if (iosInputPolicy) {",
     "  window.__highlightMultilineBridgeState = state;\n  window.__highlightMultilineBridgeTestHooks = { recoverLegacyHighlightTargetText: getLegacyHighlightSidebarTargetText, buildAnnotationSidebarViewModels };\n  if (iosInputPolicy) {",
   );
@@ -407,6 +418,16 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
               recoveredLegacyText,
               legacyRecoveredTextLength: typeof recoveredLegacyText === "string" ? recoveredLegacyText.length : 0,
               legacyRecoveryMatches: Boolean(selectedText && recoveredLegacyText && normalize(selectedText) === normalize(recoveredLegacyText)),
+              legacyGeometry: (() => {
+                const probe = window.__highlightLegacyGeometryProbe;
+                if (!probe) return null;
+                const hits = new Map();
+                for (const line of probe.lines) for (const index of line.selectedGlyphIndexes) hits.set(index, (hits.get(index) || 0) + 1);
+                return { glyphCount: probe.glyphCount, normalizedSelectedLength: normalize(selectedText).length,
+                  normalizedRecoveredLength: normalize(recoveredLegacyText).length,
+                  glyphsAssignedToMultipleLines: [...hits].filter(([, count]) => count > 1).length,
+                  lines: probe.lines.map(({ selectedGlyphIndexes, ...line }) => line) };
+              })(),
               visible: Boolean(bounds?.width > 0 && bounds?.height > 0), ...value }
               : { runtimeId: String(editor.id), serializeReturnedNull: true };
           });
@@ -459,6 +480,7 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
               recoveredLegacyText: editor.recoveredLegacyText ?? null,
               legacyRecoveryMatches: editor.legacyRecoveryMatches ?? false,
               legacyRecoveredTextLength: editor.legacyRecoveredTextLength ?? 0,
+              legacyGeometry: editor.legacyGeometry || null,
               annotationType: editor.annotationType ?? null,
               annotationEditorType: editor.annotationEditorType ?? null,
               textLength: typeof editor.text === "string" ? editor.text.length : null,
