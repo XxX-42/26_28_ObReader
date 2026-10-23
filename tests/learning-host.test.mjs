@@ -410,6 +410,53 @@ test("Markdown draft, rename and Source preserve exact range without a second na
   assert.equal(f.sourceOpenings.length, 1);
 });
 
+test("Markdown route failure stays visible and retries routing without rewriting canonical Learning or History", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Route retry question";
+
+  const originalCommit = f.runtime.coordinator.commit.bind(f.runtime.coordinator);
+  let failRouteCommit = true;
+  let learningCommits = 0;
+  f.runtime.coordinator.commit = async input => {
+    if (input.historySummary === null && failRouteCommit) {
+      throw Object.assign(new Error("Injected Markdown routing transaction failure."), { code: "TEST_ROUTE_COMMIT_FAILED" });
+    }
+    if (input.historySummary !== null) learningCommits += 1;
+    return originalCommit(input);
+  };
+
+  const first = await modal.confirm();
+  assert.equal(first.status, "committed");
+  assert.equal(first.sourceStatus.status, "TARGET_UNRESOLVED");
+  assert.equal(modal.closed, false, "a saved item with unresolved source routing must stay retryable and closable");
+  assert.match(modal.statusEl.textContent, /来源关联未完成/);
+  assert.equal(modal.confirmButton.textContent, "重试来源关联");
+
+  const itemId = first.item.itemId;
+  const service = await f.host.getService();
+  const saved = await service.getItem(itemId);
+  assert.ok(saved, "the canonical learning item was saved before route binding failed");
+  const learningBytes = [...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b));
+  const historyBytes = [...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b));
+  assert.equal(learningCommits, 1);
+
+  failRouteCommit = false;
+  const retried = await modal.confirm();
+  assert.equal(retried.item.itemId, itemId);
+  assert.equal(retried.sourceStatus.status, "VERIFIED");
+  assert.equal(modal.closed, true);
+  assert.equal(learningCommits, 1, "retry must not reconfirm or rewrite the canonical Learning record");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/learning/items/")).sort(([a], [b]) => a.localeCompare(b)),
+    learningBytes, "routing retry leaves canonical Learning bytes unchanged");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/history/")).sort(([a], [b]) => a.localeCompare(b)),
+    historyBytes, "routing retry does not append or rewrite ReviewHistory");
+  assert.equal((await f.host.getSourceContract(itemId)).status, "VERIFIED");
+});
+
 test("malformed Markdown owner contexts cannot fall back to a stale canonical path", async () => {
   const f = fixture();
   const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;

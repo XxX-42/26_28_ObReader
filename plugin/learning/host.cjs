@@ -184,9 +184,13 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
     const service = await getService();
     if (disposed || plugin.isUnloading || !(await guard())) throw unresolved("source-changed-before-draft");
     const sourceGuard = async () => !disposed && !plugin.isUnloading && await guard();
+    let confirmedResult = null;
     const checkedService = { ...service, confirmDraft: async (draftId, options = {}) => {
       if (disposed || plugin.isUnloading || !(await guard())) throw Object.assign(new Error("来源已变化，草稿已保留；请重新核对来源。"), { code: "LEARNING_SOURCE_STALE" });
-      const draft = service.getDraft(draftId);
+      // A canonical item can commit before its separate Markdown routing facts.
+      // Retain that result so the same modal can retry only the route write after
+      // a routing failure; the service has already consumed its draft by then.
+      const draft = confirmedResult ? null : service.getDraft(draftId);
       const sourceVerifier = async (anchor) => {
         if (anchor?.evidenceKind === "backlink") return resolve(anchor);
         if (isMarkdownAnchor(anchor)) {
@@ -195,8 +199,9 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
         }
         return resolve(anchor);
       };
-      const result = await service.confirmDraft(draftId, { ...options, sourceGuard, sourceVerifier });
-      if (result.status === "committed" && isMarkdownAnchor(source)) {
+      const result = confirmedResult || await service.confirmDraft(draftId, { ...options, sourceGuard, sourceVerifier });
+      if (!confirmedResult && ["committed", "duplicate"].includes(result.status)) confirmedResult = result;
+      if (["committed", "duplicate"].includes(result.status) && isMarkdownAnchor(source)) {
         const ownerId = result.item?.itemId || draft?.itemId;
         const sourcePath = markdownFile?.path || source.sourcePath;
         try {

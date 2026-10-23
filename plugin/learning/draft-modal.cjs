@@ -30,6 +30,7 @@ function createLearningDraftModal({ Modal, Notice } = {}) {
       this.actionId = null;
       this.confirmPromise = null;
       this.confirmed = false;
+      this.routeRepairPending = false;
       this.lastError = null;
     }
 
@@ -92,7 +93,7 @@ function createLearningDraftModal({ Modal, Notice } = {}) {
     }
 
     syncConfirmButton() {
-      const valid = Boolean(this.promptInput?.value.trim() && this.answerInput?.value.trim());
+      const valid = this.routeRepairPending || Boolean(this.promptInput?.value.trim() && this.answerInput?.value.trim());
       if (this.confirmButton) this.confirmButton.disabled = !valid || Boolean(this.confirmPromise);
     }
 
@@ -106,14 +107,19 @@ function createLearningDraftModal({ Modal, Notice } = {}) {
 
     confirm() {
       if (this.confirmPromise) return this.confirmPromise;
-      if (!this.draft || !this.promptInput?.value.trim() || !this.answerInput?.value.trim()) {
+      if (!this.draft || (!this.routeRepairPending &&
+          (!this.promptInput?.value.trim() || !this.answerInput?.value.trim()))) {
         this.syncConfirmButton();
         return Promise.resolve({ status: "invalid", writes: 0 });
       }
-      this.draft = this.service.updateDraft(this.draft.draftId, {
-        prompt: this.promptInput.value,
-        answer: this.answerInput.value,
-      });
+      // A saved Learning item is immutable here; the Host's next confirmation
+      // retries only the unresolved Markdown route binding.
+      if (!this.routeRepairPending) {
+        this.draft = this.service.updateDraft(this.draft.draftId, {
+          prompt: this.promptInput.value,
+          answer: this.answerInput.value,
+        });
+      }
       this.actionId ||= this.makeActionId();
       this.lastError = null;
       this.confirmButton.disabled = true;
@@ -122,6 +128,15 @@ function createLearningDraftModal({ Modal, Notice } = {}) {
 
       const pending = Promise.resolve().then(() => this.service.confirmDraft(this.draft.draftId, { actionId: this.actionId }))
         .then((result) => {
+          if (["committed", "duplicate"].includes(result?.status) &&
+              result.sourceStatus?.status === "TARGET_UNRESOLVED") {
+            this.routeRepairPending = true;
+            if (this.promptInput) this.promptInput.readOnly = true;
+            if (this.answerInput) this.answerInput.readOnly = true;
+            if (this.confirmButton) this.confirmButton.textContent = "重试来源关联";
+            this.statusEl.textContent = "学习条目已保存，但 Markdown 来源关联未完成。检查来源后可重试，或关闭此窗。";
+            return result;
+          }
           this.confirmed = true;
           this.draft = null;
           this.statusEl.textContent = "已加入复习。";
@@ -129,7 +144,9 @@ function createLearningDraftModal({ Modal, Notice } = {}) {
           return result;
         }, (error) => {
           this.lastError = error;
-          const message = error?.code === "LEARNING_SOURCE_STALE"
+          const message = this.routeRepairPending
+            ? "学习条目已保存，但来源关联仍未完成；修复来源后可重试，或关闭此窗。"
+            : error?.code === "LEARNING_SOURCE_STALE"
             ? "来源已变化，草稿和文字仍保留在这里；请重新检查后再试。"
             : (error?.message || "学习条目未能保存。");
           this.statusEl.textContent = message;
