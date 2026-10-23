@@ -133,7 +133,8 @@ function validateCompleteHistory(source) {
     actionIds.add(event.actionId);
     prior = event;
   }
-  if (source.lastReviewEvent?.eventId !== (prior?.eventId || null)) {
+  const storedHeadEventId = source.lastReviewEvent == null ? null : source.lastReviewEvent.eventId;
+  if (storedHeadEventId !== (prior?.eventId || null)) {
     throw evaluationError("FSRS_EVAL_HISTORY_HEAD_MISMATCH", "The rating history does not reach the stored event head.");
   }
   if (prior && source.lastReviewEvent?.itemId !== source.itemId) {
