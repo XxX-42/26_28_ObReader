@@ -581,3 +581,74 @@ test("empty rename and Host disposal do not initialize a new database or leave a
   assert.equal(f.adapter.files.size, 0);
   await assert.rejects(f.host.fromAnnotationRequest(f.view, f.request), /workspace-closed/);
 });
+
+test("adjacent Markdown rename events wait for the preceding durable route update", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Adjacent route events";
+  const saved = await modal.confirm();
+  const protectedBytes = [...f.adapter.files].filter(([path]) => !path.includes("/routing/markdown/"));
+  const commit = f.runtime.coordinator.commit.bind(f.runtime.coordinator);
+  let release, entered;
+  const held = new Promise(resolve => { release = resolve; });
+  const firstCommitEntered = new Promise(resolve => { entered = resolve; });
+  let holdFirst = true;
+  f.runtime.coordinator.commit = async input => {
+    if (input.historySummary === null && holdFirst) {
+      holdFirst = false;
+      entered();
+      await held;
+    }
+    return commit(input);
+  };
+  f.files.delete("Notes/A.md"); f.texts.delete("Notes/A.md");
+  f.files.set("Notes/B.md", { path: "Notes/B.md", extension: "md" }); f.texts.set("Notes/B.md", text);
+  const first = f.host.renamed("Notes/A.md", "Notes/B.md");
+  await firstCommitEntered;
+  f.files.delete("Notes/B.md"); f.texts.delete("Notes/B.md");
+  f.files.set("Moved/B.md", { path: "Moved/B.md", extension: "md" }); f.texts.set("Moved/B.md", text);
+  let secondSettled = false;
+  const second = f.host.renamed("Notes/B.md", "Moved/B.md").then(result => { secondSettled = true; return result; });
+  // The in-memory adapter completes reads in microtasks. Drain one turn with
+  // the first commit explicitly held; no timing deadline or disk race is used.
+  await new Promise(setImmediate);
+  const overtook = secondSettled;
+  release();
+  await Promise.all([first, second]);
+  const owner = { ownerKind: "learning-item", ownerId: saved.item.itemId };
+  assert.equal((await (await f.host.getMarkdownRouting()).resolve(owner)).currentPath, "Moved/B.md",
+    "both observed route events must survive; the second must not be lost as unchanged");
+  assert.equal(overtook, false, "a later event must not finish against the pre-rename route snapshot");
+  assert.equal((await f.host.getSourceContract(saved.item.itemId)).status, "VERIFIED");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => !path.includes("/routing/markdown/")), protectedBytes);
+  const routeBytes = [...f.adapter.files].filter(([path]) => path.includes("/routing/markdown/"));
+  await Promise.all([
+    f.host.renamed("Notes/A.md", "Notes/B.md"),
+    f.host.renamed("Notes/B.md", "Moved/B.md"),
+  ]);
+  assert.deepEqual([...f.adapter.files].filter(([path]) => path.includes("/routing/markdown/")), routeBytes,
+    "duplicate events append no routing facts");
+  assert.deepEqual([...f.adapter.files].filter(([path]) => !path.includes("/routing/markdown/")), protectedBytes);
+
+  f.host.dispose();
+  const restarted = createLearningHost({ plugin: f.plugin, Modal });
+  assert.equal((await restarted.getSourceContract(saved.item.itemId)).status, "VERIFIED",
+    "restart resolves durable route facts without the old event queue");
+  // Reusing the historical path is a new file binding, even with identical text.
+  f.files.set("Notes/A.md", { path: "Notes/A.md", extension: "md" }); f.texts.set("Notes/A.md", text);
+  const reused = await restarted.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  reused.promptInput.value = "New file at historical path";
+  const newItem = await reused.confirm();
+  const oldRoute = await (await restarted.getMarkdownRouting()).resolve(owner);
+  const newRoute = await (await restarted.getMarkdownRouting()).resolve({ ownerKind: "learning-item", ownerId: newItem.item.itemId });
+  assert.notEqual(oldRoute.bindingId, newRoute.bindingId);
+  assert.equal(oldRoute.currentPath, "Moved/B.md");
+  f.files.delete("Moved/B.md"); f.texts.delete("Moved/B.md");
+  assert.equal((await restarted.getSourceContract(saved.item.itemId)).status, "TARGET_UNRESOLVED",
+    "identical text at a reused historical path never repairs a missing current source");
+  assert.deepEqual((await (await restarted.getService()).getItem(saved.item.itemId)).source, saved.item.source);
+  restarted.dispose();
+});
