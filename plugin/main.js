@@ -6782,7 +6782,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
-            { forceVerify },
+            { forceVerify, compactPath: Platform?.isWin === true },
           ),
         )
         .then((assets) => {

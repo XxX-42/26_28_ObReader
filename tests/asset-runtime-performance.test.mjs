@@ -76,6 +76,30 @@ function assetRoot(pluginRoot, payload) {
   return `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
 }
 
+test("compact resource paths preserve full bundle identity within Windows resource URL limits", async () => {
+  const adapter = createMemoryAdapter();
+  const pluginRoot = ".obsidian/plugins/pdf-web-reader";
+  const vaultRoot = "D:/Documents/Obsidian/ObReader-0.14-Windows-Native-20261023";
+  const payload = makePayload("pdfjs-full-viewer-5.7.192-3f4171c02-fork-ink-session-guard-0.5.19-highlight-row-collision-0.12.1", 2);
+  const file = "web/obsidian-bridge.js";
+  assert.ok(`${vaultRoot}/${assetRoot(pluginRoot, payload)}/${file}`.length > 260);
+  const first = await ensureViewerAssets(adapter, pluginRoot, payload, { compactPath: true });
+  assert.ok(`${vaultRoot}/${first.rootPath}/${file}`.length < 260,
+    "Windows app:// cannot load the original long path even though DataAdapter reads it");
+  assert.match(first.rootPath, /\/\.asset-cache\/v2\/[a-f0-9]{64}$/u);
+  const repeated = await ensureViewerAssets(adapter, pluginRoot, payload, { compactPath: true, forceVerify: true });
+  assert.equal(repeated.rootPath, first.rootPath);
+  assert.equal(repeated.metrics.bytesWritten, 0);
+  assert.ok(repeated.metrics.verificationReads >= payload.files.length);
+  // A name change with identical bytes still has a distinct, full-strength key.
+  const other = { ...payload, id: `${payload.id}-other` };
+  other.contentHash = computeContentHash(other);
+  const isolated = await ensureViewerAssets(adapter, pluginRoot, other, { compactPath: true });
+  assert.notEqual(isolated.rootPath, first.rootPath);
+  assert.equal(isolated.contentHash, other.contentHash);
+  assert.equal(await adapter.exists(`${first.rootPath}/.complete.json`), true);
+});
+
 test("valid cache hits avoid decompression and repairs decode only damaged files", async () => {
   const adapter = createMemoryAdapter();
   const payload = makePayload("performance-cache-v1", 9);
