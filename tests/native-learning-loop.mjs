@@ -529,27 +529,66 @@ async function openCommand(commandText) {
   await page.keyboard.press("Enter");
 }
 
-async function openWorkbench() {
-  if (!(await page.$(".vocabulary-workbench"))) {
-    await openPluginSettingsThroughUI();
+async function findOwnedVisibleDialog(selector) {
+  // This browser is attached only after the exact owned process/profile check.
+  // Verify the sole host vault before accepting its native modal renderers.
+  native.assertNativeVaultIdentity(await appIdentity(), native.nativeConfig);
+  const candidates = await browser.pages();
+  const hosts = candidates.filter(candidate => candidate.url() === APP_URL);
+  assert.equal(hosts.length, 1, "Dialog ownership requires exactly one owned vault renderer.");
+  const matches = [];
+  for (const candidate of candidates) {
+    const state = await candidate.evaluate(selector => {
+      const nodes = [...document.querySelectorAll(selector)];
+      return { title: document.title, popout: document.body?.classList.contains("is-popout-modal"),
+        visible: nodes.length > 0 && nodes.every(node => {
+          const rect = node.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden";
+        }) };
+    }, selector).catch(() => null);
+    if (!state?.visible) continue;
+    assert.ok(candidate === page || state.popout,
+      `Refusing a dialog outside the owned host/native modal: ${state.title}`);
+    if (state.title.includes("ObReader-") || state.title.includes("Obsidian")) {
+      assert.ok(state.title.includes("ObReader-Apple-Test"), `Unexpected dialog vault: ${state.title}`);
+    }
+    matches.push({ candidate, state });
   }
-  await page.waitForSelector(".vocabulary-workbench [data-action=\"tab-review\"]", { timeout: 15_000 });
+  assert.ok(matches.length <= 1, "Expected one visible owned dialog target.");
+  if (!matches.length) return null;
+  report.dialogTargets ||= [];
+  report.dialogTargets.push({ selector, url: matches[0].candidate.url(), ...matches[0].state,
+    ownership: "exact owned process/profile with one validated vault renderer", at: new Date().toISOString() });
+  return matches[0].candidate;
+}
+
+async function openWorkbench() {
+  let target = await findOwnedVisibleDialog(".vocabulary-workbench");
+  if (!target) {
+    await openPluginSettingsThroughUI();
+    target = await waitFor("owned Workbench dialog", () => findOwnedVisibleDialog(".vocabulary-workbench"));
+  }
+  await target.waitForSelector('.vocabulary-workbench [data-action="tab-review"]', { timeout: 15_000 });
+  return target;
 }
 
 async function openLearningDraftAndConfirm({ question, expectedAnswer, beforeCount }) {
-  await page.waitForSelector('textarea[aria-label="问题"]', { timeout: 12_000 });
-  await page.waitForSelector('textarea[aria-label="答案"]', { timeout: 12_000 });
-  const answer = await page.$eval('textarea[aria-label="答案"]', node => node.value);
+  const target = await waitFor("visible owned learning draft with question and answer", () =>
+    findOwnedVisibleDialog('textarea[aria-label="问题"], textarea[aria-label="答案"]'), Boolean, 12_000);
+  await target.waitForSelector('textarea[aria-label="问题"]', { visible: true });
+  await target.waitForSelector('textarea[aria-label="答案"]', { visible: true });
+  const answer = await target.$eval('textarea[aria-label="答案"]', node => node.value);
   assert.equal(answer, expectedAnswer, "Draft answer must be the exact selected/source text.");
   assert.equal((await readLearningItems()).length, beforeCount,
     "Opening a draft must not create a Review item before confirmation.");
-  await page.click('textarea[aria-label="问题"]');
-  await page.keyboard.type(question, { delay: 8 });
-  await clickVisibleButtonByExactText("确认加入复习");
+  await recordScreen("learning-draft-before-confirm", target);
+  await target.click('textarea[aria-label="问题"]');
+  await target.keyboard.type(question, { delay: 8 });
+  await clickVisibleButtonByExactText("确认加入复习", target);
 }
 
-async function clickVisibleButtonByExactText(label) {
-  const buttons = await page.$$("button");
+async function clickVisibleButtonByExactText(label, target = page) {
+  const buttons = await target.$$("button");
   const matches = [];
   for (const button of buttons) {
     const candidate = await button.evaluate(node => ({
@@ -751,15 +790,15 @@ async function queryFamilyKey(surface) {
 }
 
 async function clickTodaySource(itemId) {
-  await openWorkbench();
-  await page.click('[data-action="tab-review"]');
+  const target = await openWorkbench();
+  await target.click('[data-action="tab-review"]');
   await waitFor(`Today row ${itemId}`,
-    () => page.$$eval('[data-role="review-row"][data-provider-id="learning"]', rows =>
+    () => target.$$eval('[data-role="review-row"][data-provider-id="learning"]', rows =>
       rows.map(row => ({ id: row.dataset.itemId, text: row.innerText }))),
     rows => rows.some(row => row.id === itemId), 15_000);
   const sourceSelector = `[data-role="review-row"][data-provider-id="learning"][data-item-id="${itemId}"] [data-action^="review-source-learning-"]`;
-  await page.waitForSelector(sourceSelector, { timeout: 10_000 });
-  await page.click(sourceSelector);
+  await target.waitForSelector(sourceSelector, { timeout: 10_000 });
+  await target.click(sourceSelector);
   await closeSettingsThroughUIIfVisible();
 }
 
@@ -941,12 +980,8 @@ async function addMarkdownLearningItem(markdownPath) {
   const selection = await page.evaluate(() => app.workspace.activeLeaf?.view?.editor?.getSelection?.() || "");
   assert.equal(selection, MARKDOWN_EXCERPT, "Markdown source text must be selected through real editor input.");
   await openCommand("将 Markdown 选中摘录加入复习");
-  await page.waitForSelector('textarea[aria-label="答案"]', { timeout: 12_000 });
-  const answer = await page.$eval('textarea[aria-label="答案"]', node => node.value);
-  assert.equal(answer, MARKDOWN_EXCERPT);
-  await page.click('textarea[aria-label="问题"]');
-  await page.keyboard.type("Where did this exact Markdown sentence come from?", { delay: 8 });
-  await clickVisibleButtonByExactText("确认加入复习");
+  await openLearningDraftAndConfirm({ question: "Where did this exact Markdown sentence come from?",
+    expectedAnswer: MARKDOWN_EXCERPT, beforeCount: (await readLearningItems()).length });
   const items = await waitFor("Markdown Learning item creation after UI confirmation", readLearningItems,
     rows => rows.some(candidate => candidate.source?.target?.kind === "markdown" &&
       candidate.source?.targetText === MARKDOWN_EXCERPT), 15_000);
@@ -1035,10 +1070,10 @@ async function createHighlightLearningItem(pdfPath) {
   report.uiFlows.push({ name: "Highlight -> durable sidecar -> Sidebar -> Add Review -> Today", status: "passed",
     uuid: annotation.row.uuid, itemId: item.itemId, sourcePath: pdfPath, pageIndex: annotation.row.pageIndex });
   await checkpoint("highlight-learning-item-created", { uuid: annotation.row.uuid, itemId: item.itemId });
-  await openWorkbench();
-  await page.click('[data-action="tab-review"]');
-  await page.waitForSelector(`[data-role="review-row"][data-provider-id="learning"][data-item-id="${item.itemId}"]`, { timeout: 15_000 });
-  await recordScreen("highlight-today-review");
+  const workbench = await openWorkbench();
+  await workbench.click('[data-action="tab-review"]');
+  await workbench.waitForSelector(`[data-role="review-row"][data-provider-id="learning"][data-item-id="${item.itemId}"]`, { timeout: 15_000 });
+  await recordScreen("highlight-today-review", workbench);
   const sourceEvidence = await verifySource(item.itemId, { kind: "annotation", id: annotation.row.uuid,
     documentId: item.source.documentId }, pdfPath);
   report.uiFlows.at(-1).sourceEvidence = sourceEvidence;
@@ -1119,15 +1154,15 @@ async function createContextLearningItem(pdfPath) {
   await checkpoint("lingq-context-saved", { contextId: context.contextId, familyKey, exactQuote: selected });
   await recordScreen("lingq-context-captured");
 
-  await openWorkbench();
-  await page.click('[data-action="tab-vocabulary"]');
+  const workbench = await openWorkbench();
+  await workbench.click('[data-action="tab-vocabulary"]');
   const familySelector = `[data-action="select-family"][data-family-key="${familyKey}"]`;
-  await page.waitForSelector(familySelector, { timeout: 15_000 });
-  await page.click(familySelector);
-  await page.click('[data-action="tab-contexts"]');
-  await waitFor("Context row in Workbench", () => page.$$eval('[data-role="context-record"]', rows => rows.map(row => row.innerText)),
+  await workbench.waitForSelector(familySelector, { timeout: 15_000 });
+  await workbench.click(familySelector);
+  await workbench.click('[data-action="tab-contexts"]');
+  await waitFor("Context row in Workbench", () => workbench.$$eval('[data-role="context-record"]', rows => rows.map(row => row.innerText)),
     rows => rows.some(row => row.includes(selected)), 15_000);
-  const contextAddReview = await page.$('[data-action^="context-add-review-"]');
+  const contextAddReview = await workbench.$('[data-action^="context-add-review-"]');
   assert.ok(contextAddReview, "The real Context Add Review action must be visible.");
   await contextAddReview.click();
   const beforeItems = (await readLearningItems()).length;
@@ -1148,9 +1183,9 @@ async function createContextLearningItem(pdfPath) {
     exactQuote: selected, itemId: item.itemId, familyKey,
     familyStatus: familyStatus.status, lingqMode, selectionGeometry });
   await checkpoint("context-learning-item-created", { itemId: item.itemId, anchorId: context.anchorId });
-  await page.click('[data-action="tab-review"]');
-  await page.waitForSelector(`[data-role="review-row"][data-provider-id="learning"][data-item-id="${item.itemId}"]`, { timeout: 15_000 });
-  await recordScreen("context-today-review");
+  await workbench.click('[data-action="tab-review"]');
+  await workbench.waitForSelector(`[data-role="review-row"][data-provider-id="learning"][data-item-id="${item.itemId}"]`, { timeout: 15_000 });
+  await recordScreen("context-today-review", workbench);
   const sourceEvidence = await verifySource(item.itemId, { kind: "selection", id: context.anchorId,
     documentId: item.source.documentId }, pdfPath);
   const { frame: sourceFrame } = await readerFrame(pdfPath);
