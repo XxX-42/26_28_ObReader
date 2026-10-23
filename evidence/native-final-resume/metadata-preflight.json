@@ -1,0 +1,74 @@
+{
+  "phase": "static metadata only; no browser attachment or Native UI",
+  "baseCommit": "c08049aa825954d12cc50b43c91b29dc8691e9d6",
+  "datasetFileCount": 27,
+  "originalFrozenByteChecks": [
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/f.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/manifest.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/en.vocab.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/541da50323b81237c5b1a976457028575c940595fc8b6fdb0d4af3bc63892203.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/6f84a15aa11c0c91306db04df05f4143518272590eb6e40617dd3d40d5e37681.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/8fa785be50457433dcba175ff62a5b91c5377fe827c3dfea5b55a191d7d8babf.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/b4dea56ce6cedb6f5727495acf1ce653b8795a17df8baa7ff36464c19fa74f9d.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/cbc910ea50c5ae669a81862abcd36e3cf3421e107ad64218959d58a705bf6611.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/3.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/4.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/9.json",
+      "match": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/manifest.json",
+      "match": true
+    }
+  ],
+  "allOriginalFrozenBytesMatch": true,
+  "pdfPath": "/Users/jiajia/Documents/ObReader-Apple-Test/PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+  "pdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+  "pdfMatchesOriginal": true,
+  "markdownPath": "/Users/jiajia/Documents/ObReader-Apple-Test/PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning-renamed.md",
+  "markdownExactExcerptPresent": true,
+  "installedFiles": {
+    "main.js": "e9323d1854f315608ff1e0ca8741f87b7476ce2b486f3450f03af501e750377a",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "distFiles": {
+    "main.js": "e9323d1854f315608ff1e0ca8741f87b7476ce2b486f3450f03af501e750377a",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "threeFilesMatch": true,
+  "sourceReport": "evidence/native-sol-low/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023143340167.json",
+  "nextStep": "Wait for root Native lease; then independently verify unlocked session, exact owned profile and safe reload before isolation/enabling. Do not seed/recreate learning data."
+}
