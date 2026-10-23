@@ -1,0 +1,42 @@
+{
+  "status": "true-product-red-stop",
+  "installedMainSha256": "6b26b420d588c7a0698e82e5982abda82ba3b9e62e9d86ff60925d095ea9484c",
+  "profilePid": 50203,
+  "cdpPort": 49786,
+  "passed": [
+    "Highlight durable sidecar / Sidebar Add Review / Today Source exact UUID and request ACK",
+    "LingQ actual status / phrase Context / Add Review / Today Source exact anchor and request ACK",
+    "Markdown actual editor selection / palette / draft confirmation",
+    "pdfrename canonical bytes invariant",
+    "foldermove canonical bytes invariant"
+  ],
+  "contextScope": "Phrase Dynamic languages; complete sentence case still outstanding.",
+  "failed": "mdrename Source: markdown-excerpt-changed-during-open with unchanged excerpt in visible Markdown editor",
+  "notExecuted": [
+    "mdmove",
+    "bothmove",
+    "closedmove",
+    "openmove",
+    "restart",
+    "complete sentence Context case"
+  ],
+  "cleanup": {
+    "controlledPdfClose": "verified-consistent / WAL replayed",
+    "pluginActive": false,
+    "readerCount": 0,
+    "syncEnabled": false,
+    "isolationRestored": true,
+    "remainingWindows": "one ROOT-owned main window; Settings closed through Cmd+W, Meta released on main page",
+    "processKeptAlive": true
+  },
+  "runnerSetupFixes": [
+    "owned native modal targets",
+    "close Settings acknowledgement race and release Meta on main",
+    "dismiss sidebar/secondary toolbar before word click",
+    "escape family selector",
+    "PDF Context Reader anchor schema",
+    "wait for no pending transaction and stable bytes before freeze",
+    "resume proven fixtures/items without repeated learning creation"
+  ],
+  "paletteSetupDiagnosis": "Obsidian internal lazy palette singleton had stale closed Settings document owner; disabled-state main renderer reload then real ribbon open restored palette."
+}

@@ -37,13 +37,22 @@ const FIXTURE_PDF = path.join(ROOT, "tests", "fixtures", "tracemonkey.pdf");
 const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
 const CONTEXT_WORD = "Dynamic";
+const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
+const resumeEvidence = resumePath ? JSON.parse(await readFile(resumePath, "utf8")) : null;
+if (resumeEvidence) {
+  assert.equal(resumeEvidence.cleanup?.status, "complete");
+  assert.equal(resumeEvidence.cleanup?.isolationRestored, true);
+  assert.equal(resumeEvidence.uiFlows?.[0]?.status, "passed");
+  assert.ok(resumeEvidence.uiFlows[0].sourceEvidence?.navigation?.ok);
+  assert.match(resumeEvidence.runId, /^native-learning-loop-[a-z0-9-]+$/u);
+}
 const startedAt = new Date();
 const stamp = startedAt.toISOString().replace(/[-:.TZ]/g, "");
-const runId = `native-learning-loop-${stamp}-${randomBytes(5).toString("hex")}`;
+const runId = resumeEvidence?.runId || `native-learning-loop-${stamp}-${randomBytes(5).toString("hex")}`;
 const fixturePrefix = `PDF迁移测试/${runId}`;
-const reportPath = path.join(ROOT, "tests", "artifacts", `${runId}.json`);
+const reportPath = path.join(ROOT, "tests", "artifacts", `${runId}${resumeEvidence ? `-continued-${stamp}` : ""}.json`);
 const reportTempPath = `${reportPath}.tmp`;
-const screenshotDirectory = path.join(ROOT, "tests", "artifacts", runId);
+const screenshotDirectory = path.join(ROOT, "tests", "artifacts", `${runId}${resumeEvidence ? `-continued-${stamp}` : ""}`);
 const report = {
   agent: "impl_b_native",
   workstream: "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
@@ -187,7 +196,8 @@ async function installNativeIsolation() {
   const storageRootAbsolute = absoluteVaultPath(`${native.nativeConfig.configDir}/plugins/pdf-web-reader/.native-learning-loop/${runId}`);
   try {
     await access(storageRootAbsolute);
-    assert.fail(`Per-run sidecar storage already exists: ${storageRootAbsolute}`);
+    assert.ok(resumeEvidence, `Per-run sidecar storage already exists: ${storageRootAbsolute}`);
+    assert.equal(resumeEvidence.fixturePrefix, fixturePrefix);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
@@ -430,7 +440,7 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     range.setEnd(node, start + text.length);
     const rect = range.getBoundingClientRect();
     if (!rect.width || !rect.height) throw new Error(`PDF text has no visible geometry: ${text}`);
-    return { x1: rect.left + 1, x2: rect.right - 1, y: rect.top + rect.height / 2,
+    return { x1: rect.left + 0.25, x2: rect.right + 1, y: rect.top + rect.height / 2,
       text: node.textContent.slice(start, start + text.length), mode: PDFViewerApplication.pdfViewer.annotationEditorMode };
   }, { text, exact });
   const frameRect = await readerFrameRect(pathValue);
@@ -518,15 +528,23 @@ async function openCommand(commandText) {
   assert.equal(visible, true, "Command Palette ribbon control must be visible before activation.");
   await paletteButton[0].click();
   await paletteButton[0].dispose();
-  await page.waitForSelector(".prompt-input", { timeout: 8_000 });
-  await page.click(".prompt-input");
-  await page.keyboard.down("Meta");
-  await page.keyboard.press("a");
-  await page.keyboard.up("Meta");
-  await page.keyboard.type(commandText, { delay: 15 });
-  await waitFor(`command palette result ${commandText}`, async () => page.$$eval(".suggestion-item", nodes => nodes.map(node => node.innerText)),
+  let target = await findOwnedVisibleDialog(".prompt-input");
+  if (!target) {
+    await page.keyboard.up("Meta");
+    await page.keyboard.up("Shift");
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("p");
+    await page.keyboard.up("Meta");
+    target = await waitFor("visible native Command Palette after real Cmd+P", () => findOwnedVisibleDialog(".prompt-input"), Boolean, 8_000);
+  }
+  await target.click(".prompt-input");
+  await target.keyboard.down("Meta");
+  await target.keyboard.press("a");
+  await target.keyboard.up("Meta");
+  await target.keyboard.type(commandText, { delay: 15 });
+  await waitFor(`command palette result ${commandText}`, async () => target.$$eval(".suggestion-item", nodes => nodes.map(node => node.innerText)),
     rows => rows.some(row => row.includes(commandText)), 8_000);
-  await page.keyboard.press("Enter");
+  await target.keyboard.press("Enter");
 }
 
 async function findOwnedVisibleDialog(selector) {
@@ -730,6 +748,8 @@ async function closeSettingsThroughUIIfVisible() {
     if (!String(error).includes("TargetCloseError")) throw error;
     await waitFor("Settings target closure after Cmd+W", () => settingsPage.isClosed(), Boolean, 8_000);
   } finally {
+    // Release modifiers on the surviving host even when Cmd+W destroys its target.
+    if (page && !page.isClosed()) await page.keyboard.up("Meta");
     if (!settingsPage.isClosed()) await settingsPage.keyboard.up("Meta").catch(async error => {
       if (!String(error).includes("TargetCloseError")) throw error;
       await waitFor("Settings target closure after Cmd+W key release", () => settingsPage.isClosed(), Boolean, 8_000);
@@ -1106,7 +1126,26 @@ async function enableLingQReadModeThroughUI(frame) {
 
 async function createContextLearningItem(pdfPath) {
   const { frame } = await readerFrame(pdfPath);
-  const lingqMode = await enableLingQReadModeThroughUI(frame);
+  let lingqMode, familyStatus, familyKey, selectionGeometry, selected, context;
+  const previousContext = resumeEvidence?.lastStep?.label === "lingq-context-saved" ? resumeEvidence.lastStep : null;
+  if (previousContext) {
+    familyKey = previousContext.familyKey;
+    selected = previousContext.exactQuote;
+    context = (await readContextRows(familyKey)).find(row => row.contextId === previousContext.contextId);
+    assert.ok(context && context.anchor.exactQuote === selected, "Resume only the exact Context previously created through real UI.");
+    familyStatus = await page.evaluate(async pluginId => (await app.plugins.plugins[pluginId].getVocabularyRuntime()).personalService.getTerm("dynamic"), PLUGIN_ID);
+    lingqMode = { resumedPriorVisibleUI: true };
+    selectionGeometry = { resumedEvidence: resumePath };
+    contexts.dynamic = context;
+  } else {
+  lingqMode = await enableLingQReadModeThroughUI(frame);
+  if (await frame.$eval("#pdfReaderAnnotationSidebarMenu", node => !node.classList.contains("hidden"))) {
+    await frame.click("#pdfReaderAnnotationSidebarButton");
+    await frame.waitForFunction(() => document.querySelector("#pdfReaderAnnotationSidebarMenu")?.classList.contains("hidden"));
+  }
+  if (await frame.$eval("#secondaryToolbar", node => !node.classList.contains("hidden"))) {
+    await frame.click("#secondaryToolbarToggleButton");
+  }
   await recordScreen("lingq-read-mode-ready");
   const initialCount = (await page.evaluate(async pluginId => {
     const runtime = await app.plugins.plugins[pluginId].getVocabularyRuntime();
@@ -1129,15 +1168,15 @@ async function createContextLearningItem(pdfPath) {
   await frame.waitForSelector('.pdfReaderVocabularyPill[data-key="dynamic"]', { timeout: 10_000 });
   await recordScreen("lingq-word-pill-visible");
   await frame.click('.pdfReaderVocabularyPill button[data-status="2"]');
-  const familyStatus = await waitFor("real LingQ status write for dynamic", () => page.evaluate(async pluginId => {
+  familyStatus = await waitFor("real LingQ status write for dynamic", () => page.evaluate(async pluginId => {
     const runtime = await app.plugins.plugins[pluginId].getVocabularyRuntime();
     return runtime.personalService.getTerm("dynamic");
   }, PLUGIN_ID), value => value?.status === 2, 12_000);
-  const familyKey = await waitFor("Dynamic vocabulary family after its visible status action",
+  familyKey = await waitFor("Dynamic vocabulary family after its visible status action",
     () => queryFamilyKey("dynamic"), Boolean, 12_000);
-  const selectionGeometry = await selectTextByPointer({ frame, pathValue: pdfPath, text: "Dynamic languages",
+  selectionGeometry = await selectTextByPointer({ frame, pathValue: pdfPath, text: "Dynamic languages",
     mode: "selection", exact: false });
-  const selected = await frame.evaluate(() => getSelection()?.toString() || "");
+  selected = await frame.evaluate(() => getSelection()?.toString() || "");
   assert.match(selected, /Dynamic languages/u);
   await frame.click(".pdfReaderVocabularyContextCapture");
   await frame.waitForSelector(".pdfReaderVocabularyContextConfirm:not([hidden])", { timeout: 10_000 });
@@ -1145,7 +1184,7 @@ async function createContextLearningItem(pdfPath) {
   await frame.click(".pdfReaderVocabularyContextConfirm");
   const contextsForFamily = await waitFor("Context saved through the actual Viewer selection UI", () => readContextRows(familyKey),
     rows => rows.some(row => row.sentence === selected), 15_000);
-  const context = contextsForFamily.find(row => row.sentence === selected);
+  context = contextsForFamily.find(row => row.sentence === selected);
   assert.equal(context.surface.toLowerCase(), "dynamic");
   assert.equal(context.anchor.exactQuote, selected);
   assert.equal(context.anchor.textPosition.end - context.anchor.textPosition.start, selected.length,
@@ -1154,20 +1193,28 @@ async function createContextLearningItem(pdfPath) {
   await checkpoint("lingq-context-saved", { contextId: context.contextId, familyKey, exactQuote: selected });
   await recordScreen("lingq-context-captured");
 
+  }
   const workbench = await openWorkbench();
   await workbench.click('[data-action="tab-vocabulary"]');
-  const familySelector = `[data-action="select-family"][data-family-key="${familyKey}"]`;
+  const familySelector = `[data-action="select-family"][data-family-key=${JSON.stringify(familyKey)}]`;
   await workbench.waitForSelector(familySelector, { timeout: 15_000 });
   await workbench.click(familySelector);
   await workbench.click('[data-action="tab-contexts"]');
   await waitFor("Context row in Workbench", () => workbench.$$eval('[data-role="context-record"]', rows => rows.map(row => row.innerText)),
     rows => rows.some(row => row.includes(selected)), 15_000);
+  const existingContextItem = (await readLearningItems()).find(candidate =>
+    candidate.source?.contextId === context.contextId && candidate.source?.target?.id === context.anchorId);
+  if (!existingContextItem) {
   const contextAddReview = await workbench.$('[data-action^="context-add-review-"]');
   assert.ok(contextAddReview, "The real Context Add Review action must be visible.");
   await contextAddReview.click();
   const beforeItems = (await readLearningItems()).length;
   await openLearningDraftAndConfirm({ question: "What does Dynamic mean in this exact sentence?",
     expectedAnswer: selected, beforeCount: beforeItems });
+  } else {
+    assert.ok(previousContext, "Only a resumed real UI Context may reuse its confirmed Review item.");
+    report.resumedContextItem = existingContextItem.itemId;
+  }
   const items = await waitFor("Context Learning item after real Add Review confirmation", readLearningItems,
     rows => rows.some(candidate => candidate.source?.evidenceKind === "context" &&
       candidate.source?.target?.id === context.anchorId), 15_000);
@@ -1175,7 +1222,9 @@ async function createContextLearningItem(pdfPath) {
     candidate.source?.target?.id === context.anchorId);
   assert.equal(item.source.target.id, context.anchorId);
   assert.equal(item.source.targetText, selected);
-  assert.equal(item.source.sourceRange?.text, selected);
+  assert.equal(item.source.sourceRange, null, "PDF Context uses its Reader anchor; sourceRange belongs to Markdown source slices.");
+  assert.equal(context.anchor.exactQuote, selected);
+  assert.equal(context.anchor.textPosition.end - context.anchor.textPosition.start, selected.length);
   assert.equal(item.answer, selected);
   learningItems.context = item;
   report.uiFlows.push({ name: "LingQ status -> sentence selection -> Context -> Add Review -> Today",
@@ -1201,11 +1250,19 @@ async function createContextLearningItem(pdfPath) {
 }
 
 async function performPathScenarios({ pdfPath, markdownPath, pdfDirectory, markdownDirectory }) {
-  learningItems.markdown = await addMarkdownLearningItem(markdownPath);
+  const priorMarkdown = resumeEvidence?.uiFlows?.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
+  learningItems.markdown = priorMarkdown ? await readItem(priorMarkdown.itemId) : await addMarkdownLearningItem(markdownPath);
   const mdItem = learningItems.markdown;
-  report.uiFlows.push({ name: "Markdown selected excerpt -> Add Review", status: "passed",
+  if (!priorMarkdown) report.uiFlows.push({ name: "Markdown selected excerpt -> Add Review", status: "passed",
     itemId: mdItem.itemId, sourcePath: markdownPath, exactQuote: mdItem.source.targetText });
-  baseVocabularySnapshot = await snapshotVocabularyInvariant();
+  let priorStable = null;
+  baseVocabularySnapshot = await waitFor("durable Vocabulary transaction completion and stable bytes before freeze", async () => {
+    const snapshot = await snapshotVocabularyInvariant();
+    const pending = snapshot.files.some(file => /\.pending(?:\.json)?$/u.test(file.path));
+    const stable = !pending && priorStable && JSON.stringify(priorStable.files) === JSON.stringify(snapshot.files);
+    priorStable = pending ? null : snapshot;
+    return stable ? snapshot : null;
+  }, Boolean, 20_000);
   report.stores.invariantBaseline = baseVocabularySnapshot;
   await checkpoint("invariant-baseline-captured", { fileCount: baseVocabularySnapshot.fileCount });
 
@@ -1479,6 +1536,12 @@ async function main() {
   assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
   page = appPages[0];
   page.setDefaultTimeout(15_000);
+  page.on("console", message => {
+    if (message.type() === "error") {
+      report.consoleErrors ||= [];
+      report.consoleErrors.push({ text: message.text(), location: message.location(), at: new Date().toISOString() });
+    }
+  });
   page.on("pageerror", error => report.errors.push({ at: new Date().toISOString(), error: error?.stack || String(error) }));
 
   const before = await appIdentity();
@@ -1519,10 +1582,31 @@ async function main() {
     report.recommendation = "Settings UI navigation preflight passed with storage isolation installed and no learning fixtures created.";
     return;
   }
-  const fixtures = await createFixtures();
+  const fixtures = resumeEvidence ? { ...resumeEvidence.fixtures,
+    pdfDirectory: path.posix.dirname(resumeEvidence.fixtures.pdfPath),
+    markdownDirectory: path.posix.dirname(resumeEvidence.fixtures.markdownPath) } : await createFixtures();
+  if (resumeEvidence) {
+    report.fixtures = resumeEvidence.fixtures;
+    report.highlight = resumeEvidence.highlight;
+    report.uiFlows = resumeEvidence.uiFlows;
+    report.continuation = { previousReport: resumePath, reason: "Context pointer setup overlay; retain proven Highlight chain",
+      previousFailure: resumeEvidence.errors, at: new Date().toISOString() };
+    assert.equal(sha256(await readFile(absoluteVaultPath(fixtures.pdfPath))), fixtures.fixturePdfSha256);
+  }
   await enablePluginAfterIsolation();
-  await createHighlightLearningItem(fixtures.pdfPath);
-  await createContextLearningItem(fixtures.pdfPath);
+  if (resumeEvidence) {
+    learningItems.highlight = await readItem(resumeEvidence.uiFlows[0].itemId);
+    assert.equal(learningItems.highlight.source.target.id, resumeEvidence.highlight.uuid);
+    await openFixture(fixtures.pdfPath);
+    await readerFrame(fixtures.pdfPath);
+  } else await createHighlightLearningItem(fixtures.pdfPath);
+  const provenContext = resumeEvidence?.uiFlows?.find(flow => flow.contextId && flow.sourceEvidence?.navigation?.ok);
+  if (provenContext) {
+    learningItems.context = await readItem(provenContext.itemId);
+    contexts.dynamic = (await readContextRows(provenContext.familyKey)).find(row => row.contextId === provenContext.contextId);
+    assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
+    report.resumedProvenContext = provenContext;
+  } else await createContextLearningItem(fixtures.pdfPath);
   await performPathScenarios(fixtures);
   await captureNativeEvidence();
   report.status = "passed";
