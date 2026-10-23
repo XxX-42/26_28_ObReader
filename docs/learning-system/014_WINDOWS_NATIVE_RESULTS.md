@@ -60,3 +60,37 @@ adapter traces, physical file hashes and independent WAL replay.
 The test-only evidence collector is `tests/native-windows-learning-evidence.mjs`.
 Build passed (406 embedded runtime assets, 402 verified frozen vendor files).
 No production code was changed during this Native run.
+
+## Follow-up on 2a65283 integration
+
+Merged the integration containing `f8b8f18` (serialized complete LearningHost
+rename processing), rebuilt and deployed only to the test Vault. Backup:
+`.deploy-backups/2026-10-23T15-15-15-166Z/pdf-web-reader`.
+
+The deployment script backs up the entire plugin directory, including test-only
+`.native-learning-loop` storage. The old 1433 run remained intact in that backup.
+The newly created fixture data was preserved separately as run 1515; the original
+1433 run was restored from backup without merging or rewriting its records.
+Both runs are retained. Future redeployment must explicitly preserve this test
+storage before continuing a run.
+
+New run 1515 used a new Markdown fixture and a real editor selection, manually
+typed question and explicit confirmation. Consecutive rename/move while open
+now passes Today Source: actual host completion captured `result:true`, exact
+destination path, selection text, and editor range `{line:0,ch:0}` to
+`{line:0,ch:65}`. Closing all fixture Markdown leaves, moving the file again, then
+Today Source also passes with the same exact range. Plugin reload followed by
+Today Source passes. Non-route Vocabulary/Review/History bytes remain identical
+across those route-only steps. Old missing-route RED records were not repaired.
+
+After restoring the original run, the new candidate still opens its original
+Highlight UUID and full-sentence Context Anchor through Today UI. Exact current
+ACK session identities were checked; requests were respectively `reader-nav-1-1`
+and `reader-nav-1-2` in renderer `e1eff7e3-9b81-4b3b-9858-c354de118a71`.
+Original run Context/Review/History non-route bytes remain unchanged from the
+historical RED capture, and independent WAL replay retains the original UUID.
+
+Remaining NOT RUN: combined PDF+Markdown move in one unified fixture run and a
+dedicated owned-process restart. Window reload and plugin reload have been
+executed, but neither is reported as process restart. Full Native matrix is
+therefore not accepted yet.
