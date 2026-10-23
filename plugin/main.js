@@ -4654,6 +4654,16 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const requestId = pending?.documentId === view.documentId && pending.openRequest === view.openRequest &&
       pending.rendererGeneration === view.rendererGeneration && pending.pageIndex === pageIndex &&
       pending.pageIdentity === pageIdentity ? pending.requestId : undefined;
+    if (!requestId) {
+      // Identity confirmation can finish after the first Viewer query was
+      // rejected. Ask the Viewer for a fresh correlated query, rather than
+      // publishing an unsolicited result that its current request must reject.
+      view.postToViewer({ channel: CHANNEL, token: view.token, type: "reader-backlink-page-refresh",
+        documentId: view.documentId, openRequest: view.openRequest,
+        rendererGeneration: view.rendererGeneration, pageNumber, pageIndex,
+        pageIdentity, sourceHash: view.annotationSourceHash });
+      return true;
+    }
     return this.handleReaderBacklinkPageRequest(view, {
       documentId: view.documentId, openRequest: view.openRequest,
       rendererGeneration: view.rendererGeneration, pageNumber, pageIndex,
