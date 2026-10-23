@@ -1,0 +1,26 @@
+{
+  "status": "existing real geometry-recovery RED; static diagnosis only",
+  "baseCommit": "d83b59b",
+  "noTestsRun": true,
+  "noNativeUI": true,
+  "sourceEvidence": "/Users/jiajia/.codex/worktrees/obreader-0.14/v3-wiring/tests/artifacts/vocabulary-gates/out/b2f08189e5e7/highlight-multiline-regr/highlight-multiline-regression-1792767813207-62271.json",
+  "confirmedFacts": [
+    "Failure occurs at the candidate legacy QuadPoints exact-text assertion after durable save.",
+    "The test invokes getLegacyHighlightSidebarTargetText directly through a test-only hook; there is no Reader navigation request before this assertion.",
+    "One-line exact recovery passes: selected/recovered length 56.",
+    "Two-line exact recovery passes: selected/recovered length 129.",
+    "Four-line page-2 recovery fails: selected length 102, recovered length 143, 18 quads, four visual quad lines.",
+    "The actual durable Highlight payloads preserved all three exact selected texts before the failing legacy recovery assertion."
+  ],
+  "protocolHypothesis": "Refuted for this RED: requestId/targetKind/targetId guard cannot reject a direct synchronous recovery-function call. No fixture authentication changes are justified.",
+  "narrowedProductionPath": "annotationSidebarTextGlyphs -> recoverHighlightTextFromTextLayer -> getLegacyHighlightSidebarTargetText; viewer-adapter/obsidian-bridge.js",
+  "remainingUncertainty": "Existing artifacts omit recovered text and per-glyph line hit sets. They do not yet prove whether extra characters arise from multiple-line glyph assignment, neighboring glyph overlap, or another geometry decision. Nested spans alone are not sufficient proof because production walks text nodes once.",
+  "preparedDiagnostic": "Test-only source instrumentation records selected glyph counts per recovered line, quad counts, normalized lengths, and count of glyph indexes assigned to multiple lines. Existing hit logic, exact-text assertion, and geometry assertions remain unchanged.",
+  "untouched": [
+    "production main",
+    "production bridge",
+    "vendor",
+    "storage"
+  ],
+  "nextCommandAfterLease": "node --test tests/highlight-multiline-regression.test.mjs"
+}
