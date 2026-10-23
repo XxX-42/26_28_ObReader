@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile,writeFile,readdir,cp,mkdir} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import puppeteer from 'puppeteer-core';
 const root='D:/Documents/Codes/2026_7_PdfWebReader/windows-native-014-evidence';
@@ -40,9 +42,23 @@ if(mode==='install'){
 }else if(mode==='release-isolation'){
   result=await page.evaluate(()=>{if(app.plugins.plugins['pdf-web-reader'])throw Error('Plugin must be unloaded');window.__nativeLearningLoopIsolation?.restore();return !window.__nativeLearningLoopIsolation;});
 }else if(mode==='source-probe'){
-  result=await page.evaluate(()=>{const h=app.plugins.plugins['pdf-web-reader'];if(window.__nativeBacklinkProbeInstalled)throw Error('Already installed');const original=h.openReaderBacklinkSource;window.__nativeBacklinkProbeInstalled=true;h.openReaderBacklinkSource=async function(...args){const result=await original.apply(this,args);const view=app.workspace.activeLeaf?.view;window.__nativeSourceEvidence={result,args,selection:view?.editor?.getSelection(),from:view?.editor?.getCursor('from'),to:view?.editor?.getCursor('to'),path:view?.file?.path};return result;};return true;});
+  result=await page.evaluate(()=>{const h=app.plugins.plugins['pdf-web-reader'];if(h.__nativeBacklinkProbeInstalled)throw Error('Already installed');const original=h.openReaderBacklinkSource;h.__nativeBacklinkProbeInstalled=true;h.openReaderBacklinkSource=async function(...args){const result=await original.apply(this,args);const view=app.workspace.activeLeaf?.view;window.__nativeSourceEvidence={result,args,selection:view?.editor?.getSelection(),from:view?.editor?.getCursor('from'),to:view?.editor?.getCursor('to'),path:view?.file?.path};return result;};return true;});
 }else if(mode==='source-evidence'){
   result=await page.evaluate(()=>window.__nativeSourceEvidence);
+}else if(mode==='viewer-evidence'){
+  result=await page.evaluate(()=>{const v=app.workspace.getLeavesOfType('pdf-web-reader-view')[0]?.view;const d=v?.iframe?.contentDocument;return {last:v?.lastReaderNavigationResult,documentId:v?.documentId,openRequest:v?.openRequest,rendererGeneration:v?.rendererGeneration,rows:[...(d?.querySelectorAll('.sidebarComment')||[])].map(n=>({uuid:n.dataset.uuid,className:n.className,text:n.textContent})),editors:[...(d?.querySelectorAll('.annotationEditorLayer .highlightEditor')||[])].map(n=>({id:n.id,uuid:n.dataset.annotationUuid,className:n.className})),badges:[...(d?.querySelectorAll('.pdfReaderBacklinkPageBadge')||[])].map(n=>({text:n.textContent,hidden:n.hidden}))};});
+}else if(mode==='deploy'){
+  const safe=await page.evaluate(()=>({loaded:!!app.plugins.plugins['pdf-web-reader'],enabled:app.plugins.enabledPlugins.has('pdf-web-reader'),readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length}));
+  assert.deepEqual(safe,{loaded:false,enabled:false,readers:0});
+  const target=vault+'/.obsidian/plugins/pdf-web-reader';
+  const hashes=async()=>{const rows=[];const walk=async dir=>{for(const e of await readdir(dir,{withFileTypes:true})){const p=dir+'/'+e.name;if(e.isDirectory())await walk(p);else if(!['main.js','manifest.json','styles.css'].includes(p.slice(target.length+1))){const b=await readFile(p);rows.push([p.slice(target.length+1),createHash('sha256').update(b).digest('hex')]);}}};await walk(target);return rows.sort((a,b)=>a[0].localeCompare(b[0]));};
+  const before=await hashes();
+  const backup=root+'/owned-deploy-'+new Date().toISOString().replaceAll(':','-');
+  await mkdir(backup);await cp(target,backup+'/pdf-web-reader',{recursive:true,errorOnExist:true,force:false});
+  const source=fileURLToPath(new URL('../dist/pdf-web-reader/',import.meta.url));
+  const assets={};for(const name of ['main.js','manifest.json','styles.css']){await cp(source+name,target+'/'+name);assets[name]=createHash('sha256').update(await readFile(target+'/'+name)).digest('hex');}
+  assert.deepEqual(await hashes(),before,'Non-release plugin data changed during deploy');
+  result={backup,preservedFiles:before.length,assets};
 }else{
   assert.equal(mode,'identity');
   result=await page.evaluate(()=>{const v=app.workspace.getLeavesOfType('pdf-web-reader-view')[0]?.view;return {registry:app.plugins.manifests['pdf-web-reader']?.version,enabled:app.plugins.enabledPlugins.has('pdf-web-reader'),loaded:!!app.plugins.plugins['pdf-web-reader'],isolation:window.__nativeLearningLoopIsolation?.runId,trustPrompt:document.body.innerText.includes('你是否信任这个仓库的作者'),last:v?.lastReaderNavigationResult,documentId:v?.documentId,openRequest:v?.openRequest,rendererGeneration:v?.rendererGeneration,snapshot:v?.annotationSnapshot}});

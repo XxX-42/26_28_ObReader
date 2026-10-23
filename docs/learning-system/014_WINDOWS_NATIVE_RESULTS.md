@@ -194,3 +194,100 @@ profile. An independently owned process was established, but complete process
 restart/Source recovery remains NOT RUN. Its exact main PID/command line were
 revalidated before stopping only owned PID 27200. Shared main 39828 remained
 running. The normal test Vault was reopened with its plugin still disabled.
+
+## Owned restart and first-open requery continuation — 2026-10-24 CST
+
+The explicitly authorized ordinary trust confirmation was performed through
+Computer Use for the exact existing test Vault, not by editing trust settings.
+Owned main 57316 / renderer 3512 used the uniquely marked profile and its own
+CDP port 4794. Plugin initialization was preceded by isolation installation.
+After a real Highlight Source check, Readers were detached and the plugin was
+persistently disabled. The settings and test main windows were closed through
+the UI; process inspection confirmed 57316 no longer existed. Shared main
+39828 and the unrelated Vault windows were left running.
+
+Restarting the same owned profile produced main 39052 / renderer 14676 / port
+5072. Its single app page reported the exact existing test Vault, plugin
+disabled/unloaded, and no isolation. Isolation was installed before enable.
+Thus this is an actual process restart, superseding the earlier NOT RUN above,
+not a plugin/window reload.
+
+Cold persisted records were opened only through actual Workbench/Today UI:
+
+- Highlight Source returned annotation UUID
+  `a2d1ef04-6750-4d3a-97a4-c67a0ed0b148`, `reader-nav-1-1`, current renderer
+  `63776206-f105-4e4e-ba9d-11f3dd4ec3f5`, `ok:true`.
+- Whole-sentence Context Source returned original anchor
+  `context-d11edd6f2dbe2e5f5b58467646eaade71ae320c90d7b544c566b9e8e623c67a9`,
+  `reader-nav-1-2`, the same exact current session, `ok:true`.
+- After unload, isolation switched to the separately preserved 1515 run before
+  reinitialization. Its already-saved Markdown item returned actual host
+  `result:true`, `source-fixed-closedmove.md`, exact selection
+  `Windows Native queued Markdown routes preserve this exact source.`,
+  `{line:0,ch:0}` through `{line:0,ch:65}`. No records were created or seeded.
+
+Two preliminary source-probe attempts lacked a captured result because their
+diagnostic wrapper was attached to the wrong/frozen facade and then used an
+unavailable class lookup. Those attempts are not counted as exact-source PASS;
+the corrected wrapper observes the existing plugin source entry, captures its
+real return value and public active editor selection, without navigating itself.
+The successful receipt is `owned-post-restart-markdown-confirmed.json`.
+
+### d4c6f29 test-only deployment and current five directions
+
+Merged root's `d4c6f29` integration using a normal merge, rebuilt (406 assets,
+402 frozen vendor files), and deployed only after owned CDP verified zero
+Readers and plugin unloaded/disabled. The entire plugin directory was copied
+to `windows-native-014-evidence/owned-deploy-2026-10-23T16-13-58.448Z/`.
+Only the three release assets were overwritten, leaving all 456 other files,
+including both datasets and data.json, identical by individual SHA-256. No
+dataset removal/restoration was needed for this copy-in-place deployment.
+
+Installed hashes:
+
+- main.js: `8d9a411afa9f88a063e640d78f1b0bd95e831cf130f279c44c4572bcdfea6215`
+- manifest.json: `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`
+- styles.css: `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`
+
+After reinstalling 1433 isolation before enable, a trusted Markdown link click
+opened the original selection anchor, current renderer
+`25efbf0e-70f3-45e8-aaa2-a4a5367b14ed`, `reader-nav-1-1`, `ok:true`.
+Without any page switch, the page-1 badge appeared. Clicking it returned the
+exact current `closed-pair/roundtrip.md` link range `0..203`, captured host
+`result:true`. This clears the previously observed initial-presentation gap on
+this Windows fixture; the historical RED remains above.
+
+On this deployed build, actual Today Highlight Source, Sidebar row click, and
+Context tab "验证并打开来源" were also exercised. The Sidebar DOM row is
+`sidebarComment selected` with the original UUID. Direct Context Source has
+`reader-nav-1-2`, current renderer `4da8ea68-ded1-47da-b19d-105c2beafd3a`,
+the original Context anchor, and `ok:true`.
+
+This is five-direction coverage at the current stage, NOT the requested full
+eight-stage × five-direction matrix. Historical rename/move/reload steps were
+not retroactively promoted to five-direction PASS. The expanded matrix remains
+NOT COMPLETED and full Native acceptance remains open.
+
+Independent fresh Node integrity checks after restart and after these UI steps
+validate the actual JSONL/anchor and recover exactly the original Highlight.
+All 371 pre-existing default-tree files and 11 original non-route canonical
+Vocabulary/Context/Review/History files match their historical hashes.
+Source SHA-256 remains
+`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`;
+XXH64 remains `xxh64-v1:ffbe0d4d212547e5`.
+New helpers are test-only, use the owned profile endpoint, and never default
+Obsidian.com IPC. Production source was not edited by this Native workflow.
+
+Evidence SHA-256 receipts (under the external evidence directory):
+
+| File | SHA-256 |
+|---|---|
+| owned-post-restart-highlight.json | 7b0490ac4f526791282568cb05aa8fa68d8e1c1a6cca5536d647eb756662ecfe |
+| owned-post-restart-context-confirmed.json | 5fbf3ef200989840f20d6a39e3cfc406eb6eb694e2fd1bb8ae288c00c8e53520 |
+| owned-post-restart-markdown-confirmed.json | 382c85d7972020bb377c2bcAAF39bda3bcaaff14031cbc9cfe3c5a49348769ce |
+| owned-d4c-first-badge-source.json | 94100312c09e061e6906c4e96edd700ec829b5d3301f17c8d62862c4846379f9 |
+| owned-d4c-sidebar.json | f1fc988d72f4b034f658858ac50a0cc5e1fa8dbf014f9f62bee6052560b49fdc |
+| owned-d4c-context-direct.json | 4f3a3c0f068bfc285a0bf0a324ed20bcf70b7b8ac00ecf7aba15ed478e96fb30 |
+
+Current directed bridge regression: 2/2 pass, no skip/cancellation. Full suite
+was not rerun in this continuation; prior 119/119 remains historical evidence.
