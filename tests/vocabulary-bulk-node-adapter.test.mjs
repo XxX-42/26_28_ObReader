@@ -55,6 +55,50 @@ function transactionIndependentHistory(batch) {
   return canonicalStringify({ ...batch, batchId: "<batch-id>", transactionId: "<transaction-id>", changes });
 }
 
+test("default disk restore selects clean entities and preserves the unselected conflict payload bytes", async (t) => {
+  for (const count of [5, 10]) {
+    const bundle = await makeBundle(count);
+    for (const mode of ["plain", "gzip-history", "shared-history"]) {
+      const adapter = await createTemporaryVocabularyAdapter({ mode });
+      t.after(() => adapter.dispose());
+      const target = makeRuntime(adapter);
+      t.after(() => target.runtime.close());
+      await target.runtime.ready();
+      await createVocabularyTransfer({ runtime: target.runtime }).importBundle(bundle);
+      const batch = (await target.runtime.history.listBatches()).find((item) => item.actionKind === "bundle-import");
+      await target.runtime.mutatePersonal((service) => service.upsertTerm("diskterm0000", { note: "local conflict survives" }));
+      const preview = await target.runtime.history.previewRestore(batch.batchId);
+      const conflicts = preview.items.filter((item) => item.status === "conflict");
+      assert.equal(conflicts.length, 1);
+      assert.equal(preview.items.filter((item) => item.status === "clean").length, count - 1);
+      const corePath = conflicts[0].path;
+      const before = JSON.parse(await adapter.read(corePath));
+      const conflictRecord = before.records.find((record) => record.surface === "diskterm0000");
+      assert.equal(conflictRecord.note, "local conflict survives");
+      const payloadBytes = Buffer.from(canonicalStringify(conflictRecord));
+      const undo = await target.runtime.restore(batch.batchId);
+      assert.equal(undo.status, "committed");
+      assert.equal(undo.restored.length, count - 1);
+      assert.deepEqual(undo.skipped, [], "default selection excludes conflicts before skipped is calculated");
+      const diskText = await readFile(path.join(adapter.root, ...corePath.split("/")), "utf8");
+      const after = JSON.parse(diskText);
+      assert.equal(after.records.length, 1, "all selected clean entities were removed from the real file");
+      assert.deepEqual(Buffer.from(canonicalStringify(after.records[0])), payloadBytes,
+        "persisted conflict entity bytes retain the full local payload");
+      const undoRecords = await target.personalService.queryLearningTerms({ limit: count + 1 });
+      assert.equal(undoRecords.length, 1);
+      assert.equal(undoRecords[0].note, "local conflict survives");
+      const redo = await target.runtime.restore(undo.restoreBatchId);
+      assert.equal(redo.status, "committed");
+      assert.equal(redo.restored.length, count - 1);
+      const redone = JSON.parse(await adapter.read(corePath));
+      assert.equal(redone.records.length, count);
+      assert.deepEqual(Buffer.from(canonicalStringify(redone.records.find((record) => record.key === conflictRecord.key))), payloadBytes);
+      await target.runtime.close();
+    }
+  }
+});
+
 test("the real-disk DataAdapter is confined to its OS temporary root", async (t) => {
   const adapter = await createTemporaryVocabularyAdapter();
   t.after(() => adapter.dispose());
