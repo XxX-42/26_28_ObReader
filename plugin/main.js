@@ -412,8 +412,9 @@ function installPdfOpenRouting(plugin) {
     }
 
     let routedViewState = viewState;
-    if (viewState?.type === "pdf") {
-      const readerTarget = parseReaderTargetFromViewState(viewState.state);
+    if (viewState?.type === "pdf" || viewState?.type === VIEW_TYPE) {
+      const readerTarget = parseReaderTargetFromViewState(eState) ||
+        parseReaderTargetFromViewState(viewState.state);
       const file = resolvePdfFile(
         activePlugin,
         viewState.state?.file ?? viewState.state?.path,
