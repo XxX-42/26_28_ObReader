@@ -529,7 +529,7 @@ async function openCommand(commandText) {
 
 async function openWorkbench() {
   if (!(await page.$(".vocabulary-workbench"))) {
-    await openCommand("打开词汇学习工作台");
+    await openPluginSettingsThroughUI();
   }
   await page.waitForSelector(".vocabulary-workbench [data-action=\"tab-review\"]", { timeout: 15_000 });
 }
@@ -580,6 +580,117 @@ async function clickVisibleElementContainingText(selector, text) {
   await matches[0].dispose();
 }
 
+async function visibleText(selector) {
+  return page.$$eval(selector, nodes => nodes.filter(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+      getComputedStyle(node).display !== "none";
+  }).map(node => (node.innerText || node.textContent || "").replace(/\s+/gu, " ").trim()));
+}
+
+async function openPluginSettingsThroughUI() {
+  let entries = await visibleText(".vertical-tab-nav-item");
+  if (!entries.some(label => label.includes("PDF Web Reader"))) {
+    const ribbon = await page.$$(".side-dock-ribbon-action");
+    const matches = [];
+    for (const button of ribbon) {
+      const state = await button.evaluate(node => {
+        const rect = node.getBoundingClientRect();
+        return {
+          label: [node.getAttribute("aria-label"), node.getAttribute("title"), node.innerText]
+            .filter(Boolean).join(" ").replace(/\s+/gu, " ").trim(),
+          visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+            getComputedStyle(node).display !== "none",
+        };
+      });
+      if (state.visible && /settings|设置/iu.test(state.label)) matches.push(button);
+      else await button.dispose();
+    }
+    assert.equal(matches.length, 1, `Expected one visible Settings ribbon control; found ${matches.length}.`);
+    await matches[0].click();
+    await matches[0].dispose();
+    await waitFor("visible Obsidian Settings navigation", () => visibleText(".vertical-tab-nav-item"),
+      labels => labels.length > 0, 10_000);
+    entries = await visibleText(".vertical-tab-nav-item");
+  }
+  if (!entries.some(label => label.includes("PDF Web Reader"))) {
+    const community = entries.filter(label => /community plugins|第三方插件|社区插件/iu.test(label));
+    assert.equal(community.length, 1, `Expected one Community Plugins settings section; found ${community.length}.`);
+    await clickVisibleElementContainingText(".vertical-tab-nav-item", community[0]);
+    await waitFor("PDF Web Reader settings tab", () => visibleText(".vertical-tab-nav-item"),
+      labels => labels.some(label => label.includes("PDF Web Reader")), 10_000);
+  }
+  await clickVisibleElementContainingText(".vertical-tab-nav-item", "PDF Web Reader");
+  await waitFor("Workbench setting row", () => visibleText(".setting-item"),
+    rows => rows.some(label => label.includes("词汇学习工作台")), 10_000);
+  const rows = await page.$$(".setting-item");
+  const matchingRows = [];
+  for (const row of rows) {
+    const state = await row.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { text: (node.innerText || "").replace(/\s+/gu, " ").trim(),
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+          getComputedStyle(node).display !== "none" };
+    });
+    if (state.visible && state.text.includes("词汇学习工作台")) matchingRows.push(row);
+    else await row.dispose();
+  }
+  assert.equal(matchingRows.length, 1, `Expected one visible Workbench Settings row; found ${matchingRows.length}.`);
+  const buttons = await matchingRows[0].$$("button");
+  const openButtons = [];
+  for (const button of buttons) {
+    const state = await button.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { text: (node.innerText || node.textContent || "").replace(/\s+/gu, " ").trim(),
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+          getComputedStyle(node).display !== "none" };
+    });
+    if (state.visible && state.text === "打开") openButtons.push(button);
+    else await button.dispose();
+  }
+  assert.equal(openButtons.length, 1, `Expected one visible Workbench Settings Open button; found ${openButtons.length}.`);
+  await recordScreen("settings-workbench-open-control");
+  await openButtons[0].click();
+  await openButtons[0].dispose();
+  await matchingRows[0].dispose();
+  await waitFor("Workbench opened from visible Settings UI", () => page.$eval(
+    ".vocabulary-workbench [data-action=\"tab-review\"]", () => true).catch(() => false), Boolean, 15_000);
+  report.workbenchOpenMethod = "visible Settings > PDF Web Reader > 词汇学习工作台 > 打开";
+  await recordScreen("workbench-opened-from-settings");
+}
+
+async function closeSettingsThroughUIIfVisible() {
+  await page.waitForFunction(() => !document.querySelector(".vocabulary-workbench"), { timeout: 8_000 });
+  const modals = await page.$$(".modal");
+  const settings = [];
+  for (const modal of modals) {
+    const state = await modal.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { text: (node.innerText || "").replace(/\s+/gu, " ").trim(),
+        visible: rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+          getComputedStyle(node).display !== "none" };
+    });
+    if (state.visible && state.text.includes("词汇学习工作台")) settings.push(modal);
+    else await modal.dispose();
+  }
+  if (settings.length === 0) return false;
+  assert.equal(settings.length, 1, `Expected one visible Settings modal after Source; found ${settings.length}.`);
+  const closeButton = await settings[0].$(".modal-close-button");
+  assert.ok(closeButton, "The underlying Settings modal must expose its normal visible close control.");
+  const visible = await closeButton.evaluate(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && getComputedStyle(node).visibility !== "hidden" &&
+      getComputedStyle(node).display !== "none";
+  });
+  assert.equal(visible, true, "Settings close control must be visible before closing through the UI.");
+  await closeButton.click();
+  await closeButton.dispose();
+  await settings[0].dispose();
+  await page.waitForFunction(() => ![...document.querySelectorAll(".modal")]
+    .some(node => (node.innerText || "").includes("词汇学习工作台")), { timeout: 8_000 });
+  return true;
+}
+
 async function queryFamilyKey(surface) {
   return page.evaluate(async ({ pluginId, surface }) => {
     const family = await app.plugins.plugins[pluginId].getVocabularyService().getFamily(surface);
@@ -597,6 +708,7 @@ async function clickTodaySource(itemId) {
   const sourceSelector = `[data-role="review-row"][data-provider-id="learning"][data-item-id="${itemId}"] [data-action^="review-source-learning-"]`;
   await page.waitForSelector(sourceSelector, { timeout: 10_000 });
   await page.click(sourceSelector);
+  await closeSettingsThroughUIIfVisible();
 }
 
 async function readItem(itemId) {
