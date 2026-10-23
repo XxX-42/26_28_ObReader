@@ -38,12 +38,12 @@ const logicalNormalizedSha256 = digest.digest("hex");
 assert.equal(count, 770611, "resource-v2 row count");
 assert.equal(report.entryCount, count, "SQLite fixture row count");
 assert.equal(report.readbackJsonlSha256, logicalNormalizedSha256,
-  "all ordered SQLite row_json values must equal the canonical normalized resource-v2 JSONL");
+  "the reconstructed ordered SQLite key/translation/phonetic rows must equal canonical normalized resource-v2 JSONL");
 assert.equal(report.integrityCheck, "ok", "SQLite integrity check");
 report.normalization = "nfc-lower-space-v1";
 report.logicalNormalizedSha256 = logicalNormalizedSha256;
 report.fullRecordEquivalence = {
-  method: "SQLite row_json readback in ordinal order hashes to the v2 canonical compact JSONL; every key is checked with plugin normalizeDictionaryKey and every field/field order is checked.",
+  method: "SQLite key, translation, and phonetic columns ordered by key are reconstructed as canonical compact JSONL and hash to the v2 resource; every source key is checked with plugin normalizeDictionaryKey and every field/order is validated.",
   rows: count,
   verified: true,
 };

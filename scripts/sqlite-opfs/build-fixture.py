@@ -79,20 +79,14 @@ def main() -> int:
             connection.execute("PRAGMA synchronous = OFF")
             connection.execute("PRAGMA temp_store = MEMORY")
             connection.executescript("""
-                CREATE TABLE fixture_metadata (
-                    name TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                ) WITHOUT ROWID;
                 CREATE TABLE entries (
-                    ordinal INTEGER NOT NULL UNIQUE,
                     key TEXT PRIMARY KEY COLLATE BINARY,
                     translation TEXT NOT NULL,
-                    phonetic TEXT NOT NULL,
-                    row_json TEXT NOT NULL
+                    phonetic TEXT NOT NULL
                 ) WITHOUT ROWID;
                 PRAGMA user_version = 1;
             """)
-            insert = "INSERT INTO entries (ordinal, key, translation, phonetic, row_json) VALUES (?, ?, ?, ?, ?)"
+            insert = "INSERT INTO entries (key, translation, phonetic) VALUES (?, ?, ?)"
             batch = []
             with gzip.open(resource, "rb") as source:
                 for line_number, raw_line in enumerate(source, start=1):
@@ -111,7 +105,7 @@ def main() -> int:
                         raise SystemExit(f"JSONL keys are not strictly ordered at line {line_number}")
                     previous_key = key
                     entries += 1
-                    batch.append((entries, key, row["translation"], row["phonetic"], row_text))
+                    batch.append((key, row["translation"], row["phonetic"]))
                     if len(batch) == 10_000:
                         connection.executemany(insert, batch)
                         batch.clear()
@@ -123,25 +117,18 @@ def main() -> int:
             if uncompressed_bytes != EXPECTED_UNCOMPRESSED_BYTES:
                 raise SystemExit(f"wrong uncompressed byte count: {uncompressed_bytes}")
             raw_jsonl_sha256 = jsonl_digest.hexdigest()
-            metadata = {
-                "dictionaryId": "ECDICT",
-                "resourceSchemaVersion": "1",
-                "resourceSha256": resource_sha256,
-                "resourceCompressedBytes": str(compressed_bytes),
-                "resourceJsonlSha256": raw_jsonl_sha256,
-                "resourceUncompressedBytes": str(uncompressed_bytes),
-                "entryCount": str(entries),
-                "equivalence": "row_json contains each original JSONL row byte-for-byte excluding its line feed",
-            }
-            connection.executemany(
-                "INSERT INTO fixture_metadata (name, value) VALUES (?, ?)", metadata.items()
-            )
             connection.commit()
             integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
             db_entries = connection.execute("SELECT count(*) FROM entries").fetchone()[0]
             readback = hashlib.sha256()
             readback_rows = 0
-            for (row_text,) in connection.execute("SELECT row_json FROM entries ORDER BY ordinal"):
+            for key, translation, phonetic in connection.execute(
+                    "SELECT key, translation, phonetic FROM entries ORDER BY key"):
+                row_text = json.dumps(
+                    {"key": key, "translation": translation, "phonetic": phonetic},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
                 readback.update(row_text.encode("utf-8"))
                 readback.update(b"\n")
                 readback_rows += 1
@@ -173,7 +160,7 @@ def main() -> int:
 
     elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
     report = {
-        "fixture": "ECDICT resource-v2 -> prebuilt SQLite database",
+        "fixture": "ECDICT resource-v2 -> lean prebuilt SQLite database",
         "sourcePath": str(resource),
         "databasePath": str(database),
         "resourceSha256": resource_sha256,
@@ -187,6 +174,7 @@ def main() -> int:
         "pageCount": page_count,
         "integrityCheck": integrity,
         "readbackJsonlSha256": readback.hexdigest(),
+        "readbackMethod": "Reconstruct compact canonical JSONL from key, translation, and phonetic ordered by key; no duplicate JSON row or ordinal is stored in SQLite.",
         "sampleQueries": sample_queries,
         "missingQuery": "__sqlite_opfs_benchmark_missing_key__",
         "equivalent": True,

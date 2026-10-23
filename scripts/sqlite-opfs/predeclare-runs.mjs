@@ -45,8 +45,9 @@ const plan = {
     entryCount: 770611,
     compressedResourceSha256: "b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126",
     logicalNormalizedSha256: "c89eea8a579da1ea743eea9febbe7ecaed63695056d093f2c478b93a265fbd98",
-    databaseBytes: 151461888,
-    databaseSha256: "9d6f24efe39fb34e8911c5ea0c9a17a253081b78ce5e644ed593479759a8460e",
+    databaseBytes: 48779264,
+    databaseSha256: "f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c",
+    fixtureLayout: "WITHOUT ROWID; key PRIMARY KEY, translation, phonetic; no duplicate row_json or ordinal",
   },
 };
 await mkdir(outputDirectory, { recursive: true });

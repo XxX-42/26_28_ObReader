@@ -15,9 +15,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const artifactRoot = path.join(root, "tests/artifacts/sqlite-opfs-2026-10-23");
 const runtimeRoot = path.join(artifactRoot, "runtime/sqlite-wasm-3540100/jswasm");
-const databasePath = path.join(artifactRoot, "ecdict-v2.sqlite");
-const fixturePath = path.join(artifactRoot, "fixture-report.json");
-const expectedDatabaseSha256 = "9d6f24efe39fb34e8911c5ea0c9a17a253081b78ce5e644ed593479759a8460e";
+const databasePath = path.join(artifactRoot, "ecdict-v2-lean.sqlite");
+const fixturePath = path.join(artifactRoot, "fixture-report-lean.json");
+const expectedDatabaseSha256 = "f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c";
+const expectedDatabaseBytes = 48779264;
 const fixtureEntryCount = 770611;
 const optionNames = ["opfs", "opfs-sahpool"];
 const repetitionsPerOption = 5;
@@ -143,7 +144,7 @@ async function writePlan(planPath, plan) {
 
 const options = parseArgs(process.argv.slice(2));
 const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
-assert.equal(fixture.databaseBytes, 151461888, "prebuilt DB byte count");
+assert.equal(fixture.databaseBytes, expectedDatabaseBytes, "lean prebuilt DB byte count");
 assert.equal(fixture.databaseSha256, expectedDatabaseSha256, "prebuilt DB expected SHA-256");
 assert.equal(fixture.entryCount, fixtureEntryCount, "prebuilt DB row count");
 const databaseInfo = await stat(databasePath);
