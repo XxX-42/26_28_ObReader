@@ -80,6 +80,17 @@ test("unresolved tombstones cannot poison Ink cleanup, block tools, or acknowled
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode() === 15 &&
       PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getLayer(0)?.div.classList.contains('inkEditing') &&
       !document.documentElement.hasAttribute('data-pdf-reader-readonly'));
+    // Setting the editor mode can precede page rendering. A trusted pointerdown
+    // on the loading page cannot start Ink; wait for the actual drawing surface.
+    await frame.waitForFunction(() => {
+      const viewer = PDFViewerApplication.pdfViewer;
+      const layer = viewer._layerProperties.annotationEditorUIManager.getLayer(0)?.div;
+      if (!layer || viewer.getPageView(0)?.renderingState !== 3) return false;
+      const bounds = layer.getBoundingClientRect();
+      const x = Math.max(40, bounds.left + 120);
+      const y = Math.max(90, bounds.top + 160);
+      return document.elementFromPoint(x, y) === layer;
+    }, { timeout: 5_000 });
     await frame.evaluate(() => PDFViewerApplication.pdfDocument.annotationStorage
       .setValue("pdfjs_internal_editor_unbound_test", { deleted: true }));
     const cdp = await page.createCDPSession();
