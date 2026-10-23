@@ -77,14 +77,14 @@ const obsidian = {
   normalizePath: (value) => value.replaceAll("\\", "/"),
 };
 const hostModule = { exports: {} };
-const hostSource = `${await readFile(path.join(root, "plugin", "main.js"), "utf8")}\nmodule.exports.__dictionaryHostTest = { PdfReaderView, PdfWebReaderSettingTab };`;
+const hostSource = `${await readFile(path.join(root, "plugin", "main.js"), "utf8")}\nmodule.exports.__dictionaryHostTest = { PdfReaderView, PdfWebReaderSettingTab, isVocabularyDictionaryResourcePath };`;
 new Function("require", "module", "exports", hostSource)(
   (name) => name === "obsidian" ? obsidian : sourceRequire(name),
   hostModule,
   hostModule.exports,
 );
 const HostPlugin = hostModule.exports;
-const { PdfReaderView, PdfWebReaderSettingTab } = HostPlugin.__dictionaryHostTest;
+const { PdfReaderView, PdfWebReaderSettingTab, isVocabularyDictionaryResourcePath } = HostPlugin.__dictionaryHostTest;
 const fakeLog = {
   record() {},
   begin(fn) { return { fn }; },
@@ -363,3 +363,54 @@ test("enabled dictionary availability is deferred, never starts a full import, a
   assert.equal(initialized, 1, "unload cleanup cancels a queued preparation timer");
   assert.equal(preparations, 0);
 });
+
+
+const dictionaryAncestorPaths = [
+  "00_Archive/21_VocabularyData/dictionaries/ECDICT",
+  "00_Archive/21_VocabularyData/dictionaries",
+  "00_Archive/21_VocabularyData",
+  "00_Archive",
+];
+const unrelatedDictionaryPaths = [
+  "00_Archive/21_VocabularyData/dictionaries/ECDICT-other",
+  "00_Archive/21_VocabularyData/dictionaries-other",
+  "00_Archive/21_VocabularyData-other",
+  "00_Archive-other",
+  "Notes",
+];
+
+test("dictionary root ancestor classification respects exact folder boundaries", () => {
+  for (const path of unrelatedDictionaryPaths) {
+    assert.equal(isVocabularyDictionaryResourcePath(path), false, `unrelated: ${path}`);
+  }
+  for (const path of dictionaryAncestorPaths) {
+    assert.equal(isVocabularyDictionaryResourcePath(path), true, `resource ancestor: ${path}`);
+  }
+});
+
+for (const event of ["rename", "delete"]) {
+  test(`dictionary root ancestor ${event} invalidates cached resources and schedules refresh`, () => {
+    const plugin = Object.create(HostPlugin.prototype);
+    let invalidations = 0, refreshes = 0;
+    Object.assign(plugin, {
+      settings: { vocabularyEnabled: true },
+      vocabularyDictionary: { invalidate() { invalidations++; } },
+      scheduleVocabularyDictionaryRefresh() { refreshes++; },
+    });
+    for (const path of unrelatedDictionaryPaths) {
+      const paths = event === "rename" ? [`${path}-moved`, path] : [path];
+      assert.equal(plugin.handleVocabularyDictionaryResourceChange(...paths), false);
+    }
+    assert.equal(invalidations, 0);
+    assert.equal(refreshes, 0);
+    for (const path of dictionaryAncestorPaths) {
+      // The Vault may report just the folder event. A rename's old path is
+      // sufficient even when the new location no longer contains the root.
+      const paths = event === "rename" ? [`${path}-moved`, path] : [path];
+      assert.equal(plugin.handleVocabularyDictionaryResourceChange(...paths), true,
+        `${event} must revoke cached manifest and blocks under ${path}`);
+    }
+    assert.equal(invalidations, dictionaryAncestorPaths.length);
+    assert.equal(refreshes, dictionaryAncestorPaths.length);
+  });
+}
