@@ -28,6 +28,8 @@ Static source inspection shows `navigateToAnnotationUuid` returns immediately af
 
 This follow-up was prepared statically while another heavy matrix owned the lease. No Browser or full-gate run has validated the candidate, and it is not reported as fixed. Original RED evidence remains authoritative until an authorized recheck.
 
+The readiness check runs after closing the sidebar, so its geometry samples include any closing layout change. It also handles a no-scroll navigation without waiting forever for an event that cannot occur: only an empty trace since navigation began, unchanged initial scroll coordinates, and three matching geometry observations may take that branch. Any observed movement instead requires actual scrollend. The artifact records which branch was used and the stable frame count. This is an observational readiness condition, not an assertion that browser-native pending animation internals are exposed; the subsequent exact-zero assertion still rejects an asynchronous write after reset.
+
 ## Lease and scope
 
 Only the two requested diagnostic test files were run, then one explicitly authorized observer correction recheck. All owned browser resources exited through the existing cleanup path; the exclusive Browser diagnosis lease was explicitly released before report/commit work. Native may take the next lease. Further interaction reproduction belongs to a later authorized gate or diagnostic lease.
