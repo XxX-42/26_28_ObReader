@@ -425,6 +425,9 @@ test("mode-9 highlighter preserves exact one-, two-, and four-line selections", 
                 for (const line of probe.lines) for (const index of line.selectedGlyphIndexes) hits.set(index, (hits.get(index) || 0) + 1);
                 return { glyphCount: probe.glyphCount, normalizedSelectedLength: normalize(selectedText).length,
                   normalizedRecoveredLength: normalize(recoveredLegacyText).length,
+                  selectedNonWhitespaceLength: normalize(selectedText).replace(/\s/gu, "").length,
+                  recoveredNonWhitespaceLength: normalize(recoveredLegacyText).replace(/\s/gu, "").length,
+                  matchesIgnoringWhitespace: normalize(selectedText).replace(/\s/gu, "") === normalize(recoveredLegacyText).replace(/\s/gu, ""),
                   glyphsAssignedToMultipleLines: [...hits].filter(([, count]) => count > 1).length,
                   lines: probe.lines.map(({ selectedGlyphIndexes, ...line }) => line) };
               })(),
