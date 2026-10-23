@@ -291,3 +291,40 @@ Evidence SHA-256 receipts (under the external evidence directory):
 
 Current directed bridge regression: 2/2 pass, no skip/cancellation. Full suite
 was not rerun in this continuation; prior 119/119 remains historical evidence.
+
+## Eight-stage matrix checkpoint: stages 1–4
+
+All five actual UI directions were exercised separately in each stage: Today
+Highlight Source, direct Context Source, Sidebar selected original UUID,
+page backlink to exact Markdown source span, and Markdown link to exact PDF
+selection Anchor. Every captured navigation result matches its owning Reader's
+document/openRequest/rendererGeneration; the test-only receipt validator rejects
+wrong target IDs, source text/ranges and missing selected UUID. It does not
+perform navigation or create records.
+
+| Stage | Transition | Renderer | Result |
+|---|---|---|---|
+| 1 | PDF rename to closed-pair/reader-stage1.pdf | 4da8ea68-ded1-47da-b19d-105c2beafd3a | 5/5 + controlled close/replay/hash |
+| 2 | PDF move to stage2/ | 2d8a03ea-b36c-4712-934d-fb89851b39e3 | 5/5 + controlled close/replay/hash |
+| 3 | Markdown rename to roundtrip-stage3.md | 75c3e414-8e0f-41d6-b1f1-db1e25319dfc | 5/5 + controlled close/replay/hash |
+| 4 | Markdown move to stage4/ | e33634b4-fb89-4deb-9b13-5bded528036b | 5/5 + controlled close/replay/hash |
+
+Each `stageN-integrity.json` independently replays the disk WAL, confirms the
+single original Highlight UUID, unchanged source SHA-256/XXH64, 371 unchanged
+default-tree files and 11 unchanged original non-route canonical files.
+`stageN-verified-matrix.json` binds all five direction receipts. Stages 1/2 use
+the d4c build; stages 3/4 use c85 integration. Both earlier production fixes are
+preserved through normal merges.
+
+The c85 deployment preserved all 870 non-release files byte-for-byte, including
+both existing isolated datasets and data.json. Installed main SHA-256:
+`a7d74076383c4dc0cbc5c161021cfb72cc0556ad48a663a8b79dd6f3fd78137b`.
+During inspection the default Puppeteer connection viewport briefly changed
+layout. The test helper now explicitly uses `defaultViewport:null`; no product
+change was made. The empty transient badge observation is retained separately
+from the actual visible badge and successful source click.
+
+Between stages, only fixture-prefix Markdown leaves are detached and layout
+saved, preventing accumulated duplicate fixture tabs. No other notes or Vaults
+are closed. The stage-5 pair has physically moved into `stage5/`; its UI matrix
+has not yet been counted. No move is repeated on resume.

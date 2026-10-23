@@ -40,6 +40,8 @@ if(mode==='install'){
   result=await page.evaluate(async()=>{for(const l of app.workspace.getLeavesOfType('pdf-web-reader-view'))await l.detach();await app.plugins.disablePluginAndSave('pdf-web-reader');return !app.plugins.plugins['pdf-web-reader']});
 }else if(mode==='close-readers'){
   result=await page.evaluate(async()=>{for(const l of app.workspace.getLeavesOfType('pdf-web-reader-view'))await l.detach();return app.workspace.getLeavesOfType('pdf-web-reader-view').length;});assert.equal(result,0);
+}else if(mode==='cleanup-markdown'){
+  result=await page.evaluate(async()=>{const prefix='PDF迁移测试/native-learning-loop-windows-014-20261023-1433/';const closed=[];for(const l of app.workspace.getLeavesOfType('markdown')){if(l.view.file?.path?.startsWith(prefix)){closed.push(l.view.file.path);await l.detach();}}await app.workspace.saveLayout?.();return {closed};});
 }else if(mode==='transition'){
   const from=process.env.NATIVE_FROM,to=process.env.NATIVE_TO;
   for(const p of [from,to])assert.ok(typeof p==='string'&&p.startsWith('PDF迁移测试/native-learning-loop-windows-014-20261023-1433/')&&!p.includes('..'));
