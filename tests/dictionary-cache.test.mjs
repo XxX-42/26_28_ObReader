@@ -430,6 +430,10 @@ test("failed source upgrade keeps the previous verified generation available", a
   }
   assert.ok(upgradeFailure, "the malformed new source is rejected");
   assert.equal((await cache.active()).id, previous.id);
+  await assert.rejects(dictionary.lookup("old001"), error => error.code === "DICTIONARY_CACHE_NOT_READY",
+    "a retained generation cannot satisfy a different synchronized source");
+  adapter.resource = oldResource;
+  dictionary.invalidate();
   assert.deepEqual(await dictionary.lookup("old001"), {
     key: "old001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   }, "lookup serves the prior verified generation after an upgrade failure");
