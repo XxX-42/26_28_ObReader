@@ -2968,6 +2968,7 @@ test(
       await viewer.evaluate(() => {
         window.__drawingFixtureScrollTrace = [];
         const container = document.getElementById('viewerContainer');
+        window.__drawingFixtureNavigationStart = {top:container.scrollTop,left:container.scrollLeft};
         const capture = event => {
           window.__drawingFixtureScrollTrace.push({type:event.type,time:performance.now(),top:container.scrollTop,left:container.scrollLeft});
           if (window.__drawingFixtureScrollTrace.length > 40) window.__drawingFixtureScrollTrace.shift();
@@ -3017,13 +3018,39 @@ test(
       // The preceding exact navigation intentionally starts a smooth scroll.
       // Restore this drawing fixture's viewport before deriving pointer points;
       // otherwise the page moves between the geometry read and trusted drag.
+      // Sidebar selection confirms navigation was issued, not that native
+      // scrolling finished. Do not compete with its final asynchronous tick.
+      await viewer.waitForFunction(async () => {
+        const container = document.getElementById('viewerContainer');
+        const viewer = PDFViewerApplication.pdfViewer;
+        const trace = window.__drawingFixtureScrollTrace;
+        const lastEvent = trace?.at(-1);
+        const navigationStart = window.__drawingFixtureNavigationStart;
+        const noScrollObserved = trace?.length === 0 && container.scrollTop === navigationStart?.top &&
+          container.scrollLeft === navigationStart?.left;
+        if ((!noScrollObserved && lastEvent?.type !== 'scrollend') || viewer.getPageView(0)?.renderingState !== 3) return false;
+        const sample = () => {
+          const bounds = viewer.getPageView(0).div.getBoundingClientRect();
+          return {top:container.scrollTop,left:container.scrollLeft,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height};
+        };
+        const position = sample();
+        await new Promise(requestAnimationFrame);
+        const middle = sample();
+        await new Promise(requestAnimationFrame);
+        const after = sample();
+        const stable = trace.at(-1) === lastEvent && (noScrollObserved ? trace.length === 0 : true) &&
+          Object.keys(position).every(key => middle[key] === position[key] && after[key] === position[key]);
+        if (stable) window.__drawingFixtureSettled = {position,scrollEnd:lastEvent ?? null,
+          completion:noScrollObserved ? 'no-movement-observed' : 'scrollend-observed',stableGeometryFrames:[position,middle,after]};
+        return stable;
+      }, {timeout:5_000});
       results.at(-1).drawingViewportReset = await viewer.evaluate(async () => {
         const container=document.getElementById('viewerContainer');
         const before={top:container.scrollTop,left:container.scrollLeft};
         container.scrollTo({top:0,left:0,behavior:'instant'});
         const immediate={top:container.scrollTop,left:container.scrollLeft};
         await new Promise(requestAnimationFrame);
-        return {before,immediate,afterFrame:{top:container.scrollTop,left:container.scrollLeft},
+        return {settled:window.__drawingFixtureSettled,before,immediate,afterFrame:{top:container.scrollTop,left:container.scrollLeft},
           activeElement:document.activeElement?.outerHTML?.slice(0,300),
           pageNumber:PDFViewerApplication.pdfViewer.currentPageNumber,
           pageBounds:PDFViewerApplication.pdfViewer.getPageView(0)?.div?.getBoundingClientRect()?.toJSON(),
