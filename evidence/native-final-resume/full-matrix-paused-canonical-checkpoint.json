@@ -1,0 +1,86 @@
+{
+  "at": "2026-10-23T16:26:27.815Z",
+  "canonicalFiles": [
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/c.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/f.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/manifest.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/en.vocab.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/0228284d781a0ee868aa6140d4736a1e9d983bf3245dae8214dd0e902388eb42.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/2c0fe416c47f5274914c239ae572cfeaa69c6ca5718dae2f5bd6cb9e7b1cbf82.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/3e3a0baaf04e2a7ba434a8e0d76497633039791b5f6d441370da8b4dee2f1e23.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/541da50323b81237c5b1a976457028575c940595fc8b6fdb0d4af3bc63892203.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/685e86ad70dfbd98285ebfbbe1b77a60f5e123e6b2756393c641bcda749aa771.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/6f84a15aa11c0c91306db04df05f4143518272590eb6e40617dd3d40d5e37681.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/7bf885b6e7fdde3ad187318560d5a93d198d8d3ac41648455510c787c986817a.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/8fa785be50457433dcba175ff62a5b91c5377fe827c3dfea5b55a191d7d8babf.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/b4dea56ce6cedb6f5727495acf1ce653b8795a17df8baa7ff36464c19fa74f9d.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/cbc910ea50c5ae669a81862abcd36e3cf3421e107ad64218959d58a705bf6611.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/3.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/4.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/9.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/a.json",
+      "same": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/manifest.json",
+      "same": true
+    }
+  ],
+  "canonicalUnchanged": true,
+  "pdfPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix PDF Moved/reading-full-renamed.pdf",
+  "pdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+  "markdownPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+  "scope": "post-learning baseline; first stronger stage passed; foldermove physical action observed, UI directions pending"
+}

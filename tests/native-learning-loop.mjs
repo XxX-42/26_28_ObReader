@@ -6,6 +6,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rename,
   writeFile,
@@ -320,7 +321,7 @@ async function enablePluginAfterIsolation() {
   assert.equal(before.pluginActive, false);
   assert.equal(before.views, 0);
   await page.evaluate(async (pluginId) => {
-    await app.plugins.enablePluginAndSave(pluginId);
+    await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig();
   }, PLUGIN_ID);
   const plugin = await waitFor("PDF Web Reader to load after isolation install", appIdentity,
     value => value.pluginActive && value.pluginVersion === expectedManifest.version);
@@ -902,11 +903,24 @@ async function currentMarkdownRoute(itemId) {
 async function renameOwnedPath(from, to) {
   assertFixturePath(from);
   assertFixturePath(to);
-  await page.evaluate(async ({ from, to }) => {
+  await page.evaluate(({ from, to }) => {
     const file = app.vault.getAbstractFileByPath(from);
     if (!file) throw new Error(`Owned route source does not exist: ${from}`);
-    if (from !== to) await app.fileManager.renameFile(file, to);
+    const state = window.__nativeOwnedRename = { from, to, done: false };
+    state.promise = (from === to ? Promise.resolve() : app.fileManager.renameFile(file, to))
+      .then(() => { state.done = true; }, error => { state.error = String(error?.stack || error); state.done = true; });
   }, { from, to });
+  await waitFor(`owned rename ${to}`, async () => {
+    const buttons = await page.$$(".modal-container button");
+    for (const button of buttons) {
+      const match = await button.evaluate(node => node.textContent.trim() === "仅此一次" && node.getBoundingClientRect().width > 0);
+      if (match) await button.click();
+      await button.dispose();
+    }
+    return page.evaluate(() => ({ done: window.__nativeOwnedRename.done, error: window.__nativeOwnedRename.error }));
+  }, state => state.done);
+  const error = await page.evaluate(() => window.__nativeOwnedRename.error);
+  assert.ok(!error, error);
 }
 
 async function makeOwnedFolder(relative) {
@@ -1479,7 +1493,7 @@ async function performPathScenarios({ pdfPath, markdownPath, pdfDirectory, markd
     }));
   }
   const restart = await page.evaluate(async ({ pluginId }) => {
-    await app.plugins.disablePluginAndSave(pluginId);
+    await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig();
     return { enabled: app.plugins.enabledPlugins.has(pluginId), loaded: Boolean(app.plugins.plugins[pluginId]) };
   }, { pluginId: PLUGIN_ID });
   assert.equal(restart.enabled, false);
@@ -1494,7 +1508,7 @@ async function performPathScenarios({ pdfPath, markdownPath, pdfDirectory, markd
   const reinstalledSource = serializeNativeLearningLoopIsolationInstaller(isolationPlan);
   const reinstalled = await page.evaluate(source => (0, eval)(`(function(){${source}})()`), reinstalledSource);
   assert.ok(reinstalled?.includes?.(runId));
-  await page.evaluate(async pluginId => await app.plugins.enablePluginAndSave(pluginId), PLUGIN_ID);
+  await page.evaluate(async pluginId => { await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
   const restartedPlugin = await waitFor("plugin restart after route persistence", appIdentity,
     state => state.pluginActive && state.pluginVersion === expectedManifest.version);
   assert.equal(restartedPlugin.syncEnabled, false);
@@ -1682,8 +1696,8 @@ async function exerciseNavigationDirections() {
   await checkpoint("direction-real-editor-append");
   const previewCommand = await page.evaluate(() => app.commands.commands["markdown:toggle-preview"].name);
   await openCommand(previewCommand);
-  await page.waitForSelector(".workspace-leaf.mod-active .markdown-preview-view a.internal-link", { visible: true });
-  const links = await page.$$(".workspace-leaf.mod-active .markdown-preview-view a.internal-link");
+  await page.waitForSelector("[data-native-matrix-active=\"true\"] .markdown-preview-view a.internal-link", { visible: true });
+  const links = await page.$$("[data-native-matrix-active=\"true\"] .markdown-preview-view a.internal-link");
   const matching = [];
   for (const candidate of links) {
     const href = await candidate.evaluate(node => node.getAttribute("data-href") || node.getAttribute("href"));
@@ -1746,6 +1760,164 @@ async function exerciseNavigationDirections() {
     pdfBadgeToMarkdown: { badgeText, ...backlink }, sidebarSameHighlight: sidebar,
     vocabularyBytesUnchanged: true, annotationWalBytesUnchanged: true, baseline, walBefore, walAfter,
     learningExcerptUnchanged: (await readFile(absoluteVaultPath(markdownPath), "utf8")).includes(MARKDOWN_EXCERPT) };
+}
+
+async function controlledCloseMatrixReaders(label) {
+  const views = (await appIdentity()).readerViews;
+  const results = [];
+  for (let index = 0; index < views.length; index += 1) results.push(await completeNativeControlledClose({
+    runSerialized: async (fn, arg) => page.evaluate(({ source, arg }) => (0, eval)(`(${source})`)(arg), { source: fn.toString(), arg }),
+    waitFor,
+    loadFiles: root => readNativeSidecarTree(root, { resolvePath: absoluteVaultPath, rejectPending: true }),
+    readWalEvidence: readNativeWalEvidence,
+    hash: bytes => `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`,
+    filePath: views[index].path, expectedRemaining: views.slice(index + 1).filter(row => row.path === views[index].path).length,
+    label, maintenanceOffset: await page.evaluate(() => window.__sidecarNative07?.maintenance?.length || 0),
+    isolatedRoot: isolationPlan.roots[0].physicalRoot, virtualRoot: isolationPlan.roots[0].logicalRoot,
+  }));
+  return results;
+}
+
+async function checkFiveNavigationDirections(stage) {
+  const pdfPath = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+  const markdownPath = (await currentMarkdownRoute(learningItems.markdown.itemId)).currentPath;
+  const highlightSource = await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdfPath);
+  const markdownReview = await verifySource(learningItems.markdown.itemId, learningItems.markdown.source.target, markdownPath, { markdown: true });
+  await controlledCloseMatrixReaders(`${stage}-before-markdown-link`);
+  const text = await readFile(absoluteVaultPath(markdownPath), "utf8");
+  const links = text.match(/\[\[[^\n]*#page=[^\n]*obreader=[^\n]*\]\]/gu) || [];
+  assert.equal(links.length, 1, "Reuse the one actual Copy Reader Link already pasted through editor UI.");
+  const link = links[0], destination = link.slice(2, -2).split("|")[0];
+  const params = new URLSearchParams(destination.slice(destination.indexOf("#") + 1));
+  assert.equal(params.get("obdoc"), learningItems.highlight.source.documentId);
+  const active = await page.evaluate(expected => {
+    const view = app.workspace.activeLeaf.view, rect = view.containerEl.getBoundingClientRect();
+    if (view.getViewType() !== "markdown" || view.file.path !== expected || !view.containerEl.isConnected || !rect.width) throw Error("Wrong Markdown UI owner");
+    for (const el of document.querySelectorAll("[data-native-matrix-active]")) delete el.dataset.nativeMatrixActive;
+    view.containerEl.dataset.nativeMatrixActive = "true";
+    return { path: view.file.path, mode: view.getMode() };
+  }, markdownPath);
+  if (active.mode === "preview") await page.click('[data-native-matrix-active="true"] .view-action[aria-label*="切换至编辑视图"]');
+  const alias = link.slice(2, -2).split("|")[1];
+  const handles = await page.$$('[data-native-matrix-active="true"] .cm-link-alias .cm-underline');
+  const matches = [];
+  for (const handle of handles) {
+    if (await handle.evaluate((node, alias) => node.textContent === alias && node.getBoundingClientRect().width > 0, alias)) matches.push(handle);
+    else await handle.dispose();
+  }
+  assert.equal(matches.length, 1, "Actual persisted wiki alias must be uniquely visible in the owned Markdown editor");
+  const oldReceipts = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult), PLUGIN_ID);
+  await page.keyboard.down("Meta");
+  try { await matches[0].click(); } finally { await page.keyboard.up("Meta"); }
+  const markdownToPdf = await waitFor(`${stage} exact Markdown-to-PDF receipt`, () => page.evaluate(({ pluginId, documentId }) => {
+    const view = [...app.plugins.plugins[pluginId].views].find(view => view.documentId === documentId);
+    return view ? { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration,
+      receipt: view.lastReaderNavigationResult } : null;
+  }, { pluginId: PLUGIN_ID, documentId: params.get("obdoc") }), state => state?.receipt?.ok === true &&
+    state.receipt.requestId && state.receipt.documentId === state.documentId && state.receipt.openRequest === state.openRequest &&
+    state.receipt.rendererGeneration === state.rendererGeneration && state.receipt.kind === "page" && state.receipt.targetId === "ref:2R" &&
+    !oldReceipts.some(row => row?.requestId === state.receipt.requestId && row?.rendererGeneration === state.receipt.rendererGeneration));
+  await recordScreen(`${stage}-markdown-to-pdf`);
+  let { frame } = await readerFrame(pdfPath);
+  await frame.waitForSelector(".pdfReaderBacklinkPageBadge", { visible: true, timeout: 15000 });
+  const badge = await frame.$eval(".pdfReaderBacklinkPageBadge", node => node.textContent);
+  await frame.click(".pdfReaderBacklinkPageBadge");
+  const backlinkToMarkdown = await waitFor(`${stage} exact backlink source span`, () => page.evaluate(() => ({
+    path: app.workspace.activeLeaf?.view?.file?.path, selection: app.workspace.activeLeaf?.view?.editor?.getSelection?.(),
+  })), state => state.path === markdownPath && state.selection === link);
+  await recordScreen(`${stage}-backlink-to-markdown`);
+  await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdfPath);
+  ({ frame } = await readerFrame(pdfPath));
+  if (await frame.$eval("#pdfReaderAnnotationSidebarMenu", node => node.classList.contains("hidden"))) await frame.click("#pdfReaderAnnotationSidebarButton");
+  const row = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${learningItems.highlight.source.target.id}"]`;
+  await frame.waitForSelector(`${row} .pdfReaderAnnotationSidebarNavigate`, { visible: true });
+  await frame.click(`${row} .pdfReaderAnnotationSidebarNavigate`);
+  const sidebar = await waitFor(`${stage} Sidebar exact UUID`, () => frame.$eval(row, node => ({ uuid: node.dataset.uuid,
+    selected: node.classList.contains("selected"), text: node.querySelector(".sidebarCommentText")?.textContent })), state => state.selected);
+  assert.equal(sidebar.uuid, learningItems.highlight.source.target.id); assert.equal(sidebar.text, HIGHLIGHT_TEXT);
+  await recordScreen(`${stage}-sidebar-highlight`);
+  await frame.click("#pdfReaderAnnotationSidebarButton");
+  const fullContext = report.uiFlows.find(flow => flow.selectionScope === "complete sentence");
+  const contextItem = await readItem(fullContext.itemId);
+  const contextSource = await verifySource(contextItem.itemId, contextItem.source.target, pdfPath);
+  ({ frame } = await readerFrame(pdfPath));
+  contextSource.exactAnchorText = await frame.evaluate(() => [...(window.CSS?.highlights?.get("pdfReaderAnchorFocusText") || [])].map(range => range.toString()).join(""));
+  assert.equal(contextSource.exactAnchorText, fullContext.exactQuote);
+  await recordScreen(`${stage}-context-pdf`);
+  return { highlightSource, markdownReview, markdownToPdf, backlinkToMarkdown: { badge, ...backlinkToMarkdown }, sidebar, contextSource,
+    paths: { pdfPath, markdownPath }, currentLink: link };
+}
+
+async function runCompleteFiveDirectionMatrix() {
+  const mdFlow = report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
+  learningItems.markdown = await readItem(mdFlow.itemId);
+  const baseline = await snapshotVocabularyInvariant();
+  assert.ok(!baseline.files.some(row => /\.pending(?:\.json)?$/u.test(row.path)));
+  const defaultBaseline = JSON.parse(await readFile(path.join(ROOT, "evidence/native-final-resume/default-trees-controlled-baseline.json"), "utf8"));
+  const defaultSnapshot = async () => {
+    const files = [];
+    const visit = async root => {
+      for (const entry of await readdir(absoluteVaultPath(root), { withFileTypes: true })) {
+        const child = `${root}/${entry.name}`;
+        if (entry.isDirectory()) await visit(child);
+        else if (entry.isFile()) { const bytes = await readFile(absoluteVaultPath(child)); files.push({ path: child, bytes: bytes.length, sha256: sha256(bytes) }); }
+      }
+    };
+    for (const root of defaultBaseline.roots) await visit(root);
+    return files.sort((a, b) => a.path.localeCompare(b.path));
+  };
+  const sortedDefault = [...defaultBaseline.files].sort((a, b) => a.path.localeCompare(b.path));
+  assert.deepEqual(await defaultSnapshot(), sortedDefault);
+  const completedStages = resumeEvidence?.completeDirectionMatrix?.stages || [];
+  report.completeDirectionMatrix = { scope: "five actual UI directions at each additional stage; old eight Source-only stages retained separately",
+    baseline, defaultFileCount: sortedDefault.length, stages: completedStages };
+  const stage = async (name, action) => {
+    if (completedStages.some(row => row.name === name && row.status === "passed")) return;
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), `${name} before move`);
+    await action();
+    await waitFor(`${name} PDF route resolves existing moved file`, async () => {
+      const route = await currentPdfRoute(learningItems.highlight);
+      return page.evaluate(sourcePath => ({ sourcePath, exists: !!app.vault.getAbstractFileByPath(sourcePath) }), route.sourcePath);
+    }, state => state.exists);
+    await waitFor(`${name} Markdown route resolves existing moved file`, async () => {
+      const route = await currentMarkdownRoute(learningItems.markdown.itemId);
+      return page.evaluate(currentPath => ({ currentPath, exists: !!app.vault.getAbstractFileByPath(currentPath) }), route.currentPath);
+    }, state => state.exists);
+    const directions = await checkFiveNavigationDirections(name);
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), `${name} after five directions`);
+    const closes = await controlledCloseMatrixReaders(name);
+    assert.deepEqual(await defaultSnapshot(), sortedDefault, `${name} must not write default data trees`);
+    const currentPdf = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+    assert.equal(sha256(await readFile(absoluteVaultPath(currentPdf))), report.fixtures.originalPdfSha256);
+    report.completeDirectionMatrix.stages.push({ name, status: "passed", directions, closes,
+      canonicalBytesUnchanged: true, defaultTreesUnchanged: true, sourcePdfUnchanged: true });
+    await checkpoint(`complete-five-directions-${name}-passed`);
+  };
+  await controlledCloseMatrixReaders("matrix-precondition");
+  await stage("full-pdfrename", async () => { const route = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(route.sourcePath, `${path.posix.dirname(route.sourcePath)}/reading-full-renamed.pdf`); });
+  await stage("full-foldermove", async () => { const route = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(path.posix.dirname(route.sourcePath), `${fixturePrefix}/Full Matrix PDF Moved`); });
+  await stage("full-mdrename", async () => { const route = await currentMarkdownRoute(learningItems.markdown.itemId); await renameOwnedPath(route.currentPath, `${path.posix.dirname(route.currentPath)}/learning-full-renamed.md`); });
+  await stage("full-mdmove", async () => { const route = await currentMarkdownRoute(learningItems.markdown.itemId); await makeOwnedFolder(`${fixturePrefix}/Full Matrix MD Moved`); await renameOwnedPath(route.currentPath, `${fixturePrefix}/Full Matrix MD Moved/learning-full-renamed.md`); });
+  await stage("full-bothmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); const md = await currentMarkdownRoute(learningItems.markdown.itemId);
+    await makeOwnedFolder(`${fixturePrefix}/Full Matrix Both MD`); await renameOwnedPath(path.posix.dirname(pdf.sourcePath), `${fixturePrefix}/Full Matrix Both PDF`);
+    await renameOwnedPath(md.currentPath, `${fixturePrefix}/Full Matrix Both MD/learning-full-renamed.md`); });
+  await stage("full-closedmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-closed.pdf`); });
+  await stage("full-openmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdf.sourcePath);
+    await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-open.pdf`); });
+  await stage("full-plugin-restart", async () => {
+    await page.evaluate(async pluginId => { await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
+    await waitForPersistedPluginState(false, "full matrix plugin disable stable twice");
+    await page.evaluate(() => { if (!window.__nativeLearningLoopIsolation.restore()) throw Error("Isolation restore failed"); delete window.__sidecarNative07; });
+    const installer = serializeNativeLearningLoopIsolationInstaller(isolationPlan);
+    await page.evaluate(source => (0, eval)(`(function(){${source}})()`), installer);
+    await page.evaluate(async pluginId => { await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
+    await waitFor("full matrix plugin reloaded", appIdentity, state => state.pluginActive);
+    await waitForPersistedPluginState(true, "full matrix plugin enable stable twice");
+    await installMaintenanceLogger();
+    await page.evaluate(pluginId => { app.plugins.plugins[pluginId].settings.autoSave = false; }, PLUGIN_ID);
+  });
+  report.completeDirectionMatrix.status = "passed";
+  report.completeDirectionMatrix.restartScope = "plugin only; ROOT-owned process restart remains pending";
 }
 
 async function captureNativeEvidence() {
@@ -1839,11 +2011,7 @@ async function cleanupNativeRun() {
     return;
   }
 
-  if (afterClose.pluginActive || afterClose.enabledPlugins.includes(PLUGIN_ID)) {
-    await page.evaluate(async pluginId => {
-      if (app.plugins.isEnabled(pluginId)) await app.plugins.disablePluginAndSave(pluginId);
-    }, PLUGIN_ID);
-  }
+  await page.evaluate(async pluginId => { await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
   const disabled = await appIdentity();
   if (disabled.pluginActive || disabled.enabledPlugins.includes(PLUGIN_ID) || disabled.readerViews.length !== 0) {
     report.cleanup = { status: "incomplete", reason: "Plugin-remains-enabled-after-test", before,
@@ -1958,11 +2126,12 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
-  if (process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic")) {
+  if (process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
     report.sourceCheckpointOnly = true;
     report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
     report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
-    if (process.argv.includes("--backlink-correlation-diagnostic")) await diagnoseBacklinkCorrelation();
+    if (process.argv.includes("--complete-direction-matrix")) await runCompleteFiveDirectionMatrix();
+    else if (process.argv.includes("--backlink-correlation-diagnostic")) await diagnoseBacklinkCorrelation();
     else if (process.argv.includes("--navigation-directions-only")) await exerciseNavigationDirections();
     else for (const flow of report.uiFlows) {
       const item = await readItem(flow.itemId);
