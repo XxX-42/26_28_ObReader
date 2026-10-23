@@ -143,3 +143,34 @@ Independent WAL replay passes, original non-route Context/Review/History bytes
 match the historical RED baseline, and all 371 pre-existing files are unchanged.
 Combined moves are now verified; remaining blockers are aggregate page badge
 and the independently owned-process restart coverage.
+
+## Aggregate badge fix continuation on c08049a
+
+Merged the integration `c08049aa825954d12cc50b43c91b29dc8691e9d6`, rebuilt,
+closed Readers and disabled the plugin. Before deploy all 44 files across both
+test runs were hashed. After deploy they were restored exactly from the new
+`2026-10-23T15-35-21-418Z` backup; every hash matched before initialization.
+Isolation was reinstalled before enable, runtime 0.14.0.
+
+Actual Markdown link click returned the same stable Selection Anchor with
+`reader-nav-1-1`, openRequest 1, renderer
+`db06474d-2ea4-4ea0-8541-21fc6550b179`, `ok:true`.
+After a real page 2 -> page 1 transition displayed the existing page badge,
+clicking that aggregate badge now returned the sole selection-link Markdown
+source. Host completion captured `result:true`, correct `closed-pair/roundtrip.md`
+and exact current link selection `0..203` (Obsidian shortened the link path during
+the previous file moves). The historical badge RED remains recorded above.
+
+Host plus Learning regression: 119/119 pass, zero failures/cancellations/skips.
+Independent original WAL replay still passes; all 371 existing data hashes and
+the original non-route canonical/Context/Review/History bytes remain unchanged.
+Installed main.js SHA-256:
+`142553f7179079022bd07fd9e80ee78ab8fcd239dded7c76b0c62609e11c320c`.
+
+Remaining observed presentation gap: the backlink badge/CSS highlight was absent
+immediately after Markdown opened page 1 and became visible after the real
+page 2 -> 1 transition. This happened before and after the aggregate click fix.
+The initial paint/request lifecycle needs a separate reproduction; success of
+the badge click after page transition does not clear that observation.
+Independent owned-process restart remains NOT RUN for the shared-process reason
+above. Full Native acceptance is not claimed.
