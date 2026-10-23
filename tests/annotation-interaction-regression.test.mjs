@@ -2965,6 +2965,16 @@ test(
           rows.length === 1 && rows[0].dataset.uuid === uuid &&
           rows[0].querySelector(".sidebarCommentText")?.textContent === targetText.replace(/\s+/gu, " ").trim();
       }, { timeout: 10_000 }, savedHighlight);
+      await viewer.evaluate(() => {
+        window.__drawingFixtureScrollTrace = [];
+        const container = document.getElementById('viewerContainer');
+        const capture = event => {
+          window.__drawingFixtureScrollTrace.push({type:event.type,time:performance.now(),top:container.scrollTop,left:container.scrollLeft});
+          if (window.__drawingFixtureScrollTrace.length > 40) window.__drawingFixtureScrollTrace.shift();
+        };
+        container.addEventListener('scroll', capture);
+        container.addEventListener('scrollend', capture);
+      });
       await viewer.$eval(
         `#editorCommentsSidebarList li.sidebarComment[data-uuid="${savedHighlight.uuid}"] .pdfReaderAnnotationSidebarNavigate`,
         (button) => button.click(),
@@ -3007,12 +3017,24 @@ test(
       // The preceding exact navigation intentionally starts a smooth scroll.
       // Restore this drawing fixture's viewport before deriving pointer points;
       // otherwise the page moves between the geometry read and trusted drag.
-      await viewer.evaluate(async () => {
+      results.at(-1).drawingViewportReset = await viewer.evaluate(async () => {
         const container=document.getElementById('viewerContainer');
+        const before={top:container.scrollTop,left:container.scrollLeft};
         container.scrollTo({top:0,left:0,behavior:'instant'});
+        const immediate={top:container.scrollTop,left:container.scrollLeft};
         await new Promise(requestAnimationFrame);
-        if(container.scrollTop!==0)throw Error('Drawing fixture viewport was not restored');
+        return {before,immediate,afterFrame:{top:container.scrollTop,left:container.scrollLeft},
+          activeElement:document.activeElement?.outerHTML?.slice(0,300),
+          pageNumber:PDFViewerApplication.pdfViewer.currentPageNumber,
+          pageBounds:PDFViewerApplication.pdfViewer.getPageView(0)?.div?.getBoundingClientRect()?.toJSON(),
+          renderingState:PDFViewerApplication.pdfViewer.getPageView(0)?.renderingState,
+          mode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+          managerMode:PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.getMode(),
+          scrollTrace:window.__drawingFixtureScrollTrace};
       });
+      await persistProgress();
+      assert.equal(results.at(-1).drawingViewportReset.afterFrame.top, 0,
+        'Drawing fixture viewport was not restored');
       const highlightOverHighlight = await createTextMarkup(9);
       results.at(-1).highlightOverHighlight = highlightOverHighlight;
       await persistProgress();
