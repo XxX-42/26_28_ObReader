@@ -16,6 +16,7 @@
     "test:native": "node tests/native-obsidian-smoke.mjs && node tests/native-default-routing.mjs",
     "test:native:lifecycle": "node tests/native-macos-lifecycle.mjs",
     "test:native:background": "node tests/native-background.mjs",
+    "test:native:learning-loop": "node tests/native-learning-loop.mjs",
     "test:native:release": "node tests/native-threefile-release.mjs",
     "deploy": "node scripts/deploy.mjs"
   },
