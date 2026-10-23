@@ -1,0 +1,2775 @@
+{
+  "schemaVersion": 1,
+  "fixture": "tests/fixtures/tracemonkey.pdf",
+  "observedAt": "2026-10-23T15:12:41.740Z",
+  "intent": "Diagnose trusted mouse selection and mode-9 highlighter output at 1, 2, and 4 visual text lines.",
+  "variants": {
+    "candidate": "Current bridge capture guard and frozen vendored PDF.js viewer.",
+    "legacyCaptureDiagnostic": "Test-only transform restores the previous mouse-text-selection capture predicate; not a byte-identical old bridge build."
+  },
+  "results": [
+    {
+      "variant": "candidate",
+      "interactions": [
+        {
+          "variant": "candidate",
+          "requestedLines": 1,
+          "pageNumber": 1,
+          "pageIndex": 0,
+          "target": {
+            "requestedLines": 1,
+            "pageNumber": 1,
+            "expectedVisualLines": 1,
+            "start": {
+              "x": 265.59375,
+              "y": 175.390625
+            },
+            "end": {
+              "x": 1012.0892333984375,
+              "y": 175.390625
+            },
+            "bounds": {
+              "top": 154.390625,
+              "bottom": 196.390625,
+              "left": 264.59375,
+              "right": 1013.0892333984375
+            },
+            "rows": [
+              {
+                "y": 161.390625,
+                "firstSpanTextLength": 56,
+                "lastSpanTextLength": 56,
+                "spanCount": 1
+              }
+            ],
+            "lineYs": [
+              161.5
+            ],
+            "column": null,
+            "startTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 0
+            },
+            "endTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 56
+            },
+            "excludedBands": 0
+          },
+          "before": {
+            "mode": 9,
+            "highlightEditors": 0,
+            "editorIds": [],
+            "consumers": 0,
+            "selection": true
+          },
+          "consumerCount": 1,
+          "consumers": [
+            {
+              "at": 692.5,
+              "mode": 9,
+              "before": {
+                "collapsed": false,
+                "rangeCount": 1,
+                "anchorTextLayer": {
+                  "found": true,
+                  "pageNumber": "1"
+                },
+                "rangeRects": [
+                  {
+                    "x": 264.59375,
+                    "y": 154.390625,
+                    "width": 748.4954833984375,
+                    "height": 42
+                  }
+                ],
+                "rectsTruncated": false,
+                "textLength": 56,
+                "ranges": [
+                  {
+                    "start": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "end": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "startOffset": 0,
+                    "endOffset": 56,
+                    "collapsed": false
+                  }
+                ]
+              },
+              "after": {
+                "collapsed": true,
+                "rangeCount": 0,
+                "anchorTextLayer": {
+                  "found": false,
+                  "pageNumber": null
+                },
+                "rangeRects": [],
+                "rectsTruncated": false,
+                "textLength": 0,
+                "ranges": []
+              },
+              "editorCount": 1,
+              "visualRangeLines": 1
+            }
+          ],
+          "newEditorCount": 1,
+          "newEditors": [
+            {
+              "runtimeId": "pdfjs_internal_editor_0",
+              "legacyRecoveryMatches": true,
+              "legacyRecoveredTextLength": 56,
+              "legacyGeometry": {
+                "glyphCount": 4924,
+                "normalizedSelectedLength": 56,
+                "normalizedRecoveredLength": 56,
+                "selectedNonWhitespaceLength": 51,
+                "recoveredNonWhitespaceLength": 51,
+                "matchesIgnoringWhitespace": true,
+                "glyphsAssignedToMultipleLines": 0,
+                "lines": [
+                  {
+                    "top": 124.06085675172127,
+                    "bottom": 166.6340365169024,
+                    "quads": [
+                      {
+                        "left": 136.46243858337405,
+                        "right": 898.1796603732639,
+                        "top": 124.06085675172127,
+                        "bottom": 166.6340365169024
+                      }
+                    ],
+                    "quadCount": 1,
+                    "selectedGlyphCount": 51
+                  }
+                ],
+                "mismatch": null
+              },
+              "annotationType": 9,
+              "annotationEditorType": null,
+              "textLength": null,
+              "quadPointCount": 1,
+              "quadLineCount": 1,
+              "quadPoints": [
+                80.53520965576172,
+                718.5099487304688,
+                530.0732421875,
+                718.5099487304688,
+                80.53520965576172,
+                693.2908325195312,
+                530.0732421875,
+                693.2908325195312
+              ],
+              "rect": [
+                79.86600226163864,
+                692.4455965161324,
+                530.7264012694359,
+                719.3735979795456
+              ],
+              "targetTextLength": 56
+            }
+          ],
+          "annotationStorageHighlightCount": 1,
+          "annotationStorageHighlights": [
+            {
+              "annotationType": 9,
+              "quadPointCount": 1,
+              "quadLineCount": 1,
+              "quadPoints": [
+                80.53520965576172,
+                718.5099487304688,
+                530.0732421875,
+                718.5099487304688,
+                80.53520965576172,
+                693.2908325195312,
+                530.0732421875,
+                693.2908325195312
+              ]
+            }
+          ],
+          "drawSvg": [
+            {
+              "className": "highlight",
+              "pathCount": 1,
+              "visible": true,
+              "width": 750.6875,
+              "height": 44.84375
+            },
+            {
+              "className": "highlightOutline selected",
+              "pathCount": 1,
+              "visible": true,
+              "width": 755.78125,
+              "height": 51.4375
+            }
+          ],
+          "textLayerSelectingAfterUp": false
+        },
+        {
+          "variant": "candidate",
+          "requestedLines": 2,
+          "pageNumber": 1,
+          "pageIndex": 0,
+          "target": {
+            "requestedLines": 2,
+            "pageNumber": 1,
+            "expectedVisualLines": 2,
+            "start": {
+              "x": 659.328125,
+              "y": 600.125
+            },
+            "end": {
+              "x": 1056.1171875,
+              "y": 616.734375
+            },
+            "bounds": {
+              "top": 589.625,
+              "bottom": 627.234375,
+              "left": 658.328125,
+              "right": 1057.1171875
+            },
+            "rows": [
+              {
+                "y": 593.625,
+                "firstSpanTextLength": 67,
+                "lastSpanTextLength": 67,
+                "spanCount": 1
+              },
+              {
+                "y": 610.234375,
+                "firstSpanTextLength": 61,
+                "lastSpanTextLength": 61,
+                "spanCount": 1
+              }
+            ],
+            "lineYs": [
+              593.5,
+              610
+            ],
+            "column": null,
+            "startTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 0
+            },
+            "endTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 61
+            },
+            "excludedBands": 1
+          },
+          "before": {
+            "mode": 9,
+            "highlightEditors": 1,
+            "editorIds": [
+              "pdfjs_internal_editor_0"
+            ],
+            "consumers": 1,
+            "selection": true
+          },
+          "consumerCount": 1,
+          "consumers": [
+            {
+              "at": 1178.7000000029802,
+              "mode": 9,
+              "before": {
+                "collapsed": false,
+                "rangeCount": 1,
+                "anchorTextLayer": {
+                  "found": true,
+                  "pageNumber": "1"
+                },
+                "rangeRects": [
+                  {
+                    "x": 658.328125,
+                    "y": 589.625,
+                    "width": 398.784423828125,
+                    "height": 21
+                  },
+                  {
+                    "x": 130.5,
+                    "y": 765,
+                    "width": 0,
+                    "height": 22
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 606.234375,
+                    "width": 398.7890625,
+                    "height": 21
+                  }
+                ],
+                "rectsTruncated": false,
+                "textLength": 129,
+                "ranges": [
+                  {
+                    "start": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "end": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "startOffset": 0,
+                    "endOffset": 61,
+                    "collapsed": false
+                  }
+                ]
+              },
+              "after": {
+                "collapsed": true,
+                "rangeCount": 0,
+                "anchorTextLayer": {
+                  "found": false,
+                  "pageNumber": null
+                },
+                "rangeRects": [],
+                "rectsTruncated": false,
+                "textLength": 0,
+                "ranges": []
+              },
+              "editorCount": 2,
+              "visualRangeLines": 2
+            }
+          ],
+          "newEditorCount": 1,
+          "newEditors": [
+            {
+              "runtimeId": "pdfjs_internal_editor_1",
+              "legacyRecoveryMatches": true,
+              "legacyRecoveredTextLength": 129,
+              "legacyGeometry": {
+                "glyphCount": 4924,
+                "normalizedSelectedLength": 129,
+                "normalizedRecoveredLength": 129,
+                "selectedNonWhitespaceLength": 110,
+                "recoveredNonWhitespaceLength": 110,
+                "matchesIgnoringWhitespace": true,
+                "glyphsAssignedToMultipleLines": 0,
+                "lines": [
+                  {
+                    "top": 565.2347181300925,
+                    "bottom": 586.521308012683,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 942.9805687798395,
+                        "top": 565.2347181300925,
+                        "bottom": 586.521308012683
+                      }
+                    ],
+                    "quadCount": 1,
+                    "selectedGlyphCount": 58
+                  },
+                  {
+                    "top": 582.0707987390383,
+                    "bottom": 603.3573371039496,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 942.9853261311849,
+                        "top": 582.0707987390383,
+                        "bottom": 603.3573371039496
+                      }
+                    ],
+                    "quadCount": 1,
+                    "selectedGlyphCount": 52
+                  }
+                ],
+                "mismatch": null
+              },
+              "annotationType": 9,
+              "annotationEditorType": null,
+              "textLength": null,
+              "quadPointCount": 2,
+              "quadLineCount": 2,
+              "quadPoints": [
+                317.0076599121094,
+                457.1713562011719,
+                556.5131225585938,
+                457.1713562011719,
+                317.0076599121094,
+                444.5617980957031,
+                556.5131225585938,
+                444.5617980957031,
+                317.0076599121094,
+                447.1981506347656,
+                556.5159301757812,
+                447.1981506347656,
+                317.0076599121094,
+                434.588623046875,
+                556.5159301757812,
+                434.588623046875
+              ],
+              "rect": [
+                316.3428018093109,
+                433.778399258852,
+                557.1648019552231,
+                458.01359939575195
+              ],
+              "targetTextLength": 129
+            }
+          ],
+          "annotationStorageHighlightCount": 2,
+          "annotationStorageHighlights": [
+            {
+              "annotationType": 9,
+              "quadPointCount": 1,
+              "quadLineCount": 1,
+              "quadPoints": [
+                80.53520965576172,
+                718.5099487304688,
+                530.0732421875,
+                718.5099487304688,
+                80.53520965576172,
+                693.2908325195312,
+                530.0732421875,
+                693.2908325195312
+              ]
+            },
+            {
+              "annotationType": 9,
+              "quadPointCount": 2,
+              "quadLineCount": 2,
+              "quadPoints": [
+                317.0076599121094,
+                457.1713562011719,
+                556.5131225585938,
+                457.1713562011719,
+                317.0076599121094,
+                444.5617980957031,
+                556.5131225585938,
+                444.5617980957031,
+                317.0076599121094,
+                447.1981506347656,
+                556.5159301757812,
+                447.1981506347656,
+                317.0076599121094,
+                434.588623046875,
+                556.5159301757812,
+                434.588623046875
+              ]
+            }
+          ],
+          "drawSvg": [
+            {
+              "className": "highlight",
+              "pathCount": 1,
+              "visible": true,
+              "width": 750.6875,
+              "height": 44.84375
+            },
+            {
+              "className": "highlightOutline",
+              "pathCount": 1,
+              "visible": true,
+              "width": 755.78125,
+              "height": 51.4375
+            },
+            {
+              "className": "highlight",
+              "pathCount": 1,
+              "visible": true,
+              "width": 400.96875,
+              "height": 32.3125
+            },
+            {
+              "className": "highlightOutline selected",
+              "pathCount": 1,
+              "visible": true,
+              "width": 406.0625,
+              "height": 46.953125
+            }
+          ],
+          "textLayerSelectingAfterUp": false
+        },
+        {
+          "variant": "candidate",
+          "requestedLines": 4,
+          "pageNumber": 2,
+          "pageIndex": 1,
+          "target": {
+            "requestedLines": 4,
+            "pageNumber": 2,
+            "expectedVisualLines": 4,
+            "start": {
+              "x": 659.328125,
+              "y": 256.3125
+            },
+            "end": {
+              "x": 971.3562622070312,
+              "y": 306.171875
+            },
+            "bounds": {
+              "top": 247.3125,
+              "bottom": 315.171875,
+              "left": 658.328125,
+              "right": 972.3562622070312
+            },
+            "rows": [
+              {
+                "y": 249.3125,
+                "firstSpanTextLength": 33,
+                "lastSpanTextLength": 33,
+                "spanCount": 1
+              },
+              {
+                "y": 265.921875,
+                "firstSpanTextLength": 1,
+                "lastSpanTextLength": 15,
+                "spanCount": 2
+              },
+              {
+                "y": 282.546875,
+                "firstSpanTextLength": 1,
+                "lastSpanTextLength": 9,
+                "spanCount": 2
+              },
+              {
+                "y": 299.171875,
+                "firstSpanTextLength": 1,
+                "lastSpanTextLength": 36,
+                "spanCount": 2
+              }
+            ],
+            "lineYs": [
+              249.5,
+              266,
+              282.5,
+              299
+            ],
+            "column": "right",
+            "startTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 0
+            },
+            "endTarget": {
+              "tag": "span",
+              "className": "",
+              "offset": 36
+            },
+            "excludedBands": 0
+          },
+          "before": {
+            "mode": 9,
+            "highlightEditors": 0,
+            "editorIds": [],
+            "consumers": 2,
+            "selection": true
+          },
+          "consumerCount": 1,
+          "consumers": [
+            {
+              "at": 1710.4000000059605,
+              "mode": 9,
+              "before": {
+                "collapsed": false,
+                "rangeCount": 1,
+                "anchorTextLayer": {
+                  "found": true,
+                  "pageNumber": "2"
+                },
+                "rangeRects": [
+                  {
+                    "x": 658.328125,
+                    "y": 247.3125,
+                    "width": 259.086669921875,
+                    "height": 18
+                  },
+                  {
+                    "x": 130.5,
+                    "y": 1136,
+                    "width": 0,
+                    "height": 22
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 265.921875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 263.921875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 265.921875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 263.921875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 689.71875,
+                    "y": 265.921875,
+                    "width": 117.76788330078125,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 689.71875,
+                    "y": 263.921875,
+                    "width": 117.76788330078125,
+                    "height": 18
+                  },
+                  {
+                    "x": 130.5,
+                    "y": 1152,
+                    "width": 0,
+                    "height": 22
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 282.546875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 280.546875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 282.546875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 280.546875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 705.3125,
+                    "y": 282.546875,
+                    "width": 70.66619873046875,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 705.3125,
+                    "y": 280.546875,
+                    "width": 70.66619873046875,
+                    "height": 18
+                  },
+                  {
+                    "x": 130.5,
+                    "y": 1168,
+                    "width": 0,
+                    "height": 22
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 299.171875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 658.328125,
+                    "y": 297.171875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 299.171875,
+                    "width": 9.015625,
+                    "height": 14.953125
+                  },
+                  {
+                    "x": 666.1875,
+                    "y": 297.171875,
+                    "width": 9.015625,
+                    "height": 18
+                  },
+                  {
+                    "x": 689.71875,
+                    "y": 297.171875,
+                    "width": 282.63751220703125,
+                    "height": 18
+                  }
+                ],
+                "rectsTruncated": false,
+                "textLength": 102,
+                "ranges": [
+                  {
+                    "start": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "end": {
+                      "tag": "span",
+                      "id": null,
+                      "className": ""
+                    },
+                    "startOffset": 0,
+                    "endOffset": 36,
+                    "collapsed": false
+                  }
+                ]
+              },
+              "after": {
+                "collapsed": true,
+                "rangeCount": 0,
+                "anchorTextLayer": {
+                  "found": false,
+                  "pageNumber": null
+                },
+                "rangeRects": [],
+                "rectsTruncated": false,
+                "textLength": 0,
+                "ranges": []
+              },
+              "editorCount": 3,
+              "visualRangeLines": 4
+            }
+          ],
+          "newEditorCount": 1,
+          "newEditors": [
+            {
+              "runtimeId": "pdfjs_internal_editor_2",
+              "legacyRecoveryMatches": false,
+              "legacyRecoveredTextLength": 143,
+              "legacyGeometry": {
+                "glyphCount": 6184,
+                "normalizedSelectedLength": 102,
+                "normalizedRecoveredLength": 143,
+                "selectedNonWhitespaceLength": 73,
+                "recoveredNonWhitespaceLength": 103,
+                "matchesIgnoringWhitespace": false,
+                "glyphsAssignedToMultipleLines": 30,
+                "lines": [
+                  {
+                    "top": 117.8997544567994,
+                    "bottom": 136.14546180493883,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 800.8151389227974,
+                        "top": 117.8997544567994,
+                        "bottom": 136.14546180493883
+                      }
+                    ],
+                    "quadCount": 1,
+                    "selectedGlyphCount": 23
+                  },
+                  {
+                    "top": 134.7358350657453,
+                    "bottom": 152.98143937852643,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 136.76315877895152,
+                        "bottom": 151.92027822166978
+                      },
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 134.7358350657453,
+                        "bottom": 152.98143937852643
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 136.76315877895152,
+                        "bottom": 151.92027822166978
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 134.7358350657453,
+                        "bottom": 152.98143937852643
+                      },
+                      {
+                        "left": 569.0970170762804,
+                        "right": 688.9451946682401,
+                        "top": 136.76315877895152,
+                        "bottom": 151.92027822166978
+                      },
+                      {
+                        "left": 569.0970170762804,
+                        "right": 688.9451946682401,
+                        "top": 134.7358350657453,
+                        "bottom": 152.98143937852643
+                      }
+                    ],
+                    "quadCount": 6,
+                    "selectedGlyphCount": 26
+                  },
+                  {
+                    "top": 151.58768008453674,
+                    "bottom": 169.83338743267618,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 153.61500379774296,
+                        "bottom": 168.77222627581955
+                      },
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 151.58768008453674,
+                        "bottom": 169.83338743267618
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 153.61500379774296,
+                        "bottom": 168.77222627581955
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 151.58768008453674,
+                        "bottom": 169.83338743267618
+                      },
+                      {
+                        "left": 584.9661966959636,
+                        "right": 656.8806983100044,
+                        "top": 153.61500379774296,
+                        "bottom": 168.77222627581955
+                      },
+                      {
+                        "left": 584.9661966959636,
+                        "right": 656.8806983100044,
+                        "top": 151.58768008453674,
+                        "bottom": 169.83338743267618
+                      }
+                    ],
+                    "quadCount": 6,
+                    "selectedGlyphCount": 19
+                  },
+                  {
+                    "top": 168.43952510332818,
+                    "bottom": 186.6852324514676,
+                    "quads": [
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 170.46684881653437,
+                        "bottom": 185.62407129461099
+                      },
+                      {
+                        "left": 537.1518681844076,
+                        "right": 546.3267822265626,
+                        "top": 168.43952510332818,
+                        "bottom": 186.6852324514676
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 170.46684881653437,
+                        "bottom": 185.62407129461099
+                      },
+                      {
+                        "left": 545.1500617133247,
+                        "right": 554.3249757554796,
+                        "top": 168.43952510332818,
+                        "bottom": 186.6852324514676
+                      },
+                      {
+                        "left": 569.0970170762804,
+                        "right": 856.7271516588,
+                        "top": 168.43952510332818,
+                        "bottom": 186.6852324514676
+                      }
+                    ],
+                    "quadCount": 5,
+                    "selectedGlyphCount": 35
+                  }
+                ],
+                "mismatch": {
+                  "selectedText": "1 for (var i = 2; i < 100; ++i) {\n2 if (!primes[i])\n3 continue;\n4 for (var k = i + i; i < 100; k += i)",
+                  "recoveredText": "1 for (var i = 2; i < 100; ++i) {\n1 r (var i = 2; i 2 if (!primes[i])\n2 (!primes 3 continue;\n3 continue; 4 for (var k = i + i; i < 100; k += i)",
+                  "glyphs": [
+                    {
+                      "index": 3881,
+                      "character": "1",
+                      "rects": [
+                        {
+                          "left": 536.828125,
+                          "top": 125.3125,
+                          "right": 544.6920166015625,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3883,
+                      "character": "f",
+                      "rects": [
+                        {
+                          "left": 552.5286865234375,
+                          "top": 125.3125,
+                          "right": 560.392578125,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3884,
+                      "character": "o",
+                      "rects": [
+                        {
+                          "left": 560.3789672851562,
+                          "top": 125.3125,
+                          "right": 568.242919921875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3885,
+                      "character": "r",
+                      "rects": [
+                        {
+                          "left": 568.229248046875,
+                          "top": 125.3125,
+                          "right": 576.0932006835938,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3887,
+                      "character": "(",
+                      "rects": [
+                        {
+                          "left": 583.9298095703125,
+                          "top": 125.3125,
+                          "right": 591.7937622070312,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3888,
+                      "character": "v",
+                      "rects": [
+                        {
+                          "left": 591.7801513671875,
+                          "top": 125.3125,
+                          "right": 599.64404296875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3889,
+                      "character": "a",
+                      "rects": [
+                        {
+                          "left": 599.6304321289062,
+                          "top": 125.3125,
+                          "right": 607.4943237304688,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3890,
+                      "character": "r",
+                      "rects": [
+                        {
+                          "left": 607.480712890625,
+                          "top": 125.3125,
+                          "right": 615.3446044921875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3892,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 623.1812744140625,
+                          "top": 125.3125,
+                          "right": 631.045166015625,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3894,
+                      "character": "=",
+                      "rects": [
+                        {
+                          "left": 638.8818359375,
+                          "top": 125.3125,
+                          "right": 646.7457275390625,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3896,
+                      "character": "2",
+                      "rects": [
+                        {
+                          "left": 654.5823974609375,
+                          "top": 125.3125,
+                          "right": 662.4462890625,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3897,
+                      "character": ";",
+                      "rects": [
+                        {
+                          "left": 662.4326782226562,
+                          "top": 125.3125,
+                          "right": 670.296630859375,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3899,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 678.1332397460938,
+                          "top": 125.3125,
+                          "right": 685.9971923828125,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0,
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3901,
+                      "character": "<",
+                      "rects": [
+                        {
+                          "left": 693.8338623046875,
+                          "top": 125.3125,
+                          "right": 701.69775390625,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3903,
+                      "character": "1",
+                      "rects": [
+                        {
+                          "left": 709.534423828125,
+                          "top": 125.3125,
+                          "right": 717.3983154296875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3904,
+                      "character": "0",
+                      "rects": [
+                        {
+                          "left": 717.3846435546875,
+                          "top": 125.3125,
+                          "right": 725.26220703125,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3905,
+                      "character": "0",
+                      "rects": [
+                        {
+                          "left": 725.2485961914062,
+                          "top": 125.3125,
+                          "right": 733.1124877929688,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3906,
+                      "character": ";",
+                      "rects": [
+                        {
+                          "left": 733.098876953125,
+                          "top": 125.3125,
+                          "right": 740.9627685546875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3908,
+                      "character": "+",
+                      "rects": [
+                        {
+                          "left": 748.7994384765625,
+                          "top": 125.3125,
+                          "right": 756.663330078125,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3909,
+                      "character": "+",
+                      "rects": [
+                        {
+                          "left": 756.6497192382812,
+                          "top": 125.3125,
+                          "right": 764.513671875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3910,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 764.5,
+                          "top": 125.3125,
+                          "right": 772.3639526367188,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3911,
+                      "character": ")",
+                      "rects": [
+                        {
+                          "left": 772.350341796875,
+                          "top": 125.3125,
+                          "right": 780.2142333984375,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3913,
+                      "character": "{",
+                      "rects": [
+                        {
+                          "left": 788.0509033203125,
+                          "top": 125.3125,
+                          "right": 795.914794921875,
+                          "bottom": 143.3125
+                        }
+                      ],
+                      "assignedLines": [
+                        0
+                      ]
+                    },
+                    {
+                      "index": 3914,
+                      "character": "2",
+                      "rects": [
+                        {
+                          "left": 536.828125,
+                          "top": 141.921875,
+                          "right": 545.84375,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3916,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 568.21875,
+                          "top": 141.921875,
+                          "right": 576.0826416015625,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3917,
+                      "character": "f",
+                      "rects": [
+                        {
+                          "left": 576.0690307617188,
+                          "top": 141.921875,
+                          "right": 583.9329223632812,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3919,
+                      "character": "(",
+                      "rects": [
+                        {
+                          "left": 591.7695922851562,
+                          "top": 141.921875,
+                          "right": 599.633544921875,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3920,
+                      "character": "!",
+                      "rects": [
+                        {
+                          "left": 599.619873046875,
+                          "top": 141.921875,
+                          "right": 607.4838256835938,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3921,
+                      "character": "p",
+                      "rects": [
+                        {
+                          "left": 607.4701538085938,
+                          "top": 141.921875,
+                          "right": 615.3341064453125,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3922,
+                      "character": "r",
+                      "rects": [
+                        {
+                          "left": 615.3204345703125,
+                          "top": 141.921875,
+                          "right": 623.1843872070312,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3923,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 623.1707763671875,
+                          "top": 141.921875,
+                          "right": 631.03466796875,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3924,
+                      "character": "m",
+                      "rects": [
+                        {
+                          "left": 631.0210571289062,
+                          "top": 141.921875,
+                          "right": 638.8849487304688,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3925,
+                      "character": "e",
+                      "rects": [
+                        {
+                          "left": 638.871337890625,
+                          "top": 141.921875,
+                          "right": 646.7352294921875,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3926,
+                      "character": "s",
+                      "rects": [
+                        {
+                          "left": 646.7216186523438,
+                          "top": 141.921875,
+                          "right": 654.5855102539062,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "index": 3927,
+                      "character": "[",
+                      "rects": [
+                        {
+                          "left": 654.5718994140625,
+                          "top": 141.921875,
+                          "right": 662.435791015625,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3928,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 662.4221801757812,
+                          "top": 141.921875,
+                          "right": 670.2860717773438,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3929,
+                      "character": "]",
+                      "rects": [
+                        {
+                          "left": 670.2724609375,
+                          "top": 141.921875,
+                          "right": 678.1363525390625,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3930,
+                      "character": ")",
+                      "rects": [
+                        {
+                          "left": 678.1227416992188,
+                          "top": 141.921875,
+                          "right": 685.9866333007812,
+                          "bottom": 159.921875
+                        }
+                      ],
+                      "assignedLines": [
+                        1
+                      ]
+                    },
+                    {
+                      "index": 3931,
+                      "character": "3",
+                      "rects": [
+                        {
+                          "left": 536.828125,
+                          "top": 158.546875,
+                          "right": 545.84375,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3933,
+                      "character": "c",
+                      "rects": [
+                        {
+                          "left": 583.8125,
+                          "top": 158.546875,
+                          "right": 591.6763916015625,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3934,
+                      "character": "o",
+                      "rects": [
+                        {
+                          "left": 591.6627807617188,
+                          "top": 158.546875,
+                          "right": 599.5266723632812,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3935,
+                      "character": "n",
+                      "rects": [
+                        {
+                          "left": 599.5130615234375,
+                          "top": 158.546875,
+                          "right": 607.376953125,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3936,
+                      "character": "t",
+                      "rects": [
+                        {
+                          "left": 607.3633422851562,
+                          "top": 158.546875,
+                          "right": 615.227294921875,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3937,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 615.213623046875,
+                          "top": 158.546875,
+                          "right": 623.0775756835938,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3938,
+                      "character": "n",
+                      "rects": [
+                        {
+                          "left": 623.0639038085938,
+                          "top": 158.546875,
+                          "right": 630.9278564453125,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3939,
+                      "character": "u",
+                      "rects": [
+                        {
+                          "left": 630.9141845703125,
+                          "top": 158.546875,
+                          "right": 638.7781372070312,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3940,
+                      "character": "e",
+                      "rects": [
+                        {
+                          "left": 638.7645263671875,
+                          "top": 158.546875,
+                          "right": 646.62841796875,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3941,
+                      "character": ";",
+                      "rects": [
+                        {
+                          "left": 646.6148071289062,
+                          "top": 158.546875,
+                          "right": 654.4786987304688,
+                          "bottom": 176.546875
+                        }
+                      ],
+                      "assignedLines": [
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3942,
+                      "character": "4",
+                      "rects": [
+                        {
+                          "left": 536.828125,
+                          "top": 175.171875,
+                          "right": 545.84375,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3944,
+                      "character": "f",
+                      "rects": [
+                        {
+                          "left": 568.21875,
+                          "top": 175.171875,
+                          "right": 576.0826416015625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3945,
+                      "character": "o",
+                      "rects": [
+                        {
+                          "left": 576.0690307617188,
+                          "top": 175.171875,
+                          "right": 583.9329223632812,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3946,
+                      "character": "r",
+                      "rects": [
+                        {
+                          "left": 583.9193115234375,
+                          "top": 175.171875,
+                          "right": 591.783203125,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3948,
+                      "character": "(",
+                      "rects": [
+                        {
+                          "left": 599.619873046875,
+                          "top": 175.171875,
+                          "right": 607.4838256835938,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3949,
+                      "character": "v",
+                      "rects": [
+                        {
+                          "left": 607.4701538085938,
+                          "top": 175.171875,
+                          "right": 615.3341064453125,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3950,
+                      "character": "a",
+                      "rects": [
+                        {
+                          "left": 615.3204345703125,
+                          "top": 175.171875,
+                          "right": 623.1843872070312,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3951,
+                      "character": "r",
+                      "rects": [
+                        {
+                          "left": 623.1707763671875,
+                          "top": 175.171875,
+                          "right": 631.03466796875,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3953,
+                      "character": "k",
+                      "rects": [
+                        {
+                          "left": 638.871337890625,
+                          "top": 175.171875,
+                          "right": 646.7352294921875,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3955,
+                      "character": "=",
+                      "rects": [
+                        {
+                          "left": 654.5718994140625,
+                          "top": 175.171875,
+                          "right": 662.435791015625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3957,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 670.2724609375,
+                          "top": 175.171875,
+                          "right": 678.1363525390625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3959,
+                      "character": "+",
+                      "rects": [
+                        {
+                          "left": 685.9730224609375,
+                          "top": 175.171875,
+                          "right": 693.8369140625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3961,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 701.673583984375,
+                          "top": 175.171875,
+                          "right": 709.5374755859375,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3962,
+                      "character": ";",
+                      "rects": [
+                        {
+                          "left": 709.5238647460938,
+                          "top": 175.171875,
+                          "right": 717.3878173828125,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3964,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 725.2244873046875,
+                          "top": 175.171875,
+                          "right": 733.08837890625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3966,
+                      "character": "<",
+                      "rects": [
+                        {
+                          "left": 740.925048828125,
+                          "top": 175.171875,
+                          "right": 748.7889404296875,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3968,
+                      "character": "1",
+                      "rects": [
+                        {
+                          "left": 756.6392211914062,
+                          "top": 175.171875,
+                          "right": 764.5031127929688,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3969,
+                      "character": "0",
+                      "rects": [
+                        {
+                          "left": 764.489501953125,
+                          "top": 175.171875,
+                          "right": 772.3533935546875,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3970,
+                      "character": "0",
+                      "rects": [
+                        {
+                          "left": 772.3397827148438,
+                          "top": 175.171875,
+                          "right": 780.2037353515625,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3971,
+                      "character": ";",
+                      "rects": [
+                        {
+                          "left": 780.1900634765625,
+                          "top": 175.171875,
+                          "right": 788.053955078125,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3973,
+                      "character": "k",
+                      "rects": [
+                        {
+                          "left": 795.890625,
+                          "top": 175.171875,
+                          "right": 803.7545776367188,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3975,
+                      "character": "+",
+                      "rects": [
+                        {
+                          "left": 811.5911865234375,
+                          "top": 175.171875,
+                          "right": 819.4551391601562,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3976,
+                      "character": "=",
+                      "rects": [
+                        {
+                          "left": 819.4415283203125,
+                          "top": 175.171875,
+                          "right": 827.305419921875,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3978,
+                      "character": "i",
+                      "rects": [
+                        {
+                          "left": 835.14208984375,
+                          "top": 175.171875,
+                          "right": 843.0059814453125,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    },
+                    {
+                      "index": 3979,
+                      "character": ")",
+                      "rects": [
+                        {
+                          "left": 842.9923706054688,
+                          "top": 175.171875,
+                          "right": 850.8562622070312,
+                          "bottom": 193.171875
+                        }
+                      ],
+                      "assignedLines": [
+                        3
+                      ]
+                    }
+                  ]
+                }
+              },
+              "annotationType": 9,
+              "annotationEditorType": null,
+              "textLength": null,
+              "quadPointCount": 18,
+              "quadLineCount": 4,
+              "quadPoints": [
+                317.0076599121094,
+                722.1596069335938,
+                472.6122131347656,
+                722.1596069335938,
+                317.0076599121094,
+                711.3513793945312,
+                472.6122131347656,
+                711.3513793945312,
+                317.0076599121094,
+                710.9854736328125,
+                322.42236328125,
+                710.9854736328125,
+                317.0076599121094,
+                702.0068359375,
+                322.42236328125,
+                702.0068359375,
+                317.0076599121094,
+                712.1864013671875,
+                322.42236328125,
+                712.1864013671875,
+                317.0076599121094,
+                701.3782348632812,
+                322.42236328125,
+                701.3782348632812,
+                321.7279052734375,
+                710.9854736328125,
+                327.1426086425781,
+                710.9854736328125,
+                321.7279052734375,
+                702.0068359375,
+                327.1426086425781,
+                702.0068359375,
+                321.7279052734375,
+                712.1864013671875,
+                327.1426086425781,
+                712.1864013671875,
+                321.7279052734375,
+                701.3782348632812,
+                327.1426086425781,
+                701.3782348632812,
+                335.86053466796875,
+                710.9854736328125,
+                406.5906066894531,
+                710.9854736328125,
+                335.86053466796875,
+                702.0068359375,
+                406.5906066894531,
+                702.0068359375,
+                335.86053466796875,
+                712.1864013671875,
+                406.5906066894531,
+                712.1864013671875,
+                335.86053466796875,
+                701.3782348632812,
+                406.5906066894531,
+                701.3782348632812,
+                317.0076599121094,
+                701.0029296875,
+                322.42236328125,
+                701.0029296875,
+                317.0076599121094,
+                692.0242309570312,
+                322.42236328125,
+                692.0242309570312,
+                317.0076599121094,
+                702.203857421875,
+                322.42236328125,
+                702.203857421875,
+                317.0076599121094,
+                691.3956298828125,
+                322.42236328125,
+                691.3956298828125,
+                321.7279052734375,
+                701.0029296875,
+                327.1426086425781,
+                701.0029296875,
+                321.7279052734375,
+                692.0242309570312,
+                327.1426086425781,
+                692.0242309570312,
+                321.7279052734375,
+                702.203857421875,
+                327.1426086425781,
+                702.203857421875,
+                321.7279052734375,
+                691.3956298828125,
+                327.1426086425781,
+                691.3956298828125,
+                345.2259521484375,
+                701.0029296875,
+                387.66729736328125,
+                701.0029296875,
+                345.2259521484375,
+                692.0242309570312,
+                387.66729736328125,
+                692.0242309570312,
+                345.2259521484375,
+                702.203857421875,
+                387.66729736328125,
+                702.203857421875,
+                345.2259521484375,
+                691.3956298828125,
+                387.66729736328125,
+                691.3956298828125,
+                317.0076599121094,
+                691.0203857421875,
+                322.42236328125,
+                691.0203857421875,
+                317.0076599121094,
+                682.0416870117188,
+                322.42236328125,
+                682.0416870117188,
+                317.0076599121094,
+                692.2213134765625,
+                322.42236328125,
+                692.2213134765625,
+                317.0076599121094,
+                681.4130859375,
+                322.42236328125,
+                681.4130859375,
+                321.7279052734375,
+                691.0203857421875,
+                327.1426086425781,
+                691.0203857421875,
+                321.7279052734375,
+                682.0416870117188,
+                327.1426086425781,
+                682.0416870117188,
+                321.7279052734375,
+                692.2213134765625,
+                327.1426086425781,
+                692.2213134765625,
+                321.7279052734375,
+                681.4130859375,
+                327.1426086425781,
+                681.4130859375,
+                335.86053466796875,
+                692.2213134765625,
+                505.6094665527344,
+                692.2213134765625,
+                335.86053466796875,
+                681.4130859375,
+                505.6094665527344,
+                681.4130859375
+              ],
+              "rect": [
+                316.3428018093109,
+                680.5656019449234,
+                506.2463972568512,
+                723.0168006420135
+              ],
+              "targetTextLength": 102
+            }
+          ],
+          "annotationStorageHighlightCount": 3,
+          "annotationStorageHighlights": [
+            {
+              "annotationType": 9,
+              "quadPointCount": 1,
+              "quadLineCount": 1,
+              "quadPoints": [
+                80.53520965576172,
+                718.5099487304688,
+                530.0732421875,
+                718.5099487304688,
+                80.53520965576172,
+                693.2908325195312,
+                530.0732421875,
+                693.2908325195312
+              ]
+            },
+            {
+              "annotationType": 9,
+              "quadPointCount": 2,
+              "quadLineCount": 2,
+              "quadPoints": [
+                317.0076599121094,
+                457.1713562011719,
+                556.5131225585938,
+                457.1713562011719,
+                317.0076599121094,
+                444.5617980957031,
+                556.5131225585938,
+                444.5617980957031,
+                317.0076599121094,
+                447.1981506347656,
+                556.5159301757812,
+                447.1981506347656,
+                317.0076599121094,
+                434.588623046875,
+                556.5159301757812,
+                434.588623046875
+              ]
+            },
+            {
+              "annotationType": 9,
+              "quadPointCount": 18,
+              "quadLineCount": 4,
+              "quadPoints": [
+                317.0076599121094,
+                722.1596069335938,
+                472.6122131347656,
+                722.1596069335938,
+                317.0076599121094,
+                711.3513793945312,
+                472.6122131347656,
+                711.3513793945312,
+                317.0076599121094,
+                710.9854736328125,
+                322.42236328125,
+                710.9854736328125,
+                317.0076599121094,
+                702.0068359375,
+                322.42236328125,
+                702.0068359375,
+                317.0076599121094,
+                712.1864013671875,
+                322.42236328125,
+                712.1864013671875,
+                317.0076599121094,
+                701.3782348632812,
+                322.42236328125,
+                701.3782348632812,
+                321.7279052734375,
+                710.9854736328125,
+                327.1426086425781,
+                710.9854736328125,
+                321.7279052734375,
+                702.0068359375,
+                327.1426086425781,
+                702.0068359375,
+                321.7279052734375,
+                712.1864013671875,
+                327.1426086425781,
+                712.1864013671875,
+                321.7279052734375,
+                701.3782348632812,
+                327.1426086425781,
+                701.3782348632812,
+                335.86053466796875,
+                710.9854736328125,
+                406.5906066894531,
+                710.9854736328125,
+                335.86053466796875,
+                702.0068359375,
+                406.5906066894531,
+                702.0068359375,
+                335.86053466796875,
+                712.1864013671875,
+                406.5906066894531,
+                712.1864013671875,
+                335.86053466796875,
+                701.3782348632812,
+                406.5906066894531,
+                701.3782348632812,
+                317.0076599121094,
+                701.0029296875,
+                322.42236328125,
+                701.0029296875,
+                317.0076599121094,
+                692.0242309570312,
+                322.42236328125,
+                692.0242309570312,
+                317.0076599121094,
+                702.203857421875,
+                322.42236328125,
+                702.203857421875,
+                317.0076599121094,
+                691.3956298828125,
+                322.42236328125,
+                691.3956298828125,
+                321.7279052734375,
+                701.0029296875,
+                327.1426086425781,
+                701.0029296875,
+                321.7279052734375,
+                692.0242309570312,
+                327.1426086425781,
+                692.0242309570312,
+                321.7279052734375,
+                702.203857421875,
+                327.1426086425781,
+                702.203857421875,
+                321.7279052734375,
+                691.3956298828125,
+                327.1426086425781,
+                691.3956298828125,
+                345.2259521484375,
+                701.0029296875,
+                387.66729736328125,
+                701.0029296875,
+                345.2259521484375,
+                692.0242309570312,
+                387.66729736328125,
+                692.0242309570312,
+                345.2259521484375,
+                702.203857421875,
+                387.66729736328125,
+                702.203857421875,
+                345.2259521484375,
+                691.3956298828125,
+                387.66729736328125,
+                691.3956298828125,
+                317.0076599121094,
+                691.0203857421875,
+                322.42236328125,
+                691.0203857421875,
+                317.0076599121094,
+                682.0416870117188,
+                322.42236328125,
+                682.0416870117188,
+                317.0076599121094,
+                692.2213134765625,
+                322.42236328125,
+                692.2213134765625,
+                317.0076599121094,
+                681.4130859375,
+                322.42236328125,
+                681.4130859375,
+                321.7279052734375,
+                691.0203857421875,
+                327.1426086425781,
+                691.0203857421875,
+                321.7279052734375,
+                682.0416870117188,
+                327.1426086425781,
+                682.0416870117188,
+                321.7279052734375,
+                692.2213134765625,
+                327.1426086425781,
+                692.2213134765625,
+                321.7279052734375,
+                681.4130859375,
+                327.1426086425781,
+                681.4130859375,
+                335.86053466796875,
+                692.2213134765625,
+                505.6094665527344,
+                692.2213134765625,
+                335.86053466796875,
+                681.4130859375,
+                505.6094665527344,
+                681.4130859375
+              ]
+            }
+          ],
+          "drawSvg": [
+            {
+              "className": "highlight",
+              "pathCount": 1,
+              "visible": true,
+              "width": 316.1875,
+              "height": 67.125
+            },
+            {
+              "className": "highlightOutline selected",
+              "pathCount": 1,
+              "visible": true,
+              "width": 321.28125,
+              "height": 77.28125
+            }
+          ],
+          "textLayerSelectingAfterUp": false
+        }
+      ],
+      "errors": [
+        {
+          "source": "console",
+          "message": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        }
+      ],
+      "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+      "rendererGeneration": "highlight-multiline-candidate-1792768362436",
+      "currentPhase": "select-4-lines"
+    }
+  ],
+  "privacy": "Artifacts retain selected-text lengths, range endpoints, geometry, quads, and sidecar payload summaries; normal passing selections are compared in memory; the public tracemonkey legacy mismatch retains exact selected/recovered text and hit glyph geometry for deterministic offline diagnosis.",
+  "lastPersistedPhase": "failure",
+  "failure": {
+    "name": "AssertionError",
+    "message": "legacy QuadPoints recovery should reconstruct the selection from the rendered text layer"
+  },
+  "failurePage": {
+    "href": "http://127.0.0.1:62632/?variant=candidate",
+    "host": {
+      "variant": "candidate",
+      "rendererGeneration": "highlight-multiline-candidate-1792768362436",
+      "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+      "ready": [
+        {
+          "at": 130,
+          "rendererGeneration": "highlight-multiline-candidate-1792768362436"
+        }
+      ],
+      "opened": [
+        {
+          "at": 253.39999999850988,
+          "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+          "openRequest": 1,
+          "revision": 0,
+          "confirmedRevision": 0
+        }
+      ],
+      "identity": [
+        {
+          "at": 280.3999999985099,
+          "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+          "openRequest": 1,
+          "identityStatus": "KNOWN",
+          "pageCount": 14
+        }
+      ],
+      "errors": [],
+      "saves": [
+        {
+          "at": 1937,
+          "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+          "openRequest": 1,
+          "requestId": "save-highlight-multiline-candidate-1792768362436-mvl3zv4h-1",
+          "revision": 6,
+          "operationCount": 3
+        }
+      ],
+      "openSent": true,
+      "sourceBytes": {},
+      "nextOpenRequest": 1,
+      "reopen": {}
+    },
+    "sidecarErrors": [],
+    "frame": {
+      "openRequest": 1,
+      "documentId": "tests/fixtures/tracemonkey.pdf#highlight-multiline-candidate",
+      "sourceConfirmed": true,
+      "mode": 9,
+      "pages": 14,
+      "consumers": [
+        {
+          "at": 692.5,
+          "before": {
+            "collapsed": false,
+            "rangeCount": 1,
+            "anchorTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "rangeRects": [
+              {
+                "x": 264.59375,
+                "y": 154.390625,
+                "width": 748.4954833984375,
+                "height": 42
+              }
+            ],
+            "rectsTruncated": false,
+            "textLength": 56,
+            "ranges": [
+              {
+                "start": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "end": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "startOffset": 0,
+                "endOffset": 56,
+                "collapsed": false
+              }
+            ]
+          },
+          "mode": 9,
+          "after": {
+            "collapsed": true,
+            "rangeCount": 0,
+            "anchorTextLayer": {
+              "found": false,
+              "pageNumber": null
+            },
+            "rangeRects": [],
+            "rectsTruncated": false,
+            "textLength": 0,
+            "ranges": []
+          },
+          "editorCount": 1
+        },
+        {
+          "at": 1178.7000000029802,
+          "before": {
+            "collapsed": false,
+            "rangeCount": 1,
+            "anchorTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "rangeRects": [
+              {
+                "x": 658.328125,
+                "y": 589.625,
+                "width": 398.784423828125,
+                "height": 21
+              },
+              {
+                "x": 130.5,
+                "y": 765,
+                "width": 0,
+                "height": 22
+              },
+              {
+                "x": 658.328125,
+                "y": 606.234375,
+                "width": 398.7890625,
+                "height": 21
+              }
+            ],
+            "rectsTruncated": false,
+            "textLength": 129,
+            "ranges": [
+              {
+                "start": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "end": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "startOffset": 0,
+                "endOffset": 61,
+                "collapsed": false
+              }
+            ]
+          },
+          "mode": 9,
+          "after": {
+            "collapsed": true,
+            "rangeCount": 0,
+            "anchorTextLayer": {
+              "found": false,
+              "pageNumber": null
+            },
+            "rangeRects": [],
+            "rectsTruncated": false,
+            "textLength": 0,
+            "ranges": []
+          },
+          "editorCount": 2
+        },
+        {
+          "at": 1710.4000000059605,
+          "before": {
+            "collapsed": false,
+            "rangeCount": 1,
+            "anchorTextLayer": {
+              "found": true,
+              "pageNumber": "2"
+            },
+            "rangeRects": [
+              {
+                "x": 658.328125,
+                "y": 247.3125,
+                "width": 259.086669921875,
+                "height": 18
+              },
+              {
+                "x": 130.5,
+                "y": 1136,
+                "width": 0,
+                "height": 22
+              },
+              {
+                "x": 658.328125,
+                "y": 265.921875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 658.328125,
+                "y": 263.921875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 666.1875,
+                "y": 265.921875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 666.1875,
+                "y": 263.921875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 689.71875,
+                "y": 265.921875,
+                "width": 117.76788330078125,
+                "height": 14.953125
+              },
+              {
+                "x": 689.71875,
+                "y": 263.921875,
+                "width": 117.76788330078125,
+                "height": 18
+              },
+              {
+                "x": 130.5,
+                "y": 1152,
+                "width": 0,
+                "height": 22
+              },
+              {
+                "x": 658.328125,
+                "y": 282.546875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 658.328125,
+                "y": 280.546875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 666.1875,
+                "y": 282.546875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 666.1875,
+                "y": 280.546875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 705.3125,
+                "y": 282.546875,
+                "width": 70.66619873046875,
+                "height": 14.953125
+              },
+              {
+                "x": 705.3125,
+                "y": 280.546875,
+                "width": 70.66619873046875,
+                "height": 18
+              },
+              {
+                "x": 130.5,
+                "y": 1168,
+                "width": 0,
+                "height": 22
+              },
+              {
+                "x": 658.328125,
+                "y": 299.171875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 658.328125,
+                "y": 297.171875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 666.1875,
+                "y": 299.171875,
+                "width": 9.015625,
+                "height": 14.953125
+              },
+              {
+                "x": 666.1875,
+                "y": 297.171875,
+                "width": 9.015625,
+                "height": 18
+              },
+              {
+                "x": 689.71875,
+                "y": 297.171875,
+                "width": 282.63751220703125,
+                "height": 18
+              }
+            ],
+            "rectsTruncated": false,
+            "textLength": 102,
+            "ranges": [
+              {
+                "start": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "end": {
+                  "tag": "span",
+                  "id": null,
+                  "className": ""
+                },
+                "startOffset": 0,
+                "endOffset": 36,
+                "collapsed": false
+              }
+            ]
+          },
+          "mode": 9,
+          "after": {
+            "collapsed": true,
+            "rangeCount": 0,
+            "anchorTextLayer": {
+              "found": false,
+              "pageNumber": null
+            },
+            "rangeRects": [],
+            "rectsTruncated": false,
+            "textLength": 0,
+            "ranges": []
+          },
+          "editorCount": 3
+        }
+      ],
+      "layers": [
+        "textLayer highlighting",
+        "textLayer highlighting",
+        "textLayer highlighting"
+      ]
+    }
+  }
+}
