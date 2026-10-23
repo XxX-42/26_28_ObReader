@@ -5,9 +5,11 @@ const { canonicalStringify, hashText } = require("../vocabulary/canonical.cjs");
 const MARKDOWN_ROUTE_ROOT = "00_Archive/21_VocabularyData/routing/markdown";
 const MARKDOWN_OWNER_ROOT = `${MARKDOWN_ROUTE_ROOT}/owners`;
 const MARKDOWN_BINDING_ROOT = `${MARKDOWN_ROUTE_ROOT}/bindings`;
+const MARKDOWN_PATH_ROOT = `${MARKDOWN_ROUTE_ROOT}/paths`;
 const MARKDOWN_ROUTE_STORE_ID = "markdown-source-routing-v1";
 const OWNER_FACT_KIND = "markdown-owner-binding-fact";
 const BINDING_FACT_KIND = "markdown-binding-route-fact";
+const PATH_FACT_KIND = "markdown-path-binding-fact";
 
 function routeError(code, message, details) {
   const error = new Error(message);
@@ -26,7 +28,7 @@ function safeText(value, name, { max = 256, allow = /^[^\\/\u0000-\u001f\u007f]+
 
 function normalizeVaultPath(value, name = "Markdown path") {
   if (typeof value !== "string" || !value || value.startsWith("/") || value.startsWith("\\") ||
-      /[\u0000-\u001f\u007f#?]/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) {
+      /[\u0000-\u001f\u007f]/.test(value) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) {
     throw routeError("MARKDOWN_ROUTE_PATH_INVALID", `${name} must be a safe vault-relative path.`);
   }
   const parts = value.replaceAll("\\", "/").split("/");
@@ -55,8 +57,13 @@ function bindingDirectory(bindingId) {
   const hash = bindingHash(bindingId);
   return `${MARKDOWN_BINDING_ROOT}/${hash.slice(0, 2)}/${hash}`;
 }
-function bindingIdFor(actorId, ownerKind, ownerId, currentPath) {
-  return `markdown-binding-v1:${digest(`${actorId}\u0000${ownerKind}\u0000${ownerId}\u0000${currentPath}`)}`;
+function bindingIdFor(actorId, currentPath, parentFactIds = []) {
+  return `markdown-binding-v1:${digest(`${actorId}\u0000${currentPath}\u0000${parentFactIds.slice().sort(compareText).join("\u0000")}`)}`;
+}
+function pathHash(currentPath) { return digest(currentPath); }
+function pathDirectory(currentPath) {
+  const hash = pathHash(currentPath);
+  return `${MARKDOWN_PATH_ROOT}/${hash.slice(0, 2)}/${hash}`;
 }
 function factIdFor(fact) {
   const { factId: _factId, revision: _revision, ...identity } = fact;
@@ -65,7 +72,7 @@ function factIdFor(fact) {
 function filePathFor(fact) {
   const directory = fact.kind === OWNER_FACT_KIND
     ? ownerDirectory(fact.ownerKind, fact.ownerId)
-    : bindingDirectory(fact.bindingId);
+    : fact.kind === BINDING_FACT_KIND ? bindingDirectory(fact.bindingId) : pathDirectory(fact.currentPath);
   return `${directory}/${fact.factId}.json`;
 }
 
@@ -81,7 +88,7 @@ function makeFact(kind, fields) {
 
 function validateFact(value, path) {
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== 1 ||
-      ![OWNER_FACT_KIND, BINDING_FACT_KIND].includes(value.kind) || value.revision !== 1 ||
+      ![OWNER_FACT_KIND, BINDING_FACT_KIND, PATH_FACT_KIND].includes(value.kind) || value.revision !== 1 ||
       typeof value.factId !== "string" || !/^[a-f0-9]{64}$/.test(value.factId) ||
       typeof value.actorId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.actorId) ||
       !Array.isArray(value.parentFactIds) || value.parentFactIds.some((id) => typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) ||
@@ -101,7 +108,7 @@ function validateFact(value, path) {
         ownerHash(ownerKind, ownerId) !== path.path.split("/").at(-2)) {
       throw routeError("MARKDOWN_ROUTE_FACT_INVALID", "A Markdown owner binding fact failed validation.");
     }
-  } else {
+  } else if (value.kind === BINDING_FACT_KIND) {
     const bindingId = safeText(value.bindingId, "binding ID");
     const currentPath = normalizeMarkdownPath(value.currentPath);
     if (!new Set(["bind", "move"]).has(value.operation) ||
@@ -112,11 +119,20 @@ function validateFact(value, path) {
         bindingHash(bindingId) !== path.path.split("/").at(-2)) {
       throw routeError("MARKDOWN_ROUTE_FACT_INVALID", "A Markdown binding route fact failed validation.");
     }
+  } else {
+    const currentPath = normalizeMarkdownPath(value.currentPath);
+    safeText(value.bindingId, "binding ID");
+    if (!new Set(["claim", "release"]).has(value.operation) ||
+        (value.operation === "release" && value.parentFactIds.length === 0) ||
+        (value.operation === "claim" && value.parentFactIds.length && value.parentFactIds.some((id) => !/^[a-f0-9]{64}$/.test(id))) ||
+        pathHash(currentPath) !== path.path.split("/").at(-2)) {
+      throw routeError("MARKDOWN_ROUTE_FACT_INVALID", "A Markdown path occupancy fact failed validation.");
+    }
   }
   return value;
 }
 
-function resolveFactHeads(facts, stateFor, { validateMove = null } = {}) {
+function resolveFactHeads(facts, stateFor, { validateMove = null, validateTransition = null } = {}) {
   if (!facts.length) return { status: "unresolved", code: "TARGET_UNRESOLVED", reason: "binding-facts-missing", heads: [] };
   const byId = new Map(facts.map((fact) => [fact.factId, fact]));
   const superseded = new Set();
@@ -128,7 +144,7 @@ function resolveFactHeads(facts, stateFor, { validateMove = null } = {}) {
           (fact.kind === BINDING_FACT_KIND && fact.bindingId !== parent.bindingId)) {
         return { status: "unresolved", code: "TARGET_UNRESOLVED", reason: "binding-parent-mismatch", heads: [] };
       }
-      const error = validateMove?.(fact, parent);
+      const error = validateTransition?.(fact, parent) || validateMove?.(fact, parent);
       if (error) return { status: "unresolved", code: "TARGET_UNRESOLVED", reason: error, heads: [] };
       superseded.add(parentId);
     }
@@ -178,6 +194,10 @@ function createMarkdownRouting({ transaction } = {}) {
 
   async function listBindingFacts(bindingId) {
     return listFacts(bindingDirectory(bindingId), BINDING_FACT_KIND);
+  }
+
+  async function listPathFacts(currentPath) {
+    return listFacts(pathDirectory(currentPath), PATH_FACT_KIND);
   }
 
   async function listIdentityDirectories(root) {
@@ -233,10 +253,21 @@ function createMarkdownRouting({ transaction } = {}) {
 
   async function resolveBinding(bindingId) {
     const facts = await listBindingFacts(bindingId);
+    return resolveBindingFacts(facts);
+  }
+
+  function resolveBindingFacts(facts) {
     return resolveFactHeads(facts, (fact) => ({ bindingId: fact.bindingId, currentPath: fact.currentPath }), {
-      validateMove: (fact, parent) => fact.operation === "move" && parent.currentPath !== fact.fromPath
+      validateTransition: (fact, parent) => fact.operation === "move" && parent.currentPath !== fact.fromPath
         ? "binding-move-parent-path-mismatch" : null,
     });
+  }
+
+  async function resolvePath(currentPath) {
+    const facts = await listPathFacts(currentPath);
+    const result = resolvePathFacts(facts);
+    return result.status !== "verified" && result.reason === "binding-route-conflict"
+      ? { ...result, reason: "path-binding-conflict" } : result;
   }
 
   async function resolve(ownerKindOrInput, maybeOwnerId) {
@@ -252,19 +283,11 @@ function createMarkdownRouting({ transaction } = {}) {
     const bindingId = owner.bindingId;
     const binding = await resolveBinding(bindingId);
     if (binding.status !== "verified") return { ...binding, ownerKind, ownerId, bindingId, currentPath: null };
-    const allBindingFacts = await listAllBindingFacts();
-    const bindingIds = [...new Set(allBindingFacts.map((fact) => fact.bindingId))];
-    for (const otherId of bindingIds) {
-      if (otherId === bindingId) continue;
-      const other = await resolveBinding(otherId);
-      if (other.status !== "verified") {
-        return { status: "unresolved", code: "TARGET_UNRESOLVED", reason: other.reason || "other-binding-unresolved",
-          ownerKind, ownerId, bindingId, currentPath: null };
-      }
-      if (other.currentPath === binding.currentPath) {
-        return { status: "unresolved", code: "TARGET_UNRESOLVED", reason: "path-binding-conflict",
-          ownerKind, ownerId, bindingId, currentPath: null };
-      }
+    const pathState = await resolvePath(binding.currentPath);
+    if (pathState.status !== "verified" || pathState.bindingId !== bindingId) {
+      return { status: "unresolved", code: "TARGET_UNRESOLVED",
+        reason: pathState.status !== "verified" ? pathState.reason : "path-binding-conflict",
+        ownerKind, ownerId, bindingId, currentPath: null };
     }
     return { status: "verified", code: null, ownerKind, ownerId, bindingId, currentPath: binding.currentPath,
       ownerFactIds: owner.heads.map((fact) => fact.factId), bindingFactIds: binding.heads.map((fact) => fact.factId) };
@@ -310,6 +333,11 @@ function createMarkdownRouting({ transaction } = {}) {
       fromPath: parents.length ? fromPath : null, currentPath, parentFactIds: parents });
   }
 
+  function pathFact(operation, currentPath, bindingId, parentFactIds = []) {
+    return makeFact(PATH_FACT_KIND, { actorId, operation, currentPath,
+      bindingId, parentFactIds: parentFactIds.slice().sort(compareText) });
+  }
+
   async function bind(input = {}, { manual = false, maxAttempts = 3 } = {}) {
     const ownerKind = validateOwnerKind(input.ownerKind);
     const ownerId = safeText(input.ownerId, "owner ID");
@@ -318,52 +346,75 @@ function createMarkdownRouting({ transaction } = {}) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const ownerFacts = await listOwnerFacts(ownerKind, ownerId);
       const owner = ownerFacts.length ? resolveOwnerFacts(ownerKind, ownerId, ownerFacts) : null;
-      if (owner?.status === "verified") {
-        const binding = await resolveBinding(owner.bindingId);
-        if (binding.status === "verified" && binding.currentPath === currentPath) {
-          return { status: "duplicate", ownerKind, ownerId, bindingId: owner.bindingId, currentPath, writes: 0 };
-        }
-        if (!manual) throw routeError("MARKDOWN_ROUTE_OWNER_CONFLICT", "This owner already has a different Markdown route.");
-        if (binding.status !== "verified") {
-          throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The existing Markdown route cannot be manually moved while its history is incomplete.");
-        }
-      } else if (ownerFacts.length) {
+      if (ownerFacts.length && owner?.status !== "verified") {
         throw routeError("MARKDOWN_ROUTE_OWNER_UNRESOLVED", "The existing Markdown owner binding is ambiguous and cannot be overwritten.");
       }
-
-      const routes = await allBindingRoutes();
-      if (routes.some((route) => route.status !== "verified")) {
-        throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "Existing Markdown route facts are incomplete or conflicting.");
+      const sourceBinding = owner?.status === "verified" ? await resolveBinding(owner.bindingId) : null;
+      if (owner?.status === "verified" && sourceBinding.status !== "verified") {
+        throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The existing Markdown route cannot be changed while its history is incomplete.");
       }
-      const existingAtPath = routes.filter((route) => route.status === "verified" && route.currentPath === currentPath);
-      const distinct = [...new Set(existingAtPath.map((route) => route.bindingId))];
-      if (distinct.length > 1) throw routeError("MARKDOWN_ROUTE_PATH_CONFLICT", "The Markdown path is already associated with different bindings.");
-      if (requestedBindingId && distinct.length === 1 && requestedBindingId !== distinct[0]) {
+      const sourceVerified = owner?.status === "verified"
+        ? await resolve(ownerKind, ownerId) : null;
+      if (owner?.status === "verified" && sourceVerified?.status !== "verified") {
+        throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The existing Markdown route cannot be changed while its path association is incomplete.");
+      }
+      if (sourceBinding?.currentPath === currentPath) {
+        if (requestedBindingId && requestedBindingId !== owner.bindingId) {
+          throw routeError("MARKDOWN_ROUTE_PATH_CONFLICT", "The Markdown path is already associated with a different binding.");
+        }
+        return { status: "duplicate", ownerKind, ownerId, bindingId: owner.bindingId, currentPath, writes: 0 };
+      }
+      if (owner?.status === "verified" && !manual) {
+        throw routeError("MARKDOWN_ROUTE_OWNER_CONFLICT", "This owner already has a different Markdown route.");
+      }
+
+      const pathFacts = await listPathFacts(currentPath);
+      const pathState = pathFacts.length ? resolvePathFacts(pathFacts) : null;
+      if (pathState && pathState.status !== "verified") {
+        throw routeError("MARKDOWN_ROUTE_PATH_UNRESOLVED", "The Markdown path has incomplete or conflicting binding history.");
+      }
+      const occupiedBindingId = pathState?.bindingId || null;
+      if (requestedBindingId && occupiedBindingId && requestedBindingId !== occupiedBindingId) {
         throw routeError("MARKDOWN_ROUTE_PATH_CONFLICT", "The Markdown path is already associated with a different binding.");
       }
-      for (const route of routes) {
-        if (route.status !== "verified" && route.heads?.some((fact) => fact.currentPath === currentPath)) {
-          throw routeError("MARKDOWN_ROUTE_PATH_CONFLICT", "An unresolved Markdown binding may already own this path.");
-        }
+      let selectedBindingId = occupiedBindingId || null;
+      if (owner?.status === "verified" && manual && !occupiedBindingId) {
+        selectedBindingId = requestedBindingId || owner.bindingId;
+      } else if (!selectedBindingId) {
+        selectedBindingId = requestedBindingId || bindingIdFor(actorId, currentPath,
+          pathState?.heads?.map((fact) => fact.factId) || []);
       }
-      const selectedBindingId = (manual && owner?.status === "verified"
-        ? requestedBindingId || distinct[0] || owner.bindingId : null) ||
-        requestedBindingId || distinct[0] || bindingIdFor(actorId, ownerKind, ownerId, currentPath);
+
+      if (owner?.status === "verified" && manual && requestedBindingId &&
+          requestedBindingId !== owner.bindingId && requestedBindingId !== occupiedBindingId) {
+        throw routeError("MARKDOWN_ROUTE_BINDING_CONFLICT", "The requested binding is not associated with the selected Markdown path.");
+      }
       const bindingFacts = await listBindingFacts(selectedBindingId);
-      const binding = bindingFacts.length ? resolveFactHeads(bindingFacts,
-        (fact) => ({ bindingId: fact.bindingId, currentPath: fact.currentPath }), {
-          validateMove: (fact, parent) => fact.operation === "move" && parent.currentPath !== fact.fromPath
-            ? "binding-move-parent-path-mismatch" : null,
-        }) : null;
+      const binding = bindingFacts.length ? resolveBindingFacts(bindingFacts) : null;
+      if (occupiedBindingId && (binding?.status !== "verified" || binding.currentPath !== currentPath)) {
+        throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The Markdown path claim does not match a verified binding route.");
+      }
       const facts = [];
       if (binding?.status === "verified") {
         if (binding.currentPath !== currentPath) {
-          if (!manual) throw routeError("MARKDOWN_ROUTE_BINDING_CONFLICT", "The Markdown binding already points to another path.");
+          if (!manual || owner?.status !== "verified" || selectedBindingId !== owner.bindingId) {
+            throw routeError("MARKDOWN_ROUTE_BINDING_CONFLICT", "The Markdown binding already points to another path.");
+          }
+          const oldPathState = await resolvePath(binding.currentPath);
+          if (oldPathState.status !== "verified" || oldPathState.bindingId !== selectedBindingId) {
+            throw routeError("MARKDOWN_ROUTE_PATH_UNRESOLVED", "The current Markdown path association is incomplete.");
+          }
           facts.push(bindingFact(selectedBindingId, currentPath, { fromPath: binding.currentPath,
             parentFactIds: binding.heads.map((fact) => fact.factId) }));
+          facts.push(pathFact("release", binding.currentPath, selectedBindingId,
+            oldPathState.heads.map((fact) => fact.factId)));
+          facts.push(pathFact("claim", currentPath, selectedBindingId,
+            pathState?.heads?.map((fact) => fact.factId) || []));
         }
       } else if (!bindingFacts.length) {
+        if (occupiedBindingId) throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The Markdown path references a missing binding route.");
         facts.push(bindingFact(selectedBindingId, currentPath));
+        facts.push(pathFact("claim", currentPath, selectedBindingId, pathState?.heads?.map((fact) => fact.factId) || []));
       } else {
         throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The Markdown route facts are incomplete or conflicting.");
       }
@@ -381,6 +432,22 @@ function createMarkdownRouting({ transaction } = {}) {
       }
     }
     throw routeError("MARKDOWN_ROUTE_CONFLICT", "Markdown routing changed concurrently; no route was overwritten.");
+  }
+
+  function resolvePathFacts(facts) {
+    return resolveFactHeads(facts, (fact) => ({ currentPath: fact.currentPath,
+      bindingId: fact.operation === "claim" ? fact.bindingId : null }), {
+      validateTransition: (fact, parent) => {
+        if (fact.currentPath !== parent.currentPath) return "path-parent-mismatch";
+        if (fact.operation === "release" && (parent.operation !== "claim" || fact.bindingId !== parent.bindingId)) {
+          return "path-release-parent-mismatch";
+        }
+        if (fact.operation === "claim" && fact.parentFactIds.length && parent.operation !== "release") {
+          return "path-claim-parent-mismatch";
+        }
+        return null;
+      },
+    });
   }
 
   function movedPath(path, fromPath, toPath) {
@@ -426,49 +493,61 @@ function createMarkdownRouting({ transaction } = {}) {
       const bindingByNewPath = new Map(moving.map((route) => [movedPath(route.currentPath, fromPath, toPath), route.bindingId]));
       const facts = [];
       for (const route of moving) {
+        const nextPath = movedPath(route.currentPath, fromPath, toPath);
+        const oldPathState = await resolvePath(route.currentPath);
+        if (oldPathState.status !== "verified" || oldPathState.bindingId !== route.bindingId) {
+          throw routeError("MARKDOWN_ROUTE_PATH_UNRESOLVED", "A Markdown route is missing its current path association.");
+        }
+        const newPathFacts = await listPathFacts(nextPath);
+        const newPathState = newPathFacts.length ? resolvePathFacts(newPathFacts) : null;
+        if (newPathState && (newPathState.status !== "verified" || newPathState.bindingId)) {
+          throw routeError("MARKDOWN_ROUTE_PATH_CONFLICT", "The renamed Markdown destination already belongs to another binding.");
+        }
         facts.push(bindingFact(route.bindingId, movedPath(route.currentPath, fromPath, toPath), {
           fromPath: route.currentPath, parentFactIds: route.heads.map((fact) => fact.factId),
         }));
+        facts.push(pathFact("release", route.currentPath, route.bindingId,
+          oldPathState.heads.map((fact) => fact.factId)));
+        facts.push(pathFact("claim", nextPath, route.bindingId,
+          newPathState?.heads?.map((fact) => fact.factId) || []));
       }
 
       const newLegacyRoutes = new Map();
       const allBindingFacts = await listAllBindingFacts();
-      const existingOwnerState = new Map();
       for (const legacy of legacyOwners) {
         const key = ownerKey(legacy.ownerKind, legacy.ownerId);
-        if (ownerKeys.has(key)) {
-          if (!existingOwnerState.has(key)) existingOwnerState.set(key, await resolve(legacy.ownerKind, legacy.ownerId));
-          continue;
-        }
+        if (ownerKeys.has(key)) continue;
         const destination = movedPath(legacy.sourcePath, fromPath, toPath);
         let selectedBindingId = bindingByOldPath.get(legacy.sourcePath) || bindingByNewPath.get(destination) || newLegacyRoutes.get(legacy.sourcePath);
         if (!selectedBindingId) {
           const retired = allBindingFacts.some((fact) => fact.operation === "move" &&
             (fact.fromPath === legacy.sourcePath || fact.fromPath.startsWith(`${legacy.sourcePath}/`)));
           if (retired) continue;
-          selectedBindingId = `markdown-binding-v1:${digest(`${actorId}\u0000vault-rename\u0000${legacy.sourcePath}\u0000${destination}`)}`;
+          const destinationFacts = await listPathFacts(destination);
+          const destinationState = destinationFacts.length ? resolvePathFacts(destinationFacts) : null;
+          if (destinationState && destinationState.status !== "verified") {
+            throw routeError("MARKDOWN_ROUTE_PATH_UNRESOLVED", "The renamed legacy Markdown destination has incomplete path history.");
+          }
+          if (destinationState?.bindingId) selectedBindingId = destinationState.bindingId;
+          else selectedBindingId = bindingIdFor(actorId, destination,
+            destinationState?.heads?.map((fact) => fact.factId) || []);
+          const ownerRoute = selectedBindingId ? await resolveBinding(selectedBindingId) : null;
+          if (destinationState?.bindingId && (ownerRoute?.status !== "verified" || ownerRoute.currentPath !== destination)) {
+            throw routeError("MARKDOWN_ROUTE_BINDING_UNRESOLVED", "The legacy Markdown path claim does not match a verified route.");
+          }
           const bindingFacts = await listBindingFacts(selectedBindingId);
-          if (!bindingFacts.length) facts.push(bindingFact(selectedBindingId, destination));
+          if (!bindingFacts.length) {
+            facts.push(bindingFact(selectedBindingId, destination));
+            facts.push(pathFact("claim", destination, selectedBindingId,
+              destinationState?.heads?.map((fact) => fact.factId) || []));
+          }
           else {
-            const existing = resolveFactHeads(bindingFacts, (fact) => ({ bindingId: fact.bindingId, currentPath: fact.currentPath }), {
-              validateMove: (fact, parent) => fact.operation === "move" && parent.currentPath !== fact.fromPath
-                ? "binding-move-parent-path-mismatch" : null,
-            });
+            const existing = resolveBindingFacts(bindingFacts);
             if (existing.status !== "verified" || existing.currentPath !== destination) continue;
           }
           newLegacyRoutes.set(legacy.sourcePath, selectedBindingId);
         }
         facts.push(ownerFact(legacy.ownerKind, legacy.ownerId, selectedBindingId));
-      }
-      for (const [key, state] of existingOwnerState) {
-        if (state.status !== "verified") continue;
-        const legacy = legacyOwners.find((entry) => ownerKey(entry.ownerKind, entry.ownerId) === key);
-        const expected = legacy && movedPath(legacy.sourcePath, fromPath, toPath);
-        if (expected && state.currentPath !== expected && !movingIds.has(state.bindingId)) {
-          // Existing route facts are authoritative; a rename event cannot move
-          // a legacy owner whose binding points elsewhere.
-          continue;
-        }
       }
 
       const uniqueFacts = new Map(facts.map((fact) => [fact.factId, fact]));
@@ -492,12 +571,14 @@ function createMarkdownRouting({ transaction } = {}) {
     root: MARKDOWN_ROUTE_ROOT,
     ownersRoot: MARKDOWN_OWNER_ROOT,
     bindingsRoot: MARKDOWN_BINDING_ROOT,
+    pathsRoot: MARKDOWN_PATH_ROOT,
     resolve,
     bindCaptured(input) { return bind(input, { manual: false }); },
     bindManual(input) { return bind(input, { manual: true }); },
     recordRename,
     async hasRecords() {
-      return (await adapter.exists(MARKDOWN_OWNER_ROOT)) || (await adapter.exists(MARKDOWN_BINDING_ROOT));
+      return (await adapter.exists(MARKDOWN_OWNER_ROOT)) || (await adapter.exists(MARKDOWN_BINDING_ROOT)) ||
+        (await adapter.exists(MARKDOWN_PATH_ROOT));
     },
     async listBindings() {
       return allBindingRoutes();
@@ -515,5 +596,6 @@ function createMarkdownRouting({ transaction } = {}) {
   });
 }
 
-module.exports = { MARKDOWN_ROUTE_ROOT, MARKDOWN_OWNER_ROOT, MARKDOWN_BINDING_ROOT,
-  MARKDOWN_ROUTE_STORE_ID, OWNER_FACT_KIND, BINDING_FACT_KIND, createMarkdownRouting, normalizeVaultPath, normalizeMarkdownPath };
+module.exports = { MARKDOWN_ROUTE_ROOT, MARKDOWN_OWNER_ROOT, MARKDOWN_BINDING_ROOT, MARKDOWN_PATH_ROOT,
+  MARKDOWN_ROUTE_STORE_ID, OWNER_FACT_KIND, BINDING_FACT_KIND, PATH_FACT_KIND,
+  createMarkdownRouting, normalizeVaultPath, normalizeMarkdownPath };
