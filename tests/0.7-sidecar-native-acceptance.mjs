@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { constants, writeFileSync } from "node:fs";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
@@ -12,6 +12,7 @@ import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 import {
   mapNativeSidecarAdapterArgs,
   mapNativeSidecarListResult,
+  readNativeSidecarTree,
   serializeNativeSidecarAdapterMapper,
 } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
@@ -68,6 +69,7 @@ const report = {
   },
   startedAt: new Date().toISOString(),
   stages: [],
+  snapshotReadRaces: [],
   status: "running",
 };
 report.driverSourceHashReads = [];
@@ -111,14 +113,8 @@ async function wait(label, probe, ok = Boolean, timeout = 30_000) {
   }
   throw Error(`${label}: ${JSON.stringify(latest)}`);
 }
-async function tree(dir) {
-  const result = new Map();
-  for (const e of await readdir(absolute(dir), { withFileTypes: true }).catch(() => [])) {
-    const p = `${dir}/${e.name}`;
-    if (e.isDirectory()) for (const [p2, value] of await tree(p)) result.set(p2, value);
-    else result.set(p, await readFile(absolute(p)));
-  }
-  return result;
+async function tree(dir, { rejectPending = false } = {}) {
+  return readNativeSidecarTree(dir, { resolvePath: absolute, rejectPending });
 }
 const protectedFiles = await tree(storeRoot);
 await mkdir(artifacts, { recursive: true });
@@ -248,7 +244,14 @@ async function point(rx, ry) {
 }
 async function checkpoint() {
   const s = await state();
-  const all = await tree(isolatedStoreRoot);
+  let all;
+  try {
+    all = await tree(isolatedStoreRoot, { rejectPending: true });
+  } catch (error) {
+    if (error?.code !== "NATIVE_SIDECAR_SNAPSHOT_TRANSIENT") throw error;
+    report.snapshotReadRaces.push({ at: new Date().toISOString(), path: error.path });
+    return null;
+  }
   return readNativeWalEvidence({
     files: all,
     isolatedRoot: isolatedStoreRoot,
@@ -260,6 +263,9 @@ async function checkpoint() {
     confirmedViewerRevision: s.confirmed,
     hash: verifyHash,
   });
+}
+async function stableCheckpoint(label = "stable Native sidecar evidence") {
+  return wait(label, checkpoint, evidence => evidence !== null);
 }
 async function saved(label, expectedTypes) {
   await doc(({ w, d }) => { w.focus(); d.getElementById("viewerContainer").focus(); return true; });
@@ -300,7 +306,7 @@ async function saved(label, expectedTypes) {
 async function controlledDetach(label, targetToken = null, expectedRemaining = 0) {
   const maintenanceOffset = await run(() => globalThis.__sidecarNative07.maintenance.length);
   const evidence = await completeNativeControlledClose({ runSerialized: run, waitFor: wait,
-    loadFiles: tree, readWalEvidence: readNativeWalEvidence, hash: verifyHash,
+    loadFiles: dir => tree(dir, { rejectPending: true }), readWalEvidence: readNativeWalEvidence, hash: verifyHash,
     filePath: file, targetToken, expectedRemaining, label, maintenanceOffset,
     isolatedRoot: isolatedStoreRoot, virtualRoot: storeRoot });
   (report.controlledCloses ||= []).push(evidence);
@@ -329,7 +335,7 @@ async function closeFailedFixtureSafely() {
   if (!session.protocol?.startsWith("wal-sidecar-v3.")) return { alreadyAbsent: true, noWalMaintenanceExpected: true, session };
   const maintenance = await wait("failure-path background annotation maintenance settled", () => run(nativeMaintenanceTerminal,
     { documentId: session.documentId, offset: 0 }), row => Boolean(row && row.receivedAt > session.latestAckAt), 20_000);
-  const wal = await readNativeWalEvidence({ files: await tree(isolatedStoreRoot), isolatedRoot: isolatedStoreRoot,
+  const wal = await readNativeWalEvidence({ files: await tree(isolatedStoreRoot, { rejectPending: true }), isolatedRoot: isolatedStoreRoot,
     virtualRoot: storeRoot, docKey: session.docKey, documentId: session.documentId,
     sourceHash: session.sourceHash, viewerRevision: report.failureState?.revision ?? 0,
     confirmedViewerRevision: report.failureState?.confirmed ?? 0, hash: verifyHash });
@@ -337,7 +343,7 @@ async function closeFailedFixtureSafely() {
   return { alreadyAbsent: true, maintenance, walAfterClose: { snapshotStatus: wal.snapshot?.status, walStatus: wal.durableWal?.status } };
 }
 async function exportCopy(expectedTypes) {
-  const expectedRows = (await checkpoint()).annotations;
+  const expectedRows = (await stableCheckpoint("checkpoint before controlled close")).annotations;
   const expectedPath = `${folder}/immutable-source (PDF Reader Export).pdf`;
   const targetState = await run(async p => ({
     exists: await app.vault.adapter.exists(p),
@@ -567,17 +573,17 @@ try {
   }else if(scenario==='underline'){
     await independentReaderLifecycle();
     await createNativeUnderline('underline-single',5);
-    const initial=(await checkpoint()).annotations.map(r=>r.uuid);
+    const initial=(await stableCheckpoint("initial Underline checkpoint")).annotations.map(r=>r.uuid);
     await close();await open();
     await wait('Underline hydrated after reopen',state,s=>s.editors.filter(e=>e.type===10).length===1);
-    assert.deepEqual((await checkpoint()).annotations.map(r=>r.uuid),initial);
+    assert.deepEqual((await stableCheckpoint("reopened Underline checkpoint")).annotations.map(r=>r.uuid),initial);
     await underlineVisual('underline-after-reopen');
     await createNativeUnderline('underline-adjacent',6);
     await createNativeUnderline('underline-multiline',9,true);
-    const all=(await checkpoint()).annotations.map(r=>r.uuid);assert.equal(new Set(all).size,3);
+    const all=(await stableCheckpoint("three Underline checkpoint")).annotations.map(r=>r.uuid);assert.equal(new Set(all).size,3);
     await close();await open();
     await wait('Three Underlines hydrate without duplication',state,s=>s.editors.filter(e=>e.type===10).length===3);
-    assert.deepEqual((await checkpoint()).annotations.map(r=>r.uuid).sort(),all.sort());
+    assert.deepEqual((await stableCheckpoint("reopened three Underline checkpoint")).annotations.map(r=>r.uuid).sort(),all.sort());
     await underlineVisual('underline-three-after-reopen');
     await close();report.status='passed';
   }else{
@@ -589,11 +595,11 @@ try {
   await saved('freetext-created',['FreeText']);
   await freeTextVisual('freetext-created');
   if(scenario==='freetext'){
-    const uuid=(await checkpoint()).annotations[0].uuid;
+    const uuid=(await stableCheckpoint("created FreeText checkpoint")).annotations[0].uuid;
     const createdRect=(await state()).editors.find(e=>e.type===3).serialized.rect;
     await close(); await open();
     await wait('FreeText hydrated',state,s=>s.editors.some(e=>e.type===3));
-    assert.equal((await checkpoint()).annotations[0].uuid,uuid);
+    assert.equal((await stableCheckpoint("reopened FreeText checkpoint")).annotations[0].uuid,uuid);
     await freeTextVisual('freetext-after-reopen');
     report.freeTextUuid=uuid;
     const reopenedRect=(await state()).editors.find(e=>e.type===3).serialized.rect;
@@ -619,7 +625,7 @@ try {
   assert.deepEqual(Object.fromEntries((await state()).snapshot.annotations.map(r=>[r.kind,r.uuid])),report.initialUuids);
   await freeTextVisual('freetext-after-reopen');
   // Move a saved Square through actual pointer input.
-  const squareRows=(await checkpoint()).annotations.filter(row=>row.kind==='Square');
+  const squareRows=(await stableCheckpoint("reopened Square checkpoint")).annotations.filter(row=>row.kind==='Square');
   const squareEditors=(await state()).editors.filter(editor=>editor.type===5);
   assert.equal(squareRows.length,1,'The persisted five-tool state must contain exactly one Square before moving it');
   assert.equal(squareEditors.length,1,'The reopened Viewer must contain exactly one Square before moving it');
@@ -680,7 +686,7 @@ try {
   // The active Square tool intentionally draws over existing markup. Return
   // to NONE and prove the exact old Underline is selected before Delete.
   const underlineEditors=(await state()).editors.filter(editor=>editor.type===10);
-  const underlineRows=(await checkpoint()).annotations.filter(row=>row.kind==='Underline');
+  const underlineRows=(await stableCheckpoint("Underline before delete checkpoint")).annotations.filter(row=>row.kind==='Underline');
   assert.equal(underlineEditors.length,1); assert.equal(underlineRows.length,1);
   assert.equal(underlineRows[0].uuid,report.initialUuids.Underline);
   const underlineEditor=underlineEditors[0];
@@ -735,10 +741,10 @@ try {
   await key('Delete','Delete',46);
   const four=five.filter(t=>t!=='Underline'); await saved('delete',four);
   await button('#pdfReaderBridgeUndoButton'); await saved('undo',five);
-  assert.equal((await checkpoint()).annotations.find(r=>r.kind==='Underline').uuid,report.initialUuids.Underline);
+  assert.equal((await stableCheckpoint("saved Underline checkpoint")).annotations.find(r=>r.kind==='Underline').uuid,report.initialUuids.Underline);
   await button('#pdfReaderBridgeRedoButton'); await saved('redo',four);
   await close(); await open(); await wait('final four hydrated',state,s=>s.editors.length===4);
-  const final=await checkpoint(); assert.equal(final.tombstones.find(r=>r.kind==='Underline').uuid,report.initialUuids.Underline);
+  const final=await stableCheckpoint("final delete/undo/redo checkpoint"); assert.equal(final.tombstones.find(r=>r.kind==='Underline').uuid,report.initialUuids.Underline);
   report.finalUuids=Object.fromEntries(final.annotations.map(r=>[r.kind,r.uuid]));
   await exportCopy(four);
   await close(); report.status='passed';

@@ -1,3 +1,50 @@
+# Windows Native P0 acceptance — 0.13.0, 2026-10-23
+
+This dated addendum records the final-package test-Vault runs. It does not
+replace the 2026-10-22 staging evidence or its retained failures below.
+
+## Runtime identity and immutable-source checks
+
+- Obsidian 1.14.4 on Windows; test Vault only.
+- Runtime/plugin version: `0.13.0`.
+- Installed `main.js` SHA-256:
+  `5537d534053af3d1b30c99881377307d34ce855e562d63bcbf74e372a92684c6`.
+- Five-tool fixture source SHA-256:
+  `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`;
+  XXH64 `xxh64-v1:ffbe0d4d212547e5`.
+- All three receipts report the same source hashes before and after, zero
+  source-PDF write attempts, and zero ordinary `saveDocument()` calls. The only
+  recorded PDF serialization calls are explicitly authorized independent-file
+  exports in the FreeText and five-tool flows.
+- Each run verified 366 protected pre-existing sidecar files with zero changes.
+
+## Final-package Native runs
+
+`tests/artifacts/0.7-sidecar-native-acceptance-20261023034628589.json`:
+**PASS** for the recorded flow. Underline, Square, Highlight, Ink and FreeText
+were created; the annotations were saved, the Reader fully closed and reopened,
+and the same UUIDs restored. Square was moved after saving, and delete → Undo →
+Redo was verified. The independent export was separate from the source PDF.
+
+`tests/artifacts/0.7-sidecar-native-acceptance-20261023033226925.json`:
+**PASS** for the recorded Underline flow. Single-line, adjacent-line and
+multiline selections were saved and reopened; three distinct UUIDs remained,
+three editors were visible, and Reader A/B lifecycle selection worked without
+duplicate editors. The composed screenshot ROI changed for the reopened marks.
+
+`tests/artifacts/0.7-sidecar-native-acceptance-20261023033319350.json`:
+**PASS** for the recorded FreeText flow. Real pointer creation, nonempty text,
+commit, durable save and full close/reopen preserved UUID, contents and PDF
+rectangle (`maxDelta=0`); the composed display ROI remained visible. Independent
+export reparsed as standard `/FreeText`.
+
+These are bounded Windows Native acceptance scenarios, not a claim that every
+device/input/lifecycle path is covered. macOS, physical iPad/Pencil and real
+multi-client Sync remain `NOT_RUN`; Native learning-source return and dedicated
+rename/move flows remain `NOT_VERIFIED`.
+
+---
+
 # Windows Native P0 staging acceptance — 2026-10-22
 
 This is additional evidence, not a replacement for the earlier failures in

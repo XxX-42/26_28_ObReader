@@ -2340,13 +2340,19 @@ test(
       const afterToolbarTouch = await inputSnapshot();
       await waitMs(300);
       const afterToolbarTouchWait = await inputSnapshot();
+      const toolbarTouchEvents = await viewer.evaluate((offset) =>
+        window.__ipadPointerEvents?.slice(offset) || [], toolbarTouchOffset,
+      );
+      report.toolbarContactOutcome = {
+        dispatches: toolbarContactDispatches,
+        afterContact: afterToolbarTouch,
+        after300ms: afterToolbarTouchWait,
+        events: toolbarTouchEvents,
+      };
       runSequenceAssertion(report, "gesture25-to-26-toolbar-contact", () => assert.ok(
         Math.abs(afterToolbarTouchWait.scrollTop - afterToolbarTouch.scrollTop) <= 1,
         "A new finger contact on the toolbar must stop PDF inertia",
       ));
-      const toolbarTouchEvents = await viewer.evaluate((offset) =>
-        window.__ipadPointerEvents?.slice(offset) || [], toolbarTouchOffset,
-      );
       await endReliabilitySequence(
         viewer,
         "gesture25-to-26-toolbar-contact",

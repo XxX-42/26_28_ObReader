@@ -261,15 +261,18 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
       const stopped = container.scrollTop;
       await new Promise((resolve) => setTimeout(resolve, 150));
       return { initial, moving, stopped, later: container.scrollTop,
-        eraser: document.body.classList.contains("editorEraserMode") };
+        eraser: document.body.classList.contains("editorEraserMode"),
+        maxScrollTop: container.scrollHeight - container.clientHeight,
+        scrollBehavior: getComputedStyle(container).scrollBehavior,
+        overflow: getComputedStyle(container).overflow };
     });
+    t.diagnostic(JSON.stringify({ momentumBeforeEraser }));
     assert.ok(momentumBeforeEraser.moving > momentumBeforeEraser.initial &&
       momentumBeforeEraser.moving < momentumBeforeEraser.initial + 500,
       "the eraser is selected during an unfinished native scroll animation");
     assert.equal(momentumBeforeEraser.eraser, true);
     assert.ok(Math.abs(momentumBeforeEraser.later - momentumBeforeEraser.stopped) <= 1,
       "selecting eraser interrupts in-flight native smooth scrolling before the next Pencil stroke");
-    t.diagnostic(JSON.stringify({ momentumBeforeEraser }));
 
     await viewer.evaluate(() => PDFViewerApplication.eventBus.dispatch("switchannotationeditormode", {
       source: window, mode: 0, isFromKeyboard: true, createNewEditor: false,

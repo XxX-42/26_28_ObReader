@@ -1350,12 +1350,21 @@ test(
         const rect = page?.getBoundingClientRect();
         if (!rect?.width || !rect?.height) throw new Error("The first page is not rendered for the local square gesture.");
         return {
-          x1: rect.x + rect.width * 0.48,
+          // The annotation sidebar is intentionally still open here so this
+          // gesture verifies live list refresh. Keep the gesture in the
+          // uncovered left part of the page instead of underneath its panel.
+          x1: rect.x + rect.width * 0.15,
           y1: rect.y + rect.height * 0.55,
-          x2: rect.x + rect.width * 0.56,
+          x2: rect.x + rect.width * 0.25,
           y2: rect.y + rect.height * 0.63,
         };
       });
+      const squareGesturePageHits = await viewer.evaluate((gesture) => [
+        document.elementFromPoint(gesture.x1, gesture.y1)?.closest(".page")?.dataset.pageNumber || null,
+        document.elementFromPoint(gesture.x2, gesture.y2)?.closest(".page")?.dataset.pageNumber || null,
+      ], squareGesture);
+      assert.deepEqual(squareGesturePageHits, ["1", "1"],
+        "the sidebar-open Square gesture starts and ends on the visible PDF page");
       const iframeRect = await page.$eval("#pdf-reader", (iframe) => {
         const rect = iframe.getBoundingClientRect();
         return { x: rect.x, y: rect.y };

@@ -2990,6 +2990,11 @@ test(
           .map((entry) => ({
             paused:entry.callArgs?.paused ?? null,
             stack:entry.stack || [],
+            pageIndex:entry.pageIndex ?? null,
+            pageLayerConnected:entry.pageLayerConnected === true,
+            managerCurrentLayerMatchesPage:entry.managerCurrentLayerMatchesPage === true,
+            activeEditor:entry.activeEditor || null,
+            activeElement:entry.activeElement || null,
           })) ?? [],
         manualCalls:window.__mouseManualPauseResumeCalls.slice(),
       };
@@ -3037,9 +3042,21 @@ test(
     const explicitToolbarPause = resumedFreeText.pauseEvents[0];
     assert.equal(explicitToolbarPause?.paused, true, JSON.stringify(resumedFreeText));
     const additionalPauses = resumedFreeText.pauseEvents.slice(3);
-    assert.ok(additionalPauses.every((event) => event.paused === true &&
-      event.stack.some((frame) => frame.includes("PDFPageView.reset"))),
-    `Every pause after the three captured toolbar calls must be an explicitly traced PDF.js page reset: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
+    assert.ok(additionalPauses.every((event) => {
+      if (event.paused === true) {
+        return event.stack.some((frame) => frame.includes("PDFPageView.reset"));
+      }
+      return event.paused === false &&
+        event.stack.some((frame) => frame.includes("AnnotationEditorLayerBuilder.show")) &&
+        event.pageIndex === pausedFreeText.pageIndex &&
+        event.pageLayerConnected && event.managerCurrentLayerMatchesPage &&
+        event.activeEditor?.id === pausedFreeText.editorId &&
+        event.activeEditor?.parentPageIndex === pausedFreeText.pageIndex &&
+        event.activeEditor?.parentMatchesPageLayer === true &&
+        event.activeEditor?.attached === true && event.activeEditor?.selected === true &&
+        event.activeEditor?.empty === false &&
+        event.activeElement?.editable === (event.activeEditor?.editing === true);
+    }), `Every post-toolbar pause must be either a page-reset hide or a PDF.js show that preserves this attached, selected, nonempty editor without contradicting its editability: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.equal(resumedFreeText.pauseEvents.at(-1)?.paused, false,
       `Both toolbar and redraw pauses must finish with the layer resumed: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.deepEqual(

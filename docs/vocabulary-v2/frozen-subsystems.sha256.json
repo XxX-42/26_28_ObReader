@@ -35,6 +35,12 @@
       "viewer-adapter/input/text-selection-controller.js": "012af2d686bb5bcf8bfe5a5f67bb399a5e2b315d71edbc6cc55f76d8cbb3f51b"
     }
   },
+  "reviewedReliabilityOverrides": {
+    "reason": "2026-10-23: evidenced iOS toolbar finger contact did not stop native PDF scroll inertia; stop inertia while preserving native toolbar activation and page scrolling.",
+    "sha256": {
+      "viewer-adapter/input/ios-input-policy.js": "8615b2261931c485aaca3942ed5bfef7eb44b6cf0dfc64bdb8a7d5671804a27b"
+    }
+  },
   "sha256": {
     "plugin/pdf-annotation-host.cjs": "9f9340e9d57fce9fa4d79c6392022705923534bdfc40e3267f31f9d4f9b7b2de",
     "plugin/pdf-annotation-store.cjs": "96924d0682f53e799501673b1a180481d263d4e1e6ad7a9ca4529c4b7eb78d53",

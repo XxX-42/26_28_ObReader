@@ -52,4 +52,25 @@ The in-memory compact-envelope prototype preserved every History field but grew 
 
 Raw resource and JSON/log artifacts stay ignored under `tests/artifacts/` and `tests/output/dictionary-resource-benchmark-20261022/`. The frozen public resource was copied only from the prior isolated test artifact; compressed SHA-256 was verified as `b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126`. No production Vault, deployment, push, or schema change occurred.
 
-Support tests passed 4/4, including fresh-browser lifecycle success/timeout/setup-failure cleanup, variant bundle construction, cancellation/resume membership correctness, corrupt forced-replacement preservation, and expired-owner lease fencing. The lifecycle test uses a mock browser factory with isolated storage maps; real profile disk backing still requires protocol 3's browser run. Revised harness syntax and `git diff --check` passed. Protocols 2 and 3 have not run.
+Support tests passed 4/4, including fresh-browser lifecycle success/timeout/setup-failure cleanup, variant bundle construction, cancellation/resume membership correctness, corrupt forced-replacement preservation, and expired-owner lease fencing. The lifecycle test uses a mock browser factory with isolated storage maps; real profile disk backing still requires a complete protocol 3 browser run. At the time of this 2026-10-22 entry, protocols 2 and 3 had not run; the later partial attempt is recorded below.
+
+## Partial P3 cold-measurement attempt (2026-10-23)
+
+The predeclared P3 run set `71b1645a-b291-4efe-b7e8-7d4130e819a9` was started
+and then stopped to release the exclusive Browser resource for product
+acceptance. The plan and all partial results remain under
+`tests/artifacts/performance/p3/2026-10-23T03-29-51-525Z-71b1645a-b291-4efe-b7e8-7d4130e819a9/`.
+
+| Variant | Passed | Timed out | Interrupted | Not run |
+|---|---:|---:|---:|---:|
+| 4k baseline | 3 | 2 | 0 | 0 |
+| 4k membership-tail | 4 | 1 | 0 | 0 |
+| 8k | 1 | 0 | 1 | 3 |
+| 16k | 0 | 0 | 0 | 5 |
+| **Total of 20 predeclared trials** | **8** | **3** | **1** | **8** |
+
+This is an incomplete experiment, not a valid five-run-per-variant comparison.
+No optimization gain, batch-size recommendation, or cold-start acceptance is
+claimed. Existing raw results were retained; no timeout was increased, no
+failed result was retried to select a pass, and no product/resource data was
+modified.

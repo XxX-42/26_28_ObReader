@@ -1,3 +1,5 @@
+import { readdir as fsReaddir, readFile as fsReadFile } from "node:fs/promises";
+
 const ADAPTER_PATH_METHODS = new Set([
   "read", "write", "readBinary", "writeBinary", "append", "appendBinary",
   "remove", "rename", "exists", "mkdir", "list", "process",
@@ -11,6 +13,44 @@ export function assertNativeFixtureScope({ file, fixtureFolder } = {}) {
     throw new Error("Native PDF guards require an explicit isolated fixture folder");
   }
   return true;
+}
+
+export async function readNativeSidecarTree(root, {
+  resolvePath = value => value,
+  readdir = fsReaddir,
+  readFile = fsReadFile,
+  rejectPending = false,
+} = {}) {
+  const files = new Map();
+  const walk = async directory => {
+    const entries = await readdir(resolvePath(directory), { withFileTypes: true });
+    for (const entry of entries) {
+      const logicalPath = `${directory.replace(/\/+$/, "")}/${entry.name}`;
+      if (entry.isDirectory()) {
+        await walk(logicalPath);
+        continue;
+      }
+      if (rejectPending && entry.name.endsWith(".jsonl.pending")) {
+        const publishedName = entry.name.slice(0, -".pending".length);
+        if (entries.some(candidate => candidate.name === publishedName && !candidate.isDirectory())) {
+          // atomicReplace intentionally leaves a JSONL recovery witness. The
+          // published WAL remains authoritative; its full readback is checked
+          // by readNativeWalEvidence, while a rename window is handled by the
+          // normal expected-state retry.
+          continue;
+        }
+      }
+      if (rejectPending && entry.name.endsWith(".pending")) {
+        const error = new Error(`Native sidecar snapshot overlaps an atomic pending write: ${logicalPath}`);
+        error.code = "NATIVE_SIDECAR_SNAPSHOT_TRANSIENT";
+        error.path = logicalPath;
+        throw error;
+      }
+      files.set(logicalPath, await readFile(resolvePath(logicalPath)));
+    }
+  };
+  await walk(root);
+  return files;
 }
 
 export function mapNativeSidecarPath(value, sourceRoot, targetRoot) {

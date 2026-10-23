@@ -5,6 +5,7 @@ import * as sidecarIsolation from "./native-sidecar-isolation.mjs";
 import {
   mapNativeSidecarAdapterArgs,
   mapNativeSidecarPath,
+  readNativeSidecarTree,
   serializeNativeSidecarAdapterMapper,
 } from "./native-sidecar-isolation.mjs";
 
@@ -94,6 +95,65 @@ test("Native sidecar redirect maps DataAdapter.list results back into the virtua
   ]);
   assert.deepEqual(physical.files, [`${targetRoot}/wal/device-a/doc.jsonl.anchor.json`, "outside/file.json"],
     "mapping a list result must not mutate the adapter's physical result");
+});
+
+test("Native evidence snapshot defers while an atomic .pending file is being renamed", async () => {
+  const reads = [];
+  const error = await readNativeSidecarTree("sidecar", {
+    rejectPending: true,
+    readdir: async () => [{ name: "doc.jsonl.archive.11-11.json.pending", isDirectory: () => false }],
+    readFile: async file => {
+      reads.push(file);
+      throw Object.assign(new Error("ENOENT during atomic rename"), { code: "ENOENT" });
+    },
+  }).then(() => null, value => value);
+
+  assert.equal(error?.code, "NATIVE_SIDECAR_SNAPSHOT_TRANSIENT");
+  assert.equal(error?.path, "sidecar/doc.jsonl.archive.11-11.json.pending");
+  assert.deepEqual(reads, [], "Unpublished temporary files must never be parsed as durable WAL evidence");
+});
+
+test("Native evidence snapshot ignores the retained JSONL witness but reads its published WAL", async () => {
+  const reads = [];
+  const files = await readNativeSidecarTree("sidecar", {
+    rejectPending: true,
+    readdir: async directory => directory === "sidecar"
+      ? [{ name: "wal", isDirectory: () => true }]
+      : [
+        { name: "doc.jsonl.pending", isDirectory: () => false },
+        { name: "doc.jsonl", isDirectory: () => false },
+      ],
+    readFile: async file => {
+      reads.push(file);
+      return Buffer.from("published-wal\n");
+    },
+  });
+
+  assert.deepEqual([...files.keys()], ["sidecar/wal/doc.jsonl"]);
+  assert.deepEqual(reads, ["sidecar/wal/doc.jsonl"], "The retained pending witness is never treated as the active WAL");
+});
+
+test("Native evidence snapshot still defers when a JSONL pending file has no published WAL", async () => {
+  const error = await readNativeSidecarTree("sidecar", {
+    rejectPending: true,
+    readdir: async directory => directory === "sidecar"
+      ? [{ name: "wal", isDirectory: () => true }]
+      : [{ name: "doc.jsonl.pending", isDirectory: () => false }],
+    readFile: async () => { throw new Error("unpublished WAL must not be read"); },
+  }).then(() => null, value => value);
+
+  assert.equal(error?.code, "NATIVE_SIDECAR_SNAPSHOT_TRANSIENT");
+  assert.equal(error?.path, "sidecar/wal/doc.jsonl.pending");
+});
+
+test("Native evidence snapshot propagates a missing published file", async () => {
+  const error = await readNativeSidecarTree("sidecar", {
+    rejectPending: true,
+    readdir: async () => [{ name: "doc.jsonl.archive.11-11.json", isDirectory: () => false }],
+    readFile: async () => { throw Object.assign(new Error("missing published archive"), { code: "ENOENT" }); },
+  }).then(() => null, value => value);
+
+  assert.equal(error?.code, "ENOENT", "A missing final archive remains a real evidence failure");
 });
 
 test("Native sidecar mapper works after serialization into an isolated Obsidian runtime", () => {

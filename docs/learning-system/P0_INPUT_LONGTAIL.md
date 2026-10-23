@@ -110,3 +110,17 @@ Artifact limitation: the existing exact command's harness reduces the CDP `Profi
 ## Separate P0 workstream
 
 The six A/B reports above precede the later P0 Square interaction/source-guard work. Parent-reported follow-up state is: a minimal bridge wrapper fix, Browser 1/1, packaging 4/4, offline PASS, and installed test-vault main SHA-256 `78c842df1ee3806277983fced3dc3e0cf01137960a59d577cf1925a53ac2b563`. That workstream is not an 80 ms input optimization and made no `InputRouter` change; its results must not be blended into or used to reinterpret these paired long-tail measurements.
+
+## Later standalone simulated-input follow-up (2026-10-23)
+
+The latest standalone `ipad-pointer-policy` browser receipt is
+`tests/artifacts/vocabulary-gates/out/7ceab8f159b3/ipad-pointer-policy/ipad-pointer-policy-1792728635205-31364.json`.
+It recorded eight timed gestures, no acceptance assertion failures, normal
+browser/server cleanup, and a maximum recorded dispatch delay of **41.2 ms**.
+This is simulated Chromium input (`physicalDevice: false`); CDP pen input is not
+hardware Apple Pencil. It is a successful follow-up sample, not a replacement
+for the six paired runs, B2 readiness failure, separate profiled failure, or
+the earlier 84.8 ms test failure observed during a concurrent ECDICT benchmark.
+Those failures remain in their original run reports. The single later pass does
+not establish sustained-load latency, attribute earlier failures to contention,
+or satisfy a physical iPad gate.

@@ -41,6 +41,38 @@ const mimeTypes = new Map([
   [".svg", "image/svg+xml"],
   [".wasm", "application/wasm"],
 ]);
+const chromiumBlockedPorts = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53,
+  77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117,
+  119, 123, 135, 139, 143, 179, 389, 427, 465, 512, 513, 514, 515,
+  526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989,
+  990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 5060, 5061,
+  6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080,
+]);
+
+async function listenOnChromiumSafePort(server) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((resolve, reject) => {
+      const onError = (error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(0, "127.0.0.1");
+    });
+    const port = server.address()?.port;
+    if (port && !chromiumBlockedPorts.has(port)) return port;
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+  throw new Error("Could not allocate a Chromium-safe localhost port after 8 OS assignments.");
+}
 
 test("iOS auto-save waits for idle and cooldown, then writes only the latest revision", {
   skip: !browserPath && "Chrome or Edge is required for this browser regression",
@@ -219,11 +251,8 @@ test("iOS auto-save waits for idle and cooldown, then writes only the latest rev
   });
 
   try {
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const port = await listenOnChromiumSafePort(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
     browser = await launchTestBrowser(puppeteer, {
       executablePath: browserPath,
       headless: true,

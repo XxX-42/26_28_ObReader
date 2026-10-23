@@ -30,6 +30,13 @@
             intent.nativeActivationTarget === true)) {
         this.stopNativeScroll();
       }
+      if (intent?.type === "touchstart" &&
+          !intent.touchHasStylus &&
+          ["editor-mode-buttons", "editor-params-toolbar"].includes(intent.targetRegion)) {
+        // A finger tap on a toolbar control must stop browser-owned PDF
+        // inertia, while leaving the touch event itself native for activation.
+        this.stopNativeScroll();
+      }
       if (this.updateReadPenSelectionSuppression(intent, controls)) return false;
       if (intent?.type === "touchstart") this.handleTouchStart(intent, controls);
       if (intent?.type === "touchmove") this.handleTouchMove(intent, controls);

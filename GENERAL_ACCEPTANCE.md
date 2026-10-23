@@ -1,9 +1,10 @@
 # Reading → understanding → memory — 0.13.0 candidate
 
-Integration baseline: `9c361330388cbc929ef76bcc53b83f49a7360c04` on
-`feature/reading-learning-loop-20261022`. The implementation contract and
-stage receipts live under `docs/learning-system/`. Historical results below
-are retained, not re-labelled as current acceptance.
+Current worktree: `feature/reading-learning-loop-20261022` at
+`04a85f80e8317ac181262fc610122e0c1a727b23`; implementation contract and
+stage receipts live under `docs/learning-system/`. The previous feature
+baseline was `9c361330388cbc929ef76bcc53b83f49a7360c04`. Historical results
+below are retained, not re-labelled as current acceptance.
 
 This stage preserves the frozen PDF.js vendor, InputRouter architecture,
 annotation WAL/sidecar protocol, immutable source PDFs, Vocabulary canonical
@@ -12,36 +13,54 @@ not another database. Learning items are a separate logical store over the
 existing coordinator/shards/History; explicit draft confirmation is required.
 Default scheduling remains compatible UTC Leitner. FSRS is dev-only replay.
 
-Current verified stage evidence:
+Current verified stage evidence (2026-10-23):
 
-- Real Windows Obsidian test-Vault staging package: five-tools, FreeText and
-  Underline Native scenarios passed with exact UUID close/reopen, source
-  SHA-256/XXH64 unchanged, zero source writes and ordinary `saveDocument()`
-  calls, and 366 protected pre-existing sidecar files unchanged. These runs
-  used the earlier 0.12.2-labelled staging bundle, not the final 0.13 package.
-  See `P0_NATIVE_ROOT_ACCEPTANCE.md` for hashes, runs and retained failures.
+- Windows Obsidian test-Vault Native receipts now run the actual `0.13.0`
+  package, bundle SHA-256 `5537d534053af3d1b30c99881377307d34ce855e562d63bcbf74e372a92684c6`:
+  five tools, Underline and FreeText passed their recorded close/reopen flows.
+  Source PDF SHA-256 and XXH64 were unchanged; source write attempts and
+  ordinary `saveDocument()` calls were zero; all 366 protected pre-existing
+  sidecar files were unchanged. See `P0_NATIVE_ROOT_ACCEPTANCE.md` for receipts.
+- Browser run `run-2026-10-23T04-07-40-827Z-40880-b3dd2f92` passed **28/28,
+  0 failed, 0 skipped** and was acceptance eligible. It exercises Chromium/PDF.js
+  and mocked Obsidian host boundaries; it is not Native Markdown navigation or
+  physical-device evidence.
+- Exact `npm test` invocation stopped at Fast: **111 passed, 1 gate failure,
+  5 skipped**. The five skips are existing platform-specific cases, and the
+  strict runner makes any skip ineligible; no child assertion failed. Report:
+  `run-2026-10-23T04-14-12-381Z-31632-c5c4ac8f`. Browser was run independently
+  and passed 28/28. `npm run test:offline` passed after the current build.
 - Six unprofiled input A/B runs collected all 18 declared gesture sequences;
   none violated 80 ms in those captures. B2 still failed a later page-readiness
   condition. A separate CPU-profiled run failed at 169–188 ms, with timestamps
   preceding profiler startup; it is not replaced by the successful unprofiled
-  results and does not prove a candidate production regression. See
-  `P0_INPUT_LONGTAIL.md`. No latency threshold was increased.
+  results. A later simulated input run passed with a 41.2 ms max dispatch, but
+  neither erases the retained failures or proves a physical-device outcome. No
+  latency threshold was increased. See `P0_INPUT_LONGTAIL.md`.
 - Source-validity loss after asynchronous draft planning and missing other-
   device export history were both reproduced red, minimally repaired, then
   the learning Host/domain suites passed 24/24. Validation is immediately
   before commit, not a globally atomic transaction with external source files.
-- Backlink/LingQ pointer ownership, explicit touch badges and visibility
-  refresh have focused red/green tests. InputRouter and persistence unchanged.
-- A packaged build verifies exactly three files, 406 embedded assets and
-  all 402 frozen vendor hashes. Final Fast/Browser/Race/Offline results and
-  final 0.13 Native/deployment receipts are not yet claimed here.
+- SemanticAnchor/targetText focused suites passed 33/33; learning domain/host,
+  History, review, source validation and export suites passed 43/43 in the
+  read-only audit. Browser learning/backlink flows passed within the 28-test
+  gate, with the Obsidian workspace/editor boundary mocked.
+- The latest build verifies exactly three release files, 406 embedded assets
+  and all 402 frozen vendor hashes. After the autosave-mobile test began
+  selecting an OS-assigned Chromium-safe port (avoiding blocked port 6000), a
+  full Race run `run-2026-10-23T04-17-47-099Z-16100-10c96f0c` passed **80/80,
+  0 failed, 0 skipped**. The original 79/80 `ERR_UNSAFE_PORT` report is
+  retained as the pre-fix run.
+- The test Vault has a verified 0.13.0 installed bundle matching the Native
+  receipt hash. This is a test-Vault deployment only; no production Vault push
+  or deployment occurred.
 
-Still open at this checkpoint: the full browser learning/backlink suite has a
-retained late badge-click failure (screenshot proves an occluding Highlight
-parameter popup); its trusted outside-dismissal fixture correction awaits
-execution. E2E-5 LingQ→Review→Context→PDF, dictionary cold measurements,
-25k actual I/O, final Native, macOS/physical iPad and real Sync remain separate
-gates. Do not call this architecture or release accepted from targeted passes.
+Still open: the Fast gate rejects its five platform-specific skips; ECDICT
+cold-start measurements are incomplete and do not establish an optimization; the 25k
+import measurement uses an in-memory adapter, not physical Vault I/O. Native
+learning/source-return and Native rename/move are not verified. macOS Native,
+physical iPad, real multi-client Sync, and physical Pencil remain `NOT_RUN`.
+The candidate is not fully accepted for release from the current evidence.
 
 ---
 

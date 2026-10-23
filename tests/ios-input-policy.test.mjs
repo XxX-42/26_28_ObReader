@@ -267,6 +267,42 @@ test("selecting a tool interrupts native momentum before Pencil input, without i
   assert.equal(stylusStart.prevented, true);
 });
 
+test("a finger contact on the annotation toolbar interrupts native momentum without claiming touch", () => {
+  const { policy } = createPolicy();
+  let interruptions = 0;
+  let forwarded = 0;
+  policy.stopNativeScroll = () => { interruptions++; };
+  const toolbarTouch = controls();
+  policy.route({
+    type: "touchstart",
+    pointerType: "touch",
+    targetRole: "native-control",
+    targetRegion: "editor-mode-buttons",
+    nativeContextTarget: true,
+    nativeActivationTarget: true,
+    touchHasStylus: false,
+  }, () => { forwarded++; }, toolbarTouch.value);
+  assert.equal(interruptions, 1,
+    "the toolbar contact requests cancellation of PDF native scroll inertia");
+  assert.equal(toolbarTouch.prevented, false,
+    "the toolbar retains its normal native finger activation");
+  assert.equal(forwarded, 1,
+    "the original touch event still reaches PDF.js and toolbar handling");
+
+  const viewerTouch = controls();
+  policy.route({
+    type: "touchstart",
+    pointerType: "touch",
+    targetRole: "viewer",
+    nativeContextTarget: false,
+    nativeActivationTarget: false,
+  }, () => { forwarded++; }, viewerTouch.value);
+  assert.equal(interruptions, 1,
+    "ordinary page scrolling remains browser-owned");
+  assert.equal(viewerTouch.prevented, false);
+  assert.equal(forwarded, 2);
+});
+
 test("native scroll interruption preserves position and restores all inline CSS, including on error", async () => {
   const runtimeWindow = { PdfReaderInputRuntime: {} };
   vm.runInNewContext(await readFile(new URL("../viewer-adapter/input/viewport-controller.js", import.meta.url), "utf8"), { window: runtimeWindow });
