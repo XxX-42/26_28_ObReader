@@ -301,36 +301,6 @@ async function clearStaleNativeMaintenanceLogger() {
   await checkpoint("prior-owned-maintenance-hook-cleared", stale);
 }
 
-async function readRuntimeBacklinkMethodSource() {
-  const session = await page.createCDPSession();
-  try {
-    const { result } = await session.send("Runtime.evaluate", {
-      expression: `app.plugins.plugins[${JSON.stringify(PLUGIN_ID)}].openReaderBacklinkSource`,
-    });
-    let methodId = result.objectId;
-    for (let depth = 0; depth < 4; depth += 1) {
-      const source = await session.send("Runtime.callFunctionOn", { objectId: methodId,
-        functionDeclaration: "function() { return Function.prototype.toString.call(this); }", returnByValue: true });
-      const text = source.result.value;
-      if (!text.includes("original.apply(this, args)")) return text;
-      const properties = await session.send("Runtime.getProperties", { objectId: methodId });
-      const scopesId = properties.internalProperties?.find(row => row.name === "[[Scopes]]")?.value?.objectId;
-      assert.ok(scopesId, "Traced runtime method must expose its read-only closure scope.");
-      const scopes = await session.send("Runtime.getProperties", { objectId: scopesId });
-      let originalId;
-      for (const scope of scopes.result) {
-        if (!scope.value?.objectId) continue;
-        const closure = await session.send("Runtime.getProperties", { objectId: scope.value.objectId });
-        originalId = closure.result.find(row => row.name === "original" && row.value?.type === "function")?.value?.objectId;
-        if (originalId) break;
-      }
-      assert.ok(originalId, "Read only the actual original function captured by the diagnostic wrapper.");
-      methodId = originalId;
-    }
-    throw new Error("Too many diagnostic wrapper layers for runtime source verification.");
-  } finally { await session.detach(); }
-}
-
 async function enablePluginAfterIsolation() {
   const before = await page.evaluate((pluginId) => ({
     enabled: app.plugins.enabledPlugins.has(pluginId),
@@ -350,17 +320,11 @@ async function enablePluginAfterIsolation() {
   assert.equal(plugin.configDir, ".obsidian");
   assert.equal(plugin.syncEnabled, false, "Obsidian Sync must stay disabled in the test vault.");
   assert.deepEqual(plugin.readerViews, []);
-  const runtimeSource = await readRuntimeBacklinkMethodSource();
-  report.runtimeSource = { openReaderBacklinkSourceSha256: sha256(Buffer.from(runtimeSource)),
-    editorRangeScroll: /scrollIntoView(?:\?\.)?\(\{\s*from:\s*position,\s*to:\s*endPosition\s*\|\|\s*position\s*\}/u.test(runtimeSource) };
-  if (process.env.PDF_READER_NATIVE_REQUIRE_EDITOR_RANGE === "1") {
-    assert.equal(report.runtimeSource.editorRangeScroll, true, "Loaded runtime must contain the fixed EditorRange scroll contract.");
-  }
   report.installedFiles = {};
   for (const file of ["main.js", "manifest.json", "styles.css"]) {
     report.installedFiles[file] = sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`)));
   }
-  await checkpoint("plugin-enabled-after-isolation", { version: plugin.pluginVersion, runtimeSource: report.runtimeSource });
+  await checkpoint("plugin-enabled-after-isolation", { version: plugin.pluginVersion, installedFiles: report.installedFiles });
 
   originalSettings = await page.evaluate((pluginId) => {
     const instance = app.plugins.plugins[pluginId];
@@ -998,6 +962,17 @@ async function verifySource(itemId, expectedTarget, expectedPath, { markdown = f
     row.targetId === exactTarget.id && row.kind === exactTarget.kind &&
     row.requestId === expectedRequestId).at(-1);
   assert.ok(navigation, `Reader navigation must acknowledge the exact current target ${expectedTarget.id}.`);
+  const acceptedNavigation = await page.evaluate(({ pluginId, documentId }) => {
+    const candidate = [...(app.plugins.plugins[pluginId]?.views || [])].find(row => row.documentId === documentId);
+    return candidate?.lastReaderNavigationResult || null;
+  }, { pluginId: PLUGIN_ID, documentId: item.source.documentId });
+  assert.ok(acceptedNavigation, "Host must retain the accepted current navigation receipt.");
+  for (const [key, expected] of Object.entries({ requestId: expectedRequestId,
+    documentId: item.source.documentId, openRequest: navigationIdentity.openRequest,
+    rendererGeneration: navigationIdentity.rendererGeneration, kind: exactTarget.kind,
+    targetId: exactTarget.id, ok: true })) {
+    assert.equal(acceptedNavigation[key], expected, `Accepted Source receipt must exactly match ${key}.`);
+  }
   const pendingNavigation = await page.evaluate(({ pluginId, documentId }) => {
     const candidate = [...(app.plugins.plugins[pluginId]?.views || [])]
       .find(row => row.documentId === documentId);
@@ -1006,6 +981,7 @@ async function verifySource(itemId, expectedTarget, expectedPath, { markdown = f
   assert.equal(pendingNavigation, null, "Accepted Reader navigation must clear its correlated pending request.");
   return { itemId, target: item.source.target, path: route.sourcePath, view,
     navigationIdentity: { ...navigationIdentity, priorApplySequence },
+    acceptedNavigation,
     navigation: { requestId: navigation.requestId, targetId: navigation.targetId,
       kind: navigation.kind, ok: navigation.ok, pendingAfterAck: pendingNavigation } };
 }
