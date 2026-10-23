@@ -25939,6 +25939,7 @@ var __PDFReaderLearningHost = (() => {
             this.actionId = null;
             this.confirmPromise = null;
             this.confirmed = false;
+            this.routeRepairPending = false;
             this.lastError = null;
           }
           onOpen() {
@@ -25991,7 +25992,7 @@ var __PDFReaderLearningHost = (() => {
             this.syncConfirmButton();
           }
           syncConfirmButton() {
-            const valid = Boolean(this.promptInput?.value.trim() && this.answerInput?.value.trim());
+            const valid = this.routeRepairPending || Boolean(this.promptInput?.value.trim() && this.answerInput?.value.trim());
             if (this.confirmButton) this.confirmButton.disabled = !valid || Boolean(this.confirmPromise);
           }
           cancel() {
@@ -26003,20 +26004,30 @@ var __PDFReaderLearningHost = (() => {
           }
           confirm() {
             if (this.confirmPromise) return this.confirmPromise;
-            if (!this.draft || !this.promptInput?.value.trim() || !this.answerInput?.value.trim()) {
+            if (!this.draft || !this.routeRepairPending && (!this.promptInput?.value.trim() || !this.answerInput?.value.trim())) {
               this.syncConfirmButton();
               return Promise.resolve({ status: "invalid", writes: 0 });
             }
-            this.draft = this.service.updateDraft(this.draft.draftId, {
-              prompt: this.promptInput.value,
-              answer: this.answerInput.value
-            });
+            if (!this.routeRepairPending) {
+              this.draft = this.service.updateDraft(this.draft.draftId, {
+                prompt: this.promptInput.value,
+                answer: this.answerInput.value
+              });
+            }
             this.actionId ||= this.makeActionId();
             this.lastError = null;
             this.confirmButton.disabled = true;
             this.cancelButton.disabled = true;
             this.statusEl.textContent = "\u6B63\u5728\u9A8C\u8BC1\u6765\u6E90\u5E76\u4FDD\u5B58\u2026";
             const pending = Promise.resolve().then(() => this.service.confirmDraft(this.draft.draftId, { actionId: this.actionId })).then((result) => {
+              if (["committed", "duplicate"].includes(result?.status) && result.sourceStatus?.status === "TARGET_UNRESOLVED") {
+                this.routeRepairPending = true;
+                if (this.promptInput) this.promptInput.readOnly = true;
+                if (this.answerInput) this.answerInput.readOnly = true;
+                if (this.confirmButton) this.confirmButton.textContent = "\u91CD\u8BD5\u6765\u6E90\u5173\u8054";
+                this.statusEl.textContent = "\u5B66\u4E60\u6761\u76EE\u5DF2\u4FDD\u5B58\uFF0C\u4F46 Markdown \u6765\u6E90\u5173\u8054\u672A\u5B8C\u6210\u3002\u68C0\u67E5\u6765\u6E90\u540E\u53EF\u91CD\u8BD5\uFF0C\u6216\u5173\u95ED\u6B64\u7A97\u3002";
+                return result;
+              }
               this.confirmed = true;
               this.draft = null;
               this.statusEl.textContent = "\u5DF2\u52A0\u5165\u590D\u4E60\u3002";
@@ -26024,7 +26035,7 @@ var __PDFReaderLearningHost = (() => {
               return result;
             }, (error) => {
               this.lastError = error;
-              const message = error?.code === "LEARNING_SOURCE_STALE" ? "\u6765\u6E90\u5DF2\u53D8\u5316\uFF0C\u8349\u7A3F\u548C\u6587\u5B57\u4ECD\u4FDD\u7559\u5728\u8FD9\u91CC\uFF1B\u8BF7\u91CD\u65B0\u68C0\u67E5\u540E\u518D\u8BD5\u3002" : error?.message || "\u5B66\u4E60\u6761\u76EE\u672A\u80FD\u4FDD\u5B58\u3002";
+              const message = this.routeRepairPending ? "\u5B66\u4E60\u6761\u76EE\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u6765\u6E90\u5173\u8054\u4ECD\u672A\u5B8C\u6210\uFF1B\u4FEE\u590D\u6765\u6E90\u540E\u53EF\u91CD\u8BD5\uFF0C\u6216\u5173\u95ED\u6B64\u7A97\u3002" : error?.code === "LEARNING_SOURCE_STALE" ? "\u6765\u6E90\u5DF2\u53D8\u5316\uFF0C\u8349\u7A3F\u548C\u6587\u5B57\u4ECD\u4FDD\u7559\u5728\u8FD9\u91CC\uFF1B\u8BF7\u91CD\u65B0\u68C0\u67E5\u540E\u518D\u8BD5\u3002" : error?.message || "\u5B66\u4E60\u6761\u76EE\u672A\u80FD\u4FDD\u5B58\u3002";
               this.statusEl.textContent = message;
               showNotice(Notice, message);
               throw error;
@@ -26863,9 +26874,10 @@ var __PDFReaderLearningHost = (() => {
           const service = await getService();
           if (disposed || plugin.isUnloading || !await guard()) throw unresolved("source-changed-before-draft");
           const sourceGuard = async () => !disposed && !plugin.isUnloading && await guard();
+          let confirmedResult = null;
           const checkedService = { ...service, confirmDraft: async (draftId, options = {}) => {
             if (disposed || plugin.isUnloading || !await guard()) throw Object.assign(new Error("\u6765\u6E90\u5DF2\u53D8\u5316\uFF0C\u8349\u7A3F\u5DF2\u4FDD\u7559\uFF1B\u8BF7\u91CD\u65B0\u6838\u5BF9\u6765\u6E90\u3002"), { code: "LEARNING_SOURCE_STALE" });
-            const draft = service.getDraft(draftId);
+            const draft = confirmedResult ? null : service.getDraft(draftId);
             const sourceVerifier = async (anchor) => {
               if (anchor?.evidenceKind === "backlink") return resolve(anchor);
               if (isMarkdownAnchor(anchor)) {
@@ -26874,8 +26886,9 @@ var __PDFReaderLearningHost = (() => {
               }
               return resolve(anchor);
             };
-            const result = await service.confirmDraft(draftId, { ...options, sourceGuard, sourceVerifier });
-            if (result.status === "committed" && isMarkdownAnchor(source)) {
+            const result = confirmedResult || await service.confirmDraft(draftId, { ...options, sourceGuard, sourceVerifier });
+            if (!confirmedResult && ["committed", "duplicate"].includes(result.status)) confirmedResult = result;
+            if (["committed", "duplicate"].includes(result.status) && isMarkdownAnchor(source)) {
               const ownerId = result.item?.itemId || draft?.itemId;
               const sourcePath = markdownFile?.path || source.sourcePath;
               try {
