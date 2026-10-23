@@ -708,12 +708,15 @@
 
   async function navigateReaderAnchor(message) {
     const startedAt = performanceNow();
+    const navigationSequence = (state.readerAnchorNavigationSequence || 0) + 1;
+    state.readerAnchorNavigationSequence = navigationSequence;
     const target = message?.target;
     let result = { ok: false, reason: "invalid-target" };
     const current = state.actualSourceIdentity;
     const isCurrent = () => message.documentId === state.activeDocumentId &&
       message.openRequest === state.activeOpenRequest &&
-      message.rendererGeneration === rendererGeneration && state.actualSourceIdentity === current;
+      message.rendererGeneration === rendererGeneration && state.actualSourceIdentity === current &&
+      state.readerAnchorNavigationSequence === navigationSequence;
     if (!isCurrent() || !target || !current) {
       result.reason = "stale-session";
     } else {
@@ -817,6 +820,8 @@
       documentId: message.documentId,
       openRequest: message.openRequest,
       rendererGeneration: message.rendererGeneration,
+      requestId: message.requestId,
+      targetId: target?.id || null,
       kind: target?.kind || null,
       ok: result.ok,
       reason: result.reason,

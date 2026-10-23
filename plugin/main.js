@@ -1391,6 +1391,7 @@ class PdfReaderView extends EditableFileView {
     this.readerTargetApplyKey = null;
     this.readerTargetApplyPromise = null;
     this.readerTargetApplyPendingTarget = null;
+    this.readerNavigationRequest = null;
   }
 
   getViewType() {
@@ -3034,9 +3035,13 @@ class PdfReaderView extends EditableFileView {
         resolved.pageIdentity = pageIdentities[resolved.pageIndex];
       }
       if (!isCurrent() || !Number.isSafeInteger(resolved.pageIndex) || !resolved.pageIdentity) return false;
+      const request = { ...identity, requestId: `reader-nav-${identity.openRequest}-${sequence}`,
+        kind: resolved.kind, targetId: resolved.id || null };
+      this.readerNavigationRequest = request;
       const sent = this.postToViewer({ channel: CHANNEL, token: this.token,
         type: "reader-anchor-navigate", documentId: identity.documentId,
-        openRequest: identity.openRequest, target: resolved });
+        openRequest: identity.openRequest, requestId: request.requestId, target: resolved });
+      if (!sent && this.readerNavigationRequest === request) this.readerNavigationRequest = null;
       if (sent && isCurrent()) {
         this.pendingReaderTarget = null;
         const { readerTarget: _readerTarget, ...state } = this.navigationState || {};
@@ -3554,10 +3559,16 @@ class PdfReaderView extends EditableFileView {
       return;
     }
     if (message.type === "reader-anchor-navigation-result") {
+      const request = this.readerNavigationRequest;
       if (message.rendererGeneration !== this.rendererGeneration || message.documentId !== this.documentId ||
-          message.openRequest !== this.openRequest) return;
+          message.openRequest !== this.openRequest || !request ||
+          request.rendererGeneration !== this.rendererGeneration || request.documentId !== this.documentId ||
+          request.openRequest !== this.openRequest || message.requestId !== request.requestId ||
+          message.kind !== request.kind || message.targetId !== request.targetId) return;
+      this.readerNavigationRequest = null;
       if (message.ok !== true) new Notice(message.message || "无法可靠定位此 PDF 链接目标。", 7000);
       this.plugin.sessionLog?.record("readerAnchor", { event: "navigation-result", ok: message.ok === true,
+        requestId: request.requestId, targetId: request.targetId,
         resolveMs: message.resolveMs, kind: message.kind, reason: message.reason || null });
       return;
     }

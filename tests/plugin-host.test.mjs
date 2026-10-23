@@ -11,6 +11,8 @@ import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 import { VocabularyController } from "../viewer-adapter/vocabulary/controller.js";
 import { scanPageTextLayer } from "../viewer-adapter/vocabulary/page-scanner.js";
 
+
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
 const { encodeReaderLinkFragment, parseReaderLinkFragment } = sourceRequire("./reader-anchor-store.cjs");
@@ -4926,4 +4928,39 @@ test("learning Markdown Source requires its exact editor span after the asynchro
   assert.equal(editor.scrolls, 0);
   assert.equal(editor.focuses, 0);
   harness.plugin.onunload();
+});
+
+test("Reader navigation accepts exactly one current request and target acknowledgement", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/navigation-request.pdf", [37, 80, 68, 70, 3]);
+    const reader = await createSidecarReader(harness, file, { pageCount: 1,
+      orderedPageIdentities: ["navigation-request-page"] });
+    const { view, frame } = reader;
+    const outcomes = [];
+    const record = harness.plugin.sessionLog.record.bind(harness.plugin.sessionLog);
+    harness.plugin.sessionLog.record = (category, details) => {
+      if (category === "readerAnchor" && details.event === "navigation-result") outcomes.push(details);
+      return record(category, details);
+    };
+    view.pendingReaderTarget = { kind: "page", id: "navigation-request-page" };
+    assert.equal(await view.applyPendingReaderTarget(), true);
+    const request = reader.sent.findLast(row => row.type === "reader-anchor-navigate");
+    assert.equal(typeof request.requestId, "string", "navigation must carry a runtime correlation ID");
+    const reply = { channel: "pdf-web-reader", token: view.token,
+      type: "reader-anchor-navigation-result", rendererGeneration: view.rendererGeneration,
+      documentId: view.documentId, openRequest: view.openRequest, requestId: request.requestId,
+      kind: "page", targetId: "navigation-request-page", ok: true };
+    for (const altered of [{ requestId: "prior-request" }, { targetId: "other-page" },
+      { rendererGeneration: "old-renderer" }, { openRequest: view.openRequest - 1 }]) {
+      view.onMessage({ source: frame, data: { ...reply, ...altered } });
+    }
+    assert.equal(outcomes.length, 0, "stale or wrong-target results cannot acknowledge navigation");
+    view.onMessage({ source: frame, data: reply });
+    view.onMessage({ source: frame, data: reply });
+    assert.equal(outcomes.length, 1, "duplicate results are consumed only once");
+    assert.equal(outcomes[0].requestId, request.requestId);
+    assert.equal(outcomes[0].targetId, reply.targetId);
+  } finally { harness.plugin.onunload(); }
 });
