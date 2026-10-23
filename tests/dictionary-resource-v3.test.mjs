@@ -40,7 +40,7 @@ class MemoryAdapter {
 
 function digest(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
 
-function makeV3Files(rows = ROWS, groupSize = 2) {
+function makeV3Files(rows = ROWS, groupSize = 2, source) {
   rows = [...rows].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
   const blocks = [];
   const files = new Map();
@@ -67,12 +67,25 @@ function makeV3Files(rows = ROWS, groupSize = 2) {
     blockCount: blocks.length,
     targetBlockBytes: 262144,
     blocks,
-    source: { format: "resource-v2", sha256: "a".repeat(64), entryCount: rows.length,
+    source: source || { format: "resource-v2", sha256: "a".repeat(64), entryCount: rows.length,
       compressedBytes: 500, uncompressedBytes: 1000, source: { sha256: "b".repeat(64), rows: rows.length } },
   };
   validateManifest(manifest);
   files.set(`${ROOT}/manifest.json`, JSON.stringify(manifest));
   return { files, manifest };
+}
+
+function makeV2Files(rows = ROWS) {
+  rows = [...rows].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  const raw = Buffer.from(`${rows.map(entry => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  const compressed = gzipSync(raw, { level: 9, mtime: 0 });
+  const sha256 = digest(compressed);
+  const manifest = { schemaVersion: 1, kind: "pdf-reader-dictionary-resource", dictionaryId: "ECDICT",
+    normalization: "nfc-lower-space-v1", entryCount: rows.length, compressedBytes: compressed.length,
+    uncompressedBytes: raw.length, sha256, resourceFile: `entries.${sha256}.jsonl.gz`,
+    source: { sha256: "c".repeat(64), rows: rows.length } };
+  return { manifest, compressed, files: new Map([[`${LEGACY_ROOT}/manifest.json`, JSON.stringify(manifest)],
+    [`${LEGACY_ROOT}/${manifest.resourceFile}`, compressed]]) };
 }
 
 function makeCache() {
@@ -97,6 +110,99 @@ test("v3 lookup agrees with every row and resolves range boundaries and Unicode 
   assert.equal(await dictionary.lookup("alpha-beta"), null, "a gap inside a block range is a real miss");
   assert.equal(await dictionary.lookup("aardvark"), null, "a term before the first range is a real miss");
   assert.equal(await dictionary.lookup("zulu"), null, "a term after the final range is a real miss");
+});
+
+test("ensureReady reports a verified v3 resource without requiring a full cache build", async (t) => {
+  const fixture = makeV3Files();
+  const adapter = new MemoryAdapter(fixture.files);
+  const statuses = [];
+  const dictionary = dictionaryFor(t, adapter, { onStatus: status => statuses.push(status) });
+
+  const result = await dictionary.ensureReady();
+
+  assert.deepEqual(result, { status: "resource-available", count: ROWS.length, warmed: false, result: null });
+  assert.deepEqual(dictionary.getStatus(), {
+    phase: "resource-available", count: 0, total: 0,
+    code: "DICTIONARY_RESOURCE_AVAILABLE", entryCount: ROWS.length,
+  });
+  assert.deepEqual(statuses.map(status => status.phase), ["resource-available"]);
+  assert.equal(adapter.readBinaryCount.size, 0, "availability checks only read the small manifest");
+});
+
+test("valid not-found stays ready, block failures are unavailable, and recovery restores ready", async (t) => {
+  const fixture = makeV3Files();
+  const adapter = new MemoryAdapter(fixture.files);
+  const statuses = [];
+  const dictionary = dictionaryFor(t, adapter, { onStatus: status => statuses.push(status) });
+
+  assert.equal(await dictionary.lookup("aardvark"), null);
+  assert.equal(dictionary.getStatus().phase, "ready", "a valid range miss is not a resource failure");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V3_READY");
+
+  const firstBlock = fixture.manifest.blocks[0];
+  const blockPath = `${ROOT}/${firstBlock.resourceFile}`;
+  const originalBlock = adapter.files.get(blockPath);
+  adapter.files.delete(blockPath);
+  await assert.rejects(dictionary.lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_MISSING");
+  assert.equal(dictionary.getStatus().phase, "unavailable");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_MISSING");
+
+  adapter.files.set(blockPath, originalBlock);
+  assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
+  assert.equal(dictionary.getStatus().phase, "ready");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V3_READY");
+  assert.ok(statuses.some(status => status.phase === "unavailable" && status.code === "DICTIONARY_RESOURCE_MISSING"));
+  assert.deepEqual(statuses.slice(-2).map(status => status.phase), ["resource-available", "ready"]);
+
+  dictionary.invalidate();
+  assert.equal(dictionary.getStatus().phase, "idle", "resource changes clear stale status as well as cached blocks");
+});
+
+test("a verified same-source v2 cache serves a v3 block while that block is syncing", async (t) => {
+  const v2 = makeV2Files();
+  const source = { format: "resource-v2", sha256: v2.manifest.sha256,
+    entryCount: v2.manifest.entryCount, compressedBytes: v2.manifest.compressedBytes,
+    uncompressedBytes: v2.manifest.uncompressedBytes, source: v2.manifest.source };
+  const v3 = makeV3Files(ROWS, 2, source);
+  const files = new Map([...v2.files, ...v3.files]);
+  const missingBlock = v3.manifest.blocks[0];
+  files.delete(`${ROOT}/${missingBlock.resourceFile}`);
+  const adapter = new MemoryAdapter(files);
+  const cache = makeCache();
+  await cache.prepare(v2.manifest, async () => v2.compressed);
+  const statuses = [];
+  const dictionary = dictionaryFor(t, adapter, { cache, onStatus: status => statuses.push(status) });
+
+  assert.deepEqual(await dictionary.lookup("alpha"), expected(ROWS[0]));
+  assert.equal(dictionary.getStatus().phase, "degraded");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V2_FALLBACK");
+  assert.equal(dictionary.getStatus().resourceStatusCode, "DICTIONARY_RESOURCE_MISSING");
+  assert.equal(adapter.readBinaryCount.get(`${LEGACY_ROOT}/${v2.manifest.resourceFile}`) || 0, 0,
+    "fallback reads only the already-verified Dexie generation, never rebuilds it");
+  assert.ok(statuses.some(status => status.phase === "degraded"));
+
+  files.set(`${ROOT}/${missingBlock.resourceFile}`, v3.files.get(`${ROOT}/${missingBlock.resourceFile}`));
+  assert.deepEqual(await dictionary.lookup("beta"), expected(ROWS[1]));
+  assert.equal(dictionary.getStatus().phase, "ready", "a successful v3 block read restores the healthy status");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_V3_READY");
+});
+
+test("a mismatched or unready v2 cache never hides a missing v3 block as not-found", async (t) => {
+  const v2 = makeV2Files();
+  const mismatchedV3 = makeV3Files(ROWS, 2, { format: "resource-v2", sha256: "d".repeat(64),
+    entryCount: v2.manifest.entryCount, compressedBytes: v2.manifest.compressedBytes,
+    uncompressedBytes: v2.manifest.uncompressedBytes, source: v2.manifest.source });
+  const files = new Map([...v2.files, ...mismatchedV3.files]);
+  const block = mismatchedV3.manifest.blocks[0];
+  files.delete(`${ROOT}/${block.resourceFile}`);
+  const adapter = new MemoryAdapter(files);
+  const cache = makeCache();
+  await cache.prepare(v2.manifest, async () => v2.compressed);
+  const dictionary = dictionaryFor(t, adapter, { cache });
+
+  await assert.rejects(dictionary.lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_MISSING");
+  assert.equal(dictionary.getStatus().phase, "unavailable");
+  assert.equal(dictionary.getStatus().code, "DICTIONARY_RESOURCE_MISSING");
 });
 
 test("one cold block read is coalesced across concurrent lookups and warm hits stay in the bounded LRU", async (t) => {
@@ -176,17 +282,28 @@ test("missing, partial, and corrupt blocks remain distinct from a dictionary mis
 
   const missing = new Map(fixture.files);
   missing.delete(`${ROOT}/${block.resourceFile}`);
-  await assert.rejects(dictionaryFor(t, new MemoryAdapter(missing)).lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_MISSING");
+  const missingStatuses = [];
+  const missingDictionary = dictionaryFor(t, new MemoryAdapter(missing), { onStatus: status => missingStatuses.push(status) });
+  await assert.rejects(missingDictionary.lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_MISSING");
+  assert.equal(missingDictionary.getStatus().phase, "unavailable");
+  assert.equal(missingDictionary.getStatus().code, "DICTIONARY_RESOURCE_MISSING");
 
   const partial = new Map(fixture.files);
   partial.set(`${ROOT}/${block.resourceFile}`, Buffer.from(fixture.files.get(`${ROOT}/${block.resourceFile}`).subarray(0, -2)));
-  await assert.rejects(dictionaryFor(t, new MemoryAdapter(partial)).lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_CORRUPT");
+  const partialDictionary = dictionaryFor(t, new MemoryAdapter(partial));
+  await assert.rejects(partialDictionary.lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_CORRUPT");
+  assert.equal(partialDictionary.getStatus().phase, "unavailable");
+  assert.equal(partialDictionary.getStatus().code, "DICTIONARY_RESOURCE_CORRUPT");
 
   const corrupt = new Map(fixture.files);
   const damaged = Buffer.from(corrupt.get(`${ROOT}/${block.resourceFile}`));
   damaged[damaged.length - 1] ^= 0xff;
   corrupt.set(`${ROOT}/${block.resourceFile}`, damaged);
-  await assert.rejects(dictionaryFor(t, new MemoryAdapter(corrupt)).lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_CORRUPT");
+  const corruptDictionary = dictionaryFor(t, new MemoryAdapter(corrupt));
+  await assert.rejects(corruptDictionary.lookup("alpha"), error => error.code === "DICTIONARY_RESOURCE_CORRUPT");
+  assert.equal(corruptDictionary.getStatus().phase, "unavailable");
+  assert.equal(corruptDictionary.getStatus().code, "DICTIONARY_RESOURCE_CORRUPT");
+  assert.equal(missingStatuses.at(-1).phase, "unavailable");
 });
 
 test("v3 manifest index is checked and a missing v3 resource does not trigger v2 full import", async (t) => {
