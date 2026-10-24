@@ -1,0 +1,57 @@
+{
+  "at": "2026-10-23T18:51:49.940Z",
+  "rows": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "state": {
+        "title": "原则 (瑞·达利欧) (z-library.sk, 1lib.sk, z-lib.sk) - ObReader-Apple-Test - Obsidian 1.14.5",
+        "visibility": "hidden",
+        "focus": false,
+        "hasApp": true,
+        "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "readers": [
+          {
+            "path": "12_books/原则 (瑞·达利欧) (z-library.sk, 1lib.sk, z-lib.sk).pdf"
+          }
+        ],
+        "isolation": false
+      }
+    },
+    {
+      "url": "about:blank",
+      "state": {
+        "title": "设置 - 远程仓库1 - Obsidian 1.14.5",
+        "visibility": "hidden",
+        "focus": false,
+        "hasApp": false,
+        "vault": null,
+        "isolation": false,
+        "scope": "read-only inventory; not authorized for test interaction"
+      }
+    },
+    {
+      "url": "about:blank",
+      "state": {
+        "title": "设置 - ObReader-Apple-Test - Obsidian 1.14.5",
+        "visibility": "hidden",
+        "focus": false,
+        "hasApp": false,
+        "vault": null,
+        "isolation": false,
+        "scope": "read-only inventory; not authorized for test interaction"
+      }
+    },
+    {
+      "url": "app://obsidian.md/index.html",
+      "state": {
+        "title": "ObScripts_3 巴赫 - 远程仓库1 - Obsidian 1.14.5",
+        "visibility": "hidden",
+        "focus": true,
+        "hasApp": true,
+        "vault": "/Users/jiajia/Documents/Documents/Obsidian/远程仓库1",
+        "isolation": false,
+        "scope": "read-only inventory; not authorized for test interaction"
+      }
+    }
+  ]
+}

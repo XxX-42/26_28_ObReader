@@ -1,0 +1,96 @@
+{
+  "at": "2026-10-23T16:37:32.166Z",
+  "state": {
+    "closed": [
+      "43df2059cee3bece"
+    ],
+    "ownMD": 0,
+    "readers": 0,
+    "enabled": [],
+    "iso": false
+  },
+  "mdBytesUnchanged": true,
+  "mdSha": "f89de90174da476643270b7b8a2ca0948d8918ab53bf9b6b794d0449d1b11fbe",
+  "defaultUnchanged": true,
+  "canonicalUnchanged": true,
+  "canonical": [
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/c.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/f.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/contexts/manifest.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/en.vocab.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/0228284d781a0ee868aa6140d4736a1e9d983bf3245dae8214dd0e902388eb42.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/2c0fe416c47f5274914c239ae572cfeaa69c6ca5718dae2f5bd6cb9e7b1cbf82.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/3e3a0baaf04e2a7ba434a8e0d76497633039791b5f6d441370da8b4dee2f1e23.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/541da50323b81237c5b1a976457028575c940595fc8b6fdb0d4af3bc63892203.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/685e86ad70dfbd98285ebfbbe1b77a60f5e123e6b2756393c641bcda749aa771.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/6f84a15aa11c0c91306db04df05f4143518272590eb6e40617dd3d40d5e37681.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/7bf885b6e7fdde3ad187318560d5a93d198d8d3ac41648455510c787c986817a.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/8fa785be50457433dcba175ff62a5b91c5377fe827c3dfea5b55a191d7d8babf.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/b4dea56ce6cedb6f5727495acf1ce653b8795a17df8baa7ff36464c19fa74f9d.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/history/908eb061-6688-4f5e-8efa-bd2525345a33/cbc910ea50c5ae669a81862abcd36e3cf3421e107ad64218959d58a705bf6611.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/3.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/4.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/9.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/a.json",
+      "unchanged": true
+    },
+    {
+      "path": "00_Archive/21_VocabularyData/learning/items/manifest.json",
+      "unchanged": true
+    }
+  ],
+  "community": [],
+  "workspaceReader": false
+}

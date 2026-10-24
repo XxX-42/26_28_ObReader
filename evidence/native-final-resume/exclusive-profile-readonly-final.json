@@ -1,0 +1,85 @@
+{
+  "at": "2026-10-23T19:37:14.266Z",
+  "rows": [
+    {
+      "mainPid": 99806,
+      "port": 62596,
+      "label": "shared",
+      "url": "app://obsidian.md/index.html",
+      "data": {
+        "title": "新标签页 - ObReader-Apple-Test - Obsidian 1.14.5",
+        "globalAppVersion": null,
+        "basePath": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "configDir": ".obsidian",
+        "loadedInstancePresent": false,
+        "enabled": false,
+        "manifest": {
+          "id": "pdf-web-reader",
+          "name": "PDF Web Reader",
+          "version": "0.14.0",
+          "minAppVersion": "1.14.4",
+          "description": "Read vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
+          "author": "XxX-42",
+          "isDesktopOnly": false,
+          "dir": ".obsidian/plugins/pdf-web-reader"
+        },
+        "moduleCachePaths": [],
+        "isolationInstalled": false,
+        "readerPaths": [],
+        "sync": false,
+        "visibility": "visible",
+        "hasFocus": false
+      }
+    },
+    {
+      "mainPid": 45063,
+      "port": 64650,
+      "label": "independent",
+      "url": "app://obsidian.md/index.html",
+      "data": {
+        "title": "新标签页 - ObReader-Apple-Test - Obsidian 1.12.7",
+        "globalAppVersion": null,
+        "basePath": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "configDir": ".obsidian",
+        "loadedInstancePresent": true,
+        "componentLoaded": true,
+        "enabled": true,
+        "manifest": {
+          "id": "pdf-web-reader",
+          "name": "PDF Web Reader",
+          "version": "0.14.0",
+          "minAppVersion": "1.14.4",
+          "description": "Read vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
+          "author": "XxX-42",
+          "isDesktopOnly": false,
+          "dir": ".obsidian/plugins/pdf-web-reader"
+        },
+        "moduleCachePaths": [],
+        "isolationInstalled": false,
+        "readerPaths": [],
+        "sync": false,
+        "visibility": "hidden",
+        "hasFocus": false
+      }
+    }
+  ],
+  "hashes": [
+    {
+      "path": "/Users/jiajia/Documents/ObReader-Apple-Test/.obsidian/plugins/pdf-web-reader/main.js",
+      "sha256": "6fe62329017d3d68917c6597cdc5806ba98ba6060fe8c632276d2525fc477f64",
+      "bytes": 9151254
+    },
+    {
+      "path": "/Users/jiajia/Documents/ObReader-Apple-Test/.obsidian/plugins/pdf-web-reader/manifest.json",
+      "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "bytes": 261
+    },
+    {
+      "path": "/Users/jiajia/Documents/ObReader-Apple-Test/.obsidian/plugins/pdf-web-reader/styles.css",
+      "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+      "bytes": 8058
+    }
+  ],
+  "loadSourceLimitation": "Runtime manifest directory and installed hashes confirmed; no cached module entry, so exact evaluated source cannot be independently confirmed by this read-only evidence.",
+  "defaultTreeComparison": "Before and after every127 path/hash preserved; added0/changed0/deleted0."
+}

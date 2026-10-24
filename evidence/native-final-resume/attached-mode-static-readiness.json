@@ -1,0 +1,28 @@
+{
+  "at": "2026-10-23T19:48:03.986343+00:00",
+  "status": "NOT_RUN",
+  "scope": "Static harness preparation only; no Native UI, plugin enable, fixture, Vault or configuration writes since hold.",
+  "flag": "--attached-existing-test-vault",
+  "preWriteChecks": [
+    "Exact mainPID/profile marker and exact Apple-Test vault path+name",
+    "Explicit excluded remote1 renderer; no DOM content/screenshots/interactions from it",
+    "Visible and document.hasFocus; actual main activeWindow/document identity",
+    "Sync=false; Reader=0; plugin unloaded/disabled",
+    "Installed main/manifest/styles SHA equals local integration dist",
+    "Sibling45063 absent or exact test Vault plugin unloaded+disabled/Reader0/Syncfalse",
+    "Stable disk community-plugins.json excludes pluginId twice",
+    "Full default tree and preserved originalrun SHA baseline before installer/fixture creation"
+  ],
+  "blockedConditions": [
+    "Sibling45063 last observed plugin loaded/_loadedtrue/enabledtrue without isolation",
+    "Shared99806 Apple-Test last observed visible but document.hasFocus=false",
+    "Disk community-plugins.json last observed includes pluginId, despite shared runtime disabled"
+  ],
+  "minimalReleaseConditions": [
+    "Root/user explicitly establishes sibling45063 cannot run test-Vault plugin writes, then read-only verifies unloaded+disabled and Reader0, or sibling no longer exists",
+    "Root/user leaves shared99806 exact Apple-Test window visible and truly focused; Sync=false/Reader0/pluginunloaded",
+    "Persisted community-plugins.json excludes plugin twice; no concurrent user/plugin operations in test Vault during controlled run"
+  ],
+  "processRestart": "NOT_RUN: sharedPID owns excluded remote1; no process restart/closure permitted",
+  "plannedWorkflow": "Unique new fixture and isolated run; real Highlight/Context/full sentence/Markdown Review UI; real CopyLink; only openmove five directions; postlearning canonical/default/originalrun SHA invariants; cleanup own fixture tabs/plugin/isolation; preserve all original6/8 evidence"
+}

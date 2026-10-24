@@ -1,0 +1,5 @@
+{
+  "incident": "safe reload happened before async community-plugins.json disable save settled; Reader autoloaded without per-run isolation. Closed exact fixture Reader through visible tab UI, disabled plugin, waited disk[]; no further navigation directions claimed.",
+  "recentCanonicalFiles": [],
+  "note": "mtime identifies possible writes during setup incident, not a before/after byte diff. Existing Native evidence remains confined to its isolated dataset."
+}

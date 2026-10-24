@@ -1,0 +1,1152 @@
+{
+  "agent": "impl_b_native",
+  "workstream": "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
+  "base": "cd6e15743d5065dfe53579d658dde18580c84e9f",
+  "branch": "codex/014-native-sol-low",
+  "planA": "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in an owned Obsidian profile attached only to ObReader-Apple-Test.",
+  "planB": "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity; perform eight PDF/Markdown move/restart cases with exact canonical byte invariants.",
+  "startedAt": "2026-10-23T16:21:50.860Z",
+  "runId": "native-learning-loop-20261023142727241-ab1fac1a68",
+  "fixturePrefix": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68",
+  "status": "failed",
+  "nativeProfile": {
+    "root": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-learning-loop-20261023-0642",
+    "marker": {
+      "kind": "codex-owned-native-test-profile",
+      "runId": "learning-loop-20261023-0642",
+      "allowedVault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "appPath": "/Applications/Obsidian.app",
+      "createdAt": "2026-10-23T12:56:26.199Z"
+    },
+    "cdpPort": 49786,
+    "ownerProcessHash": "f9912102c107a4a34c81966f4cd68f077caf76b95a851f95e0b7c16b4664324e"
+  },
+  "identity": {
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "configDir": ".obsidian",
+    "vaultName": "ObReader-Apple-Test",
+    "pluginActive": false,
+    "pluginVersion": null,
+    "enabledPlugins": [],
+    "syncEnabled": false,
+    "readerViews": [],
+    "visibility": "visible",
+    "focused": true
+  },
+  "sync": {
+    "enabled": false,
+    "off": true
+  },
+  "plugin": {
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "configDir": ".obsidian",
+    "vaultName": "ObReader-Apple-Test",
+    "pluginActive": false,
+    "pluginVersion": null,
+    "enabledPlugins": [],
+    "syncEnabled": false,
+    "readerViews": [],
+    "visibility": "visible",
+    "focused": true,
+    "expectedVersion": "0.14.0",
+    "installedManifestVersion": "0.14.0"
+  },
+  "stores": {
+    "storageRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68",
+    "roots": [
+      {
+        "logicalRoot": "00_Archive/20_PDFData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68/PDFData"
+      },
+      {
+        "logicalRoot": "00_Archive/21_VocabularyData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68/VocabularyData"
+      }
+    ],
+    "dictionaryRoot": "00_Archive/21_VocabularyData/dictionaries",
+    "installedBeforePluginEnable": true,
+    "adapterCallCount": 19,
+    "writeCount": 2,
+    "unmappedWriteCount": 0,
+    "pdfDataFileCount": 13,
+    "pdfWalDocuments": [
+      "22a64dda-a6d4-4988-bc4e-7db69e5d5bdd"
+    ]
+  },
+  "uiFlows": [
+    {
+      "name": "Highlight -> durable sidecar -> Sidebar -> Add Review -> Today",
+      "status": "passed",
+      "uuid": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+      "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+      "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+      "pageIndex": 0,
+      "sourceEvidence": {
+        "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+        "target": {
+          "id": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+          "kind": "annotation"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+              "token": "f282154b-a92c-4482-a629-60982136220b"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "82cb5849-3d91-423a-862b-dfe810ebba25",
+          "applySequence": 1,
+          "pending": null,
+          "priorApplySequence": 0
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-1",
+          "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+          "kind": "annotation",
+          "ok": true,
+          "pendingAfterAck": null
+        }
+      },
+      "sourceCheckpoint": {
+        "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+        "target": {
+          "id": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+          "kind": "annotation"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+              "token": "062eecfd-7425-4345-aa75-e585ef7132e6"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "applySequence": 1,
+          "pending": null,
+          "priorApplySequence": 0
+        },
+        "acceptedNavigation": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "requestId": "reader-nav-1-1",
+          "kind": "annotation",
+          "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+          "ok": true,
+          "reason": null
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-1",
+          "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+          "kind": "annotation",
+          "ok": true,
+          "pendingAfterAck": null
+        }
+      }
+    },
+    {
+      "name": "LingQ status -> sentence selection -> Context -> Add Review -> Today",
+      "status": "passed",
+      "contextId": "context:v1:d2be2862ea3a446f68c1528edd4990c501a93a1d16dccd9fabda6a3f985b94e8",
+      "anchorId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+      "exactQuote": "Dynamic languages",
+      "itemId": "learning:v1:ee2f2241-775b-4234-8bf0-5f08efa5e42c",
+      "familyKey": "en-family:v1:word:[\"dynamic\"]",
+      "familyStatus": 2,
+      "lingqMode": {
+        "resumedPriorVisibleUI": true
+      },
+      "selectionGeometry": {
+        "resumedEvidence": "/Users/jiajia/.codex/worktrees/obreader-0.14/native-sol-low/tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-context-setup.json"
+      },
+      "sourceEvidence": {
+        "itemId": "learning:v1:ee2f2241-775b-4234-8bf0-5f08efa5e42c",
+        "target": {
+          "id": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+          "kind": "selection"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+              "token": "839b67fc-6953-49b1-b102-6f9bd77d5e5e"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "b5a17627-a5af-40ed-b69b-dc1370ecf4cd",
+          "applySequence": 1,
+          "pending": null,
+          "priorApplySequence": 0
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-1",
+          "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+          "kind": "selection",
+          "ok": true,
+          "pendingAfterAck": null
+        },
+        "exactAnchorText": "Dynamic languages"
+      },
+      "sourceCheckpoint": {
+        "itemId": "learning:v1:ee2f2241-775b-4234-8bf0-5f08efa5e42c",
+        "target": {
+          "id": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+          "kind": "selection"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+              "token": "062eecfd-7425-4345-aa75-e585ef7132e6"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "applySequence": 2,
+          "pending": null,
+          "priorApplySequence": 1
+        },
+        "acceptedNavigation": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "requestId": "reader-nav-1-2",
+          "kind": "selection",
+          "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+          "ok": true,
+          "reason": null
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-2",
+          "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+          "kind": "selection",
+          "ok": true,
+          "pendingAfterAck": null
+        }
+      }
+    },
+    {
+      "name": "Markdown selected excerpt -> Add Review",
+      "status": "passed",
+      "itemId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+      "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning.md",
+      "exactQuote": "This Markdown excerpt survives every route change.",
+      "sourceCheckpoint": {
+        "itemId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+        "target": {
+          "id": "md:33:83",
+          "kind": "markdown"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+        "selection": "This Markdown excerpt survives every route change."
+      }
+    },
+    {
+      "name": "LingQ status -> complete sentence selection -> Context -> Add Review -> Today",
+      "selectionScope": "complete sentence",
+      "status": "passed",
+      "contextId": "context:v1:e3a72b8f7011e5e3fe3868b14788660b2103f7dfa2e0d2d578bf35e9f465377a",
+      "anchorId": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+      "exactQuote": "Dynamic languages such as JavaScript, Python, and Ruby, are pop-ular since they are expressive, accessible to non-experts, and makedeployment as easy as distributing a source ﬁle.",
+      "itemId": "learning:v1:87fc6318-0c0f-40fe-ad10-687d7a3ce7d6",
+      "familyKey": "en-family:v1:word:[\"dynamic\"]",
+      "familyStatus": 2,
+      "lingqMode": {
+        "enabledThroughVisibleToolbar": true,
+        "viewerMode": 0,
+        "managerMode": 0
+      },
+      "selectionGeometry": {
+        "x1": 57.3515625,
+        "y1": 450.96875,
+        "x2": 175.930908203125,
+        "y2": 464.46875,
+        "sourceStart": "Dynamic languages",
+        "sourceEnd": "deployment as easy as distributing a source ﬁle. They are used for",
+        "actualSelection": "Dynamic languages such as JavaScript, Python, and Ruby, are pop-\nular since they are expressive, accessible to non-experts, and make\ndeployment as easy as distributing a source ﬁle.",
+        "scope": "complete sentence across actual PDF textLayer lines",
+        "exactRangeText": "Dynamic languages such as JavaScript, Python, and Ruby, are pop-ular since they are expressive, accessible to non-experts, and makedeployment as easy as distributing a source ﬁle."
+      },
+      "sourceEvidence": {
+        "itemId": "learning:v1:87fc6318-0c0f-40fe-ad10-687d7a3ce7d6",
+        "target": {
+          "id": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "kind": "selection"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+              "token": "0339ca87-064a-4413-8e96-f36f58a9af78"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "f8c78ee3-01b1-4eda-942d-a95dcd6fdffb",
+          "applySequence": 2,
+          "pending": null,
+          "priorApplySequence": 1
+        },
+        "acceptedNavigation": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "f8c78ee3-01b1-4eda-942d-a95dcd6fdffb",
+          "requestId": "reader-nav-1-2",
+          "kind": "selection",
+          "targetId": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "ok": true,
+          "reason": null
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-2",
+          "targetId": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "kind": "selection",
+          "ok": true,
+          "pendingAfterAck": null
+        },
+        "exactAnchorText": "Dynamic languages such as JavaScript, Python, and Ruby, are pop-ular since they are expressive, accessible to non-experts, and makedeployment as easy as distributing a source ﬁle."
+      },
+      "sourceCheckpoint": {
+        "itemId": "learning:v1:87fc6318-0c0f-40fe-ad10-687d7a3ce7d6",
+        "target": {
+          "id": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "kind": "selection"
+        },
+        "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+        "view": {
+          "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+          "configDir": ".obsidian",
+          "vaultName": "ObReader-Apple-Test",
+          "pluginActive": true,
+          "pluginVersion": "0.14.0",
+          "enabledPlugins": [
+            "pdf-web-reader"
+          ],
+          "syncEnabled": false,
+          "readerViews": [
+            {
+              "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+              "token": "062eecfd-7425-4345-aa75-e585ef7132e6"
+            }
+          ],
+          "visibility": "visible",
+          "focused": true
+        },
+        "navigationIdentity": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "applySequence": 3,
+          "pending": null,
+          "priorApplySequence": 2
+        },
+        "acceptedNavigation": {
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+          "openRequest": 1,
+          "rendererGeneration": "335be6a0-1759-48b7-b0b8-c1b3a0a0a919",
+          "requestId": "reader-nav-1-3",
+          "kind": "selection",
+          "targetId": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "ok": true,
+          "reason": null
+        },
+        "navigation": {
+          "requestId": "reader-nav-1-3",
+          "targetId": "context-376329be101b7abb302edc44bddcf9ab4bd69fe05456c51adb6bef45f1147fac",
+          "kind": "selection",
+          "ok": true,
+          "pendingAfterAck": null
+        },
+        "exactAnchorText": "Dynamic languages such as JavaScript, Python, and Ruby, are pop-ular since they are expressive, accessible to non-experts, and makedeployment as easy as distributing a source ﬁle."
+      }
+    }
+  ],
+  "routeScenarios": [
+    {
+      "name": "pdfrename",
+      "status": "passed",
+      "at": "2026-10-23T14:33:41.752Z",
+      "evidence": {
+        "pdfSource": {
+          "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+          "target": {
+            "id": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading-renamed.pdf",
+          "view": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "vaultName": "ObReader-Apple-Test",
+            "pluginActive": true,
+            "pluginVersion": "0.14.0",
+            "enabledPlugins": [
+              "pdf-web-reader"
+            ],
+            "syncEnabled": false,
+            "readerViews": [
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading-renamed.pdf",
+                "token": "5d5cffbc-55c6-4b1c-adc7-6d771db5e9eb"
+              }
+            ],
+            "visibility": "visible",
+            "focused": true
+          },
+          "navigationIdentity": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "f16dd5ef-175c-4bef-ae1c-ee722fc011f6",
+            "applySequence": 1,
+            "pending": null,
+            "priorApplySequence": 0
+          },
+          "navigation": {
+            "requestId": "reader-nav-1-1",
+            "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation",
+            "ok": true,
+            "pendingAfterAck": null
+          }
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading-renamed.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "9a196f6d43c56f6ff04cbe371cb5ad87db8fcd79173e17abb19502eefa16b544"
+          ]
+        }
+      }
+    },
+    {
+      "name": "foldermove",
+      "status": "passed",
+      "at": "2026-10-23T14:33:42.516Z",
+      "evidence": {
+        "pdfSource": {
+          "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+          "target": {
+            "id": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+          "view": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "vaultName": "ObReader-Apple-Test",
+            "pluginActive": true,
+            "pluginVersion": "0.14.0",
+            "enabledPlugins": [
+              "pdf-web-reader"
+            ],
+            "syncEnabled": false,
+            "readerViews": [
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+                "token": "5d5cffbc-55c6-4b1c-adc7-6d771db5e9eb"
+              }
+            ],
+            "visibility": "visible",
+            "focused": true
+          },
+          "navigationIdentity": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "f16dd5ef-175c-4bef-ae1c-ee722fc011f6",
+            "applySequence": 2,
+            "pending": null,
+            "priorApplySequence": 1
+          },
+          "navigation": {
+            "requestId": "reader-nav-1-2",
+            "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation",
+            "ok": true,
+            "pendingAfterAck": null
+          }
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "9a196f6d43c56f6ff04cbe371cb5ad87db8fcd79173e17abb19502eefa16b544"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mdrename",
+      "status": "passed",
+      "at": "2026-10-23T15:44:31.051Z",
+      "evidence": {
+        "markdownSource": {
+          "itemId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "target": {
+            "id": "md:33:83",
+            "kind": "markdown"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning-renamed.md",
+          "selection": "This Markdown excerpt survives every route change."
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "38146de1bfc247f46d043ac9bfbb116129d7d89f725043e6a79bbb8cfe187d25"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mdmove",
+      "status": "passed",
+      "at": "2026-10-23T15:44:32.013Z",
+      "evidence": {
+        "markdownSource": {
+          "itemId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "target": {
+            "id": "md:33:83",
+            "kind": "markdown"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files Moved/learning-renamed.md",
+          "selection": "This Markdown excerpt survives every route change."
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files Moved/reading-renamed.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files Moved/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "af34c0ce94a0cb67c9a043c4ba146c77e04b50f8cfc39343119f5fbf930b3fe8"
+          ]
+        }
+      }
+    },
+    {
+      "name": "bothmove",
+      "status": "passed",
+      "at": "2026-10-23T15:44:33.900Z",
+      "evidence": {
+        "pdfSource": {
+          "itemId": "learning:v1:ee2f2241-775b-4234-8bf0-5f08efa5e42c",
+          "target": {
+            "id": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "kind": "selection"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-renamed.pdf",
+          "view": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "vaultName": "ObReader-Apple-Test",
+            "pluginActive": true,
+            "pluginVersion": "0.14.0",
+            "enabledPlugins": [
+              "pdf-web-reader"
+            ],
+            "syncEnabled": false,
+            "readerViews": [
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-renamed.pdf",
+                "token": "fde538fe-4358-4fa1-89d6-c5e30fadb3cb"
+              }
+            ],
+            "visibility": "visible",
+            "focused": true
+          },
+          "navigationIdentity": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "671106af-7178-4668-bdd9-17d0ffab6c6a",
+            "applySequence": 1,
+            "pending": null,
+            "priorApplySequence": 0
+          },
+          "acceptedNavigation": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "671106af-7178-4668-bdd9-17d0ffab6c6a",
+            "requestId": "reader-nav-1-1",
+            "kind": "selection",
+            "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "ok": true,
+            "reason": null
+          },
+          "navigation": {
+            "requestId": "reader-nav-1-1",
+            "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "kind": "selection",
+            "ok": true,
+            "pendingAfterAck": null
+          }
+        },
+        "markdownSource": {
+          "itemId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "target": {
+            "id": "md:33:83",
+            "kind": "markdown"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+          "selection": "This Markdown excerpt survives every route change."
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-renamed.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "af4098fa9512f3738dcf77f26f0dee1a59a439144b14fae2b3ba76dd2e1bf5bd"
+          ]
+        }
+      }
+    },
+    {
+      "name": "closedmove",
+      "status": "passed",
+      "at": "2026-10-23T15:44:36.259Z",
+      "evidence": {
+        "controlledClose": {
+          "label": "closedmove",
+          "ok": true,
+          "before": {
+            "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-renamed.pdf",
+            "token": "fde538fe-4358-4fa1-89d6-c5e30fadb3cb",
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "docKey": "0cd915c44ec9",
+            "sourceHash": "xxh64-v1:ffbe0d4d212547e5",
+            "revision": 0,
+            "confirmed": 0,
+            "pending": 0,
+            "dirty": false,
+            "protocol": "wal-sidecar-v3.2-jsonl"
+          },
+          "prepared": {
+            "id": "036176ed-9cbc-474d-9f86-7e6b3d3f73a9",
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "revision": 0,
+            "recovered": false,
+            "unconfirmed": false,
+            "unloaded": false
+          },
+          "maintenanceOffset": 1,
+          "remaining": 0,
+          "maintenance": {
+            "event": "annotation-snapshot-materialized",
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "receivedAt": 12918.29999999702
+          },
+          "closeEvidence": {
+            "viewCount": 0,
+            "maintenanceEvent": "annotation-snapshot-materialized",
+            "protocol": "wal-sidecar-v3.2-jsonl",
+            "snapshotStatus": "verified-consistent",
+            "walStatus": "replayed",
+            "walWatermarkTotal": 7,
+            "isolatedRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68/PDFData",
+            "evidencePaths": 11
+          },
+          "walAfterClose": {
+            "protocol": "wal-sidecar-v3.2-jsonl",
+            "snapshotStatus": "verified-consistent",
+            "walStatus": "replayed",
+            "viewerRevision": 0,
+            "confirmedViewerRevision": 0,
+            "walWatermarkTotal": 7
+          }
+        },
+        "source": {
+          "itemId": "learning:v1:cf5fcd2c-fcbe-4734-9be2-68d578e34438",
+          "target": {
+            "id": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-closed-move.pdf",
+          "view": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "vaultName": "ObReader-Apple-Test",
+            "pluginActive": true,
+            "pluginVersion": "0.14.0",
+            "enabledPlugins": [
+              "pdf-web-reader"
+            ],
+            "syncEnabled": false,
+            "readerViews": [
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-closed-move.pdf",
+                "token": "8803e25a-2b60-4121-a645-75c36f1f5f66"
+              }
+            ],
+            "visibility": "visible",
+            "focused": true
+          },
+          "navigationIdentity": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "215bcc0e-f4a4-4d8a-a205-8a8f4327afa6",
+            "applySequence": 1,
+            "pending": {
+              "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+              "openRequest": 1,
+              "rendererGeneration": "215bcc0e-f4a4-4d8a-a205-8a8f4327afa6",
+              "requestId": "reader-nav-1-1",
+              "kind": "annotation",
+              "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2"
+            },
+            "priorApplySequence": 0
+          },
+          "acceptedNavigation": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "215bcc0e-f4a4-4d8a-a205-8a8f4327afa6",
+            "requestId": "reader-nav-1-1",
+            "kind": "annotation",
+            "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "ok": true,
+            "reason": null
+          },
+          "navigation": {
+            "requestId": "reader-nav-1-1",
+            "targetId": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+            "kind": "annotation",
+            "ok": true,
+            "pendingAfterAck": null
+          }
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-closed-move.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "af4098fa9512f3738dcf77f26f0dee1a59a439144b14fae2b3ba76dd2e1bf5bd"
+          ]
+        }
+      }
+    },
+    {
+      "name": "openmove",
+      "status": "passed",
+      "at": "2026-10-23T15:44:37.544Z",
+      "evidence": {
+        "pdfSource": {
+          "itemId": "learning:v1:ee2f2241-775b-4234-8bf0-5f08efa5e42c",
+          "target": {
+            "id": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "kind": "selection"
+          },
+          "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+          "view": {
+            "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+            "configDir": ".obsidian",
+            "vaultName": "ObReader-Apple-Test",
+            "pluginActive": true,
+            "pluginVersion": "0.14.0",
+            "enabledPlugins": [
+              "pdf-web-reader"
+            ],
+            "syncEnabled": false,
+            "readerViews": [
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+                "token": "8803e25a-2b60-4121-a645-75c36f1f5f66"
+              },
+              {
+                "path": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+                "token": "a22d6813-5822-491f-b23e-bd1bc16eaaa9"
+              }
+            ],
+            "visibility": "visible",
+            "focused": true
+          },
+          "navigationIdentity": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "215bcc0e-f4a4-4d8a-a205-8a8f4327afa6",
+            "applySequence": 2,
+            "pending": null,
+            "priorApplySequence": 1
+          },
+          "acceptedNavigation": {
+            "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356",
+            "openRequest": 1,
+            "rendererGeneration": "215bcc0e-f4a4-4d8a-a205-8a8f4327afa6",
+            "requestId": "reader-nav-1-2",
+            "kind": "selection",
+            "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "ok": true,
+            "reason": null
+          },
+          "navigation": {
+            "requestId": "reader-nav-1-2",
+            "targetId": "context-8ce05c695be989d8e020ac7d764ba48413d0d8dadf1db3cfc1d0ef7e4edea0ce",
+            "kind": "selection",
+            "ok": true,
+            "pendingAfterAck": null
+          }
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      },
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "af4098fa9512f3738dcf77f26f0dee1a59a439144b14fae2b3ba76dd2e1bf5bd"
+          ]
+        }
+      }
+    },
+    {
+      "name": "restart",
+      "status": "passed",
+      "at": "2026-10-23T15:45:36.172Z",
+      "restart": {
+        "enabled": false,
+        "loaded": false
+      },
+      "pluginVersion": "0.14.0",
+      "routes": {
+        "pdf": {
+          "sourcePath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+          "docKey": "0cd915c44ec9",
+          "documentId": "sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356"
+        },
+        "markdown": {
+          "status": "verified",
+          "code": null,
+          "ownerKind": "learning-item",
+          "ownerId": "learning:v1:c7998e9d-f5b5-4d7a-a1bc-1b1b873a7a90",
+          "bindingId": "markdown-binding-v1:51b7d1ef9328832096798ecc963835b9e29b4090c579a651265c969475b5880c",
+          "currentPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Both Moved/learning-renamed.md",
+          "ownerFactIds": [
+            "12d241e4b4c8ca2d8777a3c584cee8007bd3f4272ba1c5e83b6689561ffef140"
+          ],
+          "bindingFactIds": [
+            "af4098fa9512f3738dcf77f26f0dee1a59a439144b14fae2b3ba76dd2e1bf5bd"
+          ]
+        }
+      },
+      "invariant": {
+        "fileCount": 12,
+        "unchanged": true
+      }
+    }
+  ],
+  "screenshots": [
+    "/Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023162150860/preflight-safe-mode.png",
+    "/Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/artifacts/native-learning-loop-20261023142727241-ab1fac1a68-continued-20261023162150860/failure-target-1.png"
+  ],
+  "errors": [
+    {
+      "at": "2026-10-23T16:22:11.500Z",
+      "error": "Error: Timed out waiting for plugin enabled config stable twice; last value: {\"enabled\":false,\"stableReads\":0}\n    at waitFor (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:98:9)\n    at async enablePluginAfterIsolation (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:328:3)\n    at async main (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:2096:3)\n    at async file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:2179:3"
+    }
+  ],
+  "restoredPriorMaintenanceLogger": {
+    "maintenanceCount": 7,
+    "navigationResultCount": 5,
+    "hasOriginalRecorder": true,
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "syncEnabled": false,
+    "pluginActive": false,
+    "pluginEnabled": false,
+    "readerViews": 0,
+    "cleared": true
+  },
+  "lastStep": {
+    "label": "sidecar-isolation-installed",
+    "at": "2026-10-23T16:21:51.160Z",
+    "runId": "native-learning-loop-20261023142727241-ab1fac1a68",
+    "roots": [
+      {
+        "logicalRoot": "00_Archive/20_PDFData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68/PDFData"
+      },
+      {
+        "logicalRoot": "00_Archive/21_VocabularyData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68/VocabularyData"
+      }
+    ],
+    "calls": 0
+  },
+  "fixtures": {
+    "pdfPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Files/reading.pdf",
+    "markdownPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Markdown Files/learning.md",
+    "originalPdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "fixturePdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "markdownExcerpt": "This Markdown excerpt survives every route change.",
+    "fixtureDirectory": "/Users/jiajia/Documents/ObReader-Apple-Test/PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68",
+    "finalPdfPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Reader Both Moved/reading-open-move.pdf",
+    "finalPdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "originalPdfUnchanged": "renamed test copy; source fixture remains unchanged"
+  },
+  "highlight": {
+    "uuid": "dd79686a-5acd-4430-8e35-2a96a4d1c0e2",
+    "pageIndex": 0,
+    "revision": 2,
+    "confirmedRevision": 2,
+    "sourceText": "Trace-based Just-in-Time Type Specialization",
+    "saveControl": {
+      "text": "保存批注",
+      "title": "保存批注到外置记录",
+      "disabled": false
+    }
+  },
+  "continuation": {
+    "previousReport": "/Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/evidence/native-final-resume/full-matrix-stage1-recovery.json",
+    "reason": "Context pointer setup overlay; retain proven Highlight chain",
+    "previousFailure": [
+      {
+        "at": "2026-10-23T16:20:21.612Z",
+        "error": "Error: Timed out waiting for PDF identity route sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356; last value: {\"sourcePath\":\"PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix PDF Moved/reading-full-renamed.pdf\",\"docKey\":\"0cd915c44ec9\",\"documentId\":\"sha256-v1:68d235995e9e30b9d264c3bd6eaa3fe1bdd1ad95a1226c87420242525f1e6356\"}\n    at waitFor (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:98:9)\n    at async verifySource (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:959:17)\n    at async checkFiveNavigationDirections (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:1784:27)\n    at async stage (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:1871:24)\n    at async runCompleteFiveDirectionMatrix (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:1883:3)\n    at async main (file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:2122:63)\n    at async file:///Users/jiajia/.codex/worktrees/obreader-0.14/native-final-resume/tests/native-learning-loop.mjs:2173:3"
+      }
+    ],
+    "at": "2026-10-23T16:21:51.161Z"
+  },
+  "failedAt": "2026-10-23T16:22:11.500Z",
+  "failureTargets": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "title": "learning-renamed - ObReader-Apple-Test - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header is-focused",
+      "text": "ObReader-Apple-Test\n00_Archive\n12_books\n测试插件\nObReader-Bulk-Tests\nPDF Reader Diagnostics\nPDF Recovery\nPDF迁移测试\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nlearning-renamed\nPDF迁移测试\n/\nnative-learning-loop-20261023142727241-ab1fac1a68\n/\nMarkdown Both Moved\n/\nlearning-renamed\nlearning-renamed\n1 条反向链接\n27 个词\n279 个字符",
+      "textareas": []
+    }
+  ],
+  "recommendation": "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.",
+  "cleanup": {
+    "status": "complete",
+    "before": {
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "configDir": ".obsidian",
+      "syncEnabled": false,
+      "pluginActive": true,
+      "enabledPlugins": [
+        "pdf-web-reader"
+      ],
+      "views": [],
+      "workspaceViewCount": 0
+    },
+    "closeResults": [],
+    "disabled": {
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "configDir": ".obsidian",
+      "vaultName": "ObReader-Apple-Test",
+      "pluginActive": false,
+      "pluginVersion": null,
+      "enabledPlugins": [],
+      "syncEnabled": false,
+      "readerViews": [],
+      "visibility": "visible",
+      "focused": true
+    },
+    "adapterEvidence": {
+      "status": "verified",
+      "adapterCallCount": 19,
+      "writeCount": 2,
+      "pdfDataFileCount": 13,
+      "pdfWalDocuments": [
+        "22a64dda-a6d4-4988-bc4e-7db69e5d5bdd"
+      ]
+    },
+    "isolationRestored": true,
+    "disabledStatePersisted": true,
+    "at": "2026-10-23T16:22:11.741Z"
+  },
+  "completedAt": "2026-10-23T16:22:11.743Z"
+}

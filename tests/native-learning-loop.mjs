@@ -6,6 +6,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rename,
   writeFile,
@@ -41,7 +42,9 @@ const FIXTURE_PDF = path.join(ROOT, "tests", "fixtures", "tracemonkey.pdf");
 const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
 const CONTEXT_WORD = "Dynamic";
+const attachedExistingTestVault = process.argv.includes("--attached-existing-test-vault");
 const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
+assert.ok(!attachedExistingTestVault || !resumePath, "Attached mode requires a fresh unique run and must not mutate the preserved run.");
 const resumeEvidence = resumePath ? JSON.parse(await readFile(resumePath, "utf8")) : null;
 if (resumeEvidence) {
   assert.equal(resumeEvidence.cleanup?.status, "complete");
@@ -162,8 +165,7 @@ async function initializeNativeConfig(profileRoot) {
   const { nativeConfig, assertNativeVaultIdentity } = await import("./native-config.mjs");
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
-  return { profileRoot: canonicalProfile, marker, port,
-    ownerPid: Number(ownerLines[0].trim().split(/\s/u)[0]), nativeConfig, assertNativeVaultIdentity };
+  return { profileRoot: canonicalProfile, marker, port, ownerPid: Number(ownerLines[0].trim().split(/\s/u)[0]), nativeConfig, assertNativeVaultIdentity };
 }
 
 const profileRoot = verifyOwnedProfile();
@@ -325,6 +327,15 @@ async function clearStaleNativeMaintenanceLogger() {
   await checkpoint("prior-owned-maintenance-hook-cleared", stale);
 }
 
+async function waitForPersistedPluginState(enabled, label) {
+  let stableReads = 0;
+  return waitFor(label, async () => {
+    const ids = JSON.parse(await readFile(absoluteVaultPath(".obsidian/community-plugins.json"), "utf8"));
+    stableReads = ids.includes(PLUGIN_ID) === enabled ? stableReads + 1 : 0;
+    return { enabled: ids.includes(PLUGIN_ID), stableReads };
+  }, state => state.stableReads >= 2);
+}
+
 async function enablePluginAfterIsolation() {
   const before = await page.evaluate((pluginId) => ({
     enabled: app.plugins.enabledPlugins.has(pluginId),
@@ -335,10 +346,11 @@ async function enablePluginAfterIsolation() {
   assert.equal(before.pluginActive, false);
   assert.equal(before.views, 0);
   await page.evaluate(async (pluginId) => {
-    await app.plugins.enablePluginAndSave(pluginId);
+    await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig();
   }, PLUGIN_ID);
   const plugin = await waitFor("PDF Web Reader to load after isolation install", appIdentity,
     value => value.pluginActive && value.pluginVersion === expectedManifest.version);
+  await waitForPersistedPluginState(true, "plugin enabled config stable twice");
   report.plugin = { ...plugin, enabledAfterIsolation: true };
   assert.equal(plugin.vault, EXPECTED_VAULT);
   assert.equal(plugin.configDir, ".obsidian");
@@ -371,12 +383,13 @@ async function installMaintenanceLogger() {
     const record = instance.sessionLog?.record;
     if (typeof record !== "function") return { installed: false, reason: "annotation session log unavailable" };
     if (window.__sidecarNative07) throw new Error("Native maintenance logger already installed.");
-    const state = { maintenance: [], navigationResults: [], original: record };
+    const state = { maintenance: [], navigationResults: [], copiedLinks: [], original: record };
     instance.sessionLog.record = function(kind, fields) {
       if (kind === "annotationStore" && ["annotation-snapshot-materialized", "annotation-snapshot-sync-pending",
           "annotation-snapshot-materialize-failed"].includes(fields?.event)) {
         state.maintenance.push({ ...fields, receivedAt: performance.now() });
       }
+      if (kind === "readerAnchor" && fields?.event === "link-copied") state.copiedLinks.push({ ...fields });
       if (kind === "readerAnchor" && fields?.event === "navigation-result") {
         state.navigationResults.push({ ...fields, receivedAt: performance.now() });
       }
@@ -594,9 +607,10 @@ async function findOwnedVisibleDialog(selector) {
   native.assertNativeVaultIdentity(await appIdentity(), native.nativeConfig);
   const candidates = await browser.pages();
   const hosts = candidates.filter(candidate => candidate.url() === APP_URL);
-  assert.equal(hosts.length, 1, "Dialog ownership requires exactly one owned vault renderer.");
+  if (!attachedExistingTestVault) assert.equal(hosts.length, 1, "Dialog ownership requires exactly one owned vault renderer.");
   const matches = [];
   for (const candidate of candidates) {
+    if (attachedExistingTestVault && candidate !== page && !(await candidate.title()).includes(" - ObReader-Apple-Test - ")) continue;
     const state = await candidate.evaluate(selector => {
       const nodes = [...document.querySelectorAll(selector)];
       return { title: document.title, popout: document.body?.classList.contains("is-popout-modal"),
@@ -691,6 +705,7 @@ async function visibleText(selector, target = page) {
 async function findSettingsWindow() {
   const pages = await browser.pages();
   for (const candidate of pages) {
+    if (attachedExistingTestVault && candidate !== page && !(await candidate.title()).includes(" - ObReader-Apple-Test - ")) continue;
     const isSettings = await candidate.evaluate(() => Boolean(
       document.body?.classList.contains("is-popout-modal") &&
       document.querySelector(".modal.mod-settings"),
@@ -798,6 +813,9 @@ async function closeSettingsThroughUIIfVisible() {
   }
   await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
   settingsPage = null;
+  assertNativeLearningForeground(await appIdentity(), {
+    vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "after Settings window close",
+  });
   return true;
 }
 
@@ -915,11 +933,24 @@ async function currentMarkdownRoute(itemId) {
 async function renameOwnedPath(from, to) {
   assertFixturePath(from);
   assertFixturePath(to);
-  await page.evaluate(async ({ from, to }) => {
+  await page.evaluate(({ from, to }) => {
     const file = app.vault.getAbstractFileByPath(from);
     if (!file) throw new Error(`Owned route source does not exist: ${from}`);
-    if (from !== to) await app.fileManager.renameFile(file, to);
+    const state = window.__nativeOwnedRename = { from, to, done: false };
+    state.promise = (from === to ? Promise.resolve() : app.fileManager.renameFile(file, to))
+      .then(() => { state.done = true; }, error => { state.error = String(error?.stack || error); state.done = true; });
   }, { from, to });
+  await waitFor(`owned rename ${to}`, async () => {
+    const buttons = await page.$$(".modal-container button");
+    for (const button of buttons) {
+      const match = await button.evaluate(node => node.textContent.trim() === "仅此一次" && node.getBoundingClientRect().width > 0);
+      if (match) await button.click();
+      await button.dispose();
+    }
+    return page.evaluate(() => ({ done: window.__nativeOwnedRename.done, error: window.__nativeOwnedRename.error }));
+  }, state => state.done);
+  const error = await page.evaluate(() => window.__nativeOwnedRename.error);
+  assert.ok(!error, error);
 }
 
 async function makeOwnedFolder(relative) {
@@ -1184,13 +1215,14 @@ async function enableLingQReadModeThroughUI(frame) {
 async function selectCompleteDynamicSentenceByPointer(frame, pdfPath) {
   const geometry = await frame.evaluate(() => {
     const spans = [...document.querySelectorAll('.page[data-page-number="1"] .textLayer span')];
-    const firstIndex = spans.findIndex(node => node.textContent.includes("Dynamic languages"));
+    const firstIndex = spans.findLastIndex(node => node.textContent.includes("Dynamic languages"));
     if (firstIndex < 0) throw new Error("Dynamic sentence start is missing from actual textLayer.");
-    const last = spans.slice(firstIndex).find(node => node.textContent.includes("source file."));
+    const last = spans.slice(firstIndex).find(node => node.textContent.normalize("NFKC").includes("source file."));
     if (!last) throw new Error("Complete Dynamic sentence ending is missing from actual textLayer.");
     const first = spans[firstIndex];
     const start = first.textContent.indexOf("Dynamic languages");
-    const end = last.textContent.indexOf("source file.") + "source file.".length;
+    const endingStart = last.textContent.indexOf("source ");
+    const end = last.textContent.indexOf(".", endingStart) + 1;
     const begin = document.createRange(); begin.setStart(first.firstChild, start); begin.setEnd(first.firstChild, start + 1);
     const finish = document.createRange(); finish.setStart(last.firstChild, end - 1); finish.setEnd(last.firstChild, end);
     const a = begin.getBoundingClientRect(), z = finish.getBoundingClientRect();
@@ -1205,7 +1237,7 @@ async function selectCompleteDynamicSentenceByPointer(frame, pdfPath) {
   await page.mouse.up();
   const actualSelection = await frame.evaluate(() => getSelection()?.toString() || "");
   assert.match(actualSelection, /^Dynamic languages/u);
-  assert.match(actualSelection, /source file\.$/u);
+  assert.match(actualSelection.normalize("NFKC"), /source file\.$/u);
   assert.ok(actualSelection.length > 100, "The extra case must capture the complete sentence, not a phrase.");
   return { ...geometry, actualSelection, scope: "complete sentence across actual PDF textLayer lines" };
 }
@@ -1263,8 +1295,16 @@ async function createContextLearningItem(pdfPath, { completeSentence = false } =
     () => queryFamilyKey("dynamic"), Boolean, 12_000);
   selectionGeometry = completeSentence ? await selectCompleteDynamicSentenceByPointer(frame, pdfPath)
     : await selectTextByPointer({ frame, pathValue: pdfPath, text: "Dynamic languages", mode: "selection", exact: false });
-  selected = await frame.evaluate(() => getSelection()?.toString() || "");
+  selected = await frame.evaluate(({ completeSentence }) => {
+    const selection = getSelection();
+    return completeSentence && selection?.rangeCount === 1 ? selection.getRangeAt(0).toString() : selection?.toString() || "";
+  }, { completeSentence });
   assert.match(selected, /Dynamic languages/u);
+  if (completeSentence) {
+    assert.equal(selected, selectionGeometry.actualSelection.replace(/\n/gu, ""),
+      "The exact native DOM Range must differ from rendered Selection only by layout line breaks.");
+    selectionGeometry.exactRangeText = selected;
+  }
   await frame.click(".pdfReaderVocabularyContextCapture");
   await frame.waitForSelector(".pdfReaderVocabularyContextConfirm:not([hidden])", { timeout: 10_000 });
   assert.equal(await frame.$eval(".pdfReaderVocabularyContextPreview", node => node.value), selected);
@@ -1278,6 +1318,8 @@ async function createContextLearningItem(pdfPath, { completeSentence = false } =
     "Context selection offsets must span the exact user-selected text.");
   contexts.dynamic = context;
   await checkpoint("lingq-context-saved", { contextId: context.contextId, familyKey, exactQuote: selected });
+  const pillClose = await frame.$(".pdfReaderVocabularyPillClose");
+  if (pillClose && await pillClose.evaluate(node => node.getBoundingClientRect().width > 0)) await pillClose.click();
   await recordScreen("lingq-context-captured");
 
   }
@@ -1465,22 +1507,42 @@ async function performPathScenarios({ pdfPath, markdownPath, pdfDirectory, markd
 
   const restartBefore = await snapshotVocabularyInvariant();
   assertNativeLearningLoopInvariantUnchanged(baseVocabularySnapshot, restartBefore, "restart precondition");
+  const restartViews = (await appIdentity()).readerViews;
+  report.restartControlledCloses = [];
+  for (let index = 0; index < restartViews.length; index += 1) {
+    const targetPath = restartViews[index].path;
+    report.restartControlledCloses.push(await completeNativeControlledClose({
+      runSerialized: async (fn, arg) => page.evaluate(({ source, arg }) => (0, eval)(`(${source})`)(arg), { source: fn.toString(), arg }),
+      waitFor,
+      loadFiles: root => readNativeSidecarTree(root, { resolvePath: absoluteVaultPath, rejectPending: true }),
+      readWalEvidence: readNativeWalEvidence,
+      hash: bytes => `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`,
+      filePath: targetPath, expectedRemaining: restartViews.slice(index + 1).filter(row => row.path === targetPath).length,
+      label: "plugin-restart", maintenanceOffset: await page.evaluate(() => window.__sidecarNative07?.maintenance?.length || 0),
+      isolatedRoot: isolationPlan.roots[0].physicalRoot, virtualRoot: isolationPlan.roots[0].logicalRoot,
+    }));
+  }
   const restart = await page.evaluate(async ({ pluginId }) => {
-    await app.plugins.disablePluginAndSave(pluginId);
-    return { enabled: app.plugins.isEnabled(pluginId), loaded: Boolean(app.plugins.plugins[pluginId]) };
+    await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig();
+    return { enabled: app.plugins.enabledPlugins.has(pluginId), loaded: Boolean(app.plugins.plugins[pluginId]) };
   }, { pluginId: PLUGIN_ID });
   assert.equal(restart.enabled, false);
   assert.equal(restart.loaded, false);
+  await waitForPersistedPluginState(false, "plugin restart disabled config stable twice");
   // This case tests a plugin restart in the same owned renderer. It does not
   // claim an application-process restart; the ROOT-owned app remains open.
-  await page.evaluate(() => { delete window.__nativeLearningLoopIsolation; });
+  await page.evaluate(() => {
+    if (window.__nativeLearningLoopIsolation?.restore?.() !== true) throw new Error("Could not restore the owned adapter before reinstall.");
+    delete window.__sidecarNative07;
+  });
   const reinstalledSource = serializeNativeLearningLoopIsolationInstaller(isolationPlan);
   const reinstalled = await page.evaluate(source => (0, eval)(`(function(){${source}})()`), reinstalledSource);
   assert.ok(reinstalled?.includes?.(runId));
-  await page.evaluate(async pluginId => await app.plugins.enablePluginAndSave(pluginId), PLUGIN_ID);
+  await page.evaluate(async pluginId => { await app.plugins.enablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
   const restartedPlugin = await waitFor("plugin restart after route persistence", appIdentity,
     state => state.pluginActive && state.pluginVersion === expectedManifest.version);
   assert.equal(restartedPlugin.syncEnabled, false);
+  await installMaintenanceLogger();
   runtimeSettingsChanged = true;
   await page.evaluate(({ pluginId }) => {
     const instance = app.plugins.plugins[pluginId];
@@ -1514,6 +1576,459 @@ async function assertIsolationEvidence() {
   report.stores.pdfDataFileCount = physicalPdfFiles.size;
   report.stores.pdfWalDocuments = [...new Set([...physicalPdfFiles.keys()]
     .filter(file => file.includes("/wal/")).map(file => file.split("/wal/")[1]?.split("/")[0]).filter(Boolean))];
+}
+
+async function diagnoseBacklinkCorrelation() {
+  const pdfPath = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+  const { frame } = await readerFrame(pdfPath);
+  await frame.waitForFunction(() => PDFViewerApplication.pdfDocument && PDFViewerApplication.pdfViewer.pagesCount > 1);
+  await page.evaluate(pluginId => {
+    const plugin = app.plugins.plugins[pluginId];
+    const trace = { wire: [], originals: [] };
+    const copy = value => { const { token, ...fields } = value || {}; return { ...fields, tokenPresent: typeof token === "string" }; };
+    trace.listener = event => {
+      const view = [...plugin.views].find(view => view.iframe?.contentWindow === event.source);
+      if (view && /reader-backlink-page/u.test(event.data?.type || "")) trace.wire.push({ direction: "viewer-to-host",
+        authenticatedSource: true, tokenMatches: event.data.token === view.token, message: copy(event.data) });
+    };
+    window.addEventListener("message", trace.listener, true);
+    for (const view of plugin.views) {
+      const original = view.postToViewer;
+      trace.originals.push({ view, original });
+      view.postToViewer = function(message, ...args) {
+        if (/reader-backlink-page/u.test(message?.type || "")) trace.wire.push({ direction: "host-to-viewer",
+          tokenMatches: message.token === this.token, message: copy(message) });
+        return original.call(this, message, ...args);
+      };
+    }
+    window.__nativeBacklinkWireDiag = trace;
+  }, PLUGIN_ID);
+  await frame.evaluate(() => {
+    const proto = window.PdfReaderInputRuntime.BacklinkInteractionController.prototype;
+    const trace = { calls: [], originals: {} };
+    for (const name of ["beginPageRequest", "isCurrentPageRequest", "setPageResults"]) {
+      const original = proto[name]; trace.originals[name] = original;
+      proto[name] = function(message, ...args) {
+        const before = this.latestPageRequest ? { ...this.latestPageRequest } : null;
+        const result = original.call(this, message, ...args);
+        trace.calls.push({ name, message: { ...message }, pendingBefore: before,
+          pendingAfter: this.latestPageRequest ? { ...this.latestPageRequest } : null, result });
+        return result;
+      };
+    }
+    window.__nativeBacklinkControllerDiag = trace;
+  });
+  try {
+    for (const number of [2, 1]) {
+      await frame.click("#pageNumber");
+      await page.keyboard.down("Meta"); await page.keyboard.press("a"); await page.keyboard.up("Meta");
+      await page.keyboard.type(String(number)); await page.keyboard.press("Enter");
+      await frame.waitForFunction(number => PDFViewerApplication.pdfViewer.currentPageNumber === number, {}, number);
+      await waitFor(`real page ${number} request wire`, () => page.evaluate(() => window.__nativeBacklinkWireDiag.wire),
+        rows => rows.some(row => row.direction === "host-to-viewer" && row.message.pageNumber === number), 8000).catch(error => {
+          report.backlinkDiagnosticWaitErrors ||= []; report.backlinkDiagnosticWaitErrors.push(String(error));
+        });
+    }
+    report.backlinkCorrelationDiagnostic = {
+      wire: await page.evaluate(() => window.__nativeBacklinkWireDiag.wire),
+      controllerCalls: await frame.evaluate(() => window.__nativeBacklinkControllerDiag.calls),
+      finalBadgeState: await frame.evaluate(() => ({ page: PDFViewerApplication.pdfViewer.currentPageNumber,
+        badges: [...document.querySelectorAll(".pdfReaderBacklinkPageBadge")].map(node => node.textContent) })),
+    };
+    await recordScreen("backlink-correlation-diagnostic-page1");
+  } finally {
+    await frame.evaluate(() => {
+      const trace = window.__nativeBacklinkControllerDiag;
+      for (const [name, original] of Object.entries(trace.originals)) window.PdfReaderInputRuntime.BacklinkInteractionController.prototype[name] = original;
+      delete window.__nativeBacklinkControllerDiag;
+    });
+    await page.evaluate(() => {
+      const trace = window.__nativeBacklinkWireDiag;
+      window.removeEventListener("message", trace.listener, true);
+      for (const { view, original } of trace.originals) view.postToViewer = original;
+      delete window.__nativeBacklinkWireDiag;
+    });
+  }
+}
+
+async function exerciseNavigationDirections() {
+  const pdfRoute = await currentPdfRoute(learningItems.highlight);
+  const mdFlow = report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
+  learningItems.markdown = await readItem(mdFlow.itemId);
+  const mdRoute = await currentMarkdownRoute(mdFlow.itemId);
+  const pdfPath = pdfRoute.sourcePath, markdownPath = mdRoute.currentPath;
+  const initialFrame = (await readerFrame(pdfPath)).frame;
+  await initialFrame.waitForFunction(() => PDFViewerApplication.pdfDocument && PDFViewerApplication.pdfViewer.pagesCount > 0);
+  const baseline = await snapshotVocabularyInvariant();
+  const walSnapshot = async () => {
+    const files = await readNativeSidecarTree(isolationPlan.roots[0].physicalRoot,
+      { resolvePath: absoluteVaultPath, rejectPending: true });
+    return [...files].filter(([name]) => /\.jsonl(?:$|\.archive\.)/u.test(name))
+      .map(([name, bytes]) => ({ name, sha256: sha256(bytes), bytes: bytes.length })).sort((a, b) => a.name.localeCompare(b.name));
+  };
+  const walBefore = await walSnapshot();
+  const copiedOffset = await page.evaluate(() => window.__sidecarNative07.copiedLinks.length);
+  await openCommand("复制当前 PDF 阅读器链接");
+  await waitFor("real Copy Reader Link acknowledgement", () => page.evaluate(() => window.__sidecarNative07.copiedLinks.length), count => count > copiedOffset);
+  const link = await page.evaluate(() => require("electron").clipboard.readText());
+  assert.ok(link.startsWith(`[[${pdfPath}#`) && link.endsWith("]]"), "Use the exact real Copy Reader Link clipboard result.");
+  report.directionProgress = { copiedLink: link };
+  await checkpoint("direction-real-copy-reader-link");
+  const destination = link.slice(2, -2).split("|")[0];
+  const params = new URLSearchParams(destination.slice(destination.indexOf("#") + 1));
+  const targetText = params.get("obreader"), targetMatch = /^(ann|sel|page)\.(.+)$/u.exec(targetText || "");
+  assert.ok(targetMatch, "Copied link must contain the authenticated enhanced Reader target.");
+  const target = { kind: targetMatch[1] === "ann" ? "annotation" : targetMatch[1] === "sel" ? "selection" : "page", id: targetMatch[2] };
+  assert.equal(params.get("obdoc"), learningItems.highlight.source.documentId);
+  await page.evaluate(async targetPath => await app.workspace.getLeaf(true).openFile(app.vault.getAbstractFileByPath(targetPath)), markdownPath);
+  const markdownMode = await page.evaluate(() => app.workspace.activeLeaf.view.getMode?.());
+  if (markdownMode === "preview") {
+    const toggle = await page.evaluate(() => app.commands.commands["markdown:toggle-preview"].name);
+    await openCommand(toggle);
+  }
+  await page.waitForSelector(".workspace-leaf.mod-active .cm-content", { visible: true });
+  let original = await page.evaluate(() => app.workspace.activeLeaf.view.editor.getValue());
+  assert.ok(original.includes(MARKDOWN_EXCERPT));
+  const previousLinkLine = original.split("\n").findLast(line => line.startsWith("[["));
+  if (previousLinkLine && previousLinkLine !== link) {
+    // Repair only this harness's previously typed, autocomplete-mutated tail.
+    assert.ok(previousLinkLine.includes("reading-open-move.pdf#page="));
+    await page.click(".workspace-leaf.mod-active .cm-content");
+    await page.keyboard.down("Meta"); await page.keyboard.press("ArrowDown"); await page.keyboard.up("Meta");
+    await page.keyboard.press("End");
+    await page.keyboard.down("Shift");
+    try {
+      for (let count = 0; count < previousLinkLine.length + 4; count += 1) {
+        const selected = await page.evaluate(() => app.workspace.activeLeaf.view.editor.getSelection());
+        if (selected === previousLinkLine) break;
+        assert.ok(selected.length <= previousLinkLine.length, "Refuse to delete outside the harness-added malformed link.");
+        await page.keyboard.press("ArrowLeft");
+      }
+    } finally { await page.keyboard.up("Shift"); }
+    assert.equal(await page.evaluate(() => app.workspace.activeLeaf.view.editor.getSelection()), previousLinkLine);
+    await page.keyboard.press("Backspace");
+    original = await page.evaluate(() => app.workspace.activeLeaf.view.editor.getValue());
+  }
+  await page.click(".workspace-leaf.mod-active .cm-content");
+  await page.keyboard.down("Meta"); await page.keyboard.press("ArrowDown"); await page.keyboard.up("Meta");
+  await page.keyboard.press("End");
+  const cursor = await page.evaluate(() => ({ cursor: app.workspace.activeLeaf.view.editor.getCursor(), last: app.workspace.activeLeaf.view.editor.lineCount() - 1 }));
+  assert.equal(cursor.cursor.line, cursor.last, "Append only outside the original learning excerpt.");
+  if (!original.includes(link)) {
+    await page.keyboard.press("Enter"); await page.keyboard.press("Enter");
+    assert.equal(await page.evaluate(() => require("electron").clipboard.readText()), link);
+    await page.keyboard.sendCharacter(link);
+    await page.keyboard.press("Enter");
+  }
+  await page.keyboard.down("Meta"); await page.keyboard.press("s"); await page.keyboard.up("Meta");
+  await waitFor("real Markdown editor link append saved", async () => readFile(absoluteVaultPath(markdownPath), "utf8"), text => text.startsWith(original) && text.includes(link));
+  report.directionProgress.appendedLink = link;
+  report.directionProgress.markdownPath = markdownPath;
+  await checkpoint("direction-real-editor-append");
+  const previewCommand = await page.evaluate(() => app.commands.commands["markdown:toggle-preview"].name);
+  await openCommand(previewCommand);
+  await page.waitForSelector("[data-native-matrix-active=\"true\"] .markdown-preview-view a.internal-link", { visible: true });
+  const links = await page.$$("[data-native-matrix-active=\"true\"] .markdown-preview-view a.internal-link");
+  const matching = [];
+  for (const candidate of links) {
+    const href = await candidate.evaluate(node => node.getAttribute("data-href") || node.getAttribute("href"));
+    if (href === destination) matching.push(candidate); else await candidate.dispose();
+  }
+  assert.equal(matching.length, 1, "Click the one real rendered copied link.");
+  const beforeNavigation = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult || null), PLUGIN_ID);
+  await matching[0].click();
+  const accepted = await waitFor("Markdown clicked link exact current PDF receipt", () => page.evaluate(({ pluginId, documentId }) => {
+    const view = [...app.plugins.plugins[pluginId].views].find(view => view.documentId === documentId);
+    return view ? { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration,
+      receipt: view.lastReaderNavigationResult || null } : null;
+  }, { pluginId: PLUGIN_ID, documentId: params.get("obdoc") }), state => state?.receipt?.ok === true &&
+    state.receipt.targetId === target.id && state.receipt.kind === target.kind &&
+    state.receipt.documentId === state.documentId && state.receipt.openRequest === state.openRequest &&
+    state.receipt.rendererGeneration === state.rendererGeneration &&
+    !beforeNavigation.some(row => row?.requestId === state.receipt.requestId && row?.rendererGeneration === state.receipt.rendererGeneration));
+  report.directionProgress.markdownToPdf = accepted;
+  await checkpoint("direction-real-markdown-to-pdf-passed");
+  await recordScreen("direction-markdown-to-pdf");
+  let { frame } = await readerFrame(pdfPath);
+  await frame.waitForSelector(".pdfReaderBacklinkPageBadge", { visible: true, timeout: 15000 }).catch(async error => {
+    report.backlinkDiagnostic = await page.evaluate(({ pluginId, documentId }) => {
+      const plugin = app.plugins.plugins[pluginId];
+      return { indexReady: plugin.readerBacklinkIndexReady, revision: plugin.readerBacklinkIndex?.revision,
+        rows: plugin.readerBacklinkIndex?.getDocument("0cd915c44ec9", documentId),
+        views: [...plugin.views].map(view => ({ documentId: view.documentId, openRequest: view.openRequest,
+          rendererGeneration: view.rendererGeneration, currentPageNumber: view.currentPageNumber,
+          pageRequest: view.readerBacklinkPageRequest, hydration: view.annotationHydrationAllowed })) };
+    }, { pluginId: PLUGIN_ID, documentId: params.get("obdoc") });
+    report.backlinkFrameDiagnostic = await frame.evaluate(() => ({ page: PDFViewerApplication.pdfViewer.currentPageNumber,
+      badges: [...document.querySelectorAll(".pdfReaderBacklinkPageBadge")].map(node => ({ text: node.textContent,
+        rect: node.getBoundingClientRect().toJSON() })) }));
+    throw error;
+  });
+  const badgeText = await frame.$eval(".pdfReaderBacklinkPageBadge", node => node.textContent);
+  await frame.click(".pdfReaderBacklinkPageBadge");
+  const backlink = await waitFor("PDF page badge exact Markdown link span", () => page.evaluate(() => ({
+    path: app.workspace.activeLeaf?.view?.file?.path, selection: app.workspace.activeLeaf?.view?.editor?.getSelection?.(),
+    cursor: app.workspace.activeLeaf?.view?.editor?.getCursor?.(),
+  })), state => state.path === markdownPath && state.selection === link);
+  await recordScreen("direction-pdf-badge-to-markdown");
+  await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdfPath);
+  ({ frame } = await readerFrame(pdfPath));
+  const sidebarHidden = await frame.$eval("#pdfReaderAnnotationSidebarMenu", node => node.classList.contains("hidden"));
+  if (sidebarHidden) await frame.click("#pdfReaderAnnotationSidebarButton");
+  const rowSelector = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${learningItems.highlight.source.target.id}"]`;
+  await frame.waitForSelector(`${rowSelector} .pdfReaderAnnotationSidebarNavigate`, { visible: true });
+  await frame.click(`${rowSelector} .pdfReaderAnnotationSidebarNavigate`);
+  const sidebar = await waitFor("Sidebar navigate same durable Highlight UUID", () => frame.$eval(rowSelector, row => ({ uuid: row.dataset.uuid,
+    selected: row.classList.contains("selected"), text: row.querySelector(".sidebarCommentText")?.textContent })), row => row.selected === true);
+  assert.equal(sidebar.uuid, learningItems.highlight.source.target.id);
+  assert.equal(sidebar.text, HIGHLIGHT_TEXT);
+  await recordScreen("direction-sidebar-same-highlight");
+  const after = await snapshotVocabularyInvariant();
+  assertNativeLearningLoopInvariantUnchanged(baseline, after, "additional navigation directions");
+  const walAfter = await walSnapshot();
+  assert.deepEqual(walAfter, walBefore, "Link/backlink/Sidebar navigation must not append Annotation WAL operations.");
+  report.navigationDirections = { status: "passed", clipboardLink: link, target, markdownToPdf: accepted,
+    pdfBadgeToMarkdown: { badgeText, ...backlink }, sidebarSameHighlight: sidebar,
+    vocabularyBytesUnchanged: true, annotationWalBytesUnchanged: true, baseline, walBefore, walAfter,
+    learningExcerptUnchanged: (await readFile(absoluteVaultPath(markdownPath), "utf8")).includes(MARKDOWN_EXCERPT) };
+}
+
+async function controlledCloseMatrixReaders(label) {
+  const views = (await appIdentity()).readerViews;
+  const results = [];
+  for (let index = 0; index < views.length; index += 1) results.push(await completeNativeControlledClose({
+    runSerialized: async (fn, arg) => page.evaluate(({ source, arg }) => (0, eval)(`(${source})`)(arg), { source: fn.toString(), arg }),
+    waitFor,
+    loadFiles: root => readNativeSidecarTree(root, { resolvePath: absoluteVaultPath, rejectPending: true }),
+    readWalEvidence: readNativeWalEvidence,
+    hash: bytes => `xxh64-v1:${h64Raw(bytes).toString(16).padStart(16, "0")}`,
+    filePath: views[index].path, expectedRemaining: views.slice(index + 1).filter(row => row.path === views[index].path).length,
+    label, maintenanceOffset: await page.evaluate(() => window.__sidecarNative07?.maintenance?.length || 0),
+    isolatedRoot: isolationPlan.roots[0].physicalRoot, virtualRoot: isolationPlan.roots[0].logicalRoot,
+  }));
+  return results;
+}
+
+async function quickOpenOwnedMarkdown(markdownPath) {
+  assertFixturePath(markdownPath);
+  await closeOwnedMarkdownTabs(markdownPath, "before-fresh-QuickOpen");
+  const openButton = await page.$('.empty-state-action[aria-label="打开文件"]');
+  if (openButton && await openButton.evaluate(node => node.getBoundingClientRect().width > 0)) await openButton.click();
+  else {
+    await page.click(".workspace-tab-header.is-active");
+    await page.keyboard.down("Meta");
+    try { await page.keyboard.press("o"); } finally { await page.keyboard.up("Meta"); }
+  }
+  await page.waitForSelector(".prompt-input", { visible: true });
+  await page.type(".prompt-input", markdownPath, { delay: 1 });
+  await waitFor("QuickOpen exact fixture candidate", () => page.evaluate(() => [...document.querySelectorAll(".suggestion-item")].filter(n=>n.getBoundingClientRect().width).map(n=>n.innerText)), rows => rows.length === 1);
+  await page.keyboard.press("Enter");
+  await waitFor("QuickOpen exact Markdown UI owner", () => page.evaluate(() => ({ path:app.workspace.activeLeaf.view.file?.path, type:app.workspace.activeLeaf.view.getViewType(), visible:app.workspace.activeLeaf.view.containerEl.getBoundingClientRect().width })), state => state.path === markdownPath && state.type === "markdown" && state.visible > 0);
+}
+
+async function closeOwnedMarkdownTabs(markdownPath, label) {
+  assertFixturePath(markdownPath);
+  const before = await readFile(absoluteVaultPath(markdownPath));
+  const result = await page.evaluate(async markdownPath => {
+    const leaves = app.workspace.getLeavesOfType("markdown").filter(leaf => leaf.view?.file?.path === markdownPath);
+    const closedLeafIds = leaves.map(leaf => leaf.id);
+    for (const leaf of leaves) await leaf.detach();
+    await app.workspace.saveLayout();
+    return { closedLeafIds, remaining: app.workspace.getLeavesOfType("markdown").filter(leaf => leaf.view?.file?.path === markdownPath).length };
+  }, markdownPath);
+  assert.equal(result.remaining, 0);
+  assert.deepEqual(await readFile(absoluteVaultPath(markdownPath)), before, `${label} own Markdown tab cleanup preserves exact bytes`);
+  return { label, markdownPath, ...result, bytesUnchanged: true, sha256: sha256(before) };
+}
+
+async function installEditorRoutePassiveProbe() {
+  await page.evaluate(pluginId => {
+    const state = window.__nativeEditorRouteProbe = { calls: [], restores: [], startedAt: Date.now() };
+    const copy = value => { try { return JSON.parse(JSON.stringify(value)); } catch { return String(value); } };
+    const wrap = (owner, name, label) => {
+      if (!owner || typeof owner[name] !== "function") { state.calls.push({ label, missing: true }); return; }
+      const original = owner[name], hadOwn = Object.hasOwn(owner, name);
+      const wrapper = function(...args) {
+        state.calls.push({ label, args: args.map(copy), at: Date.now(), receiverPath: this.view?.file?.path || this.file?.path,
+          target: copy(this.readerPendingNavigationTarget || this.pendingNavigationTarget || this.currentTarget) });
+        return Reflect.apply(original, this, args);
+      };
+      owner[name] = wrapper;
+      state.restores.push(() => { if (owner[name] === wrapper) { if (hadOwn) owner[name] = original; else delete owner[name]; } });
+    };
+    wrap(Object.getPrototypeOf(app.workspace.activeLeaf), "setViewState", "WorkspaceLeaf.setViewState");
+    const reader = [...app.plugins.plugins[pluginId].views][0];
+    wrap(Object.getPrototypeOf(reader), "setEphemeralState", "PdfReaderView.setEphemeralState");
+  }, PLUGIN_ID);
+}
+
+async function checkFiveNavigationDirections(stage) {
+  const pdfPath = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+  const markdownPath = (await currentMarkdownRoute(learningItems.markdown.itemId)).currentPath;
+  const highlightSource = await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdfPath);
+  const markdownReview = await verifySource(learningItems.markdown.itemId, learningItems.markdown.source.target, markdownPath, { markdown: true });
+  await controlledCloseMatrixReaders(`${stage}-before-markdown-link`);
+  const text = await readFile(absoluteVaultPath(markdownPath), "utf8");
+  const links = text.match(/\[\[[^\n]*#page=[^\n]*obreader=[^\n]*\]\]/gu) || [];
+  assert.equal(links.length, 1, "Reuse the one actual Copy Reader Link already pasted through editor UI.");
+  const link = links[0], destination = link.slice(2, -2).split("|")[0];
+  const params = new URLSearchParams(destination.slice(destination.indexOf("#") + 1));
+  assert.equal(params.get("obdoc"), learningItems.highlight.source.documentId);
+  const active = await page.evaluate(expected => {
+    const view = app.workspace.activeLeaf.view, rect = view.containerEl.getBoundingClientRect();
+    if (view.getViewType() !== "markdown" || view.file.path !== expected || !view.containerEl.isConnected || !rect.width) throw Error("Wrong Markdown UI owner");
+    for (const el of document.querySelectorAll("[data-native-matrix-active]")) delete el.dataset.nativeMatrixActive;
+    view.containerEl.dataset.nativeMatrixActive = "true";
+    return { path: view.file.path, mode: view.getMode() };
+  }, markdownPath);
+  const oldReceipts = await page.evaluate(pluginId => [...app.plugins.plugins[pluginId].views].map(view => view.lastReaderNavigationResult), PLUGIN_ID);
+  if (!process.argv.includes("--editor-route-passive-diagnostic")) {
+    if (active.mode !== "preview") await page.click('[data-native-matrix-active="true"] .view-action[aria-label*="切换至阅读视图"]');
+    await page.waitForSelector('[data-native-matrix-active="true"] .markdown-preview-view a.internal-link', { visible: true, timeout: 10000 });
+    const handles = await page.$$('[data-native-matrix-active="true"] .markdown-preview-view a.internal-link');
+    const matches = [];
+    for (const handle of handles) {
+      if (await handle.evaluate((node, destination) => (node.getAttribute("data-href") || node.getAttribute("href")) === destination && node.getBoundingClientRect().width > 0, destination)) matches.push(handle);
+      else await handle.dispose();
+    }
+    assert.equal(matches.length, 1, "Persisted enhanced wiki must match one visible actual ReadingView anchor");
+    await matches[0].click();
+  } else {
+  if (active.mode === "preview") await page.click('[data-native-matrix-active="true"] .view-action[aria-label*="切换至编辑视图"]');
+  const alias = link.slice(2, -2).split("|")[1];
+  const handles = await page.$$('[data-native-matrix-active="true"] .cm-link-alias .cm-underline');
+  const matches = [];
+  for (const handle of handles) {
+    if (await handle.evaluate((node, alias) => node.textContent === alias && node.getBoundingClientRect().width > 0, alias)) matches.push(handle);
+    else await handle.dispose();
+  }
+  assert.equal(matches.length, 1, "Actual persisted wiki alias must be uniquely visible in the owned Markdown editor");
+  await page.keyboard.down("Meta");
+  try { await matches[0].click(); } finally { await page.keyboard.up("Meta"); }
+  }
+  if (process.argv.includes("--editor-route-passive-diagnostic")) {
+    await waitFor("passive actual editor open Reader", appIdentity, state => state.readerViews.length === 1);
+    await readerFrame(pdfPath);
+    await recordScreen("editor-route-passive-first-open");
+    report.editorRoutePassive = await page.evaluate(pluginId => ({ calls: window.__nativeEditorRouteProbe.calls,
+      readers: [...app.plugins.plugins[pluginId].views].map(view => ({ path: view.file?.path, documentId: view.documentId,
+        openRequest: view.openRequest, rendererGeneration: view.rendererGeneration, receipt: view.lastReaderNavigationResult,
+        target: view.readerPendingNavigationTarget || view.pendingNavigationTarget || null })) }), PLUGIN_ID);
+    report.editorRoutePassive.link = link;
+    return report.editorRoutePassive;
+  }
+  const markdownToPdf = await waitFor(`${stage} exact Markdown-to-PDF receipt`, () => page.evaluate(({ pluginId, documentId }) => {
+    const view = [...app.plugins.plugins[pluginId].views].find(view => view.documentId === documentId);
+    return view ? { documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration,
+      receipt: view.lastReaderNavigationResult } : null;
+  }, { pluginId: PLUGIN_ID, documentId: params.get("obdoc") }), state => state?.receipt?.ok === true &&
+    state.receipt.requestId && state.receipt.documentId === state.documentId && state.receipt.openRequest === state.openRequest &&
+    state.receipt.rendererGeneration === state.rendererGeneration && state.receipt.kind === "page" && state.receipt.targetId === "ref:2R" &&
+    !oldReceipts.some(row => row?.requestId === state.receipt.requestId && row?.rendererGeneration === state.receipt.rendererGeneration));
+  await recordScreen(`${stage}-markdown-to-pdf`);
+  let { frame } = await readerFrame(pdfPath);
+  await frame.waitForSelector(".pdfReaderBacklinkPageBadge", { visible: true, timeout: 15000 });
+  const badge = await frame.$eval(".pdfReaderBacklinkPageBadge", node => node.textContent);
+  await frame.click(".pdfReaderBacklinkPageBadge");
+  const backlinkToMarkdown = await waitFor(`${stage} exact backlink source span`, () => page.evaluate(() => ({
+    path: app.workspace.activeLeaf?.view?.file?.path, selection: app.workspace.activeLeaf?.view?.editor?.getSelection?.(),
+  })), state => state.path === markdownPath && state.selection === link);
+  await recordScreen(`${stage}-backlink-to-markdown`);
+  await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdfPath);
+  ({ frame } = await readerFrame(pdfPath));
+  if (await frame.$eval("#pdfReaderAnnotationSidebarMenu", node => node.classList.contains("hidden"))) await frame.click("#pdfReaderAnnotationSidebarButton");
+  const row = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${learningItems.highlight.source.target.id}"]`;
+  await frame.waitForSelector(`${row} .pdfReaderAnnotationSidebarNavigate`, { visible: true });
+  await frame.click(`${row} .pdfReaderAnnotationSidebarNavigate`);
+  const sidebar = await waitFor(`${stage} Sidebar exact UUID`, () => frame.$eval(row, node => ({ uuid: node.dataset.uuid,
+    selected: node.classList.contains("selected"), text: node.querySelector(".sidebarCommentText")?.textContent })), state => state.selected);
+  assert.equal(sidebar.uuid, learningItems.highlight.source.target.id); assert.equal(sidebar.text, HIGHLIGHT_TEXT);
+  await recordScreen(`${stage}-sidebar-highlight`);
+  await frame.click("#pdfReaderAnnotationSidebarButton");
+  const fullContext = report.uiFlows.find(flow => flow.selectionScope === "complete sentence");
+  const contextItem = await readItem(fullContext.itemId);
+  const contextSource = await verifySource(contextItem.itemId, contextItem.source.target, pdfPath);
+  ({ frame } = await readerFrame(pdfPath));
+  contextSource.exactAnchorText = await frame.evaluate(() => [...(window.CSS?.highlights?.get("pdfReaderAnchorFocusText") || [])].map(range => range.toString()).join(""));
+  assert.equal(contextSource.exactAnchorText, fullContext.exactQuote);
+  await recordScreen(`${stage}-context-pdf`);
+  return { highlightSource, markdownReview, markdownToPdf, backlinkToMarkdown: { badge, ...backlinkToMarkdown }, sidebar, contextSource,
+    paths: { pdfPath, markdownPath }, currentLink: link };
+}
+
+async function runCompleteFiveDirectionMatrix() {
+  const mdFlow = report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
+  learningItems.markdown = await readItem(mdFlow.itemId);
+  const baseline = await snapshotVocabularyInvariant();
+  assert.ok(!baseline.files.some(row => /\.pending(?:\.json)?$/u.test(row.path)));
+  const defaultBaseline = JSON.parse(await readFile(path.join(ROOT, "evidence/native-final-resume/default-trees-controlled-baseline.json"), "utf8"));
+  const defaultSnapshot = async () => {
+    const files = [];
+    const visit = async root => {
+      for (const entry of await readdir(absoluteVaultPath(root), { withFileTypes: true })) {
+        const child = `${root}/${entry.name}`;
+        if (entry.isDirectory()) await visit(child);
+        else if (entry.isFile()) { const bytes = await readFile(absoluteVaultPath(child)); files.push({ path: child, bytes: bytes.length, sha256: sha256(bytes) }); }
+      }
+    };
+    for (const root of defaultBaseline.roots) await visit(root);
+    return files.sort((a, b) => a.path.localeCompare(b.path));
+  };
+  const sortedDefault = [...defaultBaseline.files].sort((a, b) => a.path.localeCompare(b.path));
+  assert.deepEqual(await defaultSnapshot(), sortedDefault);
+  const completedStages = resumeEvidence?.completeDirectionMatrix?.stages || [];
+  report.completeDirectionMatrix = { scope: "five actual UI directions at each additional stage; old eight Source-only stages retained separately",
+    baseline, defaultFileCount: sortedDefault.length, stages: completedStages };
+  const stage = async (name, action) => {
+    if (completedStages.some(row => row.name === name && row.status === "passed")) return;
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), `${name} before move`);
+    await action();
+    await waitFor(`${name} PDF route resolves existing moved file`, async () => {
+      const route = await currentPdfRoute(learningItems.highlight);
+      return page.evaluate(sourcePath => ({ sourcePath, exists: !!app.vault.getAbstractFileByPath(sourcePath) }), route.sourcePath);
+    }, state => state.exists);
+    await waitFor(`${name} Markdown route resolves existing moved file`, async () => {
+      const route = await currentMarkdownRoute(learningItems.markdown.itemId);
+      return page.evaluate(currentPath => ({ currentPath, exists: !!app.vault.getAbstractFileByPath(currentPath) }), route.currentPath);
+    }, state => state.exists);
+    const directions = await checkFiveNavigationDirections(name);
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), `${name} after five directions`);
+    const closes = await controlledCloseMatrixReaders(name);
+    const markdownCleanup = await closeOwnedMarkdownTabs(directions.paths.markdownPath, name);
+    assert.deepEqual(await defaultSnapshot(), sortedDefault, `${name} must not write default data trees`);
+    const currentPdf = (await currentPdfRoute(learningItems.highlight)).sourcePath;
+    assert.equal(sha256(await readFile(absoluteVaultPath(currentPdf))), report.fixtures.originalPdfSha256);
+    report.completeDirectionMatrix.stages.push({ name, status: "passed", directions, closes, markdownCleanup,
+      canonicalBytesUnchanged: true, defaultTreesUnchanged: true, sourcePdfUnchanged: true });
+    await checkpoint(`complete-five-directions-${name}-passed`);
+  };
+  await controlledCloseMatrixReaders("matrix-precondition");
+  await stage("full-pdfrename", async () => { const route = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(route.sourcePath, `${path.posix.dirname(route.sourcePath)}/reading-full-renamed.pdf`); });
+  await stage("full-foldermove", async () => { const route = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(path.posix.dirname(route.sourcePath), `${fixturePrefix}/Full Matrix PDF Moved`); });
+  await stage("full-mdrename", async () => { const route = await currentMarkdownRoute(learningItems.markdown.itemId); await renameOwnedPath(route.currentPath, `${path.posix.dirname(route.currentPath)}/learning-full-renamed.md`); });
+  await stage("full-mdmove", async () => { const route = await currentMarkdownRoute(learningItems.markdown.itemId); await makeOwnedFolder(`${fixturePrefix}/Full Matrix MD Moved`); await renameOwnedPath(route.currentPath, `${fixturePrefix}/Full Matrix MD Moved/learning-full-renamed.md`); });
+  await stage("full-bothmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); const md = await currentMarkdownRoute(learningItems.markdown.itemId);
+    await makeOwnedFolder(`${fixturePrefix}/Full Matrix Both MD`); await renameOwnedPath(path.posix.dirname(pdf.sourcePath), `${fixturePrefix}/Full Matrix Both PDF`);
+    await renameOwnedPath(md.currentPath, `${fixturePrefix}/Full Matrix Both MD/learning-full-renamed.md`); });
+  await stage("full-closedmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-closed.pdf`); });
+  await stage("full-openmove", async () => { const pdf = await currentPdfRoute(learningItems.highlight); await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, pdf.sourcePath);
+    await renameOwnedPath(pdf.sourcePath, `${path.posix.dirname(pdf.sourcePath)}/reading-full-open.pdf`); });
+  if (!process.argv.includes("--after-owned-process-restart")) {
+    report.completeDirectionMatrix.status = "awaiting-owned-process-restart";
+    report.completeDirectionMatrix.processRestartPending = { ownerPid: native.ownerPid, cdpPort: native.port, profileRoot: native.profileRoot,
+      note: "ROOT must safely restart the exact owned process after final cleanup; plugin toggles do not satisfy this stage." };
+    await checkpoint("seven-full-stages-awaiting-ROOT-owned-process-restart");
+    return;
+  }
+  const previous = resumeEvidence.completeDirectionMatrix.processRestartPending;
+  assert.ok(previous && Number.isInteger(previous.ownerPid));
+  assert.notEqual(native.ownerPid, previous.ownerPid, "Formal restart requires a different actual owned main PID");
+  assert.equal(native.profileRoot, previous.profileRoot);
+  await stage("full-owned-process-restart", async () => {});
+  report.completeDirectionMatrix.status = "passed";
+  report.completeDirectionMatrix.restartScope = "actual owned Obsidian process restart by ROOT, independently verified new main PID";
+  report.completeDirectionMatrix.processRestart = { previous, currentOwnerPid: native.ownerPid, currentCdpPort: native.port };
+
 }
 
 async function captureNativeEvidence() {
@@ -1607,17 +2122,17 @@ async function cleanupNativeRun() {
     return;
   }
 
-  if (afterClose.pluginActive || afterClose.enabledPlugins.includes(PLUGIN_ID)) {
-    await page.evaluate(async pluginId => {
-      if (app.plugins.isEnabled(pluginId)) await app.plugins.disablePluginAndSave(pluginId);
-    }, PLUGIN_ID);
+  if (attachedExistingTestVault && report.fixtures?.markdownPath) {
+    report.attachedMode.finalMarkdownCleanup = await closeOwnedMarkdownTabs(report.fixtures.markdownPath, "attached-final-cleanup");
   }
+  await page.evaluate(async pluginId => { await app.plugins.disablePluginAndSave(pluginId); await app.plugins.saveConfig(); }, PLUGIN_ID);
   const disabled = await appIdentity();
   if (disabled.pluginActive || disabled.enabledPlugins.includes(PLUGIN_ID) || disabled.readerViews.length !== 0) {
     report.cleanup = { status: "incomplete", reason: "Plugin-remains-enabled-after-test", before,
       closeResults, disabled, adapterEvidence };
     return;
   }
+  await waitForPersistedPluginState(false, "cleanup disabled config stable twice before adapter restore");
   const restored = await page.evaluate(runId => {
     const state = window.__nativeLearningLoopIsolation;
     if (!state) return false;
@@ -1627,7 +2142,47 @@ async function cleanupNativeRun() {
     return ok;
   }, runId);
   report.cleanup = { status: "complete", before, closeResults, disabled, adapterEvidence,
-    isolationRestored: restored, at: new Date().toISOString() };
+    isolationRestored: restored, disabledStatePersisted: true, at: new Date().toISOString() };
+}
+
+async function assertAttachedSiblingProcessesQuiescent() {
+  const siblingProfile = path.join(OWNED_PROFILE_PARENT, "macos-native-profile-exclusive-20261024-0120");
+  const processLines = execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }).split(/\r?\n/u)
+    .filter(line => line.includes(APP_EXECUTABLE) && line.includes(`--user-data-dir=${siblingProfile}`));
+  report.attachedMode.siblingPreflight = [];
+  if (!processLines.length) return;
+  assert.equal(processLines.length, 1, "Unexpected sibling process ownership ambiguity");
+  const marker = JSON.parse(await readFile(path.join(siblingProfile, ".codex-native-profile.json"), "utf8"));
+  assert.equal(marker.kind, "codex-owned-native-test-profile");
+  assert.equal(marker.allowedVault, EXPECTED_VAULT);
+  const port = Number((await readFile(path.join(siblingProfile, "DevToolsActivePort"), "utf8")).split(/\r?\n/u)[0]);
+  const siblingBrowser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null });
+  try {
+    const candidates = (await siblingBrowser.pages()).filter(candidate => candidate.url() === APP_URL);
+    assert.equal(candidates.length, 1, "Sibling process must contain only the owned test Vault");
+    const state = await candidates[0].evaluate(pluginId => ({ path: app.vault.adapter.basePath, name: app.vault.getName(),
+      title: document.title, loaded: !!app.plugins.plugins[pluginId], enabled: app.plugins.enabledPlugins.has(pluginId),
+      readers: app.workspace.getLeavesOfType("pdf-web-reader-view").length, sync: app.internalPlugins.plugins.sync?.enabled }), PLUGIN_ID);
+    report.attachedMode.siblingPreflight.push({ profile: siblingProfile, port, ...state });
+    assert.equal(state.path, EXPECTED_VAULT);
+    assert.equal(state.name, "ObReader-Apple-Test");
+    assert.equal(state.loaded, false, "Sibling test-Vault plugin must be unloaded before attached writes");
+    assert.equal(state.enabled, false, "Sibling test-Vault plugin must be disabled before attached writes");
+    assert.equal(state.readers, 0);
+    assert.equal(state.sync, false);
+  } finally { siblingBrowser.disconnect(); }
+}
+
+async function attachedReadOnlySnapshot(onlyRoot = null) {
+  const roots = onlyRoot ? [onlyRoot] : ["00_Archive/20_PDFData", "00_Archive/21_VocabularyData"];
+  const files = [];
+  for (const root of roots) for (const relative of await readdir(absoluteVaultPath(root), { recursive: true })) {
+    const file = `${root}/${relative}`;
+    const stat = await import("node:fs/promises").then(fs => fs.stat(absoluteVaultPath(file)));
+    if (!stat.isFile()) continue;
+    const bytes = await readFile(absoluteVaultPath(file)); files.push({ path: file, bytes: bytes.length, sha256: sha256(bytes) });
+  }
+  return files.sort((a,b)=>a.path.localeCompare(b.path));
 }
 
 async function main() {
@@ -1637,8 +2192,20 @@ async function main() {
   browser = await puppeteer.connect({ browserURL: native.nativeConfig.cdpUrl, defaultViewport: null });
   const pages = await browser.pages();
   const appPages = pages.filter(candidate => candidate.url() === APP_URL);
-  assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
-  page = appPages[0];
+  if (attachedExistingTestVault) {
+    const matched = [];
+    report.attachedMode = { enabled: true, temporaryHarnessMode: true, processRestart: "NOT_RUN: shared process ownership", excludedRenderers: [] };
+    for (const candidate of appPages) {
+      const identity = await candidate.evaluate(() => ({ path: app.vault.adapter.basePath, name: app.vault.getName() }));
+      if (identity.path === EXPECTED_VAULT && identity.name === "ObReader-Apple-Test") matched.push(candidate);
+      else report.attachedMode.excludedRenderers.push({ url: candidate.url(), ...identity, action: "excluded; no navigation, interaction, content read, or mutation" });
+    }
+    assert.equal(matched.length, 1, "Attached mode requires exactly one exact Apple-Test renderer");
+    page = matched[0];
+  } else {
+    assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
+    page = appPages[0];
+  }
   page.setDefaultTimeout(15_000);
   page.on("console", message => {
     if (message.type() === "error") {
@@ -1661,6 +2228,21 @@ async function main() {
   assert.deepEqual(before.readerViews, [], "Close all Reader tabs before Native acceptance.");
   assert.equal(before.pluginActive, false, "Disable PDF Web Reader before installing write isolation.");
   assert.equal(before.enabledPlugins.includes(PLUGIN_ID), false);
+  assert.equal(before.visibility, "visible",
+    "Keep the owned Obsidian test window visible; if this is hidden, stop rather than automate another window.");
+  if (attachedExistingTestVault) {
+    assert.ok(await page.evaluate(() => document.hasFocus() && (typeof activeDocument === "undefined" || activeDocument === document) &&
+      (typeof activeWindow === "undefined" || activeWindow === window)), "Attached test window/document owner must already be truly focused before writes");
+    assert.ok((await page.title()).endsWith("ObReader-Apple-Test - Obsidian 1.14.5"));
+    for (const file of ["main.js", "manifest.json", "styles.css"]) {
+      assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
+        sha256(await readFile(path.join(ROOT, "dist", PLUGIN_ID, file))), `Attached bundle ${file} must exactly match integration dist`);
+    }
+    await assertAttachedSiblingProcessesQuiescent();
+    await waitForPersistedPluginState(false, "attached pre-write disabled config stable twice");
+    report.attachedMode.defaultBaseline = await attachedReadOnlySnapshot();
+    report.attachedMode.preservedRunBaseline = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
+  }
   report.identity = before;
   report.sync = { enabled: before.syncEnabled, off: before.syncEnabled === false };
   report.plugin = { ...before, expectedVersion: expectedManifest.version,
@@ -1730,9 +2312,109 @@ async function main() {
     assert.ok(contexts.dynamic && learningItems.context.source.target.id === contexts.dynamic.anchorId);
     report.resumedProvenContext = provenContext;
   } else await createContextLearningItem(fixtures.pdfPath);
-  await performPathScenarios(fixtures);
-  // Route invariants are complete before the additional real learning write.
-  report.routesFrozenBytesVerified = await compareInvariantAfterMove("all eight routes complete");
+  if (attachedExistingTestVault) {
+    const md = await addMarkdownLearningItem(fixtures.markdownPath);
+    learningItems.markdown = md;
+    report.uiFlows.push({ name: "Markdown selected excerpt -> Add Review", status: "passed", itemId: md.itemId,
+      sourcePath: fixtures.markdownPath, exactQuote: md.source.targetText });
+    await createContextLearningItem(fixtures.pdfPath, { completeSentence: true });
+    await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, fixtures.pdfPath);
+    await exerciseNavigationDirections();
+    const baseline = await snapshotVocabularyInvariant();
+    report.attachedMode.postLearningCanonicalBaseline = baseline;
+    const movedPath = `${fixtures.pdfDirectory}/reading-attached-open-move.pdf`;
+    await verifySource(learningItems.highlight.itemId, learningItems.highlight.source.target, fixtures.pdfPath);
+    await renameOwnedPath(fixtures.pdfPath, movedPath);
+    await waitFor("attached exact open-move identity route", () => currentPdfRoute(learningItems.highlight), route => route.sourcePath === movedPath);
+    const directions = await checkFiveNavigationDirections("attached-openmove");
+    assertNativeLearningLoopInvariantUnchanged(baseline, await snapshotVocabularyInvariant(), "attached openmove five directions");
+    const closes = await controlledCloseMatrixReaders("attached-openmove");
+    const markdownCleanup = await closeOwnedMarkdownTabs(fixtures.markdownPath, "attached-openmove");
+    assert.equal(sha256(await readFile(absoluteVaultPath(movedPath))), report.fixtures.originalPdfSha256);
+    report.attachedMode.openMove = { status: "passed", directions, closes, markdownCleanup, canonicalUnchanged: true, sourcePdfUnchanged: true };
+    report.fixtures.finalPdfPath = movedPath;
+    await captureNativeEvidence();
+    report.status = "passed";
+    report.recommendation = "Attached E2E and open-move only. Original six-stage run unchanged; real process restart NOT_RUN due shared process.";
+    return;
+  }
+  if (process.argv.includes("--markdown-quick-open-diagnostic") || process.argv.includes("--markdown-source-visibility-diagnostic") || process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
+    report.sourceCheckpointOnly = true;
+    report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
+    report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
+    if (process.argv.includes("--markdown-quick-open-diagnostic")) {
+      const item = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      const route = await currentMarkdownRoute(item.itemId);
+      await controlledCloseMatrixReaders("before-QuickOpen-preview-diagnostic");
+      await quickOpenOwnedMarkdown(route.currentPath);
+      const mode = await page.evaluate(() => { app.workspace.activeLeaf.view.containerEl.dataset.nativeQuickOpen = "true"; return app.workspace.activeLeaf.view.getMode(); });
+      if (mode !== "preview") await page.click('[data-native-quick-open="true"] .view-action[aria-label*="切换至阅读视图"]');
+      try { await page.waitForSelector('[data-native-quick-open="true"] .markdown-preview-view a.internal-link', { visible:true,timeout:10000 }); } finally {
+        report.markdownQuickOpen = await page.evaluate(() => {const v=app.workspace.activeLeaf.view;return{path:v.file?.path,mode:v.getMode(),preview:v.containerEl.querySelector(".markdown-preview-view")?.outerHTML,links:[...v.containerEl.querySelectorAll("a.internal-link")].map(n=>({href:n.getAttribute("data-href"),text:n.textContent,rect:n.getBoundingClientRect().toJSON()}))}});
+        await recordScreen("markdown-fresh-quickopen-preview-once");
+        await closeOwnedMarkdownTabs(route.currentPath, "QuickOpen-preview-diagnostic");
+      }
+    } else if (process.argv.includes("--markdown-source-visibility-diagnostic")) {
+      const item = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      const route = await currentMarkdownRoute(item.itemId);
+      const source = await verifySource(item.itemId, item.source.target, route.currentPath, { markdown: true });
+      report.markdownSourceVisibility = await page.evaluate(() => {
+        const view = app.workspace.activeLeaf.view;
+        const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(), style = getComputedStyle(node); return { x:r.x,y:r.y,width:r.width,height:r.height,display:style.display,visibility:style.visibility,connected:node.isConnected }; };
+        const editor = view.containerEl.querySelector(".cm-content"), preview = view.containerEl.querySelector(".markdown-preview-view");
+        const selection = window.getSelection();
+        return { path:view.file?.path, mode:view.getMode(), editor:rect(editor), preview:rect(preview), previewText:preview?.innerText,
+          editorSelection:view.editor?.getSelection(), domSelection:selection?.toString(), domRangeRects:selection?.rangeCount ? [...selection.getRangeAt(0).getClientRects()].map(r=>({x:r.x,y:r.y,width:r.width,height:r.height})) : [], activeElement:document.activeElement?.outerHTML.slice(0,300) };
+      });
+      report.markdownSourceVisibility.source = source;
+      await recordScreen("markdown-source-visibility-no-toggle");
+      await controlledCloseMatrixReaders("markdown-source-visibility-diagnostic");
+      report.markdownSourceVisibility.cleanup = await closeOwnedMarkdownTabs(route.currentPath, "markdown-source-visibility-diagnostic");
+    } else if (process.argv.includes("--editor-route-passive-diagnostic")) {
+      learningItems.markdown = await readItem(report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review").itemId);
+      await installEditorRoutePassiveProbe();
+      await checkFiveNavigationDirections("passive-editor-route");
+      await page.evaluate(() => { for (const restore of window.__nativeEditorRouteProbe.restores.reverse()) restore(); delete window.__nativeEditorRouteProbe; });
+    } else if (process.argv.includes("--complete-direction-matrix")) await runCompleteFiveDirectionMatrix();
+    else if (process.argv.includes("--backlink-correlation-diagnostic")) await diagnoseBacklinkCorrelation();
+    else if (process.argv.includes("--navigation-directions-only")) await exerciseNavigationDirections();
+    else for (const flow of report.uiFlows) {
+      const item = await readItem(flow.itemId);
+      assert.ok(item, "Source checkpoint reuses an existing confirmed Review item.");
+      const markdown = item.source.target.kind === "markdown";
+      const expectedPath = markdown ? (await currentMarkdownRoute(item.itemId)).currentPath : (await currentPdfRoute(item)).sourcePath;
+      const sourceEvidence = await verifySource(item.itemId, item.source.target, expectedPath, { markdown });
+      if (flow.selectionScope === "complete sentence") {
+        const { frame } = await readerFrame(expectedPath);
+        const close = await frame.$(".pdfReaderVocabularyPillClose");
+        if (close && await close.evaluate(node => node.getBoundingClientRect().width > 0)) await close.click();
+        sourceEvidence.exactAnchorText = await frame.evaluate(() => [...(window.CSS?.highlights?.get("pdfReaderAnchorFocusText") || [])].map(range => range.toString()).join(""));
+        assert.equal(sourceEvidence.exactAnchorText, flow.exactQuote);
+      }
+      flow.sourceCheckpoint = sourceEvidence;
+      await recordScreen(`source-checkpoint-${flow.selectionScope || item.source.target.kind}`);
+    }
+    report.postLearningInvariant = await snapshotVocabularyInvariant();
+    await captureNativeEvidence();
+    report.status = "passed";
+    report.completedAt = new Date().toISOString();
+    report.recommendation = "Source-only checkpoint reuses all confirmed Review items and records fresh exact receipts; process restart remains separately managed by ROOT.";
+    return;
+  }
+  const priorAllRoutes = ["pdfrename", "foldermove", "mdrename", "mdmove", "bothmove", "closedmove", "openmove", "restart"]
+    .every(name => resumeEvidence?.routeScenarios?.some(row => row.name === name && row.status === "passed"));
+  if (priorAllRoutes) {
+    assert.equal(resumeEvidence.routesFrozenBytesVerified?.unchanged, true);
+    report.routesFrozenBytesVerified = resumeEvidence.routesFrozenBytesVerified;
+    report.stores.invariantBaseline = resumeEvidence.stores.invariantBaseline;
+    report.routeEvidenceClosedBeforeAdditionalLearning = true;
+    const priorMd = resumeEvidence.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
+    learningItems.markdown = await readItem(priorMd.itemId);
+  } else {
+    await performPathScenarios(fixtures);
+    // Route invariants are complete before the additional real learning write.
+    report.routesFrozenBytesVerified = await compareInvariantAfterMove("all eight routes complete");
+  }
   const finalPdfRoute = await currentPdfRoute(learningItems.highlight);
   await verifySource(learningItems.context.itemId,
     { kind: "selection", id: learningItems.context.source.target.id }, finalPdfRoute.sourcePath);
@@ -1752,6 +2434,7 @@ try {
   if (browser) {
     report.failureTargets = [];
     for (const target of await browser.pages()) {
+      if (attachedExistingTestVault && target !== page && !(await target.title()).includes(" - ObReader-Apple-Test - ")) continue;
       const state = await target.evaluate(() => ({ title: document.title,
         bodyClass: document.body?.className || "",
         text: (document.body?.innerText || "").slice(0, 6000),
@@ -1766,9 +2449,19 @@ try {
   report.errors.push({ at: report.failedAt, code: error?.code || null, error: error?.stack || String(error) });
   report.recommendation = "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.";
 } finally {
+  if (page) await page.evaluate(() => { const state = window.__nativeEditorRouteProbe; if (state) { for (const restore of state.restores.reverse()) restore(); delete window.__nativeEditorRouteProbe; } }).catch(() => {});
   await cleanupNativeRun().catch(error => {
     report.cleanup = { status: "failed", error: error?.stack || String(error), at: new Date().toISOString() };
   });
+  if (attachedExistingTestVault && report.attachedMode?.defaultBaseline) {
+    const after = await attachedReadOnlySnapshot();
+    const preservedAfter = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
+    report.attachedMode.defaultAfter = after;
+    report.attachedMode.preservedRunAfter = preservedAfter;
+    report.attachedMode.defaultUnchanged = JSON.stringify(after) === JSON.stringify(report.attachedMode.defaultBaseline);
+    report.attachedMode.preservedRunUnchanged = JSON.stringify(preservedAfter) === JSON.stringify(report.attachedMode.preservedRunBaseline);
+    if (!report.attachedMode.defaultUnchanged || !report.attachedMode.preservedRunUnchanged) report.status = "failed";
+  }
   if (browser) browser.disconnect();
   report.completedAt ||= new Date().toISOString();
   await persistReport().catch((error) => {

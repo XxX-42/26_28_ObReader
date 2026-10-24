@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-23T19:30:25.665809+00:00",
+  "status": "NOT_RUN",
+  "branch": "codex/014-native-final-resume",
+  "verifiedLocalAndRemoteCommit": "7daf06c9cd34b01bb90f549ad8c3a4af9769f689",
+  "ownedPid": 99806,
+  "cdpPort": 62596,
+  "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-learning-loop-20261023-0642",
+  "testVault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "testState": {
+    "title": "新标签页 - ObReader-Apple-Test - Obsidian 1.14.5",
+    "visibility": "hidden",
+    "documentHasFocus": false,
+    "pluginEnabled": true,
+    "readers": [],
+    "sync": false,
+    "isolation": false,
+    "activeDocumentIsMain": true,
+    "activeWindowIsMain": true
+  },
+  "exactPidAXWindowTitles": [
+    "ObScripts_3 巴赫 - 远程仓库1 - Obsidian 1.14.5"
+  ],
+  "sharedProcessHasExcludedRenderer": true,
+  "reason": "No visible exact Apple-Test NSWindow proved; real process restart would affect excluded Vault sharing same PID. No Native/plugin/Vault mutations performed.",
+  "matrixAcceptedStages": 6,
+  "missingStages": [
+    "open-move five directions",
+    "actual owned process restart five directions"
+  ],
+  "priorDefaultTreeDeltaPreserved": "user-state-change-default-tree-delta.json"
+}

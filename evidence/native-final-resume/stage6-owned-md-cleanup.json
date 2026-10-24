@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-23T16:34:13.015Z",
+  "markdownPath": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix Both MD/learning-full-renamed.md",
+  "beforeSha256": "f89de90174da476643270b7b8a2ca0948d8918ab53bf9b6b794d0449d1b11fbe",
+  "afterSha256": "f89de90174da476643270b7b8a2ca0948d8918ab53bf9b6b794d0449d1b11fbe",
+  "unchanged": true,
+  "state": {
+    "closed": [
+      "033ae2e820b5ec85",
+      "495075c5af6fd230",
+      "76aeecfcb98aeaf9",
+      "09ca4ae011231970",
+      "0ca65891142aa6a8",
+      "bf0128fcfd860615",
+      "1a26b863799b019d",
+      "e0fc7be02cb17622",
+      "f56dfec1f1907b3a",
+      "9005678452361019",
+      "e0944f2dde5116e7",
+      "9653fa5ffddb7590",
+      "28359d3a23733a22",
+      "45ca8f8e2c1a7fe3",
+      "1ac51dfb8ae54ca1",
+      "ee1c6a8c83a4c1d1",
+      "cf34fce758ceb1e7",
+      "973af3c7ff7d1bf7"
+    ],
+    "remaining": 0,
+    "rename": {
+      "from": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix Both PDF/reading-full-renamed.pdf",
+      "to": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix Both PDF/reading-full-closed.pdf",
+      "done": false
+    },
+    "readers": 0,
+    "enabled": [],
+    "isolation": false
+  },
+  "community": [],
+  "workspaceReader": false,
+  "observedAgainAt": "2026-10-23T16:34:25.838Z",
+  "observedAgain": {
+    "rename": {
+      "from": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix Both PDF/reading-full-renamed.pdf",
+      "to": "PDF迁移测试/native-learning-loop-20261023142727241-ab1fac1a68/Full Matrix Both PDF/reading-full-closed.pdf",
+      "done": false
+    },
+    "ownMD": 0,
+    "readers": 0
+  }
+}

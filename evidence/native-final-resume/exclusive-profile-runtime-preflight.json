@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-23T19:35:48.216Z",
+  "ownerPid": 45063,
+  "port": 64650,
+  "rows": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "state": {
+        "title": "新标签页 - ObReader-Apple-Test - Obsidian 1.12.7",
+        "visible": "visible",
+        "focus": true,
+        "hasApp": true,
+        "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+        "plugin": true,
+        "enabled": [
+          "pdf-web-reader"
+        ],
+        "sync": false,
+        "readers": 0,
+        "body": "ObReader-Apple-Test\n00_Archive\n12_books\n测试插件\nObReader-Bulk-Tests\nPDF Reader Diagnostics\nPDF Recovery\nPDF迁移测试\n新标签页\n新标签页\n创建新文件 (⌘ N)\n打开文件 (⌘ O)\n关闭标签页\n选项\n关于\n编辑器\n文件与链接\n外观\n快捷键\n钥匙串\n核心插件\n第三方插件\n核心插件\n白板\n笔记重组\n反向链接\n快速切换\n命令面板\n模板\n日记\n文件恢复\n页面预览\n第三方插件\nPDF Web Reader\n安全模式\n安全模式已关闭。开启以限制第三方插件运行。\n开启\n社区插件市场\n浏览、安装社区成员制作的第三方插件。\n浏览\n插件安装情况\n你目前已经安装了 1 个插件。\n检查更新\n自动检查插件更新\n定期检查第三方插件的更新。\n已安装插件\nPDF Web Reader\n版本: 0.14.0\n作者：XxX-42\nRead vault PDFs, edit annotations, and optionally learn English vocabulary offline."
+      }
+    }
+  ]
+}
