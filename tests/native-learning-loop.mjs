@@ -2176,11 +2176,24 @@ async function assertAttachedSiblingProcessesQuiescent() {
 async function attachedReadOnlySnapshot(onlyRoot = null) {
   const roots = onlyRoot ? [onlyRoot] : ["00_Archive/20_PDFData", "00_Archive/21_VocabularyData"];
   const files = [];
-  for (const root of roots) for (const relative of await readdir(absoluteVaultPath(root), { recursive: true })) {
-    const file = `${root}/${relative}`;
-    const stat = await import("node:fs/promises").then(fs => fs.stat(absoluteVaultPath(file)));
-    if (!stat.isFile()) continue;
-    const bytes = await readFile(absoluteVaultPath(file)); files.push({ path: file, bytes: bytes.length, sha256: sha256(bytes) });
+  for (const root of roots) {
+    let entries;
+    try {
+      entries = await readdir(absoluteVaultPath(root), { recursive: true });
+    } catch (error) {
+      // The preserved-run comparison is optional when that historical run was
+      // never present in this test Vault. Missing protected data roots remain
+      // an error for the required default snapshot.
+      if (onlyRoot && error?.code === "ENOENT") return null;
+      throw error;
+    }
+    for (const relative of entries) {
+      const file = `${root}/${relative}`;
+      const stat = await import("node:fs/promises").then(fs => fs.stat(absoluteVaultPath(file)));
+      if (!stat.isFile()) continue;
+      const bytes = await readFile(absoluteVaultPath(file));
+      files.push({ path: file, bytes: bytes.length, sha256: sha256(bytes) });
+    }
   }
   return files.sort((a,b)=>a.path.localeCompare(b.path));
 }
@@ -2455,12 +2468,17 @@ try {
   });
   if (attachedExistingTestVault && report.attachedMode?.defaultBaseline) {
     const after = await attachedReadOnlySnapshot();
-    const preservedAfter = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
     report.attachedMode.defaultAfter = after;
-    report.attachedMode.preservedRunAfter = preservedAfter;
     report.attachedMode.defaultUnchanged = JSON.stringify(after) === JSON.stringify(report.attachedMode.defaultBaseline);
-    report.attachedMode.preservedRunUnchanged = JSON.stringify(preservedAfter) === JSON.stringify(report.attachedMode.preservedRunBaseline);
-    if (!report.attachedMode.defaultUnchanged || !report.attachedMode.preservedRunUnchanged) report.status = "failed";
+    if (report.attachedMode.preservedRunBaseline === null) {
+      report.attachedMode.preservedRunAfter = null;
+      report.attachedMode.preservedRunUnchanged = "NOT_PRESENT";
+    } else {
+      const preservedAfter = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
+      report.attachedMode.preservedRunAfter = preservedAfter;
+      report.attachedMode.preservedRunUnchanged = JSON.stringify(preservedAfter) === JSON.stringify(report.attachedMode.preservedRunBaseline);
+    }
+    if (!report.attachedMode.defaultUnchanged || report.attachedMode.preservedRunUnchanged === false) report.status = "failed";
   }
   if (browser) browser.disconnect();
   report.completedAt ||= new Date().toISOString();

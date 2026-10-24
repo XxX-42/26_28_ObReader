@@ -1,38 +1,64 @@
-# Resource-v3 integration evidence
+# ObReader 0.14 candidate status
 
-## Candidate and boundary
+## Git and release boundary
 
-- Integration base: `6694c16b4c390d4a8dbd7762ec647ffa13f8f909` (`feature/0.14-native-learning-dictionary-20261023`).
-- Current candidate commit: `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5` on `codex/014-resource-v3-integration`.
-- Built `main.js` SHA-256: `8e2200c7e60c10de9501ba1789ce49029949cf3b7b35653bfaa68ef2489d605b`.
-- Scroll performance scope: `INVESTIGATED / NOT_RELEASE_BLOCKER`. No further PDF.js, wheel, observer, or LingQ scroll changes were made.
-- This report covers dictionary resource conversion and direct Native DataAdapter lookup. It does not establish the complete plugin startup path, UI latency, or Native Learning Loop acceptance.
+- Latest fetched `origin/main`: `833397ad2e78bba35e4490d3810ac73783860856`.
+- Latest fetched `origin/feature/0.14-native-learning-dictionary-20261023`: `6694c16b4c390d4a8dbd7762ec647ffa13f8f909`.
+- Integration branch: `codex/014-resource-v3-integration`, evidence collection started at `a35c7fa20eaa3c841db8b26da42c516957460850`; it already contains the feature branch as an ancestor. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
+- `main` remains unchanged. The formal vault was not deployed or modified.
+- Candidate version: `0.14.0`. The built/deployed `main.js` SHA-256 is `8e2200c7e60c10de9501ba1789ce49029949cf3b7b35653bfaa68ef2489d605b`.
 
-## Resource conversion
+## Scope decision
 
-Converted the test Vault's verified resource-v2 input to a temporary resource-v3 directory, without writing to the Vault. The conversion retained all `770,611` rows in `67` content-addressed blocks (`16,769,142` compressed bytes). Each generated block was byte-identical to the currently installed resource-v3 block. The generated manifest records the MIT license notice at `../LICENSE-MIT.txt` and its SHA-256 `f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f`. The existing test Vault manifest predates this provenance field; runtime compatibility accepts it, and the existing license file remains in place.
+- `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. No reproducible root cause was established for the user's 120-page OCR PDF. Stop the scroll-specific investigation; do not modify PDF.js, wheel handling, observers, or LingQ scroll paths unless that exact PDF becomes reproducible.
+- iPad remains `DEFERRED_BY_SCOPE`; synthetic mobile timing is not iPad evidence.
+- Bulk import prototypes are rejected by their stated production gate; FSRS stays development-only; SQLite/OPFS has not shown a win over Resource-v3.
 
-## Native DataAdapter benchmark
+## Resource-v3 conversion and lookup
 
-The Native harness attached to the exact ObReader-Apple-Test Obsidian renderer with the plugin disabled and all Reader leaves closed. It called only the Vault DataAdapter `read` and `readBinary` methods and used disposable, unique IndexedDB cache names. There were zero Vault writes. Each case ran five new dictionary/Worker instances, each with one first lookup plus 20 same-key warm lookups. This is instance-cold in an already-running Native process and existing OS/origin cache, not a fresh-process or post-restart cold start.
+The verified resource-v2 source converted to `770,611` equivalent rows in `67` content-addressed blocks (`16,769,142` compressed bytes). A temporary conversion was byte-identical to the installed Resource-v3 blocks. The manifest records the MIT notice at `../LICENSE-MIT.txt` and checksum `f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f`.
 
-| Query | First lookup P50 | First lookup P95 / max of 5 | Warm lookup P95 | Bytes read per first lookup |
+Native DataAdapter lookup used the real Obsidian Vault adapter in `ObReader-Apple-Test`; the plugin was disabled and Reader leaves were closed. Each query ran five new dictionary/Worker instances and 20 resident repeats. Reads were limited to DataAdapter `read`/`readBinary`; there were zero Vault writes.
+
+| Query | First lookup P50 | P95 / max of 5 | Warm lookup P95 | First-read bytes |
 |---|---:|---:|---:|---:|
-| `on` | 159.8 ms | 423.8 ms | ≤0.1 ms | 262,366 |
-| `zyzzyva` | 112.5 ms | 276.5 ms | ≤0.1 ms | 139,005 |
-| valid not-found | 127.9 ms | 172.3 ms | ≤0.1 ms | 236,616 |
+| Common `on` | 159.8 ms | 423.8 ms | ≤0.1 ms | 262,366 |
+| Rare `zyzzyva` | 112.5 ms | 276.5 ms | ≤0.1 ms | 139,005 |
+| Valid not-found | 127.9 ms | 172.3 ms | ≤0.1 ms | 236,616 |
 
-`startup added blocking = NOT_MEASURED`: attachment occurs after Obsidian startup. The benchmark proves direct lookup does not wait for the full Dexie build, but it does not measure plugin startup contribution or its full Reader/Host wiring.
+This satisfies the stated first-query target for these loaded-resource samples; it does not measure process-cold lookup. `startup added blocking = NOT_MEASURED`, and the benchmark does not exercise the enabled plugin's full Host/Reader lookup wiring. Retain Resource-v3 as the candidate; do not claim the startup gate passed.
 
-Raw per-trial evidence: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
+Raw trials: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
 
-## Verification
+## Current-package Native Learning Loop
 
-- Focused dictionary / conversion suites: 67 passed, 0 failed, 0 skipped.
-- Build: passed; 3 release files, 406 embedded runtime assets, 402 frozen vendor files verified.
-- Fast gate: final rerun 122 passed, 0 failed, 0 skipped. The first run had one concurrent child-process crash-boundary failure; the same test passed alone 7/7 and the full Fast gate passed on rerun. Both run reports were retained under `tests/artifacts/vocabulary-gates/runs/`.
-- Browser gate: 27 passed, 1 failed, 0 skipped. The failure is the existing iPad synthetic 80 ms pointer delay check (`ipad-pointer-policy.test.mjs`, gesture 21). iPad is deferred for this release scope; the assertion was not changed and no iPad input code was modified.
-- Race gate: 80 passed, 0 failed, 0 skipped.
-- Offline smoke: passed, including editor creation, save/reopen, and bulk-delete non-resurrection.
-- Current-package Native Learning Loop 8-stage × 5-direction matrix and real process restart: `NOT_VERIFIED`. The current exact Native Obsidian window has a stale app `activeWindow` reference to a different Settings window, so UI-driven route acceptance could not be controlled reliably. Older-package or Windows evidence is not substituted for this candidate hash.
-- Test Vault deployment: not performed. No test Vault dictionary, plugin, PDF, or annotation files were changed during this run.
+The exact 0.14.0 three-file package was deployed to `ObReader-Apple-Test` after backing up the previous plugin directory to `.deploy-backups/2026-10-24T20-53-16-712Z/pdf-web-reader`. The deployed files matched the build:
+
+| File | SHA-256 |
+|---|---|
+| `main.js` | `8e2200c7e60c10de9501ba1789ce49029949cf3b7b35653bfaa68ef2489d605b` |
+| `manifest.json` | `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675` |
+| `styles.css` | `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea` |
+
+The current-package Native runner loaded v0.14.0 with DataAdapter write isolation installed and Sync disabled. It selected the visible PDF.js Highlight tool, then failed to observe a real Highlight editor after the pointer selection. No learning route was accepted from this run; the evidence is an automation/input-path failure and is not enough to classify a production correctness regression. Cleanup completed, the Reader closed, plugin disabled, isolation restored, and protected default data hashes remained unchanged. A post-run SHA-256 check confirmed the test PDF still matches its source fixture (`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`). The unrelated formal-vault renderer was excluded without navigation, content interaction, or mutation.
+
+Therefore:
+
+```text
+NATIVE_LEARNING_LOOP_CURRENT_PACKAGE = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+```
+
+Do not substitute earlier package or Windows evidence for these current-package gates. The 8-stage × 5-direction matrix and true process restart remain the first release blocker. The current native failure report is [native-learning-loop-20261024210631256-a55ffa2317.json](../../tests/artifacts/native-learning-loop-20261024210631256-a55ffa2317.json).
+
+## Automated gates
+
+- Focused dictionary/conversion suites: 67 passed.
+- Build: passed; 3 release files, 406 embedded assets, 402 frozen vendor hashes verified.
+- Fast: 122 passed.
+- Browser: 27 passed, 1 failed. The retained failure is the synthetic iPad 80 ms pointer-delay case; iPad is deferred and its assertion/code were not changed.
+- Race: 80 passed.
+- Offline smoke: passed, including save/reopen and bulk-delete non-resurrection.
+
+These green gates do not override the Native acceptance blocker. Test Vault deployment is complete and verified by hashes; no production deployment, `main` push, Release, or data cleanup occurred.
