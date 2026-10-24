@@ -1,0 +1,30 @@
+{
+  "scope": "Read-only end inventory; no writes or baseline backup occurred because focus gate failed before any mutation",
+  "files": [
+    {
+      "path": "00_Archive/20_PDFData/wal/22a64dda-a6d4-4988-bc4e-7db69e5d5bdd/d6cd1325606b.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "00_Archive/20_PDFData/wal/03e9be5c-85d9-4ed7-988d-c9a98cd9f6a6/b6c7646f3da9.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "00_Archive/20_PDFData/wal/03e9be5c-85d9-4ed7-988d-c9a98cd9f6a6/1048386ed9e9.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "00_Archive/20_PDFData/wal/03e9be5c-85d9-4ed7-988d-c9a98cd9f6a6/652937000494.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261024212130027-54207db4f2/PDFData/wal/22a64dda-a6d4-4988-bc4e-7db69e5d5bdd/39aa4aa09b88.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

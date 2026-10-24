@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-24T22:38:46.689Z",
+  "ownerPid": 69139,
+  "port": 57977,
+  "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-exclusive-20261024-0120",
+  "before": {
+    "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "after": {
+    "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "states": [
+    {
+      "title": "source-inspection-1792131679927 - ObReader-Apple-Test - Obsidian 1.14.5",
+      "url": "app://obsidian.md/index.html",
+      "visibility": "visible",
+      "focused": true,
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "pluginActive": false,
+      "syncEnabled": false,
+      "activeFile": "ObReader-Bulk-Tests/source-inspection-1792131679927.pdf",
+      "activeViewType": "pdf",
+      "readerViews": []
+    }
+  ],
+  "uiActions": [],
+  "processRestart": {
+    "status": "NOT_RUN"
+  },
+  "matrix": "NOT_RUN_FOCUS_GATE_FAILED",
+  "focusGate": {
+    "visibility": "visible",
+    "focused": true,
+    "activeDocumentMatches": false,
+    "activeWindowMatches": false,
+    "activeDocumentTitle": "设置 - ObReader-Apple-Test - Obsidian 1.14.5",
+    "activeWindowDocumentTitle": "设置 - ObReader-Apple-Test - Obsidian 1.14.5",
+    "result": "FAILED_OWNER_DOCUMENT_FOCUS"
+  },
+  "backupAndRestore": {
+    "status": "NOT_NEEDED_NO_MUTATIONS",
+    "testDataWritten": false,
+    "jsonlSidecarContextReviewMutations": []
+  },
+  "runtimeLoadedCandidate": "NOT_PROVEN_PLUGIN_DISABLED"
+}
