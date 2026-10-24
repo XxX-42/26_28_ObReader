@@ -75,6 +75,8 @@ The offline auditor was rerun against all nine saved Native reports and the exac
 
 A fresh passive CUA/CDP inventory confirms the window-control boundary: the visible Obsidian test window is associated with the CDP process on port `62596`, whose page list includes both `ObReader-Apple-Test` and a `远程仓库1` renderer. The separate owned test-only process is PID `69139` on port `57977`; its profile is exclusive and its only page is a test-vault `source-inspection` PDF, but that window is not exposed for selection in the current CUA app window list. No window activation or process restart was attempted. This leaves no safe current UI target for the Native route matrix or true restart.
 
+A new one-shot owned-profile preflight rechecked the isolated PID `69139` and exact candidate package. The app renderer was visible and `document.hasFocus()` returned true, but the stricter owner gate failed: `activeDocument !== document` and `activeWindow !== window`; both globals pointed to the test vault's Settings window. The runner stopped before enabling the plugin or writing test state. The active PDF was the fixture `ObReader-Bulk-Tests/source-inspection-1792131679927.pdf`; no Reader view was open. No other PDF or shared/mixed PID was acted on, and no process was restarted. The separate receipt is [native-current-preflight-20261025](../native-current-preflight-20261025/README.md). It supersedes the earlier basic visibility/focus observation for deciding whether user input is safe: **the strict Native focus gate still fails**.
+
 ## Automated gates
 
 - Focused dictionary/conversion suites: 67 passed.
