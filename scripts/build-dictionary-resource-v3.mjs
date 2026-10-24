@@ -95,6 +95,11 @@ async function readVerifiedV2(inputRoot) {
   const manifestPath = path.join(path.resolve(inputRoot), "manifest.json");
   const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
   assert.equal(manifest.schemaVersion, 1, "The v3 converter accepts a verified resource-v2 manifest.");
+  const licenseFile = "../LICENSE-MIT.txt";
+  const licenseBytes = await readFile(path.resolve(inputRoot, licenseFile));
+  const licenseText = licenseBytes.toString("utf8");
+  assert.ok(licenseText.startsWith("MIT License\n"), "ECDICT conversion requires its adjacent MIT license notice");
+  assert.match(licenseText, /Copyright \(c\) 2025 Linwei/u, "ECDICT MIT copyright notice is preserved");
   const compressed = await readFile(path.join(path.resolve(inputRoot), manifest.resourceFile));
   assert.equal(compressed.length, manifest.compressedBytes, "resource-v2 compressed byte count matches its manifest");
   assert.equal(sha256(compressed), manifest.sha256, "resource-v2 SHA-256 matches its manifest");
@@ -124,7 +129,8 @@ async function readVerifiedV2(inputRoot) {
     entries.push(entry);
     lastKey = entry.key;
   }
-  return { manifest, entries };
+  return { manifest, entries, license: { name: "MIT", file: licenseFile,
+    sha256: sha256(licenseBytes) } };
 }
 
 function encodeEntries(entries) {
@@ -228,6 +234,7 @@ async function build({ input, output, rawTargetBytes = DEFAULT_RAW_TARGET_BYTES 
       compressedBytes: source.manifest.compressedBytes,
       uncompressedBytes: source.manifest.uncompressedBytes,
       source: source.manifest.source,
+      license: source.license,
     },
   };
   validateManifest(manifest);

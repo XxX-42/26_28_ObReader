@@ -73,6 +73,11 @@ function validateManifest(value) {
       !Number.isSafeInteger(value.source.uncompressedBytes) || value.source.uncompressedBytes < 1) {
     throw dictionaryError("Dictionary resource provenance is malformed.", "DICTIONARY_MANIFEST_CORRUPT");
   }
+  if (value.source.license !== undefined && (!value.source.license ||
+      value.source.license.name !== "MIT" || value.source.license.file !== "../LICENSE-MIT.txt" ||
+      !validHash(value.source.license.sha256))) {
+    throw dictionaryError("Dictionary license provenance is malformed.", "DICTIONARY_MANIFEST_CORRUPT");
+  }
   return value;
 }
 function generationId(manifest) {

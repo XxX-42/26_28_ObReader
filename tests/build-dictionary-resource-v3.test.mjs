@@ -16,12 +16,14 @@ const CSV = [
   '"gamma","ɡ","","多行\n中文释义"',
   '"Ωmega","","","希腊字母"',
 ].join("\r\n") + "\r\n";
+const MIT_LICENSE = "MIT License\n\nCopyright (c) 2025 Linwei\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\n";
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "obreader-ecdict-v3-build-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const input = path.join(directory, "ecdict.csv.gz");
   const v2 = path.join(directory, "resource-v2");
+  await writeFile(path.join(directory, "LICENSE-MIT.txt"), MIT_LICENSE);
   await writeFile(input, gzipSync(Buffer.from(CSV, "utf8"), { mtime: 0 }));
   await buildV2({ input, output: v2 });
   return { directory, v2 };
@@ -62,6 +64,8 @@ test("resource-v3 conversion preserves every verified v2 row and source provenan
     compressedBytes: v2Manifest.compressedBytes,
     uncompressedBytes: v2Manifest.uncompressedBytes,
     source: v2Manifest.source,
+    license: { name: "MIT", file: "../LICENSE-MIT.txt",
+      sha256: createHash("sha256").update(MIT_LICENSE).digest("hex") },
   });
   assert.equal(first.manifest.schemaVersion, 3);
   assert.ok(first.manifest.blockCount >= 1);
@@ -73,6 +77,14 @@ test("resource-v3 conversion preserves every verified v2 row and source provenan
   const repeatFiles = await readdir(path.join(directory, "repeat", "blocks"));
   const firstFiles = await readdir(path.join(output, "blocks"));
   assert.deepEqual(repeatFiles, firstFiles);
+});
+
+test("resource-v3 conversion fails closed when the source license notice is missing", async (t) => {
+  const { directory, v2 } = await fixture(t);
+  await rm(path.join(directory, "LICENSE-MIT.txt"));
+  const output = path.join(directory, "resource-v3");
+  await assert.rejects(buildV3({ input: v2, output }), { code: "ENOENT" });
+  await assert.rejects(readFile(path.join(output, "manifest.json")), { code: "ENOENT" });
 });
 
 test("resource-v3 conversion rejects damaged v2 bytes before publishing a manifest", async (t) => {
