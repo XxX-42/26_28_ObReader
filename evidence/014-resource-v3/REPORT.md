@@ -4,13 +4,15 @@
 
 - Latest fetched `origin/main`: `833397ad2e78bba35e4490d3810ac73783860856`.
 - Latest fetched `origin/feature/0.14-native-learning-dictionary-20261023`: `6694c16b4c390d4a8dbd7762ec647ffa13f8f909`.
-- Integration branch: `codex/014-resource-v3-integration`, current HEAD `f78641bd1d432dac4ea91f8e45d9e120669a20cd`; it contains the latest feature branch and the Native harness/SemanticAnchor audit commits. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
+- Integration branch: `codex/014-resource-v3-integration`; evidence baseline commit `e81b469ea862a4f76d39161ce99af25d42405fe7` contains the latest feature branch and the Native harness/SemanticAnchor audit commits. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
 - `main` remains unchanged. The formal vault was not deployed or modified.
 - Candidate version: `0.14.0`. The current built/deployed `main.js` SHA-256 is `ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`.
 
 ## Scope decision
 
 - `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. No reproducible root cause was established for the user's 120-page OCR PDF. Stop the scroll-specific investigation; do not modify PDF.js, wheel handling, observers, or LingQ scroll paths unless that exact PDF becomes reproducible.
+- Native closeout is bounded: the current owned macOS test process/window could not be brought through the runner's visible-and-focused ownership check. Window-selection attempts are stopped. Keep `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED` and `REAL_PROCESS_RESTART_8x5 = NOT_RUN`; do not relabel either from earlier-package or partial UI receipts. Proceed with Resource-v3 evidence and report the Native gap instead of spending more time on window control.
+- `SemanticAnchorContractV1`, Sidebar and Backlink source/API contracts are frozen at the code and deterministic-test level; full Native route acceptance remains pending and is not implied by that source-level freeze.
 - iPad remains `DEFERRED_BY_SCOPE`; synthetic mobile timing is not iPad evidence.
 - Bulk import prototypes are rejected by their stated production gate; FSRS stays development-only; SQLite/OPFS has not shown a win over Resource-v3.
 
@@ -63,3 +65,14 @@ Do not substitute earlier package or Windows evidence for these current-package 
 - SemanticAnchor exact-evidence regression: the contract projector now refuses to mark a different target VERIFIED using another anchor's evidence; targeted semantic/LearningHost/Markdown routing tests passed 153/153.
 
 These automated gates do not override the Native acceptance blocker. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scroll changes were made. Test Vault deployment is verified by hashes, but the plugin was disabled during the completed runs. No production deployment, `main` push, Release, or data cleanup occurred.
+
+## Latest focused regressions
+
+After the `e81b469` evidence update, focused tests were rerun on the integration worktree:
+
+- Resource-v3 conversion/runtime suites: **33/33 passed**.
+- SemanticAnchor, Semantic services, Learning domain/Host, and backlink suites: **55/55 passed**.
+- Dictionary Host/cache suites: **28/28 passed**; real Worker/browser smoke: **1/1 passed**.
+- `npm run build`: passed; 3 release files, 406 embedded assets, 402 frozen vendor hashes verified. The rebuilt package hashes still match the test Vault's deployed files exactly, so no redeploy was needed.
+
+These tests validate deterministic module behavior. They do not replace the missing Native 8×5 route matrix, true owned-process restart, current-package Resource-v3 startup measurement, or enabled-plugin Reader first-query verification.
