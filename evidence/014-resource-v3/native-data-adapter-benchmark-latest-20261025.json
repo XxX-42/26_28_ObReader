@@ -4174,6 +4174,11 @@
     "pid": 99806,
     "cdpPort": 62596,
     "verifiedByListeningSocket": true,
-    "probeKind": "Obsidian app-origin renderer DataAdapter; current package source bundle hash recorded separately"
+    "probeKind": "Obsidian app-origin renderer DataAdapter; current package source bundle hash recorded separately",
+    "rendererUserAgentProductVersion": "1.12.7",
+    "installedAppBundleVersion": "1.12.7",
+    "nativeWindowTitleReportedVersion": "1.14.5",
+    "candidateMinAppVersion": "1.14.4",
+    "supportedRuntimeIdentity": "UNRESOLVED"
   }
 }

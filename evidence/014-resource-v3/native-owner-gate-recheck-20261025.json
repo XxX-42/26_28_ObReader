@@ -9,7 +9,11 @@
     "mainJsSha256": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8"
   },
   "runtime": {
-    "application": "Obsidian 1.14.5",
+    "application": "Obsidian; runtime version identity unresolved",
+    "windowTitleReportedVersion": "1.14.5",
+    "rendererUserAgentProductVersion": "1.12.7",
+    "installedAppBundleVersion": "1.12.7",
+    "candidateMinAppVersion": "1.14.4",
     "processId": 99806,
     "cdpPort": 62596,
     "processProfileIsSharedWithAnotherVault": true,
