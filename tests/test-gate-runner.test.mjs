@@ -15,6 +15,7 @@ import {
   captureSourceFingerprint,
   casesForGate,
   diffSourceFingerprints,
+  removeCompletedTestProfile,
   runCases,
   runRaceRounds,
   summarizeGates,
@@ -59,6 +60,24 @@ function fakeSpawn({ delayMs = 5, failureFor = () => false, outputFor = null, co
 async function temporaryRoot() {
   return mkdtemp(path.join(os.tmpdir(), "vocabulary-gate-runner-test-"));
 }
+
+test("completed browser profile cleanup retries transient macOS directory races", async (t) => {
+  const root = await temporaryRoot();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const profile = path.join(root, "profile");
+  await mkdir(path.join(profile, "crashpad"), { recursive: true });
+  let attempts = 0;
+  await removeCompletedTestProfile(profile, async (target, options) => {
+    attempts += 1;
+    assert.equal(target, profile);
+    assert.equal(options.recursive, true);
+    assert.equal(options.force, true);
+    if (attempts < 3) throw Object.assign(new Error("temporary directory still changing"), { code: "ENOTEMPTY" });
+    await rm(target, options);
+  });
+  assert.equal(attempts, 3);
+  await assert.rejects(() => readdir(profile), error => error.code === "ENOENT");
+});
 
 test("gate manifest explicitly classifies every test file once", async () => {
   const check = await validateManifest();

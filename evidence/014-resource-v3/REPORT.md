@@ -4,9 +4,9 @@
 
 - Latest fetched `origin/main`: `833397ad2e78bba35e4490d3810ac73783860856`.
 - Latest fetched `origin/feature/0.14-native-learning-dictionary-20261023`: `6694c16b4c390d4a8dbd7762ec647ffa13f8f909`.
-- Integration branch: `codex/014-resource-v3-integration`, evidence collection started at `a35c7fa20eaa3c841db8b26da42c516957460850`; it already contains the feature branch as an ancestor. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
+- Integration branch: `codex/014-resource-v3-integration`, current HEAD `f78641bd1d432dac4ea91f8e45d9e120669a20cd`; it contains the latest feature branch and the Native harness/SemanticAnchor audit commits. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
 - `main` remains unchanged. The formal vault was not deployed or modified.
-- Candidate version: `0.14.0`. The built/deployed `main.js` SHA-256 is `8e2200c7e60c10de9501ba1789ce49029949cf3b7b35653bfaa68ef2489d605b`.
+- Candidate version: `0.14.0`. The current built/deployed `main.js` SHA-256 is `ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`.
 
 ## Scope decision
 
@@ -18,47 +18,48 @@
 
 The verified resource-v2 source converted to `770,611` equivalent rows in `67` content-addressed blocks (`16,769,142` compressed bytes). A temporary conversion was byte-identical to the installed Resource-v3 blocks. The manifest records the MIT notice at `../LICENSE-MIT.txt` and checksum `f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f`.
 
-Native DataAdapter lookup used the real Obsidian Vault adapter in `ObReader-Apple-Test`; the plugin was disabled and Reader leaves were closed. Each query ran five new dictionary/Worker instances and 20 resident repeats. Reads were limited to DataAdapter `read`/`readBinary`; there were zero Vault writes.
+The latest lookup run used the real macOS Obsidian DataAdapter in `ObReader-Apple-Test`; the plugin was disabled and Reader leaves were closed. It ran five new dictionary/Worker instances per query and 20 resident repeats each. Reads were limited to DataAdapter `read`/`readBinary`; there were zero Vault writes. Each cold observation reads one relevant compressed block; the new IndexedDB caches use unique disposable names and are removed after each trial.
 
 | Query | First lookup P50 | P95 / max of 5 | Warm lookup P95 | First-read bytes |
 |---|---:|---:|---:|---:|
-| Common `on` | 159.8 ms | 423.8 ms | ≤0.1 ms | 262,366 |
-| Rare `zyzzyva` | 112.5 ms | 276.5 ms | ≤0.1 ms | 139,005 |
-| Valid not-found | 127.9 ms | 172.3 ms | ≤0.1 ms | 236,616 |
+| Common `on` | 118.4 ms | 407.8 ms | ≤0.1 ms | 262,366 per cold trial |
+| Rare `zyzzyva` | 92.7 ms | 191.0 ms | ≤0.1 ms | 139,005 per cold trial |
+| Valid not-found | 115.8 ms | 117.3 ms | ≤0.1 ms | 236,616 per cold trial |
 
-This satisfies the stated first-query target for these loaded-resource samples; it does not measure process-cold lookup. `startup added blocking = NOT_MEASURED`, and the benchmark does not exercise the enabled plugin's full Host/Reader lookup wiring. Retain Resource-v3 as the candidate; do not claim the startup gate passed.
+The first common and rare lookup targets pass for these Native DataAdapter samples; this is not a process-cold measurement. Every resident repeat hit the bounded in-memory block cache. `startup added blocking = NOT_MEASURED`; startup schedules an unawaited availability check in source, but that code inspection is not a timing measurement. The harness injects the standalone dictionary module and does not exercise enabled-plugin Host/Reader wiring. Keep Resource-v3 as the candidate without claiming the startup gate passed.
 
-Raw trials: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
+Current-package raw trials: [native-data-adapter-benchmark-current-package-20261025.json](native-data-adapter-benchmark-current-package-20261025.json). Earlier module run: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
 
 ## Current-package Native Learning Loop
 
-The exact 0.14.0 three-file package was deployed to `ObReader-Apple-Test` after backing up the previous plugin directory to `.deploy-backups/2026-10-24T20-53-16-712Z/pdf-web-reader`. The deployed files matched the build:
+The exact 0.14.0 three-file package was deployed to `ObReader-Apple-Test` after backing up the previous plugin directory to `.deploy-backups/2026-10-24T21-20-00-515Z/pdf-web-reader`. The deployed files matched the build:
 
 | File | SHA-256 |
 |---|---|
-| `main.js` | `8e2200c7e60c10de9501ba1789ce49029949cf3b7b35653bfaa68ef2489d605b` |
+| `main.js` | `ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8` |
 | `manifest.json` | `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675` |
 | `styles.css` | `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea` |
 
-The current-package Native runner loaded v0.14.0 with DataAdapter write isolation installed and Sync disabled. It selected the visible PDF.js Highlight tool, then failed to observe a real Highlight editor after the pointer selection. No learning route was accepted from this run; the evidence is an automation/input-path failure and is not enough to classify a production correctness regression. Cleanup completed, the Reader closed, plugin disabled, isolation restored, and protected default data hashes remained unchanged. A post-run SHA-256 check confirmed the test PDF still matches its source fixture (`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`). The unrelated formal-vault renderer was excluded without navigation, content interaction, or mutation.
+The current-package Native runner loaded v0.14.0 with DataAdapter write isolation installed and Sync disabled. After the harness correction, a real user-input Highlight was created, durably written to the isolated Sidecar, shown in the Annotation Sidebar, added to Review, and visible in Today Review. The runner then stalled on a Puppeteer `Runtime.callFunctionOn` while creating the Context learning item. It did not reach the route matrix. This is a Native harness/CDP timeout, not evidence of a production assertion failure. Cleanup completed: Reader closed through the WAL path, isolation restored, and protected default data hashes remained unchanged. The test PDF SHA-256 remained `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`.
 
 Therefore:
 
 ```text
 NATIVE_LEARNING_LOOP_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
 OPEN_MOVE_8x5 = NOT_VERIFIED
 REAL_PROCESS_RESTART_8x5 = NOT_RUN
 ```
 
-Do not substitute earlier package or Windows evidence for these current-package gates. The 8-stage × 5-direction matrix and true process restart remain the first release blocker. The current native failure report is [native-learning-loop-20261024210631256-a55ffa2317.json](../../tests/artifacts/native-learning-loop-20261024210631256-a55ffa2317.json).
+Do not substitute earlier package or Windows evidence for these current-package gates. The 8-stage × 5-direction matrix and true process restart remain unverified. In the current visible test window, the macOS Window menu also exposed a separate `远程仓库1` window, so restarting its shared Obsidian process could affect the formal vault. The independent test-only process is hidden and not selectable through the available CUA window list. It was not restarted. Current run evidence: [native-learning-loop-20261024212130027-54207db4f2.json](../../tests/artifacts/native-learning-loop-20261024212130027-54207db4f2.json).
 
 ## Automated gates
 
 - Focused dictionary/conversion suites: 67 passed.
 - Build: passed; 3 release files, 406 embedded assets, 402 frozen vendor hashes verified.
-- Fast: 122 passed.
-- Browser: 27 passed, 1 failed. The retained failure is the synthetic iPad 80 ms pointer-delay case; iPad is deferred and its assertion/code were not changed.
-- Race: 80 passed.
-- Offline smoke: passed, including save/reopen and bulk-delete non-resurrection.
+- Test-runner cleanup regression: 9/9 passed; adds bounded retry for transient macOS `ENOTEMPTY` while removing a completed disposable browser profile. No test assertion, product timeout, or gate threshold changed.
+- Full Fast + Browser + Race run: Fast 122/122, Browser 28/28 (including offline smoke), Race 79/80, zero skips. The single Race failure was a Chromium startup timeout while waiting for its CDP WebSocket endpoint in round 9; the test assertion was never reached. The full run report is retained as `tests/artifacts/vocabulary-gates/report-20261025-current.json` and is correctly `acceptanceEligible=false`.
+- A separate complete 10-round Race rerun passed 80/80 with stable source fingerprints and no skips. Its report is retained as `tests/artifacts/vocabulary-gates/report-20261025-race-repeat.json`. The initial failure remains recorded.
+- SemanticAnchor exact-evidence regression: the contract projector now refuses to mark a different target VERIFIED using another anchor's evidence; targeted semantic/LearningHost/Markdown routing tests passed 153/153.
 
-These green gates do not override the Native acceptance blocker. Test Vault deployment is complete and verified by hashes; no production deployment, `main` push, Release, or data cleanup occurred.
+These automated gates do not override the Native acceptance blocker. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scroll changes were made. Test Vault deployment is verified by hashes, but the plugin was disabled during the completed runs. No production deployment, `main` push, Release, or data cleanup occurred.

@@ -23740,7 +23740,8 @@ var __PDFReaderLearningHost = (() => {
         fromBacklink,
         fromMarkdown,
         matchesMarkdownSourceSlice,
-        createSemanticSourceResolver
+        createSemanticSourceResolver,
+        hasVerifiedEvidence
       };
     }
   });
@@ -23749,7 +23750,7 @@ var __PDFReaderLearningHost = (() => {
   var require_semantic_contracts = __commonJS({
     "plugin/semantic/semantic-contracts.cjs"(exports, module) {
       "use strict";
-      var { makeSemanticAnchor } = require_semantic_anchor();
+      var { makeSemanticAnchor, hasVerifiedEvidence } = require_semantic_anchor();
       var SEMANTIC_ANCHOR_CONTRACT_V1 = "SemanticAnchorContractV1";
       function projectResolutionStatus(result, { explicitPageFallback = false } = {}) {
         if (result?.status === "verified" && result.sourceCurrent === true && result.pageCurrent === true && result.exact === true) {
@@ -23770,7 +23771,8 @@ var __PDFReaderLearningHost = (() => {
       } = {}) {
         const normalized = makeSemanticAnchor(anchor || {});
         if (!normalized) return null;
-        const projected = projectResolutionStatus(resolution, { explicitPageFallback });
+        const checkedResolution = resolution?.status === "verified" && !hasVerifiedEvidence(resolution, anchor, { needsPage: true }) ? null : resolution;
+        const projected = projectResolutionStatus(checkedResolution, { explicitPageFallback });
         return {
           contract: SEMANTIC_ANCHOR_CONTRACT_V1,
           version: 1,

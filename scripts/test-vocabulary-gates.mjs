@@ -360,6 +360,19 @@ function waitForStreamFinish(stream) {
   return once(stream, "finish").then(() => undefined);
 }
 
+export async function removeCompletedTestProfile(profileDir, removeImpl = rm) {
+  const retryableCodes = new Set(["ENOTEMPTY", "EBUSY", "EPERM"]);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await removeImpl(profileDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 20 });
+      return;
+    } catch (error) {
+      if (!retryableCodes.has(error?.code) || attempt >= 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+}
+
 /** Run independent Node test files with a strict process cap and preserve raw child streams. */
 export async function runCases(cases, {
   rootDir = DEFAULT_ROOT,
@@ -455,7 +468,7 @@ export async function runCases(cases, {
         logContainsFailure: /\bnot ok\b|ERR_TEST_FAILURE|AssertionError|Error:/i.test(`${stdout}\n${stderr}`),
       };
       if (status === "passed") {
-        await rm(profileDir, { recursive: true, force: true });
+        await removeCompletedTestProfile(profileDir);
       } else {
         // Keep a failed child's private temp directory available for diagnosis.
         results[index].profileTempPath = profileDir;
