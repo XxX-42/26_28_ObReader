@@ -25,14 +25,18 @@ import {
 import { readNativeSidecarTree } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
+import { assertNativeCandidateFiles, assertNativeLearningForeground } from "./native-learning-acceptance.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const RUNNER_HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const RUNNER_BRANCH = execFileSync("git", ["branch", "--show-current"], { cwd: ROOT, encoding: "utf8" }).trim();
 const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
 const OWNED_PROFILE_PARENT = "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence";
 const APP_EXECUTABLE = "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
 const PLUGIN_ID = "pdf-web-reader";
 const VIEW_TYPE = "pdf-web-reader-view";
 const APP_URL = "app://obsidian.md/index.html";
+const EXPECTED_PLUGIN_DIST = process.env.PDF_READER_NATIVE_PLUGIN_DIST || path.join(ROOT, "dist", PLUGIN_ID);
 const FIXTURE_PDF = path.join(ROOT, "tests", "fixtures", "tracemonkey.pdf");
 const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
@@ -56,10 +60,11 @@ const screenshotDirectory = path.join(ROOT, "tests", "artifacts", `${runId}${res
 const report = {
   agent: "impl_b_native",
   workstream: "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
-  base: "cd6e15743d5065dfe53579d658dde18580c84e9f",
-  branch: "codex/014-native-sol-low",
+  base: "65de915b306954a160ed99002f33ada639cebd4e",
+  branch: RUNNER_BRANCH,
+  runnerHead: RUNNER_HEAD,
   planA: "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in an owned Obsidian profile attached only to ObReader-Apple-Test.",
-  planB: "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity; perform eight PDF/Markdown move/restart cases with exact canonical byte invariants.",
+  planB: "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity and the existing route scenarios. The restart scenario in this runner is a plugin reload, not an application-process restart.",
   startedAt: startedAt.toISOString(),
   runId,
   fixturePrefix,
@@ -73,6 +78,8 @@ const report = {
   routeScenarios: [],
   screenshots: [],
   errors: [],
+  nativeAcceptance: { status: "NOT_VERIFIED", fullFiveDirectionMatrix: "NOT_RUN_BY_THIS_RUNNER",
+    actualProcessRestart: "NOT_RUN_BY_THIS_RUNNER", foregroundPolicy: "external-cua-selection" },
 };
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -155,13 +162,14 @@ async function initializeNativeConfig(profileRoot) {
   const { nativeConfig, assertNativeVaultIdentity } = await import("./native-config.mjs");
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
-  return { profileRoot: canonicalProfile, marker, port, nativeConfig, assertNativeVaultIdentity };
+  return { profileRoot: canonicalProfile, marker, port,
+    ownerPid: Number(ownerLines[0].trim().split(/\s/u)[0]), nativeConfig, assertNativeVaultIdentity };
 }
 
 const profileRoot = verifyOwnedProfile();
 const native = await initializeNativeConfig(profileRoot);
 const { h64Raw } = await xxhash();
-report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port,
+report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
@@ -170,6 +178,22 @@ const installedManifest = JSON.parse(await readFile(installedManifestPath, "utf8
 assert.equal(installedManifest.id, PLUGIN_ID);
 assert.equal(installedManifest.version, expectedManifest.version,
   `Deploy the integration build ${expectedManifest.version} before Native learning-loop acceptance.`);
+
+async function recordCandidateArtifact() {
+  const candidate = {};
+  const installed = {};
+  for (const file of ["main.js", "manifest.json", "styles.css"]) {
+    const [expectedBytes, installedBytes] = await Promise.all([
+      readFile(path.join(EXPECTED_PLUGIN_DIST, file)),
+      readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`)),
+    ]);
+    candidate[file] = { sha256: sha256(expectedBytes), bytes: expectedBytes.length };
+    installed[file] = { sha256: sha256(installedBytes), bytes: installedBytes.length };
+  }
+  report.candidateArtifact = { directory: EXPECTED_PLUGIN_DIST, version: expectedManifest.version,
+    files: candidate, installedFiles: installed };
+  assertNativeCandidateFiles(candidate, installed);
+}
 
 let browser;
 let page;
@@ -1472,7 +1496,8 @@ async function performPathScenarios({ pdfPath, markdownPath, pdfDirectory, markd
   await verifySource(mdItem.itemId,
     { kind: "markdown", id: mdItem.source.target.id }, currentMarkdownPath, { markdown: true });
   const restartInvariant = await compareInvariantAfterMove("restart");
-  report.routeScenarios.push({ name: "restart", status: "passed", at: new Date().toISOString(), restart,
+  report.routeScenarios.push({ name: "restart", status: "passed", scope: "plugin-reload",
+    actualProcessRestart: false, at: new Date().toISOString(), restart,
     pluginVersion: restartedPlugin.pluginVersion, routes: { pdf: restartPdf, markdown: restartMarkdown },
     invariant: restartInvariant });
   await checkpoint("route-restart-passed");
@@ -1625,12 +1650,17 @@ async function main() {
 
   const before = await appIdentity();
   native.assertNativeVaultIdentity(before, native.nativeConfig);
+  report.identity = before;
+  report.foregroundPreflight = { status: "not-verified", policy: "external-cua-selection",
+    visibility: before.visibility, focused: before.focused };
+  report.foregroundPreflight = assertNativeLearningForeground(before, {
+    vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "before Native test mutations",
+  });
+  await recordCandidateArtifact();
   assert.equal(before.syncEnabled, false, "Disable Obsidian Sync before Native acceptance.");
   assert.deepEqual(before.readerViews, [], "Close all Reader tabs before Native acceptance.");
   assert.equal(before.pluginActive, false, "Disable PDF Web Reader before installing write isolation.");
   assert.equal(before.enabledPlugins.includes(PLUGIN_ID), false);
-  assert.equal(before.visibility, "visible",
-    "Keep the owned Obsidian test window visible; if this is hidden, stop rather than automate another window.");
   report.identity = before;
   report.sync = { enabled: before.syncEnabled, off: before.syncEnabled === false };
   report.plugin = { ...before, expectedVersion: expectedManifest.version,
@@ -1710,7 +1740,7 @@ async function main() {
   await captureNativeEvidence();
   report.status = "passed";
   report.completedAt = new Date().toISOString();
-  report.recommendation = "Accept the Native learning-loop implementation only when all eight route scenarios pass and History/Review/Context/transaction bytes remain identical outside immutable Markdown route facts.";
+  report.recommendation = "The recorded UI and route scenarios passed for the exact candidate files. Full five-direction route coverage and an actual owned Obsidian process restart remain separate required Native acceptance gates.";
 }
 
 try {
@@ -1733,7 +1763,7 @@ try {
       await recordScreen(`failure-target-${report.failureTargets.length}`, target).catch(() => {});
     }
   }
-  report.errors.push({ at: report.failedAt, error: error?.stack || String(error) });
+  report.errors.push({ at: report.failedAt, code: error?.code || null, error: error?.stack || String(error) });
   report.recommendation = "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.";
 } finally {
   await cleanupNativeRun().catch(error => {
