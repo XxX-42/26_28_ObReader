@@ -235,6 +235,7 @@ test("only currently visible PDF.js pages are scanned and offscreen resources ar
   assert.equal(runtime.getScanCalls(), 1, "offscreen text-layer events do not trigger whole-document scanning");
   runtime.setVisiblePageIds([2]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   runtime.listeners.get("textlayerrendered")({ pageNumber: 2 });
   assert.equal(runtime.getScanCalls(), 3);
   assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
@@ -262,10 +263,12 @@ test("updateviewarea restores page-scoped scanning when the reader returns to a 
   assert.equal(runtime.posted.length, 1);
   runtime.setVisiblePageIds([2]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   assert.equal(runtime.posted.length, 2);
   assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
   runtime.setVisiblePageIds([1]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   assert.equal(runtime.posted.length, 3);
   assert.equal(runtime.posted.at(-1).pageNumber, 1);
   assert.deepEqual([...runtime.controller.pages.keys()], ["1"]);
@@ -282,9 +285,27 @@ test("updateviewarea reuses one visible-page snapshot for scan, page checks, and
   const beforeScroll = runtime.getVisiblePageReads();
   runtime.setVisiblePageIds([2]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   assert.equal(runtime.getVisiblePageReads() - beforeScroll, 1,
     "each scroll/view-area event computes visibility once and reuses the result");
   assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
+  runtime.controller.dispose();
+});
+
+test("rapid updateviewarea bursts scan once per animation frame", () => {
+  const runtime = makeRuntime();
+  runtime.controller.setDocument("doc-1", 7, true);
+  assert.equal(runtime.getVisiblePageReads(), 1);
+
+  runtime.setVisiblePageIds([2]);
+  for (let index = 0; index < 12; index += 1) runtime.listeners.get("updateviewarea")();
+  assert.equal(runtime.getVisiblePageReads(), 1,
+    "scroll events only schedule one scan before the next frame");
+  runtime.flushAnimationFrames();
+  assert.equal(runtime.getVisiblePageReads(), 2,
+    "the latest visible-page state is read once when the frame runs");
+  assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
+  assert.equal(runtime.posted.length, 2, "the newly visible page is queried once");
   runtime.controller.dispose();
 });
 
@@ -475,7 +496,10 @@ test("compact lexical result cache is bounded to nine recently visited pages", (
   runtime.controller.setDocument("doc-1", 7, true);
   for (let pageNumber = 1; pageNumber <= 10; pageNumber += 1) {
     runtime.setVisiblePageIds([pageNumber]);
-    if (pageNumber > 1) runtime.listeners.get("updateviewarea")();
+    if (pageNumber > 1) {
+      runtime.listeners.get("updateviewarea")();
+      runtime.flushAnimationFrames();
+    }
     const query = runtime.posted.at(-1);
     assert.equal(query.pageNumber, pageNumber);
     assert.equal(runtime.controller.handlePageResults({
@@ -857,6 +881,7 @@ test("scrolling keeps visible highlights stable and reuses completed results whe
   const initialClearCount = firstOverlay.clearCount;
 
   for (let index = 0; index < 5; index += 1) runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   assert.equal(runtime.posted.length, 1, "unchanged scroll frames do not re-query the host");
   assert.equal(firstOverlay.clearCount, initialClearCount, "scroll frames do not clear a painted overlay");
   runtime.controller.handlePageResults({
@@ -868,6 +893,7 @@ test("scrolling keeps visible highlights stable and reuses completed results whe
 
   runtime.setVisiblePageIds([2]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   const secondQuery = runtime.posted[1];
   runtime.controller.handlePageResults({
     documentId: "doc-1", openRequest: 7, pageNumber: 2,
@@ -876,6 +902,7 @@ test("scrolling keeps visible highlights stable and reuses completed results whe
   });
   runtime.setVisiblePageIds([1]);
   runtime.listeners.get("updateviewarea")();
+  runtime.flushAnimationFrames();
   assert.equal(runtime.posted.length, 2, "a completed page result is restored from the bounded cache");
   const returnedPageOverlay = runtime.overlays.at(-1);
   assert.equal(returnedPageOverlay.draws.length, 1);

@@ -195,6 +195,8 @@ export class VocabularyController {
     this.pageResultCache = new Map();
     this.disposed = false;
     this.querySequence = 0;
+    this.renderedPageScanHandle = null;
+    this.renderedPageScanCancel = null;
     this.geometryRedrawHandle = null;
     this.geometryRedrawCancel = null;
     this.entryPillLayoutHandle = null;
@@ -241,7 +243,9 @@ export class VocabularyController {
       });
     };
     this.onViewAreaChanged = () => {
-      this.scanRenderedPages();
+      // PDF.js may dispatch many view-area updates during one scroll frame.
+      // Scan only the latest visible-page snapshot once before the next paint.
+      this.scheduleRenderedPageScan();
       this.scheduleEntryPillLayout();
     };
     this.onScaleChanging = () => {
@@ -323,6 +327,33 @@ export class VocabularyController {
       this.identity.openRequest === identity.openRequest &&
       current?.documentId === identity.documentId &&
       current?.openRequest === identity.openRequest;
+  }
+
+  scheduleRenderedPageScan() {
+    if (this.disposed || !this.enabled || !this.identity) return false;
+    if (this.renderedPageScanHandle !== null) return true;
+    const scan = () => {
+      this.renderedPageScanHandle = null;
+      this.renderedPageScanCancel = null;
+      if (this.disposed || !this.enabled || !this.identity) return;
+      this.scanRenderedPages();
+    };
+    if (typeof this.window?.requestAnimationFrame === "function") {
+      this.renderedPageScanCancel = (handle) => this.window?.cancelAnimationFrame?.(handle);
+      this.renderedPageScanHandle = this.window.requestAnimationFrame(scan);
+    } else {
+      this.renderedPageScanCancel = (handle) => clearTimeout(handle);
+      this.renderedPageScanHandle = setTimeout(scan, 0);
+    }
+    return true;
+  }
+
+  cancelRenderedPageScan() {
+    if (this.renderedPageScanHandle !== null) {
+      try { this.renderedPageScanCancel?.(this.renderedPageScanHandle); } catch {}
+    }
+    this.renderedPageScanHandle = null;
+    this.renderedPageScanCancel = null;
   }
 
   getPageRoot(pageNumber) {
@@ -1589,6 +1620,7 @@ export class VocabularyController {
   }
 
   clearPages() {
+    this.cancelRenderedPageScan();
     this.cancelGeometryRedraw();
     this.dismissEntryPill();
     for (const page of this.pages.values()) {
