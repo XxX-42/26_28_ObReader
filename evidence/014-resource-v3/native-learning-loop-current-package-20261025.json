@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-learning-loop-current-package",
+  "date": "2026-10-25",
+  "runId": "native-learning-loop-20261024231109330-daa24a391d",
+  "candidate": {
+    "branch": "codex/014-resource-v3-integration",
+    "commit": "d11e0699ed2a3cb0748e59321a5a81f50a1e2eb0",
+    "version": "0.14.0",
+    "files": {
+      "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "environment": {
+    "vault": "ObReader-Apple-Test",
+    "syncEnabled": false,
+    "pluginVersion": "0.14.0"
+  },
+  "verifiedCoreFlows": [
+    {
+      "name": "Highlight -> durable Sidecar -> Sidebar -> Review -> Today -> exact Source",
+      "status": "passed",
+      "annotationUuid": "955a4e69-c4da-4860-85c3-0551a1dceeda",
+      "pageIndex": 0,
+      "reviewItemId": "learning:v1:9113bab6-127d-4686-b997-4d8fd0dade79",
+      "navigation": {
+        "documentId": "sha256-v1:940a7ec99388d8e93c183942ecb2f4a3b4f791b0bf528f8f9636d5e5bcbbd7de",
+        "openRequest": 1,
+        "requestId": "reader-nav-1-1",
+        "kind": "annotation",
+        "targetId": "955a4e69-c4da-4860-85c3-0551a1dceeda",
+        "ok": true
+      },
+      "revision": 2,
+      "confirmedRevision": 2,
+      "targetText": "Trace-based Just-in-Time Type Specialization"
+    },
+    {
+      "name": "LingQ -> exact phrase -> Context -> Review -> Today -> exact Source",
+      "status": "passed",
+      "contextId": "context:v1:5910bf6cc14de3a52e50730b1c7b2e9bbe41e5bd94a854ca480ccbebc58f0afd",
+      "anchorId": "context-680231316b8e34807c89e97869dcbfe71f87c43fc0ceb4216ae3c18f91a476af",
+      "exactQuote": "Dynamic languages",
+      "reviewItemId": "learning:v1:b8eb647a-e22c-4d0d-86db-0d2a7f64e882",
+      "navigation": {
+        "documentId": "sha256-v1:940a7ec99388d8e93c183942ecb2f4a3b4f791b0bf528f8f9636d5e5bcbbd7de",
+        "openRequest": 1,
+        "requestId": "reader-nav-1-2",
+        "kind": "selection",
+        "targetId": "context-680231316b8e34807c89e97869dcbfe71f87c43fc0ceb4216ae3c18f91a476af",
+        "ok": true
+      }
+    }
+  ],
+  "fixture": {
+    "sourcePdfSha256Before": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "sourcePdfSha256After": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "unchanged": true
+  },
+  "isolation": {
+    "temporaryDataAdapterInstalledBeforePluginEnable": true,
+    "writeCountInsideIsolatedTestRoots": 92,
+    "unmappedWriteCount": 0,
+    "cleanup": "complete",
+    "isolationRestored": true,
+    "pluginDisabledAfterRun": true
+  },
+  "incompleteStage": {
+    "stage": "Markdown source route",
+    "status": "NOT_REACHED",
+    "reason": "Puppeteer CDP click and Cmd+P did not open a visible native Command Palette; no route assertion was changed."
+  },
+  "acceptance": {
+    "coreLearningFlows": "PASS",
+    "currentPackageRouteMatrix8x5": "NOT_VERIFIED",
+    "openMove8x5": "NOT_VERIFIED",
+    "realOwnedProcessRestart8x5": "NOT_RUN"
+  }
+}
