@@ -83,3 +83,41 @@ test("backlink resolution forwards transient owner context to exact Markdown and
   assert.ok(seen.every(([, context]) => context === ownerContext));
   assert.equal(Object.hasOwn(anchor, "ownerContext"), false, "owner routing stays request-scoped");
 });
+
+test("SemanticAnchorContractV1 cannot borrow VERIFIED evidence from a different anchor", () => {
+  const anchor = fromBacklink({ sourcePath: "Notes/Quote.md", target: { kind: "selection", id: "sel-1" },
+    docKey: "012345abcdef", documentId: "document-1", offset: 8, endOffset: 48,
+    sourceText: "[[Book.pdf#obreader=sel.sel-1|exact quote]]" }, {
+    sourceHash: `sha256-v1:${"c".repeat(64)}`, pageIndex: 2, pageIdentity: "page-3",
+    targetText: "exact quote", targetTextSource: "stored",
+  });
+  const verified = evidence => ({ status: "verified", sourceCurrent: true, pageCurrent: true,
+    exact: true, anchor: evidence });
+  for (const evidence of [
+    undefined,
+    { ...anchor, target: { kind: "selection", id: "same-quote-different-uuid" } },
+    { ...anchor, documentId: "different-document" },
+    { ...anchor, docKey: "different-doc-key" },
+    { ...anchor, sourcePath: "Notes/Other.md" },
+    { ...anchor, sourceHash: `sha256-v1:${"d".repeat(64)}` },
+    { ...anchor, pageIdentity: "different-page" },
+    { ...anchor, pageIndex: 3 },
+    { ...anchor, contextId: "different-context" },
+    { ...anchor, annotationVersion: { version: { rev: 1, deviceId: "device-1", seq: 1 } } },
+    { ...anchor, sourceRange: { ...anchor.sourceRange, startOffset: 9 } },
+    { ...anchor, targetText: "changed quote" },
+  ]) {
+    const descriptor = createSemanticAnchorContractV1(anchor, { resolution: verified(evidence) });
+    assert.equal(descriptor.status, "TARGET_UNRESOLVED");
+    assert.equal(descriptor.exact, false);
+    assert.equal(descriptor.pageFallback, null);
+    assert.deepEqual(descriptor.target, anchor.target);
+  }
+  // Copies and alternate result.source echoes retain the same evidence identity.
+  assert.equal(createSemanticAnchorContractV1(anchor, {
+    resolution: verified(structuredClone(anchor)),
+  }).status, "VERIFIED");
+  assert.equal(createSemanticAnchorContractV1(anchor, {
+    resolution: { ...verified(undefined), source: structuredClone(anchor) },
+  }).status, "VERIFIED");
+});
