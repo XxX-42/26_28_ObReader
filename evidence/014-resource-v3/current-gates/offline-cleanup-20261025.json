@@ -1,0 +1,93 @@
+{
+  "status": "normal",
+  "browser": {
+    "status": "normal",
+    "closeState": "fulfilled",
+    "closeError": null,
+    "pageClose": {
+      "state": "fulfilled",
+      "source": "ownedPages",
+      "attempted": 1,
+      "closed": 1,
+      "skipped": 0,
+      "pages": [
+        {
+          "index": 0,
+          "target": "http://127.0.0.1:59077/",
+          "startedAt": 1792882193465,
+          "settledAt": 1792882193478,
+          "elapsedMs": 13,
+          "state": "fulfilled",
+          "preparation": {
+            "state": "fulfilled",
+            "startedAt": 1792882193456,
+            "settledAt": 1792882193465,
+            "remainingMsAtStart": 19999,
+            "elapsedMs": 9,
+            "result": [
+              {
+                "taskDestroyed": true,
+                "workerDestroyed": true,
+                "documentReleased": true,
+                "pageViews": 0,
+                "selectionCollapsed": true
+              }
+            ],
+            "error": null
+          }
+        }
+      ]
+    },
+    "process": {
+      "pid": 8814,
+      "exitCode": 0,
+      "signalCode": null,
+      "identity": {
+        "pid": 8814,
+        "startedAt": "Sun Oct 25 06:49:48 2026",
+        "identityMode": "process-table",
+        "parentPid": 8797,
+        "groupId": 8814,
+        "state": "Ss",
+        "executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "executableValidated": true,
+        "profileDirectory": "/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/puppeteer_dev_chrome_profile-0OAmCj",
+        "profileValidated": true,
+        "validated": true
+      },
+      "profileIdentityValidatedAtStart": true,
+      "processGroupValidatedAtStart": true,
+      "processGroupId": 8814
+    },
+    "connectedAfterClose": false,
+    "termination": [],
+    "releasedExitedProcessPipes": true,
+    "detachedStreamsAfterFailure": false,
+    "timings": {
+      "cleanupStartedAt": 1792882193455,
+      "closeDeadlineAt": 1792882213455,
+      "pageListingStartedAt": 1792882193456,
+      "pageListingSettledAt": 1792882193456,
+      "browserCloseCalledAt": 1792882193478,
+      "browserCloseSettledAt": 1792882193605,
+      "cdpDisconnectedAt": 1792882193526,
+      "processExitAt": 1792882193580
+    },
+    "testBrowserLaunch": {
+      "launchId": "be19c817-1227-497c-b18b-aac474f19768",
+      "testName": "offline-smoke",
+      "state": "closed-naturally",
+      "cleanupState": "closed-naturally",
+      "crashpadDirectory": "/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/pdf-reader-crashpad-FEnnRZ",
+      "recordPath": "/private/tmp/obreader-014-v3/tests/artifacts/browser-launch-offline-smoke-1792882188895-8797-Ea9coA/launch-record.jsonl",
+      "ownerMarkerPath": "/private/tmp/obreader-014-v3/tests/artifacts/browser-launch-offline-smoke-1792882188895-8797-Ea9coA/owner.json",
+      "browserPid": 8814,
+      "browserExecutable": "Google Chrome",
+      "recordErrors": []
+    }
+  },
+  "server": {
+    "closeState": "fulfilled"
+  },
+  "errors": []
+}

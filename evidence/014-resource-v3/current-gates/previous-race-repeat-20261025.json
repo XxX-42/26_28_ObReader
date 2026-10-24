@@ -1,0 +1,1726 @@
+{
+  "schemaVersion": 1,
+  "runId": "run-2026-10-24T21-52-55-106Z-85725-38f1d6e4",
+  "gate": "race",
+  "createdAt": "2026-10-24T21:57:56.147Z",
+  "root": "/private/tmp/obreader-014-v3",
+  "constraints": {
+    "fastMaxProcesses": 4,
+    "browserProcesses": 1,
+    "raceProcesses": 2,
+    "raceRounds": 10,
+    "skipPolicy": "any skipped test fails its gate",
+    "timeoutPolicy": "test-defined timeouts only; runner adds none",
+    "retries": 0
+  },
+  "manifest": {
+    "fast": 122,
+    "browserTests": 27,
+    "browserScripts": [
+      "tests/offline-smoke.mjs"
+    ],
+    "racePair": [
+      "tests/autosave-mobile-regression.test.mjs",
+      "tests/highlight-multiline-regression.test.mjs",
+      "tests/plugin-host.test.mjs",
+      "tests/learning-domain.test.mjs",
+      "tests/learning-host.test.mjs",
+      "tests/vocabulary-transactions.test.mjs",
+      "tests/vocabulary-review-transaction-integration.test.mjs",
+      "tests/vocabulary-v2-runtime.test.mjs"
+    ]
+  },
+  "sourceFingerprint": {
+    "policy": "SHA-256 of Git-tracked files plus untracked source files; excludes docs, dist, node_modules, test-vault, .git, and artifact directories.",
+    "before": {
+      "algorithm": "sha256",
+      "hash": "c8752efa80a37704211d078f844154275253bd09d3bb33709c778aa3cff75d46",
+      "fileCount": 1078
+    },
+    "after": {
+      "algorithm": "sha256",
+      "hash": "c8752efa80a37704211d078f844154275253bd09d3bb33709c778aa3cff75d46",
+      "fileCount": 1078
+    },
+    "stable": true,
+    "changedFiles": [],
+    "captureError": null
+  },
+  "gates": {
+    "race": [
+      {
+        "round": 1,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/65d0aea0ad52/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1552,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b194a4f292b6/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3033,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/d1b0befd92c7/plugin-host",
+            "rawBytes": {
+              "stdout": 27851,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/3b5dbb997184/learning-domain",
+            "rawBytes": {
+              "stdout": 2978,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/26627e55d720/learning-host",
+            "rawBytes": {
+              "stdout": 5000,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/469f088045fe/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4614,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/6d13b3511469/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 609,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 1,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-01-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/7223d2b4ccbd/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1858,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 2,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ab62d35e5f61/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1555,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/0a2e2b92e87f/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3034,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b9032856397a/plugin-host",
+            "rawBytes": {
+              "stdout": 27849,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/1a81f6c4dcab/learning-domain",
+            "rawBytes": {
+              "stdout": 2976,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/0882f1b04724/learning-host",
+            "rawBytes": {
+              "stdout": 4992,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/0bd68c9b7d43/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/564bf734e0c3/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 2,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-02-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/4d6ec8dd8775/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1857,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 3,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/29d592122b9e/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b9c1a9a6088f/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3034,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/97bfd726ba1c/plugin-host",
+            "rawBytes": {
+              "stdout": 27857,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/91835bf229cb/learning-domain",
+            "rawBytes": {
+              "stdout": 2975,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/7f8ab7c33ee1/learning-host",
+            "rawBytes": {
+              "stdout": 5000,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/37d6b7e2bf54/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4613,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/64bb355d2747/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 609,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 3,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-03-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/dff09442d70d/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1862,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 4,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b3d1fbfeaaf5/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/20fa215676d7/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3034,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/a3719041fdc0/plugin-host",
+            "rawBytes": {
+              "stdout": 27845,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b61e893153f7/learning-domain",
+            "rawBytes": {
+              "stdout": 2974,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ff0f42f29813/learning-host",
+            "rawBytes": {
+              "stdout": 4990,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/4124c92c985f/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4614,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/a00c0d331b99/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 4,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-04-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ac6e7d3837f8/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1859,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 5,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/d04e64901617/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1554,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b816c52a9a56/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3034,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/e7cf126b9fb9/plugin-host",
+            "rawBytes": {
+              "stdout": 27864,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/08b647cab882/learning-domain",
+            "rawBytes": {
+              "stdout": 2975,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/98dc0f103b10/learning-host",
+            "rawBytes": {
+              "stdout": 4995,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b0c52288c406/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4614,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/249e2aafb38c/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 5,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-05-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/968f179bd669/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1858,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 6,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/70b2aa6e5832/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/0ebbb5e9184d/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3032,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/7ec57aacec61/plugin-host",
+            "rawBytes": {
+              "stdout": 27844,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/805567fc3f62/learning-domain",
+            "rawBytes": {
+              "stdout": 2969,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ba86acea8b98/learning-host",
+            "rawBytes": {
+              "stdout": 4995,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/4f5dc3b034c5/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4601,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/51d0dc21ef34/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 609,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 6,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-06-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/6d48c06b430e/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1858,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 7,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/abfd45eefaa3/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/1542c50cbbd5/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3030,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/8962a9249c0e/plugin-host",
+            "rawBytes": {
+              "stdout": 27852,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/0666c05c2a07/learning-domain",
+            "rawBytes": {
+              "stdout": 2972,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/d72cc4c84642/learning-host",
+            "rawBytes": {
+              "stdout": 4997,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/6ecae31fe098/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4615,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ba05c22dee32/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 7,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-07-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/959443fc2483/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1862,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 8,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/b49baf3bb59b/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/8fdaa01f1521/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3030,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/a8256c2a63af/plugin-host",
+            "rawBytes": {
+              "stdout": 27853,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/6c4bc5427e90/learning-domain",
+            "rawBytes": {
+              "stdout": 2981,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/1fb7c997e62a/learning-host",
+            "rawBytes": {
+              "stdout": 4999,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/d4fe72f0f9f8/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4612,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/a5d8a5e46025/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 8,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-08-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/38208d030b89/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1856,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 9,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/5dcad597ad48/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/a64be2e4064b/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3033,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/00bb23f1d4c0/plugin-host",
+            "rawBytes": {
+              "stdout": 27845,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/fca21ee7aecb/learning-domain",
+            "rawBytes": {
+              "stdout": 2974,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/15433d87e901/learning-host",
+            "rawBytes": {
+              "stdout": 4994,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/c86c7cafea93/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4616,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/2889250c3b7c/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 608,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 9,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-09-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/6d11d0a7947c/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1860,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "round": 10,
+        "tests": [
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-autosave-mobile-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-autosave-mobile-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/aebd4ceed3e4/autosave-mobile-regressi",
+            "rawBytes": {
+              "stdout": 1556,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-highlight-multiline-regression/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-highlight-multiline-regression/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/823f7f3501e5/highlight-multiline-regr",
+            "rawBytes": {
+              "stdout": 3032,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-plugin-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-plugin-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/4c1ab6d80f50/plugin-host",
+            "rawBytes": {
+              "stdout": 27860,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-learning-domain/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-learning-domain/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/3eee962e53d6/learning-domain",
+            "rawBytes": {
+              "stdout": 2968,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-learning-host/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-learning-host/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/bb7cca620742/learning-host",
+            "rawBytes": {
+              "stdout": 4993,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-transactions/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-transactions/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/ff881e6bf45d/vocabulary-transactions",
+            "rawBytes": {
+              "stdout": 4616,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-review-transaction-integration/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-review-transaction-integration/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/2e35e985e75f/vocabulary-review-transa",
+            "rawBytes": {
+              "stdout": 610,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          },
+          {
+            "gate": "race",
+            "round": 10,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "skips": [],
+            "stdoutPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-v2-runtime/stdout.raw.log",
+            "stderrPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/runs/run-2026-10-24T21-52-55-106Z-85725-38f1d6e4/children/race-round-10-vocabulary-v2-runtime/stderr.raw.log",
+            "testArtifactsPath": "/private/tmp/obreader-014-v3/tests/artifacts/vocabulary-gates/out/823014e46b01/vocabulary-v2-runtime",
+            "rawBytes": {
+              "stdout": 1861,
+              "stderr": 0
+            },
+            "logContainsFailure": false
+          }
+        ],
+        "status": "passed"
+      }
+    ]
+  },
+  "summary": {
+    "race": {
+      "total": 80,
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0
+    },
+    "total": 80,
+    "passed": 80,
+    "failed": 0,
+    "skipped": 0
+  },
+  "acceptanceEligible": true
+}

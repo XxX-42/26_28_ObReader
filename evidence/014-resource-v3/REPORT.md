@@ -117,7 +117,7 @@ After incorporating the Native preflight and LRU evidence (documentation/evidenc
 - Offline Viewer smoke: **PASS**, including all five annotation tools, save/reopen, and bulk-delete persistence.
 - Race: **80/80**, 0 failed, 0 skipped.
 
-The build hashes remain identical to the installed test-only package (`main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, manifest `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, styles `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`). The test-vault enabled-plugin list is still `[]`; no redeploy or plugin activation was needed for this evidence update. Raw current run reports are retained under `tests/artifacts/vocabulary-gates/runs/` and Offline cleanup proof under `tests/artifacts/offline-smoke-1792882187793-8797-e0a7a906-daf4-45a5-b816-dceb323ecbf0.cleanup.json`.
+The build hashes remain identical to the installed test-only package (`main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, manifest `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, styles `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`). The test-vault enabled-plugin list is still `[]`; no redeploy or plugin activation was needed for this evidence update. Tracked raw reports, Offline cleanup evidence, and the preserved earlier Race failure are indexed in [current-gates](current-gates/README.md).
 
 ## Seven-workstream ledger
 
