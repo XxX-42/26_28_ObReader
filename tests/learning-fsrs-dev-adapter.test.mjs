@@ -17,7 +17,7 @@ const { LeitnerScheduler } = require("../plugin/learning/scheduler.cjs");
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/learning-fsrs-evaluation-v1.json", import.meta.url), "utf8"));
 const asOfUTC = "2026-10-23T12:00:00.000Z";
 
-function historyBatch(event, stateAfter, index) {
+function historyBatch(event, stateAfter, stateBefore, eventBefore) {
   const immutableEvent = structuredClone(event);
   delete immutableEvent.onCurrentBranch;
   return {
@@ -36,7 +36,7 @@ function historyBatch(event, stateAfter, index) {
         field: "reviewState",
         fieldPath: ["records", event.itemId, "reviewState"],
         beforeExists: true,
-        before: { fixtureBefore: index },
+        before: structuredClone(stateBefore),
         afterExists: true,
         after: structuredClone(stateAfter),
         path: "/private/vault/00_Archive/21_VocabularyData/learning/items/shard.json",
@@ -48,7 +48,7 @@ function historyBatch(event, stateAfter, index) {
         field: "lastReviewEvent",
         fieldPath: ["records", event.itemId, "lastReviewEvent"],
         beforeExists: true,
-        before: null,
+        before: structuredClone(eventBefore),
         afterExists: true,
         after: immutableEvent,
         path: "/private/vault/00_Archive/21_VocabularyData/learning/items/shard.json",
@@ -88,8 +88,13 @@ function makeSnapshot(sourceFixture = fixture, { shiftDays = 0, itemSuffix = "on
       : stateAfterByEventId.get(event.previousEventId);
     stateAfterByEventId.set(event.eventId, scheduler.rate(priorState, event.rating, event.reviewedAtUTC).state);
   }
-  const historyBatches = source.reviewHistory.map((event, index) =>
-    historyBatch(event, stateAfterByEventId.get(event.eventId), index));
+  const historyBatches = source.reviewHistory.map((event) => {
+    const previous = source.reviewHistory.find((candidate) => candidate.eventId === event.previousEventId);
+    const eventBefore = previous ? { ...previous } : null;
+    if (eventBefore) delete eventBefore.onCurrentBranch;
+    return historyBatch(event, stateAfterByEventId.get(event.eventId),
+      previous ? stateAfterByEventId.get(previous.eventId) : scheduler.initialState(source.createdAtUTC), eventBefore);
+  });
   const item = {
     itemId: source.itemId,
     externalId: source.externalId,
@@ -285,4 +290,43 @@ test("a current item with no reviews can still replay its initial state when ret
   const report = evaluateFsrsDevCohort([{ status: "READY", ...adapted }], { asOfUTC, fsrsPackage });
   assert.equal(report.cohort.eligibleItems, 1, JSON.stringify(report));
   assert.equal(report.cohort.insufficientHistoryItems, 0);
+});
+
+
+test("shadow replay requires matching batch pre-state and predecessor evidence without mutating input", () => {
+  const valid = makeSnapshot(fixture, { itemSuffix: "before-evidence" });
+  const before = JSON.stringify(valid);
+  // Deliberately scramble physical batch order: the explicit predecessor chain determines replay order.
+  valid.historyBatches.reverse();
+  const shuffledBefore = JSON.stringify(valid);
+  assert.equal(evaluateFsrsDevCohort([valid], { asOfUTC, fsrsPackage }).cohort.eligibleItems, 1);
+  assert.equal(JSON.stringify(valid), shuffledBefore);
+  valid.historyBatches.reverse();
+  assert.equal(JSON.stringify(valid), before);
+
+  for (const field of ["reviewState", "lastReviewEvent"]) {
+    const malformed = structuredClone(valid);
+    const batch = malformed.historyBatches.find((candidate) => candidate.changes.some((change) => change.after?.sequence === 2));
+    const change = batch.changes.find((candidate) => candidate.field === field);
+    change.before = field === "reviewState" ? { ...change.before, reviewCount: 99 } : null;
+    const inputBefore = JSON.stringify(malformed);
+    const report = evaluateFsrsDevCohort([malformed], { asOfUTC, fsrsPackage });
+    assert.equal(report.cohort.eligibleItems, 0);
+    assert.equal(report.cohort.insufficientHistoryItems, 1);
+    assert.deepEqual(report.cohort.insufficientByReason,
+      { [field === "reviewState" ? "STATE_PARITY_MISMATCH" : "HISTORY_CHAIN_INVALID"]: 1 });
+    assert.equal(report.authoritativeWrites, 0);
+    assert.equal(JSON.stringify(malformed), inputBefore);
+  }
+});
+
+
+test("unsupported scheduler evidence on an undone branch is insufficient history", () => {
+  const snapshot = makeSnapshot(fixture, { itemSuffix: "unsupported-branch" });
+  const undone = snapshot.historyBatches.find((batch) => batch.changes.some((change) =>
+    change.after?.eventId?.endsWith("eval-3-undone-branch")));
+  undone.changes.find((change) => change.field === "lastReviewEvent").after.schedulerVersion = "unknown-v1";
+  const report = evaluateFsrsDevCohort([snapshot], { asOfUTC, fsrsPackage });
+  assert.equal(report.cohort.eligibleItems, 0);
+  assert.deepEqual(report.cohort.insufficientByReason, { HISTORY_GRAPH_INVALID: 1 });
 });

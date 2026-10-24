@@ -72,7 +72,7 @@ function ratingBatchEvent(batch, itemId) {
       batch.batchId !== `learning-rating-${sha256(event.actionId)}`) {
     return { invalid: REASON.IDENTITY_INVALID };
   }
-  return { event, stateAfter: stateChange.after };
+  return { event, eventBefore: eventChange.before, stateBefore: stateChange.before, stateAfter: stateChange.after };
 }
 
 function reasonForEvaluationError(error) {
@@ -115,13 +115,16 @@ export function createFsrsDevEvaluationSource(item, historyBatches) {
     const extracted = ratingBatchEvent(batch, item.itemId);
     if (!extracted) continue;
     if (extracted.invalid) return insufficient(extracted.invalid);
-    rows.push({ event: extracted.event, stateAfter: extracted.stateAfter });
+    rows.push(extracted);
   }
 
   const eventsById = new Map();
   const actionIds = new Set();
   for (const row of rows) {
     const event = row.event;
+    if (event.schemaVersion !== 1 || event.schedulerVersion !== evaluationConstants.EXPECTED_LEITNER_VERSION) {
+      return insufficient(REASON.HISTORY_GRAPH_INVALID);
+    }
     if (typeof event.eventId !== "string" || !event.eventId || eventsById.has(event.eventId) || actionIds.has(event.actionId)) {
       return insufficient(REASON.HISTORY_GRAPH_INVALID);
     }
@@ -178,6 +181,15 @@ export function createFsrsDevEvaluationSource(item, historyBatches) {
       ? scheduler.initialState(item.createdAt)
       : statesByEventId.get(event.previousEventId);
     if (!priorState) return insufficient(REASON.HISTORY_CHAIN_INVALID);
+    const row = eventsById.get(event.eventId);
+    const expectedPreviousEvent = event.previousEventId === null
+      ? null : eventsById.get(event.previousEventId).event;
+    if (!isDeepStrictEqual(row.eventBefore, expectedPreviousEvent)) {
+      return insufficient(REASON.HISTORY_CHAIN_INVALID);
+    }
+    if (!isDeepStrictEqual(row.stateBefore, priorState)) {
+      return insufficient(REASON.STATE_PARITY_MISMATCH);
+    }
     const expectedState = scheduler.rate(priorState, event.rating, event.reviewedAtUTC).state;
     if (!isDeepStrictEqual(eventsById.get(event.eventId).stateAfter, expectedState)) {
       return insufficient(REASON.STATE_PARITY_MISMATCH);
