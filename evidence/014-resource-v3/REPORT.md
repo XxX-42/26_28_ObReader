@@ -57,6 +57,8 @@ Do not substitute earlier package or Windows evidence for these current-package 
 
 The offline auditor was rerun against all nine saved Native reports and the exact current three-file package. It found two package-matching reports, but **0/8 route stages are accepted**: seven older reports have package mismatches, the latest exclusive-process preflight failed its focused-owner assertion before any test mutations, and the earlier partial run does not close all route-matrix requirements. The latest preflight report also lacks verified cleanup. The report set remains `INCOMPLETE`; it cannot prove a current-package Native pass.
 
+A fresh passive CUA/CDP inventory confirms the window-control boundary: the visible Obsidian test window is associated with the CDP process on port `62596`, whose page list includes both `ObReader-Apple-Test` and a `远程仓库1` renderer. The separate owned test-only process is PID `69139` on port `57977`; its profile is exclusive and its only page is a test-vault `source-inspection` PDF, but that window is not exposed for selection in the current CUA app window list. No window activation or process restart was attempted. This leaves no safe current UI target for the Native route matrix or true restart.
+
 ## Automated gates
 
 - Focused dictionary/conversion suites: 67 passed.
