@@ -482,6 +482,16 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     await frame.waitForSelector(`#${buttonId}`, { timeout: 15_000 });
     await frame.click(`#${buttonId}`);
   }
+  // TextLayer ranges keep nonzero geometry when the Reader restores a scroll
+  // position below the title. Bring the actual drag target into the viewport
+  // before measuring; otherwise the real pointer can land on the toolbar.
+  await frame.evaluate(async text => {
+    const span = [...document.querySelectorAll('.page[data-page-number="1"] .textLayer span')]
+      .find(node => node.textContent.includes(text));
+    if (!span) throw new Error(`Could not find PDF.js textLayer text: ${text}`);
+    span.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }, text);
   const geometry = await frame.evaluate(({ text, exact }) => {
     const spans = [...document.querySelectorAll('.page[data-page-number="1"] .textLayer span')];
     const span = spans.find(node => exact ? node.textContent.includes(text) : node.textContent.includes(text));
@@ -494,6 +504,11 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     range.setEnd(node, start + text.length);
     const rect = range.getBoundingClientRect();
     if (!rect.width || !rect.height) throw new Error(`PDF text has no visible geometry: ${text}`);
+    if (rect.left < 0 || rect.right + 1 >= innerWidth || rect.top < 0 || rect.bottom >= innerHeight) {
+      throw new Error(`PDF text drag range is outside the Reader viewport: ${text}`);
+    }
+    const hit = document.elementFromPoint(rect.left + 0.25, rect.top + rect.height / 2);
+    if (!hit?.closest(".textLayer")) throw new Error(`PDF text drag target is obscured: ${text}`);
     return { x1: rect.left + 0.25, x2: rect.right + 1, y: rect.top + rect.height / 2,
       text: node.textContent.slice(start, start + text.length), mode: PDFViewerApplication.pdfViewer.annotationEditorMode };
   }, { text, exact });
@@ -1148,6 +1163,9 @@ async function createHighlightLearningItem(pdfPath) {
   await recordScreen("reader-highlight-tool-active");
   const selection = await selectTextByPointer({ frame, pathValue: pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
   assert.equal(selection.text, HIGHLIGHT_TEXT);
+  report.highlightPointerGeometry = selection;
+  await frame.waitForFunction(() => document.querySelectorAll(".annotationEditorLayer .highlightEditor").length > 0,
+    { timeout: 8_000 });
   const annotation = await saveAnnotationThroughReaderUI(frame, before);
   report.highlight = { uuid: annotation.row.uuid, pageIndex: annotation.row.pageIndex,
     revision: annotation.revision, confirmedRevision: annotation.confirmedRevision,
