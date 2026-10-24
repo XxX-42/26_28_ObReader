@@ -32,6 +32,10 @@ The first common and rare lookup targets pass for these Native DataAdapter sampl
 
 Current-package raw trials: [native-data-adapter-benchmark-current-package-20261025.json](native-data-adapter-benchmark-current-package-20261025.json). Earlier module run: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
 
+A fresh five-trial repeat was run against the same exact test Vault renderer after the Native owner-gate closeout. Each trial used a new dictionary instance and Worker, with 20 warm repeats per term; each cold case read exactly one Resource-v3 block. Across the 5 cold samples, common `on` was 173.7 ms P50 / 400.9 ms observed max, rare `zyzzyva` was 121.8 ms P50 / 142.8 ms max, and a valid miss was 125.3 ms P50 / 226.7 ms max. Across 100 warm repeats per term, P95 was 0.1 ms for common, rare, and miss; maximum was 0.4 ms. The Native DataAdapter first-rare and warm targets pass for this renderer. This is still instance-cold within an already running process, not process-cold startup, plugin activation, or Reader UI. No Vault writes occurred. Raw receipt: [native-data-adapter-benchmark-latest-20261025.json](native-data-adapter-benchmark-latest-20261025.json).
+
+The renderer's `navigator.userAgent` reports `obsidian/1.12.7`, while the native window title reports `Obsidian 1.14.5`; the installed app bundle metadata also reports 1.12.7. Treat this as exact test-Vault DataAdapter evidence, but do not claim it verifies performance on a confirmed 1.14.5 runtime. The startup-added-blocking gate remains **NOT_MEASURED**.
+
 ### Current-package Native Host probe
 
 A follow-up probe exercised the installed 0.14.0 plugin's real `getVocabularyDictionary().lookup()` path in the existing `ObReader-Apple-Test` vault. Obsidian Sync was disabled, no Reader leaves were open, and the plugin remained disabled in the persisted enabled-plugin list before and after the probe. The actual Host read the Vault manifest and only the matching common/rare Resource-v3 blocks; it did not read the full dictionary or wait for a full Dexie build.
