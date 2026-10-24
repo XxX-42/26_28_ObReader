@@ -122,3 +122,50 @@ It audits saved receipts; it never creates a Native PASS without those runs.
   and live Native were not run by this continuation.
 
 `IPAD=DEFERRED_BY_SCOPE`. Real multi-client Sync remains unverified.
+
+## 2026-10-25 continuation: current gate and window-selection result
+
+The current branch is `codex/native-openmove-resume-scroll-audit` at
+`7ab911286526c3835f169a7bff5ffac74e52d3f4`, matching
+`origin/feature/0.14-native-learning-dictionary-20261023`. No production files,
+Vault records, or source code were changed in this continuation.
+
+The exact Native runner process remains PID `69139`, using the owned profile
+`macos-native-profile-exclusive-20261024-0120`. I switched Obsidian through its
+Window menu and restored the visible `ObReader-Apple-Test` `learning` window to
+the foreground. The menu exposed only that window and the `远程仓库1` window; it
+did not expose PID `69139`'s hidden window. Mission Control via CUA did not
+change that. The runner therefore cannot pass its visible-and-focused
+preflight, and the five-direction `full-openmove` and actual owned-process
+restart stages remain `NOT_RUN` for the current candidate.
+
+The rebuilt candidate and test-Vault plugin files are not byte-identical:
+
+| File | Candidate SHA-256 | Test-Vault SHA-256 |
+|---|---|---|
+| `main.js` | `8606b6cdf30184260833993ce7c349ad2216e2c4fa1498d9a7d25e9055b249a0` | `0cad7558cf24157d3658df32fc7e9d467fb44da89880b9bca6887d946180f77c` |
+| `manifest.json` | `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675` | same |
+| `styles.css` | `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea` | same |
+
+The hidden owned process is still running against the shared test Vault, so I
+did not replace plugin files while it may be using them.
+
+### Gate results
+
+- `npm run test:gates`: **222/228 passed, 6 failed, 0 skipped**; Fast 120/120,
+  Browser 27/28, Race 75/80. Acceptance is not eligible.
+- The Browser failure was the simulated iPad pointer-latency assertion: gesture
+  21 observed a 104.1 ms pointer-up delay against the 80 ms bound. A standalone
+  `node --test tests/ipad-pointer-policy.test.mjs` passed 1/1. An earlier
+  standalone Browser gate also passed 28/28, so this long-tail result remains a
+  real gate observation whose cause is not isolated to production code.
+- The five Race failures were browser cleanup/DevTools startup or test timeout
+  failures. Running `tests/autosave-mobile-regression.test.mjs` and
+  `tests/highlight-multiline-regression.test.mjs` individually passed 1/1 each.
+- A fresh standalone Browser gate still reported 27/28 because of the same
+  80 ms simulated pointer threshold. Test source fingerprints were unchanged.
+
+The current candidate has no matching Native receipt for `main.js` SHA
+`8606b6cdf30184260833993ce7c349ad2216e2c4fa1498d9a7d25e9055b249a0`. Previous
+Native reports use different package hashes and do not close the current gaps.
+No merge to `main` or deployment was performed.

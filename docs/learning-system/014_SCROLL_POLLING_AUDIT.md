@@ -62,3 +62,14 @@ ObReader stutters, profile Host/bridge observers and cached overlay work before
 changing timer cadence. Keep the original PDF read-only.
 
 No PDF.js vendor code or interaction code was changed for this audit.
+
+## 2026-10-25 input-latency follow-up
+
+The current full gate recorded one simulated finger gesture with a 104.1 ms
+pointer-up delivery delay against the test's 80 ms bound. The same
+`tests/ipad-pointer-policy.test.mjs` passed when run alone, and a prior Browser
+gate passed 28/28. The latest Browser gate therefore remains a failure (27/28),
+not an accepted latency result. Its evidence comes from synthetic Chromium
+touch dispatch and does not reproduce the reported Windows 120-page OCR PDF.
+This is a long-tail signal to profile under a controlled load; it does not
+establish that a recurring poll caused the Windows wheel stutter.
