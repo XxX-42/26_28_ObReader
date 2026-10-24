@@ -14,6 +14,7 @@ function makeRuntime() {
   const identity = { documentId: "doc-1", openRequest: 7 };
   let textNodes = [{}, {}, {}];
   let visiblePageIds = [1];
+  let visiblePageReads = 0;
   let scanCalls = 0;
   let nextFrameId = 0;
   const frameCallbacks = new Map();
@@ -33,7 +34,7 @@ function makeRuntime() {
     pdfDocument: { numPages: 50 },
     pdfViewer: {
       getPageView(index) { return { div: pages.get(index + 1) || null }; },
-      getVisiblePages() { return { views: visiblePageIds.map((id) => ({ id })) }; },
+      getVisiblePages() { visiblePageReads += 1; return { views: visiblePageIds.map((id) => ({ id })) }; },
     },
   };
   const windowRef = {
@@ -102,6 +103,7 @@ function makeRuntime() {
     triggerPageResize(target) {
       for (const observer of resizeObservers) if (observer.targets.has(target)) observer.trigger(target);
     },
+    getVisiblePageReads: () => visiblePageReads,
     getScanCalls: () => scanCalls,
   };
 }
@@ -267,6 +269,22 @@ test("updateviewarea restores page-scoped scanning when the reader returns to a 
   assert.equal(runtime.posted.length, 3);
   assert.equal(runtime.posted.at(-1).pageNumber, 1);
   assert.deepEqual([...runtime.controller.pages.keys()], ["1"]);
+  runtime.controller.dispose();
+});
+
+test("updateviewarea reuses one visible-page snapshot for scan, page checks, and pruning", () => {
+  const runtime = makeRuntime();
+  runtime.setVisiblePageIds([1, 2]);
+  runtime.controller.setDocument("doc-1", 7, true);
+  assert.equal(runtime.getVisiblePageReads(), 1,
+    "initial visible-page scan uses one PDF.js visibility calculation for all visible pages");
+
+  const beforeScroll = runtime.getVisiblePageReads();
+  runtime.setVisiblePageIds([2]);
+  runtime.listeners.get("updateviewarea")();
+  assert.equal(runtime.getVisiblePageReads() - beforeScroll, 1,
+    "each scroll/view-area event computes visibility once and reuses the result");
+  assert.deepEqual([...runtime.controller.pages.keys()], ["2"]);
   runtime.controller.dispose();
 });
 

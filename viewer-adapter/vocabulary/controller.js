@@ -334,15 +334,15 @@ export class VocabularyController {
     const visiblePages = getVisiblePageViews(this.app.pdfViewer);
     if (!Array.isArray(visiblePages)) return;
     const visible = new Set(visiblePages.map((page) => page?.id).filter(isPositivePageNumber));
-    for (const pageNumber of visible) this.refreshPage(pageNumber);
+    for (const pageNumber of visible) this.refreshPage(pageNumber, { visiblePageNumbers: visible });
     this.pruneOffscreenPages(visible);
   }
 
   pruneOffscreenPages(visiblePageNumbers) {
-    const current = getVisiblePageViews(this.app.pdfViewer);
     const visible = visiblePageNumbers instanceof Set
       ? visiblePageNumbers
-      : new Set(Array.isArray(current) ? current.map((page) => page?.id).filter(isPositivePageNumber) : []);
+      : new Set((getVisiblePageViews(this.app.pdfViewer) || [])
+        .map((page) => page?.id).filter(isPositivePageNumber));
     for (const [key, page] of this.pages) {
       if (visible.has(page.pageNumber)) continue;
       this.unobservePageLayout(page);
@@ -424,8 +424,12 @@ export class VocabularyController {
     this.pendingAllGeometryPages = false;
   }
 
-  refreshPage(pageNumber, { refreshTokens = false } = {}) {
-    if (!this.enabled || !this.identityIsCurrent() || !isPositivePageNumber(pageNumber) || !this.isPageVisible(pageNumber)) return false;
+  refreshPage(pageNumber, { refreshTokens = false, visiblePageNumbers = null } = {}) {
+    if (!this.enabled || !this.identityIsCurrent() || !isPositivePageNumber(pageNumber)) return false;
+    const visible = visiblePageNumbers instanceof Set
+      ? visiblePageNumbers.has(pageNumber)
+      : this.isPageVisible(pageNumber);
+    if (!visible) return false;
     const pageRoot = this.getPageRoot(pageNumber);
     const textLayer = pageRoot?.querySelector?.(".textLayer");
     if (!pageRoot || !textLayer) return false;
