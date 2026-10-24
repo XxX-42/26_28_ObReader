@@ -108,7 +108,7 @@ function createSessionLog({ adapter, directory, version, maxBuffered = 1024 * 10
     return cleanup;
   }
   function close() {
-    globalThis.clearInterval(timer);
+    if (timer != null) globalThis.clearInterval?.(timer);
     for (const cleanup of cleanups.splice(0)) cleanup();
     // Allow the enclosing onunload wrapper to record its final return first.
     return Promise.resolve().then(async () => { record("session.end"); closed = true; await flush(); if (lines.length || dropped) await flush(); });
@@ -389,7 +389,9 @@ function createSessionLog({ adapter, directory, version, maxBuffered = 1024 * 10
     session,
     highFrequencyInputSampleEvery: HIGH_FREQUENCY_EVENT_SAMPLE_EVERY,
   });
-  timer = globalThis.setInterval(() => { void flush(); }, interval);
+  timer = typeof globalThis.setInterval === "function"
+    ? globalThis.setInterval(() => { void flush(); }, interval)
+    : null;
   timer?.unref?.();
   return { record, begin, end, flush, close, observe, exportDiagnostic, errorInfo, get path() { return path(); }, get lastWriteError() { return lastWriteError; } };
 }

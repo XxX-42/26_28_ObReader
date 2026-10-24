@@ -361,10 +361,12 @@ const vocabularyModalsMarker =
 const heavyWorkMarker =
   /\/\* BUILD:HEAVY_WORK_REQUIRE \*\/\s*const\s*\{\s*createHeavyWorkCoordinator\s*\}\s*=\s*require\((['"])\.\/heavy-work\.cjs\1\);/s;
 const recoveryMarker = /\/\* BUILD:PDF_RECOVERY_REQUIRE \*\/\s*const\s*\{\s*readDeltaRecovery\s*\}\s*=\s*require\((['"])\.\/pdf-recovery-read\.cjs\1\);/s;
-const sessionLogMarker = /\/\* BUILD:SESSION_LOG_REQUIRE \*\/\s*const\s*\{\s*createSessionLog\s*,\s*traceFunction\s*,\s*traceMethods\s*\}\s*=\s*require\((['"])\.\/session-log\.cjs\1\);/s;
+const sessionLogMarker = /\/\* BUILD:SESSION_LOG_REQUIRE \*\/\s*const\s*\{\s*createSessionLog\s*\}\s*=\s*require\((['"])\.\/session-log\.cjs\1\);/s;
 const readerAnchorStoreMarker = /\/\* BUILD:READER_ANCHOR_STORE_REQUIRE \*\/\s*const\s*\{\s*createReaderAnchorStore\s*,\s*parseReaderLinkFragment\s*,\s*parseReaderLinkDestination\s*,\s*encodeReaderLinkFragment\s*\}\s*=\s*require\((['"])\.\/reader-anchor-store\.cjs\1\);/s;
 const readerBacklinkIndexMarker = /\/\* BUILD:READER_BACKLINK_INDEX_REQUIRE \*\/\s*const\s*\{\s*buildReaderBacklinkPageIndex\s*,\s*createReaderBacklinkIndex\s*,\s*normalizePdfRoutePath\s*\}\s*=\s*require\((['"])\.\/reader-backlink-index\.cjs\1\);/s;
 const sourceMain = await readFile(path.join(pluginSource, "main.js"), "utf8");
+assert.doesNotMatch(sourceMain, /\btraceMethods\s*\(|\b\w+\s*=\s*traceFunction\s*\(|BUILD:HOST_FUNCTION_TRACE/,
+  "Production Host methods must not be automatically wrapped for per-call diagnostics");
 const hashRuntimeMarker = /\/\* BUILD:PDF_HASH_RUNTIME_REQUIRE \*\/\s*const\s*\{\s*createPdfHashRuntime\s*\}\s*=\s*require\((['"])\.\/pdf-hash-runtime\.cjs\1\);/s;
 const mergeClientMarker = /\/\* BUILD:PDF_MERGE_CLIENT_REQUIRE \*\/\s*const\s*\{\s*createPdfMergeClient\s*\}\s*=\s*require\((['"])\.\/pdf-merge-client\.cjs\1\);/s;
 assert.equal(
@@ -509,12 +511,11 @@ const inlinedHeavyWork = await inlineModule("heavy-work.cjs", "__PDFReaderHeavyW
 assert.equal([...sourceMain.matchAll(new RegExp(recoveryMarker.source, "gs"))].length, 1, "Expected one recovery build marker");
 const inlinedRecovery = await inlineModule("pdf-recovery-read.cjs", "__PDFReaderRecovery", "readDeltaRecovery");
 assert.equal([...sourceMain.matchAll(new RegExp(sessionLogMarker.source, "gs"))].length, 1);
-const inlinedSessionLog = await inlineModule("session-log.cjs", "__PDFReaderSessionLog", "createSessionLog, traceFunction, traceMethods");
+const inlinedSessionLog = await inlineModule("session-log.cjs", "__PDFReaderSessionLog", "createSessionLog");
 assert.equal([...sourceMain.matchAll(new RegExp(readerAnchorStoreMarker.source, "gs"))].length, 1, "Expected one Reader Anchor Store build marker");
 const inlinedReaderAnchorStore = await inlineModule("reader-anchor-store.cjs", "__PDFReaderAnchorStore", "createReaderAnchorStore, parseReaderLinkFragment, parseReaderLinkDestination, encodeReaderLinkFragment");
 assert.equal([...sourceMain.matchAll(new RegExp(readerBacklinkIndexMarker.source, "gs"))].length, 1, "Expected one Reader Backlink Index build marker");
 const inlinedReaderBacklinkIndex = await inlineModule("reader-backlink-index.cjs", "__PDFReaderBacklinkIndex", "buildReaderBacklinkPageIndex, createReaderBacklinkIndex, normalizePdfRoutePath");
-const hostTrace = [...sourceMain.matchAll(/^(?:async )?function (\w+)\(/gm)].map(match => `${match[1]} = traceFunction(${match[1]}, ${JSON.stringify(`Host.${match[1]}`)}, () => activeSessionLog);`).join("\n");
 const bundledMain = sourceMain
   .replace(requireMarker, () => inlinedHelper)
   .replace(hashRuntimeMarker, () => inlinedHashRuntime)
@@ -533,7 +534,6 @@ const bundledMain = sourceMain
   .replace(sessionLogMarker, () => inlinedSessionLog)
   .replace(readerAnchorStoreMarker, () => inlinedReaderAnchorStore)
   .replace(readerBacklinkIndexMarker, () => inlinedReaderBacklinkIndex)
-  .replace("/* BUILD:HOST_FUNCTION_TRACE */", () => hostTrace)
   .replace(
     payloadMarker,
     () => `const VIEWER_ASSET_PAYLOAD = ${JSON.stringify(payload)};`,
@@ -551,6 +551,8 @@ assert.ok(!bundledMain.includes("./reader-anchor-store.cjs"));
 assert.ok(!bundledMain.includes("./reader-backlink-index.cjs"));
 assert.ok(!bundledMain.includes("writeDeltaRecovery"), "0.6.0 runtime must not contain the legacy binary recovery writer");
 assert.ok(!bundledMain.includes("VIEWER_ASSET_PAYLOAD = null"));
+assert.equal(/\btraceMethods\s*\(\s*(?:this\.|PdfReaderView\.|PdfWebReaderSettingTab\.|module\.exports\.)|\b\w+\s*=\s*traceFunction\s*\(/.test(bundledMain), false,
+  "The production Host bundle must not instrument hot paths per call");
 const externalRequires = [...bundledMain.matchAll(/\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g)].map(
   (match) => match[2],
 );

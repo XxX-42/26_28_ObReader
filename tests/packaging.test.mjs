@@ -193,3 +193,11 @@ test("viewer hot paths are not wrapped in per-call runtime tracing", async () =>
   assert.doesNotMatch(viewer, /runtimeLogTrace|BUILD:VIEWER_FUNCTION_TRACE/);
   assert.match(viewer, /runtimeLogEventSamples/);
 });
+
+test("host hot paths are not wrapped in automatic per-call tracing", async () => {
+  const main = await readFile(path.join(dist, "main.js"), "utf8");
+  assert.equal(/\btraceMethods\s*\(\s*(?:this\.|PdfReaderView\.|PdfWebReaderSettingTab\.|module\.exports\.)/.test(main), false,
+    "Host classes must not be wrapped method-by-method");
+  assert.equal(/\b\w+\s*=\s*traceFunction\s*\(/.test(main), false, "Host functions must not be wrapped individually");
+  assert.equal(main.includes("BUILD:HOST_FUNCTION_TRACE"), false);
+});

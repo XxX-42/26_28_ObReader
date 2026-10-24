@@ -15,8 +15,20 @@ const {
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
-/* BUILD:SESSION_LOG_REQUIRE */ const { createSessionLog, traceFunction, traceMethods } = require("./session-log.cjs");
-let activeSessionLog = null;
+/* BUILD:SESSION_LOG_REQUIRE */ const { createSessionLog } = require("./session-log.cjs");
+function startSessionLog(plugin) {
+  if (plugin.sessionLog) return plugin.sessionLog;
+  const log = createSessionLog({
+    adapter: plugin.app.vault.adapter,
+    directory: `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.logs`,
+    version: plugin.manifest.version,
+  });
+  plugin.sessionLog = log;
+  void log.flush();
+  log.observe(globalThis.window, "host", event =>
+    [...(plugin.views || [])].some(view => view.containerEl?.contains?.(event.target)));
+  return log;
+}
 function drainViewerRuntimeLog(view) {
   try {
     for (const row of view.iframe?.contentWindow?.__PDF_READER_DRAIN_LOG__?.() || []) {
@@ -4164,6 +4176,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   async onload() {
+    startSessionLog(this);
     this.platformRuntimeAdapter = isMobilePlatform(this.app)
       ? MOBILE_RUNTIME_ADAPTER : DESKTOP_RUNTIME_ADAPTER;
     this.mobileRuntimeSelected = this.runtimeAdapter.mobile;
@@ -4255,8 +4268,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.readerBacklinkAnchorResolutionJobs = new Map();
     this.readerBacklinkAnchorResolutionVersions = new Map();
     this.readerBacklinkPageIndexes = new Map();
-    traceMethods(this.annotationHost, "PdfAnnotationHost", () => this.sessionLog);
-    traceMethods(this.heavyWork, "HeavyWork", () => this.sessionLog);
     this.recoveryDirectory = normalizePath(
       `${this.app.vault.configDir}/plugins/${this.manifest.id}/.recovery`,
     );
@@ -5708,8 +5719,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.pdfOpenRouting = null;
     this.viewerAssetsPromise = null;
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-    void this.sessionLog?.close();
-    activeSessionLog = null;
+    return this.sessionLog?.close();
   }
 
   async moveReaderToPopout(workspace, leaf, originalMove, args) {
@@ -7157,21 +7167,3 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 };
-
-traceMethods(PdfReaderView.prototype, "PdfReaderView", view => view.plugin?.sessionLog);
-traceMethods(PdfWebReaderSettingTab.prototype, "PdfWebReaderSettingTab", tab => tab.plugin?.sessionLog);
-traceMethods(module.exports.prototype, "PdfWebReaderPlugin", plugin => {
-  if (!plugin.sessionLog) {
-    plugin.sessionLog = createSessionLog({
-      adapter: plugin.app.vault.adapter,
-      directory: `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.logs`,
-      version: plugin.manifest.version,
-    });
-    activeSessionLog = plugin.sessionLog;
-    void plugin.sessionLog.flush();
-    plugin.sessionLog.observe(globalThis.window, "host", event =>
-      [...(plugin.views || [])].some(view => view.containerEl?.contains?.(event.target)));
-  }
-  return plugin.sessionLog;
-});
-/* BUILD:HOST_FUNCTION_TRACE */

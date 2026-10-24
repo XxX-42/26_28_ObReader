@@ -15,7 +15,7 @@ const {
   WorkspaceLeaf,
   normalizePath,
 } = require("obsidian");
-const { createSessionLog, traceFunction, traceMethods } = (() => {
+const { createSessionLog } = (() => {
 "use strict";
 var __PDFReaderSessionLog = (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -161,7 +161,7 @@ var __PDFReaderSessionLog = (() => {
           return cleanup;
         }
         function close() {
-          globalThis.clearInterval(timer);
+          if (timer != null) globalThis.clearInterval?.(timer);
           for (const cleanup of cleanups.splice(0)) cleanup();
           return Promise.resolve().then(async () => {
             record("session.end");
@@ -460,9 +460,9 @@ var __PDFReaderSessionLog = (() => {
           session,
           highFrequencyInputSampleEvery: HIGH_FREQUENCY_EVENT_SAMPLE_EVERY
         });
-        timer = globalThis.setInterval(() => {
+        timer = typeof globalThis.setInterval === "function" ? globalThis.setInterval(() => {
           void flush();
-        }, interval);
+        }, interval) : null;
         timer?.unref?.();
         return { record, begin, end, flush, close, observe, exportDiagnostic, errorInfo, get path() {
           return path();
@@ -517,7 +517,19 @@ var __PDFReaderSessionLog = (() => {
 })();
   return __PDFReaderSessionLog;
 })();
-let activeSessionLog = null;
+function startSessionLog(plugin) {
+  if (plugin.sessionLog) return plugin.sessionLog;
+  const log = createSessionLog({
+    adapter: plugin.app.vault.adapter,
+    directory: `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.logs`,
+    version: plugin.manifest.version,
+  });
+  plugin.sessionLog = log;
+  void log.flush();
+  log.observe(globalThis.window, "host", event =>
+    [...(plugin.views || [])].some(view => view.containerEl?.contains?.(event.target)));
+  return log;
+}
 function drainViewerRuntimeLog(view) {
   try {
     for (const row of view.iframe?.contentWindow?.__PDF_READER_DRAIN_LOG__?.() || []) {
@@ -41025,6 +41037,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   }
 
   async onload() {
+    startSessionLog(this);
     this.platformRuntimeAdapter = isMobilePlatform(this.app)
       ? MOBILE_RUNTIME_ADAPTER : DESKTOP_RUNTIME_ADAPTER;
     this.mobileRuntimeSelected = this.runtimeAdapter.mobile;
@@ -41116,8 +41129,6 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.readerBacklinkAnchorResolutionJobs = new Map();
     this.readerBacklinkAnchorResolutionVersions = new Map();
     this.readerBacklinkPageIndexes = new Map();
-    traceMethods(this.annotationHost, "PdfAnnotationHost", () => this.sessionLog);
-    traceMethods(this.heavyWork, "HeavyWork", () => this.sessionLog);
     this.recoveryDirectory = normalizePath(
       `${this.app.vault.configDir}/plugins/${this.manifest.id}/.recovery`,
     );
@@ -42569,8 +42580,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.pdfOpenRouting = null;
     this.viewerAssetsPromise = null;
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-    void this.sessionLog?.close();
-    activeSessionLog = null;
+    return this.sessionLog?.close();
   }
 
   async moveReaderToPopout(workspace, leaf, originalMove, args) {
@@ -44018,61 +44028,3 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 };
-
-traceMethods(PdfReaderView.prototype, "PdfReaderView", view => view.plugin?.sessionLog);
-traceMethods(PdfWebReaderSettingTab.prototype, "PdfWebReaderSettingTab", tab => tab.plugin?.sessionLog);
-traceMethods(module.exports.prototype, "PdfWebReaderPlugin", plugin => {
-  if (!plugin.sessionLog) {
-    plugin.sessionLog = createSessionLog({
-      adapter: plugin.app.vault.adapter,
-      directory: `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}/.logs`,
-      version: plugin.manifest.version,
-    });
-    activeSessionLog = plugin.sessionLog;
-    void plugin.sessionLog.flush();
-    plugin.sessionLog.observe(globalThis.window, "host", event =>
-      [...(plugin.views || [])].some(view => view.containerEl?.contains?.(event.target)));
-  }
-  return plugin.sessionLog;
-});
-drainViewerRuntimeLog = traceFunction(drainViewerRuntimeLog, "Host.drainViewerRuntimeLog", () => activeSessionLog);
-isValidEditorPosition = traceFunction(isValidEditorPosition, "Host.isValidEditorPosition", () => activeSessionLog);
-copyEditorPosition = traceFunction(copyEditorPosition, "Host.copyEditorPosition", () => activeSessionLog);
-sameEditorPosition = traceFunction(sameEditorPosition, "Host.sameEditorPosition", () => activeSessionLog);
-vocabularyCodePointBefore = traceFunction(vocabularyCodePointBefore, "Host.vocabularyCodePointBefore", () => activeSessionLog);
-vocabularyHasLetterBefore = traceFunction(vocabularyHasLetterBefore, "Host.vocabularyHasLetterBefore", () => activeSessionLog);
-validateVocabularySurface = traceFunction(validateVocabularySurface, "Host.validateVocabularySurface", () => activeSessionLog);
-normalizeVocabularyDisplayMode = traceFunction(normalizeVocabularyDisplayMode, "Host.normalizeVocabularyDisplayMode", () => activeSessionLog);
-normalizeAnnotationToolMode = traceFunction(normalizeAnnotationToolMode, "Host.normalizeAnnotationToolMode", () => activeSessionLog);
-normalizeVocabularyHighlightLevels = traceFunction(normalizeVocabularyHighlightLevels, "Host.normalizeVocabularyHighlightLevels", () => activeSessionLog);
-vocabularyDictionaryPercent = traceFunction(vocabularyDictionaryPercent, "Host.vocabularyDictionaryPercent", () => activeSessionLog);
-vocabularyDictionaryStatusText = traceFunction(vocabularyDictionaryStatusText, "Host.vocabularyDictionaryStatusText", () => activeSessionLog);
-applyVocabularyDictionaryStatus = traceFunction(applyVocabularyDictionaryStatus, "Host.applyVocabularyDictionaryStatus", () => activeSessionLog);
-isVocabularyDictionaryResourcePath = traceFunction(isVocabularyDictionaryResourcePath, "Host.isVocabularyDictionaryResourcePath", () => activeSessionLog);
-isMobilePlatform = traceFunction(isMobilePlatform, "Host.isMobilePlatform", () => activeSessionLog);
-isPdfFile = traceFunction(isPdfFile, "Host.isPdfFile", () => activeSessionLog);
-resolvePdfFile = traceFunction(resolvePdfFile, "Host.resolvePdfFile", () => activeSessionLog);
-isPopoutWindow = traceFunction(isPopoutWindow, "Host.isPopoutWindow", () => activeSessionLog);
-findPopoutSplit = traceFunction(findPopoutSplit, "Host.findPopoutSplit", () => activeSessionLog);
-createOwnerWindowMessageSender = traceFunction(createOwnerWindowMessageSender, "Host.createOwnerWindowMessageSender", () => activeSessionLog);
-installPdfOpenRouting = traceFunction(installPdfOpenRouting, "Host.installPdfOpenRouting", () => activeSessionLog);
-restorePdfOpenRouting = traceFunction(restorePdfOpenRouting, "Host.restorePdfOpenRouting", () => activeSessionLog);
-escapeAttribute = traceFunction(escapeAttribute, "Host.escapeAttribute", () => activeSessionLog);
-escapeStyleText = traceFunction(escapeStyleText, "Host.escapeStyleText", () => activeSessionLog);
-makeToken = traceFunction(makeToken, "Host.makeToken", () => activeSessionLog);
-normalizeReaderTarget = traceFunction(normalizeReaderTarget, "Host.normalizeReaderTarget", () => activeSessionLog);
-parseReaderTargetFromViewState = traceFunction(parseReaderTargetFromViewState, "Host.parseReaderTargetFromViewState", () => activeSessionLog);
-localAnnotationDeviceId = traceFunction(localAnnotationDeviceId, "Host.localAnnotationDeviceId", () => activeSessionLog);
-toArrayBuffer = traceFunction(toArrayBuffer, "Host.toArrayBuffer", () => activeSessionLog);
-receivedArrayBuffer = traceFunction(receivedArrayBuffer, "Host.receivedArrayBuffer", () => activeSessionLog);
-bytesEqual = traceFunction(bytesEqual, "Host.bytesEqual", () => activeSessionLog);
-fingerprint = traceFunction(fingerprint, "Host.fingerprint", () => activeSessionLog);
-fingerprintMatches = traceFunction(fingerprintMatches, "Host.fingerprintMatches", () => activeSessionLog);
-hashFileKey = traceFunction(hashFileKey, "Host.hashFileKey", () => activeSessionLog);
-isSupportedFingerprint = traceFunction(isSupportedFingerprint, "Host.isSupportedFingerprint", () => activeSessionLog);
-clampDiagnosticInteger = traceFunction(clampDiagnosticInteger, "Host.clampDiagnosticInteger", () => activeSessionLog);
-sanitizeInputDiagnostics = traceFunction(sanitizeInputDiagnostics, "Host.sanitizeInputDiagnostics", () => activeSessionLog);
-safeDiagnosticCode = traceFunction(safeDiagnosticCode, "Host.safeDiagnosticCode", () => activeSessionLog);
-createMobileBootScript = traceFunction(createMobileBootScript, "Host.createMobileBootScript", () => activeSessionLog);
-ensureAdapterDirectory = traceFunction(ensureAdapterDirectory, "Host.ensureAdapterDirectory", () => activeSessionLog);
-safeFileName = traceFunction(safeFileName, "Host.safeFileName", () => activeSessionLog);
