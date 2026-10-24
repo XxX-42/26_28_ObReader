@@ -1,0 +1,15 @@
+{
+  "vault": "ObReader-Apple-Test",
+  "input": "resource-v2",
+  "output": "temporary directory outside Vault",
+  "entryCount": 770611,
+  "blockCount": 67,
+  "compressedBytes": 16769142,
+  "blockBytesIdenticalToInstalledResourceV3": true,
+  "license": {
+    "name": "MIT",
+    "relativePath": "../LICENSE-MIT.txt",
+    "sha256": "f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f"
+  },
+  "vaultWrites": 0
+}
