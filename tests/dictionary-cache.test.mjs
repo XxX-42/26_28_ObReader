@@ -68,7 +68,7 @@ class MemoryAdapter {
   }
 }
 
-test("cold lookup imports once; warm lookups and reopened cache avoid readBinary; clear rebuilds", async (t) => {
+test("explicit v2 preparation imports once; warm lookups and reopened caches avoid readBinary", async (t) => {
   const name = `dictionary-cache-reopen-${randomUUID()}`;
   const resource = makeResource(makeEntries());
   const adapter = new MemoryAdapter(resource);
@@ -76,6 +76,7 @@ test("cold lookup imports once; warm lookups and reopened cache avoid readBinary
   const first = new VocabularyDictionary({ adapter, cache: firstCache });
   t.after(() => first.dispose());
 
+  await first.ensureReady(); // v2 imports remain an explicit compatibility maintenance action.
   assert.deepEqual(await first.lookup(" WORD001 "), {
     key: "word001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   });
@@ -103,6 +104,7 @@ test("cold lookup imports once; warm lookups and reopened cache avoid readBinary
   const rebuildAdapter = new MemoryAdapter(resource);
   const rebuilt = new VocabularyDictionary({ adapter: rebuildAdapter, cache: createCache(name) });
   t.after(() => rebuilt.dispose());
+  await rebuilt.ensureReady();
   assert.deepEqual(await rebuilt.lookup("word003"), {
     key: "word003", translation: "释义 3", phonetic: "p3", source: "ECDICT",
   });
@@ -255,7 +257,7 @@ test("missing or corrupt source bytes during force rebuild retain the prior read
       const readBinary = adapter.readBinary.bind(adapter);
       adapter.readBinary = async () => {
         adapter.readBinaryCount += 1;
-        if (failureKind === "missing") throw new Error("fixture resource is not synchronized");
+        if (failureKind === "missing") throw Object.assign(new Error("fixture resource is not synchronized"), { code: "ENOENT" });
         const damaged = Buffer.from(resource.compressed);
         damaged[damaged.length - 1] ^= 0xff;
         return damaged;
@@ -312,6 +314,8 @@ test("a missing payload and its expected membership bucket force a rebuild", asy
   await cache.db.entries.delete([generation.id, "word004"]);
   await cache.db.membership.delete([generation.id, "wo"]);
 
+  await assert.rejects(dictionary.lookup("word004"), (error) => error.code === "DICTIONARY_CACHE_INCOMPLETE");
+  await dictionary.rebuildCache();
   assert.deepEqual(await dictionary.lookup("word004"), {
     key: "word004", translation: "释义 4", phonetic: "p4", source: "ECDICT",
   });
@@ -426,6 +430,10 @@ test("failed source upgrade keeps the previous verified generation available", a
   }
   assert.ok(upgradeFailure, "the malformed new source is rejected");
   assert.equal((await cache.active()).id, previous.id);
+  await assert.rejects(dictionary.lookup("old001"), error => error.code === "DICTIONARY_CACHE_NOT_READY",
+    "a retained generation cannot satisfy a different synchronized source");
+  adapter.resource = oldResource;
+  dictionary.invalidate();
   assert.deepEqual(await dictionary.lookup("old001"), {
     key: "old001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   }, "lookup serves the prior verified generation after an upgrade failure");
@@ -501,6 +509,8 @@ test("a missing cached entry invalidates the ready marker and rebuilds before re
   await cache.db.entries.delete([original.id, "word001"]);
   assert.equal(await cache.entryCount(original.id), resource.manifest.entryCount - 1);
 
+  await assert.rejects(dictionary.lookup("word001"), (error) => error.code === "DICTIONARY_CACHE_INCOMPLETE");
+  await dictionary.rebuildCache();
   assert.deepEqual(await dictionary.lookup("word001"), {
     key: "word001", translation: "释义 1", phonetic: "p1", source: "ECDICT",
   });
@@ -521,6 +531,8 @@ test("corrupted cached display fields are rejected and rebuilt", async (t) => {
   const row = await cache.db.entries.get([generation.id, "word002"]);
   await cache.db.entries.put({ ...row, translation: 17, phonetic: null });
 
+  await assert.rejects(dictionary.lookup("word002"), (error) => error.code === "DICTIONARY_CACHE_INCOMPLETE");
+  await dictionary.rebuildCache();
   assert.deepEqual(await dictionary.lookup("word002"), {
     key: "word002", translation: "释义 2", phonetic: "p2", source: "ECDICT",
   });

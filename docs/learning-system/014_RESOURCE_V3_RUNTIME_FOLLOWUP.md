@@ -1,0 +1,13 @@
+# 0.14 Resource-v3 runtime follow-up
+
+This isolated candidate is based on integration commit `376e36d145973d7133e4f2f6cf9ac265cfeb7241`. It selectively carries dictionary changes from `codex/014-v3-integration-check`; restoring that older branch wholesale would also revert newer integration changes to Host tracing, routing, anchor/backlink storage and unrelated tests.
+
+The runtime verifies the v3 range index, reads and verifies only the selected gzip block, coalesces concurrent reads, and keeps a bounded in-memory LRU. Lookups never initiate a legacy full-resource import. Only an already verified v2 cache with matching source provenance may satisfy a v3 block failure. Missing resources, corruption, read failures and a valid dictionary miss remain distinct. The builder converts verified v2 data into content-addressed blocks without altering canonical vocabulary records.
+
+This is not a production-ready Host integration. The runtime default root becomes resource-v3, while the current Host watcher and settings still reference resource-v2 and startup/refresh still call ensureReady. Host wiring must be updated selectively before production integration, including bounded checkAvailability calls, v3 invalidation and availability/fallback status rendering. A missing v3 resource does not authorize importing v2 on lookup.
+
+Native startup/lookup measurement and the Native route/learning-loop gates remain required before any production merge. The 16-block / 8 MiB estimated cache limits are provisional. No latency, memory, iPad or Windows performance result is claimed by Node tests or a successful build. No deployment or production Vault access is part of this branch.
+
+Changes do not edit Vocabulary canonical schema, Context/Review, WAL, PDF.js, or platform-specific input paths. The Worker protocol and cooperative decode fallback still require validation in the target Native WebViews.
+
+Validation on this worktree: `npm run build` passed; four focused dictionary/builder suites passed 58 tests; benchmark-support suite passed 4 tests; `npm run test:fast` passed all 121 suites with no skips and an eligible stable-source report at `tests/artifacts/vocabulary-gates/runs/run-2026-10-24T11-28-32-513Z-36038-f74e64ac/report.json`. `node --test tests/dictionary-cache-browser.test.mjs` passed its one real-browser suite (legacy import and fallback); it is not a v3 Native performance measurement. `git diff --check` passed. Browser/race release gates and Native measurement were not run.
