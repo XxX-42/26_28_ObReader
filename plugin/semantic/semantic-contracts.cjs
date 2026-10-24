@@ -1,6 +1,6 @@
 "use strict";
 
-const { makeSemanticAnchor } = require("./semantic-anchor.cjs");
+const { makeSemanticAnchor, hasVerifiedEvidence } = require("./semantic-anchor.cjs");
 
 const SEMANTIC_ANCHOR_CONTRACT_V1 = "SemanticAnchorContractV1";
 
@@ -22,7 +22,11 @@ function createSemanticAnchorContractV1(anchor, {
 } = {}) {
   const normalized = makeSemanticAnchor(anchor || {});
   if (!normalized) return null;
-  const projected = projectResolutionStatus(resolution, { explicitPageFallback });
+  // A successful check belongs only to the exact anchor it verified. Status
+  // booleans alone must not lend another target or source an exact contract.
+  const checkedResolution = resolution?.status === "verified" &&
+    !hasVerifiedEvidence(resolution, anchor, { needsPage: true }) ? null : resolution;
+  const projected = projectResolutionStatus(checkedResolution, { explicitPageFallback });
   return {
     contract: SEMANTIC_ANCHOR_CONTRACT_V1,
     version: 1,

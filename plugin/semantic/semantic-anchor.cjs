@@ -337,4 +337,5 @@ module.exports = {
   fromMarkdown,
   matchesMarkdownSourceSlice,
   createSemanticSourceResolver,
+  hasVerifiedEvidence,
 };

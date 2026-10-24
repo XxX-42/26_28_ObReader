@@ -83,3 +83,24 @@ test("backlink resolution forwards transient owner context to exact Markdown and
   assert.ok(seen.every(([, context]) => context === ownerContext));
   assert.equal(Object.hasOwn(anchor, "ownerContext"), false, "owner routing stays request-scoped");
 });
+
+
+test("SemanticAnchorContractV1 cannot borrow exact verification from another target", () => {
+  const anchor = fromBacklink({ sourcePath: "Notes/Quote.md",
+    target: { kind: "annotation", id: "annotation-1" }, offset: 0, endOffset: 5,
+    sourceText: "quote" });
+  const verified = { status: "verified", sourceCurrent: true, pageCurrent: true,
+    exact: true, anchor };
+  const other = { ...anchor, target: { kind: "annotation", id: "annotation-2" } };
+  assert.equal(createSemanticAnchorContractV1(other, { resolution: verified }).status,
+    "TARGET_UNRESOLVED", "identical quote evidence cannot verify another UUID");
+  assert.equal(createSemanticAnchorContractV1(anchor, {
+    resolution: { ...verified, anchor: undefined },
+  }).exact, false, "status booleans without an anchor echo do not prove identity");
+  assert.equal(createSemanticAnchorContractV1(anchor, {
+    resolution: { ...verified, anchor: { ...anchor, sourcePath: "Notes/Other.md" } },
+  }).exact, false, "verification of a different Markdown source cannot be borrowed");
+  assert.equal(createSemanticAnchorContractV1(anchor, {
+    resolution: { ...verified, anchor: Object.fromEntries(Object.entries(anchor).reverse()) },
+  }).status, "VERIFIED", "structural identity does not depend on object key order");
+});
