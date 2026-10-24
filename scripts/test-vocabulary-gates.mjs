@@ -166,6 +166,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/native-sidecar-isolation.test.mjs",
     "tests/native-wal-evidence.test.mjs",
     "tests/native-learning-loop-isolation.test.mjs",
+    "tests/native-learning-acceptance.test.mjs",
     "tests/native-tooling.test.mjs",
     "tests/packaging.test.mjs",
     "tests/pdf-annotation-host.test.mjs",
