@@ -48,6 +48,14 @@ The plugin manager's runtime `enablePlugin()` invocation took 623.2 ms and the s
 
 Before/after content audits found the existing PDFData tree unchanged (124 files, 3,433,916 bytes), VocabularyData unchanged (71 files, 33,531,219 bytes), plugin `data.json` unchanged, enabled-plugin list unchanged, and probe PDF SHA-256 unchanged (`53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378`). One diagnostic log was written in the test plugin's `.logs` directory. Detailed sanitized receipt: [native-host-probe-current-package-20261025.json](native-host-probe-current-package-20261025.json).
 
+### LRU capacity decision
+
+The required 8/16/32 comparison is now present as an isolated product-runtime experiment, but it uses a Node filesystem adapter and synthetic traces rather than a Native Vault or recorded user trace. At the production candidate's current 8 MiB byte limit, **all 8/16/32 count caps were byte-evicted to the same effective 5–6 blocks**. Repeated 6/12/24/67-block working sets had 0 resident hits for every cap because each miss performed the actual checksum, gzip, JSONL parse and decode. Raising the byte limit to 128 MiB exposed count behavior: the minimum cap retaining the synthetic 6/12/24 block working sets was 8/16/32, respectively; none retained the 67-block trace. This does not identify a universal user-optimal capacity.
+
+Do not change the current `16 blocks / 8 MiB` default from this evidence. Treat it as **provisional and unvalidated**, not as the selected optimum. The Native Host repeated-same-term sample validates a resident block hit, not the cross-block LRU workload. A representative lookup trace and Native memory/latency evidence are still needed to freeze the cache budget. Full 24-cell result and reproducible harness: [LRU audit](../014-resource-v3-startup-audit/README.md).
+
+The same audit measured 500 Node Dexie/schema constructions (p50 0.0388 ms, p95 0.1748 ms, max 2.415 ms) and module first-require at 20.74 ms including all dependencies. These are diagnostic-only results, not Native startup measurements. Resource-v3 successful lookups do not issue Dexie table reads or full-generation imports, but Dexie remains a constructor/module dependency. `startup added blocking <50 ms` remains **NOT_MEASURED**.
+
 ## Current-package Native Learning Loop
 
 The exact 0.14.0 three-file package was deployed to `ObReader-Apple-Test` after backing up the previous plugin directory to `.deploy-backups/2026-10-24T21-20-00-515Z/pdf-web-reader`. The deployed files matched the build:
@@ -98,6 +106,18 @@ After the `e81b469` evidence update, focused tests were rerun on the integration
 - `npm run build`: passed; 3 release files, 406 embedded assets, 402 frozen vendor hashes verified. The rebuilt package hashes still match the test Vault's deployed files exactly, so no redeploy was needed.
 
 These tests validate deterministic module behavior. The actual current-package Host lookup now has one Native sample, but it does not replace the missing Native 8×5 route matrix, true owned-process restart, a cold startup-added-blocking measurement, or an enabled-plugin Reader UI first-query verification.
+
+### Fresh gate rerun on the current integration source
+
+After incorporating the Native preflight and LRU evidence (documentation/evidence files only), the current integration source was rebuilt and all automated release gates were rerun:
+
+- Build: **PASS**, 3 release files, 406 embedded assets, 402 frozen vendor files verified.
+- Fast: **122/122**, 0 failed, 0 skipped.
+- Browser: **28/28**, 0 failed, 0 skipped.
+- Offline Viewer smoke: **PASS**, including all five annotation tools, save/reopen, and bulk-delete persistence.
+- Race: **80/80**, 0 failed, 0 skipped.
+
+The build hashes remain identical to the installed test-only package (`main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, manifest `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, styles `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`). The test-vault enabled-plugin list is still `[]`; no redeploy or plugin activation was needed for this evidence update. Raw current run reports are retained under `tests/artifacts/vocabulary-gates/runs/` and Offline cleanup proof under `tests/artifacts/offline-smoke-1792882187793-8797-e0a7a906-daf4-45a5-b816-dceb323ecbf0.cleanup.json`.
 
 ## Seven-workstream ledger
 
