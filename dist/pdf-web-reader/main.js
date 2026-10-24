@@ -37267,7 +37267,8 @@ const VIEWER_ASSET_PAYLOAD = {"schema":1,"id":"pdfjs-full-viewer-5.7.192-3f4171c
 
 const VIEW_TYPE = "pdf-web-reader-view";
 const CHANNEL = "pdf-web-reader";
-const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v2";
+const VOCABULARY_DICTIONARY_ROOT = "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3";
+const VOCABULARY_DICTIONARY_LEGACY_ROOT = VOCABULARY_DICTIONARY_ROOT.replace(/resource-v3$/u, "resource-v2");
 const VOCABULARY_DICTIONARY_MANIFEST = `${VOCABULARY_DICTIONARY_ROOT}/manifest.json`;
 const MAX_VOCABULARY_QUERY_TEXT_CHARS = 131072;
 const DEFAULT_VOCABULARY_HIGHLIGHT_LEVELS = Object.freeze({
@@ -37449,7 +37450,10 @@ function vocabularyDictionaryStatusText(status) {
     case "verifying": return `正在校验词典 · ${vocabularyDictionaryPercent(status)}%`;
     case "building": return `正在建立词典缓存 · ${vocabularyDictionaryPercent(status)}%`;
     case "waiting": return `等待缓存任务 · ${vocabularyDictionaryPercent(status)}%`;
-    case "ready": return `词典缓存已就绪 · ${(Number(status.count) || 0).toLocaleString("zh-CN")} 条`;
+    case "resource-available": return "词典资源已就绪 · 按需读取词条";
+    case "degraded": return "词典资源暂不可用 · 使用已校验的 v2 缓存";
+    case "ready": if (status.code === "DICTIONARY_RESOURCE_V3_READY") return "词典按需查询已就绪";
+      return `词典缓存已就绪 · ${(Number(status.count) || 0).toLocaleString("zh-CN")} 条`;
     case "unavailable": return "本地词典暂不可用";
     default: return "词典缓存尚未初始化";
   }
@@ -37474,9 +37478,12 @@ function applyVocabularyDictionaryStatus(plugin, status) {
 function isVocabularyDictionaryResourcePath(value) {
   if (typeof value !== "string") return false;
   const filePath = normalizePath(value);
-  if (filePath === VOCABULARY_DICTIONARY_MANIFEST) return true;
-  const prefix = `${VOCABULARY_DICTIONARY_ROOT}/entries.`;
-  return filePath.startsWith(prefix) && /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(prefix.length));
+  if (filePath === VOCABULARY_DICTIONARY_MANIFEST ||
+      filePath === `${VOCABULARY_DICTIONARY_LEGACY_ROOT}/manifest.json`) return true;
+  const v3Prefix = `${VOCABULARY_DICTIONARY_ROOT}/blocks/block.`;
+  const v2Prefix = `${VOCABULARY_DICTIONARY_LEGACY_ROOT}/entries.`;
+  return [v3Prefix, v2Prefix].some(prefix => filePath.startsWith(prefix) &&
+    /^[a-f0-9]{64}\.jsonl\.gz$/u.test(filePath.slice(prefix.length)));
 }
 
 let activePdfHashRuntime = null;
@@ -38562,13 +38569,13 @@ class PdfWebReaderSettingTab extends PluginSettingTab {
       });
     this.vocabularyDictionaryStatusSetting = new Setting(containerEl)
       .setName(vocabularyDictionaryStatusText(this.plugin.vocabularyDictionaryStatus))
-      .setDesc(`词典资源目录：${VOCABULARY_DICTIONARY_ROOT}/；仅建立本地查询缓存。`)
+      .setDesc(`词典资源目录：${VOCABULARY_DICTIONARY_ROOT}/；校验索引后按需读取词条，兼容已校验的 v2 缓存。`)
       .addButton((button) => {
-        button.setButtonText("重建缓存");
-        button.setTooltip?.("重新校验词典资源并重建本地查询缓存");
+        button.setButtonText("重新检查词典");
+        button.setTooltip?.("重新检查词典资源可用性（不建立完整缓存）");
         button.setDisabled?.(!this.plugin.settings.vocabularyEnabled);
         button.onClick(() => void this.plugin.rebuildVocabularyDictionaryCache().catch((error) =>
-          new Notice(`词典缓存重建失败：${error.message || error}`, 8000)));
+          new Notice(`词典资源检查失败：${error.message || error}`, 8000)));
         this.vocabularyDictionaryRebuildButton = button;
       });
     this.observeVocabularyDictionary(this.plugin.vocabularyDictionary);
@@ -40656,6 +40663,7 @@ class PdfReaderView extends EditableFileView {
         };
         progressState.sendProgress = (status, force = false) => {
           if (!progressState.active || !this.isCurrentVocabularyIdentity(identity)) return false;
+          if (["resource-available", "ready", "degraded"].includes(status?.phase)) return false;
           const count = Number.isFinite(status?.count) ? Math.max(0, Math.floor(status.count)) : 0;
           const total = Number.isFinite(status?.total) ? Math.max(0, Math.floor(status.total)) : 0;
           const percent = Math.floor(vocabularyDictionaryPercent({ ...status, count, total }) / 10) * 10;
@@ -43757,7 +43765,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         applyVocabularyDictionaryStatus(this, { phase: "unavailable", count: 0, total: 0 });
         return;
       }
-      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+      Promise.resolve(dictionary.checkAvailability()).catch(() => undefined);
     }, Math.max(0, Number(delay) || 0));
     return true;
   }
@@ -43771,7 +43779,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       let dictionary;
       try { dictionary = this.getVocabularyDictionary(); }
       catch { return; }
-      Promise.resolve(dictionary.ensureReady?.()).catch(() => undefined);
+      Promise.resolve(dictionary.checkAvailability()).catch(() => undefined);
     }, Math.max(0, Number(delay) || 0));
     return true;
   }
@@ -43801,7 +43809,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.vocabularyDictionaryRefreshTimer = null;
     }
     const dictionary = this.getVocabularyDictionary();
-    await dictionary.rebuildCache();
+    dictionary.invalidate();
+    await dictionary.checkAvailability();
     return true;
   }
 

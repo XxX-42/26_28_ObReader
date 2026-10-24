@@ -287,12 +287,16 @@ test("LingQ settings expose a live cache row, data folder and explicit rebuild c
   const tab = new PdfWebReaderSettingTab({}, plugin);
   plugin.readerSettingsTab = tab;
   tab.display();
-  const row = tab.containerEl.settings.find((setting) => setting.buttons?.some((button) => button.text === "重建缓存"));
+  const row = tab.containerEl.settings.find((setting) => setting.buttons?.some((button) => button.text === "重新检查词典"));
   assert.ok(row);
-  assert.match(row.description, /dictionaries\/ECDICT\/resource-v2/);
-  assert.equal(row.buttons[0].text, "重建缓存");
+  assert.match(row.description, /dictionaries\/ECDICT\/resource-v3/);
+  assert.equal(row.buttons[0].text, "重新检查词典");
   listeners.values().next().value({ phase: "building", count: 500, total: 1000 });
   assert.match(row.name, /正在建立词典缓存 · 50%/);
+  listeners.values().next().value({ phase: "resource-available" });
+  assert.match(row.name, /按需读取/);
+  listeners.values().next().value({ phase: "degraded", code: "DICTIONARY_RESOURCE_V2_FALLBACK" });
+  assert.match(row.name, /已校验的 v2 缓存/);
   row.buttons[0].click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(rebuilds, 1);
@@ -300,7 +304,7 @@ test("LingQ settings expose a live cache row, data folder and explicit rebuild c
   assert.equal(listeners.size, 0);
 });
 
-test("dictionary resource events invalidate only ECDICT resource-v2 files and debounce enabled refresh", () => {
+test("dictionary resource events invalidate only ECDICT v3 blocks and v2 compatibility files and debounce enabled refresh", () => {
   const plugin = Object.create(HostPlugin.prototype);
   let invalidations = 0, refreshes = 0;
   Object.assign(plugin, {
@@ -316,11 +320,15 @@ test("dictionary resource events invalidate only ECDICT resource-v2 files and de
   assert.equal(invalidations, 0);
   assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${root}/manifest.json`), true);
   assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${root}/entries.${"a".repeat(64)}.jsonl.gz`), true);
-  assert.equal(invalidations, 2);
-  assert.equal(refreshes, 2, "the handler schedules a debounced cache refresh rather than scanning the resource per entry");
+  const v3 = root.replace("resource-v2", "resource-v3");
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/manifest.json`), true);
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/blocks/block.${"b".repeat(64)}.jsonl.gz`), true);
+  assert.equal(plugin.handleVocabularyDictionaryResourceChange(`${v3}/blocks/block.invalid.jsonl.gz`), false);
+  assert.equal(invalidations, 4);
+  assert.equal(refreshes, 4, "the handler schedules a debounced cache refresh rather than scanning the resource per entry");
 });
 
-test("enabled cache preparation is deferred off the Reader hot path and cancelled at unload", async () => {
+test("enabled resource availability check is deferred off the Reader hot path and cancelled at unload", async () => {
   const plugin = Object.create(HostPlugin.prototype);
   let initialized = 0, preparations = 0;
   Object.assign(plugin, {
@@ -331,7 +339,7 @@ test("enabled cache preparation is deferred off the Reader hot path and cancelle
     vocabularyDictionaryRefreshTimer: null,
     getVocabularyDictionary() {
       initialized += 1;
-      return { ensureReady: async () => { preparations += 1; } };
+      return { checkAvailability: async () => { preparations += 1; }, ensureReady() { throw new Error("full import forbidden"); } };
     },
   });
   assert.equal(plugin.scheduleVocabularyDictionaryWarmup(1), true);
@@ -340,8 +348,24 @@ test("enabled cache preparation is deferred off the Reader hot path and cancelle
   assert.equal(initialized, 1);
   assert.equal(preparations, 1);
 
+  plugin.scheduleVocabularyDictionaryRefresh(1);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(preparations, 2, "resource refresh checks availability without importing");
+
   plugin.scheduleVocabularyDictionaryWarmup(15);
   plugin.clearVocabularyDictionaryTimers();
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(initialized, 1, "unload cleanup cancels a queued preparation timer");
+  assert.equal(initialized, 2, "unload cleanup cancels a queued preparation timer");
+});
+
+test("manual resource recheck invalidates and checks availability without full import", async () => {
+  const plugin = Object.create(HostPlugin.prototype);
+  const calls = [];
+  Object.assign(plugin, { settings: { vocabularyEnabled: true }, getVocabularyDictionary: () => ({
+    invalidate() { calls.push("invalidate"); },
+    async checkAvailability() { calls.push("check"); },
+    rebuildCache() { throw new Error("full import forbidden"); },
+  }) });
+  assert.equal(await plugin.rebuildVocabularyDictionaryCache(), true);
+  assert.deepEqual(calls, ["invalidate", "check"]);
 });
