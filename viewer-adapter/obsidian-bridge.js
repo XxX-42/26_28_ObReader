@@ -235,7 +235,9 @@
   }
   // Diagnostic-only channel. Batches contain metadata, never PDF bytes or text.
   const runtimeLogStarted = performance.now();
-  let runtimeLogRows = [], runtimeLogBytes = 0, runtimeLogLost = 0, runtimeLogSequence = 0, runtimeLogCall = 0, runtimeLogClosed = false, runtimeLogClosing = false;
+  let runtimeLogRows = [], runtimeLogBytes = 0, runtimeLogLost = 0, runtimeLogSequence = 0, runtimeLogClosed = false, runtimeLogClosing = false;
+  const runtimeLogHighFrequencySampleEvery = 64;
+  const runtimeLogEventSamples = { pointermove: 0, mousemove: 0, wheel: 0, scroll: 0, touchmove: 0 };
   const runtimeLogListeners = [];
   function runtimeLogRecord(kind, fields = {}) {
     if (runtimeLogClosed) return;
@@ -260,24 +262,6 @@
     }
   }
   function runtimeLogError(error) { return { name: String(error?.name || "Error"), message: String(error?.message ?? error).slice(0, 4096), stack: String(error?.stack || "").slice(0, 8192) }; }
-  function runtimeLogTrace(original, fn) {
-    return function (...args) {
-      const call = ++runtimeLogCall;
-      let start;
-      try { start = performance.now(); runtimeLogRecord("function.begin", { fn, call }); } catch { /* Diagnostic only. */ }
-      const finish = error => { try { runtimeLogRecord(error ? "function.error" : "function.end", { fn, call, durationMs: +(performance.now() - start).toFixed(3), ...(error ? { error: runtimeLogError(error) } : {}) }); } catch { /* Preserve original outcome. */ } };
-      let value;
-      try { value = original.apply(this, args); } catch (error) { finish(error); throw error; }
-      try {
-        if (value && Object.prototype.toString.call(value) === "[object Promise]") {
-          Promise.prototype.then.call(value, () => finish(), error => finish(error));
-          return value;
-        }
-      } catch { /* Preserve original outcome. */ }
-      finish();
-      return value;
-    };
-  }
   function runtimeLogListen(type, fn) { window.addEventListener(type, fn, true); runtimeLogListeners.push([type, fn]); }
   const runtimeLogConsoleRestore = [];
   for (const level of ["warn", "error"]) {
@@ -289,14 +273,18 @@
     runtimeLogConsoleRestore.push([level, original, console[level]]);
   }
   for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointermove", "pointerup", "pointercancel", "wheel", "keydown", "input", "change", "compositionstart", "compositionend", "scroll"]) {
-    runtimeLogListen(type, event => runtimeLogRecord("user", { event: type, trusted: event.isTrusted === true, target: event.target?.id || event.target?.tagName || "window", pointerType: event.pointerType, pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY, deltaX: event.deltaX, deltaY: event.deltaY, key: type === "keydown" ? (/^(Enter|Escape|Tab|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Shift|Control|Alt|Meta|CapsLock|Dead|Process|Unidentified|F[0-9]{1,2})$/.test(event.key || "") ? event.key : "character") : undefined, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, scrollTop: type === "scroll" ? event.target?.scrollTop : undefined }));
+    runtimeLogListen(type, event => {
+      // Input diagnostics are observational. Sampling high-rate events keeps
+      // instrumentation from adding synchronous JSON work to scroll/drag.
+      if (Object.hasOwn(runtimeLogEventSamples, type) &&
+          (runtimeLogEventSamples[type]++ % runtimeLogHighFrequencySampleEvery) !== 0) return;
+      runtimeLogRecord("user", { event: type, trusted: event.isTrusted === true, target: event.target?.id || event.target?.tagName || "window", pointerType: event.pointerType, pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY, deltaX: event.deltaX, deltaY: event.deltaY, key: type === "keydown" ? (/^(Enter|Escape|Tab|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Shift|Control|Alt|Meta|CapsLock|Dead|Process|Unidentified|F[0-9]{1,2})$/.test(event.key || "") ? event.key : "character") : undefined, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, scrollTop: type === "scroll" ? event.target?.scrollTop : undefined });
+    });
   }
   runtimeLogListen("error", event => runtimeLogRecord("error", { error: runtimeLogError(event.error || event.message), source: event.filename, line: event.lineno, column: event.colno }));
   runtimeLogListen("unhandledrejection", event => runtimeLogRecord("unhandledrejection", { error: runtimeLogError(event.reason) }));
   const runtimeLogTimer = setInterval(runtimeLogFlush, 1000);
-  runtimeLogRecord("viewer.start");
-  /* BUILD:VIEWER_FUNCTION_TRACE */
-
+  runtimeLogRecord("viewer.start", { highFrequencyInputSampleEvery: runtimeLogHighFrequencySampleEvery });
   function runtimeLogClose() {
     if (runtimeLogClosing) return;
     runtimeLogClosing = true;

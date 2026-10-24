@@ -2,6 +2,7 @@
 
 const now = () => globalThis.performance?.now?.() ?? Date.now();
 const MAX_DIAGNOSTIC_JSON_BYTES = 64_000_000;
+const HIGH_FREQUENCY_EVENT_SAMPLE_EVERY = 64;
 const utf8Length = value => {
   const text = String(value);
   let bytes = 0;
@@ -86,10 +87,16 @@ function createSessionLog({ adapter, directory, version, maxBuffered = 1024 * 10
   function observe(target, scope, accept = () => true) {
     if (!target?.addEventListener) return;
     const listeners = [];
+    const highFrequencyCounts = Object.create(null);
     const on = (type, handler) => { target.addEventListener(type, handler, true); listeners.push([type, handler]); };
     for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointermove", "pointerup", "pointercancel", "wheel", "keydown", "input", "change", "compositionstart", "compositionend", "scroll"]) {
       on(type, event => {
         if (!accept(event)) return;
+        if (type === "pointermove" || type === "mousemove" || type === "wheel" || type === "scroll" || type === "touchmove") {
+          const count = highFrequencyCounts[type] || 0;
+          highFrequencyCounts[type] = count + 1;
+          if ((count % HIGH_FREQUENCY_EVENT_SAMPLE_EVERY) !== 0) return;
+        }
         const element = event.target;
         record("user", { scope, event: type, trusted: event.isTrusted === true, target: element?.id || element?.tagName || "window", pointerType: event.pointerType, pointerId: event.pointerId, button: event.button, buttons: event.buttons, x: event.clientX, y: event.clientY, deltaX: event.deltaX, deltaY: event.deltaY, key: type === "keydown" ? (/^(Enter|Escape|Tab|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Shift|Control|Alt|Meta|CapsLock|Dead|Process|Unidentified|F[0-9]{1,2})$/.test(event.key || "") ? event.key : "character") : undefined, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, scrollTop: type === "scroll" ? element?.scrollTop : undefined });
       });
@@ -376,7 +383,12 @@ function createSessionLog({ adapter, directory, version, maxBuffered = 1024 * 10
     }
     return { outputPath, recordCount: count, rawRecordCount, omittedRecords: filteredRecordCount + sizeOmittedRecordCount, complete: complete(), sources: sourceCount, bytes: outputBytes, maxBytes };
   }
-  record("session.start", { version, directory, session });
+  record("session.start", {
+    version,
+    directory,
+    session,
+    highFrequencyInputSampleEvery: HIGH_FREQUENCY_EVENT_SAMPLE_EVERY,
+  });
   timer = globalThis.setInterval(() => { void flush(); }, interval);
   timer?.unref?.();
   return { record, begin, end, flush, close, observe, exportDiagnostic, errorInfo, get path() { return path(); }, get lastWriteError() { return lastWriteError; } };

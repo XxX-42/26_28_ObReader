@@ -204,22 +204,45 @@ test('write failure is reported and a later successful part records log loss',as
   assert.equal(await f.log.flush(),false);assert.equal(f.log.lastWriteError.message,'disk full');f.adapter.write=original;
   assert.equal(await f.log.flush(),true);await f.log.close();assert.ok(f.rows().some(r=>r.kind==='log-loss'));
 });
-test('Viewer tracing keeps cross-window promises and synchronous drain removes the final batch',async()=>{
+test('Viewer runtime logging samples hot input events and synchronous drain removes the final batch',async()=>{
   const source=await readFile(new URL('../viewer-adapter/obsidian-bridge.js',import.meta.url),'utf8');
   const listeners=new Map(), messages=[];
   const window={parent:{postMessage:m=>messages.push(m)},addEventListener:(n,f)=>listeners.set(n,f),removeEventListener:n=>listeners.delete(n)};
   const context={window,document:{currentScript:{dataset:{token:'test',rendererGeneration:'test'}},baseURI:'https://fixture.test/web/bridge.js'},URL,performance:{now:()=>10},setInterval:()=>1,clearInterval:()=>{},console:{error(){},warn(){}}};
-  runInNewContext(source.slice(0,source.indexOf('  function postToHost('))+'globalThis.testLog={runtimeLogTrace,runtimeLogClose,runtimeLogTake};})();',context);
-  const promise=Promise.resolve(1), wrapped=context.testLog.runtimeLogTrace(()=>promise,'Viewer.async');
-  assert.equal(wrapped(),promise);await promise;await Promise.resolve();
+  runInNewContext(source.slice(0,source.indexOf('  function postToHost('))+'globalThis.testLog={runtimeLogClose,runtimeLogTake};})();',context);
+  const pointerMove=listeners.get('pointermove'),wheel=listeners.get('wheel');
+  for(let index=0;index<1024;index++)pointerMove({type:'pointermove',target:{tagName:'DIV'},pointerType:'mouse',clientX:index,clientY:index,isTrusted:true});
+  for(let index=0;index<128;index++)wheel({type:'wheel',target:{tagName:'DIV'},deltaY:index,isTrusted:true});
   listeners.get('pointerdown')({type:'pointerdown',target:{id:'editorInkButton'},pointerType:'pen',isTrusted:false});
+  listeners.get('pointerup')({type:'pointerup',target:{id:'editorInkButton'},pointerType:'pen',isTrusted:false});
   listeners.get('keydown')({type:'keydown',target:{tagName:'TEXTAREA'},key:'😀',isTrusted:false});
   const rows=context.testLog.runtimeLogTake().map(JSON.parse);
-  assert.ok(rows.some(r=>r.fn==='Viewer.async'&&r.kind==='function.end'));
+  assert.equal(rows.find(row=>row.kind==='viewer.start')?.highFrequencyInputSampleEvery,64);
+  assert.equal(rows.filter(r=>r.kind==='user'&&r.event==='pointermove').length,16);
+  assert.equal(rows.filter(r=>r.kind==='user'&&r.event==='wheel').length,2);
   assert.ok(rows.some(r=>r.kind==='user'&&r.pointerType==='pen'&&r.trusted===false));
   assert.ok(rows.some(r=>r.event==='keydown'&&r.key==='character'));
+  assert.equal(rows.filter(r=>r.kind==='user'&&r.event==='pointerup').length,1,'terminal input events remain unsampled');
   assert.ok(!JSON.stringify(rows).includes('😀'));
   assert.equal(context.testLog.runtimeLogTake().length,0);
   context.testLog.runtimeLogClose();context.testLog.runtimeLogClose();await Promise.resolve();
   assert.equal(listeners.size,0);assert.equal(messages.length,1);
+});
+
+test('host session event observation samples wheel and pointer movement without sampling discrete input',async()=>{
+  const f=fixture(),listeners=new Map(),target={
+    addEventListener(name,listener){const values=listeners.get(name)||[];values.push(listener);listeners.set(name,values);},
+    removeEventListener(name,listener){listeners.set(name,(listeners.get(name)||[]).filter(value=>value!==listener));},
+  };
+  f.log.observe(target,'host');
+  for(let index=0;index<1024;index++)for(const listener of listeners.get('pointermove')||[])listener({type:'pointermove',target:{tagName:'DIV'},clientX:index,isTrusted:true});
+  for(let index=0;index<128;index++)for(const listener of listeners.get('wheel')||[])listener({type:'wheel',target:{tagName:'DIV'},deltaY:index,isTrusted:true});
+  for(const listener of listeners.get('pointerup')||[])listener({type:'pointerup',target:{tagName:'DIV'},isTrusted:true});
+  await f.log.flush();
+  const users=f.rows().filter(row=>row.kind==='user');
+  assert.equal(f.rows().find(row=>row.kind==='session.start')?.highFrequencyInputSampleEvery,64);
+  assert.equal(users.filter(row=>row.event==='pointermove').length,16);
+  assert.equal(users.filter(row=>row.event==='wheel').length,2);
+  assert.equal(users.filter(row=>row.event==='pointerup').length,1);
+  await f.log.close();
 });

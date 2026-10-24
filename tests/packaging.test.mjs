@@ -173,14 +173,6 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
       sourceBytes = decoded;
     } else {
       sourceBytes = expected[index].bytes ? Buffer.from(expected[index].bytes) : await readFile(expected[index].absolute);
-      if (entry.path === "web/obsidian-bridge.js") {
-        // The packaged bridge asset includes the input modules, while the
-        // build instruments only functions declared in obsidian-bridge.js.
-        const source = await readFile(path.join(adapters, "obsidian-bridge.js"), "utf8");
-        const names = [...source.matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1]).filter(name => !name.startsWith("runtimeLog"));
-        const assignments = names.map(name => `${name} = runtimeLogTrace(${name}, ${JSON.stringify(`Viewer.${name}`)});`).join("\n  ");
-        sourceBytes = Buffer.from(sourceBytes.toString("utf8").replace("/* BUILD:VIEWER_FUNCTION_TRACE */", assignments));
-      }
     }
     assert.equal(entry.size, sourceBytes.byteLength, `${entry.path}: size`);
     assert.equal(
@@ -191,4 +183,13 @@ test("built main embeds all runtime files with checked deterministic gzip and ha
     assert.equal(sha256(decoded), entry.sha256, `${entry.path}: decoded hash`);
     assert.deepEqual(decoded, sourceBytes, `${entry.path}: decoded bytes`);
   }
+});
+
+test("viewer hot paths are not wrapped in per-call runtime tracing", async () => {
+  const payload = await readEmbeddedPayload();
+  const entry = payload.files.find((file) => file.path === "web/obsidian-bridge.js");
+  assert.ok(entry);
+  const viewer = gunzipSync(Buffer.from(entry.gzipBase64, "base64")).toString("utf8");
+  assert.doesNotMatch(viewer, /runtimeLogTrace|BUILD:VIEWER_FUNCTION_TRACE/);
+  assert.match(viewer, /runtimeLogEventSamples/);
 });

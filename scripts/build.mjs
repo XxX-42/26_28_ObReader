@@ -315,12 +315,7 @@ const inputRuntimeSource = (await Promise.all(
 for (const input of runtimeInputs) {
   let data = input.bytes || await readFile(input.absolute);
   if (input.path === "web/obsidian-bridge.js") {
-    const source = `${inputRuntimeSource}\n${data.toString("utf8")}`;
-    // Trace only functions in the bridge closure; input modules own separate closures.
-    const names = [...data.toString("utf8").matchAll(/^  (?:async )?function (\w+)\(/gm)].map(match => match[1])
-      .filter(name => !name.startsWith("runtimeLog"));
-    assert.equal(source.split("/* BUILD:VIEWER_FUNCTION_TRACE */").length, 2);
-    data = Buffer.from(source.replace("/* BUILD:VIEWER_FUNCTION_TRACE */", names.map(name => `${name} = runtimeLogTrace(${name}, ${JSON.stringify(`Viewer.${name}`)});`).join("\n  ")));
+    data = Buffer.from(`${inputRuntimeSource}\n${data.toString("utf8")}`);
   }
   const compressed = gzipSync(data, { level: 9, mtime: 0 });
   // Normalize the RFC 1952 timestamp and OS fields across Node/platform builds.
