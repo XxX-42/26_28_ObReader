@@ -1864,11 +1864,10 @@ test("Reader backlink source jump rejects a changed MetadataCache target or sour
   const note = new harness.TFile("Notes/Source.md");
   harness.files.set(note.path, note);
   const expected = { kind: "page", id: "page-one" };
-  const fragment = encodeReaderLinkFragment({ pageNumber: 1, docKey: "aabbccddeeff",
-    documentId: "xxh64-v1:0123456789abcdef", target: expected });
+  const legacyFragmentFor = (target) => `page=1&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=page.${target.id}`;
+  const fragment = legacyFragmentFor(expected);
   const link = (target, start = 10, end = 40) => ({
-    link: `Books/Book.pdf#${target === expected ? fragment : encodeReaderLinkFragment({ pageNumber: 1,
-      docKey: "aabbccddeeff", documentId: "xxh64-v1:0123456789abcdef", target })}`,
+    link: `Books/Book.pdf#${legacyFragmentFor(target)}`,
     position: { start: { offset: start, line: 2 }, end: { offset: end, line: 2 } },
   });
   let openCalls = 0;
@@ -1933,7 +1932,7 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   const docKey = "aabbccddeeff";
   const documentId = "xxh64-v1:0123456789abcdef";
   const target = { kind: "page", id: "page-two" };
-  const fragment = encodeReaderLinkFragment({ pageNumber: 2, docKey, documentId, target });
+  const fragment = `page=2&docKey=${docKey}&obdoc=${encodeURIComponent(documentId)}&obreader=page.page-two`;
   const content = `A quote.\n[[Books/Book.pdf#${fragment}|Reader source]]\nLater text.`;
   const start = content.indexOf("[[Books/");
   const end = content.indexOf("]]", start) + 2;
@@ -2002,8 +2001,24 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
     removeEventListener(name, listener) { listeners.get(name)?.delete(listener); },
     dispatch(name) { for (const listener of [...(listeners.get(name) || [])]) listener({ type: name }); },
   };
-  const markdownLeaf = { view: { file: noteFile, editor, containerEl,
-    getViewType: () => "markdown" } };
+  let markdownMode = "source";
+  const modeCalls = [];
+  const markdownView = { file: noteFile, editor, containerEl,
+    getViewType: () => "markdown", getMode: () => markdownMode,
+    async setMode(mode) {
+      modeCalls.push(mode);
+      markdownMode = mode;
+      markdownView.editor = mode === "source" ? editor : null;
+    } };
+  const markdownLeaf = { view: markdownView };
+  const previewCommands = [];
+  harness.app.commands = { executeCommandById(commandId) {
+    previewCommands.push(commandId);
+    if (commandId !== "markdown:toggle-preview" || markdownMode !== "preview") return false;
+    markdownMode = "source";
+    markdownView.editor = editor;
+    return true;
+  } };
   const openCalls = [];
   harness.app.workspace.openLinkText = async (...args) => {
     openCalls.push(args);
@@ -2060,6 +2075,13 @@ test("Reader backlink source navigation focuses the exact Markdown link and neve
   const excerpt = { sourcePath: noteFile.path, offset: 0, endOffset: 8, line: 0, sourceText: "A quote." };
   await harness.plugin.openReaderBacklinkSource(excerpt, { source: "learning-excerpt" });
   assert.equal(editor.getSelection(), "A quote.", "a Markdown excerpt selects only its exact sourceText span");
+  markdownMode = "preview";
+  markdownView.editor = null;
+  assert.equal(await harness.plugin.openReaderBacklinkSource(excerpt,
+    { source: "learning-item", requireExact: true }), true);
+  assert.equal(markdownMode, "source", "an exact learning Source jump switches Preview to the editable Markdown view");
+  assert.equal(modeCalls.at(-1), "source", "MarkdownView.setMode switches to source mode before exact selection");
+  assert.equal(editor.getSelection(), "A quote.", "Preview-origin Source still selects the exact excerpt visibly");
   await harness.plugin.openReaderBacklinkSource({ ...excerpt, offset: 1, endOffset: 9 },
     { source: "stale-learning-excerpt" });
   assert.equal(editor.getSelection(), "", "a mismatch is never repaired by searching for similar text elsewhere");
@@ -2197,7 +2219,7 @@ test("LingQ occurrence backlink query never starts a cold full-Vault index scan"
   harness.plugin.onunload();
 });
 
-test("enhanced Reader links keep stable page, selection and annotation identity across PDF rename", async () => {
+test("new Reader links hide internal identities and follow the PDF route updated on rename", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const originalBytes = Uint8Array.from([37, 80, 68, 70, 9, 8, 7]);
@@ -2265,6 +2287,16 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   harness.emitVault("rename", file, oldPath);
   await new Promise((resolve) => setTimeout(resolve, 0));
 
+  const compactSelectionLink = link({ kind: "selection", id: selectionAnchor.anchorId }, 2);
+  const movedSelection = await harness.plugin.resolveReaderLinkDocument(
+    parseReaderLinkFragment(compactSelectionLink), oldPath,
+  );
+  assert.equal(movedSelection.file, file,
+    "a compact Selection Anchor link follows its stable document identity after the old PDF path is moved");
+  assert.equal(movedSelection.readerTarget.documentId, document.documentId);
+  assert.equal(movedSelection.readerTarget.docKey, document.docKey);
+  assert.equal(movedSelection.readerTarget.pageNumber, 2);
+
   const legacyAnnotationLink = `page=2&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`;
   const annotation = await harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(legacyAnnotationLink),
@@ -2276,9 +2308,8 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   assert.equal(view.annotationDocument.docKey, document.docKey);
 
   const compactAnnotationLink = link({ kind: "annotation", id: annotationId }, 2);
-  assert.equal(compactAnnotationLink,
-    `page=2&docKey=${document.docKey}&obdoc=${encodeURIComponent(document.documentId)}&obreader=ann.${annotationId}`,
-    "newly copied links keep the stable document identity as well as the native fallback and target ID");
+  assert.equal(compactAnnotationLink, `page=2&obreader=ann.${annotationId}`,
+    "newly copied links keep the native fallback and stable target while hiding internal document identifiers");
   const compactAnnotation = await harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(compactAnnotationLink), file.path,
   );
@@ -2293,11 +2324,10 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   });
   assert.notEqual(copyReader.view.annotationDocument.documentId, document.documentId,
     "a PDF copy at the former route receives its own path-derived identity");
-  const originalFromStaleRoute = await harness.plugin.resolveReaderLinkDocument(
+  await assert.rejects(harness.plugin.resolveReaderLinkDocument(
     parseReaderLinkFragment(compactAnnotationLink), oldPath,
-  );
-  assert.equal(originalFromStaleRoute.file, file,
-    "the embedded original identity wins over a different copied PDF at the stale path");
+  ), /已验证的 PDF 身份/u,
+  "a stale path now occupied by another PDF cannot silently bind an absent Annotation target");
 
   await saveSidecarOperations(reader, {
     requestId: "rename-link-delete-annotation",
@@ -2316,7 +2346,147 @@ test("enhanced Reader links keep stable page, selection and annotation identity 
   harness.plugin.onunload();
 });
 
-test("identity-bearing Reader links keep closed-file navigation but report replacement targets unresolved", async () => {
+test("source-editor openLinkText follows a compact Selection link after its PDF path moves", async () => {
+  const harness = createHarness();
+  let defaultOpenCalls = 0;
+  const defaultOpenLinkText = async () => { defaultOpenCalls += 1; };
+  harness.app.workspace.openLinkText = defaultOpenLinkText;
+  await harness.plugin.onload();
+  const file = new harness.TFile("PDF迁移测试/Reader Files/moved-selection.pdf", Uint8Array.from([37, 80, 68, 70, 4]));
+  const { view } = await createSidecarReader(harness, file, {
+    pageCount: 2, orderedPageIdentities: ["move-page-one", "move-page-two"],
+  });
+  const document = view.annotationDocument;
+  const anchor = await harness.plugin.readerAnchorStore.create({
+    anchorId: "anchor-openlink-move",
+    docKey: document.docKey,
+    documentId: document.documentId,
+    sourceHash: view.annotationSourceHash,
+    pageIdentity: "move-page-two",
+    pageIndexHint: 1,
+    pageCount: 2,
+    orderedPageIdentityDigest: await harness.plugin.pdfHashRuntime.fingerprint(
+      new TextEncoder().encode(JSON.stringify(["move-page-one", "move-page-two"])),
+    ),
+    textPosition: { start: 4, end: 18 },
+    exactQuote: "moved exact target",
+    prefix: "before ", suffix: " after",
+    createdAt: 1792200000000,
+  });
+  const oldPath = file.path;
+  harness.files.delete(oldPath);
+  file.path = "PDF迁移测试/Full Matrix PDF Moved/moved-selection.pdf";
+  file.basename = "moved-selection";
+  harness.files.set(file.path, file);
+  await harness.plugin.annotationHost.renamed(file, oldPath);
+  const replacementAtOldPath = new harness.TFile(oldPath, Uint8Array.from([37, 80, 68, 70, 9]));
+  harness.files.set(oldPath, replacementAtOldPath);
+  let opened = null;
+  const originalOpenPdf = harness.plugin.openPdf;
+  harness.plugin.openPdf = async (targetFile, readerTarget) => { opened = { file: targetFile, readerTarget }; };
+
+  await harness.app.workspace.openLinkText(
+    `${oldPath}#page=2&obreader=sel.${anchor.anchorId}`,
+    "PDF迁移测试/Notes/Source.md",
+    false,
+  );
+
+  assert.equal(defaultOpenCalls, 0, "the stale path must not resolve to a companion note or replacement PDF");
+  assert.equal(opened.file, file);
+  assert.equal(opened.readerTarget.kind, "selection");
+  assert.equal(opened.readerTarget.id, anchor.anchorId);
+  assert.equal(opened.readerTarget.documentId, document.documentId);
+  assert.equal(opened.readerTarget.docKey, document.docKey);
+  assert.equal(opened.readerTarget.pageNumber, 2);
+  harness.plugin.openPdf = originalOpenPdf;
+  harness.plugin.onunload();
+  assert.equal(harness.app.workspace.openLinkText, defaultOpenLinkText,
+    "plugin unload restores Obsidian's original source-link router");
+});
+
+test("source-editor compact Selection links retain page fallback and Obsidian leaf options", async () => {
+  const harness = createHarness();
+  let defaultOpenCalls = 0;
+  const defaultOpenLinkText = async () => { defaultOpenCalls += 1; };
+  harness.app.workspace.openLinkText = defaultOpenLinkText;
+  await harness.plugin.onload();
+  const file = new harness.TFile("Books/compact-selection-fallback.pdf", Uint8Array.from([37, 80, 68, 70, 7]));
+  harness.files.set(file.path, file);
+  await createSidecarReader(harness, file, {
+    pageCount: 2, orderedPageIdentities: ["fallback-page-one", "fallback-page-two"],
+  });
+  const note = new harness.TFile("Notes/compact-selection-source.md");
+  harness.files.set(note.path, note);
+  const sourceLeaf = harness.app.workspace.getLeaf(true);
+  await sourceLeaf.setViewState({ type: "markdown", active: true, state: { file: note.path } });
+  // The minimal harness does not model Obsidian's active tab selection for
+  // source-editor activation, so make the user-selected leaf explicit.
+  harness.app.workspace.activeLeaf = sourceLeaf;
+  const eState = { active: true, state: { scroll: { top: 73 } } };
+  const missingAnchorLink = `${file.path}#page=2&selection=4%2C0%2C5%2C20&obreader=sel.anchor-missing`;
+
+  await harness.app.workspace.openLinkText(missingAnchorLink, note.path, false, eState);
+  assert.equal(defaultOpenCalls, 0, "the authenticated Reader link path handles the PDF target");
+  assert.equal(sourceLeaf.view.getViewType(), "pdf-web-reader-view",
+    "a failed stable target retains the native PDF page fallback in the current leaf");
+  assert.equal(sourceLeaf.view.requestedPath, file.path);
+  assert.deepEqual(sourceLeaf.lastEState, eState,
+    "the fourth Obsidian openLinkText argument is forwarded to setViewState");
+  assert.equal(sourceLeaf.view.getState().readerTarget.kind, "page-number");
+  assert.equal(sourceLeaf.view.getState().readerTarget.pageNumber, 2);
+
+  const previousLeafCount = harness.leaves.length;
+  const newLeafState = { state: { scroll: { top: 19 } } };
+  await harness.app.workspace.openLinkText(missingAnchorLink, note.path, true, newLeafState);
+  assert.equal(harness.leaves.length, previousLeafCount + 1,
+    "explicit new-leaf activation continues to open a separate PDF Reader tab");
+  assert.deepEqual(harness.leaves.at(-1).lastEState, newLeafState);
+  harness.plugin.onunload();
+  assert.equal(harness.app.workspace.openLinkText, defaultOpenLinkText);
+});
+
+test("a stale compact Anchor lookup cannot restore a binding after the Anchor file changes", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  let releaseInitial;
+  let lookupCount = 0;
+  const boundRevisions = [];
+  harness.plugin.readerAnchorStore = {
+    root: "00_Archive/20_PDFData/anchors",
+    findManyById: async () => {
+      lookupCount += 1;
+      if (lookupCount === 1) return new Promise((resolve) => { releaseInitial = resolve; });
+      return { anchors: new Map([[
+        "anchor-race-check", { anchorId: "anchor-race-check", revision: "new" },
+      ]]), errors: new Map() };
+    },
+  };
+  harness.plugin.readerBacklinkIndexReady = true;
+  harness.plugin.readerBacklinkIndex = {
+    getCompactSelectionAnchorIds: () => ["anchor-race-check"],
+    clearCompactSelectionBinding: () => true,
+    bindCompactSelectionAnchor(anchor) { boundRevisions.push(anchor.revision); return true; },
+  };
+
+  const initialResolution = harness.plugin.resolveCompactReaderBacklinkTargets(["anchor-race-check"]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(lookupCount, 1, "the first lookup is pending while the file change arrives");
+  harness.plugin.handleReaderBacklinkAnchorFileChange(
+    "00_Archive/20_PDFData/anchors/aabbccddeeff/anchor-race-check.json",
+  );
+  releaseInitial({ anchors: new Map([[
+    "anchor-race-check", { anchorId: "anchor-race-check", revision: "stale" },
+  ]]), errors: new Map() });
+  await initialResolution;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(lookupCount, 2, "the change event starts a fresh lookup after the stale one drains");
+  assert.deepEqual(boundRevisions, ["new"],
+    "only the post-change Anchor revision may be rebound into the derived backlink index");
+  harness.plugin.onunload();
+});
+
+test("legacy identity-bearing Reader links keep closed-file navigation and report replacements unresolved", async () => {
   const harness = createHarness();
   await harness.plugin.onload();
   const original = new harness.TFile("Books/identity-replaced.pdf", [37, 80, 68, 70, 1, 2, 3]);
@@ -2325,8 +2495,7 @@ test("identity-bearing Reader links keep closed-file navigation but report repla
   });
   const identity = { docKey: originalReader.view.annotationDocument.docKey,
     documentId: originalReader.view.annotationDocument.documentId };
-  const parsed = parseReaderLinkFragment(encodeReaderLinkFragment({ pageNumber: 1, ...identity,
-    target: { kind: "page", id: "original-page-one" } }));
+  const parsed = parseReaderLinkFragment(`page=1&docKey=${identity.docKey}&obdoc=${encodeURIComponent(identity.documentId)}&obreader=page.original-page-one`);
 
   // A closed Reader still resolves its identity route; source verification is
   // performed by the normal open/initialize handshake, not a second click hash.
@@ -4998,6 +5167,23 @@ test("a PDF folder rename updates the existing identity route for open and close
       orderedPageIdentities: ["folder-page"] });
     const identity = { documentId: reader.view.annotationDocument.documentId,
       docKey: reader.view.annotationDocument.docKey };
+    const compactId = "anchor-folder-move";
+    const compactNote = new harness.TFile("Notes/Compact Reader Link.md");
+    harness.plugin.readerBacklinkIndex.replaceFile(compactNote, { links: [{
+      link: `Books/Folder/book.pdf#page=1&obreader=sel.${compactId}`,
+      displayText: "stable quote",
+      position: { start: { offset: 0, line: 0 } },
+    }] });
+    const anchorStore = harness.plugin.readerAnchorStore;
+    harness.plugin.readerAnchorStore = {
+      ...anchorStore,
+      async findManyById(ids) {
+        const anchors = new Map(ids.includes(compactId) ? [[compactId, {
+          anchorId: compactId, docKey: identity.docKey, documentId: identity.documentId,
+        }]] : []);
+        return { anchors, errors: new Map() };
+      },
+    };
     const beforeBytes = Uint8Array.from(file.bytes);
     const move = async (fromPath, toPath, open) => {
       if (!open) {
@@ -5020,6 +5206,16 @@ test("a PDF folder rename updates the existing identity route for open and close
       assert.equal(route.docKey, identity.docKey);
     };
     await move("Books/Folder", "Archive/Folder", true);
+    for (let attempt = 0; attempt < 25 && !harness.plugin.readerBacklinkIndex
+      .getDocument(identity.docKey, identity.documentId).some(row => row.target.id === compactId); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    const movedBacklink = harness.plugin.readerBacklinkIndex
+      .getDocument(identity.docKey, identity.documentId).find(row => row.target.id === compactId);
+    assert.equal(movedBacklink?.identityResolvedFromAnchor, true,
+      "a PDF folder move rebinds compact backlink rows through the verified Anchor identity");
+    assert.equal(movedBacklink?.routePath, "Books/Folder/book.pdf",
+      "the original Markdown route remains unchanged as native fallback provenance");
     await move("Archive/Folder", "Archive/Closed", false);
     assert.deepEqual(file.bytes, beforeBytes);
     assert.equal(file.writes, 0);
@@ -5055,6 +5251,22 @@ test("Sidebar and Backlink facades delegate to the current effective Reader with
     assert.equal(request.documentId, reader.view.documentId);
     const backlinks = harness.plugin.getBacklinkService(reader.view);
     assert.ok(Object.isFrozen(backlinks));
+    const learningHostBefore = harness.plugin.getLearningHost;
+    const resolveAnchor = { target: { kind: "annotation", id: uuid }, evidenceKind: "annotation" };
+    const owner = { ownerKind: "learning-item", ownerId: "learning:v1:facade-owner" };
+    const resolvedContract = { contract: "SemanticAnchorContractV1", version: 1,
+      status: "VERIFIED", exact: true, target: resolveAnchor.target };
+    let resolveContractArgs = null;
+    harness.plugin.getLearningHost = () => ({ resolveContract: async (...args) => {
+      resolveContractArgs = args;
+      return resolvedContract;
+    } });
+    try {
+      assert.deepEqual(await backlinks.resolve(resolveAnchor, owner), resolvedContract,
+        "the public BacklinkService exposes the versioned uppercase resolution contract");
+      assert.equal(resolveContractArgs[0], resolveAnchor);
+      assert.equal(resolveContractArgs[1], owner);
+    } finally { harness.plugin.getLearningHost = learningHostBefore; }
     assert.deepEqual(await backlinks.listSources({ target: { kind: "page", id: "wrong-page" } }), []);
     reader.view.annotationHydrationAllowed = false;
     assert.deepEqual(api.list(), []);
@@ -5290,7 +5502,8 @@ for (const kind of ["page", "selection", "annotation"]) {
       const target = { kind, id: kind === "page" ? "ref:2R" : `${kind}-stable-target` };
       const pageNumber = kind === "page" ? 1 : 2;
       const identity = { docKey: "aabbccddeeff", documentId: "xxh64-v1:0123456789abcdef" };
-      const fragment = encodeReaderLinkFragment({ pageNumber, ...identity, target });
+      const prefix = kind === "page" ? "page" : kind === "selection" ? "sel" : "ann";
+      const fragment = `page=${pageNumber}&docKey=${identity.docKey}&obdoc=${encodeURIComponent(identity.documentId)}&obreader=${prefix}.${target.id}`;
       const originalState = { file: file.path, customScroll: 123, nestedPluginState: { preserve: true } };
       const viewState = { type: "pdf", active: true, pinned: false, state: originalState };
       const eState = { subpath: `#${fragment}`, focus: true, line: 9, customEphemeral: { preserve: true } };
@@ -5322,8 +5535,7 @@ test("PDF routing existing state.subpath preserves enhanced identity and SDK eph
   try {
     const file = new harness.TFile("Books/state-fragment-control.pdf", [1, 2, 3]);
     harness.files.set(file.path, file);
-    const fragment = encodeReaderLinkFragment({ pageNumber: 3, docKey: "aabbccddeeff",
-      documentId: "xxh64-v1:0123456789abcdef", target: { kind: "page", id: "page-three" } });
+    const fragment = "page=3&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=page.page-three";
     const eState = { focus: true, line: 4 };
     const leaf = harness.createLeaf();
     await leaf.setViewState({ type: "pdf", state: { file: file.path, subpath: `#${fragment}`, custom: "kept" } }, eState);
@@ -5346,8 +5558,7 @@ for (const routeType of ["pdf", "pdf-web-reader-view"]) {
       await leaf.setViewState({ type: "pdf", state: { file: file.path } });
       const existing = leaf.view;
       const oldFragment = encodeReaderLinkFragment({ pageNumber: 1, target: { kind: "page", id: "old-page" } });
-      const fragment = encodeReaderLinkFragment({ pageNumber: 2, docKey: "aabbccddeeff",
-        documentId: "xxh64-v1:0123456789abcdef", target: { kind: "page", id: "new-page" } });
+      const fragment = "page=2&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=page.new-page";
       const eState = { subpath: `#${fragment}`, focus: true, preserve: "ephemeral" };
       const state = { file: file.path, subpath: `#${oldFragment}`, preserve: "persistent" };
       await leaf.setViewState({ type: routeType, active: true, state }, eState);

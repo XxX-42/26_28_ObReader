@@ -37,6 +37,8 @@ function createSemanticAnchorContractV1(anchor, {
     targetText: normalized.targetText,
     targetTextSource: normalized.targetTextSource,
     sourceRange: normalized.sourceRange,
+    ...(normalized.contextId ? { contextId: normalized.contextId } : {}),
+    ...(normalized.annotationVersion ? { annotationVersion: normalized.annotationVersion } : {}),
     owner: ownerKind && ownerId ? { kind: ownerKind, id: ownerId } : null,
     bindingId: typeof bindingId === "string" && bindingId ? bindingId : null,
     status: projected.status,

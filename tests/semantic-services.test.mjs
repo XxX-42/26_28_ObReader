@@ -38,7 +38,9 @@ test("SemanticAnchorContractV1 keeps flat target wire and gates exact status pro
   const anchor = { target: { kind: "markdown", id: "md:2:7" }, evidenceKind: "markdown",
     sourcePath: "Notes/A.md", sourceHash: null, documentId: null, docKey: null, pageIndex: null,
     pageIdentity: null, targetText: "quote", targetTextSource: "captured",
-    sourceRange: { startOffset: 2, endOffset: 7, line: 0, text: "quote" } };
+    sourceRange: { startOffset: 2, endOffset: 7, line: 0, text: "quote" }, contextId: "context-1",
+    annotationVersion: { version: { rev: 3, deviceId: "device-1", seq: 8 },
+      clock: { timestamp: 100, logical: 2, deviceId: "device-1", opId: "device-1:8" } } };
   const verified = { status: "verified", sourceCurrent: true, pageCurrent: true, exact: true, anchor };
   const descriptor = createSemanticAnchorContractV1(anchor, { ownerKind: "learning-item", ownerId: "item-1",
     bindingId: "binding-1", resolution: verified });
@@ -47,6 +49,9 @@ test("SemanticAnchorContractV1 keeps flat target wire and gates exact status pro
   assert.deepEqual(descriptor.owner, { kind: "learning-item", id: "item-1" });
   assert.equal(descriptor.status, "VERIFIED");
   assert.equal(descriptor.exact, true);
+  assert.equal(descriptor.contextId, "context-1", "the v1 view contract preserves the existing optional context identity");
+  assert.deepEqual(descriptor.annotationVersion, anchor.annotationVersion,
+    "the v1 view contract preserves the existing optional annotation revision evidence");
   assert.equal(Object.hasOwn(anchor, "owner"), false, "routing identity stays outside canonical anchor data");
   const fallback = { status: "unresolved", pageFallback: { kind: "page", id: "page-x", pageIndex: 3, exact: false } };
   assert.equal(projectResolutionStatus(fallback).status, "TARGET_UNRESOLVED");

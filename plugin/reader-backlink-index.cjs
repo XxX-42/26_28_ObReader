@@ -192,6 +192,7 @@ async function buildReaderBacklinkPageIndex({
 function createReaderBacklinkIndex() {
   const byTarget = new Map();
   const byPdfRoute = new Map();
+  const byCompactSelectionId = new Map();
   const bySource = new Map();
   let revision = 0;
 
@@ -199,12 +200,13 @@ function createReaderBacklinkIndex() {
     const prior = bySource.get(sourcePath);
     if (!prior) return false;
     for (const [key, rowIds] of prior) {
-      const rows = byTarget.get(key) || byPdfRoute.get(key);
+      const rows = byTarget.get(key) || byPdfRoute.get(key) || byCompactSelectionId.get(key);
       if (!rows) continue;
       for (const rowId of rowIds) rows.delete(rowId);
       if (rows.size === 0) {
         byTarget.delete(key);
         byPdfRoute.delete(key);
+        byCompactSelectionId.delete(key);
       }
     }
     bySource.delete(sourcePath);
@@ -225,6 +227,8 @@ function createReaderBacklinkIndex() {
       const routePath = normalizePdfRoutePath(parsed.routePath, sourcePath);
       const identityIndexKey = targetKey(parsed.docKey, parsed.target, parsed.documentId || "*");
       const routeIndexKey = routeTargetKey(routePath, parsed.target);
+      const compactSelectionIndexKey = !identityIndexKey && parsed.target.kind === "selection"
+        ? `anchor:${parsed.target.id}` : null;
       if (!identityIndexKey && !routeIndexKey) continue;
       const start = Number.isSafeInteger(link.position?.start?.offset) ? link.position.start.offset : -1;
       const end = Number.isSafeInteger(link.position?.end?.offset) ? link.position.end.offset : null;
@@ -244,7 +248,8 @@ function createReaderBacklinkIndex() {
       });
       const indexes = identityIndexKey
         ? [[byTarget, identityIndexKey]]
-        : [[byPdfRoute, routeIndexKey]];
+        : [[byPdfRoute, routeIndexKey], ...(compactSelectionIndexKey
+          ? [[byCompactSelectionId, compactSelectionIndexKey]] : [])];
       for (const [table, key] of indexes) {
         if (!key) continue;
         const rowId = `${sourcePath}\0${start}\0${key}`;
@@ -259,6 +264,67 @@ function createReaderBacklinkIndex() {
     if (sourceTargets.size) bySource.set(sourcePath, sourceTargets);
     revision += 1;
     return true;
+  }
+
+  function getCompactSelectionAnchorIds(sourcePath = null) {
+    const sourceRows = sourcePath ? bySource.get(sourcePath) : null;
+    const ids = new Set();
+    const entries = sourceRows
+      ? [...sourceRows.keys()].filter((key) => key.startsWith("anchor:"))
+      : [...byCompactSelectionId.keys()];
+    for (const key of entries) {
+      const rows = byCompactSelectionId.get(key);
+      if (rows?.size) ids.add(key.slice("anchor:".length));
+    }
+    return [...ids].sort();
+  }
+
+  function bindCompactSelectionAnchor(anchor) {
+    const anchorId = anchor?.anchorId;
+    const rows = typeof anchorId === "string"
+      ? byCompactSelectionId.get(`anchor:${anchorId}`) : null;
+    if (!rows || !anchor?.docKey || !anchor?.documentId) return false;
+    const key = targetKey(anchor.docKey, { kind: "selection", id: anchorId }, anchor.documentId);
+    if (!key) return false;
+    let changed = false;
+    for (const [rowId, row] of rows) {
+      const identityRow = Object.freeze({ ...row, docKey: anchor.docKey, documentId: anchor.documentId,
+        identityResolvedFromAnchor: true });
+      let identityRows = byTarget.get(key);
+      if (!identityRows) byTarget.set(key, (identityRows = new Map()));
+      const existing = identityRows.get(rowId);
+      if (existing?.identityResolvedFromAnchor && existing.docKey === identityRow.docKey &&
+          existing.documentId === identityRow.documentId) continue;
+      identityRows.set(rowId, identityRow);
+      let sourceRows = bySource.get(row.sourcePath);
+      if (!sourceRows) bySource.set(row.sourcePath, (sourceRows = new Map()));
+      let rowIds = sourceRows.get(key);
+      if (!rowIds) sourceRows.set(key, (rowIds = new Set()));
+      rowIds.add(rowId);
+      changed = true;
+    }
+    if (changed) revision += 1;
+    return changed;
+  }
+
+  function clearCompactSelectionBinding(anchorId) {
+    if (typeof anchorId !== "string") return false;
+    let changed = false;
+    for (const [key, rows] of byTarget) {
+      for (const [rowId, row] of rows) {
+        if (!row.identityResolvedFromAnchor || row.target?.kind !== "selection" || row.target.id !== anchorId) continue;
+        rows.delete(rowId);
+        const sourceRows = bySource.get(row.sourcePath);
+        const rowIds = sourceRows?.get(key);
+        rowIds?.delete(rowId);
+        if (rowIds && rowIds.size === 0) sourceRows.delete(key);
+        if (sourceRows && sourceRows.size === 0) bySource.delete(row.sourcePath);
+        changed = true;
+      }
+      if (rows.size === 0) byTarget.delete(key);
+    }
+    if (changed) revision += 1;
+    return changed;
   }
 
   function get(docKey, target, documentId = null) {
@@ -301,8 +367,10 @@ function createReaderBacklinkIndex() {
   }
 
   return Object.freeze({ replaceFile, removeFile, get, getDocument, getByPdfPath,
+    getCompactSelectionAnchorIds, bindCompactSelectionAnchor, clearCompactSelectionBinding,
     getSourcePathsUnder,
-    get size() { return byTarget.size + byPdfRoute.size; }, get revision() { return revision; } });
+    get size() { return byTarget.size + byPdfRoute.size + byCompactSelectionId.size; },
+    get revision() { return revision; } });
 }
 
 module.exports = { buildReaderBacklinkPageIndex, createReaderBacklinkIndex, occurrenceKey,

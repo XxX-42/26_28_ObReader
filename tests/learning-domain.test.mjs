@@ -313,7 +313,8 @@ test("Due paging is stable and bounded, skip writes nothing, and exports include
   const csv = await service.exportItems("csv");
   const tsv = await service.exportItems("anki-tsv");
   assert.match(markdown.content, /obreader-learning:v1:/);
-  assert.match(markdown.content, /Library\/Book\.pdf#page=2&docKey=aaaaaaaaaaaa&obdoc=doc-1&obreader=ann\.annotation-1/);
+  assert.match(markdown.content, /Library\/Book\.pdf#page=2&obreader=ann\.annotation-1/);
+  assert.doesNotMatch(markdown.content, /(?:docKey|obdoc)=/u);
   assert.match(csv.content, /ExternalID,Prompt,Answer,TargetText,SourceLink/);
   assert.match(tsv.content, /ExternalID\tPrompt\tAnswer\tTargetText\tSourceLink/);
   assert.equal(markdown.itemCount, 5);

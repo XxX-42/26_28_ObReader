@@ -17,7 +17,13 @@ class MemoryAdapter {
   async read(path) { if (!this.files.has(path)) throw new Error("missing"); return this.files.get(path); }
   async write(path, data) { this.files.set(path, data); }
   async rename(from, to) { if (this.files.has(to)) throw new Error("occupied"); this.files.set(to, this.files.get(from)); this.files.delete(from); }
-  async list(path) { return { files: [...this.files.keys()].filter((item) => item.startsWith(`${path}/`) && !item.slice(path.length + 1).includes("/")), folders: [] }; }
+  async list(path) {
+    const prefix = path ? `${path}/` : "";
+    const children = [...this.directories].filter(item => item.startsWith(prefix) && item !== path)
+      .map(item => item.slice(prefix.length)).filter(item => item && !item.includes("/"));
+    return { files: [...this.files.keys()].filter((item) => item.startsWith(prefix) && !item.slice(prefix.length).includes("/")),
+      folders: [...new Set(children)] };
+  }
 }
 
 const hash = async (bytes) => `sha256-v1:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -37,7 +43,7 @@ const anchorFixture = {
   createdAt: 1792200000000,
 };
 
-test("copied Reader fragments preserve validated document identity with native page fallback and stable target", () => {
+test("copied Reader fragments hide validated internal identity and retain native fallbacks with a stable target", () => {
   const fragment = encodeReaderLinkFragment({
     pageNumber: 42,
     selection: "15,3,18,9",
@@ -46,13 +52,15 @@ test("copied Reader fragments preserve validated document identity with native p
     target: { kind: "selection", id: "anchor-abc_123" },
   });
   assert.equal(fragment,
-    "page=42&docKey=aabbccddeeff&obdoc=xxh64-v1%3A0123456789abcdef&obreader=sel.anchor-abc_123");
+    "page=42&selection=15%2C3%2C18%2C9&obreader=sel.anchor-abc_123");
+  assert.doesNotMatch(fragment, /(?:docKey|obdoc)=/u,
+    "new Reader links must not expose internal document routing identifiers");
   const parsed = parseReaderLinkFragment(fragment);
   assert.deepEqual(parsed, {
     pageNumber: 42,
-    selection: null,
-    docKey: "aabbccddeeff",
-    documentId: "xxh64-v1:0123456789abcdef",
+    selection: "15,3,18,9",
+    docKey: null,
+    documentId: null,
     target: { kind: "selection", id: "anchor-abc_123" },
   });
   assert.deepEqual(parseReaderLinkFragment("page=42&obreader=sel.anchor-abc_123"), {
@@ -66,7 +74,7 @@ test("copied Reader fragments preserve validated document identity with native p
   assert.throws(() => encodeReaderLinkFragment({ pageNumber: 42, docKey: "aabbccddeeff",
     target: { kind: "selection", id: "anchor-abc_123" } }),
   (error) => error.code === "READER_LINK_IDENTITY_INVALID",
-  "docKey and obdoc are emitted only as a validated pair");
+  "internal identity validation still requires docKey and obdoc as a pair");
   assert.throws(() => encodeReaderLinkFragment({ pageNumber: 42, docKey: "aabbccddeeff",
     documentId: "x".repeat(513), target: { kind: "selection", id: "anchor-abc_123" } }),
   (error) => error.code === "READER_LINK_IDENTITY_INVALID",
@@ -83,6 +91,14 @@ test("copied Reader fragments preserve validated document identity with native p
     pageNumber: 37, target: { kind: "page", id: "ref:37R" },
   }));
   assert.deepEqual(page.target, { kind: "page", id: "ref:37R" });
+  assert.equal(parseReaderLinkFragment("page=1&obreader=sel.x").target, null,
+    "selection targets must satisfy the Anchor ID grammar before entering backlink indexing");
+  assert.deepEqual(parseReaderLinkFragment("page=1&obreader=ann.x").target,
+    { kind: "annotation", id: "x" },
+    "existing annotation identifiers retain their broader historical grammar");
+  assert.deepEqual(parseReaderLinkFragment("page=1&obreader=ann.custom%3Aid.v1").target,
+    { kind: "annotation", id: "custom:id.v1" },
+    "safe punctuation in existing Annotation IDs remains readable");
 });
 
 test("Selection Anchors use a dedicated immutable Vault namespace with verified integrity", async () => {
@@ -110,6 +126,46 @@ test("Anchor Store fails closed on corruption and document identity mismatch", a
   adapter.files.set(path, JSON.stringify(corrupted));
   await assert.rejects(store.get(anchorFixture.docKey, created.anchorId),
     (error) => error.code === "WAL_INTEGRITY_MISMATCH");
+});
+
+test("compact Selection Anchor links resolve their document identity after the PDF path moves", async () => {
+  const adapter = new MemoryAdapter();
+  const store = createReaderAnchorStore({ adapter, hash, makeId: () => "anchor-route-1" });
+  const created = await store.create(anchorFixture);
+  const restartedStore = createReaderAnchorStore({ adapter, hash, makeId: () => "unused-anchor-id" });
+  const resolved = await restartedStore.findById(created.anchorId);
+  assert.equal(resolved.anchorId, created.anchorId);
+  assert.equal(resolved.docKey, created.docKey);
+  assert.equal(resolved.documentId, created.documentId);
+  assert.equal(resolved.sourceHash, created.sourceHash);
+  assert.equal(resolved.exactQuote, created.exactQuote);
+  const batch = await restartedStore.findManyById([created.anchorId, "anchor-not-present"]);
+  assert.equal(batch.anchors.get(created.anchorId).documentId, created.documentId);
+  assert.equal(batch.anchors.has("anchor-not-present"), false);
+  const mixedValidity = await restartedStore.findManyById([created.anchorId, "x"]);
+  assert.equal(mixedValidity.anchors.get(created.anchorId).documentId, created.documentId,
+    "one malformed ID must not prevent valid IDs in the same batch from resolving");
+  assert.equal(mixedValidity.errors.get("x").code, "READER_ANCHOR_ID_INVALID");
+
+  const originalList = adapter.list.bind(adapter);
+  adapter.list = async (directory) => {
+    const listing = await originalList(directory);
+    return directory === restartedStore.root
+      ? { ...listing, folders: listing.folders.map((folder) => `${folder}/`) }
+      : listing;
+  };
+  const trailingSlashBatch = await restartedStore.findManyById([created.anchorId]);
+  assert.equal(trailingSlashBatch.anchors.get(created.anchorId).documentId, created.documentId,
+    "folder listings with trailing slashes must still resolve document directories");
+
+  const duplicate = await store.create({ ...anchorFixture, docKey: "ffeeddccbbaa", documentId: "xxh64-v1:fedcba9876543210" });
+  assert.equal(duplicate.anchorId, created.anchorId);
+  await assert.rejects(restartedStore.findById(created.anchorId),
+    error => error.code === "READER_ANCHOR_ID_AMBIGUOUS",
+    "copied or colliding Anchor IDs fail closed rather than selecting an arbitrary document");
+  const ambiguousBatch = await restartedStore.findManyById([created.anchorId]);
+  assert.equal(ambiguousBatch.anchors.has(created.anchorId), false);
+  assert.equal(ambiguousBatch.errors.get(created.anchorId).code, "READER_ANCHOR_ID_AMBIGUOUS");
 });
 
 test("Anchor Store recreates deleted directories and rejects malformed source evidence", async () => {
@@ -218,6 +274,55 @@ test("path-only Reader links are indexed by their resolved vault PDF route", asy
   assert.equal(pageIndex.forPage("page-one").markers[0].kind, "selection");
   index.replaceFile(source, { links: [] });
   assert.equal(index.getByPdfPath("Books/Book A.pdf").length, 0);
+});
+
+test("compact Selection backlinks bind by verified Anchor identity after a PDF moves", async () => {
+  const index = createReaderBacklinkIndex();
+  const docKey = "aabbccddeeff";
+  const documentId = "document-full-id";
+  const anchorId = "anchor-moved";
+  const source = { path: "Notes/Quote.md" };
+  const fragment = encodeReaderLinkFragment({ pageNumber: 1,
+    target: { kind: "selection", id: anchorId } });
+  index.replaceFile(source, { links: [{
+    link: `Old/Book.pdf#${fragment}`,
+    displayText: "quoted passage",
+    position: { start: { offset: 12, line: 3 } },
+  }] });
+  assert.deepEqual(index.getCompactSelectionAnchorIds(), [anchorId]);
+  assert.equal(index.getDocument(docKey, documentId).length, 0);
+
+  const anchor = { ...anchorFixture, docKey, documentId, anchorId, pageIdentity: "page-one" };
+  assert.equal(index.bindCompactSelectionAnchor(anchor), true);
+  assert.equal(index.bindCompactSelectionAnchor(anchor), false, "binding an existing exact target is idempotent");
+  const boundRows = index.getDocument(docKey, documentId);
+  assert.equal(boundRows.length, 1);
+  assert.equal(boundRows[0].identityResolvedFromAnchor, true);
+  assert.equal(boundRows[0].routePath, "Old/Book.pdf");
+
+  const pageIndex = await buildReaderBacklinkPageIndex({
+    index,
+    sourcePath: "New/Book.pdf",
+    anchorStore: { async get(key, id, expectedId) {
+      assert.equal(key, docKey);
+      assert.equal(id, anchorId);
+      assert.equal(expectedId, documentId);
+      return anchor;
+    } },
+    docKey, documentId, pageIdentities: ["page-one"],
+  });
+  assert.equal(pageIndex.forPage("page-one").rows.length, 1);
+  assert.equal(pageIndex.forPage("page-one").markers[0].id, anchorId);
+
+  assert.equal(index.clearCompactSelectionBinding(anchorId), true);
+  assert.equal(index.getDocument(docKey, documentId).length, 0);
+  assert.equal(index.getByPdfPath("Old/Book.pdf").length, 1,
+    "clearing verified identity resolution retains the native path fallback row");
+  assert.equal(index.bindCompactSelectionAnchor(anchor), true);
+  index.removeFile(source.path);
+  assert.equal(index.getDocument(docKey, documentId).length, 0,
+    "removing the Markdown source also removes its derived identity binding");
+  assert.deepEqual(index.getCompactSelectionAnchorIds(), []);
 });
 
 test("explicit relative PDF routes resolve against the Markdown note path", () => {

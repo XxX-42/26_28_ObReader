@@ -394,6 +394,11 @@ function installPdfOpenRouting(plugin) {
     detachWrapper: null,
     detachOperations: new WeakMap(),
     workspace: plugin.app?.workspace || null,
+    originalOpenLinkText: plugin.app?.workspace?.openLinkText,
+    originalOpenLinkTextDescriptor: plugin.app?.workspace
+      ? Object.getOwnPropertyDescriptor(plugin.app.workspace, "openLinkText")
+      : null,
+    openLinkTextWrapper: null,
     originalMoveLeafToPopout: plugin.app?.workspace?.moveLeafToPopout,
     originalMoveLeafToPopoutDescriptor: plugin.app?.workspace
       ? Object.getOwnPropertyDescriptor(
@@ -500,6 +505,51 @@ function installPdfOpenRouting(plugin) {
   };
 
   prototype.setViewState = routing.setViewStateWrapper;
+
+  if (typeof routing.originalOpenLinkText === "function") {
+    routing.openLinkTextWrapper = function (linktext, sourcePath = "", ...args) {
+      const activePlugin = routing.plugin;
+      if (!routing.active || !activePlugin || this !== routing.workspace || typeof linktext !== "string") {
+        return routing.originalOpenLinkText.call(this, linktext, sourcePath, ...args);
+      }
+      const destination = parseReaderLinkDestination(linktext);
+      if (destination.target?.kind === "selection") {
+        // Obsidian's source editor resolves a stale PDF wikilink before the
+        // document click handler can see it. Resolve compact Selection links
+        // by their immutable Anchor first, so an old path cannot open a
+        // same-name Markdown companion or a new PDF copied into that path.
+        const openOptions = {
+          fromWorkspaceLink: true,
+          newLeaf: args[0] ?? false,
+          eState: args[1],
+        };
+        return activePlugin.resolveReaderLinkDocument(destination, destination.routePath, sourcePath)
+          .then(({ file, readerTarget }) => activePlugin.openPdf(file, readerTarget, openOptions),
+            async (error) => {
+              const fallback = await activePlugin.resolveReaderLinkFallback(
+                destination, destination.routePath, sourcePath,
+              );
+              if (fallback) {
+                new Notice(`稳定目标无法确认，已退回原生 PDF 页码链接：${error?.message || error}`, 7000);
+                return activePlugin.openPdf(fallback.file, fallback.readerTarget, openOptions);
+              }
+              new Notice(`无法打开 PDF 链接：${error?.message || error}`);
+              return undefined;
+            });
+      }
+      return routing.originalOpenLinkText.call(this, linktext, sourcePath, ...args);
+    };
+    try {
+      Object.defineProperty(routing.workspace, "openLinkText", {
+        configurable: true,
+        enumerable: routing.originalOpenLinkTextDescriptor?.enumerable ?? true,
+        writable: true,
+        value: routing.openLinkTextWrapper,
+      });
+    } catch {
+      routing.openLinkTextWrapper = null;
+    }
+  }
 
   if (typeof routing.originalDetach === "function") {
     routing.detachWrapper = function (...args) {
@@ -609,6 +659,17 @@ function restorePdfOpenRouting(routing) {
   routing.plugin = null;
   if (routing.prototype.setViewState === routing.setViewStateWrapper) {
     routing.prototype.setViewState = routing.originalSetViewState;
+  }
+  if (routing.openLinkTextWrapper && routing.workspace?.openLinkText === routing.openLinkTextWrapper) {
+    try {
+      if (routing.originalOpenLinkTextDescriptor) {
+        Object.defineProperty(routing.workspace, "openLinkText", routing.originalOpenLinkTextDescriptor);
+      } else {
+        delete routing.workspace.openLinkText;
+      }
+    } catch {
+      // Preserve a wrapper installed by another plugin after ObReader.
+    }
   }
   if (
     routing.detachWrapper &&
@@ -4191,6 +4252,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.readerBacklinkIndex = createReaderBacklinkIndex();
     this.readerBacklinkIndexReady = false;
     this.readerBacklinkIndexBuildPromise = null;
+    this.readerBacklinkAnchorResolutionJobs = new Map();
+    this.readerBacklinkAnchorResolutionVersions = new Map();
     this.readerBacklinkPageIndexes = new Map();
     traceMethods(this.annotationHost, "PdfAnnotationHost", () => this.sessionLog);
     traceMethods(this.heavyWork, "HeavyWork", () => this.sessionLog);
@@ -4348,6 +4411,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("modify", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.handleReaderBacklinkAnchorFileChange(file?.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
           }
@@ -4362,6 +4426,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("create", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.handleReaderBacklinkAnchorFileChange(file?.path);
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.refreshReaderBacklinkFile(file);
           }
@@ -4373,6 +4438,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.registerEvent(
         this.app.vault.on("delete", (file) => {
           if (isVocabularyDictionaryResourcePath(file?.path)) this.handleVocabularyDictionaryResourceChange(file.path);
+          this.handleReaderBacklinkAnchorFileChange(file?.path, { deleted: true });
           if (typeof file?.path === "string" && file.path.toLowerCase().endsWith(".md")) {
             this.removeReaderBacklinkFile(file.path);
           }
@@ -4380,6 +4446,13 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       );
       this.registerEvent(
         this.app.vault.on("rename", (file, oldPath) => {
+          if (isPdfFile(file) || Array.isArray(file?.children)) {
+            // Compact Markdown links retain their historical PDF route by
+            // design. Rebind those links from their verified Anchor identity
+            // when an explicit PDF or containing-folder move occurs.
+            const compactAnchorIds = this.readerBacklinkIndex?.getCompactSelectionAnchorIds?.() || [];
+            if (compactAnchorIds.length) void this.resolveCompactReaderBacklinkTargets(compactAnchorIds);
+          }
           if(typeof oldPath==='string'&&(oldPath.toLowerCase().endsWith('.md')||
               file?.path?.toLowerCase().endsWith('.md')||Array.isArray(file?.children))) {
             void this.getLearningHost().renamed(oldPath,file.path).catch(error=>
@@ -4486,6 +4559,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       const startedAt = Date.now();
       const files = this.app.vault.getMarkdownFiles?.() || [];
       for (const file of files) this.refreshReaderBacklinkFile(file, { notify: false });
+      await this.resolveCompactReaderBacklinkTargets(
+        index.getCompactSelectionAnchorIds?.() || [], { notify: false });
       this.readerBacklinkIndexReady = true;
       this.readerBacklinkPageIndexes.clear();
       this.sessionLog?.record("readerBacklinks", {
@@ -4519,10 +4594,110 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!cache) return this.removeReaderBacklinkFile(file.path, { notify });
     const updated = this.readerBacklinkIndex?.replaceFile(file, cache) || false;
     if (updated) this.invalidateReaderBacklinkPageIndexes();
+    if (updated && this.readerBacklinkIndexReady) {
+      const anchorIds = this.readerBacklinkIndex?.getCompactSelectionAnchorIds?.(file.path) || [];
+      if (anchorIds.length) void this.resolveCompactReaderBacklinkTargets(anchorIds, { notify });
+    }
     if (updated && notify && this.readerBacklinkIndexReady) {
       for (const view of this.views) void this.refreshReaderBacklinksForView(view);
     }
     return updated;
+  }
+
+  async resolveCompactReaderBacklinkTargets(anchorIds, { notify = true } = {}) {
+    const ids = [...new Set(Array.isArray(anchorIds) ? anchorIds : [])]
+      .filter((anchorId) => typeof anchorId === "string" && anchorId.length > 0);
+    if (!ids.length || typeof this.readerAnchorStore?.findManyById !== "function" ||
+        !this.readerBacklinkIndex) return false;
+    const waiting = new Set(ids.map((id) => this.readerBacklinkAnchorResolutionJobs.get(id)).filter(Boolean));
+    const unresolved = ids.filter((id) => !this.readerBacklinkAnchorResolutionJobs.has(id));
+    const versionsAtCall = new Map(ids.map((id) => [id,
+      this.readerBacklinkAnchorResolutionVersions.get(id) || 0]));
+    if (unresolved.length) {
+      const versionsAtStart = new Map(unresolved.map((id) => [id, versionsAtCall.get(id)]));
+      const job = (async () => {
+        let result;
+        try {
+          result = await this.readerAnchorStore.findManyById(unresolved);
+        } catch (error) {
+          for (const anchorId of unresolved) {
+            this.sessionLog?.record("readerBacklinks", {
+              event: "compact-anchor-resolution-failed", anchorId,
+              code: error?.code || "READER_ANCHOR_LOOKUP_FAILED",
+            });
+          }
+          return false;
+        }
+        let changed = false;
+        for (const [anchorId, anchor] of result.anchors || []) {
+          if ((this.readerBacklinkAnchorResolutionVersions.get(anchorId) || 0) !== versionsAtStart.get(anchorId)) continue;
+          try {
+            if (this.readerBacklinkIndex.bindCompactSelectionAnchor(anchor)) changed = true;
+          } catch (error) {
+            this.sessionLog?.record("readerBacklinks", {
+              event: "compact-anchor-resolution-failed", anchorId,
+              code: error?.code || "READER_ANCHOR_BIND_FAILED",
+            });
+          }
+        }
+        for (const [anchorId, error] of result.errors || []) {
+          this.sessionLog?.record("readerBacklinks", {
+            event: "compact-anchor-resolution-failed", anchorId,
+            code: error?.code || "READER_ANCHOR_INVALID",
+          });
+        }
+        if (changed) {
+          this.invalidateReaderBacklinkPageIndexes();
+          if (notify && this.readerBacklinkIndexReady) {
+            for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+          }
+        }
+        return changed;
+      })();
+      for (const id of unresolved) this.readerBacklinkAnchorResolutionJobs.set(id, job);
+      waiting.add(job);
+    }
+    let results;
+    try { results = await Promise.all([...waiting]); }
+    finally {
+      for (const id of unresolved) {
+        const job = this.readerBacklinkAnchorResolutionJobs.get(id);
+        if (job && waiting.has(job)) this.readerBacklinkAnchorResolutionJobs.delete(id);
+      }
+      const staleIds = ids.filter((id) =>
+        (this.readerBacklinkAnchorResolutionVersions.get(id) || 0) !== versionsAtCall.get(id));
+      if (staleIds.length) {
+        globalThis.setTimeout(() => {
+          void this.resolveCompactReaderBacklinkTargets(staleIds, { notify }).catch((error) => {
+            this.sessionLog?.record("readerBacklinks", {
+              event: "compact-anchor-resolution-retry-failed",
+              code: error?.code || "READER_ANCHOR_LOOKUP_FAILED",
+            });
+          });
+        }, 0);
+      }
+    }
+    return results.some(Boolean);
+  }
+
+  handleReaderBacklinkAnchorFileChange(path, { deleted = false } = {}) {
+    const root = `${this.readerAnchorStore?.root || "00_Archive/20_PDFData/anchors"}/`;
+    if (typeof path !== "string" || !path.startsWith(root) || !path.endsWith(".json")) return false;
+    const anchorId = path.slice(path.lastIndexOf("/") + 1, -5);
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(anchorId)) return false;
+    this.readerBacklinkAnchorResolutionVersions.set(anchorId,
+      (this.readerBacklinkAnchorResolutionVersions.get(anchorId) || 0) + 1);
+    const invalidated = this.readerBacklinkIndex?.clearCompactSelectionBinding?.(anchorId) || false;
+    this.invalidateReaderBacklinkPageIndexes();
+    if (deleted) {
+      if (invalidated && this.readerBacklinkIndexReady) {
+        for (const view of this.views) void this.refreshReaderBacklinksForView(view);
+      }
+    } else if (this.readerBacklinkIndexReady) {
+      const ids = this.readerBacklinkIndex?.getCompactSelectionAnchorIds?.() || [];
+      if (ids.includes(anchorId)) void this.resolveCompactReaderBacklinkTargets([anchorId]);
+    }
+    return true;
   }
 
   async getReaderBacklinkPageIndex(view, identity) {
@@ -4752,8 +4927,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       return false;
     }
 
-    const leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
-    const view = leaf?.view;
+    let leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
+    let view = leaf?.view;
+    if (requireExactSourceText && view?.getViewType?.() === "markdown" &&
+        view.file?.path === sourcePath && view.getMode?.() === "preview") {
+      let switched = false;
+      try {
+        if (typeof view.setMode === "function") {
+          await view.setMode("source");
+          switched = true;
+        } else {
+          const executeCommandById = this.app.commands?.executeCommandById;
+          switched = typeof executeCommandById === "function" &&
+            executeCommandById.call(this.app.commands, "markdown:toggle-preview") !== false;
+        }
+      } catch { switched = false; }
+      if (switched) {
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          leaf = workspace.activeLeaf || workspace.getMostRecentLeaf?.() || null;
+          view = leaf?.view;
+          if (view?.getViewType?.() === "markdown" && view.file?.path === sourcePath &&
+              view.getMode?.() !== "preview" && view.editor) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+    }
     const editor = view?.editor;
     if (view?.getViewType?.() !== "markdown" || view.file?.path !== sourcePath || !editor) {
       return requireExactSourceText ? rejectUnresolvedSourceText() : true;
@@ -4943,6 +5141,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     if (!parsed?.target && !parsed?.pageNumber) throw new Error("链接没有可识别的 Reader 目标。");
     let route = null;
     let file = null;
+    let selectionAnchor = null;
     if (parsed.docKey || parsed.documentId) {
       if (!parsed.docKey || !parsed.documentId) {
         const error = new Error("TARGET_UNRESOLVED：链接中的 PDF 身份字段不完整；不会退回历史路径。");
@@ -4970,6 +5169,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       const pathFile = this.resolveLinkedPdfFile(linkPath, sourcePath);
       if (pathFile && isPdfFile(file) && pathFile.path !== file.path) {
         this.sessionLog?.record("readerAnchor", { event: "stale-path-routed-by-identity", docKey: parsed.docKey });
+      }
+    } else if (parsed.target?.kind === "selection") {
+      // Copied links intentionally expose only the PDF path and immutable
+      // Selection Anchor ID. When that path becomes stale after a Vault move,
+      // resolve the anchor's owning document identity, then follow its current
+      // verified route. The Anchor Store remains authoritative; this is a
+      // point lookup for the explicitly opened link, not a render-time scan.
+      selectionAnchor = await this.readerAnchorStore.findById(parsed.target.id);
+      if (selectionAnchor) {
+        route = await this.annotationHost.store.documentForIdentity({
+          docKey: selectionAnchor.docKey,
+          documentId: selectionAnchor.documentId,
+        });
+        if (route.source?.sourceHash !== selectionAnchor.sourceHash) {
+          throw new Error("Selection Anchor 来源 PDF 已变化，目标无法可靠确认。");
+        }
+        file = route.sourcePath ? this.app.vault.getAbstractFileByPath(route.sourcePath) : null;
+        const pathHint = this.resolveLinkedPdfFile(linkPath, sourcePath);
+        const pathRoute = pathHint ? await this.annotationHost.store.documentForPath(pathHint.path) : null;
+        if (pathRoute && (pathRoute.docKey !== route.docKey || pathRoute.documentId !== route.documentId)) {
+          this.sessionLog?.record("readerAnchor", { event: "stale-path-routed-by-anchor", docKey: route.docKey });
+        }
+      } else {
+        file = this.resolveLinkedPdfFile(linkPath, sourcePath);
+        if (file) route = await this.annotationHost.store.documentForPath(file.path);
       }
     } else {
       file = this.resolveLinkedPdfFile(linkPath, sourcePath);
@@ -5014,7 +5238,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       }
     }
     if (readerTarget.kind === "selection") {
-      const anchor = await this.readerAnchorStore.get(docKey, readerTarget.id, documentId);
+      const anchor = selectionAnchor || await this.readerAnchorStore.get(docKey, readerTarget.id, documentId);
       if (!anchor || anchor.sourceHash !== route.source?.sourceHash) {
         throw new Error("Selection Anchor 不存在或来源版本不匹配；原生页码回退仍可用。");
       }
@@ -6096,7 +6320,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
 
   getBacklinkService(view) {
     return createBacklinkService({
-      resolve: (anchor, owner) => this.getLearningHost().resolveSource(anchor, owner),
+      resolve: (anchor, owner) => this.getLearningHost().resolveContract(anchor, owner),
       openPdfTarget: (anchor, owner) => this.getLearningHost().openPdfTarget(anchor, owner),
       openMarkdownSource: (anchor, owner) => this.getLearningHost().openMarkdownSource(anchor, owner),
       listSources: async anchor => {
@@ -6892,9 +7116,21 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return changed;
   }
 
-  async openPdf(file, readerTarget = null) {
+  async openPdf(file, readerTarget = null, workspaceOpenOptions = null) {
     if (!isPdfFile(file)) {
       new Notice("请选择一个 PDF 文件。");
+      return;
+    }
+    if (workspaceOpenOptions?.fromWorkspaceLink === true) {
+      const newLeaf = workspaceOpenOptions.newLeaf ?? false;
+      const leaf = newLeaf
+        ? this.app.workspace.getLeaf(newLeaf)
+        : (this.app.workspace.activeLeaf || this.app.workspace.getLeaf(false));
+      await leaf.setViewState({
+        type: VIEW_TYPE,
+        active: true,
+        state: { path: file.path, readerTarget: normalizeReaderTarget(readerTarget) },
+      }, workspaceOpenOptions.eState);
       return;
     }
     const existingLeaf = this.app.workspace
