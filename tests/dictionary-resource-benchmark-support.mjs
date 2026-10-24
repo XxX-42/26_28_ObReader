@@ -43,12 +43,12 @@ async function readSource(filename) {
 
 function instrumentResource(source) {
   source = replaceOnce(source,
-    "async function verifyResource(manifest, value) {\n  const bytes = asBytes(value);",
-    "async function verifyResource(manifest, value) {\n  const __bench = globalThis.__dictionaryBenchMetrics;\n  const __verifyStarted = performance.now();\n  const bytes = asBytes(value);",
+    "async function verifyCompressedPayload(expectedBytes, expectedHash, value) {\n  const bytes = asBytes(value);",
+    "async function verifyCompressedPayload(expectedBytes, expectedHash, value) {\n  const __bench = globalThis.__dictionaryBenchMetrics;\n  const __verifyStarted = performance.now();\n  const bytes = asBytes(value);",
     "SHA-256 timer start");
   source = replaceOnce(source,
-    "  return bytes;\n}\n\n/** Stream JSONL in bounded batches instead of allocating a 770k-entry array. */",
-    "  if (__bench) { __bench.sha256Ms = performance.now() - __verifyStarted; __bench.sha256Bytes = bytes.byteLength; }\n  return bytes;\n}\n\n/** Stream JSONL in bounded batches instead of allocating a 770k-entry array. */",
+    "  return bytes;\n}\nasync function verifyResource(manifest, value) {",
+    "  if (__bench) { __bench.sha256Ms += performance.now() - __verifyStarted; __bench.sha256Bytes += bytes.byteLength; }\n  return bytes;\n}\nasync function verifyResource(manifest, value) {",
     "SHA-256 timer result");
   source = replaceOnce(source,
     "async function decodeResource(manifest, bytes, onBatch, { batchSize = 1000, checkCancelled = () => {} } = {}) {\n  if (typeof globalThis.DecompressionStream",
@@ -63,8 +63,8 @@ function instrumentResource(source) {
     "      await onBatch(batch, { count, lastKey, jsonlRecordBytes: __batchRecordBytes });\n      __batchRecordBytes = 0;\n      batch = [];",
     "full-batch source byte propagation");
   source = replaceOnce(source,
-    "      const chunk = await reader.read();\n      if (chunk.done) break;",
-    "      const __readStarted = __bench ? performance.now() : 0;\n      const chunk = await reader.read();\n      if (__bench) __gzipReadMs += performance.now() - __readStarted;\n      if (chunk.done) break;",
+    "      const chunk = await reader.read();\n      if (chunk.done) break;\n      uncompressedBytes += chunk.value.byteLength;\n      if (uncompressedBytes > manifest.uncompressedBytes)",
+    "      const __readStarted = __bench ? performance.now() : 0;\n      const chunk = await reader.read();\n      if (__bench) __gzipReadMs += performance.now() - __readStarted;\n      if (chunk.done) break;\n      uncompressedBytes += chunk.value.byteLength;\n      if (uncompressedBytes > manifest.uncompressedBytes)",
     "gzip read timer");
   source = replaceOnce(source,
     "    if (batch.length) await onBatch(batch, { count, lastKey });\n    return { count, lastKey };",

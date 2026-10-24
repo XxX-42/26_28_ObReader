@@ -37,13 +37,13 @@ class MemoryAdapter {
   }
   async read(file) {
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     return Buffer.isBuffer(value) ? value.toString("utf8") : value;
   }
   async readBinary(file) {
     this.readBinaryCount.set(file, (this.readBinaryCount.get(file) || 0) + 1);
     const value = this.files.get(file);
-    if (value === undefined) throw new Error(`missing: ${file}`);
+    if (value === undefined) throw Object.assign(new Error(`missing: ${file}`), { code: "ENOENT" });
     return value;
   }
 }
@@ -91,6 +91,7 @@ test("dictionary lookup returns ECDICT translation and phonetic without personal
   const fixture = await makeDictionaryFixture(t);
   const adapter = new MemoryAdapter(fixture.files);
   const dictionary = dictionaryFor(t, adapter);
+  await dictionary.ensureReady(); // Explicit v2 compatibility preparation; lookup itself never builds it.
   assert.deepEqual(await dictionary.lookup(" ON "), {
     key: "on",
     translation: "prep. 在...之上\nadv. ...上去\na. 正起作用的\n[计] 打开",
@@ -112,6 +113,7 @@ test("dictionary lookup returns ECDICT translation and phonetic without personal
 test("generator parses quoted multiline CSV fields and uses definition when translation is empty", async (t) => {
   const fixture = await makeDictionaryFixture(t);
   const dictionary = dictionaryFor(t, new MemoryAdapter(fixture.files));
+  await dictionary.ensureReady();
   assert.deepEqual(await dictionary.lookup("with newline"), {
     key: "with newline",
     translation: "释义第一行\n释义第二行",
@@ -131,7 +133,7 @@ test("missing manifest, missing resource, and damaged resource have distinct sta
 
   const missingResourceFiles = new Map(fixture.files);
   missingResourceFiles.delete(`${ROOT}/${fixture.manifest.resourceFile}`);
-  await readErrorCode(dictionaryFor(t, new MemoryAdapter(missingResourceFiles)).lookup("on"),
+  await readErrorCode(dictionaryFor(t, new MemoryAdapter(missingResourceFiles)).ensureReady(),
     "DICTIONARY_RESOURCE_MISSING");
 
   const damagedFiles = new Map(fixture.files);
@@ -139,19 +141,20 @@ test("missing manifest, missing resource, and damaged resource have distinct sta
   const damaged = Buffer.from(damagedFiles.get(resourcePath));
   damaged[damaged.length - 1] ^= 0xff;
   damagedFiles.set(resourcePath, damaged);
-  await readErrorCode(dictionaryFor(t, new MemoryAdapter(damagedFiles)).lookup("on"),
+  await readErrorCode(dictionaryFor(t, new MemoryAdapter(damagedFiles)).ensureReady(),
     "DICTIONARY_RESOURCE_CORRUPT");
 });
 
-test("concurrent cold lookups share one resource import; warm hits and misses stay local", async (t) => {
+test("explicit v2 preparation imports once; warm hits and misses stay local", async (t) => {
   const fixture = await makeDictionaryFixture(t);
   const adapter = new MemoryAdapter(fixture.files);
   const dictionary = dictionaryFor(t, adapter);
+  await dictionary.ensureReady();
   const [first, second] = await Promise.all([dictionary.lookup("on"), dictionary.lookup("ON")]);
   assert.deepEqual(first, second);
   const resourcePath = `${ROOT}/${fixture.manifest.resourceFile}`;
   assert.equal(adapter.readBinaryCount.get(resourcePath), 1,
-    "concurrent cold queries share one decompression and IndexedDB import");
+    "explicit v2 preparation reads the compressed source once");
   assert.deepEqual(await dictionary.lookup("mostly"), {
     key: "mostly", translation: "adv. 大概, 大部分, 主要\n[经] 大部份", phonetic: "'mәustli", source: "ECDICT",
   });
@@ -168,6 +171,7 @@ test("gzip decoding uses the standard Web DecompressionStream API available to W
   }
   const fixture = await makeDictionaryFixture(t);
   const dictionary = dictionaryFor(t, new MemoryAdapter(fixture.files));
+  await dictionary.ensureReady();
   assert.equal((await dictionary.lookup("on")).translation.includes("在...之上"), true);
 });
 
