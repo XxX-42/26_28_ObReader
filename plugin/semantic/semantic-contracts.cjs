@@ -22,7 +22,14 @@ function createSemanticAnchorContractV1(anchor, {
 } = {}) {
   const normalized = makeSemanticAnchor(anchor || {});
   if (!normalized) return null;
-  const projected = projectResolutionStatus(resolution, { explicitPageFallback });
+  // Bind a VERIFIED descriptor to the evidence actually checked by the resolver.
+  // Normalize both sides to the API shape; object identity and key order are not
+  // evidence, but UUID, source, page, range and revision changes are.
+  const evidence = resolution?.anchor ?? resolution?.source;
+  const sameEvidence = evidence &&
+    JSON.stringify(makeSemanticAnchor(evidence)) === JSON.stringify(normalized);
+  const checkedResolution = resolution?.status === "verified" && !sameEvidence ? null : resolution;
+  const projected = projectResolutionStatus(checkedResolution, { explicitPageFallback });
   return {
     contract: SEMANTIC_ANCHOR_CONTRACT_V1,
     version: 1,
