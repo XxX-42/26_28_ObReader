@@ -652,3 +652,62 @@ test("adjacent Markdown rename events wait for the preceding durable route updat
   assert.deepEqual((await (await restarted.getService()).getItem(saved.item.itemId)).source, saved.item.source);
   restarted.dispose();
 });
+
+test("semantic contracts fail closed when the Markdown route changes during resolution", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Route snapshot race";
+  const saved = await modal.confirm();
+  const routing = await f.host.getMarkdownRouting();
+  const read = f.plugin.app.vault.read;
+  let moved = false;
+  f.plugin.app.vault.read = async file => {
+    const value = await read(file);
+    if (!moved && file.path === "Notes/A.md") {
+      moved = true;
+      f.files.delete("Notes/A.md"); f.texts.delete("Notes/A.md");
+      f.files.set("Notes/B.md", { path: "Notes/B.md", extension: "md" });
+      f.texts.set("Notes/B.md", "different text at the moved route");
+      await routing.recordRename({ fromPath: "Notes/A.md", toPath: "Notes/B.md",
+        eventProof: { kind: "vault-rename", fromPath: "Notes/A.md", toPath: "Notes/B.md" } });
+    }
+    return value;
+  };
+
+  const contract = await f.host.getSourceContract(saved.item.itemId);
+  assert.equal(moved, true, "the deterministic read hook moved the route after the old excerpt was checked");
+  assert.equal(contract.status, "TARGET_UNRESOLVED",
+    "a VERIFIED resolution for the old route must not be combined with a newer route whose text was not verified");
+  f.host.dispose();
+});
+
+test("semantic contracts return TARGET_UNRESOLVED when the route becomes corrupt during resolution", async () => {
+  const f = fixture();
+  const text = f.texts.get("Notes/A.md"), start = text.indexOf("exact excerpt"), end = start + "exact excerpt".length;
+  const editor = { getCursor: side => ({ line: 0, ch: side === "from" ? start : end }),
+    posToOffset: pos => pos.ch, getSelection: () => "exact excerpt" };
+  const modal = await f.host.fromMarkdownEditor(editor, { file: f.files.get("Notes/A.md") });
+  modal.promptInput.value = "Corrupt route snapshot";
+  const saved = await modal.confirm();
+  const read = f.plugin.app.vault.read;
+  let corrupted = false;
+  f.plugin.app.vault.read = async file => {
+    const value = await read(file);
+    if (!corrupted && file.path === "Notes/A.md") {
+      corrupted = true;
+      for (const [path] of f.adapter.files) {
+        if (path.includes("/routing/markdown/")) f.adapter.files.set(path, "{malformed-route-fact");
+      }
+    }
+    return value;
+  };
+
+  const contract = await f.host.getSourceContract(saved.item.itemId);
+  assert.equal(corrupted, true, "the deterministic read hook corrupted route facts after the initial verification");
+  assert.equal(contract.status, "TARGET_UNRESOLVED",
+    "route storage corruption during contract projection must fail closed instead of rejecting the API call");
+  f.host.dispose();
+});

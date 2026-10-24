@@ -34,6 +34,7 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
   let disposed = false;
   let renameQueue = Promise.resolve();
   const drafts = new Set();
+  const contractRouteCaptures = new WeakMap();
   const liveView = (anchor) => [...plugin.views].find(view => !view.teardownStarted &&
     view.annotationHydrationAllowed === true && view.annotationSourceMismatch !== true &&
     view.annotationSyncPending !== true && view.annotationStorageUnavailable !== true &&
@@ -97,6 +98,8 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
         throw unresolved("markdown-owner-context-invalid");
       }
       if (route.status !== "verified") throw unresolved("markdown-binding-missing");
+      const capture = contractRouteCaptures.get(ownerContext);
+      if (capture && !capture.route) capture.route = route;
       return route;
     }
     return { status: "verified", currentPath: anchor?.sourcePath || null, bindingId: null };
@@ -355,14 +358,30 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
   }
 
   async function resolveContract(anchor, ownerContext = null, { explicitPageFallback = false } = {}) {
-    const resolution = await resolve(anchor, ownerContext);
+    // Capture the route used by the actual Markdown verifier, then confirm it
+    // did not move while the source slice was being checked. A second route
+    // read is only a consistency check; its path is never attached to an
+    // earlier verification unless both snapshots identify the same binding.
+    const scopedOwner = ownerContext && isMarkdownAnchor(anchor) ? { ...ownerContext } : ownerContext;
+    const capture = {};
+    if (scopedOwner && isMarkdownAnchor(anchor)) contractRouteCaptures.set(scopedOwner, capture);
+    let resolution = await resolve(anchor, scopedOwner);
     let bindingId = null;
     let currentPath = null;
-    if (ownerContext && isMarkdownAnchor(anchor)) {
-      const route = await (await getMarkdownRouting()).resolve(ownerContext);
-      if (route.status === "verified") {
-        bindingId = route.bindingId;
-        currentPath = route.currentPath;
+    if (scopedOwner && isMarkdownAnchor(anchor) && capture.route && resolution?.status === "verified") {
+      try {
+        const route = await (await getMarkdownRouting()).resolve(scopedOwner);
+        if (route.status === "verified" && route.bindingId === capture.route.bindingId &&
+            route.currentPath === capture.route.currentPath) {
+          bindingId = capture.route.bindingId;
+          currentPath = capture.route.currentPath;
+        } else {
+          resolution = { ...resolution, status: "unresolved", code: "TARGET_UNRESOLVED",
+            reason: "markdown-route-changed-during-resolution", sourceCurrent: false, pageCurrent: false, exact: false };
+        }
+      } catch {
+        resolution = { ...resolution, status: "unresolved", code: "TARGET_UNRESOLVED",
+          reason: "markdown-route-unavailable-during-resolution", sourceCurrent: false, pageCurrent: false, exact: false };
       }
     }
     return createSemanticAnchorContractV1(anchor, { ownerKind: ownerContext?.ownerKind,
