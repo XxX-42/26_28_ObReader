@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "kind": "obsidian-native-resource-v3-host-probe",
+  "date": "2026-10-25",
+  "vault": "ObReader-Apple-Test",
+  "packageVersion": "0.14.0",
+  "processState": {
+    "vaultSyncEnabled": false,
+    "readerLeavesBeforeProbe": 0,
+    "pluginEnabledOnDiskBeforeAndAfter": false,
+    "pluginDataUnchanged": true
+  },
+  "pluginActivation": {
+    "enablePluginMs": 623.2,
+    "observedLongTasksMs": [73],
+    "coldProcessStartupDeltaMeasured": false,
+    "interpretation": "Runtime enable duration includes the whole plugin activation path and is not an isolated Resource-v3 or cold process startup measurement."
+  },
+  "lookup": {
+    "path": "current plugin Host -> VocabularyDictionary -> Vault DataAdapter",
+    "resourceEntries": 770611,
+    "resourceBlocks": 67,
+    "results": {
+      "common_on": "found",
+      "rare_zyzzyva": "found",
+      "valid_not_found": "not_found"
+    },
+    "firstLookupMs": {
+      "common_on": 206.4,
+      "rare_zyzzyva": 36.9,
+      "valid_not_found": 0.1
+    },
+    "warmQueriesPerTerm": 20,
+    "warmObservedMaxMs": {
+      "common_on": 0.3,
+      "rare_zyzzyva": 0.3,
+      "valid_not_found": 0.3
+    },
+    "warmTimerResolutionMs": "The reported 0.0 ms values reflect timer quantization; use the observed maximum as the conservative bound.",
+    "adapterReads": [
+      "resource-v3 manifest",
+      "one common-word block",
+      "one rare-word block"
+    ],
+    "persistentVocabularyOrPdfDataWrites": 0
+  },
+  "integrity": {
+    "pdfDataFileCountBeforeAfter": [124, 124],
+    "pdfDataBytesBeforeAfter": [3433916, 3433916],
+    "pdfDataTreeUnchanged": true,
+    "vocabularyDataFileCountBeforeAfter": [71, 71],
+    "vocabularyDataBytesBeforeAfter": [33531219, 33531219],
+    "vocabularyDataTreeUnchanged": true,
+    "communityPluginsJsonUnchanged": true,
+    "pluginDataJsonUnchanged": true,
+    "sourcePdfSha256BeforeAfter": "53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378",
+    "sourcePdfUnchanged": true,
+    "diagnosticLogWrite": "One plugin diagnostic log was written under the test plugin .logs directory."
+  },
+  "gates": {
+    "firstRareLookupUnder1000ms": "PASS for this single actual-Host Native sample",
+    "startupAddedBlockingUnder50ms": "NOT_MEASURED",
+    "multiDeviceSync": "NOT_RUN",
+    "readerUiLookup": "NOT_RUN"
+  }
+}

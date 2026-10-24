@@ -32,6 +32,22 @@ The first common and rare lookup targets pass for these Native DataAdapter sampl
 
 Current-package raw trials: [native-data-adapter-benchmark-current-package-20261025.json](native-data-adapter-benchmark-current-package-20261025.json). Earlier module run: [native-data-adapter-benchmark-20261025.json](native-data-adapter-benchmark-20261025.json).
 
+### Current-package Native Host probe
+
+A follow-up probe exercised the installed 0.14.0 plugin's real `getVocabularyDictionary().lookup()` path in the existing `ObReader-Apple-Test` vault. Obsidian Sync was disabled, no Reader leaves were open, and the plugin remained disabled in the persisted enabled-plugin list before and after the probe. The actual Host read the Vault manifest and only the matching common/rare Resource-v3 blocks; it did not read the full dictionary or wait for a full Dexie build.
+
+| Query | First lookup | 20 resident repeats |
+|---|---:|---:|
+| Common `on` | 206.4 ms | max 0.3 ms |
+| Rare `zyzzyva` | 36.9 ms | max 0.3 ms |
+| Valid not-found | 0.1 ms | max 0.3 ms |
+
+The browser timer quantized many warm samples to 0.0 ms, so the maximum is reported conservatively; it is not a precision sub-millisecond benchmark. The single current-Host rare lookup is below 1 second. This is a real Native Host sample, not a Reader UI lookup, multi-device Sync test, or cold-process startup measurement.
+
+The plugin manager's runtime `enablePlugin()` invocation took 623.2 ms and the same observation window recorded one 73 ms Long Task. This includes the whole plugin activation path and does **not** isolate Resource-v3 or measure the incremental delay of process startup; treat it as a signal to keep startup blocking explicitly unverified, not as a Resource-v3 regression attribution. `startup added blocking <50 ms = NOT_MEASURED`.
+
+Before/after content audits found the existing PDFData tree unchanged (124 files, 3,433,916 bytes), VocabularyData unchanged (71 files, 33,531,219 bytes), plugin `data.json` unchanged, enabled-plugin list unchanged, and probe PDF SHA-256 unchanged (`53ade40ce75c07455bd1d5a3829c5dd8efe925a65f1b5a54de756a9bea9dd378`). One diagnostic log was written in the test plugin's `.logs` directory. Detailed sanitized receipt: [native-host-probe-current-package-20261025.json](native-host-probe-current-package-20261025.json).
+
 ## Current-package Native Learning Loop
 
 The exact 0.14.0 three-file package was deployed to `ObReader-Apple-Test` after backing up the previous plugin directory to `.deploy-backups/2026-10-24T21-20-00-515Z/pdf-web-reader`. The deployed files matched the build:
@@ -79,7 +95,7 @@ After the `e81b469` evidence update, focused tests were rerun on the integration
 - Dictionary Host/cache suites: **28/28 passed**; real Worker/browser smoke: **1/1 passed**.
 - `npm run build`: passed; 3 release files, 406 embedded assets, 402 frozen vendor hashes verified. The rebuilt package hashes still match the test Vault's deployed files exactly, so no redeploy was needed.
 
-These tests validate deterministic module behavior. They do not replace the missing Native 8×5 route matrix, true owned-process restart, current-package Resource-v3 startup measurement, or enabled-plugin Reader first-query verification.
+These tests validate deterministic module behavior. The actual current-package Host lookup now has one Native sample, but it does not replace the missing Native 8×5 route matrix, true owned-process restart, a cold startup-added-blocking measurement, or an enabled-plugin Reader UI first-query verification.
 
 ## Seven-workstream ledger
 
@@ -87,7 +103,7 @@ These tests validate deterministic module behavior. They do not replace the miss
 |---|---|---|
 | A — Baseline / frozen-core audit | Latest `origin/main` is an ancestor of this clean integration branch. The 0.14 source diff does not modify frozen storage/WAL, canonical Vocabulary, input-owner, or PDF.js vendor paths. | The original 441-file frozen-hash recomputation was at the prior reviewed baseline; it is not a new runtime test. |
 | B — Native learning loop and routing | Partial current-package UI reached durable Highlight → Sidebar → Review → Today; overall Native result remains `NOT_VERIFIED`. | 8×5, open-move, and true owned-process restart are still unverified; see exact-package audit above. Historical Windows evidence is not current-package acceptance. |
-| C — ECDICT Resource-v3 | 770,611 rows, 67 blocks, 16,769,142 compressed bytes; current-package Native DataAdapter first/warm lookups measured, focused and Worker tests pass. | `startup added blocking` and enabled-plugin Reader first lookup remain `NOT_MEASURED` / `NOT_VERIFIED`; do not call the Native product gate complete. |
+| C — ECDICT Resource-v3 | 770,611 rows, 67 blocks, 16,769,142 compressed bytes; current-package Native DataAdapter and actual Host first/warm lookups measured, focused and Worker tests pass. First rare lookup was 36.9 ms in one Host sample. | Cold startup-added-blocking and enabled-plugin Reader UI first lookup remain `NOT_MEASURED` / `NOT_VERIFIED`; keep the single Host sample separate from the five-trial adapter benchmark. |
 | D — SQLite WASM / OPFS | Isolated Chrome experiment only. Standard OPFS completed 5/5 with COOP/COEP; SAHpool completed 0/5 end-to-end because second-window access failed. | App-origin probe initialized SQLite but did not install VFS or write. Native/app-origin compatibility and performance are unproven; SQLite is not selected. |
 | E — SemanticAnchor / Sidebar / Backlink | Source/API contract and deterministic behavior are frozen; semantic, LearningHost, Markdown-route and plugin-host receipts include 153/153 passing tests, with current focused subset 55/55. | Native route/restart acceptance remains pending; quote matching never auto-rebinds. |
 | F — Bulk import / History | Real-filesystem matrix completed; both candidates rejected. History gzip reduces total write bytes 22.77% (<40% gate); shared lifecycle reduces 13.56%, with worst CPU +54.47% and restore +26.65%. | Keep production behavior unchanged; measurements are bytes submitted to Node writes, not physical sectors or Sync traffic. |
