@@ -1,0 +1,2 @@
+  PID  PPID COMMAND
+69139     1 /Applications/Obsidian.app/Contents/MacOS/Obsidian --user-data-dir=/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-exclusive-20261024-0120 --remote-debugging-port=0 vault=ObReader-Apple-Test

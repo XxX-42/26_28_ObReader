@@ -1,0 +1,2 @@
+COMMAND    PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+Obsidian 69139 jiajia   36u  IPv4 0xdfcf024bedbd86de      0t0  TCP 127.0.0.1:57977 (LISTEN)
