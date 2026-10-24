@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "c6c252cd853a1a4ca8047784b213f8f68122d25f",
+  "sha256": {
+    "plugin/vocabulary/dictionary.cjs": "5656c23758433a7b50d699f778bff153aa683b3752782910301670059b45f441",
+    "plugin/vocabulary/dictionary-cache.cjs": "f5e520b7aa9c56725747d69bb4c28af82c706a5aa85d001db0e167f1104d57e3",
+    "plugin/vocabulary/dictionary-resource.cjs": "f246c009420044ca4edb84bd45a0887e395243a80922b04b9a9b78ca5b220d0b",
+    "evidence/014-resource-v3-startup-audit/lru-audit.mjs": "a048f9a3ce1a2bf1dfec4b6dda92b4c7719fb71fe0fd6579426a9d4e9928b217",
+    "evidence/014-resource-v3-startup-audit/dexie-constructor-audit.mjs": "a7b2030a56e0fc44afebb37d7bcb12a3be4b1cb7e5471d4a99e5801dd1ea90cb"
+  },
+  "validation": "24 cells complete; hit+miss=lookups; miss=read=actual decode in all cells; no product source changes"
+}
