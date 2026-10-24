@@ -171,6 +171,72 @@ baselines remain a permanent evidence limitation, not a task that can be fixed
 by generating a later hash. No such gap is converted into success in this draft.
 
 
+## Live continuation — 2026-10-25
+
+The repository was initially shallow. After fetching the complete history,
+`origin/main=833397ad2e78bba35e4490d3810ac73783860856` is confirmed as the
+ancestor of the active feature branch; the earlier apparent missing merge-base
+was a shallow-clone artifact. The active feature branch now ends at
+`cefae282e49a2417ebc05dd621754f387c2429ae`.
+
+### Semantic route consistency correction
+
+Two deterministic RED tests were added to `tests/learning-host.test.mjs`:
+
+1. A Markdown file moves after its source slice is read but before public
+   `SemanticAnchorContractV1` projection. The former implementation returned
+   `VERIFIED` while attaching the newer, unchecked route. The Host now retains
+   the route used by verification and confirms the route identity is unchanged
+   before exposing binding/path metadata; a mismatch returns
+   `TARGET_UNRESOLVED`.
+2. Route facts become malformed during that same interval. The former public
+   contract API rejected with a transaction parse error; it now returns
+   `TARGET_UNRESOLVED`.
+
+The fix is limited to `plugin/learning/host.cjs`, its focused tests, and the
+rebuilt release `dist/pdf-web-reader/main.js`. Annotation/WAL/core PDF.js and
+Vocabulary canonical storage are unchanged. Focused SemanticAnchor / Host /
+routing / Backlink tests: **49/49 passed**.
+
+### Current automated evidence
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Fast | 120/120, 0 failed, 0 skipped | `run-2026-10-24T17-30-04-989Z-92216-f2448492/report.json` |
+| Browser including offline browser script | 28/28, 0 failed, 0 skipped | `run-2026-10-24T17-31-40-278Z-93651-0694f375/report.json` |
+| Race | 80/80, 0 failed, 0 skipped | `run-2026-10-24T17-38-15-403Z-97142-568c3b58/report.json` |
+| Separate Offline smoke | passed; five editor tools, save/reopen, bulk-delete persistence | `tests/artifacts/offline-smoke-1792863860915-229-2ad17a5c-fe79-41de-ac97-68d9b065ef56.cleanup.json` |
+| Build | 3 release files; 406 embedded runtime assets; 402 frozen vendor hashes verified | payload 6,732,067 bytes before release transport compression |
+| FSRS development replay | 12/12 tests passed; evaluation COMPLETE; authoritative writes 0 | Read-only audit of `origin/codex/014-g-fsrs` and current implementation |
+
+### Current Native/deployment state
+
+The currently accessible CUA Obsidian window is explicitly titled
+`远程仓库1`; its Window menu exposes only that window. The isolated test Obsidian
+process is a separate hidden process and is not addressable through the current
+CUA app/window binding. No PDF or user data in the production vault was touched.
+
+The test-vault CDP probe still reports plugin enabled, no Reader views, and a
+hidden document. The normal test-only deployment command was run against
+`/Users/jiajia/Documents/ObReader-Apple-Test` and safely refused before changing
+files because the plugin is enabled; deployment's disabled-plugin precondition
+was not bypassed. Therefore the current `cefae28` package has **not** been
+installed or exercised in the Native UI. Previous open/move receipts remain
+bound to an earlier package hash, and the prior process-restart receipt still
+lacks a verified old-process exit record. The required current-package Native
+five-direction matrix and true process-restart evidence remain **PENDING**.
+
+The candidate source changes were pushed to
+`feature/0.14-native-learning-dictionary-20261023`; local and remote HEAD both
+equal `cefae282e49a2417ebc05dd621754f387c2429ae`. `main` was not modified.
+Resource-v3 has Chrome evidence only; Native startup blocking and Native
+first/warm lookup gates remain unmeasured, so resource-v3 has not been selected
+or integrated. SQLite/OPFS, Bulk and FSRS conclusions remain as recorded above.
+The Windows 120-page OCR scroll-lag report is still not reproduced against the
+user's actual PDF; no scroll/PDF.js modification was made. iPad remains
+`DEFERRED_BY_SCOPE`.
+
+
 ## Read-only follow-up: initial backlink refresh repair at d4c6f29
 
 Reviewed `d4c6f291b157783503b66830bd0de60d556a8dc7` against test commit
