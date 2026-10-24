@@ -311,7 +311,12 @@ test("compact Selection backlinks bind by verified Anchor identity after a PDF m
     } },
     docKey, documentId, pageIdentities: ["page-one"],
   });
+  const movedPageRow = pageIndex.forPage("page-one").rows[0];
   assert.equal(pageIndex.forPage("page-one").rows.length, 1);
+  assert.equal(movedPageRow.readerDocKey, docKey,
+    "the current Reader document identity is attached to in-memory backlink rows after a move");
+  assert.equal(movedPageRow.readerDocumentId, documentId,
+    "identity enrichment stays in the derived page index and never enters Markdown storage");
   assert.equal(pageIndex.forPage("page-one").markers[0].id, anchorId);
 
   assert.equal(index.clearCompactSelectionBinding(anchorId), true);

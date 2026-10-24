@@ -1897,6 +1897,64 @@ test("Reader backlink source jump rejects a changed MetadataCache target or sour
   harness.plugin.onunload();
 });
 
+test("Reader backlink source evidence re-resolves one renamed link by verified target identity", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const note = new harness.TFile("Notes/Source.md");
+  harness.files.set(note.path, note);
+  const target = { kind: "selection", id: "anchor-12345678" };
+  const currentLink = {
+    link: "Archive/Renamed.pdf#page=1&selection=2%2C1%2C2%2C8&obreader=sel.anchor-12345678",
+    original: "[[Archive/Renamed.pdf#page=1&selection=2%2C1%2C2%2C8&obreader=sel.anchor-12345678|source]]",
+    position: { start: { offset: 84, line: 4 }, end: { offset: 186, line: 4 } },
+  };
+  harness.setFileCache(note, { links: [currentLink] });
+  const row = {
+    sourcePath: note.path,
+    routePath: "Books/Old.pdf",
+    target,
+    readerDocKey: "aabbccddeeff",
+    readerDocumentId: "sha256-v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    offset: 10,
+    endOffset: 95,
+    line: 1,
+    sourceText: "[[Books/Old.pdf#page=1&selection=2%2C1%2C2%2C8&obreader=sel.anchor-12345678|source]]",
+  };
+  const resolutions = [];
+  harness.plugin.resolveReaderLinkDocument = async (parsed, routePath, sourcePath) => {
+    resolutions.push({ routePath, sourcePath, target: parsed.target });
+    return { file: new harness.TFile("Archive/Renamed.pdf"), readerTarget: {
+      ...parsed.target,
+      docKey: row.readerDocKey,
+      documentId: row.readerDocumentId,
+    } };
+  };
+
+  const evidence = await harness.plugin.resolveReaderBacklinkSourceEvidence(row, note);
+  assert.deepEqual(evidence, {
+    kind: "reader-link",
+    offset: currentLink.position.start.offset,
+    endOffset: currentLink.position.end.offset,
+    line: 4,
+    sourceText: currentLink.original,
+  }, "after a PDF rename the current unique Markdown link span is verified via its stable Reader target");
+  assert.deepEqual(resolutions, [{ routePath: "Archive/Renamed.pdf", sourcePath: note.path, target }]);
+
+  harness.plugin.resolveReaderLinkDocument = async (parsed) => ({ file: new harness.TFile("Other/Book.pdf"),
+    readerTarget: { ...parsed.target, docKey: "bbbbbbbbbbbb", documentId: "other-document" } });
+  assert.equal(await harness.plugin.resolveReaderBacklinkSourceEvidence(row, note), null,
+    "a current link routed to a different document identity is rejected");
+
+  harness.plugin.resolveReaderLinkDocument = async (parsed) => ({ file: new harness.TFile("Archive/Renamed.pdf"),
+    readerTarget: { ...parsed.target, docKey: row.readerDocKey, documentId: row.readerDocumentId } });
+  harness.setFileCache(note, { links: [currentLink, { ...currentLink,
+    original: currentLink.original.replace("|source]]", "|duplicate]]"),
+    position: { start: { offset: 200, line: 8 }, end: { offset: 303, line: 8 } } }] });
+  assert.equal(await harness.plugin.resolveReaderBacklinkSourceEvidence(row, note), null,
+    "two current links with the same target remain ambiguous when the old exact span is gone");
+  harness.plugin.onunload();
+});
+
 test("Reader backlink page lookup cannot publish a superseded same-page result", async () => {
   const harness = createHarness();
   await harness.plugin.onload();

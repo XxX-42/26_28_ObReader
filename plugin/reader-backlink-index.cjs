@@ -92,7 +92,14 @@ async function buildReaderBacklinkPageIndex({
     if (typeof tombstone?.uuid === "string") deletedAnnotations.set(tombstone.uuid, tombstone);
   }
 
-  for (const row of rows) {
+  for (const sourceRow of rows) {
+    // Rows from the vault-wide route index may intentionally omit document
+    // identity (copied Markdown links expose only a native PDF path and an
+    // obreader target). Bind the in-memory row to the already verified Reader
+    // document so later source navigation can revalidate a renamed link by its
+    // stable target and current route without persisting identity into Markdown.
+    const row = sourceRow.readerDocKey === docKey && sourceRow.readerDocumentId === documentId
+      ? sourceRow : { ...sourceRow, readerDocKey: docKey, readerDocumentId: documentId };
     if (row.target.kind === "page") {
       if (!validPages.has(row.target.id)) continue;
       const page = getPage(row.target.id);
