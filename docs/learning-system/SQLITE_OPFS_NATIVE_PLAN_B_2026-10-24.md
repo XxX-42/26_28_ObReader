@@ -39,3 +39,7 @@ node scripts/sqlite-opfs/native-owned-experiment.mjs
 ```
 
 Validation: runner completed all five declared loop iterations without retry; 5/5 count/integrity checks passed; 100/100 warm samples were retained; 5/5 second-Worker failures were retained. `node --check` and `git diff --check` pass. Branch is benchmark-only and should not be merged into production as a storage alternative.
+
+## Later standard-VFS follow-up
+
+`SQLITE_OPFS_NATIVE_STANDARD_2026-10-24.md` records the subsequent non-SAHpool experiment: five final fresh native profiles, 100 warm queries, and five successful real second-native-window concurrent read probes. It supersedes this report's earlier standard-VFS-unqualified status for that narrow read-only native-origin capability only. The SAHpool rejection and its samples remain valid. No paired resource-v2/adaptive performance comparison exists, so Plan B remains unselected.

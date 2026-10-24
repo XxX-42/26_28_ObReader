@@ -1,0 +1,10 @@
+{
+  "trials": 5,
+  "warmQueriesPerTrial": 20,
+  "variant": "standard-opfs",
+  "databaseHash": "f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c",
+  "databaseBytes": 48779264,
+  "origin": "app://obsidian.md",
+  "profile": "fresh ordinary persistent per process",
+  "comparators": "unpaired; not rerun"
+}
