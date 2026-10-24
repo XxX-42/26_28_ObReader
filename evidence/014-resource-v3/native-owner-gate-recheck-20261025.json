@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "obsidian-native-current-package-owner-gate-recheck",
+  "observedAtUtc": "2026-10-24T23:38:10Z",
+  "candidate": {
+    "branch": "codex/014-resource-v3-integration",
+    "commit": "412839ac4ef25215ef7c1111f82954507f1cbc9a",
+    "version": "0.14.0",
+    "mainJsSha256": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8"
+  },
+  "runtime": {
+    "application": "Obsidian 1.14.5",
+    "processId": 99806,
+    "cdpPort": 62596,
+    "processProfileIsSharedWithAnotherVault": true,
+    "selectedWindowTitle": "未命名 - ObReader-Apple-Test - Obsidian 1.14.5",
+    "exactTestVaultRendererCount": 1,
+    "exactTestVaultPath": "/Users/jiajia/Documents/ObReader-Apple-Test"
+  },
+  "testRenderer": {
+    "documentHasFocus": true,
+    "activeDocumentIsThis": false,
+    "activeWindowIsThis": false,
+    "readerLeafCount": 0,
+    "pluginLoaded": false,
+    "pluginEnabled": false,
+    "vaultSyncEnabled": false
+  },
+  "ownership": {
+    "obsidianActiveDocumentAndWindowBelongToAnotherRenderer": true,
+    "strictNativeForegroundGate": "FAIL",
+    "commandPaletteAxClickOpenedPalette": false,
+    "commandPaletteSuperPOpenedPalette": false,
+    "routeMatrix": "NOT_RUN",
+    "processRestart": "NOT_RUN"
+  },
+  "sideEffects": {
+    "readerOpened": false,
+    "pluginEnabled": false,
+    "vaultFilesWritten": false,
+    "processRestarted": false,
+    "formalVaultContentsReadOrModified": false
+  },
+  "decision": "Stop UI retries. Current-package Native 8x5 route matrix remains NOT_VERIFIED; true owned-process restart remains NOT_RUN."
+}

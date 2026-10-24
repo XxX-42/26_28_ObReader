@@ -91,6 +91,8 @@ A bounded follow-up confirmed that the available CUA app-name binding resolves t
 
 A new one-shot owned-profile preflight rechecked the isolated PID `69139` and exact candidate package. The app renderer was visible and `document.hasFocus()` returned true, but the stricter owner gate failed: `activeDocument !== document` and `activeWindow !== window`; both globals pointed to the test vault's Settings window. The runner stopped before enabling the plugin or writing test state. The active PDF was the fixture `ObReader-Bulk-Tests/source-inspection-1792131679927.pdf`; no Reader view was open. No other PDF or shared/mixed PID was acted on, and no process was restarted. The separate receipt is [native-current-preflight-20261025](../native-current-preflight-20261025/README.md). It supersedes the earlier basic visibility/focus observation for deciding whether user input is safe: **the strict Native focus gate still fails**.
 
+A later bounded check of the attached `ObReader-Apple-Test` window confirmed the same ownership failure on the shared process: the visible exact-test renderer had `document.hasFocus() === true`, but both `activeDocument` and `activeWindow` belonged to another renderer. The test renderer had Sync and the plugin disabled and zero Reader leaves. One fresh AX click and one native `super+p` attempt did not open the command palette. No Reader was opened and no Vault data or plugin state was changed. Stop further window-control attempts; the current-package Native matrix remains **NOT_VERIFIED**, and true process restart remains **NOT_RUN**. Receipt: [native-owner-gate-recheck-20261025.json](native-owner-gate-recheck-20261025.json).
+
 ## Automated gates
 
 - Focused dictionary/conversion suites: 67 passed.
