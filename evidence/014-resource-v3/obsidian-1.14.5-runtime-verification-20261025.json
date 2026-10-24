@@ -1,0 +1,37 @@
+{
+  "verifiedAt": "2026-10-25",
+  "source": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.5/Obsidian-1.14.5.dmg",
+  "dmgSha256": "be79e6410d80fa705218aa4e8cb24ce8418cf16e13be4036227a5659b1f6aab2",
+  "hdiutilVerify": "valid",
+  "appBundlePath": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app",
+  "bundleVersion": "1.14.5",
+  "bundleBuild": "1.14.5",
+  "codeSignVerification": "passed",
+  "gatekeeperAssessment": "accepted; notarized Developer ID Application Dynalist Inc. team 6JSW4SJWN9",
+  "launchedMainPid": 27240,
+  "profile": "/private/tmp/obreader-014-runtime/profile-1.14.5",
+  "cdpPort": 63456,
+  "runtimeUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+  "nativeRenderer": {
+    "origin": "app://obsidian.md",
+    "href": "app://obsidian.md/index.html",
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "adapterClass": "e",
+    "platform": {
+      "isDesktopApp": null,
+      "isMobileApp": null,
+      "isIosApp": null
+    }
+  },
+  "preflight": {
+    "visible": true,
+    "focused": true,
+    "activeDocumentMatches": true,
+    "activeWindowMatches": true,
+    "syncEnabled": false,
+    "candidatePluginEnabled": false,
+    "readerLeaves": 0
+  },
+  "appInstallUntouched": true,
+  "formalVaultUntouched": true
+}
