@@ -1,0 +1,1102 @@
+[
+  {
+    "trial": 1,
+    "origin": "app://obsidian.md",
+    "url": "app://obsidian.md/starter.html",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "ordinaryPersistentProfile": true,
+    "crossOriginIsolated": false,
+    "mainOpfs": true,
+    "warm": [
+      {
+        "roundTripMs": 1.2000000029802322,
+        "ms": 0.7000000029802322,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.19999998807907104,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.4000000059604645,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 1.7999999970197678,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.19999998807907104,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.9000000059604645,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      }
+    ],
+    "init": {
+      "initMs": 192.5,
+      "vfs": "owned-native-1",
+      "origin": "app://obsidian.md"
+    },
+    "copy": {
+      "copyOpenMs": 72.30000001192093
+    },
+    "first": {
+      "ms": 34.20000000298023,
+      "row": {
+        "key": "on",
+        "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+        "phonetic": "ɒn"
+      }
+    },
+    "firstRoundTripMs": 34.79999999701977,
+    "coldStartToResultMs": 3939.6000000089407,
+    "validation": {
+      "count": 770611,
+      "integrity": "ok"
+    },
+    "secondary": {
+      "error": {
+        "name": "NoModificationAllowedError",
+        "message": "Failed to execute 'createSyncAccessHandle' on 'FileSystemFileHandle': Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file."
+      }
+    },
+    "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/sqlite-opfs-experiment/tests/output/sqlite-native-owned/profile-79QAoV"
+  },
+  {
+    "trial": 2,
+    "origin": "app://obsidian.md",
+    "url": "app://obsidian.md/starter.html",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "ordinaryPersistentProfile": true,
+    "crossOriginIsolated": false,
+    "mainOpfs": true,
+    "warm": [
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.29999999701976776,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.19999998807907104,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 2.3999999910593033,
+        "ms": 2.3999999910593033,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 1.2000000029802322,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      }
+    ],
+    "init": {
+      "initMs": 179.40000000596046,
+      "vfs": "owned-native-2",
+      "origin": "app://obsidian.md"
+    },
+    "copy": {
+      "copyOpenMs": 48.1000000089407
+    },
+    "first": {
+      "ms": 13.299999997019768,
+      "row": {
+        "key": "on",
+        "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+        "phonetic": "ɒn"
+      }
+    },
+    "firstRoundTripMs": 13.600000008940697,
+    "coldStartToResultMs": 3863.5,
+    "validation": {
+      "count": 770611,
+      "integrity": "ok"
+    },
+    "secondary": {
+      "error": {
+        "name": "NoModificationAllowedError",
+        "message": "Failed to execute 'createSyncAccessHandle' on 'FileSystemFileHandle': Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file."
+      }
+    },
+    "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/sqlite-opfs-experiment/tests/output/sqlite-native-owned/profile-V1OkVP"
+  },
+  {
+    "trial": 3,
+    "origin": "app://obsidian.md",
+    "url": "app://obsidian.md/starter.html",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "ordinaryPersistentProfile": true,
+    "crossOriginIsolated": false,
+    "mainOpfs": true,
+    "warm": [
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.29999999701976776,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.3999999910593033,
+        "ms": 0.3999999910593033,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.29999999701976776,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.29999999701976776,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.19999998807907104,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.30000001192092896,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      }
+    ],
+    "init": {
+      "initMs": 139.6000000089407,
+      "vfs": "owned-native-3",
+      "origin": "app://obsidian.md"
+    },
+    "copy": {
+      "copyOpenMs": 44.599999994039536
+    },
+    "first": {
+      "ms": 14.100000008940697,
+      "row": {
+        "key": "on",
+        "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+        "phonetic": "ɒn"
+      }
+    },
+    "firstRoundTripMs": 14.5,
+    "coldStartToResultMs": 3709.9000000059605,
+    "validation": {
+      "count": 770611,
+      "integrity": "ok"
+    },
+    "secondary": {
+      "error": {
+        "name": "NoModificationAllowedError",
+        "message": "Failed to execute 'createSyncAccessHandle' on 'FileSystemFileHandle': Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file."
+      }
+    },
+    "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/sqlite-opfs-experiment/tests/output/sqlite-native-owned/profile-tRrqoN"
+  },
+  {
+    "trial": 4,
+    "origin": "app://obsidian.md",
+    "url": "app://obsidian.md/starter.html",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "ordinaryPersistentProfile": true,
+    "crossOriginIsolated": false,
+    "mainOpfs": true,
+    "warm": [
+      {
+        "roundTripMs": 0.5999999940395355,
+        "ms": 0.4000000059604645,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.19999998807907104,
+        "ms": 0.19999998807907104,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.30000001192092896,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.19999998807907104,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.19999998807907104,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      }
+    ],
+    "init": {
+      "initMs": 147.29999999701977,
+      "vfs": "owned-native-4",
+      "origin": "app://obsidian.md"
+    },
+    "copy": {
+      "copyOpenMs": 55.19999998807907
+    },
+    "first": {
+      "ms": 13.599999994039536,
+      "row": {
+        "key": "on",
+        "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+        "phonetic": "ɒn"
+      }
+    },
+    "firstRoundTripMs": 14.299999997019768,
+    "coldStartToResultMs": 3942,
+    "validation": {
+      "count": 770611,
+      "integrity": "ok"
+    },
+    "secondary": {
+      "error": {
+        "name": "NoModificationAllowedError",
+        "message": "Failed to execute 'createSyncAccessHandle' on 'FileSystemFileHandle': Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file."
+      }
+    },
+    "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/sqlite-opfs-experiment/tests/output/sqlite-native-owned/profile-1nonS6"
+  },
+  {
+    "trial": 5,
+    "origin": "app://obsidian.md",
+    "url": "app://obsidian.md/starter.html",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "ordinaryPersistentProfile": true,
+    "crossOriginIsolated": false,
+    "mainOpfs": true,
+    "warm": [
+      {
+        "roundTripMs": 0.5999999940395355,
+        "ms": 0.4000000059604645,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.4000000059604645,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.5,
+        "ms": 0.4000000059604645,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.10000000894069672,
+        "ms": 0.10000000894069672,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.09999999403953552,
+        "ms": 0.09999999403953552,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.20000000298023224,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      },
+      {
+        "roundTripMs": 0.29999999701976776,
+        "ms": 0.20000000298023224,
+        "row": {
+          "key": "on",
+          "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+          "phonetic": "ɒn"
+        }
+      }
+    ],
+    "init": {
+      "initMs": 162.20000000298023,
+      "vfs": "owned-native-5",
+      "origin": "app://obsidian.md"
+    },
+    "copy": {
+      "copyOpenMs": 81.70000000298023
+    },
+    "first": {
+      "ms": 16,
+      "row": {
+        "key": "on",
+        "translation": "prep. 在...之上\\nadv. ...上去\\na. 正起作用的\\n[计] 打开",
+        "phonetic": "ɒn"
+      }
+    },
+    "firstRoundTripMs": 16.299999997019768,
+    "coldStartToResultMs": 3878.2000000029802,
+    "validation": {
+      "count": 770611,
+      "integrity": "ok"
+    },
+    "secondary": {
+      "error": {
+        "name": "NoModificationAllowedError",
+        "message": "Failed to execute 'createSyncAccessHandle' on 'FileSystemFileHandle': Access Handles cannot be created if there is another open Access Handle or Writable stream associated with the same file."
+      }
+    },
+    "profile": "/Users/jiajia/.codex/worktrees/obreader-0.14/sqlite-opfs-experiment/tests/output/sqlite-native-owned/profile-1WSssx"
+  }
+]

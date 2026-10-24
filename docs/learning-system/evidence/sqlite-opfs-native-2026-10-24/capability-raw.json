@@ -1,0 +1,154 @@
+{
+  "probe": "sqlite-wasm-opfs-read-only-host-capability",
+  "pinnedSqliteVersion": "3.54.1",
+  "readOnly": true,
+  "persistentStorageMutation": false,
+  "databaseOpened": false,
+  "vfsInstalled": false,
+  "pageApis": {
+    "protocol": "app:",
+    "origin": "app://obsidian.md",
+    "isSecureContext": true,
+    "workerConstructor": true,
+    "webAssembly": true,
+    "sharedArrayBuffer": true,
+    "atomics": true,
+    "atomicsWait": true,
+    "atomicsWaitAsync": true,
+    "crossOriginIsolated": false,
+    "opfsInMainThread": true,
+    "webLocks": true,
+    "longTaskObserver": true,
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "storageEstimate": {
+      "quota": 49979359232,
+      "usage": 0,
+      "usageDetails": {}
+    },
+    "storagePersisted": true
+  },
+  "basicBlobWorker": {
+    "stage": "echo",
+    "protocol": "blob:",
+    "origin": "app://obsidian.md",
+    "isSecureContext": true,
+    "workerGlobal": true,
+    "webAssembly": true,
+    "sharedArrayBuffer": true,
+    "atomics": true,
+    "atomicsWait": true,
+    "atomicsWaitAsync": true,
+    "crossOriginIsolated": false,
+    "opfsGetDirectory": true,
+    "opfsSyncAccessHandle": true,
+    "webLocks": true,
+    "opfsRootHandle": "FileSystemDirectoryHandle"
+  },
+  "basicBlobWorkerError": null,
+  "sqliteWorker": {
+    "protocol": "blob:",
+    "origin": "app://obsidian.md",
+    "isSecureContext": true,
+    "workerGlobal": true,
+    "webAssembly": true,
+    "sharedArrayBuffer": true,
+    "atomics": true,
+    "atomicsWait": true,
+    "atomicsWaitAsync": true,
+    "crossOriginIsolated": false,
+    "opfsGetDirectory": true,
+    "opfsSyncAccessHandle": true,
+    "webLocks": true,
+    "sqliteVersion": "3.54.1",
+    "sqliteWasmInitMs": 239.5,
+    "sqliteVfsList": [
+      "unix-none",
+      "memdb",
+      "kvvfs",
+      "unix-excl",
+      "unix-dotfile",
+      "unix"
+    ],
+    "sqliteSahpoolInstallerPresent": true,
+    "sqliteOpfsUtilitiesPresent": true,
+    "databaseOpened": false,
+    "vfsInstalled": false,
+    "sqliteStandardOpfsPrerequisites": true
+  },
+  "sqliteWorkerMessages": [
+    {
+      "stage": "api",
+      "api": {
+        "protocol": "blob:",
+        "origin": "app://obsidian.md",
+        "isSecureContext": true,
+        "workerGlobal": true,
+        "webAssembly": true,
+        "sharedArrayBuffer": true,
+        "atomics": true,
+        "atomicsWait": true,
+        "atomicsWaitAsync": true,
+        "crossOriginIsolated": false,
+        "opfsGetDirectory": true,
+        "opfsSyncAccessHandle": true,
+        "webLocks": true
+      }
+    },
+    {
+      "stage": "wasm-instantiate-started",
+      "byteLength": 879430
+    },
+    {
+      "stage": "wasm-instantiated",
+      "elapsedMs": 13.5
+    },
+    {
+      "stage": "sqlite-ready",
+      "api": {
+        "protocol": "blob:",
+        "origin": "app://obsidian.md",
+        "isSecureContext": true,
+        "workerGlobal": true,
+        "webAssembly": true,
+        "sharedArrayBuffer": true,
+        "atomics": true,
+        "atomicsWait": true,
+        "atomicsWaitAsync": true,
+        "crossOriginIsolated": false,
+        "opfsGetDirectory": true,
+        "opfsSyncAccessHandle": true,
+        "webLocks": true,
+        "sqliteVersion": "3.54.1",
+        "sqliteWasmInitMs": 239.5,
+        "sqliteVfsList": [
+          "unix-none",
+          "memdb",
+          "kvvfs",
+          "unix-excl",
+          "unix-dotfile",
+          "unix"
+        ],
+        "sqliteSahpoolInstallerPresent": true,
+        "sqliteOpfsUtilitiesPresent": true,
+        "databaseOpened": false,
+        "vfsInstalled": false,
+        "sqliteStandardOpfsPrerequisites": true
+      }
+    }
+  ],
+  "sqliteWorkerError": null,
+  "securityPolicyViolations": [],
+  "workerProbeMs": 405,
+  "sqliteRuntimeSourceBytes": 439732,
+  "sqliteWasmBytes": 879430,
+  "classification": "STANDARD_OPFS_PREREQUISITES_PASS_VFS_NOT_INSTALLED",
+  "limitations": [
+    "The probe creates a temporary Blob worker and initializes pinned WASM with OPFS auto-install disabled.",
+    "It opens no database and does not install the SAH pool or OPFS VFS; candidate status requires a later disposable-profile write probe.",
+    "Storage quota and usage are origin estimates, not measurements of SQLite profile growth."
+  ],
+  "pageProbeMs": 405,
+  "cdpUrl": "http://127.0.0.1:60071",
+  "targetUrl": "app://obsidian.md/starter.html",
+  "probedAt": "2026-10-24T12:19:16.820Z"
+}
