@@ -2,10 +2,10 @@
 
 ## Git and release boundary
 
-- Git state at the start of this continuation: `origin/main=654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5` and `origin/feature/0.14-native-learning-dictionary-20261023=3197f212c71e4ea4263a1f256bc6c9917d241dc8`.
-- Gate-tested code baseline: `3197f212c71e4ea4263a1f256bc6c9917d241dc8` on `codex/014-goal-resume-20261025`; this continuation's later commit only records evidence and does not change the package. `main` was not changed in this continuation.
-- Candidate version: `0.14.0`. Current package SHA-256: `main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
-- The existing `ObReader-Apple-Test` plugin files exactly match those hashes. No redeploy was needed in this continuation. No production Vault or user data was changed in this continuation. Earlier formal deployment is recorded in its dated historical section below.
+- At the start of this continuation, `origin/main=654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5` and the feature branch was `26bf83fa934c9a54048158de00cfe446dd941082`. The current tested code is commit `709b6600f498e88528ab71ff572ef5c1c82c5f62`; the evidence-only continuation commit `4a73980` preceded it.
+- Build and automated gates ran against the exact source subsequently committed as `709b660`; source fingerprint `c94f88ef84aa2725d3f5798ebd49573655a04862162d6dfbb7bed01543895614` was stable during Fast, Browser, and Race.
+- Candidate version: `0.14.0`. Current package SHA-256: `main.js 98b351b63936365e3615ab3955af583744b9eda069360a6c4414c39b0548e0cc`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+- The shared `ObReader-Apple-Test` plugin still has the previous `main.js ee0ce9fe…`; the current candidate was not deployed there because multiple Obsidian profiles share that Vault. No production Vault or user data was changed in this continuation. Earlier formal deployment is recorded in its dated historical section below.
 
 ## Scope decision
 
@@ -19,7 +19,21 @@
 
 The verified resource-v2 source converted to `770,611` equivalent rows in `67` content-addressed blocks (`16,769,142` compressed bytes). A temporary conversion was byte-identical to the installed Resource-v3 blocks. The manifest records the MIT notice at `../LICENSE-MIT.txt` and checksum `f8552dd246f61a4e064569eae6194a01c6b3d63b03bf27c6ca863593c549ed0f`.
 
-The latest lookup run used the real macOS Obsidian DataAdapter in `ObReader-Apple-Test`; the plugin was disabled and Reader leaves were closed. It ran five new dictionary/Worker instances per query and 20 resident repeats each. Reads were limited to DataAdapter `read`/`readBinary`; there were zero Vault writes. Each cold observation reads one relevant compressed block; the new IndexedDB caches use unique disposable names and are removed after each trial.
+### Current-candidate Native lookup after asynchronous Worker prewarm
+
+The first-candidate Native run recorded a 1.066 s first `on` query, with most of that time inside the first Worker startup/ready path. The current candidate starts the block Worker in the background after a valid v3 manifest is confirmed by `checkAvailability()`. The availability call does not await Worker readiness; a tap during Worker startup still joins the same pending promise. A focused test verifies the availability response returns while the Worker is deliberately held before its `started` message.
+
+The current candidate was tested in a fresh, dedicated Obsidian 1.14.5 / Electron 43.8.3 process and temporary Vault containing only Resource-v3 files. The plugin was absent, there were zero Reader leaves, and the actual DataAdapter was exposed only through `read` and `readBinary`. Each of five trials per query created a new dictionary and Worker, invoked `checkAvailability()`, awaited background Worker readiness, then measured one cold lookup and 20 resident repeats. There were zero binary writes.
+
+| Query | Cold lookup P50 | P95 / max (5 samples) | Warm P95 (100 repeats) | Warm max |
+|---|---:|---:|---:|---:|
+| Common `on` | 56.6 ms | 88.2 ms | 0.1 ms | 0.4 ms |
+| Rare `zyzzyva` | 22.8 ms | 29.5 ms | 0.1 ms | 0.5 ms |
+| Valid not-found | 73.4 ms | 85.9 ms | 0.1 ms | 0.2 ms |
+
+Across these lookups, `checkAvailability()` returned in at most 27.8 ms; the background Worker ready handshake took at most 287.1 ms. These are DataAdapter/module timings, not a measurement of plugin-added process-start blocking. If a user taps before Worker readiness, that lookup can still wait for the remaining handshake. `startup added blocking <50 ms = NOT_MEASURED`; full Reader UI first lookup = `NOT_VERIFIED`. Raw receipt: [native-data-adapter-prewarmed-709b660-20261025.json](native-data-adapter-prewarmed-709b660-20261025.json). It is bound to `main.js` SHA-256 `98b351b63936365e3615ab3955af583744b9eda069360a6c4414c39b0548e0cc`.
+
+The earlier lookup run used the real macOS Obsidian DataAdapter in `ObReader-Apple-Test`; the plugin was disabled and Reader leaves were closed. It ran five new dictionary/Worker instances per query and 20 resident repeats each. Reads were limited to DataAdapter `read`/`readBinary`; there were zero Vault writes. Each cold observation reads one relevant compressed block; the new IndexedDB caches use unique disposable names and are removed after each trial.
 
 | Query | First lookup P50 | P95 / max of 5 | Warm lookup P95 | First-read bytes |
 |---|---:|---:|---:|---:|

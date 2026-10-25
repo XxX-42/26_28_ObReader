@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-25",
+  "candidate": {
+    "commit": "709b6600f498e88528ab71ff572ef5c1c82c5f62",
+    "branch": "codex/014-goal-resume-20261025",
+    "version": "0.14.0 candidate",
+    "mainJsSha256": "98b351b63936365e3615ab3955af583744b9eda069360a6c4414c39b0548e0cc",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFiles": 3,
+    "embeddedAssets": 406,
+    "frozenVendorHashesVerified": 402,
+    "payloadBytes": 6732067
+  },
+  "sourceFingerprint": {
+    "algorithm": "sha256",
+    "hash": "c94f88ef84aa2725d3f5798ebd49573655a04862162d6dfbb7bed01543895614",
+    "fileCount": 1114
+  },
+  "gates": {
+    "fast": {
+      "fast": {
+        "total": 122,
+        "passed": 122,
+        "failed": 0,
+        "skipped": 0
+      },
+      "total": 122,
+      "passed": 122,
+      "failed": 0,
+      "skipped": 0
+    },
+    "browser": {
+      "browser": {
+        "total": 28,
+        "passed": 28,
+        "failed": 0,
+        "skipped": 0
+      },
+      "total": 28,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0
+    },
+    "race": {
+      "race": {
+        "total": 80,
+        "passed": 80,
+        "failed": 0,
+        "skipped": 0
+      },
+      "total": 80,
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0
+    },
+    "offline": {
+      "status": "PASS",
+      "fiveAnnotationToolsSaveReopen": true,
+      "bulkDeleteNoResurrection": true,
+      "normalBrowserCleanup": true
+    },
+    "focusedResourceV3": {
+      "passed": 30,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "nativeResourceV3": {
+    "runtime": "Obsidian 1.14.5 / Electron 43.8.3",
+    "scope": "isolated temporary profile and Vault; plugin absent/disabled; actual DataAdapter read/readBinary only; five new dictionary/Worker trials per query, 20 warm repeats per trial",
+    "binaryWrites": 0,
+    "queries": [
+      {
+        "id": "common-on",
+        "coldSamples": 5,
+        "firstLookupP50Ms": 56.599999994039536,
+        "firstLookupP95Ms": 88.19999998807907,
+        "warmSamples": 100,
+        "warmP95Ms": 0.09999999403953552,
+        "warmMaxMs": 0.4000000059604645,
+        "availabilityMaxMs": 27.80000001192093,
+        "workerPrewarmMaxMs": 287.09999999403954,
+        "oneBlockBytes": 262366
+      },
+      {
+        "id": "rare-zyzzyva",
+        "coldSamples": 5,
+        "firstLookupP50Ms": 22.80000001192093,
+        "firstLookupP95Ms": 29.5,
+        "warmSamples": 100,
+        "warmP95Ms": 0.09999999403953552,
+        "warmMaxMs": 0.5,
+        "availabilityMaxMs": 5.5999999940395355,
+        "workerPrewarmMaxMs": 224.80000001192093,
+        "oneBlockBytes": 139005
+      },
+      {
+        "id": "not-found",
+        "coldSamples": 5,
+        "firstLookupP50Ms": 73.40000000596046,
+        "firstLookupP95Ms": 85.90000000596046,
+        "warmSamples": 100,
+        "warmP95Ms": 0.09999999403953552,
+        "warmMaxMs": 0.19999998807907104,
+        "availabilityMaxMs": 2.800000011920929,
+        "workerPrewarmMaxMs": 206.59999999403954,
+        "oneBlockBytes": 236616
+      }
+    ],
+    "firstWorkerBackgroundPrewarm": {
+      "availabilityMaxMs": 27.80000001192093,
+      "workerReadyMaxMs": 287.09999999403954
+    },
+    "startupAddedBlocking": "NOT_MEASURED",
+    "enabledReaderUiFirstLookup": "NOT_VERIFIED"
+  },
+  "acceptance": {
+    "nativeEightByFiveMatrix": "NOT_VERIFIED",
+    "trueProcessRestart": "NOT_RUN",
+    "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+    "ipad": "DEFERRED_BY_SCOPE"
+  },
+  "deployment": {
+    "testVault": "NOT_DEPLOYED (shared test Vault has multiple Obsidian profiles)",
+    "productionVault": "NOT_DEPLOYED"
+  }
+}
