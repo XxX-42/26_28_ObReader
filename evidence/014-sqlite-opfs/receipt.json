@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "workstream": "D - SQLite WASM / OPFS feasibility audit",
+  "baseCommit": "197cd7d653967eb0a2d04af3c91470163949e680",
+  "branch": "codex/014-ws-d-sqlite",
+  "result": "AUDIT_COMPLETE_NATIVE_OPFS_BENCHMARK_NOT_RUN",
+  "auditDate": "2026-10-25",
+  "focusedChecks": {
+    "type": "read-only prototype artifact verification",
+    "sourceSha256": "b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126",
+    "sqliteDatabaseSha256": "f48018379b7493062c79d79ee2ab3eebb5e38385c68bc6978503bb02dc45eb5c",
+    "sqliteArchiveSha3_256": "87e24f6a4588692310b7942dc2fa7c7275bb9ba2e01d553e4115aa4a904a0050",
+    "sqliteIntegrityCheck": "ok",
+    "sourceRows": 770611,
+    "sqliteRows": 770611,
+    "sourceLogicalSha256": "c89eea8a579da1ea743eea9febbe7ecaed63695056d093f2c478b93a265fbd98",
+    "sqliteLogicalSha256": "c89eea8a579da1ea743eea9febbe7ecaed63695056d093f2c478b93a265fbd98",
+    "equivalent": true,
+    "sqliteOpenedReadOnly": true
+  },
+  "historicalRunsAudited": [
+    {
+      "runSet": "2026-10-23T14-20-11-567Z-5ae98f48-52e5-4fd6-b165-2078e406ffd1",
+      "ordinaryPersistentProfiles": true,
+      "incognito": false,
+      "uniqueTrialDatabaseNames": true,
+      "opfsCompleteTrials": "0/5",
+      "opfsSahpoolCompleteTrials": "0/5",
+      "failureRecordsPreserved": true
+    },
+    {
+      "runSet": "2026-10-23T14-20-58-005Z-af659051-3a7c-4d9b-9a69-03bae2780315",
+      "ordinaryPersistentProfiles": true,
+      "incognito": false,
+      "uniqueTrialDatabaseNames": true,
+      "opfsCompleteTrials": "5/5",
+      "opfsSecondWindowTrials": "5/5 pass",
+      "opfsCrossOriginIsolated": true,
+      "opfsSahpoolCompleteTrials": "0/5",
+      "opfsSahpoolSecondWindowTrials": "5/5 fail with NoModificationAllowedError",
+      "failureRecordsPreserved": true
+    }
+  ],
+  "newBrowserBenchmark": "NOT_RUN",
+  "newNativeAppOriginProbe": "NOT_RUN",
+  "nativeOpfsVfsWriteAndLocking": "NOT_RUN",
+  "newProfilesOrDatabasesCreated": 0,
+  "vaultWrites": 0,
+  "productionIntegration": false,
+  "appSecurityOrConfigChanges": false,
+  "deployment": false,
+  "historicalRawOutputs": "Preserved without modification in the prior sqlite-sol-low worktree's ignored tests/output/sqlite-opfs directory.",
+  "report": "evidence/014-sqlite-opfs/REPORT.md"
+}
