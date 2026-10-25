@@ -421,3 +421,28 @@ SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
 ```
 
 No product code, PDF.js, wheel/observer/LingQ scroll path, `main`, or formal Vault was changed by this closeout. Current-package Native acceptance remains a release blocker; prior matrix evidence for a different `main.js` bundle does not transfer.
+
+## 2026-10-25 Resource-v3 current-package Native first-tap benchmark
+
+After closing the bounded Native route attempt as `NOT_VERIFIED`, the next scoped Resource-v3 benchmark used the already-running Obsidian 1.14.5 test process only for read-only `Vault DataAdapter.read/readBinary` access. Preflight confirmed exactly one target renderer for `/Users/jiajia/Documents/ObReader-Apple-Test`, `pdf-web-reader` disabled both in process and on disk, zero Reader leaves, Sync disabled, and the installed three-file package hashes matching the current candidate. The benchmark made no Vault writes and did not enable the plugin or open a document. It wrote only disposable IndexedDB caches in that test profile and deleted them after each sample.
+
+The run used the exact candidate `main.js=d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257`, with current dictionary source `76cdb665…` and Worker source `0670712f…`. It exercised five new `VocabularyDictionary`/Worker instances per key. Each instance awaited `checkAvailability()` (which starts asynchronous prewarm but does not await Worker readiness), then immediately performed the first lookup and 20 same-key warm lookups. The process, renderer and OS remained warm; this is **instance-cold Native DataAdapter lookup**, not process-cold startup or Reader UI click latency.
+
+| Query | First-lookup samples (ms) | P50 | P95 / max | Warm samples | Warm observed max |
+|---|---:|---:|---:|---:|---:|
+| Common `on` | 55.1, 56.7, 59.2, 59.9, **858.8** | 59.2 | **858.8** | 100 | 0.1 ms |
+| Rare `zyzzyva` | 45.5, 45.6, 46.6, 46.7, 48.4 | 46.6 | 48.4 | 100 | 0.4 ms |
+| Valid miss | 54.9, 56.8, 58.6, 59.7, 79.9 | 58.6 | 79.9 | 100 | 0.1 ms |
+
+All 15 first-lookups returned the expected status and exactly one compressed Resource-v3 block read. All 300 warm re-lookups were cache hits with no additional block read. Preserve the common-word 858.8 ms tail: in that outlier, the manifest `read()` took 297.2 ms, Worker readiness arrived 739.7 ms after availability began, and Worker decode itself took 86.7 ms. This proves the rare first lookup was below 50 ms in these five instance-cold trials, while the common first-query path retained a large outlier below the plan's 1 s threshold. It does not prove a fresh-process first lookup or the full LingQ card path.
+
+```text
+RESOURCE_V3_CURRENT_PACKAGE_NATIVE_ADAPTER = PASS (instance-cold scope)
+FIRST_COMMON_LOOKUP = P50 59.2 ms; P95/max 858.8 ms (outlier retained)
+FIRST_RARE_LOOKUP = P50 46.6 ms; P95/max 48.4 ms
+RESIDENT_WARM_LOOKUP = observed max 0.4 ms across 300 repeats
+STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED
+READER_UI_FIRST_LOOKUP = NOT_VERIFIED
+```
+
+Full receipt: [native-resource-v3-first-tap-d57-20261025.json](current-gates/native-resource-v3-first-tap-d57-20261025.json). No product runtime code, plugin activation, PDF/annotation data, `main`, or formal Vault was changed for this benchmark.
