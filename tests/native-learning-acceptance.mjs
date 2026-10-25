@@ -54,44 +54,84 @@ export function assertNativeLearningForeground(identity, { vault, configDir = ".
     ownerDocumentIsRenderer: identity.ownerDocumentIsRenderer, ownerWindowIsRenderer: identity.ownerWindowIsRenderer });
 }
 
-function assertNativeActivationIdentity(identity, native, { vault, configDir }) {
+function assertNativeRendererBinding(identity, native, { vault, configDir }) {
   const vaultName = vault.slice(vault.lastIndexOf("/") + 1);
   const expectedTitleSuffix = `${vaultName} - Obsidian ${native.appVersion}`;
   if (!identity || identity.vault !== vault || identity.vaultName !== vaultName || identity.configDir !== configDir ||
       identity.url !== OBSIDIAN_RENDERER_URL || typeof identity.title !== "string" ||
       !identity.title.endsWith(expectedTitleSuffix)) {
-    fail("NATIVE_ACTIVATION_RENDERER_MISMATCH",
-      "The renderer must remain the exact configured test Vault window before or after process activation.");
+    fail("NATIVE_CDP_RENDERER_IDENTITY_MISMATCH",
+      "The CDP page must be the exact configured test Vault renderer.");
   }
 }
 
-function assertNativeActivationProcess(native, state) {
+function assertNativeProcessBinding(native, state) {
   if (state?.pid !== native.ownerPid || state.ownedProfileProcess !== true ||
       state.commandHash !== native.ownerCommandHash) {
-    fail("NATIVE_ACTIVATION_PROCESS_MISMATCH",
-      "The selected PID no longer matches the validated Obsidian executable and owned profile.");
+    fail("NATIVE_WINDOW_PROCESS_MISMATCH",
+      "The process probe does not match the validated Obsidian executable and owned profile.");
   }
 }
 
-export async function ensureOwnedNativeRendererForeground({
+function assertClosedSettingsStaleReferences(identity, openWindows, closedSettingsTarget, { vault, appVersion }) {
+  const stale = [];
+  if (identity.ownerDocumentIsRenderer === false) stale.push(["activeDocument", identity.activeDocumentRef]);
+  else if (identity.ownerDocumentIsRenderer !== true) {
+    fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", "activeDocument renderer identity is unavailable.");
+  }
+  if (identity.ownerWindowIsRenderer === false) stale.push(["activeWindow.document", identity.activeWindowDocumentRef]);
+  else if (identity.ownerWindowIsRenderer !== true) {
+    fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", "activeWindow renderer identity is unavailable.");
+  }
+  if (!stale.length) return [];
+
+  const vaultName = vault.slice(vault.lastIndexOf("/") + 1);
+  const settingsTitles = new Set([
+    `Settings - ${vaultName} - Obsidian ${appVersion}`,
+    `设置 - ${vaultName} - Obsidian ${appVersion}`,
+  ]);
+  let target = closedSettingsTarget;
+  if (target) {
+    if (target.closed !== true || target.settingsVisible !== true || target.vault !== vault ||
+        target.url !== OBSIDIAN_RENDERER_URL || !settingsTitles.has(target.title)) {
+      fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", "The recorded Settings target was not proven closed in this test Vault.");
+    }
+  } else {
+    const [first] = stale;
+    target = first?.[1] ? { url: first[1].url, title: first[1].title, closed: first[1].closed } : null;
+    if (target?.closed !== true || target.url !== OBSIDIAN_RENDERER_URL || !settingsTitles.has(target.title)) {
+      fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", "A stale global is accepted only when it identifies a closed Settings window.");
+    }
+  }
+
+  for (const [name, reference] of stale) {
+    if (!reference || reference.closed !== true || reference.url !== target.url || reference.title !== target.title) {
+      fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", `${name} does not identify the proven closed Settings target.`);
+    }
+  }
+  if (!Array.isArray(openWindows) || openWindows.some(window => window?.url === target.url &&
+      (window.title === target.title || (target.targetId && window.targetId === target.targetId)))) {
+    fail("NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN", "A matching Settings target is still present in the owned CDP session.");
+  }
+  return stale.map(([name]) => name);
+}
+
+export async function verifyOwnedNativeRendererForeground({
   native,
   expectedVault = EXPECTED_VAULT,
   configDir = ".obsidian",
   allowRuntimeTestProfile = false,
   allowScratchNativeVault = false,
-  readProcessState,
-  readIdentity,
-  activatePid,
-  timeoutMs = 10_000,
-  pollMs = 150,
-  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  readNativeWindow,
+  readRendererIdentity,
+  closedSettingsTarget = null,
 } = {}) {
   if (!Number.isSafeInteger(native?.ownerPid) || native.ownerPid <= 0 ||
       native?.nativeConfig?.vault !== expectedVault || native?.nativeConfig?.configDir !== configDir ||
       native?.marker?.allowedVault !== expectedVault || !sha256.test(native?.ownerCommandHash || "") ||
       !Number.isInteger(native?.port) || native.port <= 0 || native.port >= 65_536 ||
       native?.nativeConfig?.cdpUrl !== `http://127.0.0.1:${native.port}` || !nonempty(native?.appVersion)) {
-    fail("NATIVE_ACTIVATION_TARGET_MISMATCH", "Activation requires the exact validated test PID, profile, CDP port and Vault.");
+    fail("NATIVE_WINDOW_TARGET_MISMATCH", "Foreground verification requires the exact validated test PID, profile, CDP port and Vault.");
   }
   const expectedExecutable = resolveNativeOwnedProfileApp(native.profileRoot, native.marker, {
     allowRuntimeTestProfile,
@@ -99,50 +139,40 @@ export async function ensureOwnedNativeRendererForeground({
     expectedVault,
   });
   if (native.appExecutable !== expectedExecutable) {
-    fail("NATIVE_ACTIVATION_TARGET_MISMATCH", "The PID executable does not match the validated profile marker.");
+    fail("NATIVE_WINDOW_TARGET_MISMATCH", "The PID executable does not match the validated profile marker.");
   }
-  if (typeof readProcessState !== "function" || typeof readIdentity !== "function" || typeof activatePid !== "function") {
-    fail("NATIVE_ACTIVATION_HELPER_MISSING", "PID activation requires process, renderer and activation checks.");
+  if (typeof readNativeWindow !== "function" || typeof readRendererIdentity !== "function") {
+    fail("NATIVE_WINDOW_PROBE_MISSING", "Foreground verification requires injected process/window and CDP renderer probes.");
   }
   const target = Object.freeze({ ownerPid: native.ownerPid, profileRoot: native.profileRoot,
     appExecutable: expectedExecutable, port: native.port, vault: expectedVault });
-  const verifyProcess = async () => assertNativeActivationProcess(native, await readProcessState(target.ownerPid));
-  const verifyRenderer = async () => {
-    const identity = await readIdentity();
-    assertNativeActivationIdentity(identity, native, { vault: expectedVault, configDir });
-    return identity;
-  };
-
-  await verifyProcess();
-  let identity = await verifyRenderer();
-  try {
-    const foreground = assertNativeLearningForeground(identity, { vault: expectedVault, configDir,
-      stage: "owned-process foreground recovery" });
-    return Object.freeze({ status: "already-foreground", policy: "system-events-owner-pid",
-      ownerPid: target.ownerPid, profileRoot: target.profileRoot, vault: target.vault, foreground });
-  } catch (error) {
-    if (error?.code !== "NATIVE_WINDOW_NOT_FOREGROUND") throw error;
+  const windowProbe = await readNativeWindow(target.ownerPid);
+  assertNativeProcessBinding(native, windowProbe?.process);
+  const osWindow = windowProbe?.osFrontmostWindow;
+  if (osWindow?.pid !== target.ownerPid || osWindow.processName !== "Obsidian" ||
+      osWindow.frontmost !== true || typeof osWindow.title !== "string" || osWindow.title.length === 0) {
+    fail("NATIVE_OS_WINDOW_IDENTITY_MISMATCH", "System Events did not report the exact owned Obsidian PID as frontmost.");
   }
-
-  await activatePid(target.ownerPid);
-  await verifyProcess();
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    identity = await verifyRenderer();
-    try {
-      const foreground = assertNativeLearningForeground(identity, { vault: expectedVault, configDir,
-        stage: "after owned-process activation" });
-      return Object.freeze({ status: "reactivated", policy: "system-events-owner-pid",
-        ownerPid: target.ownerPid, profileRoot: target.profileRoot, vault: target.vault, foreground });
-    } catch (error) {
-      if (error?.code !== "NATIVE_WINDOW_NOT_FOREGROUND") throw error;
-    }
-    if (Date.now() >= deadline) {
-      fail("NATIVE_ACTIVATION_FOREGROUND_TIMEOUT",
-        `The exact owned renderer did not regain focus after PID ${target.ownerPid} activation.`);
-    }
-    await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  const identity = await readRendererIdentity();
+  assertNativeRendererBinding(identity, native, { vault: expectedVault, configDir });
+  if (osWindow.title !== identity.title) {
+    fail("NATIVE_OS_WINDOW_IDENTITY_MISMATCH", "The frontmost OS window title does not match the exact CDP renderer title.");
   }
+  if (identity.visibility !== "visible" || identity.focused !== true) {
+    fail("NATIVE_WINDOW_NOT_FOREGROUND", "The owned OS front window and focused CDP renderer do not identify the same test window.");
+  }
+  const openWindows = windowProbe.openWindows;
+  if (!Array.isArray(openWindows) || !openWindows.some(window => window?.url === identity.url &&
+      window.title === identity.title) || openWindows.filter(window => window?.url === identity.url &&
+      window.title === identity.title).length !== 1) {
+    fail("NATIVE_CDP_WINDOW_IDENTITY_MISMATCH", "The exact focused renderer is not unique in the owned CDP session.");
+  }
+  const staleReferences = assertClosedSettingsStaleReferences(identity, openWindows, closedSettingsTarget,
+    { vault: expectedVault, appVersion: native.appVersion });
+  return Object.freeze({ status: "verified", policy: staleReferences.length ? "owned-pid-os-cdp-closed-settings-stale-globals" : "owned-pid-os-cdp",
+    ownerPid: target.ownerPid, profileRoot: target.profileRoot, vault: target.vault,
+    osWindowTitle: osWindow.title, rendererUrl: identity.url, rendererTitle: identity.title,
+    staleGlobalReferences: staleReferences, rendererIdentity: identity });
 }
 
 export function assertNativeCandidateFiles(expectedFiles, installedFiles) {

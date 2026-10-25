@@ -26,8 +26,8 @@ import {
 import { readNativeSidecarTree } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
-import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate,
-  ensureOwnedNativeRendererForeground, resolveNativeOwnedProfileApp } from "./native-learning-acceptance.mjs";
+import { assertNativeCandidateFiles, assertNativeResumeCandidate,
+  resolveNativeOwnedProfileApp, verifyOwnedNativeRendererForeground } from "./native-learning-acceptance.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -213,38 +213,56 @@ report.nativeProfile = { root: native.profileRoot, marker: native.marker, appExe
   ownerCommandHash: native.ownerCommandHash,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 
-function activateNativeOwnerPid(pid) {
-  assert.equal(pid, native.ownerPid, "System Events may only activate the previously validated native.ownerPid.");
+function readNativeOwnerFrontWindow(pid) {
+  assert.equal(pid, native.ownerPid, "The OS window probe may inspect only the validated native.ownerPid.");
   const script = [
     "tell application \"System Events\"",
     `set matchingProcesses to every process whose unix id is ${pid}`,
     "if (count of matchingProcesses) is not 1 then error \"Expected exactly one process for the validated PID\"",
     "set targetProcess to item 1 of matchingProcesses",
-    "if name of targetProcess is not \"Obsidian\" then error \"Validated PID is no longer Obsidian\"",
-    "set frontmost of targetProcess to true",
+    "set frontmostProcesses to every process whose frontmost is true",
+    "if (count of frontmostProcesses) is not 1 then error \"Expected exactly one frontmost process\"",
+    "set frontmostProcess to item 1 of frontmostProcesses",
+    "set targetWindow to front window of targetProcess",
+    "return (unix id of targetProcess as text) & linefeed & (name of targetProcess as text) & linefeed & " +
+      "(frontmost of targetProcess as text) & linefeed & (unix id of frontmostProcess as text) & linefeed & (name of targetWindow as text)",
     "end tell",
   ].join("\n");
-  return execFileSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 5_000 });
+  const output = execFileSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 5_000 });
+  const [rawPid, processName, rawTargetFrontmost, rawFrontmostPid, ...titleLines] = output.trim().split(/\r?\n/u);
+  return { pid: Number(rawPid), processName, frontmost: rawTargetFrontmost === "true" && Number(rawFrontmostPid) === pid,
+    title: titleLines.join("\n").trim() };
 }
 
-async function ensureNativeOwnerForeground(stage) {
-  const result = await ensureOwnedNativeRendererForeground({
+async function readOpenCdpWindows() {
+  return Promise.all((await browser.pages()).map(async candidate => ({ url: candidate.url(),
+    title: await candidate.title().catch(() => ""), closed: candidate.isClosed() })));
+}
+
+async function verifyNativeOwnerForeground(stage, { closedSettingsTarget = null } = {}) {
+  const result = await verifyOwnedNativeRendererForeground({
     native,
     expectedVault: EXPECTED_VAULT,
     configDir: native.nativeConfig.configDir,
     allowRuntimeTestProfile: process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1",
     allowScratchNativeVault: false,
-    readProcessState: pid => {
+    readNativeWindow: async pid => {
+      assert.equal(pid, native.ownerPid, "The read-only process/window probe is PID-bound.");
       const state = ownedProcessForPid(pid, native.profileRoot, native.appExecutable, native.port);
-      return { pid: state.pid, ownedProfileProcess: state.ownedProfileProcess, commandHash: state.commandHash };
+      return { process: { pid: state.pid, ownedProfileProcess: state.ownedProfileProcess,
+        commandHash: state.commandHash }, osFrontmostWindow: readNativeOwnerFrontWindow(pid),
+      openWindows: await readOpenCdpWindows() };
     },
-    readIdentity: appIdentity,
-    activatePid: activateNativeOwnerPid,
+    readRendererIdentity: appIdentity,
+    closedSettingsTarget,
   });
-  report.foregroundRecovery = { stage, ...result };
-  await checkpoint(`native-owner-${result.status}`, { stage, ownerPid: result.ownerPid,
-    profileRoot: result.profileRoot, vault: result.vault, policy: result.policy });
-  return result;
+  const { rendererIdentity, ...evidence } = result;
+  report.foregroundProbe = { stage, ...evidence };
+  await checkpoint("native-owner-foreground-verified", { stage, ownerPid: result.ownerPid,
+    profileRoot: result.profileRoot, vault: result.vault, policy: result.policy,
+    osWindowTitle: result.osWindowTitle, rendererUrl: result.rendererUrl, rendererTitle: result.rendererTitle,
+    staleGlobalReferences: result.staleGlobalReferences });
+  return { ...evidence, rendererIdentity };
 }
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
@@ -290,6 +308,20 @@ async function appIdentity() {
       path: leaf.view?.requestedPath || leaf.view?.file?.path || leaf.view?.documentFile?.path || null,
       token: leaf.view?.token || null,
     }));
+    const describeDocument = candidate => {
+      try {
+        return candidate ? { url: candidate.URL || candidate.location?.href || null,
+          title: candidate.title || null, closed: candidate.defaultView?.closed === true } : null;
+      } catch { return { url: null, title: null, closed: false, inaccessible: true }; }
+    };
+    const describeWindowDocument = candidate => {
+      try {
+        const candidateDocument = candidate?.document;
+        return candidateDocument ? { url: candidateDocument.URL || candidate.location?.href || null,
+          title: candidateDocument.title || null,
+          closed: candidate.closed === true || candidateDocument.defaultView?.closed === true } : null;
+      } catch { return { url: null, title: null, closed: false, inaccessible: true }; }
+    };
     return {
       url: location.href,
       title: document.title,
@@ -305,6 +337,8 @@ async function appIdentity() {
       focused: document.hasFocus(),
       ownerDocumentIsRenderer: typeof activeDocument !== "undefined" && activeDocument === document,
       ownerWindowIsRenderer: typeof activeWindow !== "undefined" && activeWindow === window,
+      activeDocumentRef: typeof activeDocument !== "undefined" ? describeDocument(activeDocument) : null,
+      activeWindowDocumentRef: typeof activeWindow !== "undefined" ? describeWindowDocument(activeWindow) : null,
     };
   }, PLUGIN_ID, VIEW_TYPE);
 }
@@ -1036,6 +1070,11 @@ async function closeSettingsThroughUIIfVisible() {
   const settingsOpen = await settingsPage.$eval(".modal.mod-settings", node => node.getBoundingClientRect().width > 0)
     .catch(() => false);
   if (!settingsOpen) return false;
+  const settingsTarget = await settingsPage.evaluate(() => ({ url: location.href, title: document.title,
+    vault: app.vault?.adapter?.basePath || null,
+    settingsVisible: Boolean(document.querySelector(".modal.mod-settings")) }));
+  assert.equal(settingsTarget.vault, EXPECTED_VAULT);
+  assert.equal(settingsTarget.settingsVisible, true);
   await settingsPage.keyboard.down("Meta");
   try {
     await settingsPage.keyboard.press("w");
@@ -1052,8 +1091,9 @@ async function closeSettingsThroughUIIfVisible() {
     });
   }
   await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
+  const closedSettingsTarget = { ...settingsTarget, closed: settingsPage.isClosed() };
   settingsPage = null;
-  await ensureNativeOwnerForeground("after Settings window close");
+  await verifyNativeOwnerForeground("after Settings window close", { closedSettingsTarget });
   return true;
 }
 
@@ -2513,14 +2553,11 @@ async function main() {
   });
   page.on("pageerror", error => report.errors.push({ at: new Date().toISOString(), error: error?.stack || String(error) }));
 
-  const before = await appIdentity();
+  const foregroundProof = await verifyNativeOwnerForeground("before Native test mutations");
+  const { rendererIdentity: before, ...foregroundPreflight } = foregroundProof;
   native.assertNativeVaultIdentity(before, native.nativeConfig);
   report.identity = before;
-  report.foregroundPreflight = { status: "not-verified", policy: "external-cua-selection",
-    visibility: before.visibility, focused: before.focused };
-  report.foregroundPreflight = assertNativeLearningForeground(before, {
-    vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "before Native test mutations",
-  });
+  report.foregroundPreflight = foregroundPreflight;
   await recordCandidateArtifact();
   const continuingNativeMatrix = process.argv.includes("--complete-direction-matrix") ||
     process.argv.includes("--after-owned-process-restart");
@@ -2539,10 +2576,6 @@ async function main() {
   assert.equal(before.visibility, "visible",
     "Keep the owned Obsidian test window visible; if this is hidden, stop rather than automate another window.");
   if (attachedExistingTestVault) {
-    assert.ok(await page.evaluate(() => document.hasFocus() && typeof activeDocument !== "undefined" &&
-      activeDocument === document && typeof activeWindow !== "undefined" && activeWindow === window),
-    "Attached test window/document owner must exactly match the foreground renderer before writes");
-    assert.ok((await page.title()).endsWith("ObReader-Apple-Test - Obsidian 1.14.5"));
     for (const file of ["main.js", "manifest.json", "styles.css"]) {
       assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
         sha256(await readFile(path.join(ROOT, "dist", PLUGIN_ID, file))), `Attached bundle ${file} must exactly match integration dist`);
