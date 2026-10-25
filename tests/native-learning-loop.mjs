@@ -211,9 +211,7 @@ const { h64Raw } = await xxhash();
 report.nativeProfile = { root: native.profileRoot, marker: native.marker, appExecutable: native.appExecutable,
   appVersion: native.appVersion, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerCommandHash: native.ownerCommandHash,
-  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))),
-  targetBinding: scratchVaultMode ? { kind: "single-owned-profile", vault: EXPECTED_VAULT,
-    siblingProfileInspection: processOnlyBoundOwnedProfile ? "skipped; disposable scratch vault" : "required" } : null };
+  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 
 function activateNativeOwnerPid(pid) {
   assert.equal(pid, native.ownerPid, "System Events may only activate the previously validated native.ownerPid.");
@@ -235,7 +233,7 @@ async function ensureNativeOwnerForeground(stage) {
     expectedVault: EXPECTED_VAULT,
     configDir: native.nativeConfig.configDir,
     allowRuntimeTestProfile: process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1",
-    allowScratchNativeVault: scratchVaultMode,
+    allowScratchNativeVault: false,
     readProcessState: pid => {
       const state = ownedProcessForPid(pid, native.profileRoot, native.appExecutable, native.port);
       return { pid: state.pid, ownedProfileProcess: state.ownedProfileProcess, commandHash: state.commandHash };
