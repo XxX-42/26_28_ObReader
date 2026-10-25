@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-current-candidate-enable-restore",
+  "observedAt": "2026-10-25T16:39:29Z",
+  "runtime": {
+    "application": "Obsidian 1.14.5",
+    "vaultLabel": "ObReader-Apple-Test",
+    "vaultPathStored": false,
+    "syncEnabled": false
+  },
+  "candidate": {
+    "pluginId": "pdf-web-reader",
+    "version": "0.14.0",
+    "sha256": {
+      "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "before": {
+    "pluginEnabled": false,
+    "pluginLoaded": false,
+    "readerViews": 0
+  },
+  "probe": {
+    "action": "Enabled the installed candidate through Obsidian PluginManager to diagnose why the prior startup profile had an empty loaded-plugin set.",
+    "result": "Candidate loaded as 0.14.0; no Reader view was opened. This was an in-process activation probe, not a process-start measurement or Native learning-loop acceptance.",
+    "restoration": "Disabled and unloaded the candidate with PluginManager, saved the disabled plugin list, and verified zero loaded plugins and zero Reader views."
+  },
+  "after": {
+    "enabledPlugins": [],
+    "loadedPlugins": [],
+    "readerViews": 0,
+    "communityPluginsFile": []
+  },
+  "observedSideEffects": {
+    "pluginDirectoryFilesTouchedAfterProbeStart": 409,
+    "details": "Obsidian generated/refreshed the candidate's embedded asset cache and session logs while loading. These files were retained.",
+    "pdfDataFilesTouched": 0,
+    "vocabularyDataFilesTouched": 0,
+    "pdfOpened": false,
+    "sourcePdfHashComparison": "NOT_RUN_NO_READER_OPENED",
+    "formalVaultTouched": false
+  },
+  "acceptance": {
+    "native8Stage5DirectionMatrix": "NOT_RUN",
+    "openMove": "NOT_RUN",
+    "processRestart": "NOT_RUN",
+    "readerUiFirstLookup": "NOT_MEASURED",
+    "startupAddedBlockingLt50ms": "NOT_MEASURED"
+  },
+  "notes": [
+    "The profile name suggested a temporary clone, but the active Obsidian DataAdapter resolved to the existing ObReader-Apple-Test Vault. The probe was limited to enabling then restoring the plugin state; no further Native actions were performed.",
+    "The test Vault remained Sync-disabled. This receipt intentionally omits its absolute local path.",
+    "Resource-v3 lookup measurements remain the separately recorded DataAdapter measurements and are not upgraded by this activation probe."
+  ]
+}

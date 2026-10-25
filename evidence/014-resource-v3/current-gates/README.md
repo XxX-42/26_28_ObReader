@@ -224,3 +224,22 @@ the isolated service benchmark. No SQLite/OPFS, Bulk, FSRS, or scroll work is
 being added. The current candidate remains test-only; do not promote to `main`
 or the formal Vault until the current-package Native gate and startup metric
 have evidence.
+
+## 2026-10-26 bounded macOS activation follow-up
+
+A later read-only CDP check found that the long-lived Obsidian 1.14.5 process
+with a temporary-looking user-data profile was actually attached to the
+existing `ObReader-Apple-Test` Vault. Sync was disabled. To resolve the stale
+startup-profile question, the exact installed `0.14.0` candidate was briefly
+enabled through Obsidian's PluginManager. It loaded successfully, with zero
+Reader views; it was then disabled and unloaded, and the saved enabled-plugin
+list was restored to empty. Final runtime checks confirmed no loaded plugin and
+no Reader views. The exact package hashes still match the candidate above.
+
+Loading generated/refreshed 409 files within the plugin directory (embedded
+asset cache and session logs); they were retained. No files under PDFData or
+VocabularyData were modified in the observed interval, and no PDF was opened.
+This was not a Native workflow, process-restart, first-lookup, or startup-blocking
+measurement. The current Native matrix and restart remain unverified; startup
+blocking remains unmeasured. Receipt:
+[mac-current-candidate-enable-restore-20261026.json](mac-current-candidate-enable-restore-20261026.json).
