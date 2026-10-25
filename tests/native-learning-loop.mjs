@@ -27,7 +27,7 @@ import { readNativeSidecarTree } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
 import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate,
-  resolveNativeOwnedProfileApp } from "./native-learning-acceptance.mjs";
+  ensureOwnedNativeRendererForeground, resolveNativeOwnedProfileApp } from "./native-learning-acceptance.mjs";
 import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -211,7 +211,43 @@ const { h64Raw } = await xxhash();
 report.nativeProfile = { root: native.profileRoot, marker: native.marker, appExecutable: native.appExecutable,
   appVersion: native.appVersion, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerCommandHash: native.ownerCommandHash,
-  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
+  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))),
+  targetBinding: scratchVaultMode ? { kind: "single-owned-profile", vault: EXPECTED_VAULT,
+    siblingProfileInspection: processOnlyBoundOwnedProfile ? "skipped; disposable scratch vault" : "required" } : null };
+
+function activateNativeOwnerPid(pid) {
+  assert.equal(pid, native.ownerPid, "System Events may only activate the previously validated native.ownerPid.");
+  const script = [
+    "tell application \"System Events\"",
+    `set matchingProcesses to every process whose unix id is ${pid}`,
+    "if (count of matchingProcesses) is not 1 then error \"Expected exactly one process for the validated PID\"",
+    "set targetProcess to item 1 of matchingProcesses",
+    "if name of targetProcess is not \"Obsidian\" then error \"Validated PID is no longer Obsidian\"",
+    "set frontmost of targetProcess to true",
+    "end tell",
+  ].join("\n");
+  return execFileSync("/usr/bin/osascript", ["-e", script], { encoding: "utf8", timeout: 5_000 });
+}
+
+async function ensureNativeOwnerForeground(stage) {
+  const result = await ensureOwnedNativeRendererForeground({
+    native,
+    expectedVault: EXPECTED_VAULT,
+    configDir: native.nativeConfig.configDir,
+    allowRuntimeTestProfile: process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1",
+    allowScratchNativeVault: scratchVaultMode,
+    readProcessState: pid => {
+      const state = ownedProcessForPid(pid, native.profileRoot, native.appExecutable, native.port);
+      return { pid: state.pid, ownedProfileProcess: state.ownedProfileProcess, commandHash: state.commandHash };
+    },
+    readIdentity: appIdentity,
+    activatePid: activateNativeOwnerPid,
+  });
+  report.foregroundRecovery = { stage, ...result };
+  await checkpoint(`native-owner-${result.status}`, { stage, ownerPid: result.ownerPid,
+    profileRoot: result.profileRoot, vault: result.vault, policy: result.policy });
+  return result;
+}
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
 const installedManifestPath = absoluteVaultPath(".obsidian/plugins/pdf-web-reader/manifest.json");
@@ -257,6 +293,8 @@ async function appIdentity() {
       token: leaf.view?.token || null,
     }));
     return {
+      url: location.href,
+      title: document.title,
       vault: app.vault?.adapter?.basePath || null,
       configDir: app.vault?.configDir || null,
       vaultName: app.vault?.getName?.() || null,
@@ -1017,9 +1055,7 @@ async function closeSettingsThroughUIIfVisible() {
   }
   await waitFor("Settings window closed through macOS Cmd+W UI action", () => settingsPage.isClosed(), Boolean, 8_000);
   settingsPage = null;
-  assertNativeLearningForeground(await appIdentity(), {
-    vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "after Settings window close",
-  });
+  await ensureNativeOwnerForeground("after Settings window close");
   return true;
 }
 
