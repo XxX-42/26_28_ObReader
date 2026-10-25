@@ -33,5 +33,14 @@
     "readerLeaves": 0
   },
   "appInstallUntouched": true,
-  "formalVaultUntouched": true
+  "formalVaultUntouched": true,
+  "postBenchmarkUiState": {
+    "vaultTrustPrompt": "opened in Safe Mode; did not trust/enable community plugins",
+    "communityPluginsEnabled": [],
+    "candidatePluginActive": false,
+    "candidatePluginEnabled": false,
+    "syncEnabled": false,
+    "readerLeaves": 0,
+    "note": "Full Native mutation matrix was not run because multiple Obsidian processes share this test Vault; no plugin or Vault data was changed in the 1.14.5 process."
+  }
 }
