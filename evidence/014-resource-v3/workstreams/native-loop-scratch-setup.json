@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-scratch-vault-setup",
+  "createdAtUtc": "2026-10-25T12:52:15.039Z",
+  "vaultPath": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+  "vaultName": "native-loop-b-20261025125158641-78e1c4",
+  "profileRoot": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4",
+  "profileMarker": {
+    "kind": "codex-owned-native-test-profile",
+    "runId": "native-loop-b-20261025125158641-78e1c4",
+    "allowedVault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "appPath": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app"
+  },
+  "appVersion": "1.14.5",
+  "syncConfiguredOff": true,
+  "communityPlugins": [],
+  "corePlugins": [],
+  "candidateFiles": {
+    "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "resourceV3": {
+    "source": "ObReader-Apple-Test Resource-v3 dictionary only; no notes or PDFs copied",
+    "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3",
+    "fileCount": 68,
+    "bytes": 16794924,
+    "treeSha256": "b9d524730da9034a0980ab4791dee49d2e25aa2fd44c32c8f453f05bca599017",
+    "manifest": {
+      "path": "manifest.json",
+      "bytes": 25782,
+      "sha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe"
+    },
+    "blocks": 67
+  }
+}

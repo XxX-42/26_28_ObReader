@@ -33,7 +33,21 @@ import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const RUNNER_BRANCH = execFileSync("git", ["branch", "--show-current"], { cwd: ROOT, encoding: "utf8" }).trim();
-const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
+const NATIVE_RUNTIME_ROOT = "/private/tmp/obreader-014-runtime";
+const NATIVE_SCRATCH_VAULT_ROOT = `${NATIVE_RUNTIME_ROOT}/native-loop-vaults`;
+const scratchVaultMode = process.env.PDF_READER_NATIVE_SCRATCH_VAULT === "1";
+const EXPECTED_VAULT = (() => {
+  if (!scratchVaultMode) return "/Users/jiajia/Documents/ObReader-Apple-Test";
+  const requested = process.env.PDF_READER_NATIVE_SCRATCH_VAULT_PATH;
+  assert.ok(typeof requested === "string" && path.isAbsolute(requested),
+    "Scratch-vault mode requires an explicit absolute PDF_READER_NATIVE_SCRATCH_VAULT_PATH");
+  const resolved = path.resolve(requested);
+  const relative = path.relative(NATIVE_SCRATCH_VAULT_ROOT, resolved);
+  assert.ok(relative.startsWith("native-loop-b-") && !relative.includes(path.sep),
+    `Refusing Native scratch vault outside ${NATIVE_SCRATCH_VAULT_ROOT}`);
+  return resolved;
+})();
+const EXPECTED_VAULT_NAME = path.basename(EXPECTED_VAULT);
 const OWNED_PROFILE_PARENT = "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence";
 const PLUGIN_ID = "pdf-web-reader";
 const VIEW_TYPE = "pdf-web-reader-view";
@@ -44,7 +58,11 @@ const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
 const NATIVE_TEXT_LAYER_READY_TIMEOUT_MS = 60_000;
 const CONTEXT_WORD = "Dynamic";
-const attachedExistingTestVault = process.argv.includes("--attached-existing-test-vault");
+const boundedOpenMoveStage = process.argv.includes("--bounded-openmove-stage");
+const attachedExistingTestVault = process.argv.includes("--attached-existing-test-vault") || boundedOpenMoveStage;
+const processOnlyBoundOwnedProfile = process.argv.includes("--process-only-owned-profile");
+assert.ok(!processOnlyBoundOwnedProfile || (scratchVaultMode && boundedOpenMoveStage),
+  "Process-only mode is restricted to the bounded stage in a disposable scratch vault.");
 const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
 assert.ok(!attachedExistingTestVault || !resumePath, "Attached mode requires a fresh unique run and must not mutate the preserved run.");
 const resumeEvidence = resumePath ? JSON.parse(await readFile(resumePath, "utf8")) : null;
@@ -68,7 +86,7 @@ const report = {
   base: "65de915b306954a160ed99002f33ada639cebd4e",
   branch: RUNNER_BRANCH,
   runnerHead: RUNNER_HEAD,
-  planA: "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in an owned Obsidian profile attached only to ObReader-Apple-Test.",
+  planA: "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in one identity-checked owned Obsidian profile.",
   planB: "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity and the existing route scenarios. The restart scenario in this runner is a plugin reload, not an application-process restart.",
   startedAt: startedAt.toISOString(),
   runId,
@@ -156,6 +174,8 @@ async function initializeNativeConfig(profileRoot) {
   assert.equal(marker.allowedVault, EXPECTED_VAULT);
   const appExecutable = resolveNativeOwnedProfileApp(canonicalProfile, marker, {
     allowRuntimeTestProfile: process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1",
+    allowScratchNativeVault: scratchVaultMode,
+    expectedVault: EXPECTED_VAULT,
   });
   const appInfo = path.join(marker.appPath, "Contents", "Info.plist");
   assert.equal(execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", appInfo], { encoding: "utf8" }).trim(),
@@ -211,7 +231,9 @@ const { h64Raw } = await xxhash();
 report.nativeProfile = { root: native.profileRoot, marker: native.marker, appExecutable: native.appExecutable,
   appVersion: native.appVersion, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerCommandHash: native.ownerCommandHash,
-  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
+  ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))),
+  targetBinding: scratchVaultMode ? { kind: "single-owned-profile", vault: EXPECTED_VAULT,
+    siblingProfileInspection: processOnlyBoundOwnedProfile ? "skipped; disposable scratch vault" : "required" } : null };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
 const installedManifestPath = absoluteVaultPath(".obsidian/plugins/pdf-web-reader/manifest.json");
@@ -2429,13 +2451,20 @@ async function main() {
   const appPages = pages.filter(candidate => candidate.url() === APP_URL);
   if (attachedExistingTestVault) {
     const matched = [];
-    report.attachedMode = { enabled: true, temporaryHarnessMode: true, processRestart: "NOT_RUN: shared process ownership", excludedRenderers: [] };
+    report.attachedMode = { enabled: true, temporaryHarnessMode: true,
+      processRestart: boundedOpenMoveStage ? "NOT_RUN: bounded open-move stage scope" : "NOT_RUN: shared process ownership",
+      excludedRenderers: [] };
+    if (boundedOpenMoveStage) {
+      assert.equal(appPages.length, 1, "Bounded scratch mode requires exactly one renderer in the bound process/profile.");
+      report.boundedStage = { name: "openmove-five-directions", status: "running", scratchVault: EXPECTED_VAULT,
+        ownerPid: native.ownerPid, cdpPort: native.port, profileRoot: native.profileRoot };
+    }
     for (const candidate of appPages) {
       const identity = await candidate.evaluate(() => ({ path: app.vault.adapter.basePath, name: app.vault.getName() }));
-      if (identity.path === EXPECTED_VAULT && identity.name === "ObReader-Apple-Test") matched.push(candidate);
+      if (identity.path === EXPECTED_VAULT && identity.name === EXPECTED_VAULT_NAME) matched.push(candidate);
       else report.attachedMode.excludedRenderers.push({ url: candidate.url(), ...identity, action: "excluded; no navigation, interaction, content read, or mutation" });
     }
-    assert.equal(matched.length, 1, "Attached mode requires exactly one exact Apple-Test renderer");
+    assert.equal(matched.length, 1, "Bound Native mode requires exactly one renderer for the configured test vault");
     page = matched[0];
   } else {
     assert.equal(appPages.length, 1, "Owned profile must expose exactly one Obsidian main-window renderer.");
@@ -2479,7 +2508,7 @@ async function main() {
     assert.ok(await page.evaluate(() => document.hasFocus() && typeof activeDocument !== "undefined" &&
       activeDocument === document && typeof activeWindow !== "undefined" && activeWindow === window),
     "Attached test window/document owner must exactly match the foreground renderer before writes");
-    assert.ok((await page.title()).endsWith("ObReader-Apple-Test - Obsidian 1.14.5"));
+    assert.ok((await page.title()).endsWith(`${EXPECTED_VAULT_NAME} - Obsidian ${native.appVersion}`));
     for (const file of ["main.js", "manifest.json", "styles.css"]) {
       assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
         sha256(await readFile(path.join(ROOT, "dist", PLUGIN_ID, file))), `Attached bundle ${file} must exactly match integration dist`);
@@ -2494,7 +2523,13 @@ async function main() {
     installedManifestVersion: installedManifest.version };
   await recordScreen("preflight-safe-mode");
 
-  await assertSiblingTestVaultProcessesQuiescent();
+  if (processOnlyBoundOwnedProfile) {
+    assert.equal(scratchVaultMode, true);
+    assert.equal(native.marker.allowedVault, EXPECTED_VAULT);
+    report.nativeProfile.siblingTestVaultProcesses = "NOT_INSPECTED: isolated scratch vault and process-only mode";
+  } else {
+    await assertSiblingTestVaultProcessesQuiescent();
+  }
   await restoreOwnedStaleIsolation();
   await clearStaleNativeMaintenanceLogger();
   await installNativeIsolation();
@@ -2580,9 +2615,15 @@ async function main() {
     assert.equal(sha256(await readFile(absoluteVaultPath(movedPath))), report.fixtures.originalPdfSha256);
     report.attachedMode.openMove = { status: "passed", directions, closes, markdownCleanup, canonicalUnchanged: true, sourcePdfUnchanged: true };
     report.fixtures.finalPdfPath = movedPath;
+    if (boundedOpenMoveStage) {
+      report.boundedStage = { ...report.boundedStage, status: "passed", routeStage: "openmove",
+        directions, closes, markdownCleanup, sourcePdfSha256: report.fixtures.originalPdfSha256 };
+    }
     await captureNativeEvidence();
     report.status = "passed";
-    report.recommendation = "Attached E2E and open-move only. Original six-stage run unchanged; real process restart NOT_RUN due shared process.";
+    report.recommendation = boundedOpenMoveStage
+      ? "One bounded open-move five-direction stage passed in the disposable scratch vault; remaining matrix stages and real process restart are not run."
+      : "Attached E2E and open-move only. Original six-stage run unchanged; real process restart NOT_RUN due shared process.";
     return;
   }
   if (process.argv.includes("--markdown-quick-open-diagnostic") || process.argv.includes("--markdown-source-visibility-diagnostic") || process.argv.includes("--editor-route-passive-diagnostic") || process.argv.includes("--source-checkpoint-only") || process.argv.includes("--navigation-directions-only") || process.argv.includes("--backlink-correlation-diagnostic") || process.argv.includes("--complete-direction-matrix")) {
@@ -2681,7 +2722,7 @@ try {
   if (browser) {
     report.failureTargets = [];
     for (const target of await browser.pages()) {
-      if (attachedExistingTestVault && target !== page && !(await target.title()).includes(" - ObReader-Apple-Test - ")) continue;
+      if (attachedExistingTestVault && target !== page && !(await target.title()).includes(` - ${EXPECTED_VAULT_NAME} - `)) continue;
       const state = await target.evaluate(() => ({ title: document.title,
         bodyClass: document.body?.className || "",
         text: (document.body?.innerText || "").slice(0, 6000),

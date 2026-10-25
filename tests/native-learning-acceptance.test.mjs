@@ -61,6 +61,18 @@ test("Native profile trust binds the exact test Vault, profile root and Obsidian
     error => error.code === "NATIVE_PROFILE_NOT_OWNED", "external test profiles require explicit opt-in");
   assert.equal(resolveNativeOwnedProfileApp(runtimeProfile, runtimeMarker, { allowRuntimeTestProfile: true }),
     "/private/tmp/obreader-014-runtime/mnt/Obsidian.app/Contents/MacOS/Obsidian");
+  const scratchVault = "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-fixture";
+  const scratchProfile = "/private/tmp/obreader-014-runtime/profile-native-loop-b-fixture";
+  const scratchMarker = { ...runtimeMarker, allowedVault: scratchVault };
+  assert.equal(resolveNativeOwnedProfileApp(scratchProfile, scratchMarker, {
+    allowRuntimeTestProfile: true,
+    allowScratchNativeVault: true,
+    expectedVault: scratchVault,
+  }), "/private/tmp/obreader-014-runtime/mnt/Obsidian.app/Contents/MacOS/Obsidian");
+  assert.throws(() => resolveNativeOwnedProfileApp(scratchProfile, scratchMarker, {
+    allowRuntimeTestProfile: true,
+    expectedVault: scratchVault,
+  }), error => error.code === "NATIVE_PROFILE_NOT_OWNED");
   for (const [profile, marker] of [
     ["/private/tmp/obreader-014-runtime/profile-other/path", runtimeMarker],
     [runtimeProfile, { ...runtimeMarker, allowedVault: "/Users/jiajia/Documents/Other" }],

@@ -5,6 +5,7 @@ export const NATIVE_ROUTE_STAGES = Object.freeze([
 ]);
 const OWNED_PROFILE_PARENT = "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence";
 const RUNTIME_TEST_ROOT = "/private/tmp/obreader-014-runtime";
+const RUNTIME_SCRATCH_VAULT_ROOT = `${RUNTIME_TEST_ROOT}/native-loop-vaults`;
 const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
 const INSTALLED_OBSIDIAN_APP = "/Applications/Obsidian.app";
 const RUNTIME_OBSIDIAN_APP = `${RUNTIME_TEST_ROOT}/mnt/Obsidian.app`;
@@ -20,7 +21,11 @@ function fail(code, message) {
   throw error;
 }
 
-export function resolveNativeOwnedProfileApp(profileRoot, marker, { allowRuntimeTestProfile = false } = {}) {
+export function resolveNativeOwnedProfileApp(profileRoot, marker, {
+  allowRuntimeTestProfile = false,
+  allowScratchNativeVault = false,
+  expectedVault = EXPECTED_VAULT,
+} = {}) {
   const isDirectProfileChild = (parent, value, prefix) => {
     if (typeof value !== "string" || !value.startsWith(`${parent}/${prefix}`)) return false;
     const suffix = value.slice(parent.length + 1);
@@ -30,9 +35,15 @@ export function resolveNativeOwnedProfileApp(profileRoot, marker, { allowRuntime
   const runtimeTestProfile = allowRuntimeTestProfile === true &&
     isDirectProfileChild(RUNTIME_TEST_ROOT, profileRoot, "profile-");
   const expectedApp = normalProfile ? INSTALLED_OBSIDIAN_APP : runtimeTestProfile ? RUNTIME_OBSIDIAN_APP : null;
+  const scratchVaultRelative = typeof expectedVault === "string"
+    ? expectedVault.slice(`${RUNTIME_SCRATCH_VAULT_ROOT}/`.length) : "";
+  const scratchVault = allowScratchNativeVault === true && expectedVault.startsWith(`${RUNTIME_SCRATCH_VAULT_ROOT}/`) &&
+    scratchVaultRelative.startsWith("native-loop-b-") && !scratchVaultRelative.includes("/");
+  const allowedVault = expectedVault === EXPECTED_VAULT || scratchVault;
   if (!expectedApp || marker?.kind !== "codex-owned-native-test-profile" ||
-      marker.allowedVault !== EXPECTED_VAULT || marker.appPath !== expectedApp) {
-    fail("NATIVE_PROFILE_NOT_OWNED", "Native tests require a verified ObReader-Apple-Test profile and its matching Obsidian app.");
+      !allowedVault || marker.allowedVault !== expectedVault || marker.appPath !== expectedApp ||
+      (scratchVault && !runtimeTestProfile)) {
+    fail("NATIVE_PROFILE_NOT_OWNED", "Native tests require a verified test-vault profile and its matching Obsidian app.");
   }
   return `${expectedApp}/Contents/MacOS/Obsidian`;
 }

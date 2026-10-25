@@ -128,6 +128,28 @@ test("macOS native config only accepts the explicit isolated test vault", () => 
   assert.equal(direct.cli, "/usr/local/bin/obsidian");
 });
 
+test("macOS Native scratch mode accepts only one disposable runtime vault", () => {
+  const config = loadNativeConfig({
+    PDF_READER_NATIVE_SCRATCH_VAULT: "1",
+    OBSIDIAN_ACTIVE_VAULT: "1",
+    OBSIDIAN_VAULT_PATH: "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-fixture",
+    PDF_READER_CDP_URL: "http://127.0.0.1:9226",
+  }, "darwin");
+  assert.equal(config.vault, "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-fixture");
+  for (const vault of [
+    "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-fixture/nested",
+    "/private/tmp/obreader-014-runtime/other-vault",
+  ]) {
+    assert.throws(() => loadNativeConfig({
+      PDF_READER_NATIVE_SCRATCH_VAULT: "1",
+      OBSIDIAN_ACTIVE_VAULT: "1",
+      OBSIDIAN_VAULT_PATH: vault,
+      PDF_READER_CDP_URL: "http://127.0.0.1:9226",
+    }, "darwin"), /disposable vault/u);
+  }
+});
+
 test("custom config directory must remain inside the vault", () => {
   assert.throws(() => loadNativeConfig({
     OBSIDIAN_VAULT_PATH: "/tmp/test-vault",

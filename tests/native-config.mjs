@@ -10,6 +10,8 @@ const MACOS_OBSIDIAN_CLI = "/usr/local/bin/obsidian";
 export const NATIVE_CLI_MAX_BUFFER = 128 * 1024 * 1024;
 export const MACOS_TEST_VAULT =
   "/Users/jiajia/Documents/ObReader-Apple-Test";
+export const MACOS_NATIVE_SCRATCH_VAULT_ROOT =
+  "/private/tmp/obreader-014-runtime/native-loop-vaults";
 
 function resolveForPlatform(value, platform) {
   return platform === "win32" ? path.win32.resolve(value) : path.posix.resolve(value);
@@ -49,11 +51,18 @@ export function loadNativeConfig(env = process.env, platform = process.platform)
   );
 
   if (isMac) {
-    assert.equal(
-      resolveForPlatform(vault, platform),
-      resolveForPlatform(MACOS_TEST_VAULT, platform),
-      `macOS native tests are restricted to the isolated test vault at ${MACOS_TEST_VAULT}`,
-    );
+    const resolvedVault = resolveForPlatform(vault, platform);
+    if (env.PDF_READER_NATIVE_SCRATCH_VAULT === "1") {
+      const relative = path.posix.relative(MACOS_NATIVE_SCRATCH_VAULT_ROOT, resolvedVault);
+      assert.ok(relative.startsWith("native-loop-b-") && !relative.includes("/"),
+        `Native scratch tests are restricted to one disposable vault under ${MACOS_NATIVE_SCRATCH_VAULT_ROOT}`);
+    } else {
+      assert.equal(
+        resolvedVault,
+        resolveForPlatform(MACOS_TEST_VAULT, platform),
+        `macOS native tests are restricted to the isolated test vault at ${MACOS_TEST_VAULT}`,
+      );
+    }
   }
 
   // Current Obsidian CLI selects by vault name; IDs are not accepted by
