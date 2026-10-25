@@ -1,0 +1,4198 @@
+{
+  "status": "COMPLETE_INSTANCE_COLD_NATIVE_LOOKUP_ONLY",
+  "runId": "cdc499ae-cf74-4661-9dd8-d17690679453",
+  "runtimeUnderTest": "standalone VocabularyDictionary module injected into the exact Obsidian renderer; excludes plugin Host/Reader wiring",
+  "candidate": {
+    "branch": "codex/014-goal-resume-20261025",
+    "commit": "e0c98fd1d8ee886b0aa5821936ef6035c28afdf1",
+    "dictionarySourceSha256": "76cdb665c423bb9277a1790775775fe28d0f73f0be6a590861e06f833e13a8bd",
+    "workerSourceSha256": "0670712f82ad9995541fd23bd8a4f651b0021afb323cd5bc9fc192556cdf17c7",
+    "mainBundleSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5"
+  },
+  "startupAddedBlocking": {
+    "status": "NOT_MEASURED",
+    "reason": "Attaching after startup cannot attribute startup CPU or blocking; manifest elapsed I/O is not blocking."
+  },
+  "matrix": [
+    "common-on",
+    "rare-zyzzyva",
+    "not-found"
+  ],
+  "trials": [
+    {
+      "trial": 1,
+      "origin": "app://obsidian.md",
+      "href": "app://obsidian.md/index.html",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "adapterClass": "e",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "platform": {
+        "isDesktopApp": null,
+        "isMobileApp": null,
+        "isIosApp": null
+      },
+      "coldScope": "new dictionary instance/Worker per case; existing Native process/origin and OS cache retained",
+      "outcomes": [
+        {
+          "id": "common-on",
+          "key": "on",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 200.09999999403954
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 1254.300000011921
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 156.90000000596046,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 262366
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.4000000059604645,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0.5,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0.19999998807907104,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0.20000001788139343,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 110.2999999821186,
+            "compressedBytes": 262366,
+            "estimatedBytes": 1477194
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 262366,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.4000000059604645,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.4000000059604645,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "rare-zyzzyva",
+          "key": "zyzzyva",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 1.5
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 99.69999998807907
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 19.69999998807907,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 139005
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 9,
+            "compressedBytes": 139005,
+            "estimatedBytes": 665940
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 139005,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "not-found",
+          "key": "codex-benchmark-not-found-cdc499ae-cf74-4661-9dd8-d17690679453-1",
+          "expected": "missing",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 1.9000000059604645
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 176.5
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 74.5,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 236616
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 27.200000017881393,
+            "compressedBytes": 236616,
+            "estimatedBytes": 1480078
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 236616,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        }
+      ],
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 138.7000000178814,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 6.0999999940395355,
+          "bytes": 262366
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.0999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 1.199999988079071,
+          "bytes": 139005
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.5999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 3.4000000059604645,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "decodeWall": [
+        {
+          "case": "common-on",
+          "elapsedMs": 149.59999999403954,
+          "workerPresent": true
+        },
+        {
+          "case": "rare-zyzzyva",
+          "elapsedMs": 18.30000001192093,
+          "workerPresent": true
+        },
+        {
+          "case": "not-found",
+          "elapsedMs": 70.90000000596046,
+          "workerPresent": true
+        }
+      ],
+      "workerMetrics": [
+        {
+          "case": "common-on",
+          "calls": 1,
+          "decodeMs": 110.2999999821186,
+          "compressedBytes": 262366,
+          "estimatedBytes": 1477194
+        },
+        {
+          "case": "rare-zyzzyva",
+          "calls": 1,
+          "decodeMs": 9,
+          "compressedBytes": 139005,
+          "estimatedBytes": 665940
+        },
+        {
+          "case": "not-found",
+          "calls": 1,
+          "decodeMs": 27.200000017881393,
+          "compressedBytes": 236616,
+          "estimatedBytes": 1480078
+        }
+      ],
+      "manifestCalls": [],
+      "oldGenerationIsolation": "unique disposable IndexedDB namespaces; existing generation untouched; not a stale-generation migration test"
+    },
+    {
+      "trial": 2,
+      "origin": "app://obsidian.md",
+      "href": "app://obsidian.md/index.html",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "adapterClass": "e",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "platform": {
+        "isDesktopApp": null,
+        "isMobileApp": null,
+        "isIosApp": null
+      },
+      "coldScope": "new dictionary instance/Worker per case; existing Native process/origin and OS cache retained",
+      "outcomes": [
+        {
+          "id": "common-on",
+          "key": "on",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 4.300000011920929
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 176.40000000596046
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 52.89999997615814,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 262366
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 21,
+            "compressedBytes": 262366,
+            "estimatedBytes": 1477194
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 262366,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "rare-zyzzyva",
+          "key": "zyzzyva",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 2.0999999940395355
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 175.80000001192093
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 23.900000005960464,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 139005
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 17.69999998807907,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 16.19999998807907,
+            "compressedBytes": 139005,
+            "estimatedBytes": 665940
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 139005,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "not-found",
+          "key": "codex-benchmark-not-found-cdc499ae-cf74-4661-9dd8-d17690679453-2",
+          "expected": "missing",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 7.5999999940395355
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 171.59999999403954
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 63.10000002384186,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 236616
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 23.700000017881393,
+            "compressedBytes": 236616,
+            "estimatedBytes": 1480078
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 236616,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        }
+      ],
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 3.7000000178813934,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 0.699999988079071,
+          "bytes": 262366
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.7000000178813934,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 0.7999999821186066,
+          "bytes": 139005
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 7.300000011920929,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 1.699999988079071,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "decodeWall": [
+        {
+          "case": "common-on",
+          "elapsedMs": 52.099999994039536,
+          "workerPresent": true
+        },
+        {
+          "case": "rare-zyzzyva",
+          "elapsedMs": 23.100000023841858,
+          "workerPresent": true
+        },
+        {
+          "case": "not-found",
+          "elapsedMs": 61.30000001192093,
+          "workerPresent": true
+        }
+      ],
+      "workerMetrics": [
+        {
+          "case": "common-on",
+          "calls": 1,
+          "decodeMs": 21,
+          "compressedBytes": 262366,
+          "estimatedBytes": 1477194
+        },
+        {
+          "case": "rare-zyzzyva",
+          "calls": 1,
+          "decodeMs": 16.19999998807907,
+          "compressedBytes": 139005,
+          "estimatedBytes": 665940
+        },
+        {
+          "case": "not-found",
+          "calls": 1,
+          "decodeMs": 23.700000017881393,
+          "compressedBytes": 236616,
+          "estimatedBytes": 1480078
+        }
+      ],
+      "manifestCalls": [],
+      "oldGenerationIsolation": "unique disposable IndexedDB namespaces; existing generation untouched; not a stale-generation migration test"
+    },
+    {
+      "trial": 3,
+      "origin": "app://obsidian.md",
+      "href": "app://obsidian.md/index.html",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "adapterClass": "e",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "platform": {
+        "isDesktopApp": null,
+        "isMobileApp": null,
+        "isIosApp": null
+      },
+      "coldScope": "new dictionary instance/Worker per case; existing Native process/origin and OS cache retained",
+      "outcomes": [
+        {
+          "id": "common-on",
+          "key": "on",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 1.800000011920929
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 194.2999999821186
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 50,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 262366
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 22.900000005960464,
+            "compressedBytes": 262366,
+            "estimatedBytes": 1477194
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 262366,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "rare-zyzzyva",
+          "key": "zyzzyva",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 2.800000011920929
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 177
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 28.599999994039536,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 139005
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 17.400000005960464,
+            "compressedBytes": 139005,
+            "estimatedBytes": 665940
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 139005,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "not-found",
+          "key": "codex-benchmark-not-found-cdc499ae-cf74-4661-9dd8-d17690679453-3",
+          "expected": "missing",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 2.2999999821186066
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 180
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 62.400000005960464,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 236616
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0.5,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 33.900000005960464,
+            "compressedBytes": 236616,
+            "estimatedBytes": 1480078
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 236616,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.10000002384185791,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.10000002384185791,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        }
+      ],
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.0999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 1.9000000059604645,
+          "bytes": 262366
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.300000011920929,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 1.4000000059604645,
+          "bytes": 139005
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 2.0999999940395355,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "decodeWall": [
+        {
+          "case": "common-on",
+          "elapsedMs": 48.099999994039536,
+          "workerPresent": true
+        },
+        {
+          "case": "rare-zyzzyva",
+          "elapsedMs": 27.19999998807907,
+          "workerPresent": true
+        },
+        {
+          "case": "not-found",
+          "elapsedMs": 59.80000001192093,
+          "workerPresent": true
+        }
+      ],
+      "workerMetrics": [
+        {
+          "case": "common-on",
+          "calls": 1,
+          "decodeMs": 22.900000005960464,
+          "compressedBytes": 262366,
+          "estimatedBytes": 1477194
+        },
+        {
+          "case": "rare-zyzzyva",
+          "calls": 1,
+          "decodeMs": 17.400000005960464,
+          "compressedBytes": 139005,
+          "estimatedBytes": 665940
+        },
+        {
+          "case": "not-found",
+          "calls": 1,
+          "decodeMs": 33.900000005960464,
+          "compressedBytes": 236616,
+          "estimatedBytes": 1480078
+        }
+      ],
+      "manifestCalls": [],
+      "oldGenerationIsolation": "unique disposable IndexedDB namespaces; existing generation untouched; not a stale-generation migration test"
+    },
+    {
+      "trial": 4,
+      "origin": "app://obsidian.md",
+      "href": "app://obsidian.md/index.html",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "adapterClass": "e",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "platform": {
+        "isDesktopApp": null,
+        "isMobileApp": null,
+        "isIosApp": null
+      },
+      "coldScope": "new dictionary instance/Worker per case; existing Native process/origin and OS cache retained",
+      "outcomes": [
+        {
+          "id": "common-on",
+          "key": "on",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 2.0999999940395355
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 180.80000001192093
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 47.900000005960464,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 262366
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 12.300000011920929,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 22.900000005960464,
+            "compressedBytes": 262366,
+            "estimatedBytes": 1477194
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 262366,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "rare-zyzzyva",
+          "key": "zyzzyva",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 4.200000017881393
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 206.59999999403954
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 244.59999999403954,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 139005
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0.10000002384185791,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0.19999998807907104,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0.800000011920929,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 15.300000011920929,
+            "compressedBytes": 139005,
+            "estimatedBytes": 665940
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 139005,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.19999998807907104,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.19999998807907104,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "not-found",
+          "key": "codex-benchmark-not-found-cdc499ae-cf74-4661-9dd8-d17690679453-4",
+          "expected": "missing",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 16.900000005960464
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 150.39999997615814
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 66.60000002384186,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 236616
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 27.700000017881393,
+            "compressedBytes": 236616,
+            "estimatedBytes": 1480078
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 236616,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        }
+      ],
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.9000000059604645,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 1.5999999940395355,
+          "bytes": 262366
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 3.9000000059604645,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 80.2000000178814,
+          "bytes": 139005
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 10.299999982118607,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 3,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "decodeWall": [
+        {
+          "case": "common-on",
+          "elapsedMs": 46.20000001788139,
+          "workerPresent": true
+        },
+        {
+          "case": "rare-zyzzyva",
+          "elapsedMs": 164.2999999821186,
+          "workerPresent": true
+        },
+        {
+          "case": "not-found",
+          "elapsedMs": 63.5,
+          "workerPresent": true
+        }
+      ],
+      "workerMetrics": [
+        {
+          "case": "common-on",
+          "calls": 1,
+          "decodeMs": 22.900000005960464,
+          "compressedBytes": 262366,
+          "estimatedBytes": 1477194
+        },
+        {
+          "case": "rare-zyzzyva",
+          "calls": 1,
+          "decodeMs": 15.300000011920929,
+          "compressedBytes": 139005,
+          "estimatedBytes": 665940
+        },
+        {
+          "case": "not-found",
+          "calls": 1,
+          "decodeMs": 27.700000017881393,
+          "compressedBytes": 236616,
+          "estimatedBytes": 1480078
+        }
+      ],
+      "manifestCalls": [],
+      "oldGenerationIsolation": "unique disposable IndexedDB namespaces; existing generation untouched; not a stale-generation migration test"
+    },
+    {
+      "trial": 5,
+      "origin": "app://obsidian.md",
+      "href": "app://obsidian.md/index.html",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "adapterClass": "e",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "platform": {
+        "isDesktopApp": null,
+        "isMobileApp": null,
+        "isIosApp": null
+      },
+      "coldScope": "new dictionary instance/Worker per case; existing Native process/origin and OS cache retained",
+      "outcomes": [
+        {
+          "id": "common-on",
+          "key": "on",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 2.9000000059604645
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 248.2999999821186
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 72.7000000178814,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 262366
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 1.4000000059604645,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 23.599999994039536,
+            "compressedBytes": 262366,
+            "estimatedBytes": 1477194
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 262366,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "rare-zyzzyva",
+          "key": "zyzzyva",
+          "expected": "found",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 1.7999999821186066
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 192.10000002384186
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 23.599999994039536,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 139005
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 14.699999988079071,
+            "compressedBytes": 139005,
+            "estimatedBytes": 665940
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 139005,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        },
+        {
+          "id": "not-found",
+          "key": "codex-benchmark-not-found-cdc499ae-cf74-4661-9dd8-d17690679453-5",
+          "expected": "missing",
+          "availability": {
+            "status": "resource-available",
+            "elapsedMs": 1.5
+          },
+          "workerPrewarm": {
+            "completed": true,
+            "elapsedMs": 176.80000001192093
+          },
+          "cold": {
+            "ordinal": 0,
+            "durationMs": 53.80000001192093,
+            "cacheHits": 0,
+            "cacheMisses": 1,
+            "cacheHit": false,
+            "cacheMiss": true,
+            "binaryReads": 1,
+            "bytesReadBinary": 236616
+          },
+          "warm": [
+            {
+              "ordinal": 1,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 2,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 3,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 4,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 5,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 6,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 7,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 8,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 9,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 10,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 11,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 12,
+              "durationMs": 0.09999999403953552,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 13,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 14,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 15,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 16,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 17,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 18,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 19,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            },
+            {
+              "ordinal": 20,
+              "durationMs": 0,
+              "cacheHits": 1,
+              "cacheMisses": 0,
+              "cacheHit": true,
+              "cacheMiss": false,
+              "binaryReads": 0,
+              "bytesReadBinary": 0
+            }
+          ],
+          "workerMetrics": {
+            "calls": 1,
+            "decodeMs": 25.400000005960464,
+            "compressedBytes": 236616,
+            "estimatedBytes": 1480078
+          },
+          "binaryReadCount": 1,
+          "bytesReadBinary": 236616,
+          "warmSummary": {
+            "queryCount": 20,
+            "cacheHitQueries": 20,
+            "cacheMissQueries": 0,
+            "noBlockQueries": 0,
+            "binaryReadQueries": 0,
+            "bytesReadBinary": 0,
+            "repeatP50Ms": 0,
+            "repeatP95Ms": 0.09999999403953552,
+            "residentHitP50Ms": 0,
+            "residentHitP95Ms": 0.09999999403953552,
+            "everyRangedQueryHitResidentBlock": true
+          }
+        }
+      ],
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.5,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 1.5,
+          "bytes": 262366
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.300000011920929,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 1.699999988079071,
+          "bytes": 139005
+        },
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.2000000178813934,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 1.0999999940395355,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "decodeWall": [
+        {
+          "case": "common-on",
+          "elapsedMs": 71.2000000178814,
+          "workerPresent": true
+        },
+        {
+          "case": "rare-zyzzyva",
+          "elapsedMs": 21.80000001192093,
+          "workerPresent": true
+        },
+        {
+          "case": "not-found",
+          "elapsedMs": 52.5,
+          "workerPresent": true
+        }
+      ],
+      "workerMetrics": [
+        {
+          "case": "common-on",
+          "calls": 1,
+          "decodeMs": 23.599999994039536,
+          "compressedBytes": 262366,
+          "estimatedBytes": 1477194
+        },
+        {
+          "case": "rare-zyzzyva",
+          "calls": 1,
+          "decodeMs": 14.699999988079071,
+          "compressedBytes": 139005,
+          "estimatedBytes": 665940
+        },
+        {
+          "case": "not-found",
+          "calls": 1,
+          "decodeMs": 25.400000005960464,
+          "compressedBytes": 236616,
+          "estimatedBytes": 1480078
+        }
+      ],
+      "manifestCalls": [],
+      "oldGenerationIsolation": "unique disposable IndexedDB namespaces; existing generation untouched; not a stale-generation migration test"
+    }
+  ]
+}

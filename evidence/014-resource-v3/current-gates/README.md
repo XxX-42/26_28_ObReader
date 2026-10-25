@@ -158,3 +158,23 @@ receipt is not reused after `main.js` changed to `ca8b…`. The bounded Mac
 selection diagnostic is ambiguous and not evidence of a product failure.
 `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll/PDF.js code changed.
 iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 current-bundle lookup after Worker prewarm
+
+The exact `ca8b7a8d…` package was measured again in the existing Native Obsidian
+renderer using its real Vault DataAdapter, with the plugin disabled and Reader
+closed. Each instance ran `checkAvailability()`, awaited the background Worker
+prewarm, then measured the first lookup and 20 repeated lookups. Five trials per
+key produced 100 resident samples per key; every first query read exactly one
+compressed block and correctness passed.
+
+| Query | Worker prewarm P50 / max | First after prewarm P50 / P95 | 100 resident lookups P95 / max |
+| --- | ---: | ---: | ---: |
+| `on` | 194.3 / 1,254.3 ms | 52.9 / 156.9 ms | 0.2 / 12.3 ms |
+| `zyzzyva` | 177.0 / 206.6 ms | 23.9 / 244.6 ms | 0.1 / 17.7 ms |
+| valid miss | 176.5 / 180.0 ms | 63.1 / 74.5 ms | 0.1 / 0.5 ms |
+
+The 1,254.3 ms first prewarm sample occurred in background; it is not a UI-blocking
+measurement. This supports the async prewarm path but still does not measure cold
+Obsidian process startup or its added blocking. Raw receipt:
+[native-resource-v3-prewarmed-ca8b-20261025.json](native-resource-v3-prewarmed-ca8b-20261025.json).
