@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-test-vault-resource-v3-integrity",
+  "status": "PASS",
+  "measuredAt": "2026-10-26",
+  "candidate": {
+    "branch": "codex/014-goal-resume-20261025",
+    "sourceCommit": "2ead4363864618b75678c565071966a97b08171b",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5"
+  },
+  "testVault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "verificationMethod": "Read-only local filesystem verification of the installed Native test-Vault resource; no Vault writes.",
+  "resourcePath": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3",
+  "manifestSha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe",
+  "entryCount": 770611,
+  "blockCount": 67,
+  "compressedBytes": 16769142,
+  "uncompressedBytes": 69667588,
+  "checks": {
+    "manifestIndexIntegrity": true,
+    "allBlockFilesPresent": true,
+    "allCompressedSizesAndSha256": true,
+    "allGzipAndUncompressedSizes": true,
+    "strictUtf8AndJsonl": true,
+    "allRowsCanonicalAndNormalized": true,
+    "globalKeyOrderAndBlockRanges": true,
+    "rowAndByteTotalsMatchManifest": true,
+    "adjacentMitLicensePresent": true
+  },
+  "pluginEnabled": false,
+  "readerViewsOpen": 0,
+  "writes": 0
+}

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-windows-current-candidate-native-preflight",
+  "measuredAt": "2026-10-26",
+  "status": "STOPPED_BEFORE_DEPLOY",
+  "candidate": {
+    "branch": "origin/codex/014-goal-resume-20261025",
+    "commit": "2ead4363864618b75678c565071966a97b08171b",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "testVault": "D:/Documents/Obsidian/测试插件",
+  "preflight": {
+    "pluginEnabled": false,
+    "existingObsidianPid": 34296,
+    "existingProcessOwnedByNativeRun": false,
+    "exclusiveOwnedProfileAvailable": false,
+    "candidateFetched": true,
+    "candidateBuildHashVerifiedOnWindows": false
+  },
+  "latestAttempt": {
+    "runnerAvailability": "UNAVAILABLE",
+    "runnerError": "CreateProcess ENOENT",
+    "testWindowStateVerified": false,
+    "syncAndDirtyStateVerified": false,
+    "testVaultWindowClosed": false,
+    "ownedProfileStarted": false,
+    "deploymentAttempted": false,
+    "reason": "The occupied test Vault belongs to a non-owned Obsidian process. Its dirty and Sync state could not be fully inspected, so it was left open. The Native runner also could not start."
+  },
+  "nativeAcceptance": {
+    "eightStagesByFiveDirections": "NOT_RUN",
+    "realProcessRestart": "NOT_RUN"
+  },
+  "actions": {
+    "testPluginReplaced": false,
+    "pdfOrSidecarModified": false,
+    "fixtureCreated": false,
+    "remoteMainChanged": false,
+    "formalVaultTouched": false
+  },
+  "stopReason": "The existing Obsidian process PID 34296 still had the test Vault open. It was not an owned Native test process, its dirty/Sync state was not fully verified, and the runner returned CreateProcess ENOENT. The run stopped before build/deployment or input.",
+  "historicalPackageEvidence": {
+    "branch": "origin/codex/014-windows-native-test",
+    "commit": "adf5223fce3083cd416fbb6c729e16900a6c2b84",
+    "mainJsSha256": "a7d74076383c4dc0cbc5c161021cfb72cc0556ad48a663a8b79dd6f3fd78137b",
+    "matrix": "8x5 PASS",
+    "realProcessRestart": "PASS",
+    "acceptedForCurrentCandidate": false,
+    "report": "https://github.com/XxX-42/26_28_ObReader/blob/adf5223fce3083cd416fbb6c729e16900a6c2b84/docs/learning-system/014_WINDOWS_NATIVE_RESULTS.md"
+  }
+}

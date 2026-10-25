@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-macos-current-candidate-native-preflight",
+  "measuredAt": "2026-10-26",
+  "status": "STOPPED_BEFORE_MUTATION",
+  "candidate": {
+    "branch": "codex/014-goal-resume-20261025",
+    "commit": "2ead4363864618b75678c565071966a97b08171b",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "profile": {
+    "root": "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-exclusive-20261024-0120",
+    "pid": 69139,
+    "cdpPort": 57977,
+    "windowTitle": "learning - ObReader-Apple-Test - Obsidian 1.14.5",
+    "vault": "ObReader-Apple-Test",
+    "documentHasFocus": false,
+    "activeView": "file-explorer",
+    "enabledPlugins": [],
+    "pdfReaderLoaded": false,
+    "readerViewCount": 0
+  },
+  "sharedTestVault": {
+    "path": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "candidateFilesOnDiskMatch": true,
+    "otherObsidianProfilesAlsoOpenThisVault": true,
+    "oneObservedProfileAlsoHasFormalVaultWindow": true,
+    "syncAndDirtyStateAcrossAllProfilesVerified": false
+  },
+  "nativeAcceptance": {
+    "eightStagesByFiveDirections": "NOT_RUN",
+    "realProcessRestart": "NOT_RUN",
+    "currentPackageLoadedInOwnedRenderer": "NOT_VERIFIED"
+  },
+  "actions": {
+    "pluginEnabled": false,
+    "readerOpened": false,
+    "testDataWritten": false,
+    "formalVaultAccessed": false,
+    "processClosed": false
+  },
+  "stopReason": "The owned profile did not have foreground document focus, and multiple Obsidian profiles shared the test Vault. The candidate package hashes matched on disk, but enabling the plugin or mutating that shared Vault was not safe to verify in this state."
+}

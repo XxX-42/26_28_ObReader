@@ -152,10 +152,20 @@ loaded runtime version is **NOT_VERIFIED**. No formal Vault files or `main` were
 changed.
 
 The latest current-package Native 8-stage × 5-direction matrix remains
-**NOT_VERIFIED**; true Obsidian process restart remains **NOT_RUN**. Windows
-runner could not start a fresh current-package turn; the earlier d57 single-route
-receipt is not reused after `main.js` changed to `ca8b…`. The bounded Mac
-selection diagnostic is ambiguous and not evidence of a product failure.
+**NOT_VERIFIED**; true Obsidian process restart remains **NOT_RUN**. The Windows
+task completed an 8×5 matrix and process restart on an earlier package whose
+`main.js` hash was `a7d740…`; it is not accepted for current `ca8b…`. The new
+current-candidate run fetched `2ead436` but stopped before build/deploy because
+the test Vault was open in non-owned Obsidian PID `34296`. No plugin or fixture
+was changed. The latest continuation also found the remote runner unavailable
+(`CreateProcess ENOENT`); the test window's dirty and Sync state could not be
+fully verified, so it remained open. Receipt:
+[windows-current-candidate-preflight-20261026.json](windows-current-candidate-preflight-20261026.json).
+On macOS, a read-only preflight found the candidate files on disk, but the owned
+profile had no focus, the plugin was disabled, and multiple profiles shared the
+same test Vault. No plugin enable, Reader open, or Vault mutation was attempted.
+Receipt: [mac-current-candidate-preflight-20261026.json](mac-current-candidate-preflight-20261026.json).
+The bounded Mac selection diagnostic is ambiguous and not evidence of a product failure.
 `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll/PDF.js code changed.
 iPad remains `DEFERRED_BY_SCOPE`.
 
@@ -178,3 +188,39 @@ The 1,254.3 ms first prewarm sample occurred in background; it is not a UI-block
 measurement. This supports the async prewarm path but still does not measure cold
 Obsidian process startup or its added blocking. Raw receipt:
 [native-resource-v3-prewarmed-ca8b-20261025.json](native-resource-v3-prewarmed-ca8b-20261025.json).
+
+## 2026-10-26 installed resource integrity
+
+Read-only verification of the existing Native test-Vault resource validated all
+67 compressed blocks, their SHA-256 and byte counts, strict UTF-8/JSONL decoding,
+canonical sorted/normalized rows, block ranges, 770,611 total entries, and the
+adjacent MIT notice. The manifest SHA-256 remains
+`9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe`. The plugin
+was disabled, no Reader views were open, and the verification made zero writes.
+This is installed-file integrity evidence; it does not replace the separately
+recorded real DataAdapter lookup benchmark. Receipt:
+[test-vault-resource-v3-integrity-20261026.json](test-vault-resource-v3-integrity-20261026.json).
+
+## 2026-10-26 convergence decision
+
+`SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. The scroll investigation is
+closed; no further wheel, observer, LingQ scroll, or PDF.js performance changes
+are planned without a stable reproduction on the specific OCR PDF.
+
+The current-candidate Native route matrix is not closable from the present
+Windows/macOS sessions. Windows could not start its Native runner and the test
+Vault remained open in a non-owned process. macOS has no foreground-owned
+current-candidate renderer and the test Vault is shared across multiple
+profiles. Do not reuse the old `a7d740…` Windows 8×5/process-restart receipt for
+`ca8b…`.
+
+Resource-v3 is already integrated in the candidate. Its Native DataAdapter
+evidence meets the narrow first-rare-query target: P95 338.3 ms before Worker
+prewarm and 244.6 ms after prewarm; resident warm P95 is 0.1 ms. Each cold
+lookup reads one block. This is service/DataAdapter evidence, not the enabled
+Reader UI. `READER_UI_FIRST_LOOKUP = NOT_VERIFIED` and
+`STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED`; no acceptance is inferred from
+the isolated service benchmark. No SQLite/OPFS, Bulk, FSRS, or scroll work is
+being added. The current candidate remains test-only; do not promote to `main`
+or the formal Vault until the current-package Native gate and startup metric
+have evidence.
