@@ -125,11 +125,21 @@ function createLearningHost({ plugin, Modal, Notice } = {}) {
     if (!link?.target || link.target.kind !== anchor.target?.kind || link.target.id !== anchor.target?.id ||
         (link.docKey && link.docKey !== anchor.docKey) ||
         (link.documentId && link.documentId !== anchor.documentId)) return failed("backlink-reader-link-mismatch");
-    if (typeof plugin.readerBacklinkSourceEvidence === "function") {
+    if (typeof plugin.resolveReaderBacklinkSourceEvidence === "function" ||
+        typeof plugin.readerBacklinkSourceEvidence === "function") {
       const row = { sourcePath, target: anchor.target, docKey: anchor.docKey, documentId: anchor.documentId,
         routePath: link.routePath, offset: range.startOffset, endOffset: range.endOffset,
         line: range.line, sourceText: range.text };
-      if (!plugin.readerBacklinkSourceEvidence(row, file)) return failed("backlink-route-mismatch");
+      // Public links carry a PDF path and stable target, not internal document
+      // IDs. Resolve that path through the existing authenticated Reader route
+      // and compare its identity to the anchor. The navigation resolver may
+      // recover a moved citation; verification must still require this slice.
+      const evidence = typeof plugin.resolveReaderBacklinkSourceEvidence === "function"
+        ? await plugin.resolveReaderBacklinkSourceEvidence(row, file)
+        : plugin.readerBacklinkSourceEvidence(row, file);
+      if (!evidence || (typeof plugin.resolveReaderBacklinkSourceEvidence === "function" &&
+          (evidence.offset !== range.startOffset || evidence.endOffset !== range.endOffset ||
+           evidence.sourceText !== range.text))) return failed("backlink-route-mismatch");
     }
     return verified(anchor);
   }
