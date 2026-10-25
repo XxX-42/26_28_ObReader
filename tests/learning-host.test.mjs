@@ -305,6 +305,67 @@ test("backlink verification checks the exact Markdown link and a closed Reader d
   assert.equal((await f.host.resolveSource(anchor)).status, "unresolved", "a changed page identity cannot inherit the linked target");
 });
 
+test("backlink Host rejects exact source slices linked to another target or document", async () => {
+  const f = fixture();
+  const target = { kind: "selection", id: "selection-test" };
+  f.plugin.readerAnchorStore.get = async () => ({ sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
+  const make = (identity = {}, linkedTarget = target) => {
+    const link = `[[Books/fixture.pdf#${encodeReaderLinkFragment({ docKey: f.route.docKey,
+      documentId: f.route.documentId, target: linkedTarget })}${identity.docKey ? `&docKey=${identity.docKey}` : ""}${identity.documentId ? `&obdoc=${identity.documentId}` : ""}|same quote]]`;
+    f.texts.set("Notes/A.md", link);
+    return semantic.fromBacklink({ sourcePath: "Notes/A.md", target, docKey: f.route.docKey,
+      documentId: f.route.documentId, offset: 0, endOffset: link.length, sourceText: link }, {
+      sourceHash: f.route.source.sourceHash, pageIndex: 0, pageIdentity: "page-test",
+      targetText: "same quote", targetTextSource: "stored",
+    });
+  };
+  for (const anchor of [make({}, { kind: "selection", id: "another-selection" }),
+    make({ docKey: "fedcba987654" }), make({ documentId: "another-document" })]) {
+    // Keep the current slice equal to each captured link: this exercises link
+    // identity validation independently of the earlier stale-slice guard.
+    f.texts.set("Notes/A.md", anchor.sourceRange.text);
+    const result = await f.host.resolveSource(anchor);
+    assert.equal(result.reason, "backlink-reader-link-mismatch");
+    await assert.rejects(f.host.openPdfTarget(anchor), { code: "TARGET_UNRESOLVED" });
+  }
+  const anchor = make();
+  let checks = 0;
+  f.plugin.readerBacklinkSourceEvidence = (row, file) => {
+    checks++;
+    assert.equal(file.path, "Notes/A.md");
+    assert.equal(row.target.id, target.id);
+    assert.equal(row.sourceText, anchor.sourceRange.text);
+    return false;
+  };
+  assert.equal((await f.host.resolveSource(anchor)).reason, "backlink-route-mismatch");
+  await assert.rejects(f.host.openPdfTarget(anchor), { code: "TARGET_UNRESOLVED" });
+  assert.equal(checks, 2);
+  assert.equal(f.opened.length, 0);
+});
+
+test("PDF identity resolution follows a renamed or moved file without rewriting the captured anchor", async () => {
+  const f = fixture();
+  const anchor = semantic.fromAnnotation(f.row, { documentId: f.route.documentId, docKey: f.route.docKey,
+    sourcePath: f.route.sourcePath, sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
+  const captured = JSON.stringify(anchor);
+  for (const destination of ["Books/Renamed.pdf", "Archive/Nested/Renamed.pdf"]) {
+    f.files.delete(f.route.sourcePath);
+    f.route.sourcePath = destination;
+    const file = { path: destination, extension: "pdf" };
+    f.files.set(destination, file);
+    f.view.documentFile = file;
+    assert.equal((await f.host.resolveContract(anchor)).status, "VERIFIED");
+    await f.host.openPdfTarget(anchor);
+    assert.equal(f.opened.at(-1).file, destination);
+    assert.equal(f.opened.at(-1).target.id, f.row.uuid);
+    assert.equal(JSON.stringify(anchor), captured);
+  }
+  f.files.delete(f.route.sourcePath);
+  assert.equal((await f.host.resolveContract(anchor)).status, "TARGET_UNRESOLVED");
+  await assert.rejects(f.host.openPdfTarget(anchor), { code: "TARGET_UNRESOLVED" });
+  assert.equal(f.opened.length, 2);
+});
+
 test("mixed Review rows preserve canonical learning state and source fields", async () => {
   const f = fixture();
   const modal = await f.host.fromAnnotationRequest(f.view, f.request);
