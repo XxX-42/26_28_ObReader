@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "kind": "obreader-014-formal-vault-deployment",
-  "status": "DISK_DEPLOYED_RUNTIME_NOT_RELOADED",
-  "verifiedAtUtc": "2026-10-25T12:17:43Z",
+  "status": "RUNTIME_RELOADED_0.14.0",
+  "verifiedAtUtc": "2026-10-25T12:23:56Z",
   "repository": {
     "main": "be528e2813f9904e8849832a4c3b14a92d7ecc1c",
     "feature": "be528e2813f9904e8849832a4c3b14a92d7ecc1c",
@@ -45,9 +45,23 @@
   "runtime": {
     "pluginEnabled": true,
     "readerOpen": true,
-    "inMemoryVersion": "0.12.0",
-    "reload": "NOT_RUN; kept the active formal Reader window open",
-    "diskVersion": "0.14.0"
+    "priorInMemoryVersion": "0.12.0",
+    "inMemoryVersion": "0.14.0",
+    "diskVersion": "0.14.0",
+    "reload": "Fresh manifest scan, save flush ok/clean, plugin disable/enable; restored the same PDF path and page",
+    "processRestart": "NOT_RUN",
+    "readerRestored": {
+      "path": "12_books/11_杂志/TE 2025-04-12.pdf",
+      "page": 1,
+      "sameDocumentId": true,
+      "sameDocKey": true,
+      "sameSourceHash": true,
+      "sourceMismatch": false,
+      "hydrationAllowed": true,
+      "pendingSaves": 0,
+      "currentRevision": 0,
+      "confirmedRevision": 0
+    }
   },
   "acceptance": {
     "currentPackageNative8x5": "NOT_VERIFIED",
