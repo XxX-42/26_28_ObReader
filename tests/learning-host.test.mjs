@@ -343,6 +343,61 @@ test("backlink Host rejects exact source slices linked to another target or docu
   assert.equal(f.opened.length, 0);
 });
 
+test("Host verifies public Reader links through the real route evidence resolver", async () => {
+  const f = fixture();
+  const { parseReaderLinkDestination } = require("../plugin/reader-anchor-store.cjs");
+  const { normalizePdfRoutePath } = require("../plugin/reader-backlink-index.cjs");
+  const main = readFileSync(new URL("../plugin/main.js", import.meta.url), "utf8");
+  const start = main.indexOf("  readerBacklinkSourceEvidence(");
+  const end = main.indexOf("\n  async openReaderBacklinkSource(", start);
+  const methods = vm.runInNewContext(`new (class {${main.slice(start, end)}})()`, {
+    parseReaderLinkDestination, normalizePdfRoutePath,
+  });
+  f.plugin.readerBacklinkSourceEvidence = methods.readerBacklinkSourceEvidence;
+  f.plugin.resolveReaderBacklinkSourceEvidence = methods.resolveReaderBacklinkSourceEvidence;
+  const target = { kind: "selection", id: "selection-test" };
+  const link = `[[Books/fixture.pdf#${encodeReaderLinkFragment({ target,
+    docKey: f.route.docKey, documentId: f.route.documentId })}|same quote]]`;
+  assert.doesNotMatch(link, /docKey|obdoc|document-test/);
+  const destination = link.slice(2, -2).split("|")[0];
+  let cacheLink = { link: destination, original: link,
+    position: { start: { offset: 0, line: 0 }, end: { offset: link.length } } };
+  f.plugin.app.metadataCache = { getFileCache: () => ({ links: [cacheLink] }) };
+  const validTarget = { ...target, docKey: f.route.docKey, documentId: f.route.documentId };
+  let resolvedTarget = validTarget;
+  f.plugin.resolveReaderLinkDocument = async (parsed, routePath, sourcePath) => {
+    assert.equal(sourcePath, "Notes/A.md");
+    if (routePath !== "Books/fixture.pdf") throw Error("wrong PDF route");
+    return { readerTarget: resolvedTarget };
+  };
+  f.plugin.readerAnchorStore.get = async () => ({ sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
+  f.texts.set("Notes/A.md", link);
+  const anchor = semantic.fromBacklink({ sourcePath: "Notes/A.md", target,
+    docKey: f.route.docKey, documentId: f.route.documentId, offset: 0, endOffset: link.length,
+    sourceText: link }, { sourceHash: f.route.source.sourceHash, pageIndex: 0,
+    pageIdentity: "page-test", targetText: "same quote", targetTextSource: "stored" });
+  assert.equal((await f.host.resolveSource(anchor)).status, "verified");
+  await f.host.openPdfTarget(anchor);
+  for (const changed of [{ ...validTarget, id: "other-selection" },
+    { ...validTarget, docKey: "fedcba987654" }, { ...validTarget, documentId: "other-document" }]) {
+    resolvedTarget = changed;
+    assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
+  }
+  resolvedTarget = { ...target, docKey: f.route.docKey, documentId: f.route.documentId };
+  const original = cacheLink;
+  for (const changed of [{ ...original, link: destination.replace("fixture.pdf", "other.pdf") },
+    { ...original, original: link.replace("same quote", "different quote") },
+    { ...original, position: { start: { offset: 10 }, end: { offset: link.length + 10 } } }]) {
+    cacheLink = changed;
+    assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
+    await assert.rejects(f.host.openPdfTarget(anchor), { code: "TARGET_UNRESOLVED" });
+  }
+  cacheLink = original;
+  f.texts.set("Notes/A.md", link.replace("same quote", "wrong text"));
+  assert.equal((await f.host.resolveSource(anchor)).status, "unresolved");
+  assert.equal(f.opened.length, 1);
+});
+
 test("PDF identity resolution follows a renamed or moved file without rewriting the captured anchor", async () => {
   const f = fixture();
   const anchor = semantic.fromAnnotation(f.row, { documentId: f.route.documentId, docKey: f.route.docKey,
