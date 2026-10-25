@@ -9,6 +9,7 @@ const RUNTIME_SCRATCH_VAULT_ROOT = `${RUNTIME_TEST_ROOT}/native-loop-vaults`;
 const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
 const INSTALLED_OBSIDIAN_APP = "/Applications/Obsidian.app";
 const RUNTIME_OBSIDIAN_APP = `${RUNTIME_TEST_ROOT}/mnt/Obsidian.app`;
+const OBSIDIAN_RENDERER_URL = "app://obsidian.md/index.html";
 
 const sha256 = /^[a-f0-9]{64}$/u;
 const nonempty = value => typeof value === "string" && value.length > 0;
@@ -62,6 +63,97 @@ export function assertNativeLearningForeground(identity, { vault, configDir = ".
   return Object.freeze({ status: "verified", policy: "external-cua-selection", stage, vault, configDir,
     visibility: identity.visibility, focused: identity.focused,
     ownerDocumentIsRenderer: identity.ownerDocumentIsRenderer, ownerWindowIsRenderer: identity.ownerWindowIsRenderer });
+}
+
+function assertNativeActivationIdentity(identity, native, { vault, configDir }) {
+  const vaultName = vault.slice(vault.lastIndexOf("/") + 1);
+  const expectedTitleSuffix = `${vaultName} - Obsidian ${native.appVersion}`;
+  if (!identity || identity.vault !== vault || identity.vaultName !== vaultName || identity.configDir !== configDir ||
+      identity.url !== OBSIDIAN_RENDERER_URL || typeof identity.title !== "string" ||
+      !identity.title.endsWith(expectedTitleSuffix)) {
+    fail("NATIVE_ACTIVATION_RENDERER_MISMATCH",
+      "The renderer must remain the exact configured test Vault window before or after process activation.");
+  }
+}
+
+function assertNativeActivationProcess(native, state) {
+  if (state?.pid !== native.ownerPid || state.ownedProfileProcess !== true ||
+      state.commandHash !== native.ownerCommandHash) {
+    fail("NATIVE_ACTIVATION_PROCESS_MISMATCH",
+      "The selected PID no longer matches the validated Obsidian executable and owned profile.");
+  }
+}
+
+export async function ensureOwnedNativeRendererForeground({
+  native,
+  expectedVault = EXPECTED_VAULT,
+  configDir = ".obsidian",
+  allowRuntimeTestProfile = false,
+  allowScratchNativeVault = false,
+  readProcessState,
+  readIdentity,
+  activatePid,
+  timeoutMs = 10_000,
+  pollMs = 150,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+} = {}) {
+  if (!Number.isSafeInteger(native?.ownerPid) || native.ownerPid <= 0 ||
+      native?.nativeConfig?.vault !== expectedVault || native?.nativeConfig?.configDir !== configDir ||
+      native?.marker?.allowedVault !== expectedVault || !sha256.test(native?.ownerCommandHash || "") ||
+      !Number.isInteger(native?.port) || native.port <= 0 || native.port >= 65_536 ||
+      native?.nativeConfig?.cdpUrl !== `http://127.0.0.1:${native.port}` || !nonempty(native?.appVersion)) {
+    fail("NATIVE_ACTIVATION_TARGET_MISMATCH", "Activation requires the exact validated test PID, profile, CDP port and Vault.");
+  }
+  const expectedExecutable = resolveNativeOwnedProfileApp(native.profileRoot, native.marker, {
+    allowRuntimeTestProfile,
+    allowScratchNativeVault,
+    expectedVault,
+  });
+  if (native.appExecutable !== expectedExecutable) {
+    fail("NATIVE_ACTIVATION_TARGET_MISMATCH", "The PID executable does not match the validated profile marker.");
+  }
+  if (typeof readProcessState !== "function" || typeof readIdentity !== "function" || typeof activatePid !== "function") {
+    fail("NATIVE_ACTIVATION_HELPER_MISSING", "PID activation requires process, renderer and activation checks.");
+  }
+  const target = Object.freeze({ ownerPid: native.ownerPid, profileRoot: native.profileRoot,
+    appExecutable: expectedExecutable, port: native.port, vault: expectedVault });
+  const verifyProcess = async () => assertNativeActivationProcess(native, await readProcessState(target.ownerPid));
+  const verifyRenderer = async () => {
+    const identity = await readIdentity();
+    assertNativeActivationIdentity(identity, native, { vault: expectedVault, configDir });
+    return identity;
+  };
+
+  await verifyProcess();
+  let identity = await verifyRenderer();
+  try {
+    const foreground = assertNativeLearningForeground(identity, { vault: expectedVault, configDir,
+      stage: "owned-process foreground recovery" });
+    return Object.freeze({ status: "already-foreground", policy: "system-events-owner-pid",
+      ownerPid: target.ownerPid, profileRoot: target.profileRoot, vault: target.vault, foreground });
+  } catch (error) {
+    if (error?.code !== "NATIVE_WINDOW_NOT_FOREGROUND") throw error;
+  }
+
+  await activatePid(target.ownerPid);
+  await verifyProcess();
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    identity = await verifyRenderer();
+    try {
+      const foreground = assertNativeLearningForeground(identity, { vault: expectedVault, configDir,
+        stage: "after owned-process activation" });
+      return Object.freeze({ status: "reactivated", policy: "system-events-owner-pid",
+        ownerPid: target.ownerPid, profileRoot: target.profileRoot, vault: target.vault, foreground });
+    } catch (error) {
+      if (error?.code !== "NATIVE_WINDOW_NOT_FOREGROUND") throw error;
+    }
+    if (Date.now() >= deadline) {
+      fail("NATIVE_ACTIVATION_FOREGROUND_TIMEOUT",
+        `The exact owned renderer did not regain focus after PID ${target.ownerPid} activation.`);
+    }
+    await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
 }
 
 export function assertNativeCandidateFiles(expectedFiles, installedFiles) {
