@@ -34496,9 +34496,11 @@ var __PDFReaderVocabularyDictionary = (() => {
         async checkAvailability() {
           const revision = this.revision;
           try {
+            const manifestTask = this.manifest();
+            if (this.root.endsWith("/resource-v3")) void this.ensureBlockWorker();
             let manifest;
             try {
-              manifest = await this.manifest();
+              manifest = await manifestTask;
             } catch (error) {
               if (error?.code !== "DICTIONARY_INDEX_MISSING" || this.legacyRoot === this.root) throw error;
               manifest = await this.readManifestAt(this.legacyRoot);

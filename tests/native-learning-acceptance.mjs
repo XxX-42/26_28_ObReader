@@ -3,6 +3,11 @@ export const NATIVE_ROUTE_STAGES = Object.freeze([
   "full-pdfrename", "full-foldermove", "full-mdrename", "full-mdmove",
   "full-bothmove", "full-closedmove", "full-openmove", "full-owned-process-restart",
 ]);
+const OWNED_PROFILE_PARENT = "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence";
+const RUNTIME_TEST_ROOT = "/private/tmp/obreader-014-runtime";
+const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
+const INSTALLED_OBSIDIAN_APP = "/Applications/Obsidian.app";
+const RUNTIME_OBSIDIAN_APP = `${RUNTIME_TEST_ROOT}/mnt/Obsidian.app`;
 
 const sha256 = /^[a-f0-9]{64}$/u;
 const nonempty = value => typeof value === "string" && value.length > 0;
@@ -13,6 +18,23 @@ function fail(code, message) {
   const error = new Error(message);
   error.code = code;
   throw error;
+}
+
+export function resolveNativeOwnedProfileApp(profileRoot, marker, { allowRuntimeTestProfile = false } = {}) {
+  const isDirectProfileChild = (parent, value, prefix) => {
+    if (typeof value !== "string" || !value.startsWith(`${parent}/${prefix}`)) return false;
+    const suffix = value.slice(parent.length + 1);
+    return suffix.length > prefix.length && !suffix.slice(prefix.length).includes("/");
+  };
+  const normalProfile = isDirectProfileChild(OWNED_PROFILE_PARENT, profileRoot, "macos-native-profile-");
+  const runtimeTestProfile = allowRuntimeTestProfile === true &&
+    isDirectProfileChild(RUNTIME_TEST_ROOT, profileRoot, "profile-");
+  const expectedApp = normalProfile ? INSTALLED_OBSIDIAN_APP : runtimeTestProfile ? RUNTIME_OBSIDIAN_APP : null;
+  if (!expectedApp || marker?.kind !== "codex-owned-native-test-profile" ||
+      marker.allowedVault !== EXPECTED_VAULT || marker.appPath !== expectedApp) {
+    fail("NATIVE_PROFILE_NOT_OWNED", "Native tests require a verified ObReader-Apple-Test profile and its matching Obsidian app.");
+  }
+  return `${expectedApp}/Contents/MacOS/Obsidian`;
 }
 
 // Window selection belongs to the external CUA driver. This helper only

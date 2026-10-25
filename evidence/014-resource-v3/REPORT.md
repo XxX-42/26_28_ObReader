@@ -264,3 +264,42 @@ The current continuation source at `3197f212c71e4ea4263a1f256bc6c9917d241dc8` wa
 All three rebuilt package files exactly match `ObReader-Apple-Test`; no test-vault redeploy was needed. The package hashes and no-change boundary are listed in the receipt. `origin/main` remains `654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5`; this continuation did not push to main or deploy to the formal Vault. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER` remains closed to expansion.
 
 The current Native 8-stage × 5-direction matrix, open-move, and true process restart remain `NOT_VERIFIED` / `NOT_RUN`. Resource-v3's existing supported Obsidian 1.14.5 DataAdapter evidence is unchanged: rare first lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms, with the common `on` 1,154.8 ms outlier preserved. Startup-added blocking is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. The current exact test renderer was not foreground-owned and multiple Obsidian profiles list the same test Vault, so no new exclusive Native benchmark or mutation lease was taken. iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 scope-convergence update
+
+This update supersedes the preceding Native and Resource-v3 status where they describe the latest attempt. The source tree stayed stable during Build/Fast/Browser/Race at fingerprint `78c5f8b77807862e8d52f84900a63c31745368befbb5e1dddb56895dcea73bf6` (1,119 files). Build verified the 3 release files, 406 embedded runtime assets, and 402 frozen vendor hashes. Fast passed **122/122**, Browser **28/28**, Race **80/80**, and Offline smoke passed; there were no skips. Raw gate runs are in the local ignored `tests/artifacts/vocabulary-gates/` directory.
+
+### Native gate: explicit blocker, not a pass
+
+The exact current candidate (`main.js 706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`) was verified in the existing `ObReader-Apple-Test` Vault and the owned Obsidian 1.14.5 profile. PDF text-layer readiness was 292–527 ms in the two recorded attempts. Highlight mode was active (`annotationEditorMode=9`); trusted pointer and mouse events landed on text-layer spans and were not prevented, but the DOM selection remained collapsed and no PDF.js Highlight editor was created. Both attempts stopped at the Highlight setup wait. This is a reproducible current-package Native test failure, but it does not isolate a product regression from this CUA setup; no interaction or PDF.js code was changed.
+
+The older 1.12.7 profile was refused before input because it exposed two app-origin renderers, violating the exact-owner preflight. Test cleanup completed: isolation restored, plugin disabled, Sync off, and Reader closed. No actual Obsidian process restart was attempted. The 8-stage × 5-direction matrix, open-move, and true process restart therefore remain **NOT_VERIFIED / NOT_RUN**; older package receipts do not satisfy the current hash gate. A sanitized receipt is [native-current-package-selection-blocker-20261025.json](native-current-package-selection-blocker-20261025.json).
+
+```text
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE = NOT_VERIFIED
+TRUE_PROCESS_RESTART = NOT_RUN
+```
+
+### Resource-v3 Native DataAdapter first-tap benchmark
+
+Five cold trials each for common `on`, rare `zyzzyva`, and a unique missing key were run in the real Obsidian 1.14.5 renderer against the test Vault's DataAdapter. Each cold query read and decoded exactly one compressed block; each trial then ran 20 warm lookups, all resident-cache hits. This bypasses the enabled plugin Host/Reader UI, so it measures the dictionary service and real Vault I/O, not the entire user-visible click path.
+
+| Query | Before manifest/Worker overlap: first lookup P50 / max | Current async prewarm: first lookup P50 / max | Current warm P95 |
+|---|---:|---:|---:|
+| Common `on` | 272 / 1,012.3 ms | 209.5 / 942.6 ms | 0.1 ms |
+| Rare `zyzzyva` | 188.8 / 246.6 ms | 191.4 / 233.1 ms | 0.1 ms |
+| Missing | 183.7 / 274.6 ms | 215.1 / 256.5 ms | 0.1 ms |
+
+With five cold samples, the recorded maximum is also the nearest-rank P95. The common-word tail moved below one second in this sample; rare lookup stayed below 250 ms. The rare median did not improve, so this is evidence that first rare lookup is already fast in this isolated service path, not evidence of a broad latency win. `checkAvailability()` does not wait for Worker readiness; cold lookup overlaps Worker startup with manifest I/O. Startup-added blocking `<50 ms` remains `NOT_MEASURED`, and enabled Reader UI first lookup remains `NOT_VERIFIED`. Do not claim either gate passed from this DataAdapter benchmark. Receipts: [before overlap](native-first-tap-before-overlap-20261025.json) and [with overlap](native-first-tap-overlapped-prewarm-20261025.json).
+
+```text
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+PDF.js / wheel / observer / LingQ scroll changes = NONE
+IPAD = DEFERRED_BY_SCOPE
+origin/main = 654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5 (unchanged in this continuation)
+formal Vault deployment = NONE in this continuation
+```
+
+The existing test Vault already contains the exact candidate three-file package hashes listed above; no redeployment was needed. This continuation neither pushed `main` nor touched the formal `远程仓库1` Vault or user PDFs/data.

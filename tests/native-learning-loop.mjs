@@ -26,14 +26,14 @@ import {
 import { readNativeSidecarTree } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
-import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate } from "./native-learning-acceptance.mjs";
+import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate,
+  resolveNativeOwnedProfileApp } from "./native-learning-acceptance.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const RUNNER_BRANCH = execFileSync("git", ["branch", "--show-current"], { cwd: ROOT, encoding: "utf8" }).trim();
 const EXPECTED_VAULT = "/Users/jiajia/Documents/ObReader-Apple-Test";
 const OWNED_PROFILE_PARENT = "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence";
-const APP_EXECUTABLE = "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
 const PLUGIN_ID = "pdf-web-reader";
 const VIEW_TYPE = "pdf-web-reader-view";
 const APP_URL = "app://obsidian.md/index.html";
@@ -41,6 +41,7 @@ const EXPECTED_PLUGIN_DIST = process.env.PDF_READER_NATIVE_PLUGIN_DIST || path.j
 const FIXTURE_PDF = path.join(ROOT, "tests", "fixtures", "tracemonkey.pdf");
 const MARKDOWN_EXCERPT = "This Markdown excerpt survives every route change.";
 const HIGHLIGHT_TEXT = "Trace-based Just-in-Time Type Specialization";
+const NATIVE_TEXT_LAYER_READY_TIMEOUT_MS = 60_000;
 const CONTEXT_WORD = "Dynamic";
 const attachedExistingTestVault = process.argv.includes("--attached-existing-test-vault");
 const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
@@ -123,10 +124,15 @@ function verifyOwnedProfile() {
   const requested = process.env.PDF_READER_NATIVE_PROFILE_ROOT;
   assert.ok(requested, "Set PDF_READER_NATIVE_PROFILE_ROOT to this run's owned Obsidian profile.");
   assert.ok(path.isAbsolute(requested));
-  assert.ok(requested.startsWith(`${OWNED_PROFILE_PARENT}/macos-native-profile-`),
-    `Refusing a profile outside ${OWNED_PROFILE_PARENT}/macos-native-profile-*: ${requested}`);
-  const profileRoot = path.resolve(requested);
-  return profileRoot;
+  const resolved = path.resolve(requested);
+  const standardProfile = resolved.startsWith(`${OWNED_PROFILE_PARENT}/macos-native-profile-`) &&
+    !resolved.slice(`${OWNED_PROFILE_PARENT}/macos-native-profile-`.length).includes("/");
+  const runtimeProfile = process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1" &&
+    resolved.startsWith("/private/tmp/obreader-014-runtime/profile-") &&
+    !resolved.slice("/private/tmp/obreader-014-runtime/profile-".length).includes("/");
+  assert.ok(standardProfile || runtimeProfile,
+    `Refusing an unapproved Native profile: ${resolved}`);
+  return resolved;
 }
 
 function assertNativeSessionUnlocked() {
@@ -147,15 +153,24 @@ async function initializeNativeConfig(profileRoot) {
   const marker = JSON.parse(await readFile(path.join(canonicalProfile, ".codex-native-profile.json"), "utf8"));
   assert.equal(marker.kind, "codex-owned-native-test-profile");
   assert.equal(marker.allowedVault, EXPECTED_VAULT);
-  assert.equal(marker.appPath, "/Applications/Obsidian.app");
+  const appExecutable = resolveNativeOwnedProfileApp(canonicalProfile, marker, {
+    allowRuntimeTestProfile: process.env.PDF_READER_NATIVE_ALLOW_RUNTIME_TEST_PROFILE === "1",
+  });
+  const appInfo = path.join(marker.appPath, "Contents", "Info.plist");
+  assert.equal(execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", appInfo], { encoding: "utf8" }).trim(),
+    "md.obsidian", "The owned process must use the Obsidian application bundle.");
+  const appVersion = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", appInfo], { encoding: "utf8" }).trim();
+  if (marker.appPath === "/private/tmp/obreader-014-runtime/mnt/Obsidian.app") {
+    assert.equal(appVersion, "1.14.5", "The explicitly allowed runtime test copy must remain on its verified Obsidian version.");
+  }
 
   const [portText] = (await readFile(path.join(canonicalProfile, "DevToolsActivePort"), "utf8")).split(/\r?\n/u);
   const port = Number(portText);
   assert.ok(Number.isInteger(port) && port > 0 && port < 65_536, "Owned profile has no valid DevTools port.");
   const processListing = execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
   const ownerLines = processListing.split(/\r?\n/u).filter((line) =>
-    line.includes(APP_EXECUTABLE) && line.includes(`--user-data-dir=${canonicalProfile}`) &&
-    line.includes("--remote-debugging-port=0"));
+    line.includes(appExecutable) && line.includes(`--user-data-dir=${canonicalProfile}`) &&
+    (line.includes("--remote-debugging-port=0") || line.includes(`--remote-debugging-port=${port}`)));
   assert.equal(ownerLines.length, 1, "CDP must belong to exactly one Obsidian main process using this owned profile.");
 
   process.env.OBSIDIAN_VAULT_PATH = EXPECTED_VAULT;
@@ -166,12 +181,14 @@ async function initializeNativeConfig(profileRoot) {
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
   const ownerPid = Number(ownerLines[0].trim().split(/\s/u)[0]);
-  return { profileRoot: canonicalProfile, marker, port, ownerPid,
+  return { profileRoot: canonicalProfile, marker, appExecutable, appVersion, port, ownerPid,
     ownerCommandHash: sha256(Buffer.from(ownerLines[0].trim().replace(/^\d+\s+/u, ""))), nativeConfig, assertNativeVaultIdentity };
 }
 
-function ownedProcessForPid(pid, profileRoot) {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !path.isAbsolute(profileRoot)) return { pid, exists: false, ownedProfileProcess: false, commandHash: null };
+function ownedProcessForPid(pid, profileRoot, appExecutable, cdpPort) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !path.isAbsolute(profileRoot) || typeof appExecutable !== "string") {
+    return { pid, exists: false, ownedProfileProcess: false, commandHash: null };
+  }
   let command = "";
   try { command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim(); }
   catch (error) {
@@ -180,8 +197,9 @@ function ownedProcessForPid(pid, profileRoot) {
   return {
     pid,
     exists: Boolean(command),
-    ownedProfileProcess: Boolean(command && command.includes(APP_EXECUTABLE) &&
-      command.includes(`--user-data-dir=${profileRoot}`) && command.includes("--remote-debugging-port=0")),
+    ownedProfileProcess: Boolean(command && command.includes(appExecutable) &&
+      command.includes(`--user-data-dir=${profileRoot}`) &&
+      (command.includes("--remote-debugging-port=0") || command.includes(`--remote-debugging-port=${cdpPort}`))),
     commandHash: command ? sha256(Buffer.from(command)) : null,
   };
 }
@@ -189,7 +207,8 @@ function ownedProcessForPid(pid, profileRoot) {
 const profileRoot = verifyOwnedProfile();
 const native = await initializeNativeConfig(profileRoot);
 const { h64Raw } = await xxhash();
-report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port, ownerPid: native.ownerPid,
+report.nativeProfile = { root: native.profileRoot, marker: native.marker, appExecutable: native.appExecutable,
+  appVersion: native.appVersion, cdpPort: native.port, ownerPid: native.ownerPid,
   ownerCommandHash: native.ownerCommandHash,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
@@ -211,6 +230,7 @@ async function recordCandidateArtifact() {
     candidate[file] = { sha256: sha256(expectedBytes), bytes: expectedBytes.length };
     installed[file] = { sha256: sha256(installedBytes), bytes: installedBytes.length };
   }
+  assertNativeCandidateFiles(candidate, installed);
   report.candidateArtifact = { directory: EXPECTED_PLUGIN_DIST, version: expectedManifest.version,
     files: candidate, installedFiles: installed };
   assertNativeCandidateFiles(candidate, installed);
@@ -535,11 +555,88 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
   }, { text, exact });
   const frameRect = await readerFrameRect(pathValue);
   assert.ok(frameRect && frameRect.width > 0 && frameRect.height > 0, "Owned Reader iframe must be visible.");
-  await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+  await frame.evaluate(() => {
+    window.__nativePointerTrace = [];
+    for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel",
+      "mousedown", "mousemove", "mouseup", "click"]) {
+      document.addEventListener(type, event => {
+        const target = event.target;
+        const selection = document.getSelection();
+        window.__nativePointerTrace.push({ type, target: target?.tagName || null,
+          id: target?.id || null, className: typeof target?.className === "string" ? target.className : null,
+          x: event.clientX, y: event.clientY, button: event.button, buttons: event.buttons,
+          selection: selection?.toString?.() || "", rangeCount: selection?.rangeCount || 0,
+          defaultPrevented: event.defaultPrevented, trusted: event.isTrusted });
+      }, true);
+      document.addEventListener("selectionchange", () => {
+        const selection = document.getSelection();
+        window.__nativePointerTrace.push({ type: "selectionchange",
+          selection: selection?.toString?.() || "", rangeCount: selection?.rangeCount || 0,
+          collapsed: selection?.isCollapsed ?? true });
+      }, true);
+    }
+  });
+  if (buttonId) {
+    // Confirm the active tool's palette was actually mounted and shown before
+    // moving away. Treating a not-yet-created toolbar as already hidden races
+    // PDF.js' mode-change UI and lets the drag cross the still-open palette.
+    await frame.waitForFunction(() => {
+      const toolbar = document.querySelector("#editorHighlightParamsToolbar");
+      return toolbar && !toolbar.classList.contains("hidden") &&
+        !toolbar.classList.contains("editorParamsToolbarAutoHidden");
+    }, { timeout: 5_000 });
+    const palette = await frame.evaluate(() => {
+      const toolbar = document.querySelector("#editorHighlightParamsToolbar");
+      const button = document.querySelector("#editorHighlightButton");
+      const toolbarRect = toolbar?.getBoundingClientRect();
+      const buttonRect = button?.getBoundingClientRect();
+      if (!toolbarRect || !buttonRect) return null;
+      return {
+        left: toolbarRect.left, right: toolbarRect.right, top: toolbarRect.top,
+        buttonX: buttonRect.left + buttonRect.width / 2,
+        buttonY: buttonRect.top + buttonRect.height / 2,
+      };
+    });
+    assert.ok(palette, "The visible PDF.js Highlight parameter palette must have geometry.");
+    // Route above the palette first. A direct diagonal from the toolbar button
+    // to the text can cross the popup, re-arm its hover timer, and put it over
+    // the middle of the drag. The text origin lies left of this palette.
+    const stagingY = Math.max(1, palette.top - 4);
+    await page.mouse.move(frameRect.x + palette.buttonX, frameRect.y + stagingY, { steps: 3 });
+    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + stagingY, { steps: 4 });
+    // Pointerleave schedules PDF.js' one-second auto-hide. Wait for the actual
+    // hidden state before starting the drag, then verify the selected mode.
+    await frame.waitForFunction(() => {
+      const toolbar = document.querySelector("#editorHighlightParamsToolbar");
+      return !!toolbar && (toolbar.classList.contains("hidden") ||
+        toolbar.classList.contains("editorParamsToolbarAutoHidden"));
+    }, { timeout: 5_000 });
+    const mode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    assert.equal(mode, 9, "PDF.js Highlight mode must remain active after its parameter palette auto-hides.");
+    assert.ok(geometry.x1 < palette.left || geometry.x1 > palette.right,
+      "The drag origin must remain outside the hidden Highlight palette bounds.");
+    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+  } else {
+    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+  }
+  const beforeDrag = await frame.evaluate(({ x, y }) => ({
+    mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+    paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
+    startTarget: document.elementFromPoint(x, y)?.closest(".textLayer")?.className || null,
+  }), { x: geometry.x1, y: geometry.y });
   await page.mouse.down({ button: "left" });
   await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y, { steps: 12 });
   await page.mouse.up({ button: "left" });
-  return geometry;
+  const dragDiagnostics = await frame.evaluate(() => ({
+    events: window.__nativePointerTrace || [],
+    selection: document.getSelection()?.toString() || "",
+    mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+    activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+    highlightEditorCount: document.querySelectorAll(".annotationEditorLayer .highlightEditor").length,
+    editorLayerChildren: document.querySelector(".annotationEditorLayer")?.children.length || 0,
+    paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
+  }));
+  return { ...geometry, beforeDrag, dragDiagnostics };
 }
 
 async function saveAnnotationThroughReaderUI(frame, documentId) {
@@ -1139,8 +1236,13 @@ async function addMarkdownLearningItem(markdownPath) {
 async function createHighlightLearningItem(pdfPath) {
   await openFixture(pdfPath);
   const { frame } = await readerFrame(pdfPath);
+  const textLayerWaitStartedAt = Date.now();
+  // This is a bounded readiness wait, not a performance pass. Preserve the
+  // observed cold Native render duration in the receipt so slow readiness
+  // cannot be mistaken for an accepted latency target.
   await frame.waitForFunction(() => document.querySelectorAll('.page[data-page-number="1"] .textLayer span').length > 0,
-    { timeout: 30_000 });
+    { timeout: NATIVE_TEXT_LAYER_READY_TIMEOUT_MS });
+  report.nativeTextLayerReadyMs = Date.now() - textLayerWaitStartedAt;
   const initial = await page.evaluate(async ({ pluginId }) => {
     const plugin = app.plugins.plugins[pluginId];
     const service = await plugin.getLearningHost().getService();
@@ -1162,7 +1264,7 @@ async function createHighlightLearningItem(pdfPath) {
       .find(node => node.textContent.includes(expectedText));
     const rect = span?.getBoundingClientRect();
     return Boolean(PDFViewerApplication.pdfDocument && rect?.width > 0 && rect?.height > 0);
-  }, { timeout: 30_000 }, HIGHLIGHT_TEXT);
+  }, { timeout: NATIVE_TEXT_LAYER_READY_TIMEOUT_MS }, HIGHLIGHT_TEXT);
   const readHighlightMode = () => frame.evaluate(() => ({
     mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
     expanded: document.querySelector("#editorHighlightButton")?.getAttribute("aria-expanded") || null,
@@ -2069,7 +2171,7 @@ async function runCompleteFiveDirectionMatrix() {
   if (!process.argv.includes("--after-owned-process-restart")) {
     report.completeDirectionMatrix.status = "awaiting-owned-process-restart";
     report.completeDirectionMatrix.processRestartPending = { ownerPid: native.ownerPid, cdpPort: native.port, profileRoot: native.profileRoot,
-      ownerCommandHash: native.ownerCommandHash,
+      appExecutable: native.appExecutable, ownerCommandHash: native.ownerCommandHash,
       candidateFiles: report.candidateArtifact.files,
       installedFiles: report.candidateArtifact.installedFiles,
       note: "ROOT must safely restart the exact owned process after final cleanup; plugin toggles do not satisfy this stage." };
@@ -2080,9 +2182,10 @@ async function runCompleteFiveDirectionMatrix() {
   assert.ok(previous && Number.isInteger(previous.ownerPid));
   assert.notEqual(native.ownerPid, previous.ownerPid, "Formal restart requires a different actual owned main PID");
   assert.equal(native.profileRoot, previous.profileRoot);
+  assert.equal(native.appExecutable, previous.appExecutable);
   assertNativeCandidateFiles(report.candidateArtifact.files, previous.candidateFiles);
   assertNativeCandidateFiles(report.candidateArtifact.files, previous.installedFiles);
-  const previousProcess = ownedProcessForPid(previous.ownerPid, previous.profileRoot);
+  const previousProcess = ownedProcessForPid(previous.ownerPid, previous.profileRoot, native.appExecutable, previous.cdpPort);
   assert.equal(previousProcess.ownedProfileProcess, false,
     "A new PID is insufficient: the previous owned Obsidian process for this profile must no longer be running.");
   await stage("full-owned-process-restart", async () => {});
@@ -2210,32 +2313,43 @@ async function cleanupNativeRun() {
     isolationRestored: restored, disabledStatePersisted: true, at: new Date().toISOString() };
 }
 
-async function assertAttachedSiblingProcessesQuiescent() {
-  const siblingProfile = path.join(OWNED_PROFILE_PARENT, "macos-native-profile-exclusive-20261024-0120");
-  const processLines = execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }).split(/\r?\n/u)
-    .filter(line => line.includes(APP_EXECUTABLE) && line.includes(`--user-data-dir=${siblingProfile}`));
-  report.attachedMode.siblingPreflight = [];
-  if (!processLines.length) return;
-  assert.equal(processLines.length, 1, "Unexpected sibling process ownership ambiguity");
-  const marker = JSON.parse(await readFile(path.join(siblingProfile, ".codex-native-profile.json"), "utf8"));
-  assert.equal(marker.kind, "codex-owned-native-test-profile");
-  assert.equal(marker.allowedVault, EXPECTED_VAULT);
-  const port = Number((await readFile(path.join(siblingProfile, "DevToolsActivePort"), "utf8")).split(/\r?\n/u)[0]);
-  const siblingBrowser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null });
-  try {
-    const candidates = (await siblingBrowser.pages()).filter(candidate => candidate.url() === APP_URL);
-    assert.equal(candidates.length, 1, "Sibling process must contain only the owned test Vault");
-    const state = await candidates[0].evaluate(pluginId => ({ path: app.vault.adapter.basePath, name: app.vault.getName(),
-      title: document.title, loaded: !!app.plugins.plugins[pluginId], enabled: app.plugins.enabledPlugins.has(pluginId),
-      readers: app.workspace.getLeavesOfType("pdf-web-reader-view").length, sync: app.internalPlugins.plugins.sync?.enabled }), PLUGIN_ID);
-    report.attachedMode.siblingPreflight.push({ profile: siblingProfile, port, ...state });
-    assert.equal(state.path, EXPECTED_VAULT);
-    assert.equal(state.name, "ObReader-Apple-Test");
-    assert.equal(state.loaded, false, "Sibling test-Vault plugin must be unloaded before attached writes");
-    assert.equal(state.enabled, false, "Sibling test-Vault plugin must be disabled before attached writes");
-    assert.equal(state.readers, 0);
-    assert.equal(state.sync, false);
-  } finally { siblingBrowser.disconnect(); }
+async function assertSiblingTestVaultProcessesQuiescent() {
+  const processLines = execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }).split(/\r?\n/u);
+  const siblings = [];
+  for (const line of processLines) {
+    const match = line.match(/^\s*(\d+)\s+(.+?\.app\/Contents\/MacOS\/Obsidian)\s+--user-data-dir=([^\s]+)/u);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    if (pid === native.ownerPid) continue;
+    const profile = match[3];
+    const portText = await readFile(path.join(profile, "DevToolsActivePort"), "utf8").catch(error => {
+      if (error?.code === "ENOENT") throw new Error(`Cannot inspect Obsidian sibling PID ${pid}; refusing shared test-Vault writes.`);
+      throw error;
+    });
+    const port = Number(portText.split(/\r?\n/u)[0]);
+    assert.ok(Number.isInteger(port) && port > 0, `Sibling PID ${pid} has no valid DevTools port.`);
+    const siblingBrowser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${port}`, defaultViewport: null });
+    try {
+      const candidates = (await siblingBrowser.pages()).filter(candidate => candidate.url() === APP_URL);
+      let matchingVaults = 0;
+      for (const candidate of candidates) {
+        const state = await candidate.evaluate(pluginId => ({ path: app.vault.adapter.basePath, name: app.vault.getName(),
+          loaded: !!app.plugins.plugins[pluginId], enabled: app.plugins.enabledPlugins.has(pluginId),
+          readers: app.workspace.getLeavesOfType("pdf-web-reader-view").length, sync: app.internalPlugins.plugins.sync?.enabled }), PLUGIN_ID);
+        if (state.path !== EXPECTED_VAULT) continue;
+        matchingVaults++;
+        siblings.push({ pid, profile, port, ...state });
+        assert.equal(state.name, "ObReader-Apple-Test");
+        assert.equal(state.loaded, false, `Sibling PID ${pid} has the test plugin loaded.`);
+        assert.equal(state.enabled, false, `Sibling PID ${pid} has the test plugin enabled.`);
+        assert.equal(state.readers, 0, `Sibling PID ${pid} has a Reader view open.`);
+        assert.equal(state.sync, false, `Sibling PID ${pid} has Sync enabled.`);
+      }
+      assert.ok(matchingVaults <= 1, `Sibling PID ${pid} exposes duplicate test-Vault renderers.`);
+    } finally { siblingBrowser.disconnect(); }
+  }
+  if (attachedExistingTestVault) report.attachedMode.siblingPreflight = siblings;
+  else report.nativeProfile.siblingTestVaultProcesses = siblings;
 }
 
 async function attachedReadOnlySnapshot(onlyRoot = null) {
@@ -2327,7 +2441,6 @@ async function main() {
       assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
         sha256(await readFile(path.join(ROOT, "dist", PLUGIN_ID, file))), `Attached bundle ${file} must exactly match integration dist`);
     }
-    await assertAttachedSiblingProcessesQuiescent();
     await waitForPersistedPluginState(false, "attached pre-write disabled config stable twice");
     report.attachedMode.defaultBaseline = await attachedReadOnlySnapshot();
     report.attachedMode.preservedRunBaseline = await attachedReadOnlySnapshot(`.obsidian/plugins/${PLUGIN_ID}/.native-learning-loop/native-learning-loop-20261023142727241-ab1fac1a68`);
@@ -2338,6 +2451,7 @@ async function main() {
     installedManifestVersion: installedManifest.version };
   await recordScreen("preflight-safe-mode");
 
+  await assertSiblingTestVaultProcessesQuiescent();
   await restoreOwnedStaleIsolation();
   await clearStaleNativeMaintenanceLogger();
   await installNativeIsolation();

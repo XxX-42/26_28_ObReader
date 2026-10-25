@@ -44,6 +44,16 @@ These reports are copied from the ignored local run artifacts so the results rem
 
 The fresh current run also passed Race 80/80. The initial failure remains in the evidence set and was not rewritten or deleted.
 
+## Latest bounded continuation (2026-10-25)
+
+This section supersedes earlier package/test status above. Current candidate `main.js` is `706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b`; manifest and styles are unchanged. Build, Fast **122/122**, Browser **28/28**, Race **80/80**, and Offline smoke passed without skips at stable source fingerprint `78c5f8b77807862e8d52f84900a63c31745368befbb5e1dddb56895dcea73bf6` (1,119 files).
+
+On the exact current package in Obsidian 1.14.5, two isolated Native attempts reached the PDF text layer and kept Highlight mode active, but trusted pointer/mouse drags left the DOM selection collapsed and created no Highlight editor. The 1.12.7 profile was rejected before input because it exposed two app renderers. Cleanup restored the test isolation; no process restart was attempted. Thus current-package Native matrix and open-move are `NOT_VERIFIED`; true process restart is `NOT_RUN`. See the [sanitized receipt](../native-current-package-selection-blocker-20261025.json) and the detailed [scope-convergence report](../REPORT.md).
+
+Five cold trials per query type using the real Vault DataAdapter measured Resource-v3 first-tap lookup at common `on` P50 **209.5 ms** / max **942.6 ms**, rare `zyzzyva` P50 **191.4 ms** / max **233.1 ms**, and missing term P50 **215.1 ms** / max **256.5 ms**. Warm P95 was **0.1 ms** for each type. Each cold request read one block. This excludes enabled plugin Host/Reader UI and process startup, so startup-added blocking remains `NOT_MEASURED`; the fully wired Reader UI query remains `NOT_VERIFIED`. Raw receipts: [prior timing](../native-first-tap-before-overlap-20261025.json), [overlapped Worker prewarm](../native-first-tap-overlapped-prewarm-20261025.json).
+
+`SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll, PDF.js or wheel code changed. iPad remains `DEFERRED_BY_SCOPE`. No main push, formal Vault deploy, or user-data mutation occurred in this continuation.
+
 ## Preserved earlier failed bounded rerun (superseded by later complete reruns)
 
 `REPORT.md`'s [2026-10-25 bounded closeout update](../REPORT.md) is the authoritative latest status. On source fingerprint `3123b32d42d6fd4fb5c3744add9fe763005b63b3d3c0f45b73514e954c42b980`, Build/Fast passed 122/122, Race passed 80/80, and Offline smoke passed. Browser was 26/28: the iPad finger-inertia assertion remains deferred by scope, and the LingQ pill test's fake result beat its transient pending-state assertion. That second test passed when rerun alone, but the full gate result remains failed. See [sanitized gate summary](final-gates-rerun-20261025.json).

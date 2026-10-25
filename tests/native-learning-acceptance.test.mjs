@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   assertNativeLearningForeground, assertNativeCandidateFiles, auditNativeRouteMatrixEvidence,
-  assertNativeResumeCandidate, nativeProcessRestartVerified, NATIVE_ROUTE_STAGES,
+  assertNativeResumeCandidate, nativeProcessRestartVerified, NATIVE_ROUTE_STAGES, resolveNativeOwnedProfileApp,
 } from "./native-learning-acceptance.mjs";
 
 const files = { "main.js": "a".repeat(64), "manifest.json": "b".repeat(64), "styles.css": "c".repeat(64) };
@@ -44,6 +44,31 @@ test("Native foreground validation is passive and rejects hidden, unfocused or f
   }
   assert.throws(() => assertNativeLearningForeground({ ...identity, vault: "/production" }, { vault }),
     error => error.code === "NATIVE_WINDOW_IDENTITY_MISMATCH");
+});
+
+test("Native profile trust binds the exact test Vault, profile root and Obsidian app bundle", () => {
+  const standard = resolveNativeOwnedProfileApp(
+    "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-run-1",
+    { kind: "codex-owned-native-test-profile", allowedVault: "/Users/jiajia/Documents/ObReader-Apple-Test",
+      appPath: "/Applications/Obsidian.app" },
+  );
+  assert.equal(standard, "/Applications/Obsidian.app/Contents/MacOS/Obsidian");
+
+  const runtimeProfile = "/private/tmp/obreader-014-runtime/profile-1.14.5";
+  const runtimeMarker = { kind: "codex-owned-native-test-profile", allowedVault: "/Users/jiajia/Documents/ObReader-Apple-Test",
+    appPath: "/private/tmp/obreader-014-runtime/mnt/Obsidian.app" };
+  assert.throws(() => resolveNativeOwnedProfileApp(runtimeProfile, runtimeMarker),
+    error => error.code === "NATIVE_PROFILE_NOT_OWNED", "external test profiles require explicit opt-in");
+  assert.equal(resolveNativeOwnedProfileApp(runtimeProfile, runtimeMarker, { allowRuntimeTestProfile: true }),
+    "/private/tmp/obreader-014-runtime/mnt/Obsidian.app/Contents/MacOS/Obsidian");
+  for (const [profile, marker] of [
+    ["/private/tmp/obreader-014-runtime/profile-other/path", runtimeMarker],
+    [runtimeProfile, { ...runtimeMarker, allowedVault: "/Users/jiajia/Documents/Other" }],
+    [runtimeProfile, { ...runtimeMarker, appPath: "/Applications/Obsidian.app" }],
+  ]) {
+    assert.throws(() => resolveNativeOwnedProfileApp(profile, marker, { allowRuntimeTestProfile: true }),
+      error => error.code === "NATIVE_PROFILE_NOT_OWNED");
+  }
 });
 
 test("a matching version cannot replace exact three-file Native candidate hashes", () => {

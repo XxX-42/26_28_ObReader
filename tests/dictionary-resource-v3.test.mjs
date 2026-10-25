@@ -122,26 +122,39 @@ test("startup availability and no-term warmup never import either resource forma
 test("v3 availability starts the block Worker in the background without waiting for it", async (t) => {
   const fixture = makeV3Files();
   let worker;
+  let releaseManifest;
+  let signalWorkerCreated;
+  const workerCreated = new Promise(resolve => { signalWorkerCreated = resolve; });
   class DeferredWorker {
-    constructor() { worker = this; this.onmessage = null; }
+    constructor() { worker = this; this.onmessage = null; signalWorkerCreated(); }
     postMessage() {}
     terminate() {}
   }
   const adapter = new MemoryAdapter(fixture.files);
+  const readManifest = adapter.read.bind(adapter);
+  adapter.read = async file => {
+    if (file !== `${ROOT}/manifest.json`) return readManifest(file);
+    return await new Promise(resolve => { releaseManifest = () => resolve(fixture.files.get(file)); });
+  };
   const dictionary = dictionaryFor(t, adapter, { workerSource: "worker", WorkerClass: DeferredWorker });
   const pending = dictionary.checkAvailability();
   let settled = false;
   pending.then(() => { settled = true; });
   try {
-    await new Promise(resolve => setTimeout(resolve, 0));
-    assert.ok(worker, "availability should kick off Worker creation");
+    await workerCreated;
+    assert.ok(worker, "availability should create the decoder while manifest I/O is pending");
+    assert.equal(settled, false, "availability still waits for manifest validation");
+    releaseManifest();
+    const available = await pending;
+    assert.equal(available.status, "resource-available");
     assert.equal(settled, true, "availability must not wait for the Worker ready handshake");
     assert.equal(adapter.readBinaryCount.size, 0, "Worker prewarm must not read dictionary blocks");
+    worker.onmessage?.({ data: { type: "started" } });
+    await dictionary.blockWorkerReady;
   } finally {
+    releaseManifest?.();
     worker?.onmessage?.({ data: { type: "started" } });
   }
-  assert.equal((await pending).status, "resource-available");
-  await dictionary.blockWorkerReady;
 });
 
 test("v3 lookup agrees with every row and resolves range boundaries and Unicode keys", async (t) => {

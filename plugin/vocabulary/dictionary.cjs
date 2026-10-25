@@ -136,8 +136,13 @@ class VocabularyDictionary {
   async checkAvailability() {
     const revision = this.revision;
     try {
+      // Start the Resource-v3 decoder while the manifest is being read. This
+      // lets a first lookup race against both tasks instead of paying for a
+      // cold Worker only after DataAdapter I/O has completed.
+      const manifestTask = this.manifest();
+      if (this.root.endsWith("/resource-v3")) void this.ensureBlockWorker();
       let manifest;
-      try { manifest = await this.manifest(); }
+      try { manifest = await manifestTask; }
       catch (error) {
         if (error?.code !== "DICTIONARY_INDEX_MISSING" || this.legacyRoot === this.root) throw error;
         manifest = await this.readManifestAt(this.legacyRoot);

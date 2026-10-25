@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-014-current-package-native-selection-blocker",
+  "date": "2026-10-25",
+  "status": "NOT_VERIFIED",
+  "app": {
+    "name": "Obsidian",
+    "version": "1.14.5",
+    "vault": "ObReader-Apple-Test",
+    "syncEnabled": false
+  },
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b",
+    "manifestJsonSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesCssSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+    "distMatchesInstalledTestVault": true
+  },
+  "attempts": 2,
+  "observations": {
+    "textLayerReadyMs": [292, 527],
+    "annotationEditorMode": 9,
+    "trustedPointerAndMouseEventsReachedTextLayer": true,
+    "pointerEventsDefaultPrevented": false,
+    "domSelectionCollapsedAfterDrag": true,
+    "highlightEditorCreated": false,
+    "result": "Native Highlight setup timed out in both attempts"
+  },
+  "interpretation": "Current-package Native Highlight setup did not complete. The observation is not sufficient to attribute the failure to product code rather than the CUA path.",
+  "cleanup": {
+    "isolationRestored": true,
+    "pluginDisabled": true,
+    "syncEnabled": false,
+    "readerClosed": true,
+    "processRestartAttempted": false
+  },
+  "acceptance": {
+    "native8Stage5DirectionMatrix": "NOT_VERIFIED",
+    "openMove": "NOT_VERIFIED",
+    "trueProcessRestart": "NOT_RUN"
+  }
+}
