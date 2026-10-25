@@ -4,18 +4,16 @@
   "candidate": {
     "version": "0.14.0",
     "branch": "codex/014-goal-resume-20261025",
-    "commit": "ec27e9b2874f7714d2587082a077c1f97b8621b7",
-    "files": {
+    "runtimeCommit": "2d1fd355819a0cbb9d639e231647ee6ae90b4122",
+    "packageSha256": {
       "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
       "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
       "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
     },
-    "installedTestVaultFilesMatch": true,
-    "pluginEnabled": false,
-    "syncEnabled": false,
-    "readerViews": 0
+    "testVaultFilesMatch": true,
+    "testPluginEnabled": false
   },
-  "nativePreflight": {
+  "nativeAcceptance": {
     "status": "NOT_VERIFIED",
     "stage": "before Native test mutations",
     "profile": "owned Obsidian 1.14.5 profile attached to ObReader-Apple-Test",
@@ -39,33 +37,32 @@
       "pointerOrKeyboardInputSent": false,
       "vaultWrites": 0
     },
-    "matrix": "NOT_VERIFIED",
+    "matrix8Stage5Direction": "NOT_VERIFIED",
     "openMoveFiveDirections": "NOT_VERIFIED",
     "processRestartFiveDirections": "NOT_RUN",
     "rawReceipt": "tests/artifacts/native-learning-loop-20261025192559262-24813902f5.json"
   },
   "automatedGates": {
-    "status": "FAILED",
-    "acceptanceEligible": false,
+    "status": "PASS",
+    "acceptanceEligible": true,
+    "runId": "run-2026-10-25T19-43-41-383Z-76468-922159eb",
     "stableSourceFingerprint": {
-      "sha256": "26552b5771709645278e2fc68c8cde85a8faaca634b77d62553aa53e2e712ea7",
-      "files": 1152
+      "sha256": "e515b6140eb9359c583ee6b5972d0ec6bc89bae5ab0c39d55a86ee5483805da2",
+      "files": 1153
     },
     "fast": { "passed": 123, "failed": 0, "skipped": 0 },
-    "browser": { "passed": 26, "failed": 2, "skipped": 0 },
+    "browser": { "passed": 28, "failed": 0, "skipped": 0 },
     "race": { "passed": 80, "failed": 0, "skipped": 0 },
-    "total": { "passed": 229, "failed": 2, "skipped": 0 },
-    "failures": [
-      {
-        "test": "tests/mobile-browser-startup.test.mjs",
-        "detail": "Chrome did not publish a WebSocket endpoint within 30 seconds; the Blob-fallback subtest passed."
-      },
-      {
-        "test": "tests/mouse-input-regression.test.mjs",
-        "detail": "AnnotationEditor pause/restoration assertion failed after toolbar interaction."
-      }
-    ],
-    "rawReport": "tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-26-53-445Z-69906-96411f69/report.json"
+    "total": { "passed": 231, "failed": 0, "skipped": 0 },
+    "previousFlakyRun": {
+      "passed": 229,
+      "failed": 2,
+      "supersededByCompleteGreenRerun": true,
+      "failures": [
+        "tests/mobile-browser-startup.test.mjs: Chrome startup timeout; Blob fallback passed",
+        "tests/mouse-input-regression.test.mjs: AnnotationEditor pause/restoration assertion"
+      ]
+    }
   },
   "build": {
     "status": "PASS",
@@ -78,13 +75,40 @@
     "annotationToolsSavedAndReopened": 5,
     "bulkDeletePersisted": true
   },
+  "formalVaultDeployment": {
+    "status": "DISK_FILES_DEPLOYED",
+    "vault": "远程仓库1",
+    "target": ".obsidian/plugins/pdf-web-reader",
+    "externalBackup": "/Users/jiajia/Documents/ObReader-Release-Backups/0.14.0-20261026-2d1fd35",
+    "receipt": "/Users/jiajia/Documents/ObReader-Release-Backups/0.14.0-20261026-2d1fd35/deployment-receipt.json",
+    "oldHashes": {
+      "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    },
+    "newHashes": {
+      "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    },
+    "runtimeReload": "NOT_RUN_NO_FORMAL_OBSIDIAN_PROCESS",
+    "otherPluginEntriesPreserved": [
+      ".DS_Store",
+      ".asset-cache",
+      ".logs",
+      ".recovery",
+      ".sync-checkpoints",
+      "data.json"
+    ]
+  },
   "scope": {
     "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
-    "runtimeCodeChanged": false,
+    "runtimeCodeChangedAfterPackageBuild": false,
     "pdfjsVendorChanged": false,
     "storageOrWalChanged": false,
-    "mainUpdated": false,
-    "formalVaultChanged": false,
-    "testVaultRedeployed": false
+    "formalVaultDataChanged": false,
+    "testVaultRedeployed": false,
+    "ipad": "DEFERRED_BY_SCOPE",
+    "mainPush": "PENDING_FINAL_DOCUMENTATION_COMMIT"
   }
 }

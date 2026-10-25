@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-25T19:54:06.354Z",
+  "candidate": {
+    "version": "0.14.0",
+    "runtimeCommit": "2d1fd355819a0cbb9d639e231647ee6ae90b4122",
+    "sha256": {
+      "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "deployment": {
+    "vault": "远程仓库1",
+    "pluginId": "pdf-web-reader",
+    "target": ".obsidian/plugins/pdf-web-reader",
+    "status": "DISK_FILES_DEPLOYED_AND_HASH_VERIFIED",
+    "oldSha256": {
+      "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    },
+    "newSha256": {
+      "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    },
+    "backupPath": "/Users/jiajia/Documents/ObReader-Release-Backups/0.14.0-20261026-2d1fd35",
+    "backupVerified": true,
+    "pluginDataPreserved": [
+      ".DS_Store",
+      ".asset-cache",
+      ".logs",
+      ".recovery",
+      ".sync-checkpoints",
+      "data.json"
+    ],
+    "pdfDataAndVocabularyDataBackedUpBeforeDeployment": true,
+    "formalVaultUserDataModifiedByDeployment": false,
+    "formalObsidianProcess": "NOT_FOUND",
+    "runtimeReload": "NOT_RUN",
+    "loadedRuntimeVersion": "NOT_VERIFIED"
+  },
+  "releaseDecision": {
+    "automatedGates": "PASS_231_OF_231",
+    "native8Stage5DirectionMatrix": "NOT_VERIFIED",
+    "openMove5Directions": "NOT_VERIFIED",
+    "processRestart5Directions": "NOT_RUN",
+    "deploymentProceededByExplicitUserRequest": true
+  }
+}

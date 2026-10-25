@@ -1,5 +1,17 @@
 # Current integration gates
 
+## Final closeout authority — 2026-10-26
+
+This block supersedes every older status summary below. The user authorized a formal `远程仓库1` three-file deployment and Git push. Deployment completed to disk; current-package Native route acceptance remains incomplete.
+
+- Source branch: `codex/014-goal-resume-20261025`, runtime bundle from `2d1fd355819a0cbb9d639e231647ee6ae90b4122`. At the last fetch before this evidence-only closeout, `origin/main=197cd7d653967eb0a2d04af3c91470163949e680` was an ancestor of the candidate (25 commits ahead, 0 behind). Final documentation commit and push status will be recorded after promotion.
+- Candidate `0.14.0` package SHA-256: `main.js ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+- Latest complete automated gate is green: build PASS (3 release files, 406 embedded assets, 402 frozen vendor hashes); Fast 123/123, Browser 28/28, Race 80/80; Offline smoke PASS; total 231 passed, 0 failed, 0 skipped. Stable source fingerprint `e515b6140eb9359c583ee6b5972d0ec6bc89bae5ab0c39d55a86ee5483805da2` over 1,153 files. The earlier 229/231 run with two retained transient failures is superseded by this full green rerun; see [the exact gate report](../../../tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-43-41-383Z-76468-922159eb/report.json).
+- **Native acceptance is not complete.** The exact test process had no System Events front window; its CDP renderer was hidden and unfocused. The harness stopped before plugin enablement, fixture creation, input, or Vault writes. Current-candidate 8 stages × 5 directions = `NOT_VERIFIED`; open-move × 5 = `NOT_VERIFIED`; process-restart × 5 directions = `NOT_RUN`. The formal Obsidian process was absent during deployment, so disk hashes are verified but runtime reload/version is not. This limitation is preserved despite the instruction to proceed with deployment and push.
+- Resource-v3 is integrated (770,611 rows; 67 blocks; 16,769,142 compressed bytes). A supported Obsidian 1.14.5 UI sample displayed the rare-word definition in 169 ms, but it is one in-session sample. Native DataAdapter cold/warm receipts and five-process startup-toggle results remain separately scoped; Reader UI P95 and startup-added blocking `<50 ms` are `NOT_MEASURED` / `NOT_VERIFIED`.
+- Formal `远程仓库1/.obsidian/plugins/pdf-web-reader` now matches the three candidate files. Old plugin files plus `00_Archive/20_PDFData` and `00_Archive/21_VocabularyData` were backed up at `/Users/jiajia/Documents/ObReader-Release-Backups/0.14.0-20261026-2d1fd35`. Only `main.js`, `manifest.json`, and `styles.css` were replaced; other plugin entries including `data.json`, logs, recovery, checkpoints, and cache were preserved. No formal Obsidian process was running, so this is a verified disk deployment, not an active-runtime reload. Full [deployment receipt](formal-threefile-deploy-20261026.json).
+- `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll, wheel, observer, PDF.js, WAL, or storage changes were made. iPad remains `DEFERRED_BY_SCOPE`.
+
 ## Current authority — 2026-10-26
 
 This block supersedes older candidate summaries below for release decisions.

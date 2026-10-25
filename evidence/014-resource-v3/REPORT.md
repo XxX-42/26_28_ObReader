@@ -1,5 +1,18 @@
 # ObReader 0.14 candidate status
 
+## User-directed closeout — 2026-10-26
+
+The user directed us to seal the candidate, deploy it to the formal `远程仓库1` Vault, and push. The exact 0.14.0 three-file package was backed up and installed; automated gates are green. This does **not** make the incomplete Native route matrix pass.
+
+- Candidate runtime source: `2d1fd355819a0cbb9d639e231647ee6ae90b4122`; `main.js` SHA-256 `ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5`, `manifest.json` `71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css` `8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+- Full gates: 231/231 (Fast 123, Browser 28, Race 80), zero failures/skips; build verified 406 embedded assets and 402 frozen vendor files; offline annotation save/reopen and bulk delete passed. [Exact report](../../tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-43-41-383Z-76468-922159eb/report.json).
+- Formal plugin directory matches the candidate three-file hashes. Verified backup: `/Users/jiajia/Documents/ObReader-Release-Backups/0.14.0-20261026-2d1fd35`; the old plugin files and both annotation/vocabulary data trees were backed up. Deployment replaced only the three release files and preserved `data.json`, cache, logs, recovery, and checkpoint entries. [Receipt](current-gates/formal-threefile-deploy-20261026.json).
+- No formal Obsidian process was running, so this proves disk deployment only. Runtime reload and loaded version are `NOT_VERIFIED`.
+- Native acceptance remains incomplete: 8-stage × 5-direction `NOT_VERIFIED`; open-move × 5 `NOT_VERIFIED`; process-restart × 5 `NOT_RUN`. The owned test renderer had no controllable visible/focused window, so the runner stopped before any Vault writes or UI input. See [bounded Native/gate evidence](current-gates/bounded-native-and-gates-20261026.json).
+- `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; iPad is `DEFERRED_BY_SCOPE`; Reader UI first-query P95 and startup-added blocking `<50 ms` remain unverified.
+
+The integration branch will be pushed non-forced after this evidence update. No tag or GitHub Release is created.
+
 ## Current authority — 2026-10-26
 
 - At the start of this continuation, evidence audit base was `90da489454ae059dd8ca3edf2a447af0b4ea658f` on `codex/014-goal-resume-20261025`; the worktree was clean. After fetching, `origin/main=origin/feature/0.14-native-learning-dictionary-20261023=197cd7d653967eb0a2d04af3c91470163949e680` (the feature ref currently points to main). The evidence branch contains the current candidate stack on top of `origin/main` with no commits behind it; no `main` update or promotion occurred.
