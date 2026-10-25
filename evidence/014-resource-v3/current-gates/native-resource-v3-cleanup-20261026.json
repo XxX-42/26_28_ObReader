@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-resource-v3-reader-ui-cleanup",
+  "status": "PASS",
+  "measuredAt": "2026-10-25T18:25:22.381Z",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "testVault": {
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "syncEnabled": false,
+    "pluginLoaded": false,
+    "enabledPlugins": [],
+    "readerViews": 0,
+    "activeFile": "PDF迁移测试/native-learning-loop-20261024231109330-daa24a391d/Markdown Files/learning.md",
+    "focused": true
+  },
+  "temporaryFixture": {
+    "path": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf",
+    "removed": true,
+    "sourceSha256": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb"
+  },
+  "generatedRoutingArtifacts": {
+    "docKey": "e905bf1b786f",
+    "registryEntryRemoved": true,
+    "sidecarRemoved": true,
+    "walRemoved": true,
+    "preCleanupBackup": "native-resource-v3-fixture-cleanup-20261026/before-cleanup.json"
+  },
+  "pluginData": {
+    "restoredToBackup": true,
+    "sha256": "dd8185123dbe458d0550c8abebf5982da081c255daa45076790566686811aac0",
+    "communityPlugins": []
+  },
+  "syncEnabled": false
+}

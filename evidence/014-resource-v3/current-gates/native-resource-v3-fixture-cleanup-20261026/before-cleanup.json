@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "kind": "temporary-native-resource-v3-fixture-artifacts",
+  "at": "2026-10-25T18:22:17.387Z",
+  "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+  "path": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf",
+  "docKey": "e905bf1b786f",
+  "documentId": "sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a",
+  "pdfSha256": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
+  "registryEntry": {
+    "docKey": "e905bf1b786f",
+    "documentId": "sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a"
+  },
+  "sidecar": {
+    "annotations": [],
+    "docKey": "e905bf1b786f",
+    "documentId": "sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a",
+    "integrity": "xxh64-v1:0f33f6aeadd5d2d1",
+    "kind": "pdf-reader-jsonl-derived-snapshot",
+    "routing": {
+      "opId": "b6e67da9-edeb-4115-8b44-249ed98f7f9b:e905bf1b786f:1",
+      "payload": {
+        "legacyIdentities": [],
+        "legacyIdentityScanComplete": false,
+        "source": {
+          "fastHash": "xxh64-v1:554fdd4ff3c9d1bd",
+          "path": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf",
+          "size": 1041,
+          "sourceHash": "xxh64-v1:554fdd4ff3c9d1bd",
+          "sourcePath": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf",
+          "tailHash64k": "xxh64-v1:554fdd4ff3c9d1bd"
+        },
+        "sourcePath": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf"
+      },
+      "seq": 1,
+      "type": "ROUTE_SET",
+      "version": {
+        "deviceId": "b6e67da9-edeb-4115-8b44-249ed98f7f9b",
+        "rev": 1,
+        "seq": 1
+      }
+    },
+    "schemaVersion": 1,
+    "sourceHash": "xxh64-v1:554fdd4ff3c9d1bd",
+    "tombstones": [],
+    "watermarks": {
+      "b6e67da9-edeb-4115-8b44-249ed98f7f9b": 1
+    }
+  },
+  "wal": [
+    {
+      "path": "/Users/jiajia/Documents/ObReader-Apple-Test/00_Archive/20_PDFData/wal/b6e67da9-edeb-4115-8b44-249ed98f7f9b/e905bf1b786f.jsonl",
+      "data": "{\"lsn\":2,\"op\":\"ROUTE\",\"id\":\"$route\",\"payload\":{\"opId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b:e905bf1b786f:2\",\"payload\":{\"legacyIdentities\":[],\"legacyIdentityScanComplete\":true,\"source\":{\"fastHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"path\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"size\":1041,\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"tailHash64k\":\"xxh64-v1:554fdd4ff3c9d1bd\"},\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\"},\"seq\":2,\"type\":\"ROUTE_SET\",\"version\":{\"deviceId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b\",\"rev\":2,\"seq\":2}},\"ts\":1792951909217,\"docKey\":\"e905bf1b786f\",\"documentId\":\"sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a\",\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"integrity\":\"xxh64-v1:6e7fb2c0bffdb9b8\"}\n{\"lsn\":3,\"op\":\"ROUTE\",\"id\":\"$route\",\"payload\":{\"opId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b:e905bf1b786f:3\",\"payload\":{\"legacyIdentities\":[],\"legacyIdentityScanComplete\":true,\"source\":{\"fastHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"orderedPageIdentities\":[\"ref:4R\"],\"pageCount\":1,\"path\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"size\":1041,\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"tailHash64k\":\"xxh64-v1:554fdd4ff3c9d1bd\"},\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\"},\"seq\":3,\"type\":\"ROUTE_SET\",\"version\":{\"deviceId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b\",\"rev\":3,\"seq\":3}},\"ts\":1792951909849,\"docKey\":\"e905bf1b786f\",\"documentId\":\"sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a\",\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"integrity\":\"xxh64-v1:f1d93a081f577244\"}\n"
+    },
+    {
+      "path": "/Users/jiajia/Documents/ObReader-Apple-Test/00_Archive/20_PDFData/wal/b6e67da9-edeb-4115-8b44-249ed98f7f9b/e905bf1b786f.jsonl.anchor.json",
+      "data": "{\"archives\":[],\"deviceId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b\",\"docKey\":\"e905bf1b786f\",\"documentId\":\"sha256-v1:e27bef7089ec4921270f132e77706b1aa51ecb17e37b550fb9d2cfb35feff66a\",\"integrity\":\"xxh64-v1:c23505271fa4a81b\",\"kind\":\"pdf-reader-jsonl-device-anchor\",\"operations\":[{\"opId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b:e905bf1b786f:1\",\"payload\":{\"legacyIdentities\":[],\"legacyIdentityScanComplete\":false,\"source\":{\"fastHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"path\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"size\":1041,\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\",\"tailHash64k\":\"xxh64-v1:554fdd4ff3c9d1bd\"},\"sourcePath\":\"ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf\"},\"seq\":1,\"type\":\"ROUTE_SET\",\"version\":{\"deviceId\":\"b6e67da9-edeb-4115-8b44-249ed98f7f9b\",\"rev\":1,\"seq\":1}}],\"schemaVersion\":1,\"sourceHash\":\"xxh64-v1:554fdd4ff3c9d1bd\",\"throughSeq\":1}"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-resource-v3-reader-ui-warm-lookup",
+  "measuredAt": "2026-10-26",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5"
+  },
+  "status": "NOT_MEASURED",
+  "attempts": [
+    {
+      "status": "HARNESS_FAILED_BEFORE_UI",
+      "reason": "First harness used a locator count() API that is not available in the installed Puppeteer wrapper; no UI timing samples were collected."
+    },
+    {
+      "status": "INTERRUPTED_BEFORE_FIRST_SAMPLE",
+      "reason": "Corrected harness did not write a first sample within the bounded run and was interrupted. No warm lookup timings were collected; this is not evidence of a product failure."
+    }
+  ],
+  "samples": [],
+  "observedInSeparateLiveReaderDom": {
+    "term": "on",
+    "dictionaryMeaning": "ɒn; prep. 在...之上; adv. ...上去; a. 正起作用的; [计] 打开",
+    "latencyMs": null,
+    "classification": "Visible current-package Native Reader DOM observation; timing unavailable."
+  },
+  "nextStep": "Use the successful 77 ms one-sample Reader UI evidence and existing 100-sample Native DataAdapter warm benchmark; do not repeat unproductive CDP harness attempts."
+}

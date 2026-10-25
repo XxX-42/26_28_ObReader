@@ -1,24 +1,60 @@
 {
   "runId": "native-reader-ui-current-ca8b-20261026",
-  "scope": "current-package Native Reader UI first lookup",
-  "candidate": {
-    "version": "0.14.0",
-    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
-    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
-    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  "status": "READER_UI_LOOKUP_PASS",
+  "packageHashes": {
+    "mainJs": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifest": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
   },
-  "runtime": "Obsidian 1.14.5 / Electron 43.8.3, isolated temporary profile",
-  "vault": "disposable startup-benchmark-vault; Sync disabled",
-  "status": "NOT_VERIFIED",
   "preflight": {
-    "pluginListedEnabled": true,
-    "pluginInstanceLoaded": false,
-    "readerViews": 0,
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "version": "0.14.0",
+    "pluginInstance": true,
+    "pluginEnabledInSettings": false,
     "syncEnabled": false,
-    "trustActionAvailable": false
+    "readerFile": "ObReader-Bulk-Tests/native-resource-v3-query-current-0.14.pdf",
+    "readerReady": true,
+    "lingqSetting": false,
+    "focused": true
   },
-  "readerOpened": false,
-  "lookupPerformed": false,
+  "toggleMs": 158,
+  "stateAfterToggle": {
+    "setting": true,
+    "status": {
+      "phase": "idle",
+      "count": 0,
+      "total": 0
+    },
+    "dictPresent": true
+  },
+  "query": "zyzzyva",
+  "geometry": {
+    "x": 116.14063262939453,
+    "y": 121.609375,
+    "text": "on zyzzyva dynamic apple",
+    "rect": {
+      "x": 90.76060485839844,
+      "y": 111.109375,
+      "width": 50.76005554199219,
+      "height": 21
+    }
+  },
+  "iframeRect": {
+    "x": 344,
+    "y": 77.390625,
+    "width": 456,
+    "height": 522.609375
+  },
+  "clickToCardMs": 77,
+  "card": {
+    "visible": true,
+    "text": "zyzzyva\n陌生词\n🔗 Link\n×\n象鼻虫\n反向链接：0\n保存语境\n1\n2\n3\n4\n✓",
+    "meaning": "象鼻虫",
+    "status": "陌生词"
+  },
+  "cardError": null,
+  "screenshot": "/private/tmp/obreader-014-v3/evidence/014-resource-v3/current-gates/native-resource-v3-reader-ui-ca8b-20261026.png",
   "pdfSha256Before": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
-  "interpretation": "Precondition failure in the disposable app profile. No Reader or dictionary assertion ran; this is not evidence of a product lookup failure."
+  "pdfSha256After": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
+  "dictionaryManifestSha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe"
 }
