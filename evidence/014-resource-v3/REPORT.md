@@ -330,3 +330,22 @@ Resource-v3 is already integrated in the current candidate. Its supported Obsidi
 This supports keeping the direct Resource-v3 lookup path and not returning to full-database-first Dexie initialization. It does **not** close the startup or whole click-path gate: `startup added blocking <50 ms = NOT_MEASURED`, and enabled Reader UI first lookup remains `NOT_VERIFIED`. Do not describe the service benchmark as the user-visible LingQ latency. Next Resource-v3 work should measure only those two missing boundaries in a correctly owned test process; avoid another broad storage redesign or SQLite/OPFS work.
 
 No runtime source, frozen storage/WAL code, canonical vocabulary data, PDF.js vendor, or formal Vault files changed in this continuation. `origin/main` and the formal Vault were left untouched; iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 continuation: public backlink evidence fix and current gates
+
+This continuation is based on `origin/main=654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5` in integration branch `codex/014-goal-resume-20261025`. The semantic audit found that normal public Reader links intentionally omit internal `docKey`/`documentId`, but the Learning Host only called the synchronous evidence check that requires those identifiers to already be present in the link. A valid generated backlink therefore became unresolved. The fix uses the existing asynchronous Reader route resolver to verify the public path against the Anchor's stable document identity, while still requiring the captured Markdown slice, offsets, and text to match exactly. Navigation recovery cannot silently turn a stale citation into verified evidence. Focused regression covers the real public encoder, the production evidence methods, mismatched target/document/path/source/offset, and changed Markdown content.
+
+Validation on the integrated source:
+
+- Focused semantic, Learning Host, backlink, and Markdown routing suites: **54/54 passed**.
+- Build: **PASS**, 3 release files, 406 embedded runtime assets, and 402 frozen vendor files verified.
+- Fast: **123/123**, 0 failed, 0 skipped; source fingerprint `92aeb8cccf47a4abeb1fe28c316430a0fd2aea30d46ecd5bb966ded208dd33dd` (1,122 files), stable.
+- Browser: **28/28**, 0 failed, 0 skipped; same stable source fingerprint.
+- Race: **80/80**, 0 failed, 0 skipped; same stable source fingerprint.
+- Offline Viewer smoke: **PASS**, all five annotation tools, save/reopen, and bulk-delete persistence.
+
+The rebuilt package hashes are `main.js d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, and `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+
+Native acceptance remains separate from these automated results. The current-package `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX` and `OPEN_MOVE_8x5` are `NOT_VERIFIED`; `REAL_PROCESS_RESTART_8x5` is `NOT_RUN`; `MAC_NATIVE_CURRENT_PACKAGE=NOT_VERIFIED`. The owned Obsidian renderer cannot be reliably foreground-selected, so no more window-control attempts are being made. Earlier-package Windows passes do not transfer to the current main bundle. Resource-v3 remains integrated: Native DataAdapter first-lookup evidence is recorded above, but `startup added blocking <50 ms=NOT_MEASURED` and enabled Reader UI first lookup remains `NOT_VERIFIED`.
+
+At deployment check time, the existing test-vault package still had the previous `main.js 706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b`; its community-plugin list was empty. This update does not claim a current-package Native UI run, process restart, or formal-vault deployment. `main` and `远程仓库1` were not changed.

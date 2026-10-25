@@ -26971,7 +26971,7 @@ var __PDFReaderLearningHost = (() => {
           const range = anchor.sourceRange || {};
           const link = parseMarkdownReaderLink(range.text);
           if (!link?.target || link.target.kind !== anchor.target?.kind || link.target.id !== anchor.target?.id || link.docKey && link.docKey !== anchor.docKey || link.documentId && link.documentId !== anchor.documentId) return failed("backlink-reader-link-mismatch");
-          if (typeof plugin.readerBacklinkSourceEvidence === "function") {
+          if (typeof plugin.resolveReaderBacklinkSourceEvidence === "function" || typeof plugin.readerBacklinkSourceEvidence === "function") {
             const row = {
               sourcePath,
               target: anchor.target,
@@ -26983,7 +26983,8 @@ var __PDFReaderLearningHost = (() => {
               line: range.line,
               sourceText: range.text
             };
-            if (!plugin.readerBacklinkSourceEvidence(row, file)) return failed("backlink-route-mismatch");
+            const evidence = typeof plugin.resolveReaderBacklinkSourceEvidence === "function" ? await plugin.resolveReaderBacklinkSourceEvidence(row, file) : plugin.readerBacklinkSourceEvidence(row, file);
+            if (!evidence || typeof plugin.resolveReaderBacklinkSourceEvidence === "function" && (evidence.offset !== range.startOffset || evidence.endOffset !== range.endOffset || evidence.sourceText !== range.text)) return failed("backlink-route-mismatch");
           }
           return verified(anchor);
         }
