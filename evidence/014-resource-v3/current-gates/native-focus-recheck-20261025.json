@@ -1,0 +1,28 @@
+{
+  "status": "NOT_VERIFIED",
+  "date": "2026-10-25",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257"
+  },
+  "testVault": "ObReader-Apple-Test",
+  "preflight": {
+    "vaultIdentityMatched": true,
+    "syncEnabled": false,
+    "pluginEnabled": false,
+    "readerViews": 0,
+    "rendererVisible": true,
+    "activeDocumentMatches": true,
+    "activeWindowMatches": true,
+    "documentHasFocus": false
+  },
+  "focusAttempt": "One AXRaise on the exact ObReader-Apple-Test window; document.hasFocus remained false.",
+  "runnerResult": "Stopped at the pre-mutation Native foreground gate.",
+  "inputSent": false,
+  "writeIsolationInstalled": false,
+  "fixturesCreated": false,
+  "vaultDataChanged": false,
+  "nativeMatrix": "NOT_VERIFIED",
+  "openMove": "NOT_VERIFIED",
+  "trueProcessRestart": "NOT_RUN"
+}

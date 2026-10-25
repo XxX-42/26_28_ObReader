@@ -65,3 +65,7 @@ The latest actual Obsidian 1.14.5 run passed the Highlight learning flow and cre
 On the exact current `main.js d57f5e1e…` package in a disposable Obsidian 1.14.5 scratch Vault, one real pointer click on `zyzzyva` returned a LingQ card with dictionary meaning `象鼻虫` and status `陌生词`. Click-to-result was **460.9 ms**. The generated one-page PDF screenshot was visually inspected; no user document was opened. Full evidence: [receipt](native-resource-v3-reader-ui-d57-20261025.json), [screenshot](native-resource-v3-reader-ui-d57-20261025.png).
 
 This is one Native UI sample, not a process-cold first query or UI P95: page-level matching may have warmed the dictionary block. Startup-added blocking remains `NOT_MEASURED`. Current-package Native 8×5 remains `NOT_VERIFIED`; real process restart remains `NOT_RUN`. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll, PDF.js, wheel, observer, or LingQ scroll path was changed.
+
+## Current-package Native focus recheck (2026-10-25)
+
+The exact existing ObReader-Apple-Test window was targeted once. The Native runner confirmed the correct Vault, Sync disabled, plugin disabled, zero Reader views, visible renderer, and matching active document/window, but `document.hasFocus=false`; it stopped before installing isolation, enabling the plugin, creating fixtures, or sending input. No Vault data changed. See [the pre-mutation receipt](native-focus-recheck-20261025.json). Native 8×5/open-move remain `NOT_VERIFIED`; true process restart is `NOT_RUN`.

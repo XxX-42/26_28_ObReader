@@ -465,3 +465,9 @@ SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
 ```
 
 No scrolling, PDF.js, wheel, observer, or LingQ scroll code changed. No formal Vault or `main` update occurred in this continuation.
+
+## 2026-10-25 bounded Native focus recheck
+
+Using the existing `ObReader-Apple-Test` profile (current candidate package already installed), I attempted one exact-window focus acquisition and reran the Native harness. The test Vault identity matched, Sync was off, the plugin was disabled, there were no Reader views, and the renderer was visible with `activeDocument`/`activeWindow` matching that renderer. However, `document.hasFocus()` was false after the exact-window AXRaise. The harness stopped at its pre-mutation gate before installing the test write adapter, enabling the plugin, creating fixtures, or sending any pointer/keyboard input. No Vault data changed.
+
+Receipt: [Native focus recheck](current-gates/native-focus-recheck-20261025.json). No further window-control attempts were made. `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX` and `OPEN_MOVE_8x5` remain `NOT_VERIFIED`; true process restart remains `NOT_RUN`.
