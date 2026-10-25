@@ -350,6 +350,32 @@ Native acceptance remains separate from these automated results. The current-pac
 
 At deployment check time, the existing test-vault package still had the previous `main.js 706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b`; its community-plugin list was empty. This update does not claim a current-package Native UI run, process restart, or formal-vault deployment. `main` and `远程仓库1` were not changed.
 
+## 2026-10-25 latest scope-convergence decision
+
+`SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. The 120-page OCR PDF has no proven reproducible root cause. This continuation made no changes to PDF.js, wheel handling, observers, or LingQ scrolling.
+
+The current package was exercised once in the exact owned Obsidian 1.14.5 / Electron 43.8.3 profile. Preflight verified the `ObReader-Apple-Test` Vault, focused renderer, Sync off, and all three candidate package hashes. The run opened only its generated PDF fixture with Reader data writes redirected to a per-run isolated root. Highlight mode was active; 13 trusted drag-path samples hit the PDF text layer, and captured events were not prevented. However, DOM selection remained collapsed, PDF.js received no `highlightSelection` call, and no Highlight editor appeared within 8 seconds. The run stopped before either learning flow or any route stage. The fixture matched the repository fixture SHA-256; no user PDF was touched. Cleanup restored the data adapter, closed the Reader, and disabled the plugin, then removed only the two generated fixture files after re-verifying their exact paths and PDF hash. Evidence: [current-package Native Highlight drag result](current-gates/native-current-package-highlight-drag-20261025.json), [post-drag screenshot](current-gates/native-current-package-highlight-drag-20261025.png). Full local runner receipt remains under ignored `tests/artifacts/native-learning-loop-20261025114805917-dc564d9d9a*`.
+
+This is a failed Native attempt, not an acceptance pass. It does not isolate a product defect from the native CUA selection path. Do not change PDF.js or input behavior without a minimal reproducible diagnosis, and do not spend more time retrying window activation. Current package gates remain:
+
+```text
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED (Highlight interaction stopped the run)
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+```
+
+Resource-v3 is already integrated and present in the deployed test package. The strongest supported Native evidence remains the current-package Resource-v3 DataAdapter first-tap run: five samples per query after asynchronous prewarm, rare `zyzzyva` P50 191.4 ms / maximum 233.1 ms, common `on` P50 209.5 ms / maximum 942.6 ms, valid miss P50 215.1 ms / maximum 256.5 ms, and warm P95 0.1 ms. This verifies direct block lookup in the real Obsidian DataAdapter, not the full LingQ click-to-card UI.
+
+```text
+RESOURCE_V3 = INTEGRATED; CURRENT TEST PACKAGE DEPLOYED
+FIRST_RARE_LOOKUP = PASS for Native DataAdapter scope only
+READER_UI_FIRST_LOOKUP = NOT_VERIFIED
+STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED
+```
+
+Do not claim startup or full Reader first-query gates passed. The current package remains on the feature branch and existing test Vault; `main` and the formal `远程仓库1` Vault remain untouched. iPad is `DEFERRED_BY_SCOPE`.
+
 ### Test-vault package replacement
 
 After the gates passed, the previous three files were backed up outside the Vault to `/Users/jiajia/.codex/deploy-backups/obreader-014-v3-backlink-fix-2026-10-25/`. The existing `ObReader-Apple-Test` plugin folder now matches the rebuilt candidate exactly: `main.js=d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257`, `manifest.json=71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css=8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`; manifest version is `0.14.0`. Only these three files were replaced. The plugin remains disabled (`community-plugins.json=[]`), so this is a file deployment, not a runtime reload or Native UI verification. The Vault's `data.json` was not part of the copy operation. No `main` push or `远程仓库1` deployment occurred.

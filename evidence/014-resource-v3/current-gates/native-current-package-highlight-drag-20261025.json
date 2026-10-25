@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "kind": "obsidian-native-current-package-highlight-drag-result",
+  "status": "FAILED_BEFORE_LEARNING_FLOW",
+  "runId": "native-learning-loop-20261025114805917-dc564d9d9a",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "runtime": {
+    "obsidianVersion": "1.14.5",
+    "electronVersion": "43.8.3",
+    "vault": "ObReader-Apple-Test",
+    "syncEnabled": false,
+    "readerUiStep": "create first Highlight through PDF.js toolbar and pointer drag"
+  },
+  "fixture": {
+    "path": "PDF迁移测试/native-learning-loop-20261025114805917-dc564d9d9a/Reader Files/reading.pdf",
+    "sourceAndCopySha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "sourcePdfChanged": false
+  },
+  "drag": {
+    "text": "Trace-based Just-in-Time Type Specialization",
+    "annotationEditorMode": 9,
+    "trustedMouseAndPointerEvents": true,
+    "sampledDragPointsOnTextLayer": 13,
+    "capturedEventsDefaultPrevented": false,
+    "finalSelectionTextLength": 0,
+    "finalSelectionCollapsed": true,
+    "pdfJsHighlightSelectionConsumerCalls": 0,
+    "createdHighlightEditors": 0,
+    "waitTimeoutMs": 8000
+  },
+  "cleanup": {
+    "status": "complete",
+    "readerClosed": true,
+    "pluginDisabled": true,
+    "syncStillDisabled": true,
+    "dataIsolationRestored": true,
+    "generatedFixtureRemovedAfterHashVerification": true
+  },
+  "interpretation": "The current-package Native automation did not create the expected Highlight. Evidence does not yet distinguish a product interaction defect from this CUA/native-selection path, so no Native learning-flow, route-matrix, or process-restart pass is claimed. No PDF.js or input code was changed."
+}
