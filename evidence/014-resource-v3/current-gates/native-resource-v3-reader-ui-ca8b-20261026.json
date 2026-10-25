@@ -1,6 +1,6 @@
 {
   "runId": "native-reader-ui-current-ca8b-20261026",
-  "status": "READER_UI_LOOKUP_PASS",
+  "status": "EXPLORATORY_RUNTIME_UNSUPPORTED",
   "packageHashes": {
     "mainJs": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
     "manifest": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
@@ -56,5 +56,18 @@
   "screenshot": "/private/tmp/obreader-014-v3/evidence/014-resource-v3/current-gates/native-resource-v3-reader-ui-ca8b-20261026.png",
   "pdfSha256Before": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
   "pdfSha256After": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
-  "dictionaryManifestSha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe"
+  "dictionaryManifestSha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe",
+  "historicalClassification": "EXPLORATORY_RUNTIME_UNSUPPORTED",
+  "acceptance": "NOT_ACCEPTED",
+  "runtimeActual": {
+    "obsidianVersion": "1.12.7",
+    "electronVersion": "39.8.3",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
+    "processId": 69139,
+    "windowTitleWasMisleading": "The title displayed Obsidian 1.14.5; runtime User-Agent and app binary established 1.12.7."
+  },
+  "notes": [
+    "The recorded 77 ms click-to-card observation is raw exploratory data only. It was collected in Obsidian 1.12.7 / Electron 39.8.3, below the candidate minimum app version 1.14.4.",
+    "Do not use this receipt as supported Native acceptance or benchmark evidence. A separate supported-runtime 1.14.5 Reader UI receipt is native-resource-v3-reader-ui-1145-20261026.json."
+  ]
 }

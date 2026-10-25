@@ -22,7 +22,14 @@
     "term": "on",
     "dictionaryMeaning": "ɒn; prep. 在...之上; adv. ...上去; a. 正起作用的; [计] 打开",
     "latencyMs": null,
-    "classification": "Visible current-package Native Reader DOM observation; timing unavailable."
+    "classification": "Exploratory DOM observation in Obsidian 1.12.7; no timing and not supported-runtime evidence."
   },
-  "nextStep": "Use the successful 77 ms one-sample Reader UI evidence and existing 100-sample Native DataAdapter warm benchmark; do not repeat unproductive CDP harness attempts."
+  "nextStep": "The supported Obsidian 1.14.5 one-sample Reader UI result is recorded in native-resource-v3-reader-ui-1145-20261026.json. Warm UI P95 remains NOT_MEASURED.",
+  "runtimeActual": {
+    "obsidianVersion": "1.12.7",
+    "electronVersion": "39.8.3",
+    "processId": 69139,
+    "classification": "Unsupported runtime; no warm UI timings were collected."
+  },
+  "acceptance": "NOT_ACCEPTED_FOR_SUPPORTED_RUNTIME"
 }

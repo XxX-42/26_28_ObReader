@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-resource-v3-reader-ui-lookup",
+  "measuredAt": "2026-10-25T18:40:58.168Z",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "status": "PASS",
+  "runtime": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+    "title": "learning - ObReader-Apple-Test - Obsidian 1.14.5",
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "configDir": ".obsidian"
+  },
+  "preflight": {
+    "focused": true,
+    "activeDocument": true,
+    "activeWindow": true,
+    "sync": false,
+    "loaded": false,
+    "enabled": false,
+    "readers": 0,
+    "active": "PDF迁移测试/native-learning-loop-20261024231109330-daa24a391d/Markdown Files/learning.md",
+    "editor": "# Native learning route fixture\n\nThis Markdown excerpt survives every route change.\n"
+  },
+  "lookup": {
+    "query": "zyzzyva",
+    "classification": "first explicit rare-word tap after LingQ activation in this Reader session; not process-cold",
+    "clickToMeaningMs": 169,
+    "geometry": {
+      "x": 116.14063262939453,
+      "y": 121.609375,
+      "width": 50.76005554199219,
+      "text": "on zyzzyva dynamic apple"
+    },
+    "card": {
+      "text": "zyzzyva\n陌生词\n🔗 Link\n×\n象鼻虫\n反向链接：0\n保存语境\n1\n2\n3\n4\n✓",
+      "meaning": "象鼻虫",
+      "status": "陌生词"
+    },
+    "reader": {
+      "pages": 1
+    },
+    "screenshot": "/private/tmp/obreader-014-v3/evidence/014-resource-v3/current-gates/native-resource-v3-reader-ui-1145-20261026.png",
+    "pdfSha256Before": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb"
+  },
+  "cleanup": {
+    "status": "PASS",
+    "finalState": {
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "sync": false,
+      "loaded": false,
+      "enabled": [],
+      "readers": 0,
+      "active": "PDF迁移测试/native-learning-loop-20261024231109330-daa24a391d/Markdown Files/learning.md",
+      "fixture": false,
+      "storage": false
+    },
+    "pluginDataRestored": true,
+    "communityRestored": true,
+    "adapterWrites": [
+      {
+        "method": "write",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "write": true,
+        "durationMs": 1,
+        "blocked": null
+      },
+      {
+        "method": "mkdir",
+        "logicalPath": "00_Archive/20_PDFData",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData",
+        "write": true,
+        "durationMs": 1,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/_registry.json",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/_registry.json",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/_storage-protocol.json",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/_storage-protocol.json",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "mkdir",
+        "logicalPath": "00_Archive/20_PDFData/wal",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "mkdir",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl.anchor.json.pending",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl.anchor.json.pending",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "rename",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl.anchor.json.pending",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl.anchor.json.pending",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "mkdir",
+        "logicalPath": "00_Archive/20_PDFData/sidecars",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/sidecars",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/sidecars/3a780859b9c9.annotations.json.pending",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/sidecars/3a780859b9c9.annotations.json.pending",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "rename",
+        "logicalPath": "00_Archive/20_PDFData/sidecars/3a780859b9c9.annotations.json.pending",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/sidecars/3a780859b9c9.annotations.json.pending",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/_registry.json",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/_registry.json",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "write": true,
+        "durationMs": 1,
+        "blocked": null
+      },
+      {
+        "method": "append",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": ".obsidian/workspace.json",
+        "storagePath": ".obsidian/workspace.json",
+        "write": true,
+        "durationMs": 1,
+        "blocked": null
+      },
+      {
+        "method": "append",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "write": true,
+        "durationMs": 1,
+        "blocked": null
+      },
+      {
+        "method": "append",
+        "logicalPath": "00_Archive/20_PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-resource-v3-20261026-7a29431b/PDFData/wal/e39821ef-5b6e-4666-9941-6726132bd6f5/3a780859b9c9.jsonl",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/data.json",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/data.json",
+        "write": true,
+        "durationMs": 20,
+        "blocked": null
+      },
+      {
+        "method": "append",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "write": true,
+        "durationMs": 0,
+        "blocked": null
+      },
+      {
+        "method": "write",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/data.json",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/data.json",
+        "write": true,
+        "durationMs": 3,
+        "blocked": null
+      },
+      {
+        "method": "append",
+        "logicalPath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "storagePath": ".obsidian/plugins/pdf-web-reader/.logs/2026-10-25T18-40-58-267Z-by986tt4-000.log",
+        "write": true,
+        "durationMs": 5,
+        "blocked": null
+      }
+    ],
+    "sourcePdfSha256": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb"
+  }
+}
