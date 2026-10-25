@@ -1,0 +1,24 @@
+{
+  "runId": "native-reader-ui-current-ca8b-20261026",
+  "scope": "current-package Native Reader UI first lookup",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "runtime": "Obsidian 1.14.5 / Electron 43.8.3, isolated temporary profile",
+  "vault": "disposable startup-benchmark-vault; Sync disabled",
+  "status": "NOT_VERIFIED",
+  "preflight": {
+    "pluginListedEnabled": true,
+    "pluginInstanceLoaded": false,
+    "readerViews": 0,
+    "syncEnabled": false,
+    "trustActionAvailable": false
+  },
+  "readerOpened": false,
+  "lookupPerformed": false,
+  "pdfSha256Before": "401fadf3e0fca80fd18a8bf7351f65eb88c287dfe81a317d79a226c951b51efb",
+  "interpretation": "Precondition failure in the disposable app profile. No Reader or dictionary assertion ran; this is not evidence of a product lookup failure."
+}
