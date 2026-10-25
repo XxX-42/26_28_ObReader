@@ -303,3 +303,30 @@ formal Vault deployment = NONE in this continuation
 ```
 
 The existing test Vault already contains the exact candidate three-file package hashes listed above; no redeployment was needed. This continuation neither pushed `main` nor touched the formal `远程仓库1` Vault or user PDFs/data.
+
+## 2026-10-25 bounded gate rerun and next focus
+
+This continuation follows the narrowed order: the scroll investigation is closed as `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scroll code was changed. The Native current-package route matrix and process-restart gate remain the only unresolved Native acceptance items. Repeated window activation was stopped after the OS kept another Obsidian profile in front; no input was sent to that profile and no further window-control retry was made.
+
+The Native runner received test-only safeguards after the diagnostic review: it will not toggle an already-active Highlight tool off, opens the selection palette through hover, records PDF.js selection-consumer activity before and after pointer drag, checks the full drag path remains over `.textLayer`, and captures a post-drag screenshot. These changes improve failure evidence; they do not establish that the earlier selection failure was only a harness issue and do not count as a Native pass. Current-package statuses remain:
+
+```text
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED
+```
+
+The rebuilt release package did not change during this test-only work. Its three hashes remain `main.js=706b1cc37a194f985679f67b239a117fc058afde77ece8d0012e8b5fd9c8180b`, `manifest.json=71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, and `styles.css=8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+
+### Automated gates
+
+The latest source fingerprint was stable at `1be8e85005ce1979ee212fdbb36b3c100f92788daa6858005586912ae0a88af0` across 1,122 source files. Build passed with 3 release files, 406 embedded runtime assets, and 402 frozen vendor hashes. Fast passed **123/123**, Browser **28/28**, Race **80/80** across 10 rounds, and Offline smoke passed; all had zero failures and skips. The updated Native runner assertions were included in Fast. Full raw output is retained in the local ignored `tests/artifacts/vocabulary-gates/` directory; run IDs are `run-2026-10-25T11-03-29-048Z-36992-6cbf8978` (Fast), `run-2026-10-25T11-03-58-297Z-38564-cc86a2f4` (Browser), and `run-2026-10-25T11-09-51-140Z-42660-d5a069e0` (Race).
+
+### Resource-v3 decision
+
+Resource-v3 is already integrated in the current candidate. Its supported Obsidian 1.14.5 Native DataAdapter experiment uses the actual Vault `read`/`readBinary` path and one compressed block per cold query, without waiting for a full Dexie build. For the current asynchronous Worker-prewarm package, five cold samples per term measured common `on` at **209.5 ms P50 / 942.6 ms maximum**, rare `zyzzyva` at **191.4 / 233.1 ms**, and a missing term at **215.1 / 256.5 ms**; resident warm P95 was **0.1 ms** for all three. These are service/DataAdapter timings inside an already running Obsidian process, excluding plugin Host and Reader UI wiring.
+
+This supports keeping the direct Resource-v3 lookup path and not returning to full-database-first Dexie initialization. It does **not** close the startup or whole click-path gate: `startup added blocking <50 ms = NOT_MEASURED`, and enabled Reader UI first lookup remains `NOT_VERIFIED`. Do not describe the service benchmark as the user-visible LingQ latency. Next Resource-v3 work should measure only those two missing boundaries in a correctly owned test process; avoid another broad storage redesign or SQLite/OPFS work.
+
+No runtime source, frozen storage/WAL code, canonical vocabulary data, PDF.js vendor, or formal Vault files changed in this continuation. `origin/main` and the formal Vault were left untouched; iPad remains `DEFERRED_BY_SCOPE`.

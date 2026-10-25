@@ -187,6 +187,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/pending-save-integration.test.mjs",
     "tests/plugin-host.test.mjs",
     "tests/reader-anchor-store.test.mjs",
+    "tests/resource-startup-pair-support.test.mjs",
     "tests/semantic-anchor.test.mjs",
     "tests/semantic-services.test.mjs",
     "tests/markdown-routing.test.mjs",

@@ -28,6 +28,7 @@ import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
 import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate,
   resolveNativeOwnedProfileApp } from "./native-learning-acceptance.mjs";
+import { installNativeSelectionProbe } from "./native-selection-probe.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -521,7 +522,9 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
   const buttonId = mode === "highlight" ? "editorHighlightButton" : null;
   if (buttonId) {
     await frame.waitForSelector(`#${buttonId}`, { timeout: 15_000 });
-    await frame.click(`#${buttonId}`);
+    const activeMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    if (activeMode !== 9) await frame.click(`#${buttonId}`);
+    await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
   }
   // TextLayer ranges keep nonzero geometry when the Reader restores a scroll
   // position below the title. Bring the actual drag target into the viewport
@@ -576,15 +579,21 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
       }, true);
     }
   });
-  if (buttonId) {
+  const selectionProbeInstalled = await frame.evaluate((source) => {
+    const trace = window.__nativeSelectionTrace || { installers: [] };
+    if (!trace.installers) trace.installers = [];
+    const install = (0, eval)(`(${source})`);
+    const cleanup = install({ d: document, w: window, a: PDFViewerApplication, trace, captureFixtureText: true });
+    trace.installers.push(cleanup);
+    window.__nativeSelectionTrace = trace;
+    return trace.nativeSelectionProbe?.active === true;
+  }, installNativeSelectionProbe.toString());
+  assert.equal(selectionProbeInstalled, true, "Native selection probe must observe the actual PDF.js consumer path.");
+  const activeEditorMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+  if (activeEditorMode === 9) {
     // Confirm the active tool's palette was actually mounted and shown before
-    // moving away. Treating a not-yet-created toolbar as already hidden races
-    // PDF.js' mode-change UI and lets the drag cross the still-open palette.
-    await frame.waitForFunction(() => {
-      const toolbar = document.querySelector("#editorHighlightParamsToolbar");
-      return toolbar && !toolbar.classList.contains("hidden") &&
-        !toolbar.classList.contains("editorParamsToolbarAutoHidden");
-    }, { timeout: 5_000 });
+    // moving away. The caller may already have entered Highlight mode, so
+    // first hover its selected button instead of toggling the tool off.
     const palette = await frame.evaluate(() => {
       const toolbar = document.querySelector("#editorHighlightParamsToolbar");
       const button = document.querySelector("#editorHighlightButton");
@@ -597,7 +606,13 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
         buttonY: buttonRect.top + buttonRect.height / 2,
       };
     });
-    assert.ok(palette, "The visible PDF.js Highlight parameter palette must have geometry.");
+    assert.ok(palette, "The PDF.js Highlight parameter palette must have geometry.");
+    await page.mouse.move(frameRect.x + palette.buttonX, frameRect.y + palette.buttonY, { steps: 2 });
+    await frame.waitForFunction(() => {
+      const toolbar = document.querySelector("#editorHighlightParamsToolbar");
+      return toolbar && !toolbar.classList.contains("hidden") &&
+        !toolbar.classList.contains("editorParamsToolbarAutoHidden");
+    }, { timeout: 5_000 });
     // Route above the palette first. A direct diagonal from the toolbar button
     // to the text can cross the popup, re-arm its hover timer, and put it over
     // the middle of the drag. The text origin lies left of this palette.
@@ -619,23 +634,50 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
   } else {
     await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
   }
+  await frame.evaluate(({ x }) => { window.__nativeDragEndX = x; }, { x: geometry.x2 });
   const beforeDrag = await frame.evaluate(({ x, y }) => ({
     mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
     paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
     startTarget: document.elementFromPoint(x, y)?.closest(".textLayer")?.className || null,
+    dragPathHitTests: Array.from({ length: 13 }, (_, index) => {
+      const sampleX = x + (window.__nativeDragEndX - x) * index / 12;
+      const hit = document.elementFromPoint(sampleX, y);
+      return { x: sampleX, target: hit?.tagName || null,
+        textLayerClass: hit?.closest(".textLayer")?.className || null,
+        inTextLayer: Boolean(hit?.closest(".textLayer")) };
+    }),
   }), { x: geometry.x1, y: geometry.y });
   await page.mouse.down({ button: "left" });
   await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y, { steps: 12 });
   await page.mouse.up({ button: "left" });
-  const dragDiagnostics = await frame.evaluate(() => ({
-    events: window.__nativePointerTrace || [],
-    selection: document.getSelection()?.toString() || "",
-    mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
-    activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
-    highlightEditorCount: document.querySelectorAll(".annotationEditorLayer .highlightEditor").length,
-    editorLayerChildren: document.querySelector(".annotationEditorLayer")?.children.length || 0,
-    paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
-  }));
+  const dragDiagnostics = await frame.evaluate(() => {
+    const probe = window.__nativeSelectionTrace?.nativeSelectionProbe;
+    const consumerRows = (probe?.consumers || []).map(row => ({
+      mode: row.mode,
+      before: row.before,
+      after: row.after,
+      editorCount: row.editorCount,
+    }));
+    const pointerRows = (probe?.pointerEvents || []).filter(row =>
+      ["pointerdown", "pointerup"].includes(row.type) || row.buttons > 0);
+    const selectionChanges = probe?.selectionChanges || [];
+    const result = {
+      events: window.__nativePointerTrace || [],
+      selectionProbe: { consumers: consumerRows, pointerEvents: pointerRows, selectionChanges,
+        eventPhaseCount: probe?.eventPhases?.length || 0 },
+      selection: document.getSelection()?.toString() || "",
+      mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
+      activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
+      highlightEditorCount: document.querySelectorAll(".annotationEditorLayer .highlightEditor").length,
+      editorLayerChildren: document.querySelector(".annotationEditorLayer")?.children.length || 0,
+      paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
+    };
+    for (const cleanup of window.__nativeSelectionTrace?.installers || []) cleanup();
+    if (window.__nativeSelectionTrace) window.__nativeSelectionTrace.installers = [];
+    return result;
+  });
+  assert.ok(beforeDrag.dragPathHitTests.every(sample => sample.inTextLayer),
+    "Every sampled point of the native drag must stay over the PDF text layer.");
   return { ...geometry, beforeDrag, dragDiagnostics };
 }
 
@@ -1287,6 +1329,7 @@ async function createHighlightLearningItem(pdfPath) {
   const selection = await selectTextByPointer({ frame, pathValue: pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
   assert.equal(selection.text, HIGHLIGHT_TEXT);
   report.highlightPointerGeometry = selection;
+  await recordScreen("reader-after-highlight-pointer-drag");
   await frame.waitForFunction(() => document.querySelectorAll(".annotationEditorLayer .highlightEditor").length > 0,
     { timeout: 8_000 });
   const annotation = await saveAnnotationThroughReaderUI(frame, before);

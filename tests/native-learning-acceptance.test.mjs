@@ -170,3 +170,15 @@ test("the Native learning runner contains no automatic native window activation 
   assert.ok(resumeCheck >= 0 && resumeCheck < main.indexOf("await enablePluginAfterIsolation()"),
     "stale or mixed-candidate resume receipts must be rejected before plugin enable or Native writes");
 });
+
+test("Native Highlight setup observes PDF.js selection consumption and samples the entire drag path", async () => {
+  const runner = await readFile(new URL("./native-learning-loop.mjs", import.meta.url), "utf8");
+  assert.match(runner, /installNativeSelectionProbe\.toString\(\)/u);
+  assert.match(runner, /probe\?\.consumers\s*\|\|\s*\[\]/u);
+  assert.match(runner, /dragPathHitTests:\s*Array\.from\(\{ length: 13 \}/u);
+  assert.match(runner, /beforeDrag\.dragPathHitTests\.every\(sample => sample\.inTextLayer\)/u);
+  assert.match(runner, /if \(activeMode !== 9\) await frame\.click/u,
+    "already-active Highlight must not be toggled off by Native setup");
+  assert.match(runner, /reader-after-highlight-pointer-drag/u,
+    "preserve the visible state immediately after the actual pointer gesture");
+});
