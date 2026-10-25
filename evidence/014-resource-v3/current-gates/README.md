@@ -1,5 +1,19 @@
 # Current integration gates
 
+## Current authority — 2026-10-26
+
+This block supersedes older candidate summaries below for release decisions.
+
+- Evidence audit base: `90da489454ae059dd8ca3edf2a447af0b4ea658f` on `codex/014-goal-resume-20261025`, clean and matching its upstream before this report-only correction. `origin/main=197cd7d653967eb0a2d04af3c91470163949e680`; no main update in this continuation.
+- Candidate `0.14.0` package hashes: `main.js ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`. The existing test-Vault files match; plugin disabled after isolated runs.
+- Latest automated gate: build PASS (3 release files, 406 embedded assets, 402 frozen vendor files); Fast 123/123, Browser 28/28, Race 80/80, Offline smoke PASS; 231 passed, 0 failed, 0 skipped. Stable source fingerprint `40821d7182b63170e401071f9605535846391743215bd2b9600aa7a7757096f5` (1,143 files). Native UI is not included in this gate.
+- Latest macOS current-package Highlight attempt reached the text layer with mode 9 and trusted pointer input, but selection stayed empty and no Highlight editor was created. This is not enough to distinguish a product problem from the external input path. Current 8-stage × 5-direction and open-move remain `NOT_VERIFIED`; true process restart remains `NOT_RUN`. Earlier Windows PASS used `main.js a7d740…`, not this package. No further window-control retries are planned.
+- Resource-v3 Native DataAdapter results for the exact package: 770,611 rows / 67 blocks / 16,769,142 compressed bytes. Immediate instance-cold first lookup P50/max: `on` 251.7/1,024.3 ms; `zyzzyva` 231.6/338.3 ms; miss 211.0/253.7 ms. After background Worker prewarm: 52.9/156.9, 23.9/244.6, and 63.1/74.5 ms respectively. Across 100 resident repeats per key, P95/max: `on` 0.2/12.3 ms; rare 0.1/17.7 ms; miss 0.1/0.5 ms. Each cold lookup read one block. Background prewarm max was 1,254.3 ms; it is not startup-blocking evidence.
+- `READER_UI_FIRST_LOOKUP=NOT_VERIFIED`; `STARTUP_ADDED_BLOCKING_LT_50MS=NOT_MEASURED`. The existing 460.9 ms Reader UI sample used the older `d57f…` package.
+- `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; iPad `DEFERRED_BY_SCOPE`. No scroll/PDF.js edits, main promotion, or formal Vault deployment occurred in this continuation.
+
+Older sections below retain historical gate receipts and must not be confused with the current package status.
+
 ## Gates after asynchronous Resource-v3 Worker prewarm (2026-10-25)
 
 Candidate code commit `709b6600f498e88528ab71ff572ef5c1c82c5f62` was built and gated. Source fingerprint `c94f88ef84aa2725d3f5798ebd49573655a04862162d6dfbb7bed01543895614` was stable across the runs (1,114 files). Build passed with 3 release files, 406 embedded assets, and 402 frozen vendor hashes; Fast 122/122, Browser 28/28, Race 80/80 across 10 rounds, Offline smoke passed, and focused Resource-v3 tests passed 30/30. There were no failures or skips. Sanitized receipt: [gates-after-worker-prewarm-709b660-20261025.json](gates-after-worker-prewarm-709b660-20261025.json); raw child logs remain in local ignored test artifacts.
