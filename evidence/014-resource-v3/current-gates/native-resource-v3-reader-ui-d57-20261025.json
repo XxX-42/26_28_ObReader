@@ -1,0 +1,55 @@
+{
+  "status": "READER_UI_LOOKUP_COMPLETE",
+  "packageMainSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+  "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+  "pdfPath": "PDF Tests/native-resource-v3-query.pdf",
+  "screenshot": "/private/tmp/obreader-014-runtime/native-resource-v3-ui-tap-current-d57-20261025.png",
+  "preflight": {
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "focused": true,
+    "pluginEnabled": true,
+    "pluginVersion": "0.14.0",
+    "pluginActive": true,
+    "vocabularyEnabled": true,
+    "syncEnabled": false,
+    "activePath": "PDF Tests/native-resource-v3-query.pdf",
+    "readerCount": 1
+  },
+  "readiness": {
+    "pdfReady": true,
+    "pageCount": 1,
+    "textLayerCount": 2,
+    "textLayerText": "on zyzzyva dynamic appleTemporary generated dictionary test fixture. No user document.",
+    "selectionCollapsed": true,
+    "vocabularyElements": 2,
+    "bodyClass": ""
+  },
+  "geometry": {
+    "x": 167.6974105834961,
+    "y": 121.65625,
+    "width": 78.08302307128906,
+    "height": 32,
+    "text": "on zyzzyva dynamic apple",
+    "iframe": {
+      "x": 344,
+      "y": 78.046875,
+      "height": 721.953125,
+      "width": 680
+    },
+    "mainWindowClick": {
+      "x": 511.6974105834961,
+      "y": 199.703125
+    }
+  },
+  "responseResolved": true,
+  "card": {
+    "key": "zyzzyva",
+    "type": "word",
+    "ariaLabel": "LingQ 词条：zyzzyva",
+    "meaning": "象鼻虫",
+    "pronunciation": null,
+    "status": "陌生词",
+    "visible": true,
+    "clickToResultMs": 460.90000000596046
+  }
+}

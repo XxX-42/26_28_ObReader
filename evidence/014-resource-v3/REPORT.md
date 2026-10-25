@@ -446,3 +446,22 @@ READER_UI_FIRST_LOOKUP = NOT_VERIFIED
 ```
 
 Full receipt: [native-resource-v3-first-tap-d57-20261025.json](current-gates/native-resource-v3-first-tap-d57-20261025.json). No product runtime code, plugin activation, PDF/annotation data, `main`, or formal Vault was changed for this benchmark.
+
+## 2026-10-25 current-package Reader UI lookup spot check
+
+After the DataAdapter benchmark, the exact `d57f5e1e…` package was enabled only in a disposable scratch Vault with Sync disabled. The generated one-page PDF fixture contained `on zyzzyva dynamic apple`; no user document was opened. A real Obsidian pointer click on `zyzzyva` produced the LingQ card with dictionary meaning `象鼻虫`, status `陌生词`, and a measured click-to-result time of **460.9 ms**. The card was visually inspected in the captured screenshot and was visible with its link and level controls.
+
+This is one successful end-to-end Reader UI lookup on the Native Obsidian app and current package. It is a **single UI sample**, not a cold-process first-query latency or a P95 measurement: page-level vocabulary matching may have warmed the relevant dictionary block before the click. The service-level DataAdapter five-trial measurements above remain the latency evidence for direct block lookup. Startup-added blocking remains unmeasured.
+
+Evidence: [sanitized Reader UI receipt](current-gates/native-resource-v3-reader-ui-d57-20261025.json) and [visual screenshot](current-gates/native-resource-v3-reader-ui-d57-20261025.png).
+
+```text
+READER_UI_LOOKUP = PASS (one current-package Native click; scratch fixture)
+READER_UI_FIRST_QUERY_P95 = NOT_MEASURED
+STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+```
+
+No scrolling, PDF.js, wheel, observer, or LingQ scroll code changed. No formal Vault or `main` update occurred in this continuation.
