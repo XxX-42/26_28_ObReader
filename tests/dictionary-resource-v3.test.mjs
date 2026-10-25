@@ -119,6 +119,31 @@ test("startup availability and no-term warmup never import either resource forma
   }
 });
 
+test("v3 availability starts the block Worker in the background without waiting for it", async (t) => {
+  const fixture = makeV3Files();
+  let worker;
+  class DeferredWorker {
+    constructor() { worker = this; this.onmessage = null; }
+    postMessage() {}
+    terminate() {}
+  }
+  const adapter = new MemoryAdapter(fixture.files);
+  const dictionary = dictionaryFor(t, adapter, { workerSource: "worker", WorkerClass: DeferredWorker });
+  const pending = dictionary.checkAvailability();
+  let settled = false;
+  pending.then(() => { settled = true; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.ok(worker, "availability should kick off Worker creation");
+    assert.equal(settled, true, "availability must not wait for the Worker ready handshake");
+    assert.equal(adapter.readBinaryCount.size, 0, "Worker prewarm must not read dictionary blocks");
+  } finally {
+    worker?.onmessage?.({ data: { type: "started" } });
+  }
+  assert.equal((await pending).status, "resource-available");
+  await dictionary.blockWorkerReady;
+});
+
 test("v3 lookup agrees with every row and resolves range boundaries and Unicode keys", async (t) => {
   const fixture = makeV3Files();
   const adapter = new MemoryAdapter(fixture.files);

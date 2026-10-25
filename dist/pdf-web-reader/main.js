@@ -34506,6 +34506,7 @@ var __PDFReaderVocabularyDictionary = (() => {
             this.assertCurrent(revision);
             if (manifest.schemaVersion === 3) {
               this.emitResourceAvailable(manifest.entryCount);
+              void this.ensureBlockWorker();
               return this.resourceAvailableResult(manifest);
             }
             const ready = await this.cache.ready(manifest);

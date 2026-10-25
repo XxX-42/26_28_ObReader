@@ -145,6 +145,11 @@ class VocabularyDictionary {
       this.assertCurrent(revision);
       if (manifest.schemaVersion === 3) {
         this.emitResourceAvailable(manifest.entryCount);
+        // Start the block decoder while the plugin is idle so the first word
+        // tap does not pay the Worker creation/ready handshake. This is
+        // deliberately fire-and-forget: availability must not wait on Worker
+        // startup, and lookup retains the existing cooperative fallback.
+        void this.ensureBlockWorker();
         return this.resourceAvailableResult(manifest);
       }
       const ready = await this.cache.ready(manifest);

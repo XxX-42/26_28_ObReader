@@ -68,6 +68,12 @@ try {
       for (const testCase of cases) {
         const cacheName = `obreader-native-dictionary-benchmark-${runId}-${trial}-${testCase.id}`;
         const dictionary = new dictionaryRuntime.VocabularyDictionary({ adapter, cacheName });
+        const availabilityStarted = performance.now();
+        const availability = await dictionary.checkAvailability();
+        const availabilityMs = performance.now() - availabilityStarted;
+        const workerPrewarmStarted = performance.now();
+        const prewarmedWorker = dictionary.blockWorkerReady ? await dictionary.blockWorkerReady : null;
+        const workerPrewarmMs = performance.now() - workerPrewarmStarted;
         const originalDecode = dictionary.decodeBlock.bind(dictionary);
         dictionary.decodeBlock = async (...args) => { const start = performance.now(); try { return await originalDecode(...args); } finally { decodeWall.push({ case: testCase.id, elapsedMs: performance.now() - start, workerPresent: !!dictionary.blockWorker }); } };
         const originalManifest = dictionary.readManifestAt.bind(dictionary);
@@ -94,7 +100,10 @@ try {
               cacheHit: cacheHits === 1 && cacheMisses === 0 && reads.length === 0, cacheMiss: cacheMisses > 0,
               binaryReads: reads.length, bytesReadBinary: reads.reduce((sum, row) => sum + row.bytes, 0) });
           }
-          outcomes.push({ id: testCase.id, key: testCase.key, expected: testCase.expected, cold: samples[0], warm: samples.slice(1),
+          outcomes.push({ id: testCase.id, key: testCase.key, expected: testCase.expected,
+            availability: { status: availability.status, elapsedMs: availabilityMs },
+            workerPrewarm: { completed: !!prewarmedWorker, elapsedMs: workerPrewarmMs },
+            cold: samples[0], warm: samples.slice(1),
             workerMetrics: dictionary.benchmarkBlockWorkerMetrics || null,
             binaryReadCount: samples.reduce((sum, sample) => sum + sample.binaryReads, 0),
             bytesReadBinary: samples.reduce((sum, sample) => sum + sample.bytesReadBinary, 0) });
