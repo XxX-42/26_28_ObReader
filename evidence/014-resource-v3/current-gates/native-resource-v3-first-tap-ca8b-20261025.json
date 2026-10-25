@@ -1,0 +1,3656 @@
+{
+  "schemaVersion": 1,
+  "kind": "obsidian-native-resource-v3-first-tap-benchmark",
+  "status": "COMPLETE_NATIVE_FIRST_TAP_AFTER_ASYNC_PREWARM",
+  "runId": "1adf3658-3bce-422b-80fd-872f92768914",
+  "runtimeUnderTest": "current VocabularyDictionary injected into exact Obsidian renderer; real Vault DataAdapter read/readBinary only; excludes plugin Host/Reader UI wiring",
+  "candidate": {
+    "branch": "codex/014-goal-resume-20261025",
+    "commit": "b8053b5561aebbc5ac767b4e9f32dbb2f7fe058d",
+    "mainBundleSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "dictionarySourceSha256": "76cdb665c423bb9277a1790775775fe28d0f73f0be6a590861e06f833e13a8bd",
+    "workerSourceSha256": "0670712f82ad9995541fd23bd8a4f651b0021afb323cd5bc9fc192556cdf17c7"
+  },
+  "startupAddedBlocking": {
+    "status": "NOT_MEASURED",
+    "reason": "Attach-after-startup cannot attribute cold process startup blocking or the incremental startup cost of enabling this plugin."
+  },
+  "tapTiming": "For each fresh Dictionary/Worker, await checkAvailability() (which starts prewarm without awaiting it), then immediately invoke lookup() without waiting for Worker readiness.",
+  "matrix": [
+    "common-on",
+    "rare-zyzzyva",
+    "not-found"
+  ],
+  "trials": [
+    {
+      "trial": 1,
+      "id": "common-on",
+      "key": "on",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 381.09999999403954,
+        "status": "resource-available"
+      },
+      "firstTapMs": 1024.300000011921,
+      "workerReadyMsAfterAvailability": 827.5999999940395,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 262366
+      },
+      "warm": [
+        {
+          "durationMs": 0.19999998807907104,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.6000000238418579,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.7999999821186066,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.20000001788139343,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.29999998211860657,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.10000002384185791,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 100.2999999821186,
+        "compressedBytes": 262366,
+        "estimatedBytes": 1477194
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 312.09999999403954,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 5.5,
+          "bytes": 262366
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.6000000238418579,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.6000000238418579,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 1,
+      "id": "rare-zyzzyva",
+      "key": "zyzzyva",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 2.7999999821186066,
+        "status": "resource-available"
+      },
+      "firstTapMs": 216.90000000596046,
+      "workerReadyMsAfterAvailability": 190.40000000596046,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 139005
+      },
+      "warm": [
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.10000002384185791,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 15.800000011920929,
+        "compressedBytes": 139005,
+        "estimatedBytes": 665940
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.5,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 9.200000017881393,
+          "bytes": 139005
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 1,
+      "id": "not-found",
+      "key": "codex-first-tap-not-found-1adf3658-3bce-422b-80fd-872f92768914",
+      "expected": "missing",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 3.5,
+        "status": "resource-available"
+      },
+      "firstTapMs": 253.7000000178814,
+      "workerReadyMsAfterAvailability": 202.30000001192093,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 236616
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 27.5,
+        "compressedBytes": 236616,
+        "estimatedBytes": 1480078
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 3.2000000178813934,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 2.5,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 2,
+      "id": "rare-zyzzyva",
+      "key": "zyzzyva",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 1.5999999940395355,
+        "status": "resource-available"
+      },
+      "firstTapMs": 182.2999999821186,
+      "workerReadyMsAfterAvailability": 154.69999998807907,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 139005
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 14.900000005960464,
+        "compressedBytes": 139005,
+        "estimatedBytes": 665940
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.199999988079071,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 0.4000000059604645,
+          "bytes": 139005
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 2,
+      "id": "not-found",
+      "key": "codex-first-tap-not-found-1adf3658-3bce-422b-80fd-872f92768914",
+      "expected": "missing",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 1.9000000059604645,
+        "status": "resource-available"
+      },
+      "firstTapMs": 251.90000000596046,
+      "workerReadyMsAfterAvailability": 196.09999999403954,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 236616
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.10000002384185791,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 22.5,
+        "compressedBytes": 236616,
+        "estimatedBytes": 1480078
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.0999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 0.699999988079071,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 2,
+      "id": "common-on",
+      "key": "on",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 1.600000023841858,
+        "status": "resource-available"
+      },
+      "firstTapMs": 238.19999998807907,
+      "workerReadyMsAfterAvailability": 174.19999998807907,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 262366
+      },
+      "warm": [
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 7.200000017881393,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 21.5,
+        "compressedBytes": 262366,
+        "estimatedBytes": 1477194
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.2000000178813934,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 0.4000000059604645,
+          "bytes": 262366
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 3,
+      "id": "not-found",
+      "key": "codex-first-tap-not-found-1adf3658-3bce-422b-80fd-872f92768914",
+      "expected": "missing",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 3.0999999940395355,
+        "status": "resource-available"
+      },
+      "firstTapMs": 187.5,
+      "workerReadyMsAfterAvailability": 141.90000000596046,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 236616
+      },
+      "warm": [
+        {
+          "durationMs": 0.10000002384185791,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 24.099999994039536,
+        "compressedBytes": 236616,
+        "estimatedBytes": 1480078
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.5,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 1,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 3,
+      "id": "common-on",
+      "key": "on",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 2.100000023841858,
+        "status": "resource-available"
+      },
+      "firstTapMs": 184.09999999403954,
+      "workerReadyMsAfterAvailability": 143.69999998807907,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 262366
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 22.200000017881393,
+        "compressedBytes": 262366,
+        "estimatedBytes": 1477194
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.4000000059604645,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 0.699999988079071,
+          "bytes": 262366
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 3,
+      "id": "rare-zyzzyva",
+      "key": "zyzzyva",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 1.9000000059604645,
+        "status": "resource-available"
+      },
+      "firstTapMs": 231.59999999403954,
+      "workerReadyMsAfterAvailability": 181.09999999403954,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 139005
+      },
+      "warm": [
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.30000001192092896,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 37.69999998807907,
+        "compressedBytes": 139005,
+        "estimatedBytes": 665940
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.5999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 0.5,
+          "bytes": 139005
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 4,
+      "id": "common-on",
+      "key": "on",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 2.4000000059604645,
+        "status": "resource-available"
+      },
+      "firstTapMs": 251.69999998807907,
+      "workerReadyMsAfterAvailability": 205.89999997615814,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 262366
+      },
+      "warm": [
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 7.800000011920929,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 21.80000001192093,
+        "compressedBytes": 262366,
+        "estimatedBytes": 1477194
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.199999988079071,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 0.5999999940395355,
+          "bytes": 262366
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.09999999403953552,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.09999999403953552,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 4,
+      "id": "not-found",
+      "key": "codex-first-tap-not-found-1adf3658-3bce-422b-80fd-872f92768914",
+      "expected": "missing",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 2.0999999940395355,
+        "status": "resource-available"
+      },
+      "firstTapMs": 211,
+      "workerReadyMsAfterAvailability": 166.80000001192093,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 236616
+      },
+      "warm": [
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 26.900000005960464,
+        "compressedBytes": 236616,
+        "estimatedBytes": 1480078
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 1.9000000059604645,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 0.30000001192092896,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 4,
+      "id": "rare-zyzzyva",
+      "key": "zyzzyva",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 51,
+        "status": "resource-available"
+      },
+      "firstTapMs": 338.30000001192093,
+      "workerReadyMsAfterAvailability": 289.2000000178814,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 139005
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 21.5,
+        "compressedBytes": 139005,
+        "estimatedBytes": 665940
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 34.5,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 25.400000005960464,
+          "bytes": 139005
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 5,
+      "id": "rare-zyzzyva",
+      "key": "zyzzyva",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 4.300000011920929,
+        "status": "resource-available"
+      },
+      "firstTapMs": 291.2999999821186,
+      "workerReadyMsAfterAvailability": 254.19999998807907,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 139005
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.30000001192092896,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.10000002384185791,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 16.19999998807907,
+        "compressedBytes": 139005,
+        "estimatedBytes": 665940
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 3.9000000059604645,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+          "elapsedMs": 1.2999999821186066,
+          "bytes": 139005
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0.10000002384185791,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0.10000002384185791,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 5,
+      "id": "common-on",
+      "key": "on",
+      "expected": "found",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 2.5,
+        "status": "resource-available"
+      },
+      "firstTapMs": 267.80000001192093,
+      "workerReadyMsAfterAvailability": 206.30000001192093,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 262366
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 22.599999994039536,
+        "compressedBytes": 262366,
+        "estimatedBytes": 1477194
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 2.199999988079071,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+          "elapsedMs": 1,
+          "bytes": 262366
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    },
+    {
+      "trial": 5,
+      "id": "not-found",
+      "key": "codex-first-tap-not-found-1adf3658-3bce-422b-80fd-872f92768914",
+      "expected": "missing",
+      "correctness": true,
+      "availability": {
+        "elapsedMs": 5.5999999940395355,
+        "status": "resource-available"
+      },
+      "firstTapMs": 204.5,
+      "workerReadyMsAfterAvailability": 150.80000001192093,
+      "workerReadyBeforeTapCompletion": true,
+      "coldRead": {
+        "binaryReads": 1,
+        "bytes": 236616
+      },
+      "warm": [
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0.09999999403953552,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        },
+        {
+          "durationMs": 0,
+          "sameResult": true,
+          "cacheHits": 1,
+          "cacheMisses": 0,
+          "binaryReads": 0,
+          "bytesReadBinary": 0,
+          "cacheHit": true
+        }
+      ],
+      "workerMetrics": {
+        "calls": 1,
+        "decodeMs": 24.700000017881393,
+        "compressedBytes": 236616,
+        "estimatedBytes": 1480078
+      },
+      "cacheProbes": {
+        "lookups": 21,
+        "hits": 20,
+        "misses": 1
+      },
+      "operations": [
+        {
+          "method": "read",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+          "elapsedMs": 3.0999999940395355,
+          "bytes": 25782
+        },
+        {
+          "method": "readBinary",
+          "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+          "elapsedMs": 1.199999988079071,
+          "bytes": 236616
+        }
+      ],
+      "binaryWrites": 0,
+      "adapterClass": "e",
+      "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.14.5 Chrome/150.0.7871.250 Electron/43.8.3 Safari/537.36",
+      "warmSummary": {
+        "queryCount": 20,
+        "cacheHitQueries": 20,
+        "cacheMissQueries": 0,
+        "noBlockQueries": 0,
+        "binaryReadQueries": 0,
+        "bytesReadBinary": 0,
+        "repeatP50Ms": 0,
+        "repeatP95Ms": 0,
+        "residentHitP50Ms": 0,
+        "residentHitP95Ms": 0,
+        "everyRangedQueryHitResidentBlock": true
+      }
+    }
+  ]
+}

@@ -96,3 +96,65 @@ The first Fast rerun caught that the temporary diagnostic runner invoked Swift/Q
 The rebuilt package retained the exact `d57f5e1e… / 71abba5e… / 8da58b1d…` hashes and matched the three files already in `ObReader-Apple-Test`. Build passed (3 release files, 406 embedded assets, 402 frozen vendor hashes); Fast passed 123/123, Browser 28/28, Race 80/80, and Offline smoke passed with five tool save/reopen and persistent bulk-delete coverage. All had zero skips. Source fingerprint `91377431a053b5a0aa3ed0b0d181f6c79673c196f6b56a66a6bb618980918b02` (1,133 files) was stable across Fast/Browser/Race. See the [sanitized gate receipt](release-gates-bounded-native-20261025.json).
 
 These automated gates do not close the Native P0. Current-package selection remained ambiguous in the bounded diagnostic; `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX` is still `NOT_VERIFIED`, open-move is `NOT_RUN`, and actual process restart is `NOT_RUN`. `RESOURCE_V3` is integrated; its DataAdapter instance-cold measurements and one 460.9 ms Reader UI sample remain limited evidence. Reader UI first-query P95 and startup-added blocking `<50 ms` remain `NOT_MEASURED`. No product runtime, PDF.js, scroll, main, or formal Vault changes occurred.
+
+## 2026-10-25 Semantic integration and current-bundle measurements
+
+Integration branch `codex/014-goal-resume-20261025` now contains the exact-route
+fail-closed Semantic fix (`3cf02a9`) and startup metric label correction
+(`b8053b5`). The Host rejects missing route verification and requires both
+synchronous and asynchronous route adapters to echo the exact captured
+`offset`, `endOffset`, and `sourceText`. Existing `>=` checks were not changed.
+The focused Semantic / Learning / Backlink / Routing suite passed **158/158**.
+
+The rebuilt 0.14.0 candidate is bound to source fingerprint
+`cff147796a207dad0d8ce55a865f4f3898b27acd0b71bcee2bc2ba19d53cbc33`
+(1,136 source files) and these package hashes:
+
+```text
+main.js    ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5
+manifest   71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675
+styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea
+```
+
+Post-integration gates: Build passed (3 release files, 406 runtime assets,
+402 frozen vendor hashes); Fast **123/123**, Browser **28/28**, Race **80/80**,
+Offline smoke passed. All had zero failures and zero skips. Full machine-readable
+summary: [post-semantic-integration-20261025.json](post-semantic-integration-20261025.json).
+
+A new current-bundle Native DataAdapter run used the existing ObReader-Apple-Test
+Vault, read the resource-v3 manifest and exactly one compressed block per cold
+lookup, then issued 20 resident lookups per query per trial. Manifest SHA-256
+before/after was identical:
+`9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe`.
+Five first-lookups per key in a warm process/renderer measured:
+
+| Query | P50 | P95 | Warm P95 | Cold block reads |
+| --- | ---: | ---: | ---: | ---: |
+| `on` | 251.7 ms | 1024.3 ms | 0.2 ms (max 7.8 ms) | 1 per trial |
+| `zyzzyva` | 231.6 ms | 338.3 ms | 0.1 ms (max 0.3 ms) | 1 per trial |
+| valid miss | 211.0 ms | 253.7 ms | 0.1 ms | 1 per trial |
+
+These are instance-cold Dictionary/Worker trials, **not cold process**. They do
+not measure the actual UI path after the production asynchronous Worker warmup.
+The first common-word cold Worker sample was a 1024.3 ms outlier. Native process
+startup-added blocking `<50 ms` remains **NOT_MEASURED**; the earlier helper
+misnamed trace-task wall duration as CPU time, so it now reports
+`rendererMainTaskWallMs` and does not claim CPU attribution.
+Raw current-bundle samples:
+[native-resource-v3-first-tap-ca8b-20261025.json](native-resource-v3-first-tap-ca8b-20261025.json).
+
+The current package was installed only in `/Users/jiajia/Documents/ObReader-Apple-Test`
+after deployment preflight confirmed the plugin disabled and zero Reader views.
+Previous three files were backed up outside the Vault at
+`/private/tmp/obreader-014-v3/.deploy-backups/2026-10-25T15-45-32-062Z/pdf-web-reader`.
+Installed hashes match the three hashes above. The plugin remains disabled, so
+loaded runtime version is **NOT_VERIFIED**. No formal Vault files or `main` were
+changed.
+
+The latest current-package Native 8-stage × 5-direction matrix remains
+**NOT_VERIFIED**; true Obsidian process restart remains **NOT_RUN**. Windows
+runner could not start a fresh current-package turn; the earlier d57 single-route
+receipt is not reused after `main.js` changed to `ca8b…`. The bounded Mac
+selection diagnostic is ambiguous and not evidence of a product failure.
+`SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll/PDF.js code changed.
+iPad remains `DEFERRED_BY_SCOPE`.
