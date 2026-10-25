@@ -522,3 +522,42 @@ SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
 ```
 
 Full samples and package hashes are in [the paired startup receipt](current-gates/native-startup-toggle-ca8b-20261026.json). This measurement changed only evidence/docs; it did not modify product code, deploy a package, touch user data, or update `main` or the formal Vault.
+
+## Latest bounded Native status (2026-10-26)
+
+The Native test harness now checks the exact owned PID, OS frontmost window,
+and CDP renderer before writes; stale globals pass only when they are proven to
+refer to a closed Settings target. A single preflight found no System Events
+window for the exact test process. A read-only CDP snapshot showed the
+`ObReader-Apple-Test` page hidden and unfocused, with Sync and plugin disabled
+and zero Reader views. It stopped before isolation or Vault writes. Current
+package files in the test Vault exactly match the candidate hashes listed
+above. We will not repeat window-control attempts.
+
+Accordingly, the current candidate is **not Native-verified**: the requested
+8 stages × 5 route directions, open-move coverage, and process-restart route
+coverage remain `NOT_VERIFIED` / `NOT_RUN`. One clean profile relaunch was
+confirmed separately, but no route direction was validated across it.
+
+Post-harness full gates were stable across 1,152 source files but failed at
+229/231: Fast 123/123, Browser 26/28, Race 80/80, zero skips. The two Browser
+failures were a Chrome WebSocket startup timeout in the mobile startup test
+(its Blob fallback passed) and the mouse-input AnnotationEditor pause/restoration
+assertion. The exact report and child logs are under
+`tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-26-53-445Z-69906-96411f69/`.
+The compact tracked summary is
+[bounded-native-and-gates-20261026.json](current-gates/bounded-native-and-gates-20261026.json).
+No assertions were edited. Build and offline smoke passed; the candidate's
+three installed test-Vault files were already byte-identical, so they were not
+redeployed or re-enabled.
+
+```text
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_X_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8X5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8X5 = NOT_RUN
+GATES = FAILED (229/231; Browser 2 failures)
+Storage / PDF.js / scroll runtime changes = NONE
+main / formal Vault updates = NONE
+```

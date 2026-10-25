@@ -269,3 +269,59 @@ Test storage isolation was installed before plugin enable. Cleanup completed, re
 The Resource-v3 candidate is already wired into Reader vocabulary lookup. A normal v3 lookup reads a single routed block; it does not wait for a full Dexie import. Existing exact-candidate Native DataAdapter measurements show first rare lookup P95 244.6 ms after background Worker prewarm, and resident warm P95 0.1 ms. This meets the narrow sub-1-second rare-word service lookup target, but does not certify the enabled Reader UI. `READER_UI_FIRST_LOOKUP = NOT_VERIFIED`; `STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED`. Keep the prewarm duration and occasional first-query outliers visible; do not relabel background initialization as startup blocking.
 
 Current source verification: build produced 3 release files, 406 embedded runtime assets and verified 402 frozen vendor files. `npm run test:gates` passed 231/231 (Fast 123/123, Browser 28/28, Race 80/80; zero skips) with stable source fingerprint `40821d7182b63170e401071f9605535846391743215bd2b9600aa7a7757096f5` (1,143 files). `npm run test:offline` passed, including save/reopen for five annotation tools and persistent bulk deletion. This test-only continuation does not close the Native gate or authorize promotion to `main` / the formal Vault.
+
+## 2026-10-26 final bounded Native owner-window check
+
+The Native runner was updated test-only to use a read-only, PID-bound System
+Events/CDP identity probe before any write isolation or plugin enable. Its one
+bounded preflight against the existing `ObReader-Apple-Test` profile stopped
+before mutation: System Events reported no window for the owned Obsidian PID
+(`window 1 … invalid index`, error `-1719`). A separate read-only CDP snapshot
+still saw the exact Vault and candidate, but its renderer was `visibility=hidden`
+and `document.hasFocus()=false`; ObReader was disabled, Sync was disabled, and
+there were zero Reader leaves. The macOS Native window could not be selected
+reliably, so no more focus/window-control attempts are planned.
+
+The candidate and installed test-Vault files remain byte-identical:
+
+```text
+main.js      ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5
+manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675
+styles.css   8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea
+```
+
+The failed probe receipt is
+`tests/artifacts/native-learning-loop-20261025192559262-24813902f5.json`.
+It records zero fixtures, UI flows, route scenarios, storage isolation, or
+Vault writes. A prior clean-profile process relaunch was confirmed, but it did
+not carry the five route directions across restart and is not a matrix receipt.
+Therefore `MAC_NATIVE_CURRENT_PACKAGE=NOT_VERIFIED`,
+`NATIVE_8_STAGE_X_5_DIRECTION_MATRIX=NOT_VERIFIED`,
+`OPEN_MOVE_8X5=NOT_VERIFIED`, and `REAL_PROCESS_RESTART_8X5=NOT_RUN`.
+The sanitized tracked summary is
+[bounded-native-and-gates-20261026.json](bounded-native-and-gates-20261026.json).
+
+After the test-harness-only change, the full gate run was stable over 1,152
+files but **not green**: Fast 123/123, Browser 26/28, Race 80/80, total 229/231,
+zero skips, `acceptanceEligible=false`. The two Browser failures were (1) a
+mobile-browser-startup Chrome launch that did not publish its WebSocket URL
+within 30 seconds (the Blob-fallback subtest passed), and (2) the existing
+mouse-input regression's AnnotationEditor pause/restoration assertion. Their
+raw logs and the complete report are under
+`tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-26-53-445Z-69906-96411f69/`.
+The compact tracked summary is
+[bounded-native-and-gates-20261026.json](bounded-native-and-gates-20261026.json).
+No interaction assertions were changed. `npm run build` passed with three
+release files, 406 assets, and 402 frozen vendor files verified;
+`npm run test:offline` passed all five annotation-tool save/reopen checks and
+persistent bulk deletion. The test package already matched all three
+candidate hashes, so no deploy or plugin enable was performed.
+
+```text
+SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER
+MAC_NATIVE_CURRENT_PACKAGE=NOT_VERIFIED
+NATIVE_8_STAGE_X_5_DIRECTION_MATRIX=NOT_VERIFIED
+RESOURCE_V3=INTEGRATED; existing Native DataAdapter evidence retained
+GATES=FAILED (229/231; Browser 2 failures)
+MAIN_AND_FORMAL_VAULT=UNCHANGED
+```

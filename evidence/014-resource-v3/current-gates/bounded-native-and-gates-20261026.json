@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "recordedDate": "2026-10-26",
+  "candidate": {
+    "version": "0.14.0",
+    "branch": "codex/014-goal-resume-20261025",
+    "commit": "ec27e9b2874f7714d2587082a077c1f97b8621b7",
+    "files": {
+      "main.js": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    },
+    "installedTestVaultFilesMatch": true,
+    "pluginEnabled": false,
+    "syncEnabled": false,
+    "readerViews": 0
+  },
+  "nativePreflight": {
+    "status": "NOT_VERIFIED",
+    "stage": "before Native test mutations",
+    "profile": "owned Obsidian 1.14.5 profile attached to ObReader-Apple-Test",
+    "systemEvents": {
+      "status": "no-window",
+      "errorCode": -1719,
+      "message": "No front window exists for the verified Obsidian process."
+    },
+    "cdpReadOnlySnapshot": {
+      "url": "app://obsidian.md/index.html",
+      "vault": "ObReader-Apple-Test",
+      "visibility": "hidden",
+      "documentHasFocus": false,
+      "ownerDocumentMatchesRenderer": false,
+      "ownerWindowMatchesRenderer": false
+    },
+    "mutationsBeforeStop": {
+      "writeIsolationInstalled": false,
+      "pluginEnabled": false,
+      "fixturesCreated": 0,
+      "pointerOrKeyboardInputSent": false,
+      "vaultWrites": 0
+    },
+    "matrix": "NOT_VERIFIED",
+    "openMoveFiveDirections": "NOT_VERIFIED",
+    "processRestartFiveDirections": "NOT_RUN",
+    "rawReceipt": "tests/artifacts/native-learning-loop-20261025192559262-24813902f5.json"
+  },
+  "automatedGates": {
+    "status": "FAILED",
+    "acceptanceEligible": false,
+    "stableSourceFingerprint": {
+      "sha256": "26552b5771709645278e2fc68c8cde85a8faaca634b77d62553aa53e2e712ea7",
+      "files": 1152
+    },
+    "fast": { "passed": 123, "failed": 0, "skipped": 0 },
+    "browser": { "passed": 26, "failed": 2, "skipped": 0 },
+    "race": { "passed": 80, "failed": 0, "skipped": 0 },
+    "total": { "passed": 229, "failed": 2, "skipped": 0 },
+    "failures": [
+      {
+        "test": "tests/mobile-browser-startup.test.mjs",
+        "detail": "Chrome did not publish a WebSocket endpoint within 30 seconds; the Blob-fallback subtest passed."
+      },
+      {
+        "test": "tests/mouse-input-regression.test.mjs",
+        "detail": "AnnotationEditor pause/restoration assertion failed after toolbar interaction."
+      }
+    ],
+    "rawReport": "tests/artifacts/vocabulary-gates/runs/run-2026-10-25T19-26-53-445Z-69906-96411f69/report.json"
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFiles": 3,
+    "embeddedAssets": 406,
+    "frozenVendorFilesVerified": 402
+  },
+  "offlineSmoke": {
+    "status": "PASS",
+    "annotationToolsSavedAndReopened": 5,
+    "bulkDeletePersisted": true
+  },
+  "scope": {
+    "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+    "runtimeCodeChanged": false,
+    "pdfjsVendorChanged": false,
+    "storageOrWalChanged": false,
+    "mainUpdated": false,
+    "formalVaultChanged": false,
+    "testVaultRedeployed": false
+  }
+}
