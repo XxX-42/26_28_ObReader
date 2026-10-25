@@ -193,6 +193,13 @@ async function initializeNativeConfig(profileRoot) {
     line.includes(appExecutable) && line.includes(`--user-data-dir=${canonicalProfile}`) &&
     (line.includes("--remote-debugging-port=0") || line.includes(`--remote-debugging-port=${port}`)));
   assert.equal(ownerLines.length, 1, "CDP must belong to exactly one Obsidian main process using this owned profile.");
+  const ownerPid = Number(ownerLines[0].trim().split(/\s/u)[0]);
+  if (processOnlyBoundOwnedProfile) {
+    const requestedOwnerPid = Number(process.env.PDF_READER_NATIVE_EXPECT_OWNER_PID);
+    assert.ok(Number.isSafeInteger(requestedOwnerPid) && requestedOwnerPid > 0,
+      "Process-only mode requires PDF_READER_NATIVE_EXPECT_OWNER_PID.");
+    assert.equal(ownerPid, requestedOwnerPid, "CDP owner PID must match the explicitly selected scratch process.");
+  }
 
   process.env.OBSIDIAN_VAULT_PATH = EXPECTED_VAULT;
   process.env.OBSIDIAN_ACTIVE_VAULT = "1";
@@ -201,7 +208,6 @@ async function initializeNativeConfig(profileRoot) {
   const { nativeConfig, assertNativeVaultIdentity } = await import("./native-config.mjs");
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
-  const ownerPid = Number(ownerLines[0].trim().split(/\s/u)[0]);
   return { profileRoot: canonicalProfile, marker, appExecutable, appVersion, port, ownerPid,
     ownerCommandHash: sha256(Buffer.from(ownerLines[0].trim().replace(/^\d+\s+/u, ""))), nativeConfig, assertNativeVaultIdentity };
 }
