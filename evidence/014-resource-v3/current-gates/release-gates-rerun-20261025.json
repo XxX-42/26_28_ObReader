@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-014-integrated-release-gate-rerun",
+  "baseHead": "197cd7d653967eb0a2d04af3c91470163949e680",
+  "sourceFingerprint": {
+    "algorithm": "sha256",
+    "hash": "525e9f90066d556663909bb2e8acc9ee2f2cda8f716482750df201fb7f603908",
+    "fileCount": 1126,
+    "stableAcrossEachGate": true
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFileCount": 3,
+    "embeddedRuntimeAssets": 406,
+    "frozenVendorFilesVerified": 402,
+    "payloadBytesBeforeTransportCompression": 6732067,
+    "files": {
+      "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "gates": {
+    "fast": {
+      "runId": "run-2026-10-25T12-28-30-187Z-62145-8d294a58",
+      "createdAtUtc": "2026-10-25T12:28:57.425Z",
+      "total": 123,
+      "passed": 123,
+      "failed": 0,
+      "skipped": 0
+    },
+    "browser": {
+      "runId": "run-2026-10-25T12-28-57-845Z-63789-468050f9",
+      "createdAtUtc": "2026-10-25T12:32:51.714Z",
+      "total": 28,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0
+    },
+    "race": {
+      "runId": "run-2026-10-25T12-33-39-717Z-67454-6f6f5b62",
+      "createdAtUtc": "2026-10-25T12:38:10.978Z",
+      "total": 80,
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0
+    },
+    "offlineSmoke": {
+      "status": "PASS",
+      "result": "all five annotation editors created, saved, reopened, and bulk deletion persisted without resurrection",
+      "cleanupReceipt": "tests/artifacts/offline-smoke-1792931572187-67190-6724bd7e-072a-4f1d-9640-f8c02d8fdcd4.cleanup.json"
+    }
+  },
+  "nativeAcceptance": {
+    "currentPackageNative8x5": "NOT_VERIFIED",
+    "realProcessRestart8x5": "NOT_RUN",
+    "resourceV3ReaderUiFirstLookup": "NOT_VERIFIED",
+    "resourceV3StartupAddedBlockingUnder50ms": "NOT_MEASURED",
+    "iPad": "DEFERRED_BY_SCOPE"
+  }
+}
