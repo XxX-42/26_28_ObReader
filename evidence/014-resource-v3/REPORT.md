@@ -188,7 +188,7 @@ No additional window-control retries or process restart were attempted after thi
 - `startup added blocking <50 ms = NOT_MEASURED`; enabled-plugin Reader UI first lookup = **NOT_VERIFIED**.
 - `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scrolling paths changed.
 
-Sanitized latest gate summary: [final-gates-rerun-20261025.json](current-gates/final-gates-rerun-20261025.json). The exact test-only package remains 0.14.0 and is deployed only to the existing test vault. The branch has not been merged to `main`; no production vault deployment or data cleanup occurred. iPad remains `DEFERRED_BY_SCOPE`.
+Sanitized latest gate summary at that point: [final-gates-rerun-20261025.json](current-gates/final-gates-rerun-20261025.json). The exact test-only package remained 0.14.0 and was deployed to the existing test vault. At that snapshot the branch had not yet been merged to `main`; subsequent release/deployment status is recorded below. iPad remains `DEFERRED_BY_SCOPE`.
 
 ## 2026-10-25 final bounded closeout
 
@@ -199,3 +199,11 @@ The latest exact-package Native run used Obsidian 1.14.5, the existing test vaul
 The bounded decision is final for this attempt: `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX=NOT_VERIFIED`, `OPEN_MOVE_8x5=NOT_VERIFIED`, and `REAL_PROCESS_RESTART_8x5=NOT_RUN`. Do not continue trying to control Obsidian windows or claim these gates passed from partial flows. `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; no wheel, observer, PDF.js, or LingQ scrolling paths changed. iPad stays `DEFERRED_BY_SCOPE`.
 
 Resource-v3 remains integrated and deployed to the existing test vault with the exact package hashes above. Supported-runtime DataAdapter and current Host query measurements are recorded earlier in this report; they prove first lookup without a full Dexie build, but do not measure process-cold startup or enabled Reader UI first lookup. Therefore `startup added blocking <50ms=NOT_MEASURED` and `Reader UI first lookup=NOT_VERIFIED` remain explicit.
+
+## 2026-10-25 publication and formal three-file deployment
+
+The integration branch was fast-forwarded to GitHub `main` at `7af8c349e2ee84edd537f0ad78b24b7d49713741`, after verifying the fetched `origin/main` was its ancestor. The same 0.14.0 build was then backed up and installed as exactly three files in the formal `远程仓库1` plugin folder. `data.json` was byte-identical before and after; no PDF or annotation data was modified. The backup is outside the Vault at `/Users/jiajia/.codex/deploy-backups/obreader-remote1-0.14.0-2026-10-25T01-33-03-068Z`. See [deployment receipt](current-gates/formal-threefile-deploy-20261025.json).
+
+The plugin was not forcibly reloaded while Obsidian may have open user tabs. Thus `FORMAL_FILES_DEPLOYED=YES`, while `FORMAL_RUNTIME_RELOADED=NO` and the running process version is not confirmed; it will load 0.14.0 on its next plugin load. The latest test-vault package and formal package have matching release hashes.
+
+Release limitations remain visible: `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX=NOT_VERIFIED`, `REAL_PROCESS_RESTART_8x5=NOT_RUN`, `startup added blocking <50ms=NOT_MEASURED`, and enabled Reader UI first dictionary lookup is `NOT_VERIFIED`. Do not report full Native/launch acceptance as passed. `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; iPad remains `DEFERRED_BY_SCOPE`.

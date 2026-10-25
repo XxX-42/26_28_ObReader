@@ -6,6 +6,8 @@ On source fingerprint `bd2347d2f996d287585bd8082e17ae9db12dee4db67b584914ed2a003
 
 The current 0.14.0 package's latest owned-profile Native run passed both the Highlight → Sidebar → Review → Today → same UUID Source flow and the LingQ phrase → Context → Review → Today → exact Source flow. It stopped before route scenarios when the runner could not open a visible native Command Palette for the Markdown-source setup. The PDF fixture hash matched before/after and cleanup restored the plugin isolation. The 8×5 matrix remains `NOT_VERIFIED`; true app-process restart remains `NOT_RUN`. See [sanitized Native receipt](native-partial-current-package-20261025-latest.json). Stop further window-control retries.
 
+The latest package was then fast-forwarded to `main` and the three release files were backed up and replaced in the formal `远程仓库1` plugin folder. `data.json` and the source PDFs were preserved. The deployed SHA-256 values and backup location are recorded in [formal three-file deployment receipt](formal-threefile-deploy-20261025.json). No Obsidian process/plugin reload was forced; the loaded runtime remains unverified until its next plugin load.
+
 These reports are copied from the ignored local run artifacts so the results remain reviewable from the pushed integration branch. They ran on the current 0.14 integration source at `e8a6e02dd0d78847225683c423fea4a6681a2149` (the only later change before documentation was the `REPORT.md` update).
 
 ## Fresh release run

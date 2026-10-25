@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "version": "0.14.0",
+  "sourceCommit": "7af8c349e2ee84edd537f0ad78b24b7d49713741",
+  "vault": "远程仓库1",
+  "target": ".obsidian/plugins/pdf-web-reader",
+  "backup": "/Users/jiajia/.codex/deploy-backups/obreader-remote1-0.14.0-2026-10-25T01-33-03-068Z",
+  "deployedFiles": {
+    "main.js": {
+      "previousSha256": "70429136ba4e08ddd915a66a75cf0f8944115682c2a47131ca57c12a33450605",
+      "deployedSha256": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8"
+    },
+    "manifest.json": {
+      "previousSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "deployedSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675"
+    },
+    "styles.css": {
+      "previousSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+      "deployedSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "dataJsonPreserved": true,
+  "dataJsonSha256": "65313a28692fda21ef732f469fbcf7d1ee69255ff971b26f32357a399b23f4a8",
+  "deploymentMethod": "three-file atomic staging; no other plugin files replaced",
+  "pluginReload": "NOT_PERFORMED; disk package is deployed, loaded runtime version remains unverified until next plugin load",
+  "productionPdfOrAnnotationDataModified": false
+}
