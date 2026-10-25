@@ -16,6 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 import xxhash from "xxhash-wasm";
+import { dispatchNativeOsPointerDrag } from "./native-os-pointer.mjs";
 import {
   assertNativeLearningLoopAdapterEvidence,
   assertNativeLearningLoopInvariantUnchanged,
@@ -63,6 +64,9 @@ const attachedExistingTestVault = process.argv.includes("--attached-existing-tes
 const processOnlyBoundOwnedProfile = process.argv.includes("--process-only-owned-profile");
 assert.ok(!processOnlyBoundOwnedProfile || (scratchVaultMode && boundedOpenMoveStage),
   "Process-only mode is restricted to the bounded stage in a disposable scratch vault.");
+const nativeOsPointerMode = process.env.PDF_READER_NATIVE_OS_POINTER === "1";
+assert.ok(!nativeOsPointerMode || (scratchVaultMode && boundedOpenMoveStage && processOnlyBoundOwnedProfile),
+  "OS pointer input is restricted to the explicitly owned bounded scratch-vault stage.");
 const resumePath = process.env.PDF_READER_NATIVE_RESUME_AFTER_HIGHLIGHT;
 assert.ok(!attachedExistingTestVault || !resumePath, "Attached mode requires a fresh unique run and must not mutate the preserved run.");
 const resumeEvidence = resumePath ? JSON.parse(await readFile(resumePath, "utf8")) : null;
@@ -406,7 +410,24 @@ async function waitForPersistedPluginState(enabled, label) {
   }, state => state.stableReads >= 2);
 }
 
+async function refreshNativePluginManifest() {
+  if (!scratchVaultMode) return null;
+  const manifest = await page.evaluate(async pluginId => {
+    if (typeof app.plugins.loadManifests !== "function") {
+      throw new Error("Scratch Native mode requires Obsidian's manifest refresh API before plugin activation.");
+    }
+    await app.plugins.loadManifests();
+    return app.plugins.manifests?.[pluginId] || null;
+  }, PLUGIN_ID);
+  assert.equal(manifest?.id, PLUGIN_ID, "The candidate plugin manifest must load from the scratch vault.");
+  assert.equal(manifest.version, expectedManifest.version, "The refreshed scratch manifest must match the candidate version.");
+  report.pluginManifestRefresh = { status: "verified", id: manifest.id, version: manifest.version,
+    minAppVersion: manifest.minAppVersion };
+  return manifest;
+}
+
 async function enablePluginAfterIsolation() {
+  await refreshNativePluginManifest();
   const before = await page.evaluate((pluginId) => ({
     enabled: app.plugins.enabledPlugins.has(pluginId),
     pluginActive: Boolean(app.plugins.plugins[pluginId]),
@@ -688,9 +709,13 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     assert.equal(mode, 9, "PDF.js Highlight mode must remain active after its parameter palette auto-hides.");
     assert.ok(geometry.x1 < palette.left || geometry.x1 > palette.right,
       "The drag origin must remain outside the hidden Highlight palette bounds.");
-    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    if (!nativeOsPointerMode) {
+      await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    }
   } else {
-    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    if (!nativeOsPointerMode) {
+      await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    }
   }
   await frame.evaluate(({ x }) => { window.__nativeDragEndX = x; }, { x: geometry.x2 });
   const beforeDrag = await frame.evaluate(({ x, y }) => ({
@@ -705,9 +730,41 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
         inTextLayer: Boolean(hit?.closest(".textLayer")) };
     }),
   }), { x: geometry.x1, y: geometry.y });
-  await page.mouse.down({ button: "left" });
-  await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y, { steps: 12 });
-  await page.mouse.up({ button: "left" });
+  if (nativeOsPointerMode) {
+    const owner = await page.evaluate(() => ({
+      vault: app.vault.adapter.basePath,
+      visible: document.visibilityState === "visible",
+      focused: document.hasFocus(),
+      ownerDocumentIsRenderer: typeof activeDocument !== "undefined" && activeDocument === document,
+      ownerWindowIsRenderer: typeof activeWindow !== "undefined" && activeWindow === window,
+      screenX, screenY, screenWidth: screen.width, screenHeight: screen.height,
+      devicePixelRatio,
+    }));
+    assert.equal(owner.vault, EXPECTED_VAULT);
+    assert.equal(owner.visible, true);
+    assert.equal(owner.focused, true, "The exact scratch renderer must still own document focus before OS pointer input.");
+    assert.equal(owner.ownerDocumentIsRenderer, true);
+    assert.equal(owner.ownerWindowIsRenderer, true);
+    assert.equal(owner.devicePixelRatio, 1, "OS pointer mapping requires an unscaled scratch display.");
+    const start = { x: owner.screenX + frameRect.x + geometry.x1,
+      y: owner.screenY + frameRect.y + geometry.y };
+    const end = { x: owner.screenX + frameRect.x + geometry.x2,
+      y: owner.screenY + frameRect.y + geometry.y };
+    for (const point of [start, end]) {
+      assert.ok(point.x >= 0 && point.x < owner.screenWidth && point.y >= 0 && point.y < owner.screenHeight,
+        `OS pointer target is outside the owned display: ${JSON.stringify(point)}`);
+    }
+    report.nativeOsPointerInput = { status: "dispatching", owner, frameRect, geometry,
+      start, end, driver: "Quartz CGEvent via cghidEventTap" };
+    report.nativeOsPointerInput.result = dispatchNativeOsPointerDrag({
+      x1: start.x, y1: start.y, x2: end.x, y2: end.y, steps: 12, delayMs: 20,
+    });
+    report.nativeOsPointerInput.status = "posted";
+  } else {
+    await page.mouse.down({ button: "left" });
+    await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y, { steps: 12 });
+    await page.mouse.up({ button: "left" });
+  }
   const dragDiagnostics = await frame.evaluate(() => {
     const probe = window.__nativeSelectionTrace?.nativeSelectionProbe;
     const consumerRows = (probe?.consumers || []).map(row => ({

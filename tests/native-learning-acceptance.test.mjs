@@ -183,6 +183,23 @@ test("the Native learning runner contains no automatic native window activation 
     "stale or mixed-candidate resume receipts must be rejected before plugin enable or Native writes");
 });
 
+test("Quartz pointer input is limited to the explicitly bound scratch stage and rechecks focus", async () => {
+  const runner = await readFile(new URL("./native-learning-loop.mjs", import.meta.url), "utf8");
+  const helper = await readFile(new URL("./native-os-pointer.mjs", import.meta.url), "utf8");
+  const driver = await readFile(new URL("./native-os-pointer.swift", import.meta.url), "utf8");
+  assert.match(runner, /PDF_READER_NATIVE_OS_POINTER === "1"/u);
+  assert.match(runner, /scratchVaultMode && boundedOpenMoveStage && processOnlyBoundOwnedProfile/u);
+  const focusAssertion = runner.indexOf("The exact scratch renderer must still own document focus before OS pointer input.");
+  const dispatch = runner.indexOf("dispatchNativeOsPointerDrag({");
+  assert.ok(focusAssertion >= 0 && focusAssertion < dispatch,
+    "the exact scratch renderer must pass focus checks before Quartz events are posted");
+  assert.match(helper, /execFileSync\("swift", \[DRIVER, "drag"/u);
+  assert.match(driver, /CGEvent\(mouseEventSource: nil/u);
+  assert.match(driver, /event\.post\(tap: \.cghidEventTap\)/u);
+  assert.doesNotMatch(driver, /NSRunningApplication|System Events|open\(/u,
+    "the pointer helper must not activate windows or apps");
+});
+
 test("Native Highlight setup observes PDF.js selection consumption and samples the entire drag path", async () => {
   const runner = await readFile(new URL("./native-learning-loop.mjs", import.meta.url), "utf8");
   assert.match(runner, /installNativeSelectionProbe\.toString\(\)/u);
