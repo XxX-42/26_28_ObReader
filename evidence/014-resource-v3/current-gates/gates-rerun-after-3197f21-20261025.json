@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-25",
+  "branch": "codex/014-goal-resume-20261025",
+  "testedHead": "3197f212c71e4ea4263a1f256bc6c9917d241dc8",
+  "sourceFingerprint": {
+    "algorithm": "sha256",
+    "hash": "4ab39249a6e679588e97caeec28fb59771a1e02b2e365ad6700d76ad3cc22f34",
+    "fileCount": 1112,
+    "stableAcrossGates": true
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFiles": 3,
+    "embeddedRuntimeAssets": 406,
+    "frozenVendorHashesVerified": 402,
+    "payloadBytesBeforeReleaseTransportCompression": 6732067,
+    "sha256": {
+      "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "gates": {
+    "fast": {
+      "status": "PASS",
+      "passed": 122,
+      "failed": 0,
+      "skipped": 0,
+      "runId": "run-2026-10-25T08-25-10-119Z-75942-93f6b40b"
+    },
+    "browser": {
+      "status": "PASS",
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "runId": "run-2026-10-25T08-26-21-417Z-77223-80d4038d"
+    },
+    "race": {
+      "status": "PASS",
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0,
+      "rounds": 10,
+      "runId": "run-2026-10-25T08-33-32-650Z-80394-f11bba1f"
+    },
+    "offlineSmoke": {
+      "status": "PASS",
+      "fiveAnnotationToolsSaveReopen": true,
+      "bulkDeleteDoesNotResurrect": true,
+      "cleanup": "normal",
+      "receipt": "tests/artifacts/offline-smoke-1792917532927-83102-628cba6e-3b58-4f94-9750-0b277d21b22c.cleanup.json"
+    }
+  },
+  "testVaultDeployment": {
+    "vault": "/Users/jiajia/Documents/ObReader-Apple-Test",
+    "status": "ALREADY_MATCHES_BUILD",
+    "sha256MatchesDist": true,
+    "pluginEnabled": false,
+    "readerLeaves": 0,
+    "noRedeployNeeded": true
+  },
+  "nativeScope": {
+    "nativeEightStageFiveDirectionCurrentPackage": "NOT_VERIFIED",
+    "openMoveCurrentPackage": "NOT_VERIFIED",
+    "trueProcessRestartCurrentPackage": "NOT_RUN",
+    "resourceV3StartupAddedBlockingUnder50ms": "NOT_MEASURED",
+    "resourceV3EnabledReaderUiFirstLookup": "NOT_VERIFIED",
+    "resourceV3SupportedNativeDataAdapterExistingEvidence": {
+      "rareFirstLookupP50Ms": 88.9,
+      "rareFirstLookupMaxMs": 194.3,
+      "warmP95Ms": "<=0.1",
+      "commonOnObservedOutlierMs": 1154.8,
+      "note": "Existing five-trial 1.14.5 DataAdapter benchmark; standalone module path, not current Reader UI or process-cold startup."
+    },
+    "macCurrentPreflight": {
+      "exactTestVault": true,
+      "obsidianSyncEnabled": false,
+      "pluginEnabled": false,
+      "readerLeaves": 0,
+      "documentFocused": false,
+      "note": "Preflight was read-only; current Native UI was not manipulated. Other Obsidian profiles also list this test Vault, so no exclusive Native mutation/benchmark lease was taken."
+    },
+    "windowsCurrentPackageNative": "NOT_VERIFIED",
+    "ipad": "DEFERRED_BY_SCOPE"
+  },
+  "scope": {
+    "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+    "productionVaultChanged": false,
+    "mainChanged": false,
+    "resourceOrAnnotationDataChanged": false
+  },
+  "rawGateReportsLocalOnly": [
+    "tests/artifacts/vocabulary-gates/runs/run-2026-10-25T08-25-10-119Z-75942-93f6b40b/report.json",
+    "tests/artifacts/vocabulary-gates/runs/run-2026-10-25T08-26-21-417Z-77223-80d4038d/report.json",
+    "tests/artifacts/vocabulary-gates/runs/run-2026-10-25T08-33-32-650Z-80394-f11bba1f/report.json"
+  ]
+}

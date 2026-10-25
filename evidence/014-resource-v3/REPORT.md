@@ -2,16 +2,15 @@
 
 ## Git and release boundary
 
-- Latest fetched `origin/main`: `833397ad2e78bba35e4490d3810ac73783860856`.
-- Latest fetched `origin/feature/0.14-native-learning-dictionary-20261023`: `6694c16b4c390d4a8dbd7762ec647ffa13f8f909`.
-- Integration branch: `codex/014-resource-v3-integration`; evidence baseline commit `e81b469ea862a4f76d39161ce99af25d42405fe7` contains the latest feature branch and the Native harness/SemanticAnchor audit commits. The Resource-v3 code commit is `6ea2ca23a106e4fa0dfcf6dbeaaab2f9c8f90ea5`.
-- `main` remains unchanged. The formal vault was not deployed or modified.
-- Candidate version: `0.14.0`. The current built/deployed `main.js` SHA-256 is `ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`.
+- Git state at the start of this continuation: `origin/main=654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5` and `origin/feature/0.14-native-learning-dictionary-20261023=3197f212c71e4ea4263a1f256bc6c9917d241dc8`.
+- Gate-tested code baseline: `3197f212c71e4ea4263a1f256bc6c9917d241dc8` on `codex/014-goal-resume-20261025`; this continuation's later commit only records evidence and does not change the package. `main` was not changed in this continuation.
+- Candidate version: `0.14.0`. Current package SHA-256: `main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`.
+- The existing `ObReader-Apple-Test` plugin files exactly match those hashes. No redeploy was needed in this continuation. No production Vault or user data was changed in this continuation. Earlier formal deployment is recorded in its dated historical section below.
 
 ## Scope decision
 
 - `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. No reproducible root cause was established for the user's 120-page OCR PDF. Stop the scroll-specific investigation; do not modify PDF.js, wheel handling, observers, or LingQ scroll paths unless that exact PDF becomes reproducible.
-- Native closeout is bounded: an isolated, official Obsidian 1.14.5 test process is now visible and focused, and its Native DataAdapter dictionary lookup has been measured. Do not run the 8×5 mutation matrix while other Obsidian processes still share the test Vault. Keep `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED` and `REAL_PROCESS_RESTART_8x5 = NOT_RUN`; do not relabel either from earlier-package or partial UI receipts. Proceed with Resource-v3 evidence and report the remaining Native gap.
+- Native closeout is bounded. A current read-only preflight found the exact test Vault, Sync disabled, candidate plugin disabled, and no Reader leaves, but the renderer was not foreground-owned; two other Obsidian profiles also list the same test Vault. No window manipulation or Native mutation was attempted. Do not run the 8×5 matrix under shared ownership. Keep `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED` and `REAL_PROCESS_RESTART_8x5 = NOT_RUN`; do not relabel from earlier-package or partial UI receipts. The existing supported-runtime Resource-v3 DataAdapter benchmark remains valid only for its recorded standalone lookup scope.
 - `SemanticAnchorContractV1`, Sidebar and Backlink source/API contracts are frozen at the code and deterministic-test level; full Native route acceptance remains pending and is not implied by that source-level freeze.
 - iPad remains `DEFERRED_BY_SCOPE`; synthetic mobile timing is not iPad evidence.
 - Bulk import prototypes are rejected by their stated production gate; FSRS stays development-only; SQLite/OPFS remains an isolated experiment and has no qualifying app-origin result.
@@ -222,12 +221,20 @@ A separate Windows Native report contains a complete historical 8×5 route matri
 
 Four Native test safeguards were corrected: exact active renderer ownership is required; resumed stages and restart-pending receipts must match the current expected and installed hashes of all three release files; a genuine complete-sentence Context Review item must exist before any five-direction stage can pass; and restart evidence must show the prior PID is no longer running the exact owned profile. SemanticAnchor tests now explicitly exercise a reordered stable page identity and fail closed when that identity disappears. These safeguards do not turn the unrun Native matrix into a pass.
 
-### Latest automated gates
+### Previous automated gates before the continuation rerun
 
-The source fingerprint was stable at `3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05` (1,112 files) across the full rerun. Build passed (3 release files, 406 embedded runtime assets, 402 frozen vendor files verified); focused Native acceptance and SemanticAnchor tests passed 13/13; Fast 122/122; Browser 28/28; Race 80/80; Offline smoke passed, including save/reopen and bulk-delete no-resurrection. There were no skips. Full details: [sanitized harness/gate rerun](current-gates/resume-harness-gate-rerun-20261025.json).
+The earlier source fingerprint `3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05` (1,112 files) run passed Build, focused Native acceptance/SemanticAnchor tests 13/13, Fast 122/122, Browser 28/28, Race 80/80 and Offline smoke. The continuation rerun below records the newer current source fingerprint and supersedes it for the present branch state.
 
 ### Resource-v3 and scope
 
 Resource-v3 stays in the candidate because supported Native DataAdapter evidence shows rare first lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms without a full Dexie build. The common-word sample includes a 1,154.8 ms outlier. The four Native release measures are not all closed: startup-added blocking `<50 ms` is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. Do not claim complete first-query acceptance until those are measured through the current enabled Reader path.
 
 `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. No PDF.js, wheel, observer, or LingQ scroll work was added. Bulk remains rejected, FSRS remains development-only, SQLite/OPFS remains unselected, and iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 latest continuation gate and deployment check
+
+The current continuation source at `3197f212c71e4ea4263a1f256bc6c9917d241dc8` was rebuilt and revalidated. Its source fingerprint was stable at `4ab39249a6e679588e97caeec28fb59771a1e02b2e365ad6700d76ad3cc22f34` across 1,112 files. Build passed with 3 release files, 406 embedded assets and 402 frozen vendor hashes. Fast passed 122/122, Browser 28/28, Race 80/80 over 10 rounds, and Offline smoke passed; there were no failures or skips. Summary receipt: [gates-rerun-after-3197f21-20261025.json](current-gates/gates-rerun-after-3197f21-20261025.json). Raw gate reports are retained under local ignored test artifacts.
+
+All three rebuilt package files exactly match `ObReader-Apple-Test`; no test-vault redeploy was needed. The package hashes and no-change boundary are listed in the receipt. `origin/main` remains `654aa58a56e8d7ef6edfe8b53fa39975dd33ebb5`; this continuation did not push to main or deploy to the formal Vault. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER` remains closed to expansion.
+
+The current Native 8-stage × 5-direction matrix, open-move, and true process restart remain `NOT_VERIFIED` / `NOT_RUN`. Resource-v3's existing supported Obsidian 1.14.5 DataAdapter evidence is unchanged: rare first lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms, with the common `on` 1,154.8 ms outlier preserved. Startup-added blocking is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. The current exact test renderer was not foreground-owned and multiple Obsidian profiles list the same test Vault, so no new exclusive Native benchmark or mutation lease was taken. iPad remains `DEFERRED_BY_SCOPE`.

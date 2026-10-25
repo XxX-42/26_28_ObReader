@@ -1,5 +1,13 @@
 # Current integration gates
 
+## Fresh gate rerun on the current continuation branch (2026-10-25)
+
+The current branch was rebuilt and its gates were rerun at `3197f212c71e4ea4263a1f256bc6c9917d241dc8`. The source fingerprint stayed stable at `4ab39249a6e679588e97caeec28fb59771a1e02b2e365ad6700d76ad3cc22f34` (1,112 files): build passed (3 release files, 406 embedded assets, 402 frozen vendor hashes); Fast passed 122/122; Browser 28/28; Race 80/80 across 10 rounds; Offline smoke passed. No gate had failures or skips. Summary receipt: [gates-rerun-after-3197f21-20261025.json](gates-rerun-after-3197f21-20261025.json); raw reports remain in local ignored test artifacts.
+
+The rebuilt three-file hashes exactly match the existing `ObReader-Apple-Test` plugin files, so no redeploy was needed. No production Vault, main branch, or user data was changed. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER` remains closed to further expansion.
+
+Native acceptance remains bounded and explicit: current-package 8-stage × 5-direction, open-move, and true process restart are `NOT_VERIFIED` / `NOT_RUN`. Resource-v3's prior supported 1.14.5 DataAdapter result remains rare lookup P50 88.9 ms / observed max 194.3 ms and warm P95 ≤0.1 ms, with the common `on` 1,154.8 ms outlier preserved. Startup-added blocking is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. The current read-only preflight found multiple Obsidian profiles listing the same test Vault, so no exclusive Native benchmark or mutation lease was taken. See [REPORT.md](../REPORT.md) for the evidence limits.
+
 ## Fresh rerun after Native harness corrections (2026-10-25)
 
 On source fingerprint `3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05` (1,112 files, stable through all gates), Build passed with 3 release files, 406 embedded assets and 402 frozen vendor hashes verified; focused Native acceptance/SemanticAnchor tests passed 13/13; Fast passed 122/122; Browser passed 28/28; Race passed 80/80; Offline smoke passed. No skips. See [sanitized rerun summary](resume-harness-gate-rerun-20261025.json).
