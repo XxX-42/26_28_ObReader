@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "workstream": "G",
+  "assessmentDate": "2026-10-25",
+  "baseCommit": "197cd7d653967eb0a2d04af3c91470163949e680",
+  "sourceInventory": {
+    "vaultRead": false,
+    "nonSyntheticOrderedHistoriesInCheckout": 0,
+    "completeSyntheticReplayFixtures": 1,
+    "incompleteHistoryDisposition": "INSUFFICIENT_HISTORY",
+    "incompleteInputsReplayed": false
+  },
+  "productionScheduler": {
+    "version": "leitner-utc-v1",
+    "defaultPreserved": true,
+    "authoritativeWrites": 0
+  },
+  "replay": {
+    "status": "COMPLETE",
+    "sourceKind": "learning-item-synthetic",
+    "fixture": "tests/fixtures/learning-fsrs-evaluation-v1.json",
+    "fixtureSha256": "1fbb9ae4a7064923069d6d1c3a61fbd68a1836f7988f055401ba862880583824",
+    "package": "ts-fsrs@5.4.2",
+    "completeCurrentBranchEvents": 5,
+    "undoneBranchEventsIgnored": 1,
+    "ratingMapping": {
+      "remember": "Good",
+      "forget": "Again"
+    },
+    "leitnerDueAtUTC": "2026-10-22T09:00:00.000Z",
+    "fsrsDueAtUTC": "2026-10-24T09:00:00.000Z",
+    "fsrsMinusLeitnerDueDeltaDays": 2,
+    "interpretation": "Synthetic fixed-history due-date observation only; not retention or counterfactual review-load evidence."
+  },
+  "migrationSimulation": {
+    "mode": "simulation-only",
+    "authoritativeWrites": 0,
+    "undoSnapshotIncluded": true,
+    "storedStateBytesUnchanged": true,
+    "undoRestoresOriginalBytes": true,
+    "fullSourceBytesUnchanged": true
+  },
+  "productionDecision": "NO_CHANGE"
+}

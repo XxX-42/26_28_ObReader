@@ -1,0 +1,106 @@
+{
+  "fixtureSha256": "1fbb9ae4a7064923069d6d1c3a61fbd68a1836f7988f055401ba862880583824",
+  "result": {
+    "status": "COMPLETE",
+    "sourceKind": "learning-item-synthetic",
+    "itemId": "learning:v1:fsrs-eval-001",
+    "externalId": "ext-fsrs-eval-001",
+    "package": {
+      "name": "ts-fsrs",
+      "version": "5.4.2"
+    },
+    "configuration": {
+      "enableFuzz": false,
+      "enableShortTerm": false,
+      "learningSteps": [],
+      "relearningSteps": []
+    },
+    "ratingMapping": {
+      "remember": "Good",
+      "forget": "Again",
+      "known": "excluded-non-rating",
+      "skip": "excluded-session-action"
+    },
+    "replay": {
+      "completeHistoryEvents": 5,
+      "branchesIgnored": 1,
+      "events": [
+        {
+          "eventId": "learning-event:eval-1",
+          "sequence": 1,
+          "reviewedAtUTC": "2026-10-01T09:00:00.000Z",
+          "sourceRating": "remember",
+          "fsrsRating": "Good",
+          "fsrsDueAtUTC": "2026-10-04T09:00:00.000Z"
+        },
+        {
+          "eventId": "learning-event:eval-2",
+          "sequence": 2,
+          "reviewedAtUTC": "2026-10-04T09:00:00.000Z",
+          "sourceRating": "remember",
+          "fsrsRating": "Good",
+          "fsrsDueAtUTC": "2026-10-18T09:00:00.000Z"
+        },
+        {
+          "eventId": "learning-event:eval-3-current-branch",
+          "sequence": 3,
+          "reviewedAtUTC": "2026-10-11T09:00:00.000Z",
+          "sourceRating": "forget",
+          "fsrsRating": "Again",
+          "fsrsDueAtUTC": "2026-10-13T09:00:00.000Z"
+        },
+        {
+          "eventId": "learning-event:eval-4",
+          "sequence": 4,
+          "reviewedAtUTC": "2026-10-12T09:00:00.000Z",
+          "sourceRating": "remember",
+          "fsrsRating": "Good",
+          "fsrsDueAtUTC": "2026-10-16T09:00:00.000Z"
+        },
+        {
+          "eventId": "learning-event:eval-5",
+          "sequence": 5,
+          "reviewedAtUTC": "2026-10-15T09:00:00.000Z",
+          "sourceRating": "remember",
+          "fsrsRating": "Good",
+          "fsrsDueAtUTC": "2026-10-24T09:00:00.000Z"
+        }
+      ]
+    },
+    "comparison": {
+      "leitner": {
+        "schedulerVersion": "leitner-utc-v1",
+        "state": {
+          "box": 3,
+          "dueAt": "2026-10-22T09:00:00.000Z",
+          "lastReviewedAt": "2026-10-15T09:00:00.000Z",
+          "reviewCount": 5,
+          "lapseCount": 1
+        }
+      },
+      "fsrs": {
+        "state": "Review",
+        "dueAtUTC": "2026-10-24T09:00:00.000Z",
+        "lastReviewedAtUTC": "2026-10-15T09:00:00.000Z",
+        "stability": 8.60440948,
+        "difficulty": 7.36792257,
+        "scheduledDays": 9,
+        "reps": 5,
+        "lapses": 1
+      },
+      "dueDeltaMilliseconds": 172800000,
+      "dueDeltaDays": 2
+    },
+    "reversibleMigrationSimulation": {
+      "mode": "simulation-only",
+      "authoritativeWrites": 0,
+      "proposedSchedulerVersion": "ts-fsrs@5.4.2",
+      "proposedStateSha256": "9944e0a19f71968b954d322004e8fd06281dc04b7329f513f1af4d56d5e3c79a",
+      "proposalContainsUndoSnapshot": true,
+      "storedLeitnerStateSha256": "55691918b6c4b120904157597d1e973f6c9bf9ca2e6dc0f26df6c5a9d09990eb",
+      "sourceStateBytesUnchanged": true,
+      "undoRestoresOriginalBytes": true,
+      "fullSourceBytesUnchanged": true
+    }
+  }
+}
