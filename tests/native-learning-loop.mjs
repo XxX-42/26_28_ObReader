@@ -558,11 +558,10 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
       y1 >= innerHeight || y2 >= innerHeight) {
       throw new Error(`PDF text drag endpoints are outside the Reader viewport: ${text}`);
     }
-    const startHit = document.elementFromPoint(x1, y1);
-    const endHit = document.elementFromPoint(x2, y2);
-    if (!startHit?.closest(".textLayer") || !endHit?.closest(".textLayer")) {
-      throw new Error(`PDF text drag endpoints are obscured: ${text}`);
-    }
+    // Do not hit-test here: when Highlight mode was just enabled, PDF.js may
+    // still have its transient parameter palette open over the text. The
+    // pointer path below deliberately lets that palette auto-hide first,
+    // then validates every sampled drag point against the text layer.
     return { x1, y1, x2, y2,
       selectionFragments: fragments.map(rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })),
       text: node.textContent.slice(start, start + text.length), mode: PDFViewerApplication.pdfViewer.annotationEditorMode };

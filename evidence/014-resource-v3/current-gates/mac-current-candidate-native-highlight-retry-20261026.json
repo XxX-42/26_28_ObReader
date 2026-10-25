@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-26",
+  "status": "NOT_VERIFIED",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+    "installedFilesMatched": true
+  },
+  "runtime": {
+    "obsidian": "1.14.5",
+    "syncDisabled": true,
+    "testStorageIsolationInstalledBeforePluginEnable": true
+  },
+  "highlightSelectionAttempt": {
+    "textLayerReadyMs": 268,
+    "annotationEditorMode": 9,
+    "trustedEventsObserved": true,
+    "sampledDragPointsInsidePdfTextLayer": "13/13",
+    "selectionAfterPointerUp": "",
+    "highlightEditorCreated": false,
+    "failure": "Acceptance runner timed out waiting for a PDF.js Highlight editor."
+  },
+  "isolationAndCleanup": {
+    "unmappedVaultWrites": 0,
+    "isolatedStoreWrites": 39,
+    "cleanupCompleted": true,
+    "pluginDisabledAfterCleanup": true,
+    "syncDisabledAfterCleanup": true,
+    "readerViewsAfterCleanup": 0,
+    "fixturePdfSha256BeforeAndAfter": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113"
+  },
+  "acceptance": {
+    "nativeEightStageFiveDirectionMatrix": "NOT_VERIFIED",
+    "trueObsidianProcessRestart": "NOT_RUN",
+    "interpretation": "This run confirms a current-package Native UI acceptance failure, but does not distinguish a product selection defect from the macOS external-CUA/PDF.js selection path. No further window-control retry is planned."
+  },
+  "rawLocalArtifact": "tests/artifacts/native-learning-loop-20261025165100567-484a0c20ca.json"
+}
