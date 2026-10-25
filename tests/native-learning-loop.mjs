@@ -481,6 +481,36 @@ async function recordScreen(name, target = page) {
   return screenshotPath;
 }
 
+async function acceptDisposableScratchVaultTrustPrompt() {
+  if (!scratchVaultMode) return { status: "not-required" };
+  const dialog = await page.$(".modal-container");
+  if (!dialog) return { status: "already-trusted" };
+  const state = await dialog.evaluate(node => ({
+    text: node.innerText || "",
+    buttons: [...node.querySelectorAll("button")].map(button => ({
+      text: button.textContent.trim(),
+      visible: button.getBoundingClientRect().width > 0 && getComputedStyle(button).display !== "none",
+    })),
+  }));
+  if (!state.text.includes("这个仓库内容未知") || !state.text.includes("安全模式中打开该仓库")) {
+    return { status: "no-trust-prompt", dialogText: state.text.slice(0, 500) };
+  }
+  assert.equal(report.candidateArtifact.version, expectedManifest.version);
+  assert.deepEqual(report.candidateArtifact.files, report.candidateArtifact.installedFiles,
+    "Trust only the disposable vault containing the exact verified candidate package.");
+  const trustButtons = state.buttons.filter(button => button.text === "信任仓库作者并启用插件" && button.visible);
+  assert.equal(trustButtons.length, 1, "The scratch-vault trust dialog must expose one visible exact trust control.");
+  await dialog.$$eval("button", buttons => {
+    const target = buttons.find(button => button.textContent.trim() === "信任仓库作者并启用插件");
+    if (!target || target.getBoundingClientRect().width <= 0) throw new Error("Exact visible scratch-vault trust control disappeared.");
+    target.click();
+  });
+  await waitFor("disposable scratch-vault trust prompt to close", async () =>
+    page.$eval("body", node => node.innerText || ""), text =>
+      !text.includes("这个仓库内容未知") && !text.includes("信任仓库作者并启用插件"));
+  return { status: "trusted-disposable-vault", candidateFilesVerified: true, controlText: trustButtons[0].text };
+}
+
 async function createFixtures() {
   const directory = absoluteVaultPath(fixturePrefix);
   try {
@@ -2494,6 +2524,7 @@ async function main() {
     vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "before Native test mutations",
   });
   await recordCandidateArtifact();
+  report.scratchVaultTrust = await acceptDisposableScratchVaultTrustPrompt();
   const continuingNativeMatrix = process.argv.includes("--complete-direction-matrix") ||
     process.argv.includes("--after-owned-process-restart");
   if (process.argv.includes("--after-owned-process-restart")) {
@@ -2539,8 +2570,8 @@ async function main() {
   await restoreOwnedStaleIsolation();
   await clearStaleNativeMaintenanceLogger();
   await installNativeIsolation();
+  await prepareEmptyIsolationRoots();
   if (settingsUiPreflight) {
-    await prepareEmptyIsolationRoots();
     await enablePluginAfterIsolation();
     await openPluginSettingsThroughUI();
     await closeWorkbenchThroughUI();
