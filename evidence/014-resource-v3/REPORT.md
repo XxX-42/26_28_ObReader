@@ -189,3 +189,13 @@ No additional window-control retries or process restart were attempted after thi
 - `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scrolling paths changed.
 
 Sanitized latest gate summary: [final-gates-rerun-20261025.json](current-gates/final-gates-rerun-20261025.json). The exact test-only package remains 0.14.0 and is deployed only to the existing test vault. The branch has not been merged to `main`; no production vault deployment or data cleanup occurred. iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 final bounded closeout
+
+The latest complete automated rerun supersedes the earlier `26/28` Browser result for this unchanged source: source fingerprint `bd2347d2f996d287585bd8082e17ae9db12dee4db67b584914ed2a00388e6908` stayed stable across the runs; build passed (3 release files, 406 embedded assets, 402 frozen vendor hashes), Fast **122/122**, Browser **28/28**, Offline smoke **PASS**, and Race **80/80**, with zero skips. Detailed receipt: [latest automated gates](current-gates/latest-automated-gates-20261025.json).
+
+The latest exact-package Native run used Obsidian 1.14.5, the existing test vault, Sync disabled, and isolated annotation/vocabulary writes. It passed both real UI learning flows, including exact source navigation for the same Annotation UUID and the `Dynamic languages` Context anchor. It stopped before the Markdown source route matrix because the visible native Command Palette did not open after the runner's ribbon click and platform shortcut. This is recorded as `NATIVE_UI_AUTOMATION_UNRESOLVED`; no product command failure was established. Fixture PDF SHA-256 remained `3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`; cleanup restored isolation and disabled the plugin. Receipt: [latest partial Native run](current-gates/native-partial-current-package-20261025-latest.json).
+
+The bounded decision is final for this attempt: `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX=NOT_VERIFIED`, `OPEN_MOVE_8x5=NOT_VERIFIED`, and `REAL_PROCESS_RESTART_8x5=NOT_RUN`. Do not continue trying to control Obsidian windows or claim these gates passed from partial flows. `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; no wheel, observer, PDF.js, or LingQ scrolling paths changed. iPad stays `DEFERRED_BY_SCOPE`.
+
+Resource-v3 remains integrated and deployed to the existing test vault with the exact package hashes above. Supported-runtime DataAdapter and current Host query measurements are recorded earlier in this report; they prove first lookup without a full Dexie build, but do not measure process-cold startup or enabled Reader UI first lookup. Therefore `startup added blocking <50ms=NOT_MEASURED` and `Reader UI first lookup=NOT_VERIFIED` remain explicit.

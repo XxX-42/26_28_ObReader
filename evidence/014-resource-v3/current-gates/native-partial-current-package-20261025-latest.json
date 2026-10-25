@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "runId": "native-learning-loop-20261025010421404-f6f990ac78",
+  "runtime": "Obsidian 1.14.5, owned test profile, existing ObReader-Apple-Test vault",
+  "candidateVersion": "0.14.0",
+  "candidateMainJsSha256": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+  "syncEnabled": false,
+  "foregroundPreflight": "PASS",
+  "flows": {
+    "highlightToDurableSidecarSidebarReviewTodayAndSameAnnotationSource": {
+      "status": "PASS",
+      "annotationUuid": "05c9ffa2-ca49-41c2-ac9b-1af71b4d8be7",
+      "learningItemId": "learning:v1:cb92c1a0-c41a-4663-ad0d-42dc54ce4856",
+      "navigationRequestId": "reader-nav-1-1"
+    },
+    "lingqPhraseToContextReviewTodayAndExactSource": {
+      "status": "PASS",
+      "exactQuote": "Dynamic languages",
+      "contextId": "context:v1:b81d03dfefb5dfdf5a495369eb1aed0b05fdef9ea3c233ac55360971e256db48",
+      "anchorId": "context-994f33dee5c1dad4c9130e53c8a7a23bfba0a8d77ab245201777411695841fff",
+      "learningItemId": "learning:v1:c8ca9d3b-b86d-4b61-96d5-9e39f32ba60e",
+      "navigationRequestId": "reader-nav-1-2"
+    }
+  },
+  "failure": {
+    "stage": "Markdown-source learning item setup, before any route-matrix scenario",
+    "reason": "The native Command Palette was not visible after the runner clicked its ribbon control and sent the platform shortcut.",
+    "classification": "NATIVE_UI_AUTOMATION_UNRESOLVED",
+    "productCommandFailureProven": false
+  },
+  "routeAcceptance": {
+    "eightStageByFiveDirectionMatrix": "NOT_VERIFIED",
+    "openMoveScenarios": "NOT_VERIFIED",
+    "realApplicationProcessRestart": "NOT_RUN"
+  },
+  "integrity": {
+    "fixturePdfSha256Before": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "fixturePdfSha256After": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "testDataIsolationRestored": true,
+    "cleanupCompleted": true,
+    "pluginDisabledAfterRun": true
+  },
+  "releaseDisposition": "PARTIAL_NATIVE; do not label the route matrix or process restart as passed"
+}

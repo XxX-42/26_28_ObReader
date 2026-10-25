@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "sourceFingerprint": {
+    "sha256": "bd2347d2f996d287585bd8082e17ae9db12dee4db67b584914ed2a00388e6908",
+    "files": 1108,
+    "stableThroughRun": true
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFiles": 3,
+    "embeddedRuntimeAssets": 406,
+    "frozenVendorFilesVerified": 402,
+    "files": {
+      "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "fast": {
+    "runId": "run-2026-10-25T01-13-51-992Z-52789-719e94e4",
+    "passed": 122,
+    "failed": 0,
+    "skipped": 0,
+    "acceptanceEligible": true
+  },
+  "browser": {
+    "runId": "run-2026-10-25T01-14-58-392Z-54445-5e3c6c2d",
+    "passed": 28,
+    "failed": 0,
+    "skipped": 0,
+    "acceptanceEligible": true
+  },
+  "offlineSmoke": {
+    "status": "PASS",
+    "evidence": "offline-smoke-1792891365699-58438-a16aa6db-2403-4556-ad36-509847aad266.cleanup.json",
+    "coverage": "five annotation tools, save/reopen, bulk delete persistence, normal browser cleanup"
+  },
+  "race": {
+    "runId": "run-2026-10-25T01-23-10-755Z-58573-7e3d1bd8",
+    "passed": 80,
+    "failed": 0,
+    "skipped": 0,
+    "acceptanceEligible": true
+  },
+  "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+  "ipad": "DEFERRED_BY_SCOPE"
+}
