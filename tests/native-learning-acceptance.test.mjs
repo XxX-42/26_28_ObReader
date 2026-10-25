@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   assertNativeLearningForeground, assertNativeCandidateFiles, auditNativeRouteMatrixEvidence,
-  assertNativeResumeCandidate, ensureOwnedNativeRendererForeground, nativeProcessRestartVerified,
+  assertNativeResumeCandidate, nativeProcessRestartVerified, verifyOwnedNativeRendererForeground,
   NATIVE_ROUTE_STAGES, resolveNativeOwnedProfileApp,
 } from "./native-learning-acceptance.mjs";
 
@@ -11,18 +11,31 @@ const files = { "main.js": "a".repeat(64), "manifest.json": "b".repeat(64), "sty
 const vault = "/test/Native-Vault";
 const identity = { vault, configDir: ".obsidian", visibility: "visible", focused: true,
   ownerDocumentIsRenderer: true, ownerWindowIsRenderer: true };
-const activationVault = "/Users/jiajia/Documents/ObReader-Apple-Test";
-const activationNative = () => ({ ownerPid: 200, profileRoot:
+const nativeWindowVault = "/Users/jiajia/Documents/ObReader-Apple-Test";
+const nativeWindowTitle = "Native - ObReader-Apple-Test - Obsidian 1.14.5";
+const settingsWindowTitle = "设置 - ObReader-Apple-Test - Obsidian 1.14.5";
+const nativeWindowTarget = () => ({ ownerPid: 200, profileRoot:
   "/Users/jiajia/.codex/worktrees/obreader-0.14/evidence/macos-native-profile-run-1",
-  marker: { kind: "codex-owned-native-test-profile", allowedVault: activationVault,
+  marker: { kind: "codex-owned-native-test-profile", allowedVault: nativeWindowVault,
     appPath: "/Applications/Obsidian.app" },
   appExecutable: "/Applications/Obsidian.app/Contents/MacOS/Obsidian", appVersion: "1.14.5",
-  port: 9222, ownerCommandHash: "e".repeat(64), nativeConfig: { vault: activationVault,
+  port: 9222, ownerCommandHash: "e".repeat(64), nativeConfig: { vault: nativeWindowVault,
     configDir: ".obsidian", cdpUrl: "http://127.0.0.1:9222" } });
-const activationIdentity = (patch = {}) => ({ url: "app://obsidian.md/index.html",
-  title: "Native - ObReader-Apple-Test - Obsidian 1.14.5", vault: activationVault,
+const nativeRendererIdentity = (patch = {}) => ({ url: "app://obsidian.md/index.html",
+  title: nativeWindowTitle, vault: nativeWindowVault,
   vaultName: "ObReader-Apple-Test", configDir: ".obsidian", visibility: "visible", focused: true,
   ownerDocumentIsRenderer: true, ownerWindowIsRenderer: true, ...patch });
+const nativeWindowOptions = ({ native = nativeWindowTarget(), renderer = nativeRendererIdentity(),
+  processPatch = {}, windowPatch = {}, openWindows = [{ url: renderer.url, title: renderer.title, closed: false }],
+  closedSettingsTarget = null } = {}) => ({
+  native, expectedVault: nativeWindowVault, closedSettingsTarget,
+  readRendererIdentity: async () => renderer,
+  readNativeWindow: async pid => ({
+    process: { pid, ownedProfileProcess: true, commandHash: native.ownerCommandHash, ...processPatch },
+    osFrontmostWindow: { pid, processName: "Obsidian", frontmost: true, title: renderer.title, ...windowPatch },
+    openWindows,
+  }),
+});
 const receipt = (kind, targetId) => ({ kind, targetId, ok: true, requestId: `nav-${kind}`,
   documentId: "doc-1", openRequest: 3, rendererGeneration: "generation-1" });
 const source = (kind, id) => ({ target: { kind, id }, itemId: kind === "selection" ? "context-review-1" : "annotation-review-1",
@@ -59,76 +72,51 @@ test("Native foreground validation is passive and rejects hidden, unfocused or f
     error => error.code === "NATIVE_WINDOW_IDENTITY_MISMATCH");
 });
 
-test("Native foreground recovery validates PID, owned profile and exact test Vault before activation", async () => {
-  const base = activationNative();
-  let processReads = 0;
-  let activations = 0;
-  const options = {
-    native: base, expectedVault: activationVault,
-    readProcessState: async pid => { processReads++; return { pid, ownedProfileProcess: true,
-      commandHash: base.ownerCommandHash }; },
-    readIdentity: async () => activationIdentity(),
-    activatePid: async () => { activations++; },
-  };
-  const result = await ensureOwnedNativeRendererForeground(options);
-  assert.equal(result.status, "already-foreground");
-  assert.equal(result.ownerPid, base.ownerPid);
-  assert.equal(processReads, 1);
-  assert.equal(activations, 0, "a focused exact renderer is a no-op");
+test("Native foreground probe accepts stale globals only for the proven closed Settings target", async () => {
+  const stale = nativeRendererIdentity({ ownerDocumentIsRenderer: false, ownerWindowIsRenderer: false,
+    activeDocumentRef: { url: "app://obsidian.md/index.html", title: settingsWindowTitle, closed: true },
+    activeWindowDocumentRef: { url: "app://obsidian.md/index.html", title: settingsWindowTitle, closed: true } });
+  const closedSettingsTarget = { url: "app://obsidian.md/index.html", title: settingsWindowTitle,
+    vault: nativeWindowVault, settingsVisible: true, closed: true };
+  const result = await verifyOwnedNativeRendererForeground(nativeWindowOptions({ renderer: stale,
+    closedSettingsTarget }));
+  assert.equal(result.status, "verified");
+  assert.equal(result.policy, "owned-pid-os-cdp-closed-settings-stale-globals");
+  assert.equal(result.ownerPid, 200);
+  assert.equal(result.osWindowTitle, nativeWindowTitle);
+  assert.deepEqual(result.staleGlobalReferences, ["activeDocument", "activeWindow.document"]);
 
-  for (const [mutate, expectedCode] of [
-    [target => { target.ownerPid = 0; }, "NATIVE_ACTIVATION_TARGET_MISMATCH"],
-    [target => { target.profileRoot = "/private/tmp/unowned-profile"; }, "NATIVE_PROFILE_NOT_OWNED"],
-    [target => { target.marker.allowedVault = "/Users/jiajia/Documents/Production"; }, "NATIVE_ACTIVATION_TARGET_MISMATCH"],
-    [target => { target.nativeConfig.vault = "/Users/jiajia/Documents/Production"; }, "NATIVE_ACTIVATION_TARGET_MISMATCH"],
-  ]) {
-    const invalid = activationNative(); mutate(invalid);
-    let called = false;
-    await assert.rejects(ensureOwnedNativeRendererForeground({ ...options, native: invalid,
-      readProcessState: async () => { called = true; return {}; },
-      activatePid: async () => { called = true; } }), error => error.code === expectedCode);
-    assert.equal(called, false, "invalid target bindings fail before process inspection or activation");
-  }
-
-  await assert.rejects(ensureOwnedNativeRendererForeground({ ...options,
-    readProcessState: async pid => ({ pid, ownedProfileProcess: true, commandHash: "f".repeat(64) }),
-    activatePid: async () => { activations++; },
-  }), error => error.code === "NATIVE_ACTIVATION_PROCESS_MISMATCH");
-  assert.equal(activations, 0, "a reused or substituted PID is never activated");
-
-  await assert.rejects(ensureOwnedNativeRendererForeground({ ...options,
-    readIdentity: async () => activationIdentity({ vault: "/Users/jiajia/Documents/Production" }),
-    activatePid: async () => { activations++; },
-  }), error => error.code === "NATIVE_ACTIVATION_RENDERER_MISMATCH");
-  assert.equal(activations, 0, "a foreign renderer is rejected before activation");
+  const inferred = await verifyOwnedNativeRendererForeground(nativeWindowOptions({ renderer: stale }));
+  assert.equal(inferred.status, "verified", "closed refs plus no live matching CDP target prove the stale Settings globals");
 });
 
-test("Native foreground recovery activates only the bound PID and waits for exact renderer focus", async () => {
-  const native = activationNative();
-  const identities = [activationIdentity({ focused: false, ownerDocumentIsRenderer: false,
-    ownerWindowIsRenderer: false }), activationIdentity()];
-  const activatedPids = [];
-  let processReads = 0;
-  const result = await ensureOwnedNativeRendererForeground({
-    native, expectedVault: activationVault,
-    readProcessState: async pid => { processReads++; return { pid, ownedProfileProcess: true,
-      commandHash: native.ownerCommandHash }; },
-    readIdentity: async () => identities.shift(),
-    activatePid: async pid => { activatedPids.push(pid); },
-    timeoutMs: 100, pollMs: 1,
-  });
-  assert.equal(result.status, "reactivated");
-  assert.deepEqual(activatedPids, [native.ownerPid]);
-  assert.equal(processReads, 2, "the same PID/profile binding is checked before and after activation");
+test("Native foreground probe rejects wrong PID, OS window, CDP renderer and unproven stale globals", async () => {
+  for (const processPatch of [{ pid: 201 }, { ownedProfileProcess: false }, { commandHash: "f".repeat(64) }]) {
+    await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({ processPatch })),
+      error => error.code === "NATIVE_WINDOW_PROCESS_MISMATCH");
+  }
+  for (const windowPatch of [{ pid: 201 }, { processName: "Obsidian Helper" }, { frontmost: false },
+    { title: settingsWindowTitle }]) {
+    await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({ windowPatch })),
+      error => error.code === "NATIVE_OS_WINDOW_IDENTITY_MISMATCH");
+  }
+  await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({
+    renderer: nativeRendererIdentity({ vault: "/Users/jiajia/Documents/Production" }),
+  })), error => error.code === "NATIVE_CDP_RENDERER_IDENTITY_MISMATCH");
+  await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({
+    renderer: nativeRendererIdentity({ focused: false }),
+  })), error => error.code === "NATIVE_WINDOW_NOT_FOREGROUND");
 
-  await assert.rejects(ensureOwnedNativeRendererForeground({
-    native, expectedVault: activationVault,
-    readProcessState: async pid => ({ pid, ownedProfileProcess: true, commandHash: native.ownerCommandHash }),
-    readIdentity: async () => activationIdentity({ focused: false, ownerDocumentIsRenderer: false,
-      ownerWindowIsRenderer: false }),
-    activatePid: async pid => { activatedPids.push(pid); }, timeoutMs: 0,
-  }), error => error.code === "NATIVE_ACTIVATION_FOREGROUND_TIMEOUT");
-  assert.deepEqual(activatedPids, [native.ownerPid, native.ownerPid]);
+  const stale = nativeRendererIdentity({ ownerDocumentIsRenderer: false, ownerWindowIsRenderer: false,
+    activeDocumentRef: { url: "app://obsidian.md/index.html", title: settingsWindowTitle, closed: true },
+    activeWindowDocumentRef: { url: "app://obsidian.md/index.html", title: settingsWindowTitle, closed: true } });
+  await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({
+    renderer: { ...stale, activeDocumentRef: { ...stale.activeDocumentRef, closed: false } },
+  })), error => error.code === "NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN");
+  await assert.rejects(verifyOwnedNativeRendererForeground(nativeWindowOptions({ renderer: stale,
+    openWindows: [{ url: "app://obsidian.md/index.html", title: settingsWindowTitle, closed: false },
+      { url: "app://obsidian.md/index.html", title: nativeWindowTitle, closed: false }] })),
+  error => error.code === "NATIVE_WINDOW_STALE_REFERENCE_UNPROVEN");
 });
 
 test("Native profile trust binds the exact test Vault, profile root and Obsidian app bundle", () => {
@@ -256,25 +244,27 @@ test("malformed saved evidence cannot hide a valid report or manufacture matrix 
   assert.equal(auditNativeRouteMatrixEvidence({ candidateFiles: files, reports: [null, malformed, report()] }).status, "PASS");
 });
 
-test("the Native learning runner can reactivate only the validated owner PID and rechecks focus", async () => {
+test("the Native learning runner uses a read-only PID-bound OS/CDP foreground probe before writes", async () => {
   const runner = await readFile(new URL("./native-learning-loop.mjs", import.meta.url), "utf8");
-  assert.match(runner, /ensureOwnedNativeRendererForeground\(/u);
+  assert.match(runner, /verifyOwnedNativeRendererForeground\(/u);
   assert.match(runner, /assert\.equal\(pid, native\.ownerPid/u);
   assert.match(runner, /System Events/u);
   assert.match(runner, /unix id is \$\{pid\}/u);
-  assert.match(runner, /set frontmost of targetProcess to true/u);
-  assert.doesNotMatch(runner, /tell application "Obsidian" to activate|open -a Obsidian|NSRunningApplication|\.bringToFront\(|Browser\.setWindowBounds/u);
+  assert.match(runner, /frontmostProcesses to every process whose frontmost is true/u);
+  assert.match(runner, /name of targetWindow/u);
+  assert.doesNotMatch(runner, /set frontmost of targetProcess to true|tell application "Obsidian" to activate|open -a Obsidian|NSRunningApplication|\.bringToFront\(|Browser\.setWindowBounds/u);
   assert.match(runner, /url: location\.href,[\s\S]*?title: document\.title/u);
-  assert.match(runner, /assertNativeLearningForeground\(before/u);
+  assert.match(runner, /activeDocumentRef:[\s\S]*activeWindowDocumentRef:/u);
   const main = runner.slice(runner.indexOf("async function main()"));
-  assert.ok(main.indexOf("assertNativeLearningForeground(before") < main.indexOf("await installNativeIsolation()"),
-    "foreground failure must happen before any test isolation or Vault mutation");
+  const nativeGate = main.indexOf("verifyNativeOwnerForeground(\"before Native test mutations\")");
+  assert.ok(nativeGate >= 0 && nativeGate < main.indexOf("await installNativeIsolation()"),
+    "the read-only OS/CDP foreground probe must pass before any test isolation or Vault mutation");
   const resumeCheck = main.indexOf("assertNativeResumeCandidate(report.candidateArtifact.files, resumeEvidence)");
   assert.ok(resumeCheck >= 0 && resumeCheck < main.indexOf("await enablePluginAfterIsolation()"),
     "stale or mixed-candidate resume receipts must be rejected before plugin enable or Native writes");
-  const settingsClose = runner.indexOf("await ensureNativeOwnerForeground(\"after Settings window close\")");
+  const settingsClose = runner.indexOf("verifyNativeOwnerForeground(\"after Settings window close\", { closedSettingsTarget }");
   const closeWait = runner.indexOf("Settings window closed through macOS Cmd+W UI action");
-  assert.ok(settingsClose > closeWait, "PID activation runs only after the owned Settings window closes");
+  assert.ok(settingsClose > closeWait, "the post-close probe must use the verified closed Settings target");
 });
 
 test("Quartz pointer input is limited to the explicitly bound scratch stage and rechecks focus", async () => {
