@@ -1,0 +1,29 @@
+✔ default disk restore selects clean entities and preserves the unselected conflict payload bytes (325.774791ms)
+✔ the real-disk DataAdapter is confined to its OS temporary root (1.229042ms)
+✔ plain, gzip, and shared-lifecycle disk encodings expose the same logical History and support undo/redo (101.550333ms)
+✔ disk-backed plain, gzip, and shared encodings recover crashes during import and History restore (87.362791ms)
+✔ history commit, key-based preview, clean-only restore, inverse batch and redo use verified snapshots (23.418667ms)
+✔ history conflict preview never overwrites implicitly; explicit change IDs and a registered planner are required (4.133417ms)
+✔ History restore carries cross-store planner preconditions into the coordinator before writing (2.983875ms)
+✔ History restore rejects conflicting planner identities for the same path instead of choosing one (1.699875ms)
+✔ entityCreate History is grouped atomically, permits identity fields only for lifecycle, and redo recreates the complete record (10.825542ms)
+✔ history rejects identity edits outside lifecycle and scans finalized batches by verified device directory (2.804375ms)
+✔ existing canonical revision zero is distinguished from an absent file by its verified hash (0.53775ms)
+✔ the in-memory adapter separates History, pending-intent, and other transfer traffic (1.966458ms)
+✔ logical bundle exports and restores exact core, Context provenance, and canonical Review state (78.031833ms)
+✔ bundle parser rejects unknown fields, invalid nested stores, and modified integrity (12.507625ms)
+✔ object bundle imports use the integrity-checked snapshot even if the caller mutates its input (17.37625ms)
+✔ export refuses to claim a complete bundle when store identity changes between reads (12.669834ms)
+✔ export rejects acknowledged Review actions until their canonical checkpoint is flushed (7.611291ms)
+✔ multi-store import conflicts before installing any Context or Review files (14.17475ms)
+✔ bundle merge preserves existing data and Known families unless the caller explicitly overrides them (22.3685ms)
+✔ bundle overwrite records field-level before/after diffs for core, Context, and Review (33.800667ms)
+✔ bundle import accepts the shared defaultStatus policy but rejects broad unknown overwrite policies (12.880459ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 639.0455

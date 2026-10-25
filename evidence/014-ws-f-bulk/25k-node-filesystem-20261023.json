@@ -1,0 +1,1246 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-23T14:56:44.891Z",
+  "platform": "darwin/arm64 Node v26.3.1 real-filesystem temporary DataAdapter",
+  "scale": 25000,
+  "pairedRunsPerMode": 5,
+  "bundle": {
+    "bytes": 8650813,
+    "canonicalHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+    "records": 25000
+  },
+  "historyLogicalBytesBaseline": 14601020,
+  "adapterOperationCounts": {
+    "byMode": {
+      "baseline": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "A-history-gzip": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "B-shared-lifecycle": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    }
+  },
+  "summary": {
+    "pairedRunOrder": [
+      {
+        "round": 1,
+        "order": [
+          "baseline",
+          "A-history-gzip",
+          "B-shared-lifecycle"
+        ]
+      },
+      {
+        "round": 2,
+        "order": [
+          "A-history-gzip",
+          "B-shared-lifecycle",
+          "baseline"
+        ]
+      },
+      {
+        "round": 3,
+        "order": [
+          "B-shared-lifecycle",
+          "baseline",
+          "A-history-gzip"
+        ]
+      },
+      {
+        "round": 4,
+        "order": [
+          "baseline",
+          "A-history-gzip",
+          "B-shared-lifecycle"
+        ]
+      },
+      {
+        "round": 5,
+        "order": [
+          "A-history-gzip",
+          "B-shared-lifecycle",
+          "baseline"
+        ]
+      }
+    ],
+    "conditions": {
+      "baseline": {
+        "runs": 5,
+        "meanImportMs": 5949.721874800007,
+        "meanImportCpuMicros": 6602712.6,
+        "meanImportPhysicalWriteBytes": 57530614,
+        "meanImportLogicalWriteBytes": 57530614,
+        "meanHistoryPhysicalWriteBytes": 14601020,
+        "meanHistoryLogicalWriteBytes": 14601020,
+        "meanPendingPhysicalWriteBytes": 37429222,
+        "meanPendingLogicalWriteBytes": 37429222,
+        "meanAdapterEncodeMs": 132.47231680002204,
+        "meanAdapterDecodeMs": 38.09166600002099,
+        "meanAdapterEncodeCpuMicros": 121080.6,
+        "meanAdapterDecodeCpuMicros": 34905.4,
+        "meanUndoMs": 15289.2727252,
+        "meanRedoMs": 17540.148533399977,
+        "meanUndoRedoMs": 32829.42125859998,
+        "meanFinalDiskBytes": 49327689,
+        "meanFinalFileCount": 7,
+        "historyChecksums": [
+          "sha256-v1:3a1b5359f9689569416cd999d50db4321a4c0feefe7bf8499eb3787222c52085",
+          "sha256-v1:20592d8383fb889accfa1218d428761997b12e5109b613e2a35b0acf3db85880",
+          "sha256-v1:be74e996a1f0f1133fda4c4078f1ecbee9609f09b9dd9f57c069cf0d807ce4ff",
+          "sha256-v1:8970856ba8c8ada9c84deadfa4c8e8028ba6616cd8f5feced27787843d673da1",
+          "sha256-v1:9ffd7bb4df9f589a3c342f139bdc6bf653b16a8e4290912bd38ff696379e00f7"
+        ]
+      },
+      "A-history-gzip": {
+        "runs": 5,
+        "meanImportMs": 5861.929450200021,
+        "meanImportCpuMicros": 6816094.6,
+        "meanImportPhysicalWriteBytes": 44432767.4,
+        "meanImportLogicalWriteBytes": 57530614,
+        "meanHistoryPhysicalWriteBytes": 1503173.4,
+        "meanHistoryLogicalWriteBytes": 14601020,
+        "meanPendingPhysicalWriteBytes": 37429222,
+        "meanPendingLogicalWriteBytes": 37429222,
+        "meanAdapterEncodeMs": 232.72166659998476,
+        "meanAdapterDecodeMs": 77.0639827999723,
+        "meanAdapterEncodeCpuMicros": 227648.6,
+        "meanAdapterDecodeCpuMicros": 154053.2,
+        "meanUndoMs": 15505.01269140001,
+        "meanRedoMs": 17179.9798502,
+        "meanUndoRedoMs": 32684.99254160001,
+        "meanFinalDiskBytes": 10006833.4,
+        "meanFinalFileCount": 7,
+        "historyChecksums": [
+          "sha256-v1:3a4f74f29c1cb6c55437cdaaf64ba878d74685d256338ae7128014a5d730b6f6",
+          "sha256-v1:e1c8bfed7773a108be0fe1d6f32c94170a99e49f3650f1feab89238a21437031",
+          "sha256-v1:49754a84dc9d9b7f083060c351d4709198a13157ea724fa80c27aa61d0e0a4d3",
+          "sha256-v1:7144e7591e20eab555b84365a3b2026d64c6cbeb29be0db99283ca25352e8f88",
+          "sha256-v1:cf68daba48477f7d22e6ea37ffdc33f97bca04d4155a791853024bfe65c8dbf3"
+        ]
+      },
+      "B-shared-lifecycle": {
+        "runs": 5,
+        "meanImportMs": 8290.32820840003,
+        "meanImportCpuMicros": 9618525.2,
+        "meanImportPhysicalWriteBytes": 49731135,
+        "meanImportLogicalWriteBytes": 57530614,
+        "meanHistoryPhysicalWriteBytes": 11676276,
+        "meanHistoryLogicalWriteBytes": 14601020,
+        "meanPendingPhysicalWriteBytes": 32554487,
+        "meanPendingLogicalWriteBytes": 37429222,
+        "meanAdapterEncodeMs": 743.7036663999897,
+        "meanAdapterDecodeMs": 2038.0296822000644,
+        "meanAdapterEncodeCpuMicros": 834006.2,
+        "meanAdapterDecodeCpuMicros": 2406484.6,
+        "meanUndoMs": 18216.03246679999,
+        "meanRedoMs": 20870.316883600008,
+        "meanUndoRedoMs": 39086.3493504,
+        "meanFinalDiskBytes": 40553877,
+        "meanFinalFileCount": 7,
+        "historyChecksums": [
+          "sha256-v1:ebd32738fd9727ce572f52746dd179e31e4dbeefcb095bab127c455c9b2306b0",
+          "sha256-v1:4f4ce6aa025bf5f4628612589e0bf775f19a62a995cd4d65490ab5983d14b289",
+          "sha256-v1:75841532e05d9c24cb916e3ac264b92ee7b1146c8b56afe35758f6d910a3bf2e",
+          "sha256-v1:b523019edb2889dd03037475b33fa416b612cf4ea5cb9c6aaa689b39cd0d2c11",
+          "sha256-v1:22b52ab8f95c40cc7fa964ffba862d684c1913f195058045422f79d8425cc4af"
+        ]
+      }
+    },
+    "candidates": {
+      "A-history-gzip": {
+        "pairedRuns": 5,
+        "meanTotalWriteReductionPercent": 22.766742242660577,
+        "meanHistoryReductionPercent": 89.70501101977807,
+        "meanCpuIncreasePercent": 3.465453860499688,
+        "meanRestoreIncreasePercent": -0.19444820150355432,
+        "maxCpuIncreasePercent": 8.460607697641652,
+        "maxRestoreIncreasePercent": 5.34084308825864,
+        "comparisons": {
+          "totalWriteReductions": [
+            22.766240596702136,
+            22.765948578264783,
+            22.766808989731967,
+            22.767490366085784,
+            22.767222682518216
+          ],
+          "historyReductions": [
+            89.70303444553873,
+            89.70188384099194,
+            89.70527401510306,
+            89.7079587590456,
+            89.70690403821104
+          ],
+          "cpuIncreases": [
+            8.460607697641652,
+            5.841599471128922,
+            -5.402842642381378,
+            4.408214383418607,
+            4.0196903926906336
+          ],
+          "restoreIncreases": [
+            4.660441767984458,
+            5.34084308825864,
+            -3.557458335783781,
+            4.074256999207426,
+            -11.490324527184514
+          ]
+        },
+        "criteria": {
+          "totalWriteReductionAtLeast40Percent": false,
+          "historyReductionAtLeast30Percent": true,
+          "cpuIncreaseAtMost20Percent": true,
+          "restoreIncreaseAtMost20Percent": true,
+          "allCrashRecoveryChecksPassed": true,
+          "allSemanticChecksPassed": true
+        },
+        "qualifiesForD": false
+      },
+      "B-shared-lifecycle": {
+        "pairedRuns": 5,
+        "meanTotalWriteReductionPercent": 13.55709327211422,
+        "meanHistoryReductionPercent": 20.031093718110103,
+        "meanCpuIncreasePercent": 46.035733023386705,
+        "meanRestoreIncreasePercent": 19.329376236570695,
+        "maxCpuIncreasePercent": 54.47400862794724,
+        "maxRestoreIncreasePercent": 26.652187764744006,
+        "comparisons": {
+          "totalWriteReductions": [
+            13.557093272114217,
+            13.557093272114217,
+            13.557093272114217,
+            13.557093272114217,
+            13.557093272114217
+          ],
+          "historyReductions": [
+            20.031093718110103,
+            20.031093718110103,
+            20.031093718110103,
+            20.031093718110103,
+            20.031093718110103
+          ],
+          "cpuIncreases": [
+            51.89058177800967,
+            43.52833432900998,
+            33.01293273736863,
+            54.47400862794724,
+            47.272807644598004
+          ],
+          "restoreIncreases": [
+            26.652187764744006,
+            23.95682254379039,
+            14.453912373137555,
+            16.161278629232378,
+            15.422679871949141
+          ]
+        },
+        "criteria": {
+          "totalWriteReductionAtLeast40Percent": false,
+          "historyReductionAtLeast30Percent": false,
+          "cpuIncreaseAtMost20Percent": false,
+          "restoreIncreaseAtMost20Percent": false,
+          "allCrashRecoveryChecksPassed": true,
+          "allSemanticChecksPassed": true
+        },
+        "qualifiesForD": false
+      }
+    },
+    "decision": "D keep unchanged",
+    "crashChecks": {
+      "command": "node --test tests/vocabulary-bulk-node-adapter.test.mjs",
+      "exitCode": 0,
+      "passed": true,
+      "outputTail": [
+        "ℹ tests 4",
+        "ℹ suites 0",
+        "ℹ pass 4",
+        "ℹ fail 0",
+        "ℹ cancelled 0",
+        "ℹ skipped 0",
+        "ℹ todo 0",
+        "ℹ duration_ms 973.535125"
+      ]
+    },
+    "physicalScope": "Actual bytes written by the Node DataAdapter into isolated OS temporary files, including pending intents, History and other paths; final file sizes are also recorded. This is filesystem evidence, not APFS sector writes or Obsidian/Vault traffic."
+  },
+  "runs": [
+    {
+      "round": 1,
+      "mode": "baseline",
+      "adapterMode": "plain",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-d84e6105-88d7-4e8e-aab2-fe9cda1ae497-zJyf9J",
+      "importMs": 5242.696958,
+      "importCpuMicros": 6175242,
+      "adapterEncodeMs": 162.13691799999924,
+      "adapterDecodeMs": 26.860209000000395,
+      "adapterEncodeCpuMicros": 130009,
+      "adapterDecodeCpuMicros": 27097,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 57530614,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 123334887,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-c6f58ffa-80d9-41ca-8ae4-dedf9ce6b6aa",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:3a1b5359f9689569416cd999d50db4321a4c0feefe7bf8499eb3787222c52085",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2294.4812500000007,
+        "undoMs": 12883.613167,
+        "redoMs": 17459.256917000002,
+        "totalUndoRedoMs": 30342.870084000002,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 49327689
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 1,
+      "mode": "A-history-gzip",
+      "adapterMode": "gzip-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-92d47409-dfd7-4baf-9f0f-cfe29c1a9044-uFwRlw",
+      "importMs": 5628.411791999999,
+      "importCpuMicros": 6697705,
+      "adapterEncodeMs": 205.2956669999985,
+      "adapterDecodeMs": 75.85145799997554,
+      "adapterEncodeCpuMicros": 203653,
+      "adapterDecodeCpuMicros": 165360,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 44433056,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 1503462,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 70944655,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-f43ef2a0-8223-47e3-b4da-4dd37696e1ab",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:3a4f74f29c1cb6c55437cdaaf64ba878d74685d256338ae7128014a5d730b6f6",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2374.9344580000034,
+        "undoMs": 15014.803832999998,
+        "redoMs": 16742.178042,
+        "totalUndoRedoMs": 31756.981874999998,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 10007122
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 1,
+      "mode": "B-shared-lifecycle",
+      "adapterMode": "shared-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-e83a0476-3e62-4138-a003-f24bc567d548-gbB1Ne",
+      "importMs": 7956.321250000008,
+      "importCpuMicros": 9379611,
+      "adapterEncodeMs": 725.7849179999903,
+      "adapterDecodeMs": 1893.7939999999944,
+      "adapterEncodeCpuMicros": 795774,
+      "adapterDecodeCpuMicros": 2333807,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 49731135,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 11676276,
+          "pendingIntent": 32554487,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 106761176,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-7f3d35f5-08e3-454f-bd2f-714f5bb878d1",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:ebd32738fd9727ce572f52746dd179e31e4dbeefcb095bab127c455c9b2306b0",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2683.7316250000003,
+        "undoMs": 17824.966250000012,
+        "redoMs": 20604.942542000004,
+        "totalUndoRedoMs": 38429.90879200002,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 40553877
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 2,
+      "mode": "A-history-gzip",
+      "adapterMode": "gzip-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-b1ecad68-b73d-40e0-8fba-08d8423f258d-NFtn0p",
+      "importMs": 6023.718833999999,
+      "importCpuMicros": 6980444,
+      "adapterEncodeMs": 246.24366599996574,
+      "adapterDecodeMs": 87.31945699997596,
+      "adapterEncodeCpuMicros": 233729,
+      "adapterDecodeCpuMicros": 170177,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 44433224,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 1503630,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 70945327,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-8eddcb91-15d2-4704-a3c3-1411e992b12d",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:e1c8bfed7773a108be0fe1d6f32c94170a99e49f3650f1feab89238a21437031",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2481.757041999983,
+        "undoMs": 15454.125624999986,
+        "redoMs": 17229.857584000012,
+        "totalUndoRedoMs": 32683.983208999998,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 10007290
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 2,
+      "mode": "B-shared-lifecycle",
+      "adapterMode": "shared-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-c0c911e6-4e00-4f74-b95d-006412a305ea-bRDxzH",
+      "importMs": 8024.287042000011,
+      "importCpuMicros": 9465952,
+      "adapterEncodeMs": 686.9763730000122,
+      "adapterDecodeMs": 1927.8625399999437,
+      "adapterEncodeCpuMicros": 780141,
+      "adapterDecodeCpuMicros": 2298267,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 49731135,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 11676276,
+          "pendingIntent": 32554487,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 106761176,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-06b03f85-924d-44c0-a848-badbca0e3788",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:4f4ce6aa025bf5f4628612589e0bf775f19a62a995cd4d65490ab5983d14b289",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2690.111124999996,
+        "undoMs": 18093.607709000004,
+        "redoMs": 20366.334207999986,
+        "totalUndoRedoMs": 38459.94191699999,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 40553877
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 2,
+      "mode": "baseline",
+      "adapterMode": "plain",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-a0b68a6b-737e-47a6-92be-fd36f158789c-zx65lp",
+      "importMs": 5763.698083000025,
+      "importCpuMicros": 6595180,
+      "adapterEncodeMs": 143.35958499991102,
+      "adapterDecodeMs": 36.76633399998536,
+      "adapterEncodeCpuMicros": 116500,
+      "adapterDecodeCpuMicros": 36958,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 57530614,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 123334887,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-af7a39e9-d515-408c-a72d-070181fd9e71",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:20592d8383fb889accfa1218d428761997b12e5109b613e2a35b0acf3db85880",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2483.085791999998,
+        "undoMs": 15143.956750000012,
+        "redoMs": 15882.929166999995,
+        "totalUndoRedoMs": 31026.885917000007,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 49327689
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 3,
+      "mode": "B-shared-lifecycle",
+      "adapterMode": "shared-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-aa3b1425-72c4-441c-a290-cff828da0205-Ms6qOL",
+      "importMs": 8270.72983299999,
+      "importCpuMicros": 9592080,
+      "adapterEncodeMs": 744.6992920000339,
+      "adapterDecodeMs": 2017.4793330000248,
+      "adapterEncodeCpuMicros": 832675,
+      "adapterDecodeCpuMicros": 2418145,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 49731135,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 11676276,
+          "pendingIntent": 32554487,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 106761176,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-6e1e34d1-2eaa-4200-bc8c-f79a8327f88d",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:75841532e05d9c24cb916e3ac264b92ee7b1146c8b56afe35758f6d910a3bf2e",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2869.0984160000226,
+        "undoMs": 18415.42962499999,
+        "redoMs": 21307.034000000043,
+        "totalUndoRedoMs": 39722.46362500003,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 40553877
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 3,
+      "mode": "baseline",
+      "adapterMode": "plain",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-60776e99-cc9a-4140-a67c-4c7361ce4bdd-YERbWv",
+      "importMs": 7596.425874999957,
+      "importCpuMicros": 7211389,
+      "adapterEncodeMs": 140.17224899999565,
+      "adapterDecodeMs": 73.44004099990707,
+      "adapterEncodeCpuMicros": 137061,
+      "adapterDecodeCpuMicros": 56977,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 57530614,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 123334887,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-844b33d4-c98d-48d0-bfff-d6d15d9d6dbd",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:be74e996a1f0f1133fda4c4078f1ecbee9609f09b9dd9f57c069cf0d807ce4ff",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2759.6962919999496,
+        "undoMs": 16522.467083000054,
+        "redoMs": 18183.61050000001,
+        "totalUndoRedoMs": 34706.077583000064,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 49327689
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 3,
+      "mode": "A-history-gzip",
+      "adapterMode": "gzip-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-b557208f-2d85-4176-90c8-98fd01c244d4-WRr3hC",
+      "importMs": 5861.434583999973,
+      "importCpuMicros": 6821769,
+      "adapterEncodeMs": 248.54595899995184,
+      "adapterDecodeMs": 74.53037400014,
+      "adapterEncodeCpuMicros": 238659,
+      "adapterDecodeCpuMicros": 123878,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 44432729,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 1503135,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 70943347,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-ad8e1277-20d1-4f73-8824-1de0581dd2cc",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:49754a84dc9d9b7f083060c351d4709198a13157ea724fa80c27aa61d0e0a4d3",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2483.657041999977,
+        "undoMs": 15420.97662500001,
+        "redoMs": 18050.446708000032,
+        "totalUndoRedoMs": 33471.42333300004,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 10006796
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 4,
+      "mode": "baseline",
+      "adapterMode": "plain",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-ad577fcb-62c6-43a1-80d4-e162bec4d5df-6Gj0dj",
+      "importMs": 5468.802499999991,
+      "importCpuMicros": 6426094,
+      "adapterEncodeMs": 101.11016500007827,
+      "adapterDecodeMs": 25.001081999915186,
+      "adapterEncodeCpuMicros": 102090,
+      "adapterDecodeCpuMicros": 24925,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 57530614,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 123334887,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-8e0dce7d-3cbc-495f-a1df-0e9eb76a6508",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:8970856ba8c8ada9c84deadfa4c8e8028ba6616cd8f5feced27787843d673da1",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2477.640000000014,
+        "undoMs": 15970.918791999982,
+        "redoMs": 17842.46524999995,
+        "totalUndoRedoMs": 33813.38404199993,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 49327689
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 4,
+      "mode": "A-history-gzip",
+      "adapterMode": "gzip-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-f833c5d8-4dc5-45cc-b802-9a0e82ec8d0f-z5M9LU",
+      "importMs": 5807.589875000063,
+      "importCpuMicros": 6709370,
+      "adapterEncodeMs": 241.73433300002944,
+      "adapterDecodeMs": 76.96508300001733,
+      "adapterEncodeCpuMicros": 238066,
+      "adapterDecodeCpuMicros": 159360,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 44432337,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 1502743,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 70941779,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-3210480b-fada-4a98-bf84-b671abd32c68",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:7144e7591e20eab555b84365a3b2026d64c6cbeb29be0db99283ca25352e8f88",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2570.625624999986,
+        "undoMs": 16223.97741599998,
+        "redoMs": 18967.050792000024,
+        "totalUndoRedoMs": 35191.028208,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 10006402
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 4,
+      "mode": "B-shared-lifecycle",
+      "adapterMode": "shared-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-66544775-0c28-48e8-b0f0-288cb206be6a-lHDkEC",
+      "importMs": 8720.365792000084,
+      "importCpuMicros": 9926645,
+      "adapterEncodeMs": 784.3987909998978,
+      "adapterDecodeMs": 2070.6484970002202,
+      "adapterEncodeCpuMicros": 834985,
+      "adapterDecodeCpuMicros": 2489717,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 49731135,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 11676276,
+          "pendingIntent": 32554487,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 106761176,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-287387c1-5769-4467-9264-5964b2c09ded",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:b523019edb2889dd03037475b33fa416b612cf4ea5cb9c6aaa689b39cd0d2c11",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2877.164209000068,
+        "undoMs": 18355.69179199997,
+        "redoMs": 20922.367458999972,
+        "totalUndoRedoMs": 39278.05925099994,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 40553877
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 5,
+      "mode": "A-history-gzip",
+      "adapterMode": "gzip-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-9fde2749-ea90-450d-8125-af631e30a322-E7Yg6c",
+      "importMs": 5988.492166000069,
+      "importCpuMicros": 6871185,
+      "adapterEncodeMs": 221.78870799997821,
+      "adapterDecodeMs": 70.65354199975263,
+      "adapterEncodeCpuMicros": 224136,
+      "adapterDecodeCpuMicros": 151491,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 44432491,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 1502897,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 70942395,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-3ba82dfd-b7eb-4ffc-96c4-c9024a4238a1",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:cf68daba48477f7d22e6ea37ffdc33f97bca04d4155a791853024bfe65c8dbf3",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2473.32904099999,
+        "undoMs": 15411.17995800008,
+        "redoMs": 14910.366124999942,
+        "totalUndoRedoMs": 30321.546083000023,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 10006557
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 5,
+      "mode": "B-shared-lifecycle",
+      "adapterMode": "shared-history",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-a421c199-cba6-4abf-a038-9cd3c446e119-GdWgqu",
+      "importMs": 8479.937125000055,
+      "importCpuMicros": 9728338,
+      "adapterEncodeMs": 776.6589580000145,
+      "adapterDecodeMs": 2280.364041000139,
+      "adapterEncodeCpuMicros": 926456,
+      "adapterDecodeCpuMicros": 2492487,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 49731135,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 11676276,
+          "pendingIntent": 32554487,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 106761176,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-52300767-fbaf-4a5f-a0dc-4a2f2657a455",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:22b52ab8f95c40cc7fa964ffba862d684c1913f195058045422f79d8425cc4af",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2770.965749999974,
+        "undoMs": 18390.466957999975,
+        "redoMs": 21150.906209000037,
+        "totalUndoRedoMs": 39541.37316700001,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 40553877
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    },
+    {
+      "round": 5,
+      "mode": "baseline",
+      "adapterMode": "plain",
+      "root": "/private/var/folders/32/3q16ny2n3m37xtb0szqzglbr0000gn/T/obreader-bulk-fc15a993-15aa-4213-88fd-2e4eab8ed837-55zWCq",
+      "importMs": 5676.985958000063,
+      "importCpuMicros": 6605658,
+      "adapterEncodeMs": 115.5826670001261,
+      "adapterDecodeMs": 28.390664000296965,
+      "adapterEncodeCpuMicros": 119743,
+      "adapterDecodeCpuMicros": 28570,
+      "importWrites": {
+        "calls": 5,
+        "physicalBytes": 57530614,
+        "logicalBytes": 57530614,
+        "physicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        },
+        "logicalByType": {
+          "history": 14601020,
+          "pendingIntent": 37429222,
+          "other": 5500372
+        }
+      },
+      "importIo": {
+        "reads": 18,
+        "readLogicalBytes": 123334887,
+        "readPhysicalBytes": 123334887,
+        "writeOperations": 5,
+        "renameOperations": 4,
+        "touchedFiles": 9
+      },
+      "history": {
+        "batchId": "bundle-import-bundle-8de3fa28-efd0-419f-82ee-23a7a6e3737b",
+        "schemaVersion": 2,
+        "records": 25000,
+        "logicalBytes": 14601020,
+        "checksum": "sha256-v1:9ffd7bb4df9f589a3c342f139bdc6bf653b16a8e4290912bd38ff696379e00f7",
+        "semanticHash": "sha256-v1:ca058182bb9096ebc11eb4c123c48ff73b49ec99ebd80eebe4cac9a147a965da"
+      },
+      "restoreValidation": {
+        "conflicts": 1,
+        "clean": 24999,
+        "previewMs": 2648.3156250000466,
+        "undoMs": 15925.407833999954,
+        "redoMs": 18332.48083299992,
+        "totalUndoRedoMs": 34257.888666999876,
+        "undone": 24999,
+        "redone": 24999,
+        "defaultSelectionSkipped": 0,
+        "persistedConflictPayloadBytes": 276,
+        "persistedConflictPayloadPreserved": true
+      },
+      "finalDisk": {
+        "files": 7,
+        "directories": 10,
+        "bytes": 49327689
+      },
+      "finalHistoryBatches": 4,
+      "bundleHash": "sha256-v1:ca26a769c4c1edf1ff39ba1f98dc99a66261c171fc7ad250b63828a1243adca1",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "The Node adapter uses OS temporary files and reports DataAdapter writes and file sizes; it does not measure physical storage sectors or Obsidian/Vault sync traffic.",
+    "All benchmark transforms exist only in the harness adapter; production History schema and transaction coordinator are unchanged."
+  ]
+}
