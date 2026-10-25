@@ -504,3 +504,20 @@ No production runtime code, PDF.js vendor, scroll/wheel code, `main`, or formal 
 The temporary Quartz input-injection helper was removed from the Native runner after the existing passive-runner guard correctly rejected it; the guard was not weakened. The text-range endpoint measurement and passive selection tracing remain. Focused Native acceptance tests passed 10/10. Build passed with 3 release files, 406 assets, and 402 frozen vendor hashes. Fast 123/123, Browser 28/28, Race 80/80, and Offline smoke passed with zero skips. Their source fingerprint was stable at `91377431a053b5a0aa3ed0b0d181f6c79673c196f6b56a66a6bb618980918b02` across 1,133 files; exact receipts are in [the bounded gate report](current-gates/release-gates-bounded-native-20261025.json).
 
 The bundle hashes remain identical to the already-installed test package. This was not a deployment. Native current-package selection, the 8×5 matrix, open-move, and true process restart remain open; Resource-v3 UI P95 and startup-added blocking remain unmeasured. No production runtime, frozen vendor, scroll/wheel code, `main`, or formal Vault was changed.
+
+## 2026-10-26 current-package startup toggle measurement
+
+To close the remaining Resource-v3 startup question without more window-control attempts, the exact `0.14.0` package (`main.js ca8b7a8d…`) was launched in five fresh Obsidian 1.14.5 processes with `vocabularyEnabled` alternated off/on. The isolated temporary Vault had Sync disabled and no Reader open. Resource-v3 reached `DICTIONARY_RESOURCE_AVAILABLE`; its Worker became ready asynchronously in all five enabled runs, 51–447 ms after the renderer-side readiness check began.
+
+The plugin `loadPlugin` duration was noisy: enabled-minus-disabled paired deltas were -137.0, +110.9, -78.5, +17.2, and -371.9 ms. LongTask time overlapping the plugin load differed by -8, +8, -1, -1, and -5 ms. The LongTask result shows no added ≥50 ms task in these paired samples, but the metric misses shorter blocking and the broader load duration could not isolate the dictionary contribution. Therefore:
+
+```text
+RESOURCE_V3_NATIVE_STARTUP_TOGGLE = MEASURED; attribution inconclusive
+STARTUP_ADDED_BLOCKING_LT_50MS = NOT_VERIFIED
+READER_UI_FIRST_LOOKUP = NOT_VERIFIED for the exact ca8b package
+NATIVE_8_STAGE_X_5_DIRECTION_MATRIX = NOT_VERIFIED
+REAL_PROCESS_RESTART_8X5 = NOT_RUN
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+```
+
+Full samples and package hashes are in [the paired startup receipt](current-gates/native-startup-toggle-ca8b-20261026.json). This measurement changed only evidence/docs; it did not modify product code, deploy a package, touch user data, or update `main` or the formal Vault.

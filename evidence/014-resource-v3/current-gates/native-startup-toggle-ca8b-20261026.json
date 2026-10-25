@@ -1,0 +1,47 @@
+{
+  "kind": "obsidian-native-startup-toggle-comparison",
+  "date": "2026-10-26",
+  "candidate": {
+    "branch": "codex/014-goal-resume-20261025",
+    "baseSha": "51f3d85c7bcfdb180312e084b38871741a3e6442",
+    "version": "0.14.0",
+    "mainJsSha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "runtime": {
+    "application": "Obsidian 1.14.5",
+    "electron": "43.8.3",
+    "machine": "Apple M1",
+    "vault": "isolated temporary startup-benchmark-vault",
+    "sync": "disabled",
+    "readerOpened": false,
+    "profile": "same trusted temporary profile reused; a new Obsidian process was launched for every sample",
+    "method": "Five alternating vocabulary-off/on process-start pairs. A test observer captured pdf-web-reader loadPlugin duration and LongTask entries overlapping that interval. Resource availability and Worker readiness were checked after load."
+  },
+  "samples": [
+    { "pair": 1, "vocabularyEnabled": false, "pluginLoadMs": 303.8, "longTaskOverlapMs": 72 },
+    { "pair": 1, "vocabularyEnabled": true, "pluginLoadMs": 166.8, "longTaskOverlapMs": 64, "workerReadyAfterRendererMs": 51.3 },
+    { "pair": 2, "vocabularyEnabled": false, "pluginLoadMs": 332.0, "longTaskOverlapMs": 126 },
+    { "pair": 2, "vocabularyEnabled": true, "pluginLoadMs": 442.9, "longTaskOverlapMs": 134, "workerReadyAfterRendererMs": 63.8 },
+    { "pair": 3, "vocabularyEnabled": false, "pluginLoadMs": 289.8, "longTaskOverlapMs": 68 },
+    { "pair": 3, "vocabularyEnabled": true, "pluginLoadMs": 211.3, "longTaskOverlapMs": 67, "workerReadyAfterRendererMs": 61.1 },
+    { "pair": 4, "vocabularyEnabled": false, "pluginLoadMs": 160.2, "longTaskOverlapMs": 63 },
+    { "pair": 4, "vocabularyEnabled": true, "pluginLoadMs": 177.4, "longTaskOverlapMs": 62, "workerReadyAfterRendererMs": 447.0 },
+    { "pair": 5, "vocabularyEnabled": false, "pluginLoadMs": 534.5, "longTaskOverlapMs": 72 },
+    { "pair": 5, "vocabularyEnabled": true, "pluginLoadMs": 162.6, "longTaskOverlapMs": 67, "workerReadyAfterRendererMs": 66.5 }
+  ],
+  "pairedDeltasEnabledMinusDisabled": {
+    "pluginLoadMs": [-137.0, 110.9, -78.5, 17.2, -371.9],
+    "longTaskOverlapMs": [-8, 8, -1, -1, -5],
+    "longTaskOverlapMedianMs": -1,
+    "largestObservedPositiveLongTaskDeltaMs": 8
+  },
+  "interpretation": {
+    "startupAddedBlockingUnder50ms": "NOT_VERIFIED",
+    "reason": "The five paired plugin-load timings have large process-start noise and cannot isolate an incremental startup duration. LongTask overlap deltas were small, but LongTask observes only tasks of at least 50 ms and does not measure all blocking work. These results do not prove the <50 ms target.",
+    "readerUiFirstLookup": "NOT_VERIFIED",
+    "resourceV3Availability": "The exact candidate reached DICTIONARY_RESOURCE_AVAILABLE and Worker readiness in all five enabled samples; readiness was asynchronous and varied from 51.3 to 447.0 ms after the renderer-side check began."
+  },
+  "safety": "Only the temporary benchmark Vault and profile were used. No production Vault, PDF, annotation data, source code, or main branch was changed."
+}
