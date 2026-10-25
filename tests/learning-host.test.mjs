@@ -276,7 +276,19 @@ test("backlink verification checks the exact Markdown link and a closed Reader d
   });
   f.plugin.readerAnchorStore.get = async (docKey, id, documentId) => ({ anchorId: id, docKey, documentId,
     sourceHash: f.route.source.sourceHash, pageIdentity: "page-test" });
+  f.plugin.readerBacklinkSourceEvidence = (row, file) => file.path === "Notes/A.md" &&
+    row.routePath === "Books/fixture.pdf"
+    ? { offset: row.offset, endOffset: row.endOffset, sourceText: row.sourceText }
+    : null;
   assert.equal((await f.host.resolveSource(anchor)).status, "verified");
+  f.plugin.readerBacklinkSourceEvidence = row => ({ offset: row.offset + 1,
+    endOffset: row.endOffset, sourceText: row.sourceText });
+  assert.equal((await f.host.resolveSource(anchor)).reason, "backlink-route-mismatch",
+    "the synchronous route adapter must echo the exact captured slice too");
+  f.plugin.readerBacklinkSourceEvidence = (row, file) => file.path === "Notes/A.md" &&
+    row.routePath === "Books/fixture.pdf"
+    ? { offset: row.offset, endOffset: row.endOffset, sourceText: row.sourceText }
+    : null;
   const openViews = f.plugin.views;
   f.plugin.views = [];
   const opened = await f.host.openPdfTarget(anchor);
@@ -303,6 +315,25 @@ test("backlink verification checks the exact Markdown link and a closed Reader d
   f.view.annotationSourceHash = f.route.source.sourceHash;
   f.view.annotationPageIdentity.orderedPageIdentities[0] = "changed-page";
   assert.equal((await f.host.resolveSource(anchor)).status, "unresolved", "a changed page identity cannot inherit the linked target");
+});
+
+test("backlink verification fails closed without exact Reader-route evidence", async () => {
+  const f = fixture();
+  const target = { kind: "selection", id: "selection-test" };
+  const link = `[[Books/fixture.pdf#${encodeReaderLinkFragment({ docKey: f.route.docKey,
+    documentId: f.route.documentId, target })}|exact quote]]`;
+  f.texts.set("Notes/A.md", link);
+  const anchor = semantic.fromBacklink({ sourcePath: "Notes/A.md", target, docKey: f.route.docKey,
+    documentId: f.route.documentId, offset: 0, endOffset: link.length, line: 0, sourceText: link }, {
+    sourceHash: f.route.source.sourceHash, pageIndex: 0, pageIdentity: "page-test",
+    targetText: "exact quote", targetTextSource: "stored",
+  });
+
+  const result = await f.host.resolveSource(anchor);
+  assert.equal(result.status, "unresolved");
+  assert.equal(result.reason, "backlink-route-verifier-unavailable");
+  await assert.rejects(f.host.openPdfTarget(anchor), { code: "TARGET_UNRESOLVED" });
+  assert.equal(f.opened.length, 0, "an exact text slice alone cannot authorize a Reader target open");
 });
 
 test("backlink Host rejects exact source slices linked to another target or document", async () => {

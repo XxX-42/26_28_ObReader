@@ -26971,21 +26971,22 @@ var __PDFReaderLearningHost = (() => {
           const range = anchor.sourceRange || {};
           const link = parseMarkdownReaderLink(range.text);
           if (!link?.target || link.target.kind !== anchor.target?.kind || link.target.id !== anchor.target?.id || link.docKey && link.docKey !== anchor.docKey || link.documentId && link.documentId !== anchor.documentId) return failed("backlink-reader-link-mismatch");
-          if (typeof plugin.resolveReaderBacklinkSourceEvidence === "function" || typeof plugin.readerBacklinkSourceEvidence === "function") {
-            const row = {
-              sourcePath,
-              target: anchor.target,
-              docKey: anchor.docKey,
-              documentId: anchor.documentId,
-              routePath: link.routePath,
-              offset: range.startOffset,
-              endOffset: range.endOffset,
-              line: range.line,
-              sourceText: range.text
-            };
-            const evidence = typeof plugin.resolveReaderBacklinkSourceEvidence === "function" ? await plugin.resolveReaderBacklinkSourceEvidence(row, file) : plugin.readerBacklinkSourceEvidence(row, file);
-            if (!evidence || typeof plugin.resolveReaderBacklinkSourceEvidence === "function" && (evidence.offset !== range.startOffset || evidence.endOffset !== range.endOffset || evidence.sourceText !== range.text)) return failed("backlink-route-mismatch");
+          if (typeof plugin.resolveReaderBacklinkSourceEvidence !== "function" && typeof plugin.readerBacklinkSourceEvidence !== "function") {
+            return failed("backlink-route-verifier-unavailable");
           }
+          const row = {
+            sourcePath,
+            target: anchor.target,
+            docKey: anchor.docKey,
+            documentId: anchor.documentId,
+            routePath: link.routePath,
+            offset: range.startOffset,
+            endOffset: range.endOffset,
+            line: range.line,
+            sourceText: range.text
+          };
+          const evidence = typeof plugin.resolveReaderBacklinkSourceEvidence === "function" ? await plugin.resolveReaderBacklinkSourceEvidence(row, file) : plugin.readerBacklinkSourceEvidence(row, file);
+          if (!evidence || evidence.offset !== range.startOffset || evidence.endOffset !== range.endOffset || evidence.sourceText !== range.text) return failed("backlink-route-mismatch");
           return verified(anchor);
         }
         const resolve = createSemanticSourceResolver({
