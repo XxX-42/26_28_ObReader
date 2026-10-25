@@ -11,7 +11,7 @@ The user directed us to seal the candidate, deploy it to the formal `远程仓�
 - Native acceptance remains incomplete: 8-stage × 5-direction `NOT_VERIFIED`; open-move × 5 `NOT_VERIFIED`; process-restart × 5 `NOT_RUN`. The owned test renderer had no controllable visible/focused window, so the runner stopped before any Vault writes or UI input. See [bounded Native/gate evidence](current-gates/bounded-native-and-gates-20261026.json).
 - `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; iPad is `DEFERRED_BY_SCOPE`; Reader UI first-query P95 and startup-added blocking `<50 ms` remain unverified.
 
-The integration branch will be pushed non-forced after this evidence update. No tag or GitHub Release is created.
+The candidate branch and `main` were updated with normal non-force pushes; `main` advanced by fast-forward from `197cd7d653967eb0a2d04af3c91470163949e680`. No tag or GitHub Release was created.
 
 ## Current authority — 2026-10-26
 

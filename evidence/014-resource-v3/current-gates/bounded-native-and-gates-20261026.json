@@ -109,6 +109,8 @@
     "formalVaultDataChanged": false,
     "testVaultRedeployed": false,
     "ipad": "DEFERRED_BY_SCOPE",
-    "mainPush": "PENDING_FINAL_DOCUMENTATION_COMMIT"
+    "mainPush": "PUSHED_NON_FORCE_FAST_FORWARD",
+    "mainPushFrom": "197cd7d653967eb0a2d04af3c91470163949e680",
+    "candidateAndMainRefsMatchedAfterPush": true
   }
 }

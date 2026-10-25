@@ -46,6 +46,9 @@
     "native8Stage5DirectionMatrix": "NOT_VERIFIED",
     "openMove5Directions": "NOT_VERIFIED",
     "processRestart5Directions": "NOT_RUN",
-    "deploymentProceededByExplicitUserRequest": true
+    "deploymentProceededByExplicitUserRequest": true,
+    "gitPush": "NON_FORCE_FAST_FORWARD_TO_CANDIDATE_BRANCH_AND_MAIN",
+    "mainAdvancedFrom": "197cd7d653967eb0a2d04af3c91470163949e680",
+    "githubReleaseCreated": false
   }
 }
