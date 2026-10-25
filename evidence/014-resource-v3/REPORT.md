@@ -265,6 +265,10 @@ All three rebuilt package files exactly match `ObReader-Apple-Test`; no test-vau
 
 The current Native 8-stage × 5-direction matrix, open-move, and true process restart remain `NOT_VERIFIED` / `NOT_RUN`. Resource-v3's existing supported Obsidian 1.14.5 DataAdapter evidence is unchanged: rare first lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms, with the common `on` 1,154.8 ms outlier preserved. Startup-added blocking is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. The current exact test renderer was not foreground-owned and multiple Obsidian profiles list the same test Vault, so no new exclusive Native benchmark or mutation lease was taken. iPad remains `DEFERRED_BY_SCOPE`.
 
+### Test-vault settings audit after bounded Native attempt
+
+The pre-run backup at `~/.codex/deploy-backups/obreader-014-test-vault-prewarm-native-20261025/data.json` and the current `ObReader-Apple-Test/.obsidian/plugins/pdf-web-reader/data.json` have identical SHA-256 (`8807581279d95cf4ab770bdc722a5e861f1354f9c3a8eae1ee60b97aea7b09f0`). No settings restoration or guessed defaults were applied. The owned 1.14.5 profile remains plugin-disabled with zero Reader leaves. Two sibling Obsidian profiles still have the same test Vault open, and one also has a formal Vault open, so further plugin activation or shared Vault mutation is not safe until those processes are isolated. Receipt: [test-vault-settings-restore-audit-20261025.json](current-gates/test-vault-settings-restore-audit-20261025.json).
+
 ## 2026-10-25 scope-convergence update
 
 This update supersedes the preceding Native and Resource-v3 status where they describe the latest attempt. The source tree stayed stable during Build/Fast/Browser/Race at fingerprint `78c5f8b77807862e8d52f84900a63c31745368befbb5e1dddb56895dcea73bf6` (1,119 files). Build verified the 3 release files, 406 embedded runtime assets, and 402 frozen vendor hashes. Fast passed **122/122**, Browser **28/28**, Race **80/80**, and Offline smoke passed; there were no skips. Raw gate runs are in the local ignored `tests/artifacts/vocabulary-gates/` directory.

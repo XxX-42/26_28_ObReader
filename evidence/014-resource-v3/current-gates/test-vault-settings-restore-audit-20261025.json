@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-test-vault-settings-restore-audit",
+  "status": "UNCHANGED",
+  "vault": "ObReader-Apple-Test",
+  "file": ".obsidian/plugins/pdf-web-reader/data.json",
+  "preRunBackup": {
+    "path": "~/.codex/deploy-backups/obreader-014-test-vault-prewarm-native-20261025/data.json",
+    "modifiedAtLocal": "2026-10-25T18:02:39+08:00",
+    "sha256": "8807581279d95cf4ab770bdc722a5e861f1354f9c3a8eae1ee60b97aea7b09f0"
+  },
+  "postRunFile": {
+    "modifiedAtLocal": "2026-10-25T19:48:10+08:00",
+    "sha256": "8807581279d95cf4ab770bdc722a5e861f1354f9c3a8eae1ee60b97aea7b09f0"
+  },
+  "bytesEqual": true,
+  "restored": false,
+  "reason": "The pre-run backup and current test-vault settings are byte-identical; no guessed restoration was needed.",
+  "nativeProcesses": {
+    "currentOwnedProfile": "Obsidian 1.14.5, PID 27240, CDP 63456",
+    "pluginEnabled": false,
+    "readerLeaves": 0,
+    "sharedVaultProfilesObserved": 2,
+    "oneSiblingProfileAlsoHadAFormalVaultOpen": true,
+    "furtherUiMutationSafe": false
+  }
+}
