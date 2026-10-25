@@ -1,0 +1,23 @@
+# ObReader 0.14 isolated workstream ledger
+
+Base for all seven worktrees: `197cd7d653967eb0a2d04af3c91470163949e680` (`origin/main` at branch creation; current main was not advanced by this continuation). All agents used `gpt-6-luna / max`, separate `codex/014-ws-*` branches, and dedicated worktrees. Their commits have been pushed to matching `origin/codex/014-ws-*` refs.
+
+| ID | Workstream | Branch / commit | Result | Evidence |
+|---|---|---|---|---|
+| A | Baseline / frozen-boundary audit | `codex/014-ws-a-baseline` / `75bca4187ace27cd549e1b2b6daec184534a85ce` | Frozen manifest 441/441 matches. Current Native and Reader-UI Resource-v3 gates remain open. Identifies prior main/formal deployment as a scope/order discrepancy. | [Audit](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-a-baseline/evidence/014-resource-v3/workstreams/baseline-guardian.md) |
+| B | Native learning loops and route matrix | `codex/014-ws-b-native` / `33d4372d24d83756a8bd0288494f515e07ed8a42` | Current 0.14.0 package (`main.js d57f5e1e…`) was installed in an isolated scratch profile. A CDP drag did not create a selection; the one OS-pointer retry stopped at the strict `document.hasFocus` gate before input. Native remains `NOT_VERIFIED`; 8×5 and true process restart are `NOT_RUN`. No product code changed. | [Audit](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-b-native/evidence/014-resource-v3/workstreams/native-loop.md) · [focus receipt](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-b-native/evidence/014-resource-v3/workstreams/native-os-pointer-preflight-20261025.json) |
+| C | Resource-v3 first lookup | `codex/014-ws-c-resource` / `30f2ea4ccd93a9a764e1984c3d4e2153ae57b5ac` | Service/DataAdapter cold lookup evidence exists, but current-package Reader UI first tap is `NOT_VERIFIED`; startup-added blocking `<50 ms` is `NOT_MEASURED`. | [Audit](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-c-resource/evidence/014-resource-v3/workstreams/resource-lookup.md) |
+| D | SQLite WASM / OPFS alternative | `codex/014-ws-d-sqlite` / `a6d768c7e6d4f72a9e97aa8114b96de8861dd326` | Do not select. Historical localhost results do not establish Native app-origin VFS writes; Native OPFS remains `NOT_RUN`. | [Report](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-d-sqlite/evidence/014-sqlite-opfs/REPORT.md) |
+| E | SemanticAnchor / Sidebar / Backlink contract | `codex/014-ws-e-semantic` / `71db70ce85aef52d719d78e565d0d40639d306cd` | Isolated exact-evidence fail-closed fix; 158 focused tests pass. It is not integrated into the current release candidate pending Native-first gate order. | [Workstream report](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-e-semantic/docs/learning-system/014_WORKSTREAM_E_SEMANTIC_20261025.md) |
+| F | Bulk import / History | `codex/014-ws-f-bulk` / `6832144b4983379118b13cffdde1b86a5a749762` | Reject both candidates: gzip cuts total writes by 22.77%; shared lifecycle cuts 13.56% and also exceeds CPU/restore limits. Focused tests 21/21. | [Report](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-f-bulk/evidence/014-ws-f-bulk/REPORT.md) |
+| G | FSRS shadow replay | `codex/014-ws-g-fsrs` / `4dffd1327d4af5e5695eeb5a32df4a1bb5d98383` | Synthetic-only replay; insufficient non-synthetic history. No production change; `leitner-utc-v1` remains default. | [Report](https://github.com/XxX-42/26_28_ObReader/blob/codex/014-ws-g-fsrs/docs/learning-system/014_FSRS_DEVELOPMENT_AUDIT_20261025.md) |
+
+## Integrated gates
+
+The current integrated source rerun is recorded in [the release-gate receipt](../current-gates/release-gates-rerun-20261025.json): build passed (3 release files, 406 assets, 402 frozen vendor hashes); Fast 123/123, Browser 28/28, Race 80/80, Offline smoke passed. The current-package Native 8×5 matrix remains `NOT_VERIFIED`, real process restart remains `NOT_RUN`, Resource-v3 Reader UI first lookup remains `NOT_VERIFIED`, startup-added blocking remains `NOT_MEASURED`, and iPad remains `DEFERRED_BY_SCOPE`.
+
+## Scope and release notes
+
+- No workstream in this continuation modified PDF.js, frozen storage/WAL, canonical Vocabulary/Review/Context schemas, or the formal Vault.
+- The previous continuation had already pushed 0.14 artifacts to `main` and deployed them to `远程仓库1`, contrary to this goal's test-only boundary. This ledger records that historical discrepancy; the present continuation did not advance `main` or alter the formal Vault.
+- The exact formal-runtime and data-integrity evidence is in [the deployment receipt](../current-gates/formal-vault-deploy-20261025.json). Plugin reload passed; full process restart did not run.

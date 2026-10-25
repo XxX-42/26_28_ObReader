@@ -404,3 +404,20 @@ Post-reload integrity checks reconfirmed the sample PDF bytes, all previously ex
 On the exact current integrated source at `197cd7d653967eb0a2d04af3c91470163949e680`, build passed with 3 release files, 406 embedded assets, and 402 frozen vendor hashes. Fast passed **123/123**, Browser **28/28**, Race **80/80**, and Offline Viewer smoke passed. All three automated gate reports recorded the same stable source fingerprint `525e9f90066d556663909bb2e8acc9ee2f2cda8f716482750df201fb7f603908` across 1,126 source files, with zero failures or skips. The offline run created all five annotation editors, saved and reopened them, and verified bulk deletion persisted without resurrection.
 
 This rerun does not close Native acceptance: the current-package 8-stage × 5-direction matrix is still `NOT_VERIFIED`, real process restart is `NOT_RUN`, Reader UI first lookup is `NOT_VERIFIED`, startup-added blocking `<50 ms` is `NOT_MEASURED`, and iPad is `DEFERRED_BY_SCOPE`. Exact run IDs, bundle hashes, and limits are recorded in [the gate rerun receipt](current-gates/release-gates-rerun-20261025.json). No production runtime code changed during this rerun.
+
+## 2026-10-25 scope-corrected Native stop
+
+The exact current candidate package (`0.14.0`, `main.js=d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257`, manifest and stylesheet hashes unchanged) was launched in an owned Obsidian 1.14.5 scratch profile with Sync off and all mutation writes isolated. The strict app/vault/window identity checks passed for the CDP-driven attempt. However, after selecting PDF.js Highlight mode and issuing the bounded CDP pointer drag, the text selection remained empty and no Highlight editor appeared. This does not establish whether the cause is product input handling or CDP mouse semantics.
+
+One OS-pointer retry was prepared but not run: after one raise of the exact owned window and one Escape, its renderer still reported `document.hasFocus=false`. To preserve the focus safety gate, no Quartz pointer event or further window-control retry was sent. The process was terminated after confirming it was the owned scratch-profile process; its generated fixture, receipt, and screenshots remain preserved.
+
+```text
+CURRENT_PACKAGE_SELECTION_SETUP = NOT_VERIFIED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+OS_POINTER_RETRY = NOT_RUN (strict focus gate)
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+```
+
+No product code, PDF.js, wheel/observer/LingQ scroll path, `main`, or formal Vault was changed by this closeout. Current-package Native acceptance remains a release blocker; prior matrix evidence for a different `main.js` bundle does not transfer.
