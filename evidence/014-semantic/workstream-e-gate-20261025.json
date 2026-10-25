@@ -1,0 +1,64 @@
+{
+  "schema": "obreader.workstream-gate/v1",
+  "workstream": "E-semantic-anchor-sidebar-backlink",
+  "date": "2026-10-25",
+  "branch": "codex/014-ws-e-semantic",
+  "baseSha": "197cd7d653967eb0a2d04af3c91470163949e680",
+  "testedSourceDiffSha256": "6d3dd08b0128975ac12abf503ec630a083eb3362ecf748784ecbfbaf5f057053",
+  "testedTreeBasis": "baseSha plus the recorded tracked implementation/test diff",
+  "sourceContractStatus": "PASS",
+  "overallAcceptanceStatus": "SOURCE_API_PASS_NATIVE_SEALING_PENDING",
+  "changes": [
+    "plugin/learning/host.cjs",
+    "tests/learning-host.test.mjs",
+    "docs/learning-system/014_WORKSTREAM_E_SEMANTIC_20261025.md",
+    "evidence/014-semantic/workstream-e-gate-20261025.json"
+  ],
+  "contractChecks": {
+    "flatSemanticAnchorTarget": "PASS",
+    "persistedAnchorShapeUnchanged": "PASS",
+    "stableExistingTargetIdsPreserved": "PASS",
+    "sidebarDelegatesToEffectiveReader": "PASS",
+    "backlinkRequiresExactRouteAndSourceEvidence": "PASS",
+    "fuzzyRebind": "PROHIBITED_AND_REGRESSION_TESTED",
+    "explicitPageFallbackIsNonExact": "PASS",
+    "newDatabaseOrIndex": "NONE",
+    "walOrCanonicalLearningChange": "NONE",
+    "ReaderBridgeOrMainChange": "NONE"
+  },
+  "gates": [
+    {
+      "name": "focused-semantic-host-routing-suite",
+      "status": "PASS",
+      "command": "node --test tests/semantic-services.test.mjs tests/semantic-anchor.test.mjs tests/learning-semantic-interop.test.mjs tests/learning-host.test.mjs tests/markdown-routing.test.mjs tests/plugin-host.test.mjs",
+      "tests": 158,
+      "passed": 158,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "git-diff-check",
+      "status": "PASS",
+      "command": "git diff --check"
+    },
+    {
+      "name": "native-package-correlation-reverification",
+      "status": "PENDING",
+      "reason": "Root-owned package-bound Native continuation is still required."
+    },
+    {
+      "name": "native-process-restart-and-full-five-direction-matrix",
+      "status": "PENDING",
+      "reason": "Source/unit evidence does not establish the required Native restart and per-stage route matrix."
+    }
+  ],
+  "dependencySetup": {
+    "required": true,
+    "command": "npm ci --ignore-scripts --no-audit --no-fund",
+    "lockfileChanged": false
+  },
+  "residualGaps": [
+    "Current-package Native re-verification of the initial backlink request correlation.",
+    "Actual Native process restart and complete rename/move/restart by five-direction acceptance."
+  ]
+}
