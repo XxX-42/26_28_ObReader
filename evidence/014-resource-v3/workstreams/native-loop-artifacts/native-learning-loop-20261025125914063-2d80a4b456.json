@@ -1,0 +1,3687 @@
+{
+  "agent": "impl_b_native",
+  "workstream": "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
+  "base": "65de915b306954a160ed99002f33ada639cebd4e",
+  "branch": "codex/014-ws-b-native",
+  "runnerHead": "200f2616fa1f32e6b13c9b0ec6b181a95b73c15f",
+  "planA": "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in one identity-checked owned Obsidian profile.",
+  "planB": "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity and the existing route scenarios. The restart scenario in this runner is a plugin reload, not an application-process restart.",
+  "startedAt": "2026-10-25T12:59:14.063Z",
+  "runId": "native-learning-loop-20261025125914063-2d80a4b456",
+  "fixturePrefix": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456",
+  "status": "failed",
+  "nativeProfile": {
+    "root": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4",
+    "marker": {
+      "kind": "codex-owned-native-test-profile",
+      "runId": "native-loop-b-20261025125158641-78e1c4",
+      "allowedVault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "appPath": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app"
+    },
+    "appExecutable": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app/Contents/MacOS/Obsidian",
+    "appVersion": "1.14.5",
+    "cdpPort": 51663,
+    "ownerPid": 72720,
+    "ownerCommandHash": "336ca7ef30b754d98336811bbdfa86db3153648de7d26d40aa8f05d8a0a8132f",
+    "ownerProcessHash": "38ec13738defb5d7a2416b1efcc1d7f575de303457b390ee9d2792df99a07782",
+    "targetBinding": {
+      "kind": "single-owned-profile",
+      "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "siblingProfileInspection": "skipped; disposable scratch vault"
+    },
+    "siblingTestVaultProcesses": "NOT_INSPECTED: isolated scratch vault and process-only mode"
+  },
+  "identity": {
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "configDir": ".obsidian",
+    "vaultName": "native-loop-b-20261025125158641-78e1c4",
+    "pluginActive": false,
+    "pluginVersion": null,
+    "enabledPlugins": [],
+    "syncEnabled": false,
+    "readerViews": [],
+    "visibility": "visible",
+    "focused": true,
+    "ownerDocumentIsRenderer": true,
+    "ownerWindowIsRenderer": true
+  },
+  "sync": {
+    "enabled": false,
+    "off": true
+  },
+  "plugin": {
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "configDir": ".obsidian",
+    "vaultName": "native-loop-b-20261025125158641-78e1c4",
+    "pluginActive": true,
+    "pluginVersion": "0.14.0",
+    "enabledPlugins": [
+      "pdf-web-reader"
+    ],
+    "syncEnabled": false,
+    "readerViews": [],
+    "visibility": "visible",
+    "focused": true,
+    "ownerDocumentIsRenderer": true,
+    "ownerWindowIsRenderer": true,
+    "enabledAfterIsolation": true
+  },
+  "stores": {
+    "storageRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261025125914063-2d80a4b456",
+    "roots": [
+      {
+        "logicalRoot": "00_Archive/20_PDFData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261025125914063-2d80a4b456/PDFData"
+      },
+      {
+        "logicalRoot": "00_Archive/21_VocabularyData",
+        "physicalRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261025125914063-2d80a4b456/VocabularyData"
+      }
+    ],
+    "dictionaryRoot": "00_Archive/21_VocabularyData/dictionaries",
+    "installedBeforePluginEnable": true,
+    "adapterCallCount": 3279,
+    "writeCount": 572,
+    "unmappedWriteCount": 0,
+    "pdfDataFileCount": 6,
+    "pdfWalDocuments": [
+      "358cebed-eb4f-4864-add1-895bb3d52b53"
+    ]
+  },
+  "uiFlows": [],
+  "routeScenarios": [],
+  "screenshots": [
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/preflight-safe-mode.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/reader-before-highlight.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/reader-highlight-tool-active.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/reader-after-highlight-pointer-drag.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/failure-target-1.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125914063-2d80a4b456/failure-target-2.png"
+  ],
+  "errors": [
+    {
+      "at": "2026-10-25T12:59:29.208Z",
+      "code": null,
+      "error": "TimeoutError: Waiting failed: 8000ms exceeded\n    at new WaitTask (file:///private/tmp/obreader-014-ws-b-native/node_modules/puppeteer-core/lib/puppeteer/common/WaitTask.js:46:34)\n    at IsolatedWorld.waitForFunction (file:///private/tmp/obreader-014-ws-b-native/node_modules/puppeteer-core/lib/puppeteer/api/Realm.js:49:26)\n    at CdpFrame.waitForFunction (file:///private/tmp/obreader-014-ws-b-native/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:585:43)\n    at CdpFrame.<anonymous> (file:///private/tmp/obreader-014-ws-b-native/node_modules/puppeteer-core/lib/puppeteer/util/decorators.js:101:27)\n    at createHighlightLearningItem (file:///private/tmp/obreader-014-ws-b-native/tests/native-learning-loop.mjs:1408:15)\n    at async main (file:///private/tmp/obreader-014-ws-b-native/tests/native-learning-loop.mjs:2642:10)\n    at async file:///private/tmp/obreader-014-ws-b-native/tests/native-learning-loop.mjs:2771:3"
+    }
+  ],
+  "nativeAcceptance": {
+    "status": "NOT_VERIFIED",
+    "fullFiveDirectionMatrix": "NOT_RUN_BY_THIS_RUNNER",
+    "actualProcessRestart": "NOT_RUN_BY_THIS_RUNNER",
+    "foregroundPolicy": "external-cua-selection"
+  },
+  "attachedMode": {
+    "enabled": true,
+    "temporaryHarnessMode": true,
+    "processRestart": "NOT_RUN: bounded open-move stage scope",
+    "excludedRenderers": [],
+    "defaultBaseline": [
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.007be7e64888e26e152a9c019d783f282cf67cfe5690da25ac8300f428fbfb75.jsonl.gz",
+        "bytes": 248879,
+        "sha256": "007be7e64888e26e152a9c019d783f282cf67cfe5690da25ac8300f428fbfb75"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0595104edbcb07ef0e75d4caa575647ab1325656b0c0037c334cd25d1d060713.jsonl.gz",
+        "bytes": 251640,
+        "sha256": "0595104edbcb07ef0e75d4caa575647ab1325656b0c0037c334cd25d1d060713"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.05e74d36440db19e3a3e4d8d2c5ec3225e12258a4847d167d4b55789bbda4f4f.jsonl.gz",
+        "bytes": 260687,
+        "sha256": "05e74d36440db19e3a3e4d8d2c5ec3225e12258a4847d167d4b55789bbda4f4f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0df39931b1d454951aedb8eeae8c2f98ec7ef66d9994258816570c084ba231a4.jsonl.gz",
+        "bytes": 250968,
+        "sha256": "0df39931b1d454951aedb8eeae8c2f98ec7ef66d9994258816570c084ba231a4"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0e54c717a6623e64643354bea1d6fcfcccd1506a70e10514e69b73adaba2da0c.jsonl.gz",
+        "bytes": 241854,
+        "sha256": "0e54c717a6623e64643354bea1d6fcfcccd1506a70e10514e69b73adaba2da0c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.1141419776c5010fc247fd53d69391f24235270225255a7c139da311832d02ef.jsonl.gz",
+        "bytes": 248863,
+        "sha256": "1141419776c5010fc247fd53d69391f24235270225255a7c139da311832d02ef"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.12900bd2a4771000f1d7d8dcce1f28768717d5de657b15fb8a4324bc24586e35.jsonl.gz",
+        "bytes": 253144,
+        "sha256": "12900bd2a4771000f1d7d8dcce1f28768717d5de657b15fb8a4324bc24586e35"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.1be001fd217f5431a3496e26821ba3e1ea460582c4f80283b8bd99bd120e1136.jsonl.gz",
+        "bytes": 229906,
+        "sha256": "1be001fd217f5431a3496e26821ba3e1ea460582c4f80283b8bd99bd120e1136"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.256d6939651fb6f14f33cb03e88402a4301e54ab810d5d6f3731d3789ed5a85e.jsonl.gz",
+        "bytes": 257810,
+        "sha256": "256d6939651fb6f14f33cb03e88402a4301e54ab810d5d6f3731d3789ed5a85e"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.2703b546676e1ec1d35b3ab4c8666be77a1b52060490728b0d593eb28505d948.jsonl.gz",
+        "bytes": 255863,
+        "sha256": "2703b546676e1ec1d35b3ab4c8666be77a1b52060490728b0d593eb28505d948"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.2c3520cdab6ad38445983b953c8d9d31cbac2a47693e49ef95bc5ec012288168.jsonl.gz",
+        "bytes": 243094,
+        "sha256": "2c3520cdab6ad38445983b953c8d9d31cbac2a47693e49ef95bc5ec012288168"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+        "bytes": 262366,
+        "sha256": "30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.341adf3185a40c5028433b886465078ad6dce5eb98286366d40eb24d8d212e54.jsonl.gz",
+        "bytes": 246873,
+        "sha256": "341adf3185a40c5028433b886465078ad6dce5eb98286366d40eb24d8d212e54"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.36d58960a584437de7333df6367b4da2109db3e637d89607cedd36545974b39b.jsonl.gz",
+        "bytes": 258055,
+        "sha256": "36d58960a584437de7333df6367b4da2109db3e637d89607cedd36545974b39b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3915eeddf9bc48a8fa83c6d2fff741130888e4fc518e5b71c813e3b163111341.jsonl.gz",
+        "bytes": 258137,
+        "sha256": "3915eeddf9bc48a8fa83c6d2fff741130888e4fc518e5b71c813e3b163111341"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.39b0b2f8cacce9f775a62bb2260bb66515913223837f07f10e38a4d7c05e025a.jsonl.gz",
+        "bytes": 243716,
+        "sha256": "39b0b2f8cacce9f775a62bb2260bb66515913223837f07f10e38a4d7c05e025a"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3c671f42cc62ed38596adb2fbadd1135fcf4278b913b7dcb60a4f375abf1352b.jsonl.gz",
+        "bytes": 251402,
+        "sha256": "3c671f42cc62ed38596adb2fbadd1135fcf4278b913b7dcb60a4f375abf1352b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3efbee695903cd971b785cd527511a0c85d1be625eefac8cb491c0799b2dffcd.jsonl.gz",
+        "bytes": 249551,
+        "sha256": "3efbee695903cd971b785cd527511a0c85d1be625eefac8cb491c0799b2dffcd"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.4132de120ec2a9e39b7eaa91527cae55f33606ef17e5df79a70b115e389972fa.jsonl.gz",
+        "bytes": 255213,
+        "sha256": "4132de120ec2a9e39b7eaa91527cae55f33606ef17e5df79a70b115e389972fa"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.465dbf71e2da1121dda73036f8f4588ee8fd09bb51a689554f45bdd436887b5c.jsonl.gz",
+        "bytes": 257748,
+        "sha256": "465dbf71e2da1121dda73036f8f4588ee8fd09bb51a689554f45bdd436887b5c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.49388e653f58bb48f6d3dc30b05b2e7c2e01e1265466be275b70e918eee1ccec.jsonl.gz",
+        "bytes": 264772,
+        "sha256": "49388e653f58bb48f6d3dc30b05b2e7c2e01e1265466be275b70e918eee1ccec"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.49e76abc37b5e8e581bf6aabbeac5c014d686e32fa4c6b14080d406492f00c66.jsonl.gz",
+        "bytes": 263747,
+        "sha256": "49e76abc37b5e8e581bf6aabbeac5c014d686e32fa4c6b14080d406492f00c66"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.53f97d9db0038aa21bcbd9b17d58cd6b7ae5c3d02cd6532467e31228d6f6c40a.jsonl.gz",
+        "bytes": 248630,
+        "sha256": "53f97d9db0038aa21bcbd9b17d58cd6b7ae5c3d02cd6532467e31228d6f6c40a"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.57194adda06e9eea4d13f344d47a2244cf25577273ffdb3bb749ecf67ee80ea0.jsonl.gz",
+        "bytes": 224228,
+        "sha256": "57194adda06e9eea4d13f344d47a2244cf25577273ffdb3bb749ecf67ee80ea0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.57abdec840941a0ca8b40f509be3890933e20453bbdee22e516e5fbefd271865.jsonl.gz",
+        "bytes": 250470,
+        "sha256": "57abdec840941a0ca8b40f509be3890933e20453bbdee22e516e5fbefd271865"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5a0992325fca77caa4274a2a95b9af1e033a93ff33c1cf7d7b9ffc55fead6805.jsonl.gz",
+        "bytes": 228160,
+        "sha256": "5a0992325fca77caa4274a2a95b9af1e033a93ff33c1cf7d7b9ffc55fead6805"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+        "bytes": 236616,
+        "sha256": "5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.66f558e61576600aae346cb719c489ca519feaaf06d5859298b84f81ab76d479.jsonl.gz",
+        "bytes": 260816,
+        "sha256": "66f558e61576600aae346cb719c489ca519feaaf06d5859298b84f81ab76d479"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.67b67e39e9973455384f155b27806ea1fd0f4a8fec626410e9ccd3f39624ee9f.jsonl.gz",
+        "bytes": 255567,
+        "sha256": "67b67e39e9973455384f155b27806ea1fd0f4a8fec626410e9ccd3f39624ee9f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.694daef7925cb150f636b9ea7f4c72ed106eb27b5ecc9fbefc98f0ef001c1357.jsonl.gz",
+        "bytes": 256039,
+        "sha256": "694daef7925cb150f636b9ea7f4c72ed106eb27b5ecc9fbefc98f0ef001c1357"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.6a2c6cd4d3476153c1c89312d871a7f23448283a5d780f3e694344917a60fa9f.jsonl.gz",
+        "bytes": 249849,
+        "sha256": "6a2c6cd4d3476153c1c89312d871a7f23448283a5d780f3e694344917a60fa9f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.715cb31abbf8038503ed7e9b63d2ba298b7917e563a1ba20160b2e02e77f4e76.jsonl.gz",
+        "bytes": 259585,
+        "sha256": "715cb31abbf8038503ed7e9b63d2ba298b7917e563a1ba20160b2e02e77f4e76"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7570a4f7a64a85f20b624eede533025e6cc50896d188fde04d27f5a1ce3056c7.jsonl.gz",
+        "bytes": 253295,
+        "sha256": "7570a4f7a64a85f20b624eede533025e6cc50896d188fde04d27f5a1ce3056c7"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7802616521a316426e5abae315a29acc1036cc6cf2e31963b376822b1712fd21.jsonl.gz",
+        "bytes": 241435,
+        "sha256": "7802616521a316426e5abae315a29acc1036cc6cf2e31963b376822b1712fd21"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7922095da716eac26860a170ccb9987b97f84b70b9a084766bc80ee596bede47.jsonl.gz",
+        "bytes": 244596,
+        "sha256": "7922095da716eac26860a170ccb9987b97f84b70b9a084766bc80ee596bede47"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7ba371f99c9401957047aaf12fbaf005b5d9b17ffa753f15f30e9e7560e1082c.jsonl.gz",
+        "bytes": 252352,
+        "sha256": "7ba371f99c9401957047aaf12fbaf005b5d9b17ffa753f15f30e9e7560e1082c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.8199b1ca2331846b69fd79c1cc23791044b49cbbd9b7c4365e6d5f433bd2b8fc.jsonl.gz",
+        "bytes": 262282,
+        "sha256": "8199b1ca2331846b69fd79c1cc23791044b49cbbd9b7c4365e6d5f433bd2b8fc"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.86feb906b4b061f861a75f64b18d95301714d7f94f717921275e25b58bdfa373.jsonl.gz",
+        "bytes": 275180,
+        "sha256": "86feb906b4b061f861a75f64b18d95301714d7f94f717921275e25b58bdfa373"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.8a0019c801120e755c0e63547c847a35389fcb851d3c26beb0e5f5b81dcc75e2.jsonl.gz",
+        "bytes": 260104,
+        "sha256": "8a0019c801120e755c0e63547c847a35389fcb851d3c26beb0e5f5b81dcc75e2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.91431ea77e6222e533a959edabcc63ced29102f9cf480b287b42e0bf7cd563a2.jsonl.gz",
+        "bytes": 249546,
+        "sha256": "91431ea77e6222e533a959edabcc63ced29102f9cf480b287b42e0bf7cd563a2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.952e606a65aeece391100261407792714ae5a6a311447b664461ff38b7d15896.jsonl.gz",
+        "bytes": 261568,
+        "sha256": "952e606a65aeece391100261407792714ae5a6a311447b664461ff38b7d15896"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.981731fd420866ce592ba5802087a8605240d24ed5059432aa711e98ad8d4744.jsonl.gz",
+        "bytes": 266448,
+        "sha256": "981731fd420866ce592ba5802087a8605240d24ed5059432aa711e98ad8d4744"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.984048052d250ee3f9aa151baa20abe5f0e1856bbe8f32087742f1b9257fce65.jsonl.gz",
+        "bytes": 246932,
+        "sha256": "984048052d250ee3f9aa151baa20abe5f0e1856bbe8f32087742f1b9257fce65"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.9e1fabe06f88c4248e5010a6baba102da19ed11ea33b2408e73caf60362a2539.jsonl.gz",
+        "bytes": 247188,
+        "sha256": "9e1fabe06f88c4248e5010a6baba102da19ed11ea33b2408e73caf60362a2539"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.9fddf302d3c5dd360b476992eee0b47d9b81c831e90a21fc5a78ecf245060f15.jsonl.gz",
+        "bytes": 238154,
+        "sha256": "9fddf302d3c5dd360b476992eee0b47d9b81c831e90a21fc5a78ecf245060f15"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.a3c944e587c6c79cbb92a6e3853b81fa599bbde678c2db3daa7d403e3d3f28ed.jsonl.gz",
+        "bytes": 250817,
+        "sha256": "a3c944e587c6c79cbb92a6e3853b81fa599bbde678c2db3daa7d403e3d3f28ed"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.acff6e595b856623f0aa41e248c1fa0735dc8d983d7800a7fc1c3f0e934f9ea0.jsonl.gz",
+        "bytes": 255597,
+        "sha256": "acff6e595b856623f0aa41e248c1fa0735dc8d983d7800a7fc1c3f0e934f9ea0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af1b1b2d607d1ac2b73744f705188620dc1c1625d91e63aff1d30ecc406a7a09.jsonl.gz",
+        "bytes": 257614,
+        "sha256": "af1b1b2d607d1ac2b73744f705188620dc1c1625d91e63aff1d30ecc406a7a09"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+        "bytes": 139005,
+        "sha256": "af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b0c53961064485f2d8092615ff53c594d2d7ddfbc691fed0e8aa7dcfffeb63cb.jsonl.gz",
+        "bytes": 245493,
+        "sha256": "b0c53961064485f2d8092615ff53c594d2d7ddfbc691fed0e8aa7dcfffeb63cb"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b2e42bab62ed4270be535972439043654f9fa007550519285d93b5349f968b8d.jsonl.gz",
+        "bytes": 258686,
+        "sha256": "b2e42bab62ed4270be535972439043654f9fa007550519285d93b5349f968b8d"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b3077a60f4512454451cb942e9948b1a63dc11b5b186dfc75f821894c914e722.jsonl.gz",
+        "bytes": 251725,
+        "sha256": "b3077a60f4512454451cb942e9948b1a63dc11b5b186dfc75f821894c914e722"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b43bc38cfd1bd25d9e385fcb3f2fb8467bed1ab0e9a2e07fb2b058092326e94d.jsonl.gz",
+        "bytes": 250081,
+        "sha256": "b43bc38cfd1bd25d9e385fcb3f2fb8467bed1ab0e9a2e07fb2b058092326e94d"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.bc9bca265096eeed9428ad4b77efbd763b0a35e4cbfed6be29fa589931f219f9.jsonl.gz",
+        "bytes": 252064,
+        "sha256": "bc9bca265096eeed9428ad4b77efbd763b0a35e4cbfed6be29fa589931f219f9"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.bd646a32f40615a7d2321a4b00b96240871a0a24b68afd2a66c3644c4b53eae1.jsonl.gz",
+        "bytes": 255875,
+        "sha256": "bd646a32f40615a7d2321a4b00b96240871a0a24b68afd2a66c3644c4b53eae1"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.c553a8e615685dbc170f0dd7115ad44aa4ed541704e01daa48176cad8401e97b.jsonl.gz",
+        "bytes": 251709,
+        "sha256": "c553a8e615685dbc170f0dd7115ad44aa4ed541704e01daa48176cad8401e97b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.c67a0a1c8db4ce2e12588f2e83e0a7ad3fd79557da1df63bf7200f64339fca05.jsonl.gz",
+        "bytes": 242810,
+        "sha256": "c67a0a1c8db4ce2e12588f2e83e0a7ad3fd79557da1df63bf7200f64339fca05"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d175a6e681077586235e4d44454931c48e7f9bfee9454dc1495967ab8c7881d2.jsonl.gz",
+        "bytes": 251714,
+        "sha256": "d175a6e681077586235e4d44454931c48e7f9bfee9454dc1495967ab8c7881d2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d40555f68fb3cfcecbee1809525ef4cecfeaecd4e58e499366ead2fba1a850c4.jsonl.gz",
+        "bytes": 252753,
+        "sha256": "d40555f68fb3cfcecbee1809525ef4cecfeaecd4e58e499366ead2fba1a850c4"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d636978cbd10c453f28b97e8e67344e08b593d5d2acca9c18a094388245fd7bb.jsonl.gz",
+        "bytes": 278455,
+        "sha256": "d636978cbd10c453f28b97e8e67344e08b593d5d2acca9c18a094388245fd7bb"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d9a606f1c6877feac3138706911d783e7d346532897dd302f9092b65ab203fe3.jsonl.gz",
+        "bytes": 246740,
+        "sha256": "d9a606f1c6877feac3138706911d783e7d346532897dd302f9092b65ab203fe3"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.daf0203e8aa33dfbff4115c684fb1d46e7edb8d5f2a022d2db9fea87d215cf70.jsonl.gz",
+        "bytes": 244289,
+        "sha256": "daf0203e8aa33dfbff4115c684fb1d46e7edb8d5f2a022d2db9fea87d215cf70"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.dc17c92003ec444de6864739b9d535a5daec7882a390930f0233443fca3f8765.jsonl.gz",
+        "bytes": 264389,
+        "sha256": "dc17c92003ec444de6864739b9d535a5daec7882a390930f0233443fca3f8765"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.ddec0a854fe0bdf4226032e6fc889305c5198475933fcf9989133a20c73a83ce.jsonl.gz",
+        "bytes": 244407,
+        "sha256": "ddec0a854fe0bdf4226032e6fc889305c5198475933fcf9989133a20c73a83ce"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.e0b707cc12423492e1047dca23008882918319a2a8d692fe9028d4d257fa2111.jsonl.gz",
+        "bytes": 252821,
+        "sha256": "e0b707cc12423492e1047dca23008882918319a2a8d692fe9028d4d257fa2111"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.e6a2f6ab03dfba780302710d23396d262534f4b1b1232adfb6717aca1f267ffa.jsonl.gz",
+        "bytes": 234054,
+        "sha256": "e6a2f6ab03dfba780302710d23396d262534f4b1b1232adfb6717aca1f267ffa"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.f1b8a0e6b8868ac6a39228660d86e645eb6a8e35a42b5d0713b3c1aac599a247.jsonl.gz",
+        "bytes": 264716,
+        "sha256": "f1b8a0e6b8868ac6a39228660d86e645eb6a8e35a42b5d0713b3c1aac599a247"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+        "bytes": 25782,
+        "sha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe"
+      }
+    ],
+    "preservedRunBaseline": null,
+    "finalMarkdownCleanup": {
+      "label": "attached-final-cleanup",
+      "markdownPath": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Markdown Files/learning.md",
+      "closedLeafIds": [],
+      "remaining": 0,
+      "bytesUnchanged": true,
+      "sha256": "2943327461512e5aa1cda636b2fa2a049bcedd52a899517239fb282a8b60a85c"
+    },
+    "defaultAfter": [
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.007be7e64888e26e152a9c019d783f282cf67cfe5690da25ac8300f428fbfb75.jsonl.gz",
+        "bytes": 248879,
+        "sha256": "007be7e64888e26e152a9c019d783f282cf67cfe5690da25ac8300f428fbfb75"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0595104edbcb07ef0e75d4caa575647ab1325656b0c0037c334cd25d1d060713.jsonl.gz",
+        "bytes": 251640,
+        "sha256": "0595104edbcb07ef0e75d4caa575647ab1325656b0c0037c334cd25d1d060713"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.05e74d36440db19e3a3e4d8d2c5ec3225e12258a4847d167d4b55789bbda4f4f.jsonl.gz",
+        "bytes": 260687,
+        "sha256": "05e74d36440db19e3a3e4d8d2c5ec3225e12258a4847d167d4b55789bbda4f4f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0df39931b1d454951aedb8eeae8c2f98ec7ef66d9994258816570c084ba231a4.jsonl.gz",
+        "bytes": 250968,
+        "sha256": "0df39931b1d454951aedb8eeae8c2f98ec7ef66d9994258816570c084ba231a4"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.0e54c717a6623e64643354bea1d6fcfcccd1506a70e10514e69b73adaba2da0c.jsonl.gz",
+        "bytes": 241854,
+        "sha256": "0e54c717a6623e64643354bea1d6fcfcccd1506a70e10514e69b73adaba2da0c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.1141419776c5010fc247fd53d69391f24235270225255a7c139da311832d02ef.jsonl.gz",
+        "bytes": 248863,
+        "sha256": "1141419776c5010fc247fd53d69391f24235270225255a7c139da311832d02ef"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.12900bd2a4771000f1d7d8dcce1f28768717d5de657b15fb8a4324bc24586e35.jsonl.gz",
+        "bytes": 253144,
+        "sha256": "12900bd2a4771000f1d7d8dcce1f28768717d5de657b15fb8a4324bc24586e35"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.1be001fd217f5431a3496e26821ba3e1ea460582c4f80283b8bd99bd120e1136.jsonl.gz",
+        "bytes": 229906,
+        "sha256": "1be001fd217f5431a3496e26821ba3e1ea460582c4f80283b8bd99bd120e1136"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.256d6939651fb6f14f33cb03e88402a4301e54ab810d5d6f3731d3789ed5a85e.jsonl.gz",
+        "bytes": 257810,
+        "sha256": "256d6939651fb6f14f33cb03e88402a4301e54ab810d5d6f3731d3789ed5a85e"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.2703b546676e1ec1d35b3ab4c8666be77a1b52060490728b0d593eb28505d948.jsonl.gz",
+        "bytes": 255863,
+        "sha256": "2703b546676e1ec1d35b3ab4c8666be77a1b52060490728b0d593eb28505d948"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.2c3520cdab6ad38445983b953c8d9d31cbac2a47693e49ef95bc5ec012288168.jsonl.gz",
+        "bytes": 243094,
+        "sha256": "2c3520cdab6ad38445983b953c8d9d31cbac2a47693e49ef95bc5ec012288168"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80.jsonl.gz",
+        "bytes": 262366,
+        "sha256": "30e68d27e69a7f25a68508c92b7b8e33ea975b994f25afe5c8725cc10d601f80"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.341adf3185a40c5028433b886465078ad6dce5eb98286366d40eb24d8d212e54.jsonl.gz",
+        "bytes": 246873,
+        "sha256": "341adf3185a40c5028433b886465078ad6dce5eb98286366d40eb24d8d212e54"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.36d58960a584437de7333df6367b4da2109db3e637d89607cedd36545974b39b.jsonl.gz",
+        "bytes": 258055,
+        "sha256": "36d58960a584437de7333df6367b4da2109db3e637d89607cedd36545974b39b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3915eeddf9bc48a8fa83c6d2fff741130888e4fc518e5b71c813e3b163111341.jsonl.gz",
+        "bytes": 258137,
+        "sha256": "3915eeddf9bc48a8fa83c6d2fff741130888e4fc518e5b71c813e3b163111341"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.39b0b2f8cacce9f775a62bb2260bb66515913223837f07f10e38a4d7c05e025a.jsonl.gz",
+        "bytes": 243716,
+        "sha256": "39b0b2f8cacce9f775a62bb2260bb66515913223837f07f10e38a4d7c05e025a"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3c671f42cc62ed38596adb2fbadd1135fcf4278b913b7dcb60a4f375abf1352b.jsonl.gz",
+        "bytes": 251402,
+        "sha256": "3c671f42cc62ed38596adb2fbadd1135fcf4278b913b7dcb60a4f375abf1352b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.3efbee695903cd971b785cd527511a0c85d1be625eefac8cb491c0799b2dffcd.jsonl.gz",
+        "bytes": 249551,
+        "sha256": "3efbee695903cd971b785cd527511a0c85d1be625eefac8cb491c0799b2dffcd"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.4132de120ec2a9e39b7eaa91527cae55f33606ef17e5df79a70b115e389972fa.jsonl.gz",
+        "bytes": 255213,
+        "sha256": "4132de120ec2a9e39b7eaa91527cae55f33606ef17e5df79a70b115e389972fa"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.465dbf71e2da1121dda73036f8f4588ee8fd09bb51a689554f45bdd436887b5c.jsonl.gz",
+        "bytes": 257748,
+        "sha256": "465dbf71e2da1121dda73036f8f4588ee8fd09bb51a689554f45bdd436887b5c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.49388e653f58bb48f6d3dc30b05b2e7c2e01e1265466be275b70e918eee1ccec.jsonl.gz",
+        "bytes": 264772,
+        "sha256": "49388e653f58bb48f6d3dc30b05b2e7c2e01e1265466be275b70e918eee1ccec"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.49e76abc37b5e8e581bf6aabbeac5c014d686e32fa4c6b14080d406492f00c66.jsonl.gz",
+        "bytes": 263747,
+        "sha256": "49e76abc37b5e8e581bf6aabbeac5c014d686e32fa4c6b14080d406492f00c66"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.53f97d9db0038aa21bcbd9b17d58cd6b7ae5c3d02cd6532467e31228d6f6c40a.jsonl.gz",
+        "bytes": 248630,
+        "sha256": "53f97d9db0038aa21bcbd9b17d58cd6b7ae5c3d02cd6532467e31228d6f6c40a"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.57194adda06e9eea4d13f344d47a2244cf25577273ffdb3bb749ecf67ee80ea0.jsonl.gz",
+        "bytes": 224228,
+        "sha256": "57194adda06e9eea4d13f344d47a2244cf25577273ffdb3bb749ecf67ee80ea0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.57abdec840941a0ca8b40f509be3890933e20453bbdee22e516e5fbefd271865.jsonl.gz",
+        "bytes": 250470,
+        "sha256": "57abdec840941a0ca8b40f509be3890933e20453bbdee22e516e5fbefd271865"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5a0992325fca77caa4274a2a95b9af1e033a93ff33c1cf7d7b9ffc55fead6805.jsonl.gz",
+        "bytes": 228160,
+        "sha256": "5a0992325fca77caa4274a2a95b9af1e033a93ff33c1cf7d7b9ffc55fead6805"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0.jsonl.gz",
+        "bytes": 236616,
+        "sha256": "5e8b79f5d23507e251710525256467ffa52f8af98a78b5bdff01e452b260a9a0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.66f558e61576600aae346cb719c489ca519feaaf06d5859298b84f81ab76d479.jsonl.gz",
+        "bytes": 260816,
+        "sha256": "66f558e61576600aae346cb719c489ca519feaaf06d5859298b84f81ab76d479"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.67b67e39e9973455384f155b27806ea1fd0f4a8fec626410e9ccd3f39624ee9f.jsonl.gz",
+        "bytes": 255567,
+        "sha256": "67b67e39e9973455384f155b27806ea1fd0f4a8fec626410e9ccd3f39624ee9f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.694daef7925cb150f636b9ea7f4c72ed106eb27b5ecc9fbefc98f0ef001c1357.jsonl.gz",
+        "bytes": 256039,
+        "sha256": "694daef7925cb150f636b9ea7f4c72ed106eb27b5ecc9fbefc98f0ef001c1357"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.6a2c6cd4d3476153c1c89312d871a7f23448283a5d780f3e694344917a60fa9f.jsonl.gz",
+        "bytes": 249849,
+        "sha256": "6a2c6cd4d3476153c1c89312d871a7f23448283a5d780f3e694344917a60fa9f"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.715cb31abbf8038503ed7e9b63d2ba298b7917e563a1ba20160b2e02e77f4e76.jsonl.gz",
+        "bytes": 259585,
+        "sha256": "715cb31abbf8038503ed7e9b63d2ba298b7917e563a1ba20160b2e02e77f4e76"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7570a4f7a64a85f20b624eede533025e6cc50896d188fde04d27f5a1ce3056c7.jsonl.gz",
+        "bytes": 253295,
+        "sha256": "7570a4f7a64a85f20b624eede533025e6cc50896d188fde04d27f5a1ce3056c7"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7802616521a316426e5abae315a29acc1036cc6cf2e31963b376822b1712fd21.jsonl.gz",
+        "bytes": 241435,
+        "sha256": "7802616521a316426e5abae315a29acc1036cc6cf2e31963b376822b1712fd21"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7922095da716eac26860a170ccb9987b97f84b70b9a084766bc80ee596bede47.jsonl.gz",
+        "bytes": 244596,
+        "sha256": "7922095da716eac26860a170ccb9987b97f84b70b9a084766bc80ee596bede47"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.7ba371f99c9401957047aaf12fbaf005b5d9b17ffa753f15f30e9e7560e1082c.jsonl.gz",
+        "bytes": 252352,
+        "sha256": "7ba371f99c9401957047aaf12fbaf005b5d9b17ffa753f15f30e9e7560e1082c"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.8199b1ca2331846b69fd79c1cc23791044b49cbbd9b7c4365e6d5f433bd2b8fc.jsonl.gz",
+        "bytes": 262282,
+        "sha256": "8199b1ca2331846b69fd79c1cc23791044b49cbbd9b7c4365e6d5f433bd2b8fc"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.86feb906b4b061f861a75f64b18d95301714d7f94f717921275e25b58bdfa373.jsonl.gz",
+        "bytes": 275180,
+        "sha256": "86feb906b4b061f861a75f64b18d95301714d7f94f717921275e25b58bdfa373"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.8a0019c801120e755c0e63547c847a35389fcb851d3c26beb0e5f5b81dcc75e2.jsonl.gz",
+        "bytes": 260104,
+        "sha256": "8a0019c801120e755c0e63547c847a35389fcb851d3c26beb0e5f5b81dcc75e2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.91431ea77e6222e533a959edabcc63ced29102f9cf480b287b42e0bf7cd563a2.jsonl.gz",
+        "bytes": 249546,
+        "sha256": "91431ea77e6222e533a959edabcc63ced29102f9cf480b287b42e0bf7cd563a2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.952e606a65aeece391100261407792714ae5a6a311447b664461ff38b7d15896.jsonl.gz",
+        "bytes": 261568,
+        "sha256": "952e606a65aeece391100261407792714ae5a6a311447b664461ff38b7d15896"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.981731fd420866ce592ba5802087a8605240d24ed5059432aa711e98ad8d4744.jsonl.gz",
+        "bytes": 266448,
+        "sha256": "981731fd420866ce592ba5802087a8605240d24ed5059432aa711e98ad8d4744"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.984048052d250ee3f9aa151baa20abe5f0e1856bbe8f32087742f1b9257fce65.jsonl.gz",
+        "bytes": 246932,
+        "sha256": "984048052d250ee3f9aa151baa20abe5f0e1856bbe8f32087742f1b9257fce65"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.9e1fabe06f88c4248e5010a6baba102da19ed11ea33b2408e73caf60362a2539.jsonl.gz",
+        "bytes": 247188,
+        "sha256": "9e1fabe06f88c4248e5010a6baba102da19ed11ea33b2408e73caf60362a2539"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.9fddf302d3c5dd360b476992eee0b47d9b81c831e90a21fc5a78ecf245060f15.jsonl.gz",
+        "bytes": 238154,
+        "sha256": "9fddf302d3c5dd360b476992eee0b47d9b81c831e90a21fc5a78ecf245060f15"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.a3c944e587c6c79cbb92a6e3853b81fa599bbde678c2db3daa7d403e3d3f28ed.jsonl.gz",
+        "bytes": 250817,
+        "sha256": "a3c944e587c6c79cbb92a6e3853b81fa599bbde678c2db3daa7d403e3d3f28ed"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.acff6e595b856623f0aa41e248c1fa0735dc8d983d7800a7fc1c3f0e934f9ea0.jsonl.gz",
+        "bytes": 255597,
+        "sha256": "acff6e595b856623f0aa41e248c1fa0735dc8d983d7800a7fc1c3f0e934f9ea0"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af1b1b2d607d1ac2b73744f705188620dc1c1625d91e63aff1d30ecc406a7a09.jsonl.gz",
+        "bytes": 257614,
+        "sha256": "af1b1b2d607d1ac2b73744f705188620dc1c1625d91e63aff1d30ecc406a7a09"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740.jsonl.gz",
+        "bytes": 139005,
+        "sha256": "af28194c307bf916fa634851e8450244f15ede738f9cd451a326ba8c6cbe6740"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b0c53961064485f2d8092615ff53c594d2d7ddfbc691fed0e8aa7dcfffeb63cb.jsonl.gz",
+        "bytes": 245493,
+        "sha256": "b0c53961064485f2d8092615ff53c594d2d7ddfbc691fed0e8aa7dcfffeb63cb"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b2e42bab62ed4270be535972439043654f9fa007550519285d93b5349f968b8d.jsonl.gz",
+        "bytes": 258686,
+        "sha256": "b2e42bab62ed4270be535972439043654f9fa007550519285d93b5349f968b8d"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b3077a60f4512454451cb942e9948b1a63dc11b5b186dfc75f821894c914e722.jsonl.gz",
+        "bytes": 251725,
+        "sha256": "b3077a60f4512454451cb942e9948b1a63dc11b5b186dfc75f821894c914e722"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.b43bc38cfd1bd25d9e385fcb3f2fb8467bed1ab0e9a2e07fb2b058092326e94d.jsonl.gz",
+        "bytes": 250081,
+        "sha256": "b43bc38cfd1bd25d9e385fcb3f2fb8467bed1ab0e9a2e07fb2b058092326e94d"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.bc9bca265096eeed9428ad4b77efbd763b0a35e4cbfed6be29fa589931f219f9.jsonl.gz",
+        "bytes": 252064,
+        "sha256": "bc9bca265096eeed9428ad4b77efbd763b0a35e4cbfed6be29fa589931f219f9"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.bd646a32f40615a7d2321a4b00b96240871a0a24b68afd2a66c3644c4b53eae1.jsonl.gz",
+        "bytes": 255875,
+        "sha256": "bd646a32f40615a7d2321a4b00b96240871a0a24b68afd2a66c3644c4b53eae1"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.c553a8e615685dbc170f0dd7115ad44aa4ed541704e01daa48176cad8401e97b.jsonl.gz",
+        "bytes": 251709,
+        "sha256": "c553a8e615685dbc170f0dd7115ad44aa4ed541704e01daa48176cad8401e97b"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.c67a0a1c8db4ce2e12588f2e83e0a7ad3fd79557da1df63bf7200f64339fca05.jsonl.gz",
+        "bytes": 242810,
+        "sha256": "c67a0a1c8db4ce2e12588f2e83e0a7ad3fd79557da1df63bf7200f64339fca05"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d175a6e681077586235e4d44454931c48e7f9bfee9454dc1495967ab8c7881d2.jsonl.gz",
+        "bytes": 251714,
+        "sha256": "d175a6e681077586235e4d44454931c48e7f9bfee9454dc1495967ab8c7881d2"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d40555f68fb3cfcecbee1809525ef4cecfeaecd4e58e499366ead2fba1a850c4.jsonl.gz",
+        "bytes": 252753,
+        "sha256": "d40555f68fb3cfcecbee1809525ef4cecfeaecd4e58e499366ead2fba1a850c4"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d636978cbd10c453f28b97e8e67344e08b593d5d2acca9c18a094388245fd7bb.jsonl.gz",
+        "bytes": 278455,
+        "sha256": "d636978cbd10c453f28b97e8e67344e08b593d5d2acca9c18a094388245fd7bb"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.d9a606f1c6877feac3138706911d783e7d346532897dd302f9092b65ab203fe3.jsonl.gz",
+        "bytes": 246740,
+        "sha256": "d9a606f1c6877feac3138706911d783e7d346532897dd302f9092b65ab203fe3"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.daf0203e8aa33dfbff4115c684fb1d46e7edb8d5f2a022d2db9fea87d215cf70.jsonl.gz",
+        "bytes": 244289,
+        "sha256": "daf0203e8aa33dfbff4115c684fb1d46e7edb8d5f2a022d2db9fea87d215cf70"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.dc17c92003ec444de6864739b9d535a5daec7882a390930f0233443fca3f8765.jsonl.gz",
+        "bytes": 264389,
+        "sha256": "dc17c92003ec444de6864739b9d535a5daec7882a390930f0233443fca3f8765"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.ddec0a854fe0bdf4226032e6fc889305c5198475933fcf9989133a20c73a83ce.jsonl.gz",
+        "bytes": 244407,
+        "sha256": "ddec0a854fe0bdf4226032e6fc889305c5198475933fcf9989133a20c73a83ce"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.e0b707cc12423492e1047dca23008882918319a2a8d692fe9028d4d257fa2111.jsonl.gz",
+        "bytes": 252821,
+        "sha256": "e0b707cc12423492e1047dca23008882918319a2a8d692fe9028d4d257fa2111"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.e6a2f6ab03dfba780302710d23396d262534f4b1b1232adfb6717aca1f267ffa.jsonl.gz",
+        "bytes": 234054,
+        "sha256": "e6a2f6ab03dfba780302710d23396d262534f4b1b1232adfb6717aca1f267ffa"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/blocks/block.f1b8a0e6b8868ac6a39228660d86e645eb6a8e35a42b5d0713b3c1aac599a247.jsonl.gz",
+        "bytes": 264716,
+        "sha256": "f1b8a0e6b8868ac6a39228660d86e645eb6a8e35a42b5d0713b3c1aac599a247"
+      },
+      {
+        "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3/manifest.json",
+        "bytes": 25782,
+        "sha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe"
+      }
+    ],
+    "defaultUnchanged": true,
+    "preservedRunAfter": null,
+    "preservedRunUnchanged": "NOT_PRESENT"
+  },
+  "boundedStage": {
+    "name": "openmove-five-directions",
+    "status": "running",
+    "scratchVault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "ownerPid": 72720,
+    "cdpPort": 51663,
+    "profileRoot": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4"
+  },
+  "foregroundPreflight": {
+    "status": "verified",
+    "policy": "external-cua-selection",
+    "stage": "before Native test mutations",
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "configDir": ".obsidian",
+    "visibility": "visible",
+    "focused": true,
+    "ownerDocumentIsRenderer": true,
+    "ownerWindowIsRenderer": true
+  },
+  "candidateArtifact": {
+    "directory": "/private/tmp/obreader-014-ws-b-native/dist/pdf-web-reader",
+    "version": "0.14.0",
+    "files": {
+      "main.js": {
+        "sha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+        "bytes": 9209202
+      },
+      "manifest.json": {
+        "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+        "bytes": 261
+      },
+      "styles.css": {
+        "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+        "bytes": 8058
+      }
+    },
+    "installedFiles": {
+      "main.js": {
+        "sha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+        "bytes": 9209202
+      },
+      "manifest.json": {
+        "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+        "bytes": 261
+      },
+      "styles.css": {
+        "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+        "bytes": 8058
+      }
+    }
+  },
+  "scratchVaultTrust": {
+    "status": "already-trusted"
+  },
+  "lastStep": {
+    "label": "plugin-enabled-after-isolation",
+    "at": "2026-10-25T12:59:16.368Z",
+    "version": "0.14.0",
+    "installedFiles": {
+      "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "fixtures": {
+    "pdfPath": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Reader Files/reading.pdf",
+    "markdownPath": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Markdown Files/learning.md",
+    "originalPdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "fixturePdfSha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "markdownExcerpt": "This Markdown excerpt survives every route change.",
+    "fixtureDirectory": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4/PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456"
+  },
+  "pluginManifestRefresh": {
+    "status": "verified",
+    "id": "pdf-web-reader",
+    "version": "0.14.0",
+    "minAppVersion": "1.14.4"
+  },
+  "installedFiles": {
+    "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "nativeMaintenanceLogger": {
+    "installed": true
+  },
+  "nativeTextLayerReadyMs": 665,
+  "highlightPointerGeometry": {
+    "x1": 104.828125,
+    "x2": 474.9088134765625,
+    "y": 132.21875,
+    "text": "Trace-based Just-in-Time Type Specialization",
+    "mode": 9,
+    "beforeDrag": {
+      "mode": 9,
+      "paramsClass": "editorParamsToolbar doorHangerRight editorParamsToolbarAutoHidden",
+      "startTarget": "textLayer highlighting",
+      "dragPathHitTests": [
+        {
+          "x": 104.828125,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 135.66818237304688,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 166.50823974609375,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 197.34829711914062,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 228.1883544921875,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 259.0284118652344,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 289.86846923828125,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 320.7085266113281,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 351.548583984375,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 382.3886413574219,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 413.22869873046875,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 444.0687561035156,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        },
+        {
+          "x": 474.9088134765625,
+          "target": "SPAN",
+          "textLayerClass": "textLayer highlighting",
+          "inTextLayer": true
+        }
+      ]
+    },
+    "dragDiagnostics": {
+      "events": [
+        {
+          "type": "pointermove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 16,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 16,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 16,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 16,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 21.333335876464844,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 21,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 26.666664123535156,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "BUTTON",
+          "id": "editorHighlightButton",
+          "className": "toolbarButton toggled",
+          "x": 444,
+          "y": 26,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 444,
+          "y": 32,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 444,
+          "y": 32,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 359.20703125,
+          "y": 32,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 359,
+          "y": 32,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 274.4140625,
+          "y": 32,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 274,
+          "y": 32,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 189.62109375,
+          "y": 32,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 189,
+          "y": 32,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 104.828125,
+          "y": 32,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": "viewerContainer",
+          "className": "",
+          "x": 104,
+          "y": 32,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "DIV",
+          "id": null,
+          "className": "textLayer highlighting",
+          "x": 104.828125,
+          "y": 82.109375,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "DIV",
+          "id": null,
+          "className": "textLayer highlighting",
+          "x": 104,
+          "y": 82,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 104.828125,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 104,
+          "y": 132,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointerdown",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 104.828125,
+          "y": 132.21875,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousedown",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 104,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 0,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 135.66818237304688,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 135,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 166.50823974609375,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 166,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 197.3482666015625,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 197,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 228.1883544921875,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 228,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 259.0284423828125,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 259,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 289.86846923828125,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 289,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 320.70849609375,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 320,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 351.548583984375,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 351,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 382.388671875,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 382,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 413.22869873046875,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 413,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 444.0687255859375,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 444,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "selectionchange",
+          "selection": "",
+          "rangeCount": 1,
+          "collapsed": true
+        },
+        {
+          "type": "pointermove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 474.9088134765625,
+          "y": 132.21875,
+          "button": -1,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mousemove",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 474,
+          "y": 132,
+          "button": 0,
+          "buttons": 1,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "pointerup",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 474.9088134765625,
+          "y": 132.21875,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "mouseup",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 474,
+          "y": 132,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        },
+        {
+          "type": "click",
+          "target": "SPAN",
+          "id": null,
+          "className": "",
+          "x": 474,
+          "y": 132,
+          "button": 0,
+          "buttons": 0,
+          "selection": "",
+          "rangeCount": 1,
+          "defaultPrevented": false,
+          "trusted": true
+        }
+      ],
+      "selectionProbe": {
+        "consumers": [],
+        "pointerEvents": [
+          {
+            "type": "pointerdown",
+            "at": 3321.5999999940395,
+            "trusted": true,
+            "button": 0,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 104.828125,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 0,
+              "anchorTextLayer": {
+                "found": false,
+                "pageNumber": null
+              },
+              "rangeRects": [],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": []
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3342.9000000059605,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 135.66818237304688,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 104.578125,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 0,
+                  "endOffset": 0,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3359.5,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 166.50823974609375,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 139.69577026367188,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 4,
+                  "endOffset": 4,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3376,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 197.3482666015625,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 169.05621337890625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 7,
+                  "endOffset": 7,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3394.7999999821186,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 228.1883544921875,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 196.25942993164062,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 10,
+                  "endOffset": 10,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3409.9000000059605,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 259.0284423828125,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 229.8222198486328,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 14,
+                  "endOffset": 14,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3426.0999999940395,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 289.86846923828125,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 258.7484130859375,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 18,
+                  "endOffset": 18,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3443,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 320.70849609375,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 288.711181640625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 21,
+                  "endOffset": 21,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3459.5999999940395,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 351.548583984375,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 322.31597900390625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 25,
+                  "endOffset": 25,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3476.5,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 382.388671875,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 350.9059753417969,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 28,
+                  "endOffset": 28,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3492.7999999821186,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 413.22869873046875,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 386.31781005859375,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 32,
+                  "endOffset": 32,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3509.5,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 444.0687255859375,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 409.1365661621094,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 35,
+                  "endOffset": 35,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointermove",
+            "at": 3526.0999999940395,
+            "trusted": true,
+            "button": -1,
+            "buttons": 1,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 474.9088134765625,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 444.36627197265625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 40,
+                  "endOffset": 40,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "pointerup",
+            "at": 3527.5,
+            "trusted": true,
+            "button": 0,
+            "buttons": 0,
+            "pointerId": 1,
+            "pointerType": "mouse",
+            "clientX": 474.9088134765625,
+            "clientY": 132.21875,
+            "target": {
+              "tag": "span",
+              "id": null,
+              "className": ""
+            },
+            "targetTextLayer": {
+              "found": true,
+              "pageNumber": "1"
+            },
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 473.8948059082031,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 44,
+                  "endOffset": 44,
+                  "collapsed": true
+                }
+              ]
+            }
+          }
+        ],
+        "selectionChanges": [
+          {
+            "type": "selectionchange",
+            "at": 3339.4000000059605,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 104.578125,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 0,
+                  "endOffset": 0,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3344.199999988079,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 139.69577026367188,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 4,
+                  "endOffset": 4,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3360.699999988079,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 169.05621337890625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 7,
+                  "endOffset": 7,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3377.0999999940395,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 196.25942993164062,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 10,
+                  "endOffset": 10,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3396.199999988079,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 229.8222198486328,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 14,
+                  "endOffset": 14,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3411.199999988079,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 258.7484130859375,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 18,
+                  "endOffset": 18,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3427.2999999821186,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 288.711181640625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 21,
+                  "endOffset": 21,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3444.2999999821186,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 322.31597900390625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 25,
+                  "endOffset": 25,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3460.9000000059605,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 350.9059753417969,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 28,
+                  "endOffset": 28,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3477.699999988079,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 386.31781005859375,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 32,
+                  "endOffset": 32,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3494,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 409.1365661621094,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 35,
+                  "endOffset": 35,
+                  "collapsed": true
+                }
+              ]
+            }
+          },
+          {
+            "type": "selectionchange",
+            "at": 3510.7999999821186,
+            "mode": 9,
+            "selection": {
+              "collapsed": true,
+              "rangeCount": 1,
+              "anchorTextLayer": {
+                "found": true,
+                "pageNumber": "1"
+              },
+              "rangeRects": [
+                {
+                  "x": 444.36627197265625,
+                  "y": 119.21875,
+                  "width": 0,
+                  "height": 26
+                }
+              ],
+              "rectsTruncated": false,
+              "textLength": 0,
+              "selectedText": "",
+              "ranges": [
+                {
+                  "start": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "end": {
+                    "tag": "span",
+                    "id": null,
+                    "className": ""
+                  },
+                  "startOffset": 40,
+                  "endOffset": 40,
+                  "collapsed": true
+                }
+              ]
+            }
+          }
+        ],
+        "eventPhaseCount": 242
+      },
+      "selection": "",
+      "mode": 9,
+      "activeElement": "DIV",
+      "highlightEditorCount": 0,
+      "editorLayerChildren": 0,
+      "paramsClass": "editorParamsToolbar doorHangerRight hidden"
+    }
+  },
+  "failedAt": "2026-10-25T12:59:29.208Z",
+  "failureTargets": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "title": "reading - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header is-focused",
+      "text": "native-loop-b-20261025125158641-78e1c4\n找不到书签\nreading\nPDF迁移测试\n/\nnative-learning-loop-20261025125914063-2d80a4b456\n/\nReader Files\n/\nreading",
+      "textareas": []
+    },
+    {
+      "url": "about:blank",
+      "title": "设置 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header is-popout-window is-popout-modal",
+      "text": "设置 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5\n选项\n关于\n外观\n界面\n编辑器\n文件与链接\n快捷键\n钥匙串\n核心插件\n第三方插件\n核心插件\n白板\n第三方插件\nPDF Web Reader\n安全模式\n开启受限模式，以在不使用社区插件的情况下使用应用。\n开启\n社区插件市场\n浏览并安装由社区制作的社区插件。\n浏览\n插件安装情况\n你目前已经安装了 1 个插件。\n检查更新\n自动检查插件更新\n定期检查第三方插件的更新。\n已安装插件\nPDF Web Reader v0.14.0 作者：XxX-42\nRead vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
+      "textareas": []
+    }
+  ],
+  "recommendation": "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.",
+  "cleanup": {
+    "status": "complete",
+    "before": {
+      "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "configDir": ".obsidian",
+      "syncEnabled": false,
+      "pluginActive": true,
+      "enabledPlugins": [
+        "pdf-web-reader"
+      ],
+      "views": [
+        {
+          "path": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Reader Files/reading.pdf",
+          "token": "00bb6cd1-8017-4ec0-8ae3-5ce464b4c1ea"
+        }
+      ],
+      "workspaceViewCount": 1
+    },
+    "closeResults": [
+      {
+        "label": "cleanup-PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Reader Files/reading.pdf",
+        "ok": true,
+        "before": {
+          "path": "PDF迁移测试/native-learning-loop-20261025125914063-2d80a4b456/Reader Files/reading.pdf",
+          "token": "00bb6cd1-8017-4ec0-8ae3-5ce464b4c1ea",
+          "documentId": "sha256-v1:09d30e596f5f79d5955861efe62a2c2425441250b1f337118bdacb61d87031b4",
+          "openRequest": 1,
+          "docKey": "ca06a770085f",
+          "sourceHash": "xxh64-v1:ffbe0d4d212547e5",
+          "revision": 0,
+          "confirmed": 0,
+          "pending": 0,
+          "dirty": false,
+          "protocol": "wal-sidecar-v3.2-jsonl"
+        },
+        "prepared": {
+          "id": "bf581b7c-51f1-4d20-b949-41bb33b4522b",
+          "documentId": "sha256-v1:09d30e596f5f79d5955861efe62a2c2425441250b1f337118bdacb61d87031b4",
+          "openRequest": 1,
+          "revision": 0,
+          "recovered": false,
+          "unconfirmed": false,
+          "unloaded": false
+        },
+        "maintenanceOffset": 0,
+        "remaining": 0,
+        "maintenance": {
+          "event": "annotation-snapshot-materialized",
+          "documentId": "sha256-v1:09d30e596f5f79d5955861efe62a2c2425441250b1f337118bdacb61d87031b4",
+          "receivedAt": 401647.5
+        },
+        "closeEvidence": {
+          "viewCount": 0,
+          "maintenanceEvent": "annotation-snapshot-materialized",
+          "protocol": "wal-sidecar-v3.2-jsonl",
+          "snapshotStatus": "verified-consistent",
+          "walStatus": "replayed",
+          "walWatermarkTotal": 3,
+          "isolatedRoot": ".obsidian/plugins/pdf-web-reader/.native-learning-loop/native-learning-loop-20261025125914063-2d80a4b456/PDFData",
+          "evidencePaths": 7
+        },
+        "walAfterClose": {
+          "protocol": "wal-sidecar-v3.2-jsonl",
+          "snapshotStatus": "verified-consistent",
+          "walStatus": "replayed",
+          "viewerRevision": 0,
+          "confirmedViewerRevision": 0,
+          "walWatermarkTotal": 3
+        }
+      }
+    ],
+    "disabled": {
+      "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "configDir": ".obsidian",
+      "vaultName": "native-loop-b-20261025125158641-78e1c4",
+      "pluginActive": false,
+      "pluginVersion": null,
+      "enabledPlugins": [],
+      "syncEnabled": false,
+      "readerViews": [],
+      "visibility": "visible",
+      "focused": false,
+      "ownerDocumentIsRenderer": true,
+      "ownerWindowIsRenderer": true
+    },
+    "adapterEvidence": {
+      "status": "verified",
+      "adapterCallCount": 3279,
+      "writeCount": 572,
+      "pdfDataFileCount": 6,
+      "pdfWalDocuments": [
+        "358cebed-eb4f-4864-add1-895bb3d52b53"
+      ]
+    },
+    "isolationRestored": true,
+    "disabledStatePersisted": true,
+    "at": "2026-10-25T12:59:30.748Z"
+  },
+  "completedAt": "2026-10-25T12:59:30.795Z"
+}

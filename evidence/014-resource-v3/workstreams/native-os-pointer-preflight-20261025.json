@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-native-os-pointer-retry-preflight",
+  "observedAtUtc": "2026-10-25T13:07:23Z",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257"
+  },
+  "target": {
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "profileRoot": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4",
+    "ownerPid": 72720,
+    "cdpPort": 51663,
+    "appVersion": "1.14.5",
+    "windowTitle": "新标签页 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5"
+  },
+  "preflight": {
+    "vaultIdentity": "PASS",
+    "visible": true,
+    "activeDocumentIsRenderer": true,
+    "activeWindowIsRenderer": true,
+    "documentHasFocus": false,
+    "pluginActive": false,
+    "readerViews": 0,
+    "syncEnabled": false,
+    "recoveryAttempts": [
+      {
+        "action": "AXRaise exact scratch main window by title on PID 72720",
+        "result": "action returned; document.hasFocus remained false"
+      },
+      {
+        "action": "one Escape key sent to the same owned process while its Settings window was present",
+        "result": "the Settings page remained open; both inspected scratch-owned pages reported document.hasFocus=false"
+      }
+    ],
+    "decision": "BLOCKED_BY_STRICT_FOREGROUND_GATE"
+  },
+  "osPointerRetry": {
+    "status": "NOT_RUN",
+    "pointerEventsPosted": false,
+    "runnerStarted": false,
+    "reason": "document.hasFocus was false after the single exact-window focus attempt; no further window-control loop was authorized"
+  },
+  "nativeEvidenceStatus": {
+    "selectionGate": "NOT_VERIFIED",
+    "eightStageByFiveRouteMatrix": "NOT_VERIFIED",
+    "ownedProcessRestart": "NOT_RUN"
+  }
+}

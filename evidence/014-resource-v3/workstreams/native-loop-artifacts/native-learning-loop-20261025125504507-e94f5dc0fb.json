@@ -1,0 +1,150 @@
+{
+  "agent": "impl_b_native",
+  "workstream": "macOS Native learning-loop runner, store isolation, routes and bytes invariants",
+  "base": "65de915b306954a160ed99002f33ada639cebd4e",
+  "branch": "codex/014-ws-b-native",
+  "runnerHead": "200f2616fa1f32e6b13c9b0ec6b181a95b73c15f",
+  "planA": "Install DataAdapter write isolation before enabling the plugin; execute actual UI workflows and route moves in one identity-checked owned Obsidian profile.",
+  "planB": "Exercise Highlight and LingQ Context creation through Viewer/Workbench UI; verify Today Source identity and the existing route scenarios. The restart scenario in this runner is a plugin reload, not an application-process restart.",
+  "startedAt": "2026-10-25T12:55:04.507Z",
+  "runId": "native-learning-loop-20261025125504507-e94f5dc0fb",
+  "fixturePrefix": "PDF迁移测试/native-learning-loop-20261025125504507-e94f5dc0fb",
+  "status": "failed",
+  "nativeProfile": {
+    "root": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4",
+    "marker": {
+      "kind": "codex-owned-native-test-profile",
+      "runId": "native-loop-b-20261025125158641-78e1c4",
+      "allowedVault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "appPath": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app"
+    },
+    "appExecutable": "/private/tmp/obreader-014-runtime/mnt/Obsidian.app/Contents/MacOS/Obsidian",
+    "appVersion": "1.14.5",
+    "cdpPort": 51663,
+    "ownerPid": 72720,
+    "ownerCommandHash": "336ca7ef30b754d98336811bbdfa86db3153648de7d26d40aa8f05d8a0a8132f",
+    "ownerProcessHash": "4933cfc3dffb894b4f59eddcc049f5f3d7db51aaa5e7de795d6392d4a20a8be9",
+    "targetBinding": {
+      "kind": "single-owned-profile",
+      "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+      "siblingProfileInspection": "skipped; disposable scratch vault"
+    }
+  },
+  "identity": {
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "configDir": ".obsidian",
+    "vaultName": "native-loop-b-20261025125158641-78e1c4",
+    "pluginActive": false,
+    "pluginVersion": null,
+    "enabledPlugins": [],
+    "syncEnabled": false,
+    "readerViews": [],
+    "visibility": "visible",
+    "focused": true,
+    "ownerDocumentIsRenderer": true,
+    "ownerWindowIsRenderer": true
+  },
+  "sync": null,
+  "plugin": null,
+  "stores": null,
+  "uiFlows": [],
+  "routeScenarios": [],
+  "screenshots": [
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125504507-e94f5dc0fb/failure-target-1.png",
+    "/private/tmp/obreader-014-ws-b-native/tests/artifacts/native-learning-loop-20261025125504507-e94f5dc0fb/failure-target-2.png"
+  ],
+  "errors": [
+    {
+      "at": "2026-10-25T12:55:06.881Z",
+      "code": "ERR_ASSERTION",
+      "error": "AssertionError [ERR_ASSERTION]: Attached test window/document owner must exactly match the foreground renderer before writes\n    at main (file:///private/tmp/obreader-014-ws-b-native/tests/native-learning-loop.mjs:2545:12)\n    at async file:///private/tmp/obreader-014-ws-b-native/tests/native-learning-loop.mjs:2754:3"
+    }
+  ],
+  "nativeAcceptance": {
+    "status": "NOT_VERIFIED",
+    "fullFiveDirectionMatrix": "NOT_RUN_BY_THIS_RUNNER",
+    "actualProcessRestart": "NOT_RUN_BY_THIS_RUNNER",
+    "foregroundPolicy": "external-cua-selection"
+  },
+  "attachedMode": {
+    "enabled": true,
+    "temporaryHarnessMode": true,
+    "processRestart": "NOT_RUN: bounded open-move stage scope",
+    "excludedRenderers": []
+  },
+  "boundedStage": {
+    "name": "openmove-five-directions",
+    "status": "running",
+    "scratchVault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "ownerPid": 72720,
+    "cdpPort": 51663,
+    "profileRoot": "/private/tmp/obreader-014-runtime/profile-native-loop-b-20261025125158641-78e1c4"
+  },
+  "foregroundPreflight": {
+    "status": "verified",
+    "policy": "external-cua-selection",
+    "stage": "before Native test mutations",
+    "vault": "/private/tmp/obreader-014-runtime/native-loop-vaults/native-loop-b-20261025125158641-78e1c4",
+    "configDir": ".obsidian",
+    "visibility": "visible",
+    "focused": true,
+    "ownerDocumentIsRenderer": true,
+    "ownerWindowIsRenderer": true
+  },
+  "candidateArtifact": {
+    "directory": "/private/tmp/obreader-014-ws-b-native/dist/pdf-web-reader",
+    "version": "0.14.0",
+    "files": {
+      "main.js": {
+        "sha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+        "bytes": 9209202
+      },
+      "manifest.json": {
+        "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+        "bytes": 261
+      },
+      "styles.css": {
+        "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+        "bytes": 8058
+      }
+    },
+    "installedFiles": {
+      "main.js": {
+        "sha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+        "bytes": 9209202
+      },
+      "manifest.json": {
+        "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+        "bytes": 261
+      },
+      "styles.css": {
+        "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+        "bytes": 8058
+      }
+    }
+  },
+  "scratchVaultTrust": {
+    "status": "trusted-disposable-vault",
+    "candidateFilesVerified": true,
+    "controlText": "信任仓库作者并启用插件"
+  },
+  "failedAt": "2026-10-25T12:55:06.881Z",
+  "failureTargets": [
+    {
+      "url": "app://obsidian.md/index.html",
+      "title": "新标签页 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header",
+      "text": "native-loop-b-20261025125158641-78e1c4\n找不到书签\n新标签页\n新标签页\n新建笔记\n⌘ N\n新建数据库\n新建白板\n打开文件",
+      "textareas": []
+    },
+    {
+      "url": "about:blank",
+      "title": "设置 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5",
+      "bodyClass": "theme-dark mod-macos is-frameless is-hidden-frameless obsidian-app show-inline-title is-floating-nav auto-full-screen show-ribbon show-view-header is-popout-window is-popout-modal is-focused",
+      "text": "设置 - native-loop-b-20261025125158641-78e1c4 - Obsidian 1.14.5\n选项\n关于\n外观\n界面\n编辑器\n文件与链接\n快捷键\n钥匙串\n核心插件\n第三方插件\n核心插件\n白板\n安全模式\n开启受限模式，以在不使用社区插件的情况下使用应用。\n开启\n社区插件市场\n浏览并安装由社区制作的社区插件。\n浏览\n插件安装情况\n你目前已经安装了 1 个插件。\n检查更新\n自动检查插件更新\n定期检查第三方插件的更新。\n已安装插件\nPDF Web Reader v0.14.0 作者：XxX-42\nRead vault PDFs, edit annotations, and optionally learn English vocabulary offline.",
+      "textareas": []
+    }
+  ],
+  "recommendation": "Do not accept; inspect the first failing Native stage and preserve the per-run sidecars for diagnosis.",
+  "completedAt": "2026-10-25T12:55:07.559Z"
+}
