@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "kind": "obreader-014-formal-vault-deployment",
+  "status": "DISK_DEPLOYED_RUNTIME_NOT_RELOADED",
+  "verifiedAtUtc": "2026-10-25T12:17:43Z",
+  "repository": {
+    "main": "be528e2813f9904e8849832a4c3b14a92d7ecc1c",
+    "feature": "be528e2813f9904e8849832a4c3b14a92d7ecc1c",
+    "version": "0.14.0"
+  },
+  "vault": "远程仓库1",
+  "backupPath": "/Users/jiajia/.codex/deploy-backups/obreader-014-formal-20261025T121424Z",
+  "backupContents": [
+    "full .obsidian/plugins/pdf-web-reader directory",
+    ".obsidian/community-plugins.json",
+    "00_Archive/20_PDFData",
+    "00_Archive/21_VocabularyData"
+  ],
+  "releaseFiles": {
+    "main.js": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+  },
+  "resourceV3": {
+    "path": "00_Archive/21_VocabularyData/dictionaries/ECDICT/resource-v3",
+    "records": 770611,
+    "blockCount": 67,
+    "fileCount": 68,
+    "manifestSha256": "9a189c7c5e95524116673c5321deab5f96ce88e8b3028a3950ebe6caedbc2bfe",
+    "sourceResourceV2Sha256": "b20dd71d16e589c2bc37b4f243afaf40b4f70b5919fd552316fd448b3dae3126",
+    "matchesFormalVaultResourceV2": true,
+    "allBlockHashesVerified": true
+  },
+  "dataIntegrity": {
+    "pdfDataFilesCompared": 129,
+    "pdfDataChanged": 0,
+    "preexistingVocabularyFilesCompared": 11,
+    "preexistingVocabularyDataChanged": 0,
+    "vocabularyAdditionOnly": "resource-v3 manifest plus 67 verified blocks",
+    "communityPluginConfigUnchanged": true,
+    "pluginDataJsonUnchanged": true,
+    "pdfPath": "12_books/11_杂志/TE 2025-04-12.pdf",
+    "pdfSha256BeforeAndAfter": "e7a3c638f7cb4f0b218f80748ba58b72b7f454aa86ac4969c2c91650be033b81"
+  },
+  "runtime": {
+    "pluginEnabled": true,
+    "readerOpen": true,
+    "inMemoryVersion": "0.12.0",
+    "reload": "NOT_RUN; kept the active formal Reader window open",
+    "diskVersion": "0.14.0"
+  },
+  "acceptance": {
+    "currentPackageNative8x5": "NOT_VERIFIED",
+    "trueProcessRestart8x5": "NOT_RUN",
+    "resourceV3NativeDataAdapter": "PASS for measured service/DataAdapter scope",
+    "readerUiFirstLookup": "NOT_VERIFIED",
+    "startupAddedBlockingUnder50ms": "NOT_MEASURED",
+    "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+    "iPad": "DEFERRED_BY_SCOPE"
+  }
+}
