@@ -1,6 +1,16 @@
 # Current integration gates
 
-## Latest rerun (2026-10-25)
+## Fresh rerun after Native harness corrections (2026-10-25)
+
+On source fingerprint `3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05` (1,112 files, stable through all gates), Build passed with 3 release files, 406 embedded assets and 402 frozen vendor hashes verified; focused Native acceptance/SemanticAnchor tests passed 13/13; Fast passed 122/122; Browser passed 28/28; Race passed 80/80; Offline smoke passed. No skips. See [sanitized rerun summary](resume-harness-gate-rerun-20261025.json).
+
+This rerun changed only test/acceptance code and one semantic page-reorder test. The candidate package hashes remained `main.js ee0ce9fe…`, `manifest.json 71abba5e…`, `styles.css 8da58b1d…`.
+
+Native UI was not rerun. The current owned-profile preflight reported a visible, focused renderer but `activeDocument !== document` and `activeWindow !== window`, with the plugin disabled. No Vault mutation occurred. Accordingly, the Native 8×5 matrix stays `NOT_VERIFIED`, open-move stays `NOT_VERIFIED`, and true process-restart remains `NOT_RUN`. The harness now requires exact foreground document/window ownership, binds resumed receipts and restart-pending records to all three current candidate hashes, requires a complete-sentence Context before the matrix, and checks that the prior exact-profile process is gone before accepting a restart. These are acceptance safeguards; they are not Native acceptance evidence.
+
+Resource-v3 Native measurements remain as previously recorded: rare DataAdapter lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms; common `on` had a 1,154.8 ms outlier. Startup-added blocking remains `NOT_MEASURED`, and enabled Reader UI first lookup remains `NOT_VERIFIED`. `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no scroll-related production code changed. iPad remains `DEFERRED_BY_SCOPE`.
+
+## Previous complete release rerun before the current harness-only changes
 
 On source fingerprint `bd2347d2f996d287585bd8082e17ae9db12dee4db67b584914ed2a00388e6908` (1,108 files, stable during the run): Build passed with the 3-file package, 406 embedded assets, and 402 frozen vendor hashes verified; Fast passed 122/122; Browser passed 28/28; Offline Viewer smoke passed; Race passed 80/80. There were no skips. See [latest automated gate summary](latest-automated-gates-20261025.json).
 
@@ -24,7 +34,7 @@ These reports are copied from the ignored local run artifacts so the results rem
 
 The fresh current run also passed Race 80/80. The initial failure remains in the evidence set and was not rewritten or deleted.
 
-## Latest bounded rerun
+## Preserved earlier failed bounded rerun (superseded by later complete reruns)
 
 `REPORT.md`'s [2026-10-25 bounded closeout update](../REPORT.md) is the authoritative latest status. On source fingerprint `3123b32d42d6fd4fb5c3744add9fe763005b63b3d3c0f45b73514e954c42b980`, Build/Fast passed 122/122, Race passed 80/80, and Offline smoke passed. Browser was 26/28: the iPad finger-inertia assertion remains deferred by scope, and the LingQ pill test's fake result beat its transient pending-state assertion. That second test passed when rerun alone, but the full gate result remains failed. See [sanitized gate summary](final-gates-rerun-20261025.json).
 

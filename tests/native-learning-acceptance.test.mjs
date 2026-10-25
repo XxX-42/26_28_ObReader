@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   assertNativeLearningForeground, assertNativeCandidateFiles, auditNativeRouteMatrixEvidence,
-  nativeProcessRestartVerified, NATIVE_ROUTE_STAGES,
+  assertNativeResumeCandidate, nativeProcessRestartVerified, NATIVE_ROUTE_STAGES,
 } from "./native-learning-acceptance.mjs";
 
 const files = { "main.js": "a".repeat(64), "manifest.json": "b".repeat(64), "styles.css": "c".repeat(64) };
 const vault = "/test/Native-Vault";
-const identity = { vault, configDir: ".obsidian", visibility: "visible", focused: true };
+const identity = { vault, configDir: ".obsidian", visibility: "visible", focused: true,
+  ownerDocumentIsRenderer: true, ownerWindowIsRenderer: true };
 const receipt = (kind, targetId) => ({ kind, targetId, ok: true, requestId: `nav-${kind}`,
   documentId: "doc-1", openRequest: 3, rendererGeneration: "generation-1" });
 const source = (kind, id) => ({ target: { kind, id }, itemId: kind === "selection" ? "context-review-1" : "annotation-review-1",
@@ -28,13 +29,16 @@ const report = () => ({ installedFiles: files, cleanup: { status: "complete", is
   nativeProfile: { ownerPid: 200, root: "/owned/profile" }, completeDirectionMatrix: {
     status: "passed", stages: NATIVE_ROUTE_STAGES.map(stage), processRestart: {
       kind: "owned-process-restart", previousProcessExited: true,
-      previous: { ownerPid: 100, profileRoot: "/owned/profile" }, currentOwnerPid: 200,
+      previous: { ownerPid: 100, profileRoot: "/owned/profile", ownerCommandHash: "old-command" },
+      previousProcessState: { pid: 100, exists: false, ownedProfileProcess: false, commandHash: null },
+      currentOwnerPid: 200, currentOwnerCommandHash: "new-command", profileRoot: "/owned/profile",
     },
   } });
 
 test("Native foreground validation is passive and rejects hidden, unfocused or foreign windows", () => {
   assert.equal(assertNativeLearningForeground(identity, { vault }).policy, "external-cua-selection");
-  for (const patch of [{ visibility: "hidden" }, { focused: false }]) {
+  for (const patch of [{ visibility: "hidden" }, { focused: false }, { ownerDocumentIsRenderer: false },
+    { ownerWindowIsRenderer: false }, { ownerDocumentIsRenderer: undefined }]) {
     assert.throws(() => assertNativeLearningForeground({ ...identity, ...patch }, { vault }),
       error => error.code === "NATIVE_WINDOW_NOT_FOREGROUND");
   }
@@ -67,6 +71,34 @@ test("saved Native matrix receipts require current artifacts, every direction an
     "recording expected candidate bytes cannot hide an installed artifact mismatch");
 });
 
+test("resumed Native stages bind both prior expected and installed package hashes to the current candidate", () => {
+  const valid = report();
+  valid.candidateArtifact = { files, installedFiles: files };
+  assert.equal(assertNativeResumeCandidate(files, valid).length, NATIVE_ROUTE_STAGES.length);
+  for (const candidateArtifact of [
+    { files: { ...files, "main.js": "d".repeat(64) }, installedFiles: files },
+    { files, installedFiles: { ...files, "styles.css": "e".repeat(64) } },
+  ]) {
+    const evidence = report(); evidence.candidateArtifact = candidateArtifact;
+    assert.throws(() => assertNativeResumeCandidate(files, evidence),
+      error => error.code === "NATIVE_CANDIDATE_ARTIFACT_MISMATCH");
+  }
+  assert.throws(() => assertNativeResumeCandidate(files, report()),
+    error => error.code === "NATIVE_RESUME_CANDIDATE_MISSING");
+  const staleRestart = report();
+  staleRestart.candidateArtifact = { files: { ...files }, installedFiles: { ...files } };
+  staleRestart.completeDirectionMatrix.processRestartPending = { candidateFiles: { ...files },
+    installedFiles: { ...files, "manifest.json": "e".repeat(64) } };
+  assert.throws(() => assertNativeResumeCandidate(files, staleRestart),
+    error => error.code === "NATIVE_CANDIDATE_ARTIFACT_MISMATCH",
+    "the saved restart boundary must remain bound to the same exact three-file candidate");
+  const badReceipt = report();
+  badReceipt.candidateArtifact = { files: { ...files }, installedFiles: { ...files } };
+  badReceipt.completeDirectionMatrix.stages[2].directions.contextSource.exactAnchorText = "wrong sentence";
+  assert.throws(() => assertNativeResumeCandidate(files, badReceipt),
+    error => error.code === "NATIVE_RESUME_STAGE_RECEIPT_INVALID");
+});
+
 test("plugin reload and a different profile cannot count as actual owned-process restart", () => {
   const samePid = report(); samePid.completeDirectionMatrix.processRestart.currentOwnerPid = 100;
   assert.equal(nativeProcessRestartVerified(samePid), false);
@@ -76,6 +108,10 @@ test("plugin reload and a different profile cannot count as actual owned-process
   const unprovenExit = report(); delete unprovenExit.completeDirectionMatrix.processRestart.previousProcessExited;
   assert.equal(nativeProcessRestartVerified(unprovenExit), false,
     "a new PID alone cannot prove that the previous owned process actually exited");
+  const priorStillRunning = report();
+  priorStillRunning.completeDirectionMatrix.processRestart.previousProcessState.ownedProfileProcess = true;
+  assert.equal(nativeProcessRestartVerified(priorStillRunning), false,
+    "saved restart receipts must show the old exact-profile process is no longer running");
   const unclean = report(); unclean.cleanup.isolationRestored = false;
   assert.equal(auditNativeRouteMatrixEvidence({ candidateFiles: files, reports: [unclean] }).status, "INCOMPLETE");
 });
@@ -105,4 +141,7 @@ test("the Native learning runner contains no automatic native window activation 
   const main = runner.slice(runner.indexOf("async function main()"));
   assert.ok(main.indexOf("assertNativeLearningForeground(before") < main.indexOf("await installNativeIsolation()"),
     "foreground failure must happen before any test isolation or Vault mutation");
+  const resumeCheck = main.indexOf("assertNativeResumeCandidate(report.candidateArtifact.files, resumeEvidence)");
+  assert.ok(resumeCheck >= 0 && resumeCheck < main.indexOf("await enablePluginAfterIsolation()"),
+    "stale or mixed-candidate resume receipts must be rejected before plugin enable or Native writes");
 });

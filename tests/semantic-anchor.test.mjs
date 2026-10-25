@@ -179,3 +179,37 @@ test("identical PDF quotes cannot substitute another UUID on the same or a diffe
     assert.equal(result.exact, false);
   }
 });
+
+test("PDF page reordering resolves only by stable page identity, never by the former page index", async () => {
+  const anchor = fromAnnotation({ uuid: "annotation-after-reorder", kind: "Highlight", pageIndex: 1,
+    editorPayload: { text: "repeated page quote" } }, identity);
+  const reorderedPages = ["page-identity-1", "page-identity-3", identity.pageIdentity];
+  let routedPage = null;
+  const resolver = createSemanticSourceResolver({
+    verifyRouting: async value => {
+      routedPage = reorderedPages.indexOf(value.pageIdentity);
+      return routedPage >= 0 ? verified(value) : {
+        status: "invalid", sourceCurrent: true, pageCurrent: false, anchor: value,
+        code: "PAGE_IDENTITY_MISMATCH",
+      };
+    },
+    verifyAnnotation: async value => verified(value),
+  });
+  const moved = await resolver(anchor);
+  assert.equal(moved.status, "verified");
+  assert.equal(routedPage, 2, "the stable page identity follows the page to its new index");
+  assert.equal(anchor.pageIndex, 1, "the persisted page index remains a hint and is not rewritten by resolution");
+
+  const missingPageResolver = createSemanticSourceResolver({
+    verifyRouting: async value => reorderedPages.slice(0, 2).includes(value.pageIdentity)
+      ? verified(value)
+      : { status: "invalid", sourceCurrent: true, pageCurrent: false, anchor: value,
+        code: "PAGE_IDENTITY_MISMATCH" },
+    verifyAnnotation: async value => verified(value),
+  });
+  const deleted = await missingPageResolver(anchor);
+  assert.equal(deleted.status, "unresolved");
+  assert.equal(deleted.code, "TARGET_UNRESOLVED");
+  assert.equal(deleted.pageFallback, null,
+    "a different page now occupying the old index must not inherit the annotation target");
+});

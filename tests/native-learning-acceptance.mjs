@@ -21,12 +21,14 @@ export function assertNativeLearningForeground(identity, { vault, configDir = ".
   if (!identity || identity.vault !== vault || identity.configDir !== configDir) {
     fail("NATIVE_WINDOW_IDENTITY_MISMATCH", `${stage}: the renderer is not the configured test Vault.`);
   }
-  if (identity.visibility !== "visible" || identity.focused !== true) {
+  if (identity.visibility !== "visible" || identity.focused !== true ||
+      identity.ownerDocumentIsRenderer !== true || identity.ownerWindowIsRenderer !== true) {
     fail("NATIVE_WINDOW_NOT_FOREGROUND",
-      `${stage}: select the exact owned test window through CUA before Native UI input; the harness will not activate a window.`);
+      `${stage}: select the exact owned test window through CUA and verify its active document/window identity before Native UI input; the harness will not activate a window.`);
   }
   return Object.freeze({ status: "verified", policy: "external-cua-selection", stage, vault, configDir,
-    visibility: identity.visibility, focused: identity.focused });
+    visibility: identity.visibility, focused: identity.focused,
+    ownerDocumentIsRenderer: identity.ownerDocumentIsRenderer, ownerWindowIsRenderer: identity.ownerWindowIsRenderer });
 }
 
 export function assertNativeCandidateFiles(expectedFiles, installedFiles) {
@@ -57,7 +59,7 @@ function sourceReceipt(value, kind) {
     value.navigation.pendingAfterAck === null;
 }
 
-function stageReceiptValid(stage, report) {
+export function nativeRouteStageReceiptVerified(stage, report) {
   const d = stage?.directions;
   const flows = Array.isArray(report?.uiFlows) ? report.uiFlows : [];
   const contextFlow = flows.find(flow => flow && typeof flow === "object" &&
@@ -76,14 +78,42 @@ function stageReceiptValid(stage, report) {
     d?.sidebar?.selected === true && d.sidebar.uuid === d.highlightSource.target.id;
 }
 
+export function assertNativeResumeCandidate(expectedFiles, resumeReport) {
+  assertNativeCandidateFiles(expectedFiles, expectedFiles);
+  const prior = resumeReport?.candidateArtifact;
+  if (!prior || !prior.files || !prior.installedFiles) {
+    fail("NATIVE_RESUME_CANDIDATE_MISSING", "Resumed Native stages require saved expected and installed hashes for all three candidate files.");
+  }
+  assertNativeCandidateFiles(expectedFiles, prior.files);
+  assertNativeCandidateFiles(expectedFiles, prior.installedFiles);
+  const restartPending = resumeReport?.completeDirectionMatrix?.processRestartPending;
+  if (restartPending) {
+    assertNativeCandidateFiles(expectedFiles, restartPending.candidateFiles);
+    assertNativeCandidateFiles(expectedFiles, restartPending.installedFiles);
+  }
+  const stages = Array.isArray(resumeReport?.completeDirectionMatrix?.stages)
+    ? resumeReport.completeDirectionMatrix.stages : [];
+  const invalidPassed = stages.filter(row => row?.status === "passed" && !nativeRouteStageReceiptVerified(row, resumeReport));
+  if (invalidPassed.length) {
+    fail("NATIVE_RESUME_STAGE_RECEIPT_INVALID", `Refusing to reuse invalid Native stage receipts: ${invalidPassed.map(row => row.name).join(", ")}`);
+  }
+  return stages.filter(row => row?.status === "passed" && nativeRouteStageReceiptVerified(row, resumeReport));
+}
+
 export function nativeProcessRestartVerified(report) {
   const restart = report?.completeDirectionMatrix?.processRestart;
   const previous = restart?.previous;
+  const previousProcessState = restart?.previousProcessState;
   return report?.completeDirectionMatrix?.status === "passed" &&
     restart?.kind === "owned-process-restart" && restart.previousProcessExited === true &&
     Number.isSafeInteger(previous?.ownerPid) && previous.ownerPid > 0 &&
+    nonempty(previous?.ownerCommandHash) && previousProcessState?.pid === previous.ownerPid &&
+    previousProcessState.ownedProfileProcess === false &&
+    (previousProcessState.commandHash === null || previousProcessState.commandHash !== previous.ownerCommandHash) &&
     Number.isSafeInteger(restart?.currentOwnerPid) && restart.currentOwnerPid > 0 &&
     restart.currentOwnerPid !== previous.ownerPid &&
+    nonempty(restart?.currentOwnerCommandHash) &&
+    restart.profileRoot === previous.profileRoot &&
     report?.nativeProfile?.ownerPid === restart.currentOwnerPid &&
     nonempty(previous?.profileRoot) && report.nativeProfile.root === previous.profileRoot;
 }
@@ -113,7 +143,7 @@ export function auditNativeRouteMatrixEvidence({ candidateFiles, reports = [] } 
     const stages = Array.isArray(report?.completeDirectionMatrix?.stages)
       ? report.completeDirectionMatrix.stages : [];
     for (const stage of stages) {
-      if (!NATIVE_ROUTE_STAGES.includes(stage?.name) || !stageReceiptValid(stage, report)) continue;
+      if (!NATIVE_ROUTE_STAGES.includes(stage?.name) || !nativeRouteStageReceiptVerified(stage, report)) continue;
       if (stage.name === "full-owned-process-restart" && !nativeProcessRestartVerified(report)) continue;
       accepted.set(stage.name, { name: stage.name, status: "PASS", reportIndex: index });
     }

@@ -207,3 +207,25 @@ The integration branch was fast-forwarded to GitHub `main` at `7af8c349e2ee84edd
 The plugin was not forcibly reloaded while Obsidian may have open user tabs. Thus `FORMAL_FILES_DEPLOYED=YES`, while `FORMAL_RUNTIME_RELOADED=NO` and the running process version is not confirmed; it will load 0.14.0 on its next plugin load. The latest test-vault package and formal package have matching release hashes.
 
 Release limitations remain visible: `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX=NOT_VERIFIED`, `REAL_PROCESS_RESTART_8x5=NOT_RUN`, `startup added blocking <50ms=NOT_MEASURED`, and enabled Reader UI first dictionary lookup is `NOT_VERIFIED`. Do not report full Native/launch acceptance as passed. `SCROLL_PERF=INVESTIGATED / NOT_RELEASE_BLOCKER`; iPad remains `DEFERRED_BY_SCOPE`.
+
+## 2026-10-25 continuation: Native gate safeguards and Resource-v3 decision
+
+The latest repository state was fetched before work. `origin/main=8af459fe61cae8a3904a9c343491b352da22be23`; candidate `origin/feature/0.14-native-learning-dictionary-20261023=6694c16b4c390d4a8dbd7762ec647ffa13f8f909`, already an ancestor of main. Work continued in isolated branch `codex/014-goal-resume-20261025`, based on that current main commit. The existing formal deployment recorded above was not repeated or modified in this continuation.
+
+The exact candidate package remains unchanged: `main.js ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8`, `manifest.json 71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675`, and `styles.css 8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea`. This continuation changed acceptance/test code and evidence only; no PDF.js, scroll, storage, WAL, canonical vocabulary, or production plugin behavior changed.
+
+### Native acceptance boundary
+
+The current owned-profile preflight was read-only and stopped before UI input. Although the renderer reported visible and focused, its active document and window were both the Settings renderer (`activeDocumentMatches=false`, `activeWindowMatches=false`); the plugin was disabled and no Native mutation occurred. This is sufficient reason to stop further window-control attempts. The current package's 8-stage × 5-direction matrix remains `NOT_VERIFIED`; open-move is `NOT_VERIFIED`; true process restart is `NOT_RUN`. Earlier Highlight and phrase-Context learning receipts remain partial evidence only.
+
+Four Native test safeguards were corrected: exact active renderer ownership is required; resumed stages and restart-pending receipts must match the current expected and installed hashes of all three release files; a genuine complete-sentence Context Review item must exist before any five-direction stage can pass; and restart evidence must show the prior PID is no longer running the exact owned profile. SemanticAnchor tests now explicitly exercise a reordered stable page identity and fail closed when that identity disappears. These safeguards do not turn the unrun Native matrix into a pass.
+
+### Latest automated gates
+
+The source fingerprint was stable at `3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05` (1,112 files) across the full rerun. Build passed (3 release files, 406 embedded runtime assets, 402 frozen vendor files verified); focused Native acceptance and SemanticAnchor tests passed 13/13; Fast 122/122; Browser 28/28; Race 80/80; Offline smoke passed, including save/reopen and bulk-delete no-resurrection. There were no skips. Full details: [sanitized harness/gate rerun](current-gates/resume-harness-gate-rerun-20261025.json).
+
+### Resource-v3 and scope
+
+Resource-v3 stays in the candidate because supported Native DataAdapter evidence shows rare first lookup P50 88.9 ms / max 194.3 ms and warm P95 ≤0.1 ms without a full Dexie build. The common-word sample includes a 1,154.8 ms outlier. The four Native release measures are not all closed: startup-added blocking `<50 ms` is `NOT_MEASURED`; enabled Reader UI first lookup is `NOT_VERIFIED`. Do not claim complete first-query acceptance until those are measured through the current enabled Reader path.
+
+`SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`. No PDF.js, wheel, observer, or LingQ scroll work was added. Bulk remains rejected, FSRS remains development-only, SQLite/OPFS remains unselected, and iPad remains `DEFERRED_BY_SCOPE`.

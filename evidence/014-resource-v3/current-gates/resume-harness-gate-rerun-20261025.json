@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "scope": "0.14 closeout continuation; Native runner and contract tests only",
+  "base": {
+    "branch": "origin/main",
+    "sha": "8af459fe61cae8a3904a9c343491b352da22be23",
+    "featureBranch": "origin/feature/0.14-native-learning-dictionary-20261023",
+    "featureSha": "6694c16b4c390d4a8dbd7762ec647ffa13f8f909",
+    "localBranch": "codex/014-goal-resume-20261025"
+  },
+  "sourceFingerprint": {
+    "sha256": "3dd9739e8c0cf139818aef8e136c9d5d7b17d5ec5a8dba4efba184a1554b4b05",
+    "files": 1112,
+    "stableAcrossGates": true
+  },
+  "build": {
+    "status": "PASS",
+    "releaseFiles": 3,
+    "embeddedRuntimeAssets": 406,
+    "frozenVendorFilesVerified": 402,
+    "candidateSha256": {
+      "main.js": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+      "manifest.json": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "styles.css": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea"
+    }
+  },
+  "gates": {
+    "focusedNativeAndSemantic": { "passed": 13, "failed": 0, "skipped": 0 },
+    "fast": { "passed": 122, "failed": 0, "skipped": 0, "runId": "run-2026-10-25T07-51-29-384Z-62254-89437d72" },
+    "browser": { "passed": 28, "failed": 0, "skipped": 0, "runId": "run-2026-10-25T07-52-26-913Z-64273-42a8996e" },
+    "race": { "passed": 80, "failed": 0, "skipped": 0, "runId": "run-2026-10-25T07-58-04-588Z-68061-b28632b0" },
+    "offlineSmoke": { "status": "PASS", "tools": 5, "saveReopen": "PASS", "bulkDeleteNoResurrection": "PASS", "normalCleanup": "PASS", "evidence": "offline-smoke-1792915064059-67919-16766562-6bcd-43d9-8d24-15b731aaecaa.cleanup.json" }
+  },
+  "native": {
+    "ownedProfilePreflight": "STOPPED_AT_EXACT_ACTIVE_DOCUMENT_WINDOW_GATE",
+    "activeDocumentMatchesRenderer": false,
+    "activeWindowMatchesRenderer": false,
+    "pluginEnabled": false,
+    "mutations": "NONE",
+    "matrix8x5": "NOT_VERIFIED",
+    "openMove8x5": "NOT_VERIFIED",
+    "processRestart8x5": "NOT_RUN",
+    "priorPartialLearningReceipts": "DO_NOT_PROMOTE_TO_MATRIX_PASS"
+  },
+  "resourceV3": {
+    "sourceRows": 770611,
+    "adaptiveBlocks": 67,
+    "nativeDataAdapterFirstRareP50Ms": 88.9,
+    "nativeDataAdapterFirstRareMaxMs": 194.3,
+    "nativeWarmP95Ms": "<=0.1",
+    "nativeFirstCommonP50Ms": 170.2,
+    "nativeFirstCommonP95OrMaxMs": 1154.8,
+    "startupAddedBlockingUnder50Ms": "NOT_MEASURED",
+    "enabledReaderUiFirstLookup": "NOT_VERIFIED"
+  },
+  "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+  "ipad": "DEFERRED_BY_SCOPE",
+  "productionOrFormalVaultDeploymentThisRun": "NONE"
+}

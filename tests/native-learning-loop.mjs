@@ -26,7 +26,7 @@ import {
 import { readNativeSidecarTree } from "./native-sidecar-isolation.mjs";
 import { readNativeWalEvidence } from "./native-wal-evidence.mjs";
 import { completeNativeControlledClose } from "./native-controlled-close.mjs";
-import { assertNativeCandidateFiles, assertNativeLearningForeground } from "./native-learning-acceptance.mjs";
+import { assertNativeCandidateFiles, assertNativeLearningForeground, assertNativeResumeCandidate } from "./native-learning-acceptance.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
@@ -165,13 +165,32 @@ async function initializeNativeConfig(profileRoot) {
   const { nativeConfig, assertNativeVaultIdentity } = await import("./native-config.mjs");
   assert.equal(nativeConfig.vault, EXPECTED_VAULT);
   assert.equal(nativeConfig.configDir, ".obsidian");
-  return { profileRoot: canonicalProfile, marker, port, ownerPid: Number(ownerLines[0].trim().split(/\s/u)[0]), nativeConfig, assertNativeVaultIdentity };
+  const ownerPid = Number(ownerLines[0].trim().split(/\s/u)[0]);
+  return { profileRoot: canonicalProfile, marker, port, ownerPid,
+    ownerCommandHash: sha256(Buffer.from(ownerLines[0].trim().replace(/^\d+\s+/u, ""))), nativeConfig, assertNativeVaultIdentity };
+}
+
+function ownedProcessForPid(pid, profileRoot) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !path.isAbsolute(profileRoot)) return { pid, exists: false, ownedProfileProcess: false, commandHash: null };
+  let command = "";
+  try { command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim(); }
+  catch (error) {
+    if (error?.status !== 1) throw error;
+  }
+  return {
+    pid,
+    exists: Boolean(command),
+    ownedProfileProcess: Boolean(command && command.includes(APP_EXECUTABLE) &&
+      command.includes(`--user-data-dir=${profileRoot}`) && command.includes("--remote-debugging-port=0")),
+    commandHash: command ? sha256(Buffer.from(command)) : null,
+  };
 }
 
 const profileRoot = verifyOwnedProfile();
 const native = await initializeNativeConfig(profileRoot);
 const { h64Raw } = await xxhash();
 report.nativeProfile = { root: native.profileRoot, marker: native.marker, cdpPort: native.port, ownerPid: native.ownerPid,
+  ownerCommandHash: native.ownerCommandHash,
   ownerProcessHash: sha256(Buffer.from(execFileSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" }))) };
 const expectedManifest = JSON.parse(await readFile(path.join(ROOT, "manifest.json"), "utf8"));
 const settingsUiPreflight = process.argv.includes("--settings-ui-preflight");
@@ -227,6 +246,8 @@ async function appIdentity() {
       readerViews: views,
       visibility: document.visibilityState,
       focused: document.hasFocus(),
+      ownerDocumentIsRenderer: typeof activeDocument !== "undefined" && activeDocument === document,
+      ownerWindowIsRenderer: typeof activeWindow !== "undefined" && activeWindow === window,
     };
   }, PLUGIN_ID, VIEW_TYPE);
 }
@@ -1963,7 +1984,7 @@ async function checkFiveNavigationDirections(stage) {
   assert.equal(sidebar.uuid, learningItems.highlight.source.target.id); assert.equal(sidebar.text, HIGHLIGHT_TEXT);
   await recordScreen(`${stage}-sidebar-highlight`);
   await frame.click("#pdfReaderAnnotationSidebarButton");
-  const fullContext = report.uiFlows.find(flow => flow.selectionScope === "complete sentence");
+  const fullContext = [...report.uiFlows].reverse().find(flow => flow.selectionScope === "complete sentence");
   const contextItem = await readItem(fullContext.itemId);
   const contextSource = await verifySource(contextItem.itemId, contextItem.source.target, pdfPath);
   ({ frame } = await readerFrame(pdfPath));
@@ -1977,6 +1998,18 @@ async function checkFiveNavigationDirections(stage) {
 async function runCompleteFiveDirectionMatrix() {
   const mdFlow = report.uiFlows.find(flow => flow.name === "Markdown selected excerpt -> Add Review");
   learningItems.markdown = await readItem(mdFlow.itemId);
+  let fullContextFlow = [...report.uiFlows].reverse().find(flow => flow.selectionScope === "complete sentence" && flow.contextId);
+  if (!fullContextFlow) {
+    const route = await currentPdfRoute(learningItems.highlight);
+    await createContextLearningItem(route.sourcePath, { completeSentence: true });
+    fullContextFlow = [...report.uiFlows].reverse().find(flow => flow.selectionScope === "complete sentence" && flow.contextId);
+  }
+  assert.ok(fullContextFlow?.itemId && fullContextFlow?.exactQuote,
+    "The five-direction matrix requires a real complete-sentence Context Review item before any stage can pass.");
+  learningItems.context = await readItem(fullContextFlow.itemId);
+  assert.equal(learningItems.context.source.targetText, fullContextFlow.exactQuote);
+  await verifySource(learningItems.context.itemId, learningItems.context.source.target,
+    (await currentPdfRoute(learningItems.context)).sourcePath);
   const baseline = await snapshotVocabularyInvariant();
   assert.ok(!baseline.files.some(row => /\.pending(?:\.json)?$/u.test(row.path)));
   const defaultBaseline = JSON.parse(await readFile(path.join(ROOT, "evidence/native-final-resume/default-trees-controlled-baseline.json"), "utf8"));
@@ -1994,7 +2027,9 @@ async function runCompleteFiveDirectionMatrix() {
   };
   const sortedDefault = [...defaultBaseline.files].sort((a, b) => a.path.localeCompare(b.path));
   assert.deepEqual(await defaultSnapshot(), sortedDefault);
-  const completedStages = resumeEvidence?.completeDirectionMatrix?.stages || [];
+  const completedStages = resumeEvidence
+    ? assertNativeResumeCandidate(report.candidateArtifact?.files, resumeEvidence)
+    : [];
   report.completeDirectionMatrix = { scope: "five actual UI directions at each additional stage; old eight Source-only stages retained separately",
     baseline, defaultFileCount: sortedDefault.length, stages: completedStages };
   const stage = async (name, action) => {
@@ -2034,6 +2069,9 @@ async function runCompleteFiveDirectionMatrix() {
   if (!process.argv.includes("--after-owned-process-restart")) {
     report.completeDirectionMatrix.status = "awaiting-owned-process-restart";
     report.completeDirectionMatrix.processRestartPending = { ownerPid: native.ownerPid, cdpPort: native.port, profileRoot: native.profileRoot,
+      ownerCommandHash: native.ownerCommandHash,
+      candidateFiles: report.candidateArtifact.files,
+      installedFiles: report.candidateArtifact.installedFiles,
       note: "ROOT must safely restart the exact owned process after final cleanup; plugin toggles do not satisfy this stage." };
     await checkpoint("seven-full-stages-awaiting-ROOT-owned-process-restart");
     return;
@@ -2042,10 +2080,19 @@ async function runCompleteFiveDirectionMatrix() {
   assert.ok(previous && Number.isInteger(previous.ownerPid));
   assert.notEqual(native.ownerPid, previous.ownerPid, "Formal restart requires a different actual owned main PID");
   assert.equal(native.profileRoot, previous.profileRoot);
+  assertNativeCandidateFiles(report.candidateArtifact.files, previous.candidateFiles);
+  assertNativeCandidateFiles(report.candidateArtifact.files, previous.installedFiles);
+  const previousProcess = ownedProcessForPid(previous.ownerPid, previous.profileRoot);
+  assert.equal(previousProcess.ownedProfileProcess, false,
+    "A new PID is insufficient: the previous owned Obsidian process for this profile must no longer be running.");
   await stage("full-owned-process-restart", async () => {});
   report.completeDirectionMatrix.status = "passed";
   report.completeDirectionMatrix.restartScope = "actual owned Obsidian process restart by ROOT, independently verified new main PID";
-  report.completeDirectionMatrix.processRestart = { previous, currentOwnerPid: native.ownerPid, currentCdpPort: native.port };
+  report.completeDirectionMatrix.processRestart = { kind: "owned-process-restart", previous,
+    previousProcessExited: !previousProcess.ownedProfileProcess,
+    previousProcessState: previousProcess,
+    currentOwnerPid: native.ownerPid, currentOwnerCommandHash: native.ownerCommandHash,
+    currentCdpPort: native.port, profileRoot: native.profileRoot };
 
 }
 
@@ -2255,6 +2302,16 @@ async function main() {
     vault: EXPECTED_VAULT, configDir: native.nativeConfig.configDir, stage: "before Native test mutations",
   });
   await recordCandidateArtifact();
+  const continuingNativeMatrix = process.argv.includes("--complete-direction-matrix") ||
+    process.argv.includes("--after-owned-process-restart");
+  if (process.argv.includes("--after-owned-process-restart")) {
+    assert.ok(resumeEvidence, "The process-restart phase requires the saved first-phase Native receipt.");
+  }
+  if (resumeEvidence && continuingNativeMatrix) {
+    const reusableStages = assertNativeResumeCandidate(report.candidateArtifact.files, resumeEvidence);
+    report.resumeMatrixEvidence = { status: "verified-current-candidate", reusableStageCount: reusableStages.length,
+      releaseFiles: Object.keys(report.candidateArtifact.files).sort() };
+  }
   assert.equal(before.syncEnabled, false, "Disable Obsidian Sync before Native acceptance.");
   assert.deepEqual(before.readerViews, [], "Close all Reader tabs before Native acceptance.");
   assert.equal(before.pluginActive, false, "Disable PDF Web Reader before installing write isolation.");
@@ -2262,8 +2319,9 @@ async function main() {
   assert.equal(before.visibility, "visible",
     "Keep the owned Obsidian test window visible; if this is hidden, stop rather than automate another window.");
   if (attachedExistingTestVault) {
-    assert.ok(await page.evaluate(() => document.hasFocus() && (typeof activeDocument === "undefined" || activeDocument === document) &&
-      (typeof activeWindow === "undefined" || activeWindow === window)), "Attached test window/document owner must already be truly focused before writes");
+    assert.ok(await page.evaluate(() => document.hasFocus() && typeof activeDocument !== "undefined" &&
+      activeDocument === document && typeof activeWindow !== "undefined" && activeWindow === window),
+    "Attached test window/document owner must exactly match the foreground renderer before writes");
     assert.ok((await page.title()).endsWith("ObReader-Apple-Test - Obsidian 1.14.5"));
     for (const file of ["main.js", "manifest.json", "styles.css"]) {
       assert.equal(sha256(await readFile(absoluteVaultPath(`.obsidian/plugins/${PLUGIN_ID}/${file}`))),
@@ -2336,7 +2394,8 @@ async function main() {
     await openFixture(fixtures.pdfPath);
     await readerFrame(fixtures.pdfPath);
   } else await createHighlightLearningItem(fixtures.pdfPath);
-  const provenContext = resumeEvidence?.uiFlows?.find(flow => flow.contextId && flow.sourceEvidence?.navigation?.ok);
+  const provenContexts = resumeEvidence?.uiFlows?.filter(flow => flow.contextId && flow.sourceEvidence?.navigation?.ok) || [];
+  const provenContext = [...provenContexts].reverse().find(flow => flow.selectionScope === "complete sentence") || provenContexts.at(-1);
   if (provenContext) {
     learningItems.context = await readItem(provenContext.itemId);
     contexts.dynamic = (await readContextRows(provenContext.familyKey)).find(row => row.contextId === provenContext.contextId);
