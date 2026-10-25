@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "sourceFingerprint": "3123b32d42d6fd4fb5c3744add9fe763005b63b3d3c0f45b73514e954c42b980",
+  "build": "PASS; 3 release files, 406 embedded assets, 402 frozen vendor hashes",
+  "fast": { "passed": 122, "failed": 0, "skipped": 0, "acceptanceEligible": true },
+  "browser": {
+    "passed": 26,
+    "failed": 2,
+    "skipped": 0,
+    "acceptanceEligible": false,
+    "failures": [
+      {
+        "test": "ipad-pointer-policy",
+        "reason": "Finger inertia velocity decay assertion; iPad is deferred by scope and no code was changed."
+      },
+      {
+        "test": "vocabulary-pill-layout-browser",
+        "reason": "Long fake dictionary response arrived before the transient pending-state assertion; isolated rerun passed 1/1."
+      }
+    ]
+  },
+  "race": { "passed": 80, "failed": 0, "skipped": 0, "acceptanceEligible": true },
+  "offlineSmoke": "PASS",
+  "native": {
+    "highlightLearningFlow": "PASS",
+    "contextCreateSave": "PASS",
+    "fullEightByFiveMatrix": "NOT_VERIFIED",
+    "realProcessRestart": "NOT_RUN"
+  },
+  "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+  "productionRelease": "NOT_PERFORMED"
+}

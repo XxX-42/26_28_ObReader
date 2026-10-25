@@ -152,3 +152,40 @@ The build hashes remain identical to the installed test-only package (`main.js e
 | E — SemanticAnchor / Sidebar / Backlink | Source/API contract and deterministic behavior are frozen; semantic, LearningHost, Markdown-route and plugin-host receipts include 153/153 passing tests, with current focused subset 55/55. | Native route/restart acceptance remains pending; quote matching never auto-rebinds. |
 | F — Bulk import / History | Real-filesystem matrix completed; both candidates rejected. History gzip reduces total write bytes 22.77% (<40% gate); shared lifecycle reduces 13.56%, with worst CPU +54.47% and restore +26.65%. | Keep production behavior unchanged; measurements are bytes submitted to Node writes, not physical sectors or Sync traffic. |
 | G — FSRS | Development-only replay/evaluation; current `leitner-utc-v1` remains default. Focused FSRS adapter/evaluation suite passed 12/12. | No production scheduler switch or learning-effectiveness superiority claim; incomplete history stays `INSUFFICIENT_HISTORY`. |
+
+## 2026-10-25 bounded closeout update
+
+This section supersedes earlier gate summaries above where they describe the newest run. The run was performed on source fingerprint `3123b32d42d6fd4fb5c3744add9fe763005b63b3d3c0f45b73514e954c42b980` (1,106 files; unchanged during each gate).
+
+### Native current package
+
+The exact 0.14.0 package was exercised in the existing `ObReader-Apple-Test` vault with Sync disabled and all mutation writes redirected into a per-run plugin isolation root. The latest run completed these real UI steps:
+
+- Highlight → confirmed durable Sidecar → Sidebar → Add to Review → Today Review → Source returned to the same annotation target.
+- LingQ lookup and sentence selection → Context creation and save completed.
+
+The run stopped when Obsidian 1.14.5's Command Palette suggestion selection raised `TypeError: n.instanceOf is not a function` from the app's `SuggestModal` stack. The runner could not reopen the Vocabulary Workbench to complete Context → Review and the route matrix. This identifies a host UI automation/runtime boundary; it is not evidence that the product's learning command is defective. Plugin isolation was restored, the plugin was disabled, Sync remained disabled, the Reader was closed, and the fixture PDF matched the original SHA-256. Sanitized details: [native-current-final-resume-20261025.json](current-gates/native-current-final-resume-20261025.json).
+
+```text
+NATIVE_CORE_HIGHLIGHT_LEARNING_FLOW_CURRENT_PACKAGE = PASS
+NATIVE_CONTEXT_CREATE_AND_SAVE_CURRENT_PACKAGE = PASS
+NATIVE_CONTEXT_TO_REVIEW_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_VERIFIED
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+MAC_NATIVE_CURRENT_PACKAGE = PARTIAL
+```
+
+No additional window-control retries or process restart were attempted after this failure.
+
+### Latest automated gates
+
+- Build and Fast: **PASS**, 122/122; no failed or skipped tests.
+- Browser: **26/28**, no skips; acceptance-eligible **false**. `ipad-pointer-policy` failed the finger-inertia decay assertion (`DEFERRED_BY_SCOPE`; no iPad changes made). `vocabulary-pill-layout-browser` failed because the long fake dictionary result arrived before the test's transient-pending assertion. A later isolated rerun of that test passed 1/1; the full Browser result remains 26/28 and is not overwritten.
+- Race: **PASS**, 80/80; no failed or skipped tests.
+- Offline smoke: **PASS**; save/reopen and bulk-delete persistence verified.
+- Resource-v3: conversion/runtime focused suites **33/33**; supported 1.14.5 Native DataAdapter rare lookup P50 **88.9 ms**, max **194.3 ms**, warm P95 **≤0.1 ms**. Native Host probe rare lookup **36.9 ms**, common `on` **206.4 ms**, with 20 warm repeats max **0.3 ms**. These are lookup measurements inside an already running process, not process-cold startup or complete Reader UI latency.
+- `startup added blocking <50 ms = NOT_MEASURED`; enabled-plugin Reader UI first lookup = **NOT_VERIFIED**.
+- `SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER`; no PDF.js, wheel, observer, or LingQ scrolling paths changed.
+
+Sanitized latest gate summary: [final-gates-rerun-20261025.json](current-gates/final-gates-rerun-20261025.json). The exact test-only package remains 0.14.0 and is deployed only to the existing test vault. The branch has not been merged to `main`; no production vault deployment or data cleanup occurred. iPad remains `DEFERRED_BY_SCOPE`.

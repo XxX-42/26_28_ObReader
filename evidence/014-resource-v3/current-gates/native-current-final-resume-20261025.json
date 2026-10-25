@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "runId": "native-learning-loop-20261025002149823-b7afe3909a",
+  "runtime": "Obsidian 1.14.5, isolated owned profile, existing ObReader-Apple-Test vault",
+  "candidateVersion": "0.14.0",
+  "candidateMainJsSha256": "ee0ce9fe26acaa9d05b99f5e30ccdb032e7e54c5e94caa2378fd02ef9a76d2f8",
+  "syncEnabled": false,
+  "flows": {
+    "highlightToTodayReviewToSameAnnotationSource": "PASS",
+    "lingqSelectionToContextCreateAndSave": "PASS",
+    "contextToReview": "NOT_VERIFIED",
+    "nativeEightStageByFiveDirectionMatrix": "NOT_VERIFIED",
+    "realApplicationProcessRestartMatrix": "NOT_RUN"
+  },
+  "stopReason": "Obsidian 1.14.5 Command Palette SuggestModal selection threw TypeError: n.instanceOf is not a function; Workbench could not be reopened for the remaining UI path.",
+  "cleanup": {
+    "pluginDisabled": true,
+    "readerViews": 0,
+    "syncDisabled": true,
+    "isolationRestored": true,
+    "fixturePdfSha256MatchesSource": true
+  },
+  "releaseDisposition": "PARTIAL; no main merge or production deployment"
+}
