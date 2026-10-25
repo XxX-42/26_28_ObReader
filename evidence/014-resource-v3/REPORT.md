@@ -471,3 +471,29 @@ No scrolling, PDF.js, wheel, observer, or LingQ scroll code changed. No formal V
 Using the existing `ObReader-Apple-Test` profile (current candidate package already installed), I attempted one exact-window focus acquisition and reran the Native harness. The test Vault identity matched, Sync was off, the plugin was disabled, there were no Reader views, and the renderer was visible with `activeDocument`/`activeWindow` matching that renderer. However, `document.hasFocus()` was false after the exact-window AXRaise. The harness stopped at its pre-mutation gate before installing the test write adapter, enabling the plugin, creating fixtures, or sending any pointer/keyboard input. No Vault data changed.
 
 Receipt: [Native focus recheck](current-gates/native-focus-recheck-20261025.json). No further window-control attempts were made. `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX` and `OPEN_MOVE_8x5` remain `NOT_VERIFIED`; true process restart remains `NOT_RUN`.
+
+## 2026-10-25 final bounded Native selection diagnostic
+
+The exact current 0.14.0 candidate (`main.js d57f5e1e…`) was exercised in the owned Obsidian 1.14.5 test profile after exact Vault and foreground-window checks passed. Five Highlight-mode pointer attempts used CDP and Quartz CGEvent; a sixth ordinary-selection control turned Highlight mode off through the visible toolbar. Every sampled drag path remained on PDF.js text spans. The traced runs reported trusted, non-prevented pointer/mouse events, `user-select: auto`, and the text layer entering/leaving `selecting`, but no selection-consumer call; all six selections remained collapsed and no Highlight editor appeared.
+
+This is an acceptance blocker, not an isolated product diagnosis: the ordinary-selection control failed too, so the automation channel remains a plausible cause. Per the bounded scope, no further window activation retries or production input/PDF.js changes were made. Cleanup disabled the plugin, kept Sync off, closed the Reader, restored adapter isolation, and removed only this run's verified fixture and seven isolated PDFData files. The PDF fixture SHA-256 stayed equal to the repository fixture; PDFData/VocabularyData defaults were unchanged. Evidence: [sanitized receipt](current-gates/native-highlight-selection-fail-20261025.json) and [screenshot](current-gates/native-highlight-selection-fail-20261025.png).
+
+```text
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_X_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8X5 = NOT_RUN
+REAL_PROCESS_RESTART_8X5 = NOT_RUN
+RESOURCE_V3 = INTEGRATED; Native DataAdapter instance-cold evidence retained
+READER_UI_FIRST_LOOKUP_P95 = NOT_MEASURED
+STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED
+IPAD = DEFERRED_BY_SCOPE
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+```
+
+No production runtime code, PDF.js vendor, scroll/wheel code, `main`, or formal Vault changed. Resource-v3's existing direct-block path remains integrated; no additional benchmark or package deployment was performed in this diagnostic continuation.
+
+## 2026-10-25 final automated gates after Native runner safety cleanup
+
+The temporary Quartz input-injection helper was removed from the Native runner after the existing passive-runner guard correctly rejected it; the guard was not weakened. The text-range endpoint measurement and passive selection tracing remain. Focused Native acceptance tests passed 10/10. Build passed with 3 release files, 406 assets, and 402 frozen vendor hashes. Fast 123/123, Browser 28/28, Race 80/80, and Offline smoke passed with zero skips. Their source fingerprint was stable at `91377431a053b5a0aa3ed0b0d181f6c79673c196f6b56a66a6bb618980918b02` across 1,133 files; exact receipts are in [the bounded gate report](current-gates/release-gates-bounded-native-20261025.json).
+
+The bundle hashes remain identical to the already-installed test package. This was not a deployment. Native current-package selection, the 8×5 matrix, open-move, and true process restart remain open; Resource-v3 UI P95 and startup-added blocking remain unmeasured. No production runtime, frozen vendor, scroll/wheel code, `main`, or formal Vault was changed.

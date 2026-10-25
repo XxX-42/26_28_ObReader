@@ -546,14 +546,25 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     const range = document.createRange();
     range.setStart(node, start);
     range.setEnd(node, start + text.length);
-    const rect = range.getBoundingClientRect();
-    if (!rect.width || !rect.height) throw new Error(`PDF text has no visible geometry: ${text}`);
-    if (rect.left < 0 || rect.right + 1 >= innerWidth || rect.top < 0 || rect.bottom >= innerHeight) {
-      throw new Error(`PDF text drag range is outside the Reader viewport: ${text}`);
+    const fragments = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+    if (!fragments.length) throw new Error(`PDF text has no visible client rects: ${text}`);
+    const first = fragments[0];
+    const last = fragments.at(-1);
+    const x1 = first.left + Math.min(0.25, first.width / 2);
+    const y1 = first.top + first.height / 2;
+    const x2 = last.right - Math.min(0.25, last.width / 2);
+    const y2 = last.top + last.height / 2;
+    if ([x1, y1, x2, y2].some(value => value < 0) || x1 >= innerWidth || x2 >= innerWidth ||
+      y1 >= innerHeight || y2 >= innerHeight) {
+      throw new Error(`PDF text drag endpoints are outside the Reader viewport: ${text}`);
     }
-    const hit = document.elementFromPoint(rect.left + 0.25, rect.top + rect.height / 2);
-    if (!hit?.closest(".textLayer")) throw new Error(`PDF text drag target is obscured: ${text}`);
-    return { x1: rect.left + 0.25, x2: rect.right + 1, y: rect.top + rect.height / 2,
+    const startHit = document.elementFromPoint(x1, y1);
+    const endHit = document.elementFromPoint(x2, y2);
+    if (!startHit?.closest(".textLayer") || !endHit?.closest(".textLayer")) {
+      throw new Error(`PDF text drag endpoints are obscured: ${text}`);
+    }
+    return { x1, y1, x2, y2,
+      selectionFragments: fragments.map(rect => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })),
       text: node.textContent.slice(start, start + text.length), mode: PDFViewerApplication.pdfViewer.annotationEditorMode };
   }, { text, exact });
   const frameRect = await readerFrameRect(pathValue);
@@ -630,25 +641,36 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     assert.equal(mode, 9, "PDF.js Highlight mode must remain active after its parameter palette auto-hides.");
     assert.ok(geometry.x1 < palette.left || geometry.x1 > palette.right,
       "The drag origin must remain outside the hidden Highlight palette bounds.");
-    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y1, { steps: 2 });
   } else {
-    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y, { steps: 2 });
+    await page.mouse.move(frameRect.x + geometry.x1, frameRect.y + geometry.y1, { steps: 2 });
   }
-  await frame.evaluate(({ x }) => { window.__nativeDragEndX = x; }, { x: geometry.x2 });
+  await frame.evaluate(({ x, y }) => { window.__nativeDragEnd = { x, y }; }, { x: geometry.x2, y: geometry.y2 });
   const beforeDrag = await frame.evaluate(({ x, y }) => ({
     mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
     paramsClass: document.querySelector("#editorHighlightParamsToolbar")?.className || null,
     startTarget: document.elementFromPoint(x, y)?.closest(".textLayer")?.className || null,
+    selectionStyle: (() => {
+      const layer = document.elementFromPoint(x, y)?.closest(".textLayer");
+      const span = document.elementFromPoint(x, y)?.closest("span");
+      return { rootClasses: document.documentElement.className,
+        userSelect: layer ? getComputedStyle(layer).userSelect : null,
+        webkitUserSelect: layer ? getComputedStyle(layer).webkitUserSelect : null,
+        spanUserSelect: span ? getComputedStyle(span).userSelect : null,
+        spanWebkitUserSelect: span ? getComputedStyle(span).webkitUserSelect : null };
+    })(),
     dragPathHitTests: Array.from({ length: 13 }, (_, index) => {
-      const sampleX = x + (window.__nativeDragEndX - x) * index / 12;
-      const hit = document.elementFromPoint(sampleX, y);
-      return { x: sampleX, target: hit?.tagName || null,
+      const progress = index / 12;
+      const sampleX = x + (window.__nativeDragEnd.x - x) * progress;
+      const sampleY = y + (window.__nativeDragEnd.y - y) * progress;
+      const hit = document.elementFromPoint(sampleX, sampleY);
+      return { x: sampleX, y: sampleY, target: hit?.tagName || null,
         textLayerClass: hit?.closest(".textLayer")?.className || null,
         inTextLayer: Boolean(hit?.closest(".textLayer")) };
     }),
-  }), { x: geometry.x1, y: geometry.y });
+  }), { x: geometry.x1, y: geometry.y1 });
   await page.mouse.down({ button: "left" });
-  await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y, { steps: 12 });
+  await page.mouse.move(frameRect.x + geometry.x2, frameRect.y + geometry.y2, { steps: 12 });
   await page.mouse.up({ button: "left" });
   const dragDiagnostics = await frame.evaluate(() => {
     const probe = window.__nativeSelectionTrace?.nativeSelectionProbe;
@@ -661,10 +683,18 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     const pointerRows = (probe?.pointerEvents || []).filter(row =>
       ["pointerdown", "pointerup"].includes(row.type) || row.buttons > 0);
     const selectionChanges = probe?.selectionChanges || [];
+    const eventPhases = probe?.eventPhases || [];
     const result = {
       events: window.__nativePointerTrace || [],
       selectionProbe: { consumers: consumerRows, pointerEvents: pointerRows, selectionChanges,
-        eventPhaseCount: probe?.eventPhases?.length || 0 },
+        eventPhaseCount: eventPhases.length,
+        selectionEventPhases: eventPhases.filter(row =>
+          ["pointerdown", "pointerup", "mousedown", "mouseup", "selectstart"].includes(row.type))
+          .map(row => ({ type: row.type, target: row.target, capture: row.capture,
+            defaultPrevented: row.defaultPrevented, button: row.button, buttons: row.buttons,
+            collapsed: row.selection?.collapsed, textLength: row.selection?.textLength,
+            textLayerClass: row.layers?.find(layer => layer.page === "1")?.className || null })),
+      },
       selection: document.getSelection()?.toString() || "",
       mode: PDFViewerApplication.pdfViewer.annotationEditorMode,
       activeElement: document.activeElement?.id || document.activeElement?.tagName || null,
@@ -678,7 +708,7 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
   });
   assert.ok(beforeDrag.dragPathHitTests.every(sample => sample.inTextLayer),
     "Every sampled point of the native drag must stay over the PDF text layer.");
-  return { ...geometry, beforeDrag, dragDiagnostics };
+  return { ...geometry, inputDriver: "puppeteer-cdp-mouse", beforeDrag, dragDiagnostics };
 }
 
 async function saveAnnotationThroughReaderUI(frame, documentId) {

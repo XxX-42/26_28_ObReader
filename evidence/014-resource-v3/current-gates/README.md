@@ -69,3 +69,30 @@ This is one Native UI sample, not a process-cold first query or UI P95: page-lev
 ## Current-package Native focus recheck (2026-10-25)
 
 The exact existing ObReader-Apple-Test window was targeted once. The Native runner confirmed the correct Vault, Sync disabled, plugin disabled, zero Reader views, visible renderer, and matching active document/window, but `document.hasFocus=false`; it stopped before installing isolation, enabling the plugin, creating fixtures, or sending input. No Vault data changed. See [the pre-mutation receipt](native-focus-recheck-20261025.json). Native 8×5/open-move remain `NOT_VERIFIED`; true process restart is `NOT_RUN`.
+
+## 2026-10-25 final bounded Native selection diagnostic
+
+After the focus-only stop above, the owned Obsidian 1.14.5 renderer was explicitly verified as foreground-owned for a bounded diagnostic on the exact candidate (`main.js d57f5e1e…`, manifest `71abba5e…`, styles `8da58b1d…`). Five automated pointer attempts used Highlight mode and one control attempt used ordinary text-selection mode with the Highlight tool visibly off. CDP and Quartz CGEvent inputs reached the expected PDF text spans: all 13 sampled points remained inside `.textLayer`; captured pointer/mouse events were trusted and not default-prevented. In the traced runs the text layer entered and left its `selecting` class, computed `user-select`/`-webkit-user-select` were `auto`, and no PDF.js selection consumer was called. All six attempts ended with a collapsed, empty DOM selection and no Highlight editor.
+
+The plain-text control also failed, so the evidence cannot distinguish an input-channel/coordinate limitation in the automation from a product selection defect. This is **not** a product regression diagnosis and does not justify changing input ownership or PDF.js. The exact package and test Vault were verified; the plugin was disabled after each run, Sync stayed off, the Reader closed, and test write isolation was restored. The generated PDF matched the repository fixture SHA (`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`); only the exact generated Markdown/PDF fixture and this run's seven isolated PDFData files were removed after path/content/hash checks. Defaults remained unchanged. The post-drag screenshot and sanitized receipt are [here](native-highlight-selection-fail-20261025.png) and [here](native-highlight-selection-fail-20261025.json).
+
+No further window-control retries are planned. Current status remains:
+
+```text
+MAC_NATIVE_CURRENT_PACKAGE = NOT_VERIFIED
+NATIVE_8_STAGE_x_5_DIRECTION_MATRIX = NOT_VERIFIED
+OPEN_MOVE_8x5 = NOT_RUN
+REAL_PROCESS_RESTART_8x5 = NOT_RUN
+IPAD = DEFERRED_BY_SCOPE
+SCROLL_PERF = INVESTIGATED / NOT_RELEASE_BLOCKER
+```
+
+Resource-v3 remains integrated in the exact candidate. Existing Native DataAdapter evidence is instance-cold, not process-cold: five cold block reads per query, rare `zyzzyva` P50/max 191.4/233.1 ms, common `on` 209.5/942.6 ms, and resident warm P95 0.1 ms. One current-package Reader UI click produced a dictionary card in 460.9 ms, but it is not a cold-query P95. `STARTUP_ADDED_BLOCKING_LT_50MS = NOT_MEASURED`; `READER_UI_FIRST_LOOKUP_P95 = NOT_MEASURED`. No Resource-v3 code changed in this continuation. Scroll/PDF.js work remains closed.
+
+## 2026-10-25 automated rerun after Native runner safety cleanup
+
+The first Fast rerun caught that the temporary diagnostic runner invoked Swift/Quartz, violating the existing passive Native-runner safety test. I removed that global input-injection code and kept only the text-range endpoint geometry and selection diagnostics; the safety assertion remains unchanged. Focused Native acceptance tests then passed 10/10.
+
+The rebuilt package retained the exact `d57f5e1e… / 71abba5e… / 8da58b1d…` hashes and matched the three files already in `ObReader-Apple-Test`. Build passed (3 release files, 406 embedded assets, 402 frozen vendor hashes); Fast passed 123/123, Browser 28/28, Race 80/80, and Offline smoke passed with five tool save/reopen and persistent bulk-delete coverage. All had zero skips. Source fingerprint `91377431a053b5a0aa3ed0b0d181f6c79673c196f6b56a66a6bb618980918b02` (1,133 files) was stable across Fast/Browser/Race. See the [sanitized gate receipt](release-gates-bounded-native-20261025.json).
+
+These automated gates do not close the Native P0. Current-package selection remained ambiguous in the bounded diagnostic; `NATIVE_8_STAGE_x_5_DIRECTION_MATRIX` is still `NOT_VERIFIED`, open-move is `NOT_RUN`, and actual process restart is `NOT_RUN`. `RESOURCE_V3` is integrated; its DataAdapter instance-cold measurements and one 460.9 ms Reader UI sample remain limited evidence. Reader UI first-query P95 and startup-added blocking `<50 ms` remain `NOT_MEASURED`. No product runtime, PDF.js, scroll, main, or formal Vault changes occurred.

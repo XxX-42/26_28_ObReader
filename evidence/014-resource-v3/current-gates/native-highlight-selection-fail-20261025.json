@@ -1,0 +1,93 @@
+{
+  "status": "CURRENT_PACKAGE_NATIVE_SELECTION_NOT_VERIFIED",
+  "date": "2026-10-25",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+    "obsidianVersion": "1.14.5"
+  },
+  "testProfile": {
+    "vault": "ObReader-Apple-Test",
+    "syncEnabled": false,
+    "foregroundPreflight": "passed for the recorded attempts: focused renderer, active document/window matched",
+    "writesIsolatedBeforePluginEnable": true,
+    "finalPluginState": "disabled",
+    "readerViewsAfterCleanup": 0,
+    "adapterIsolationRestored": true
+  },
+  "attempts": [
+    {
+      "runId": "native-learning-loop-20261025133841611-d97a3ad242",
+      "toolMode": 9,
+      "input": "Puppeteer CDP mouse",
+      "textLayerPathSamples": "13/13",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    },
+    {
+      "runId": "native-learning-loop-20261025134656402-50ce21ac0f",
+      "toolMode": 9,
+      "input": "Quartz CGEvent",
+      "textLayerPathSamples": "13/13",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    },
+    {
+      "runId": "native-learning-loop-20261025135126430-a917d254f0",
+      "toolMode": 9,
+      "input": "Quartz CGEvent",
+      "textLayerPathSamples": "13/13",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    },
+    {
+      "runId": "native-learning-loop-20261025135645856-b7e07330ca",
+      "toolMode": 9,
+      "input": "Quartz CGEvent",
+      "textLayerPathSamples": "13/13",
+      "observed": "trusted pointer/mouse events; textLayer entered and left selecting class; no selection consumer call",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    },
+    {
+      "runId": "native-learning-loop-20261025135842200-0a25572359",
+      "toolMode": 9,
+      "input": "Puppeteer CDP mouse",
+      "textLayerPathSamples": "13/13",
+      "observed": "textLayer entered and left selecting class; no selection consumer call",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    },
+    {
+      "runId": "native-learning-loop-20261025140155901-c7a92c0277",
+      "toolMode": 0,
+      "input": "Quartz CGEvent plain-text control, activated through visible toolbar",
+      "textLayerPathSamples": "13/13",
+      "observed": "computed user-select/webkit-user-select were auto; events were not default-prevented",
+      "selection": "collapsed/empty",
+      "highlightEditorCount": 0
+    }
+  ],
+  "visualInspection": {
+    "result": "No Highlight editor or visible new Highlight after drag; screenshot shows the LingQ popover on the source text.",
+    "screenshot": "native-highlight-selection-fail-20261025.png"
+  },
+  "interpretation": "The same current package failed to produce a DOM text selection with Highlight mode both on and in a plain-text control. This does not isolate a product bug from native CUA/Quartz coordinate or event semantics. No production interaction code or PDF.js vendor code was changed.",
+  "sourceAndDataIntegrity": {
+    "generatedPdfSha256BeforeAfter": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "matchesRepositoryFixture": true,
+    "markdownFixtureAndIsolatedSevenFilePdfDataRemovedAfterExactPathAndContentVerification": true,
+    "pdfDataAndVocabularyDataDefaultsUnchanged": true
+  },
+  "acceptance": {
+    "MAC_NATIVE_CURRENT_PACKAGE": "NOT_VERIFIED",
+    "NATIVE_8_STAGE_X_5_DIRECTION_MATRIX": "NOT_VERIFIED",
+    "OPEN_MOVE_8X5": "NOT_RUN",
+    "REAL_PROCESS_RESTART_8X5": "NOT_RUN",
+    "IPAD": "DEFERRED_BY_SCOPE",
+    "SCROLL_PERF": "INVESTIGATED / NOT_RELEASE_BLOCKER"
+  },
+  "next": "Do not repeat window focus attempts or modify input behavior based on this ambiguous harness result. Resume Native acceptance only with a human-equivalent selection path or different verified input channel; Resource-v3 remains integrated and its missing UI/startup metrics are listed in the gate report."
+}

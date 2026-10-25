@@ -1,0 +1,83 @@
+{
+  "status": "AUTOMATED_GATES_PASS_NATIVE_P0_OPEN",
+  "date": "2026-10-25",
+  "branch": "codex/014-goal-resume-20261025",
+  "candidate": {
+    "version": "0.14.0",
+    "mainJsSha256": "d57f5e1e7e1328c88168d8b28e357ee35edd515b149725a9df96e464feb4b257",
+    "manifestSha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+    "stylesSha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+    "testVaultFilesMatchBuild": true
+  },
+  "sourceFingerprint": {
+    "sha256": "91377431a053b5a0aa3ed0b0d181f6c79673c196f6b56a66a6bb618980918b02",
+    "files": 1133,
+    "stableAcrossFastBrowserRace": true
+  },
+  "build": {
+    "status": "passed",
+    "releaseFiles": 3,
+    "embeddedRuntimeAssets": 406,
+    "frozenVendorFilesVerified": 402,
+    "payloadBytesBeforeTransportCompression": 6732067
+  },
+  "automatedGates": {
+    "fast": {
+      "status": "passed",
+      "passed": 123,
+      "failed": 0,
+      "skipped": 0,
+      "runId": "run-2026-10-25T14-11-45-898Z-89280-15f1cc64"
+    },
+    "browser": {
+      "status": "passed",
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "runId": "run-2026-10-25T14-12-14-698Z-90229-4c6c1465"
+    },
+    "race": {
+      "status": "passed",
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0,
+      "runId": "run-2026-10-25T14-16-12-096Z-92448-b49bb163"
+    },
+    "offlineSmoke": {
+      "status": "passed",
+      "fiveAnnotationToolsCreated": true,
+      "saveReopenPassed": true,
+      "bulkDeleteSurvivedReopen": true,
+      "normalBrowserClose": true,
+      "cleanupErrors": 0
+    }
+  },
+  "native": {
+    "macCurrentPackage": "NOT_VERIFIED",
+    "eightStageFiveDirectionMatrix": "NOT_VERIFIED",
+    "openMove": "NOT_RUN",
+    "actualProcessRestart": "NOT_RUN",
+    "diagnostic": "native-highlight-selection-fail-20261025.json"
+  },
+  "resourceV3": {
+    "status": "INTEGRATED",
+    "nativeDataAdapterFirstLookupScope": "instance-cold",
+    "rareZyzzyvaP50Ms": 191.4,
+    "rareZyzzyvaMaxMs": 233.1,
+    "commonOnP50Ms": 209.5,
+    "commonOnMaxMs": 942.6,
+    "warmP95Ms": 0.1,
+    "readerUiSingleClickMs": 460.9,
+    "readerUiP95": "NOT_MEASURED",
+    "startupAddedBlockingUnder50ms": "NOT_MEASURED"
+  },
+  "scope": {
+    "scrollPerformance": "INVESTIGATED / NOT_RELEASE_BLOCKER",
+    "pdfJsVendorChanged": false,
+    "scrollOrWheelCodeChanged": false,
+    "productionRuntimeCodeChanged": false,
+    "formalVaultDeployed": false,
+    "mainPushed": false,
+    "iPad": "DEFERRED_BY_SCOPE"
+  }
+}
