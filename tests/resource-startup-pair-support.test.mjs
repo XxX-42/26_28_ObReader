@@ -8,11 +8,12 @@ const run = (extra = {}) => ({ processCold: true, traceStartedBeforeBundle: true
   runtime: 'Obsidian fixture', windowPolicy: 'bundle-start-plus-1000ms',
   availabilityActivation: false, tasks: [{ startMs: 10, durationMs: 25 }, { startMs: 50, durationMs: 25 }], ...extra });
 
-test('sub-50ms tasks contribute CPU despite zero TBT; idle elapsed is excluded', () => {
-  assert.deepEqual(summarizeStartupRun(run()), { cpuMs: 50, longestTaskMs: 25, tbtMs: 0, elapsedMs: 1000 });
+test('sub-50ms tasks contribute main-thread task wall time despite zero TBT; idle elapsed is excluded', () => {
+  assert.deepEqual(summarizeStartupRun(run()), { rendererMainTaskWallMs: 50,
+    longestTaskMs: 25, tbtMs: 0, elapsedMs: 1000 });
   const result = summarizeStartupPair(run(), run({ pid: 2, availabilityActivation: true,
     tasks: [{ startMs: 10, durationMs: 40 }, { startMs: 70, durationMs: 40 }] }));
-  assert.equal(result.addedRendererMainCpuMs, 30);
+  assert.equal(result.addedRendererMainTaskWallMs, 30);
   assert.equal(result.startupAcceptance, 'NOT_VERIFIED');
 });
 test('reject attach-only, incomplete deferred work, mismatched packages and nested slices', () => {
@@ -25,5 +26,5 @@ test('reject attach-only, incomplete deferred work, mismatched packages and nest
 test('preserve negative paired increment and clip tasks to the measurement window', () => {
   const result = summarizeStartupPair(run(), run({ pid: 2, availabilityActivation: true,
     tasks: [{ startMs: -10, durationMs: 20 }, { startMs: 990, durationMs: 30 }] }));
-  assert.equal(result.addedRendererMainCpuMs, -30);
+  assert.equal(result.addedRendererMainTaskWallMs, -30);
 });
