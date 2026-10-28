@@ -2644,6 +2644,26 @@ async function main() {
       previousFailure: resumeEvidence.errors, at: new Date().toISOString() };
   }
   await enablePluginAfterIsolation();
+  if (process.argv.includes("--selection-ab-diagnostic")) {
+    assert.ok(!resumeEvidence, "Selection diagnostics require a fresh isolated fixture.");
+    await openFixture(fixtures.pdfPath);
+    const { frame } = await readerFrame(fixtures.pdfPath);
+    await frame.waitForFunction(() => document.querySelectorAll('.page[data-page-number="1"] .textLayer span').length > 0,
+      { timeout: NATIVE_TEXT_LAYER_READY_TIMEOUT_MS });
+    const initialMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    assert.equal(initialMode, 0, "Selection control must start in the normal Reader mode.");
+    const normal = await selectTextByPointer({ frame, pathValue: fixtures.pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
+    await recordScreen("selection-ab-normal");
+    await frame.click("#editorHighlightButton");
+    await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
+    const highlight = await selectTextByPointer({ frame, pathValue: fixtures.pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
+    await recordScreen("selection-ab-highlight");
+    report.selectionAB = { normal, highlight, acceptance: "DIAGNOSTIC_ONLY" };
+    report.status = "diagnostic-complete";
+    report.completedAt = new Date().toISOString();
+    report.recommendation = "Compare native selection in Reader and Highlight modes; this run is not route acceptance.";
+    return;
+  }
   if (resumeEvidence) {
     learningItems.highlight = await readItem(resumeEvidence.uiFlows[0].itemId);
     assert.equal(learningItems.highlight.source.target.id, resumeEvidence.highlight.uuid);
