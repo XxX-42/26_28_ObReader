@@ -22,14 +22,15 @@
     "term": "on",
     "dictionaryMeaning": "ɒn; prep. 在...之上; adv. ...上去; a. 正起作用的; [计] 打开",
     "latencyMs": null,
-    "classification": "Exploratory DOM observation in Obsidian 1.12.7; no timing and not supported-runtime evidence."
+    "classification": "Exploratory DOM observation with installer 1.12.7; updated core version not independently recorded. No timing was collected."
   },
   "nextStep": "The supported Obsidian 1.14.5 one-sample Reader UI result is recorded in native-resource-v3-reader-ui-1145-20261026.json. Warm UI P95 remains NOT_MEASURED.",
   "runtimeActual": {
-    "obsidianVersion": "1.12.7",
     "electronVersion": "39.8.3",
     "processId": 69139,
-    "classification": "Unsupported runtime; no warm UI timings were collected."
+    "classification": "App core version not independently recorded; no warm UI timings were collected.",
+    "installerVersion": "1.12.7",
+    "coreVersion": "NOT_RECORDED"
   },
-  "acceptance": "NOT_ACCEPTED_FOR_SUPPORTED_RUNTIME"
+  "acceptance": "NOT_ACCEPTED_NO_TIMING"
 }

@@ -1,6 +1,6 @@
 {
   "runId": "native-reader-ui-current-ca8b-20261026",
-  "status": "EXPLORATORY_RUNTIME_UNSUPPORTED",
+  "status": "EXPLORATORY_CORE_VERSION_UNVERIFIED",
   "packageHashes": {
     "mainJs": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
     "manifest": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
@@ -60,14 +60,15 @@
   "historicalClassification": "EXPLORATORY_RUNTIME_UNSUPPORTED",
   "acceptance": "NOT_ACCEPTED",
   "runtimeActual": {
-    "obsidianVersion": "1.12.7",
     "electronVersion": "39.8.3",
     "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) obsidian/1.12.7 Chrome/142.0.7444.265 Electron/39.8.3 Safari/537.36",
     "processId": 69139,
-    "windowTitleWasMisleading": "The title displayed Obsidian 1.14.5; runtime User-Agent and app binary established 1.12.7."
+    "installerVersion": "1.12.7",
+    "coreVersion": "NOT_RECORDED",
+    "windowTitleEvidence": "Window title displayed Obsidian 1.14.5; the User-Agent and app bundle identify the installer, not independently the updated app core."
   },
   "notes": [
-    "The recorded 77 ms click-to-card observation is raw exploratory data only. It was collected in Obsidian 1.12.7 / Electron 39.8.3, below the candidate minimum app version 1.14.4.",
-    "Do not use this receipt as supported Native acceptance or benchmark evidence. A separate supported-runtime 1.14.5 Reader UI receipt is native-resource-v3-reader-ui-1145-20261026.json."
+    "The 77 ms observation remains an exploratory single sample. Installer 1.12.7 / Electron 39.8.3 does not establish that the updated app core was below 1.14.4. The core version was not independently recorded for this process.",
+    "This observation is not a cold-start or P95 benchmark. The separate Reader UI receipt native-resource-v3-reader-ui-1145-20261026.json also remains a single sample."
   ]
 }

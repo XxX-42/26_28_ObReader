@@ -1,5 +1,9 @@
 # Current integration gates
 
+## Runtime-version correction — 2026-10-28
+
+The earlier classification of a process as running an unsupported Obsidian core solely because its bundle and User-Agent reported `1.12.7` was not established. Obsidian can load an updated application package separately from its installer; the local log records a loaded `obsidian-1.14.5.asar`. The historical process core version was not independently recorded, so its 77 ms result remains exploratory, not an accepted cold-start or P95 result. This correction supersedes conflicting historical version classifications below; it does not change the unverified Native route matrix. See [the corrected receipt](native-resource-v3-reader-ui-ca8b-20261026.json).
+
 ## Final closeout authority — 2026-10-26
 
 This block supersedes every older status summary below. The user authorized a formal `远程仓库1` three-file deployment and Git push. Deployment completed to disk; current-package Native route acceptance remains incomplete.

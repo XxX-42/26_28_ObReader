@@ -1,5 +1,9 @@
 # ObReader 0.14 candidate status
 
+## Runtime-version correction — 2026-10-28
+
+The earlier classification of a process as running an unsupported Obsidian core solely because its bundle and User-Agent reported `1.12.7` was not established. Obsidian can load an updated application package separately from its installer; the local log records a loaded `obsidian-1.14.5.asar`. The historical process core version was not independently recorded, so its 77 ms result remains exploratory, not an accepted cold-start or P95 result. This correction supersedes conflicting historical version classifications below; it does not change the unverified Native route matrix. See [the corrected receipt](current-gates/native-resource-v3-reader-ui-ca8b-20261026.json).
+
 ## User-directed closeout — 2026-10-26
 
 The user directed us to seal the candidate, deploy it to the formal `远程仓库1` Vault, and push. The exact 0.14.0 three-file package was backed up and installed; automated gates are green. This does **not** make the incomplete Native route matrix pass.
