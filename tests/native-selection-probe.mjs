@@ -20,6 +20,7 @@ export function installNativeSelectionProbe({ d, w, a, trace, captureFixtureText
     active: true,
     pointerEvents: [],
     selectionChanges: [],
+    selectionMutations: [],
     eventPhases: [],
     consumers: [],
   };
@@ -33,6 +34,28 @@ export function installNativeSelectionProbe({ d, w, a, trace, captureFixtureText
       // Diagnostics must never interfere with viewer input.
     }
   };
+
+  // Only the generated Native fixture enables method tracing. Wrappers retain
+  // the browser's receiver, arguments, return values and exceptions unchanged.
+  const selectionMethodRestores = [];
+  const selectionPrototype = captureFixtureText ? w?.Selection?.prototype : null;
+  for (const name of ["collapse", "setPosition", "setBaseAndExtent", "extend", "removeAllRanges", "addRange", "empty"]) {
+    const descriptor = selectionPrototype && Object.getOwnPropertyDescriptor(selectionPrototype, name);
+    if (!descriptor?.configurable || typeof descriptor.value !== "function") continue;
+    const original = descriptor.value;
+    const wrapper = function (...args) {
+      try {
+        appendBounded(probe.selectionMutations, { method: name,
+          at: w?.performance?.now?.() ?? null,
+          stack: String(new Error().stack || "").split("\n").slice(1, 8) });
+      } catch {
+        // A diagnostic failure must never alter the native selection call.
+      }
+      return original.apply(this, args);
+    };
+    Object.defineProperty(selectionPrototype, name, { ...descriptor, value: wrapper });
+    selectionMethodRestores.push({ name, descriptor, wrapper });
+  }
 
   const safeMode = () => {
     try {
@@ -247,6 +270,9 @@ export function installNativeSelectionProbe({ d, w, a, trace, captureFixtureText
     }
     d.removeEventListener("selectionchange", selectionChangeListener, true);
     for (const entry of phaseListeners) entry.target.removeEventListener(entry.type, entry.listener, entry.capture);
+    for (const { name, descriptor, wrapper } of selectionMethodRestores) {
+      if (selectionPrototype?.[name] === wrapper) Object.defineProperty(selectionPrototype, name, descriptor);
+    }
     if (manager?.highlightSelection === consumerWrapper && consumerWrapper) {
       if (priorConsumer) Object.defineProperty(manager, "highlightSelection", priorConsumer);
       else delete manager.highlightSelection;

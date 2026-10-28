@@ -151,3 +151,27 @@ test("native selection probe records pre-consumption ranges and restores phase l
   d.dispatch("pointerup");w.dispatch("blur");
   assert.equal(probe.eventPhases.length,n);
 });
+
+test("fixture-only selection tracing preserves native method behavior and restores the prototype", () => {
+  const d = new FakeEventTarget(), w = new FakeEventTarget();
+  w.performance = { now: () => 42 };
+  class FakeSelection {
+    collapse(node, offset) { this.value = [node, offset]; return "native-result"; }
+    extend() { throw new TypeError("native-error"); }
+  }
+  w.Selection = FakeSelection;
+  d.getSelection = () => null;
+  d.querySelectorAll = () => [];
+  const collapse = FakeSelection.prototype.collapse;
+  const extend = FakeSelection.prototype.extend;
+  const trace = {};
+  const cleanup = installNativeSelectionProbe({ d, w, trace, captureFixtureText: true });
+  const selection = new FakeSelection();
+  assert.equal(selection.collapse("node", 2), "native-result");
+  assert.deepEqual(selection.value, ["node", 2]);
+  assert.throws(() => selection.extend(), /native-error/);
+  assert.deepEqual(trace.nativeSelectionProbe.selectionMutations.map(x => x.method), ["collapse", "extend"]);
+  cleanup();
+  assert.equal(FakeSelection.prototype.collapse, collapse);
+  assert.equal(FakeSelection.prototype.extend, extend);
+});

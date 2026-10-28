@@ -772,6 +772,7 @@ async function selectTextByPointer({ frame, pathValue, text, mode, exact = true 
     const result = {
       events: window.__nativePointerTrace || [],
       selectionProbe: { consumers: consumerRows, pointerEvents: pointerRows, selectionChanges,
+        selectionMutations: probe?.selectionMutations || [],
         eventPhaseCount: eventPhases.length,
         selectionEventPhases: eventPhases.filter(row =>
           ["pointerdown", "pointerup", "mousedown", "mouseup", "selectstart"].includes(row.type))
