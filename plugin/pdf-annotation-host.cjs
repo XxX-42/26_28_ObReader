@@ -1197,11 +1197,19 @@ function containsAscii(bytes, needle) {
   if (!needle || bytes.byteLength < needle.length) return false;
   const encoded = new Uint8Array(needle.length);
   for (let index = 0; index < needle.length; index += 1) encoded[index] = needle.charCodeAt(index);
-  outer: for (let offset = 0; offset <= bytes.byteLength - encoded.length; offset += 1) {
+  let offset = 0;
+  while (offset <= bytes.byteLength - encoded.length) {
+    offset = bytes.indexOf(encoded[0], offset);
+    if (offset < 0 || offset > bytes.byteLength - encoded.length) return false;
+    let matches = true;
     for (let index = 0; index < encoded.length; index += 1) {
-      if (bytes[offset + index] !== encoded[index]) continue outer;
+      if (bytes[offset + index] !== encoded[index]) {
+        matches = false;
+        break;
+      }
     }
-    return true;
+    if (matches) return true;
+    offset += 1;
   }
   return false;
 }

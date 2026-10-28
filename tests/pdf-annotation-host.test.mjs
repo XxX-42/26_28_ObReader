@@ -220,6 +220,49 @@ test("a legacy-marker PDF opens read-only when exact identity inspection is unav
   host.dispose();
 });
 
+test("legacy marker byte search respects exact matches, end boundaries, and Uint8Array subarray bounds", async () => {
+  const cases = [
+    { name: "marker at byte zero", bytes: new TextEncoder().encode("/ObReaderMerge"), expected: true },
+    { name: "marker at final legal offset", bytes: new TextEncoder().encode("%PDF /ObReaderId"), expected: true },
+    { name: "near match ending before marker completion", bytes: new TextEncoder().encode("%PDF /ObReaderI"), expected: false },
+    { name: "first-byte collisions without a full marker", bytes: new TextEncoder().encode("/x /ObReaderMergX /ObReaderI!"), expected: false },
+  ];
+
+  for (const { name, bytes, expected } of cases) {
+    const adapter = makeAdapter();
+    const app = makeApp(adapter);
+    let inspectCalls = 0;
+    const host = createPdfAnnotationHost({
+      app,
+      hashRuntime: { fingerprint: hash },
+      inspectLegacy: async () => { inspectCalls += 1; return { identities: [] }; },
+      makeToken: () => `marker-${name.replaceAll(" ", "-")}`,
+      deviceId: "marker-byte-test",
+    });
+    const view = makeView(app, `Books/${name}.pdf`, bytes);
+    await host.initializeView(view, bytes);
+    assert.equal(inspectCalls, expected ? 1 : 0, name);
+    host.dispose();
+  }
+
+  const backing = new TextEncoder().encode("/ObReaderMerge%PDF-no-marker-in-view");
+  const subarray = backing.subarray("/ObReaderMerge".length);
+  const adapter = makeAdapter();
+  const app = makeApp(adapter);
+  let inspectCalls = 0;
+  const host = createPdfAnnotationHost({
+    app,
+    hashRuntime: { fingerprint: hash },
+    inspectLegacy: async () => { inspectCalls += 1; return { identities: [] }; },
+    makeToken: () => "marker-subarray",
+    deviceId: "marker-byte-test",
+  });
+  const view = makeView(app, "Books/subarray.pdf", subarray);
+  await host.initializeView(view, subarray);
+  assert.equal(inspectCalls, 0, "marker bytes outside a Uint8Array view must not be inspected");
+  host.dispose();
+});
+
 test("legacy delete history sharing a ref with a live annotation migrates without suppressing the live mark", async () => {
   const adapter = makeAdapter();
   const app = makeApp(adapter);
