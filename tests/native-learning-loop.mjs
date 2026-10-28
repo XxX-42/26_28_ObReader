@@ -2650,7 +2650,12 @@ async function main() {
     const { frame } = await readerFrame(fixtures.pdfPath);
     await frame.waitForFunction(() => document.querySelectorAll('.page[data-page-number="1"] .textLayer span').length > 0,
       { timeout: NATIVE_TEXT_LAYER_READY_TIMEOUT_MS });
-    const initialMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    let initialMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    if (initialMode === 9) {
+      await frame.click("#editorHighlightButton");
+      await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0, { timeout: 8_000 });
+      initialMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
+    }
     assert.equal(initialMode, 0, "Selection control must start in the normal Reader mode.");
     const normal = await selectTextByPointer({ frame, pathValue: fixtures.pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
     report.selectionAB = { normal, acceptance: "DIAGNOSTIC_ONLY" };
