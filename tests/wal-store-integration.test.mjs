@@ -303,6 +303,85 @@ test("distinct verified identities routing to one path fail closed after discove
   await assert.rejects(cachedStore.documentForPath(sourcePath), { code: "IDENTITY_ROUTE_CONFLICT" });
 });
 
+test("one discovery overlaps independent root listings without caching across calls", async () => {
+  const { adapter } = makeAdapter();
+  await adapter.mkdir(`${ROOT}/sidecars`);
+  await adapter.mkdir(`${ROOT}/wal`);
+  const originalList = adapter.list.bind(adapter);
+  let active = 0;
+  let maxActive = 0;
+  let listCalls = 0;
+  adapter.list = async (directory) => {
+    listCalls++;
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    try { return await originalList(directory); }
+    finally { active--; }
+  };
+  const store = makeWalStore(adapter);
+  const started = performance.now();
+  await store.documentForPath("Books/missing.pdf");
+  const elapsedMs = performance.now() - started;
+  assert.ok(elapsedMs < 105, `one discovery should finish near one 60ms listing wave (took ${elapsedMs.toFixed(1)}ms)`);
+  assert.equal(maxActive, 2, "the independent sidecar and WAL root listings overlap");
+  await store.documentForPath("Books/missing.pdf");
+  assert.equal(listCalls, 4, "a later call performs fresh root listings instead of reusing prior results");
+});
+
+test("failed discovery waits for already-started root listings to settle", async () => {
+  const { adapter } = makeAdapter();
+  await adapter.mkdir(`${ROOT}/sidecars`);
+  await adapter.mkdir(`${ROOT}/wal`);
+  const originalList = adapter.list.bind(adapter);
+  let active = 0;
+  adapter.list = async (directory) => {
+    active++;
+    try {
+      if (directory.endsWith("/sidecars")) throw new Error("SIDECAR_LIST_FAILED");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return await originalList(directory);
+    } finally { active--; }
+  };
+  const store = makeWalStore(adapter);
+  await assert.rejects(store.documentForPath("Books/missing.pdf"), /SIDECAR_LIST_FAILED/);
+  assert.equal(active, 0, "discovery rejection waits until its other in-flight root listing settles");
+});
+
+test("one discovery caps WAL directory listings and JSONL header reads at four", async () => {
+  const { adapter } = makeAdapter();
+  await adapter.mkdir(`${ROOT}/sidecars`);
+  await adapter.mkdir(`${ROOT}/wal`);
+  for (let index = 0; index < 8; index++) {
+    const directory = `${ROOT}/wal/device-${index}`;
+    await adapter.mkdir(directory);
+    await adapter.write(`${directory}/header-${index}.jsonl`, "{}");
+  }
+  const originalList = adapter.list.bind(adapter);
+  const originalRead = adapter.read.bind(adapter);
+  let activeLists = 0;
+  let maxLists = 0;
+  let activeReads = 0;
+  let maxReads = 0;
+  adapter.list = async (directory) => {
+    activeLists++;
+    maxLists = Math.max(maxLists, activeLists);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    try { return await originalList(directory); }
+    finally { activeLists--; }
+  };
+  adapter.read = async (file) => {
+    activeReads++;
+    maxReads = Math.max(maxReads, activeReads);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    try { return await originalRead(file); }
+    finally { activeReads--; }
+  };
+  await makeWalStore(adapter, "jsonl-discovery-device", { jsonlMode: true }).documentForPath("Books/missing.pdf");
+  assert.equal(maxLists, 4, "WAL directory listing concurrency is capped at four");
+  assert.equal(maxReads, 4, "flattened JSONL header reads share the same four-operation cap");
+});
+
 test("a verified pending sidecar is discoverable after a staged-write crash and WAL loss", async () => {
   const { adapter, shared } = makeAdapter();
   const store = makeWalStore(adapter);

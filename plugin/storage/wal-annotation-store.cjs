@@ -18,6 +18,26 @@ const PROTOCOL = "wal-sidecar-v3.1";
 const KINDS = new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
 const EMPTY_JSONL_HEADER = Symbol("empty-jsonl-header");
 const jsonlGenerationsByAdapter = new WeakMap();
+const DISCOVERY_IO_CONCURRENCY = 4;
+const DISCOVERY_VERIFY_CONCURRENCY = 8;
+
+async function mapLimit(items, limit, mapper) {
+  const results = new Array(items.length);
+  const errors = new Map();
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      if (errors.size) return;
+      const index = next++;
+      if (index >= items.length) return;
+      try { results[index] = await mapper(items[index], index); }
+      catch (error) { errors.set(index, error); }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (errors.size) throw errors.get(Math.min(...errors.keys()));
+  return results;
+}
 
 function jsonlGeneration(adapter, docKey) {
   return jsonlGenerationsByAdapter.get(adapter)?.get(docKey) || 0;
@@ -131,42 +151,59 @@ function createWalAnnotationStore({ adapter, coordinationAdapter = adapter, root
   async function discover() {
     const scanGeneration = routingGeneration;
     const keys = new Map();
-    const paths = (await list(`${root}/sidecars`)).files.filter((path) => /\.annot\.json(?:\.pending)?$/.test(path));
-    const walDirectories = (await list(`${root}/wal`)).folders;
-    for (const directory of walDirectories) {
-      const files = (await list(directory)).files;
-      paths.push(...files.filter((path) => /\.json(?:\.pending)?$/.test(path)));
-      if (jsonl) {
-        for (const path of files.filter((candidate) => /\.jsonl(?:\.anchor\.json|\.archive\.\d+-\d+\.json)?$/.test(candidate))) {
-          try {
-            const header = await readJsonlHeader(path);
-            if (/^[a-f0-9]{12}$/.test(header?.docKey || "") && typeof header.documentId === "string") {
-              keys.set(`${header.docKey}:${header.documentId}`, identityOnly(header));
-            }
-          } catch { /* A JSONL header is only a hint; readEffective validates the record. */ }
-        }
+    const [sidecarListing, walListing] = await mapLimit([
+      `${root}/sidecars`, `${root}/wal`,
+    ], 2, (directory) => list(directory));
+    const paths = sidecarListing.files
+      .filter((candidate) => /\.annot\.json(?:\.pending)?$/.test(candidate)).sort();
+    const directoryResults = await mapLimit(walListing.folders.slice().sort(), DISCOVERY_IO_CONCURRENCY,
+      async (directory) => {
+        const files = (await list(directory)).files.slice().sort();
+        const jsonlCandidates = jsonl ? files.filter((candidate) =>
+          /\.jsonl(?:\.anchor\.json|\.archive\.\d+-\d+\.json)?$/.test(candidate)) : [];
+        return { paths: files.filter((candidate) => /\.json(?:\.pending)?$/.test(candidate)),
+          jsonlCandidates };
+      });
+    const jsonlCandidates = directoryResults.flatMap((directory) => directory.jsonlCandidates);
+    const headers = await mapLimit(jsonlCandidates, DISCOVERY_IO_CONCURRENCY, async (candidate) => {
+      try { return await readJsonlHeader(candidate); }
+      catch { return null; } // A JSONL header is only a hint; readEffective validates the record.
+    });
+    for (const directory of directoryResults) {
+      paths.push(...directory.paths);
+    }
+    for (const header of headers) {
+      if (/^[a-f0-9]{12}$/.test(header?.docKey || "") && typeof header.documentId === "string") {
+        keys.set(`${header.docKey}:${header.documentId}`, identityOnly(header));
       }
     }
-    for (const path of paths) {
+    paths.sort();
+    const verifiedPaths = await mapLimit(paths, DISCOVERY_VERIFY_CONCURRENCY, async (path) => {
       // Headers are discovery hints only; readEffective verifies all envelopes.
       try {
         const value = JSON.parse(await adapter.read(path));
         const header = value.document || value;
-        if (!/^[a-f0-9]{12}$/.test(header.docKey || "") || typeof header.documentId !== "string") continue;
+        if (!/^[a-f0-9]{12}$/.test(header.docKey || "") || typeof header.documentId !== "string") return null;
         let verified;
         if (verifyHash) {
           const { integrity, ...unsigned } = value;
-          if (typeof integrity !== "string" || !await verifyHash(new TextEncoder().encode(canonicalJson(unsigned)), integrity)) continue;
+          if (typeof integrity !== "string" || !await verifyHash(new TextEncoder().encode(canonicalJson(unsigned)), integrity)) return null;
           verified = unsigned;
         } else verified = await verify(value, hash);
         if (path.startsWith(`${root}/sidecars/`)) sidecars.validateSidecar(verified, header);
         else wals.validateWal(verified, header, path.slice(`${root}/wal/`.length).split("/")[0]);
-        keys.set(`${header.docKey}:${header.documentId}`, identityOnly(header));
-      } catch { /* Unverified headers are discovery hints, never authority. */ }
+        return identityOnly(header);
+      } catch { return null; /* Unverified headers are discovery hints, never authority. */ }
+    });
+    for (const identity of verifiedPaths) {
+      if (identity) keys.set(`${identity.docKey}:${identity.documentId}`, identity);
     }
     const result = [];
     const verifiedKeys = new Map();
-    for (const candidate of keys.values()) {
+    const candidates = [...keys.values()];
+    // readEffective may repair this device's JSONL tail. Keep these calls
+    // serial so colliding document identities cannot repair the same WAL concurrently.
+    for (const candidate of candidates) {
       let loaded;
       try { loaded = await readEffective(candidate); }
       catch (error) { if (["VERSION_COLLISION", "DOC_KEY_COLLISION"].includes(error.code)) throw error; continue; }
