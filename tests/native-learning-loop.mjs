@@ -2662,15 +2662,33 @@ async function main() {
     await checkpoint("selection-ab-normal-complete");
     await recordScreen("selection-ab-normal");
     if (process.argv.includes("--selection-keyboard-diagnostic")) {
+      const keyboardBefore = await frame.evaluate(() => {
+        const trace = [];
+        const listener = event => trace.push({ type: event.type, key: event.key,
+          trusted: event.isTrusted, defaultPrevented: event.defaultPrevented });
+        for (const type of ["keydown", "keyup"]) document.addEventListener(type, listener, true);
+        window.__nativeKeyboardDiagnostic = { trace, listener };
+        const selection = document.getSelection();
+        return { focused: document.hasFocus(), activeElement: document.activeElement?.tagName || null,
+          collapsed: selection?.isCollapsed ?? null, anchorOffset: selection?.anchorOffset ?? null,
+          focusOffset: selection?.focusOffset ?? null };
+      });
+      const parentBefore = await page.evaluate(() => ({ focused: document.hasFocus(),
+        activeElement: document.activeElement?.tagName || null }));
       await page.keyboard.down("Shift");
       for (let i = 0; i < 8; i += 1) await page.keyboard.press("ArrowLeft");
       await page.keyboard.up("Shift");
       report.selectionAB.keyboard = await frame.evaluate(() => {
         const selection = document.getSelection();
+        const diagnostic = window.__nativeKeyboardDiagnostic;
+        for (const type of ["keydown", "keyup"]) document.removeEventListener(type, diagnostic.listener, true);
+        delete window.__nativeKeyboardDiagnostic;
         return { text: selection?.toString() || "", collapsed: selection?.isCollapsed ?? null,
           anchorOffset: selection?.anchorOffset ?? null, focusOffset: selection?.focusOffset ?? null,
-          anchorOnTextLayer: !!selection?.anchorNode?.parentElement?.closest(".textLayer") };
+          anchorOnTextLayer: !!selection?.anchorNode?.parentElement?.closest(".textLayer"),
+          events: diagnostic.trace };
       });
+      report.selectionAB.keyboard.before = { frame: keyboardBefore, parent: parentBefore };
       await recordScreen("selection-keyboard-result");
       report.status = "diagnostic-complete";
       report.completedAt = new Date().toISOString();
