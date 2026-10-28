@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "runId": "native-learning-loop-20261028040625309-951dd71505",
+  "recordedAt": "2026-10-28T04:06:25.309Z",
+  "scope": "Native isolated fixture diagnostic, not acceptance",
+  "runnerCommit": "f0ef5f7b5185618351db998549262e57e457f965",
+  "candidateSha256": {
+    "main.js": {
+      "sha256": "ca8b7a8dd1db65d5610d84e01a66b9193896ab58c725a07c8bbf49a009cc73a5",
+      "bytes": 9209172
+    },
+    "manifest.json": {
+      "sha256": "71abba5efc96154a9bf19a899778ab6ba2676f521f4c2205a59d1e7c40a6d675",
+      "bytes": 261
+    },
+    "styles.css": {
+      "sha256": "8da58b1d067939759b42a8671b10adb6600594f66af3c1929eed619dfab68aea",
+      "bytes": 8058
+    }
+  },
+  "rawReportSha256": "bf3fcbd4169c1307ad176c7d7b2043b74eb91c58ef89aad885dc09cec6a4ffc8",
+  "owner": {
+    "appVersion": "1.14.5",
+    "ownerPid": 15269,
+    "siblingTestVaultProcesses": [],
+    "foreground": "verified",
+    "syncEnabled": false
+  },
+  "normal": {
+    "mode": 0,
+    "driver": "puppeteer-cdp-mouse",
+    "pathSamples": 13,
+    "pathSamplesInTextLayer": 13,
+    "selection": "",
+    "highlightEditorCount": 0,
+    "selectionChanges": 12,
+    "nonCollapsedChanges": 0,
+    "selectionMutationCalls": 0,
+    "selectStartEvents": [
+      {
+        "target": "window",
+        "capture": true,
+        "defaultPrevented": false
+      },
+      {
+        "target": "document",
+        "capture": true,
+        "defaultPrevented": false
+      },
+      {
+        "target": "document",
+        "capture": false,
+        "defaultPrevented": false
+      },
+      {
+        "target": "window",
+        "capture": false,
+        "defaultPrevented": false
+      }
+    ]
+  },
+  "highlight": {
+    "mode": 9,
+    "driver": "puppeteer-cdp-mouse",
+    "pathSamples": 13,
+    "pathSamplesInTextLayer": 13,
+    "selection": "",
+    "highlightEditorCount": 0,
+    "selectionChanges": 11,
+    "nonCollapsedChanges": 0,
+    "selectionMutationCalls": 0,
+    "selectStartEvents": [
+      {
+        "target": "window",
+        "capture": true,
+        "defaultPrevented": false
+      },
+      {
+        "target": "document",
+        "capture": true,
+        "defaultPrevented": false
+      },
+      {
+        "target": "document",
+        "capture": false,
+        "defaultPrevented": false
+      },
+      {
+        "target": "window",
+        "capture": false,
+        "defaultPrevented": false
+      }
+    ]
+  },
+  "cleanup": {
+    "status": "complete",
+    "isolationRestored": true,
+    "disabledStatePersisted": true
+  },
+  "limitations": [
+    "Empty instrumentation does not prove native code did not change the selection; the probe observes JavaScript Selection methods only.",
+    "This result does not establish whether the PDF text-layer behavior occurs with physical input on a user device.",
+    "No Native route matrix or process restart is accepted by this diagnostic."
+  ]
+}

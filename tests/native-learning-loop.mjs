@@ -2644,7 +2644,7 @@ async function main() {
       previousFailure: resumeEvidence.errors, at: new Date().toISOString() };
   }
   await enablePluginAfterIsolation();
-  if (process.argv.includes("--selection-ab-diagnostic")) {
+  if (process.argv.includes("--selection-ab-diagnostic") || process.argv.includes("--selection-keyboard-diagnostic")) {
     assert.ok(!resumeEvidence, "Selection diagnostics require a fresh isolated fixture.");
     await openFixture(fixtures.pdfPath);
     const { frame } = await readerFrame(fixtures.pdfPath);
@@ -2661,6 +2661,22 @@ async function main() {
     report.selectionAB = { normal, acceptance: "DIAGNOSTIC_ONLY" };
     await checkpoint("selection-ab-normal-complete");
     await recordScreen("selection-ab-normal");
+    if (process.argv.includes("--selection-keyboard-diagnostic")) {
+      await page.keyboard.down("Shift");
+      for (let i = 0; i < 8; i += 1) await page.keyboard.press("ArrowLeft");
+      await page.keyboard.up("Shift");
+      report.selectionAB.keyboard = await frame.evaluate(() => {
+        const selection = document.getSelection();
+        return { text: selection?.toString() || "", collapsed: selection?.isCollapsed ?? null,
+          anchorOffset: selection?.anchorOffset ?? null, focusOffset: selection?.focusOffset ?? null,
+          anchorOnTextLayer: !!selection?.anchorNode?.parentElement?.closest(".textLayer") };
+      });
+      await recordScreen("selection-keyboard-result");
+      report.status = "diagnostic-complete";
+      report.completedAt = new Date().toISOString();
+      report.recommendation = "The keyboard selection is an input diagnostic, not route acceptance.";
+      return;
+    }
     await frame.click("#editorHighlightButton");
     try {
       await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
