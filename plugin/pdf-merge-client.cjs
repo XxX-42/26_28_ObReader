@@ -317,6 +317,7 @@ function createPdfMergeClient({
     prepareLocal: (payload) => call("prepareLocal", payload),
     merge: (payload) => call("merge", payload),
     inspect: (payload) => call("inspect", payload),
+    verifyOutlineUpdate: (payload) => call("verifyOutlineUpdate", payload),
     dispose,
   };
 }

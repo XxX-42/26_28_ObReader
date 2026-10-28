@@ -1,5 +1,6 @@
 import core from "./pdf-merge-core.cjs";
 import hashRuntimeModule from "./pdf-hash-runtime.cjs";
+import outlineSource from "./pdf-outline-source.cjs";
 
 const hashRuntimeReady = hashRuntimeModule.createPdfHashRuntime()
   .then((runtime) => {
@@ -7,7 +8,7 @@ const hashRuntimeReady = hashRuntimeModule.createPdfHashRuntime()
     return runtime;
   });
 
-const methods = new Set(["prepareLocal", "merge", "inspect"]);
+const methods = new Set(["prepareLocal", "merge", "inspect", "verifyOutlineUpdate"]);
 let requestQueue = Promise.resolve();
 const timingNow = () => globalThis.performance?.now?.() ?? Date.now();
 
@@ -17,7 +18,8 @@ async function handleRequest(event, enqueuedAt) {
   const startedAt = timingNow();
   try {
     await hashRuntimeReady;
-    let result = await core[method](["prepareLocal", "merge"].includes(method)
+    const implementation = method === "verifyOutlineUpdate" ? outlineSource : core;
+    let result = await implementation[method](["prepareLocal", "merge"].includes(method)
       ? { ...(payload || {}), __collectTimings: true }
       : (payload || {}));
     const executeMs = +(timingNow() - startedAt).toFixed(3);

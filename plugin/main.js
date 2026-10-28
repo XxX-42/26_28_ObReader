@@ -4293,6 +4293,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       hashRuntime: this.pdfHashRuntime,
       identityHash: (bytes) => sha256Bytes(bytes),
       inspectLegacy: (bytes) => this.getLegacyMergeClient().inspect({ bytes, fastOpen: true }),
+      verifyOutlineUpdate: (payload) => this.verifyOutlineSource(payload),
+      reopenVerifiedView: (view, file) => view.openFile(file),
       normalizePath,
       makeToken,
       deviceId: localAnnotationDeviceId(),
@@ -5802,6 +5804,8 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.annotationHost?.dispose();
     this.legacyMergeClient?.dispose();
     this.legacyMergeClient = null;
+    this.outlineVerifierClient?.dispose();
+    this.outlineVerifierClient = null;
     this.heavyWork?.dispose();
     this.viewerAssetsResult = null;
     this.verifiedAssetBytes?.clear();
@@ -7216,6 +7220,33 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       });
     }
     return this.legacyMergeClient;
+  }
+
+  verifyOutlineSource(payload) {
+    const run = async () => {
+      if (this.isUnloading) throw new Error("Plugin is unloading.");
+      const client = this.outlineVerifierClient || createPdfMergeClient({
+        loadWorkerSource: async () => {
+          const assets = await this.ensureViewerAssets();
+          const bytes = await this.readVerifiedAsset("web/pdf-merge-worker.js");
+          return { bytes, sha256: sha256Bytes(bytes), url: this.app.vault.adapter.getResourcePath(`${assets.rootPath}/web/pdf-merge-worker.js`) };
+        },
+        WorkerClass: globalThis.Worker, URLApi: globalThis.URL, BlobClass: globalThis.Blob,
+        onTaskTiming: timing => this.sessionLog?.record("outlineSourceVerification", timing),
+      });
+      this.outlineVerifierClient = client;
+      let timer;
+      try {
+        return await Promise.race([client.verifyOutlineUpdate(payload), new Promise((_, reject) => {
+          timer = globalThis.setTimeout(() => { client.dispose(); if (this.outlineVerifierClient === client) this.outlineVerifierClient = null; reject(Object.assign(new Error("Directory verification exceeded its time budget."), { code: "PDF_OUTLINE_VERIFICATION_TIMEOUT" })); }, 30000);
+        })]);
+      } finally {
+        globalThis.clearTimeout(timer);
+      }
+    };
+    const task = (this.outlineVerifierQueue || Promise.resolve()).then(run, run);
+    this.outlineVerifierQueue = task.catch(() => {});
+    return task;
   }
 
   async readVerifiedAssetText(relativePath) {

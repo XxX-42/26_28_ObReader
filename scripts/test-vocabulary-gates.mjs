@@ -174,6 +174,8 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/native-tooling.test.mjs",
     "tests/packaging.test.mjs",
     "tests/pdf-annotation-host.test.mjs",
+    "tests/pdf-outline-source.test.mjs",
+    "tests/pdf-outline-host.test.mjs",
     "tests/pdf-annotation-store.test.mjs",
     "tests/pdf-hash-runtime.test.mjs",
     "tests/pdf-incremental.test.mjs",

@@ -25,6 +25,7 @@ function boot(core) {
   vm.runInNewContext(
     workerSource
       .replace('import core from "./pdf-merge-core.cjs";', "const core = globalThis.__core;")
+      .replace('import outlineSource from "./pdf-outline-source.cjs";', "const outlineSource = globalThis.__core;")
       .replace('import hashRuntimeModule from "./pdf-hash-runtime.cjs";', "const hashRuntimeModule = globalThis.__hashRuntimeModule;"),
     context,
   );

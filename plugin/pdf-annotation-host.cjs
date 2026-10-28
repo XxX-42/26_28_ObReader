@@ -2,6 +2,7 @@
 "use strict";
 
 const { createWalAnnotationStore } = require("./storage/wal-annotation-store.cjs");
+const { createSourceVersions } = require("./pdf-source-versions.cjs");
 
 const ANNOTATION_ROOT = "00_Archive/20_PDFData";
 const TAIL_SAMPLE_BYTES = 64 * 1024;
@@ -18,6 +19,8 @@ function createPdfAnnotationHost({
   log = () => {},
   storeFactory = createWalAnnotationStore,
   enableJsonl = false,
+  verifyOutlineUpdate = null,
+  reopenVerifiedView = null,
 }) {
   if (!app?.vault?.adapter || !hashRuntime || typeof hashRuntime.fingerprint !== "function") {
     throw new TypeError("PDF annotation host requires a Vault adapter and hash runtime.");
@@ -198,6 +201,8 @@ function createPdfAnnotationHost({
   const queues = new Map();
   const documentViews = new Map();
   const sourceStates = new Map();
+  const sourceVersions = createSourceVersions({ adapter: backingAdapter, makeToken });
+  const outlineJobs = new Map();
   const snapshotReads = new Map();
   const maintenanceRequests = new Map();
   const maintenanceTimers = new Set();
@@ -213,6 +218,8 @@ function createPdfAnnotationHost({
     if (!file || typeof file.path !== "string") throw codedError("PDF_ANNOTATION_SOURCE_MISSING", "The source PDF is no longer available.");
     const sourcePath = normalizePath(file.path);
     const source = sourceMetadata(bytes, file, hashRuntime, sourcePath);
+    const physicalSource = { ...source };
+    const openRequest = view.openRequest;
     let prior;
     let registered;
     let sourceHashCompatMatch = false;
@@ -227,6 +234,12 @@ function createPdfAnnotationHost({
         source.sourceHash = prior.source.sourceHash;
         source.fastHash = prior.source.sourceHash;
         sourceHashCompatMatch = true;
+      }
+      if (prior?.source?.sourceHash && prior.source.sourceHash !== source.sourceHash && !sourceHashCompatMatch) {
+        const version = await verifyOutlineVersion(file, bytes, prior, {
+          isCurrent: () => !disposed && view.openRequest === openRequest && !view.teardownStarted,
+        });
+        if (version) Object.assign(source, version.logicalSource);
       }
       registered = await store.registerDocument({ sourcePath, source });
     } catch (error) {
@@ -416,7 +429,7 @@ function createPdfAnnotationHost({
         ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
         : "检测到旧版 PDF 批注，但无法验证其身份；已进入只读模式，原 PDF 未修改。", true);
     }
-    const state = { document: currentDocument, source, file, path: sourcePath };
+    const state = { document: currentDocument, source, physicalSource, file, path: sourcePath };
     sourceStates.set(currentDocument.documentId, state);
     addView(currentDocument.documentId, view);
     log("annotation-open", {
@@ -446,7 +459,8 @@ function createPdfAnnotationHost({
       if (message.idle !== true) pending.cancelled = true;
       if (!pending.views.size) {
         maintenanceRequests.delete(message.probeId);
-        if (!pending.cancelled) await materializeIdleDocument(pending.document);
+        if (pending.resolve) pending.resolve(!pending.cancelled);
+        else if (!pending.cancelled) await materializeIdleDocument(pending.document);
       }
       return true;
     }
@@ -703,8 +717,9 @@ function createPdfAnnotationHost({
     if (current !== file) throw codedError("PDF_ANNOTATION_SOURCE_REPLACED", "The PDF source was replaced; annotation persistence is paused.");
     const currentSize = Number(file.stat?.size);
     const currentMtime = Number(file.stat?.mtime);
-    const sizeChanged = Number.isFinite(currentSize) && currentSize !== state.source.size;
-    const mtimeChanged = Number.isFinite(currentMtime) && Number.isFinite(state.source.mtime) && currentMtime !== state.source.mtime;
+    const physical = state.physicalSource || state.source;
+    const sizeChanged = Number.isFinite(currentSize) && currentSize !== physical.size;
+    const mtimeChanged = Number.isFinite(currentMtime) && Number.isFinite(physical.mtime) && currentMtime !== physical.mtime;
     if (!allowChanged && sizeChanged) {
       throw codedError("PDF_ANNOTATION_SOURCE_CHANGED", "The PDF size changed outside the Reader; annotation persistence is paused.");
     }
@@ -900,6 +915,86 @@ function createPdfAnnotationHost({
     }
   }
 
+  async function verifyOutlineVersion(file, bytes, document, { expectedBeforeHash, expectedAfterHash, isCurrent = () => !disposed } = {}) {
+    if (typeof verifyOutlineUpdate !== "function" || !document?.source || document.sourcePath !== normalizePath(file.path)) return null;
+    if (expectedBeforeHash && (typeof hashRuntime.matches !== "function" ||
+        !Number.isSafeInteger(document.source.size) || document.source.size > bytes.length ||
+        !hashRuntime.matches(bytes.subarray(0, document.source.size), expectedBeforeHash))) {
+      throw codedError("PDF_OUTLINE_BASE_MISMATCH", "The requested original source differs from this document.");
+    }
+    const capturedPath = normalizePath(file.path);
+    const jobKey = `${document.documentId}:${hashRuntime.fingerprint(bytes)}`;
+    let job = outlineJobs.get(jobKey);
+    if (!job) {
+      job = verifyOutlineUpdate({ bytes, source: document.source, expectedAfterHash }).finally(() => outlineJobs.delete(jobKey));
+      outlineJobs.set(jobKey, job);
+    }
+    let proof;
+    try { proof = await job; }
+    catch (error) {
+      log("annotation-outline-rejected", { documentId: document.documentId, path: capturedPath, code: error?.code || "PDF_OUTLINE_UPDATE_UNVERIFIED", reason: String(error?.message || error).slice(0, 512) });
+      return null;
+    }
+    assertLive();
+    if (!isCurrent() || file.path !== capturedPath || app.vault.getAbstractFileByPath(capturedPath) !== file) throw codedError("PDF_OUTLINE_SESSION_CHANGED", "The source moved or the Reader changed during verification.");
+    // The Worker must never detach the Reader's bytes; re-read the live file
+    // after asynchronous validation to rule out a replacement during the job.
+    const current = bytesView(await app.vault.readBinary(file));
+    const verifiedStat = { size: file.stat?.size, mtime: file.stat?.mtime };
+    if (proof?.status !== "VERIFIED" || typeof hashRuntime.matches !== "function" ||
+        !hashRuntime.matches(current, proof.afterHash) || current.byteLength !== proof.afterSize ||
+        (expectedAfterHash && !hashRuntime.matches(current, expectedAfterHash)) || !isCurrent() ||
+        app.vault.getAbstractFileByPath(capturedPath) !== file || file.path !== capturedPath) {
+      throw codedError("PDF_OUTLINE_SOURCE_RACED", "The PDF changed while its directory update was being verified.");
+    }
+    const association = await sourceVersions.record(document, proof);
+    if (!isCurrent() || app.vault.getAbstractFileByPath(capturedPath) !== file || file.path !== capturedPath ||
+        file.stat?.size !== verifiedStat.size || file.stat?.mtime !== verifiedStat.mtime) throw codedError("PDF_OUTLINE_SESSION_CHANGED", "Source changed before association activation.");
+    log("annotation-outline-verified", { documentId: document.documentId, docKey: document.docKey, beforeHash: proof.beforeHash, afterHash: proof.afterHash, recordPath: association.path, elapsedMs: proof.elapsedMs });
+    return { proof, recordPath: association.path, logicalSource: { ...document.source, sourcePath: capturedPath, path: capturedPath, mtime: Number.isFinite(file.stat?.mtime) ? file.stat.mtime : null },
+      physicalSource: sourceMetadata(current, file, hashRuntime, capturedPath) };
+  }
+
+  async function probeIdle(view) {
+    if (!view?.ready || !view.iframe || view.teardownStarted || view.pendingSaves > 0 || view.currentRevision > view.confirmedRevision) return false;
+    const documentId = view.documentId, openRequest = view.openRequest, probeId = makeToken();
+    const idle = await new Promise(resolve => {
+      const timer = globalThis.setTimeout(() => { maintenanceTimers.delete(timer); maintenanceRequests.delete(probeId); resolve(false); }, 2000);
+      maintenanceTimers.add(timer);
+      maintenanceRequests.set(probeId, { views: new Set([view]), resolve: value => { globalThis.clearTimeout(timer); maintenanceTimers.delete(timer); resolve(value); } });
+      post(view, { type: "annotation-maintenance-probe", probeId, documentId, openRequest });
+    });
+    return idle && !disposed && !view.teardownStarted && view.documentId === documentId && view.openRequest === openRequest;
+  }
+
+  async function reopenCleanViews(document, file) {
+    if (typeof reopenVerifiedView !== "function") return;
+    for (const view of [...(documentViews.get(document.documentId) || [])]) {
+      if (await probeIdle(view)) {
+        await reopenVerifiedView(view, file);
+      } else view.setStatus?.("目录更新已验证；请在当前更改已保存或恢复后重新打开 PDF。", true);
+    }
+  }
+
+  async function acceptOutlineUpdate({ sourcePath, expectedBeforeHash, expectedAfterHash } = {}) {
+    assertLive();
+    const path = normalizePath(sourcePath || "");
+    const file = path && app.vault.getAbstractFileByPath(path);
+    const document = file && await store.documentForPath(path);
+    if (!document || !file) throw codedError("PDF_OUTLINE_DOCUMENT_MISSING", "No verified document route matches this PDF.");
+    const bytes = bytesView(await app.vault.readBinary(file));
+    const version = await verifyOutlineVersion(file, bytes, document, { expectedBeforeHash, expectedAfterHash });
+    if (!version) return { status: "TARGET_UNRESOLVED", documentId: document.documentId, docKey: document.docKey };
+    // Keep old loaded pages paused until the authenticated clean-view probe
+    // confirms that replacing this rendering cannot discard a current edit.
+    for (const view of documentViews.get(document.documentId) || []) {
+      view.annotationSourceMismatch = true; view.annotationHydrationAllowed = false;
+      post(view, { type: "annotation-source-mismatch", documentId: view.documentId, openRequest: view.openRequest, reason: "OUTLINE_VERSION_VERIFIED_REOPEN_REQUIRED" });
+    }
+    await reopenCleanViews(document, file);
+    return { status: "VERIFIED", documentId: document.documentId, docKey: document.docKey, beforeHash: version.proof.beforeHash, afterHash: version.proof.afterHash, recordPath: version.recordPath };
+  }
+
   async function handleSourceModify(file) {
     if (disposed || !file?.path) return false;
     const path = normalizePath(file.path);
@@ -907,9 +1002,10 @@ function createPdfAnnotationHost({
       if (state.path !== path) continue;
       const bytes = new Uint8Array(await app.vault.readBinary(file));
       const currentHash = hashRuntime.fingerprint(bytes);
+      const physical = state.physicalSource || state.source;
       const unchanged = typeof hashRuntime.matches === "function"
-        ? hashRuntime.matches(bytes, state.source.sourceHash)
-        : currentHash === state.source.sourceHash;
+        ? hashRuntime.matches(bytes, physical.sourceHash)
+        : currentHash === physical.sourceHash;
       if (!unchanged) {
         for (const view of documentViews.get(documentId) || []) {
           view.annotationSourceMismatch = true;
@@ -918,8 +1014,12 @@ function createPdfAnnotationHost({
           view.setStatus?.("检测到原始 PDF 已被外部修改；外置批注已暂停，原文件未写入。", true);
         }
         log("annotation-source-modified", { documentId, path });
+        try {
+          const version = await verifyOutlineVersion(file, bytes, state.document);
+          if (version) await reopenCleanViews(state.document, file);
+        } catch (error) { log("annotation-outline-update-failed", { documentId, code: error?.code || "PDF_OUTLINE_UPDATE_UNVERIFIED" }); }
       } else {
-        state.source = { ...state.source, size: bytes.byteLength,
+        state.physicalSource = { ...physical, size: bytes.byteLength,
           tailHash64k: hashRuntime.fingerprint(bytes.subarray(Math.max(0, bytes.byteLength - TAIL_SAMPLE_BYTES))),
           mtime: Number.isFinite(file.stat?.mtime) ? file.stat.mtime : state.source.mtime };
       }
@@ -1068,11 +1168,13 @@ function createPdfAnnotationHost({
   function assertLive() { if (disposed) throw codedError("PDF_ANNOTATION_HOST_DISPOSED", "The annotation host has been disposed."); }
   function dispose() {
     disposed = true;
+    for (const pending of maintenanceRequests.values()) pending.resolve?.(false);
     for (const timer of maintenanceTimers) globalThis.clearTimeout(timer);
     maintenanceTimers.clear(); maintenanceRequests.clear(); maintenanceByDocument.clear();
     queues.clear(); snapshotReads.clear(); selfSidecarWrites.clear(); appendAccumulators.clear(); pendingSidecarChecks.clear();
     for (const set of documentViews.values()) set.clear();
     documentViews.clear(); sourceStates.clear();
+    outlineJobs.clear();
   }
 
   return {
@@ -1084,6 +1186,7 @@ function createPdfAnnotationHost({
     renamed,
     releaseView,
     establishNewCopy,
+    acceptOutlineUpdate,
     broadcastDocument,
     watchDeletionRetention,
     dispose,

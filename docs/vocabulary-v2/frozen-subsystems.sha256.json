@@ -483,5 +483,13 @@
     "viewer-adapter/input/ios-input-policy.js": "7d6188111ac32724f42c797a923a02579d0550f426e77e77eec821b4481b65b7",
     "viewer-adapter/input/text-selection-controller.js": "1a65bf3743ff5bd35db38a0348da921aa3884419453140d03de44cb797d8a309",
     "viewer-adapter/input/viewport-controller.js": "0dacf38fd96b6956484b0faea0942a0eda7e8c01113ad40e6acef0cca3fd6c9a"
+  },
+  "reviewedOutlineSourceOverrides": {
+    "reason": "2026-10-28: user-authorized strict outline-only source-version adapter. Annotation Host separates verified physical file versions from immutable WAL source identity; worker/client add verification RPC only. No WAL, Sidecar, vendor, or annotation payload schema changes. Covered by pdf-outline-source and pdf-outline-host regressions.",
+    "sha256": {
+      "plugin/pdf-annotation-host.cjs": "d388fafccc67a9b19f057235800c1859b5bde3f8d2a372ea9abf0673cc9000dd",
+      "plugin/pdf-merge-client.cjs": "482c155cdfe2078eb059b0e300777b304608dabf969ba7d1b54dbfacc8ae9540",
+      "plugin/pdf-merge-worker.mjs": "69fbfdb8eff11d0e526efec57d550961f43774eefb3db6bd66c5562423555723"
+    }
   }
 }

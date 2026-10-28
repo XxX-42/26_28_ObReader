@@ -57,9 +57,12 @@ test("frozen subsystems retain baseline bytes except reviewed platform and displ
     "vendor/pdfjs-generic-legacy/SHA256SUMS.json",
     "vendor/pdfjs-generic-legacy/build/pdf.mjs",
   ]);
+  assert.deepEqual(Object.keys(manifest.reviewedOutlineSourceOverrides?.sha256 || {}).sort(), [
+    "plugin/pdf-annotation-host.cjs", "plugin/pdf-merge-client.cjs", "plugin/pdf-merge-worker.mjs",
+  ]);
   for (const [file, expected] of Object.entries(manifest.sha256)) {
     const actual = createHash("sha256").update(await readFile(path.join(root, file))).digest("hex");
-    const reviewed = manifest.reviewedDisplayOverrides?.sha256?.[file] || manifest.reviewedDeletionRetentionOverrides?.sha256?.[file] || manifest.reviewedUpstreamOverrides?.sha256?.[file] || manifest.reviewedBacklinkOverrides?.sha256?.[file] || manifest.reviewedReliabilityOverrides?.sha256?.[file];
+    const reviewed = manifest.reviewedOutlineSourceOverrides?.sha256?.[file] || manifest.reviewedDisplayOverrides?.sha256?.[file] || manifest.reviewedDeletionRetentionOverrides?.sha256?.[file] || manifest.reviewedUpstreamOverrides?.sha256?.[file] || manifest.reviewedBacklinkOverrides?.sha256?.[file] || manifest.reviewedReliabilityOverrides?.sha256?.[file];
     assert.equal(actual, reviewed || expected, `frozen subsystem changed outside the reviewed upstream change: ${file}`);
   }
 });
