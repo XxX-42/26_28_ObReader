@@ -241,7 +241,7 @@ test("the Native learning runner uses a read-only PID-bound OS/CDP foreground pr
   assert.match(runner, /set candidatePid to unix id of candidateProcess/u);
   assert.match(runner, /if candidatePid is \$\{pid\}/u);
   assert.match(runner, /set frontmostPid to candidatePid/u);
-  assert.match(runner, /name of targetWindow/u);
+  assert.match(runner, /name of front window of candidateProcess/u);
   assert.doesNotMatch(runner, /set frontmost of targetProcess to true|tell application "Obsidian" to activate|open -a Obsidian|NSRunningApplication|\.bringToFront\(|Browser\.setWindowBounds/u);
   assert.match(runner, /url: location\.href,[\s\S]*?title: document\.title/u);
   assert.match(runner, /activeDocumentRef:[\s\S]*activeWindowDocumentRef:/u);
