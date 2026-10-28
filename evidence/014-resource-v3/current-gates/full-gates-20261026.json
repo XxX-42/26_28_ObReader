@@ -1,0 +1,2672 @@
+{
+  "schemaVersion": 1,
+  "runId": "run-2026-10-25T19-43-41-383Z-76468-922159eb",
+  "createdAt": "2026-10-25T19:52:52.913Z",
+  "sourceReportSha256": "beae07174b999b81af9be0f1456fa3208ec53b6d412b10bae7a863d6dcd1af2b",
+  "constraints": {
+    "fastMaxProcesses": 4,
+    "browserProcesses": 1,
+    "raceProcesses": 2,
+    "raceRounds": 10,
+    "skipPolicy": "any skipped test fails its gate",
+    "timeoutPolicy": "test-defined timeouts only; runner adds none",
+    "retries": 0
+  },
+  "manifest": {
+    "fast": 123,
+    "browserTests": 27,
+    "browserScripts": [
+      "tests/offline-smoke.mjs"
+    ],
+    "racePair": [
+      "tests/autosave-mobile-regression.test.mjs",
+      "tests/highlight-multiline-regression.test.mjs",
+      "tests/plugin-host.test.mjs",
+      "tests/learning-domain.test.mjs",
+      "tests/learning-host.test.mjs",
+      "tests/vocabulary-transactions.test.mjs",
+      "tests/vocabulary-review-transaction-integration.test.mjs",
+      "tests/vocabulary-v2-runtime.test.mjs"
+    ]
+  },
+  "sourceFingerprint": {
+    "policy": "SHA-256 of Git-tracked files plus untracked source files; excludes docs, dist, node_modules, test-vault, .git, and artifact directories.",
+    "before": {
+      "algorithm": "sha256",
+      "hash": "e515b6140eb9359c583ae6b5972d0ec6bc89bae5ab0c39d55a86ee5483805da2",
+      "fileCount": 1153
+    },
+    "after": {
+      "algorithm": "sha256",
+      "hash": "e515b6140eb9359c583ae6b5972d0ec6bc89bae5ab0c39d55a86ee5483805da2",
+      "fileCount": 1153
+    },
+    "stable": true,
+    "changedFiles": [],
+    "captureError": null
+  },
+  "summary": {
+    "fast": {
+      "total": 123,
+      "passed": 123,
+      "failed": 0,
+      "skipped": 0
+    },
+    "browser": {
+      "total": 28,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0
+    },
+    "race": {
+      "total": 80,
+      "passed": 80,
+      "failed": 0,
+      "skipped": 0
+    },
+    "total": 231,
+    "passed": 231,
+    "failed": 0,
+    "skipped": 0
+  },
+  "acceptanceEligible": true,
+  "gates": {
+    "fast": [
+      {
+        "round": 1,
+        "test": "tests/annotation-controller.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/annotation-observer-isolation.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/asset-runtime-guards.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/asset-runtime-performance.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/asset-runtime-stat-index.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/asset-runtime.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/backlink-interaction-controller.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/backlink-refresh-bridge.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/browser-test-cleanup.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/browser-test-launch.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/bulk-annotation-delete.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/build-dictionary-resource.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/build-dictionary-resource-v3.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/controlled-close-nonblocking.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/controlled-close-publication.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/default-routing.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/deletion-retention.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/dictionary-cache.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/dictionary-resource-v3.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": true
+      },
+      {
+        "round": 1,
+        "test": "tests/dictionary-resource-benchmark-support.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/dictionary-host-state.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/detached-writeback-integration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/external-annotation-bridge.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/external-hydration-race.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/general-incremental-audit.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/heavy-work.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/highlight-row-collision.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/input-architecture-boundary.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/interaction-mode.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/legacy-highlight-overlap-proof.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/lingq-read-mode-transition.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/ios-direct-manipulation-controller.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/ios-input-policy.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/mobile-main.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-selection-probe.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-controlled-close.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-sidecar-isolation.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-wal-evidence.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-learning-loop-isolation.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-learning-acceptance.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-tooling.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/packaging.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-annotation-host.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-annotation-store.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-hash-runtime.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-incremental.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-journal.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-merge-client.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-merge-core.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-merge-worker.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-recovery.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdf-sync-host.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdfjs-annotation-permission-policy.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdfjs-collapsed-selection-backport.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdfjs-drawing-session-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pending-save-integration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/plugin-host.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/reader-anchor-store.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/resource-startup-pair-support.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/semantic-anchor.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/semantic-services.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/markdown-routing.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-domain.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-draft-modal.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-fsrs-evaluation.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-fsrs-dev-adapter.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-host.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-semantic-interop.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/learning-today-review.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/secondary-toolbar-labels.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/selection-pointer-capture.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/session-log.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": true
+      },
+      {
+        "round": 1,
+        "test": "tests/source-binding-matrix.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/startup-prewarm.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/store-checkpoint-race.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/store-cross-instance-race.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/store-gc-race.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/store-process-crash-boundary.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/text-selection-controller.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/tool-wheel-release-policy.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/touch-inertia.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-bridge-open-state.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-canonical.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-context-service.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-controller.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-context-identity.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-dictionary.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-line-end-hyphen-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-history.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-nightly-gate.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-normalizer-scanner.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-phrase-matcher.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-pill-placement.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-presentation.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-service.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-review-service.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-sharded-store.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-tap-priority.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-transactions.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-transfer-v2.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-transfer-large.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-bulk-node-adapter.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-workbench.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-word-morphology.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-v2-boundaries.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-v2-context-source.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-v2-device-identity.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-v2-runtime.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-v2-schema-family.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-boundaries.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-chaos.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-host.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-importer.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-model.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-persistence.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-source-binding.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-store-integration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-v32-bridge.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-v32-crash.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-v32-engine.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/wal-v32-store-integration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/test-gate-runner.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      }
+    ],
+    "browser": [
+      {
+        "round": 1,
+        "test": "tests/annotation-interaction-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/autosave-mobile-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/autosave-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/annotation-observer-lifecycle-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/desktop-toolbar.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/dictionary-cache-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/embedded-annotation-scan.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/free-text-undo-appearance-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/free-text-native-ap-undo-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/highlight-multiline-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/ipad-pointer-policy.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/mobile-browser-startup.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/mouse-input-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/native-finger-ownership.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/open-lifecycle-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/pdfjs-highlight-collision-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/reader-bidirectional-link-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/selection-differential.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/sidecar-freetext-geometry.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/sidecar-freetext-hydration.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/sync-bridge-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/tool-wheel-lingq-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/underline-regression.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-pill-layout-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-read-mode-transition-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-workbench-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/vocabulary-word-morphology-browser.test.mjs",
+        "execution": "test",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      },
+      {
+        "round": 1,
+        "test": "tests/offline-smoke.mjs",
+        "execution": "script",
+        "status": "passed",
+        "exitCode": 0,
+        "signal": null,
+        "spawnError": null,
+        "skipCount": 0,
+        "logContainsFailure": false
+      }
+    ],
+    "race": [
+      {
+        "round": 1,
+        "tests": [
+          {
+            "round": 1,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 1,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "tests": [
+          {
+            "round": 2,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 2,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "tests": [
+          {
+            "round": 3,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 3,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 4,
+        "tests": [
+          {
+            "round": 4,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 4,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 5,
+        "tests": [
+          {
+            "round": 5,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 5,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 6,
+        "tests": [
+          {
+            "round": 6,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 6,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 7,
+        "tests": [
+          {
+            "round": 7,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 7,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 8,
+        "tests": [
+          {
+            "round": 8,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 8,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 9,
+        "tests": [
+          {
+            "round": 9,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 9,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      },
+      {
+        "round": 10,
+        "tests": [
+          {
+            "round": 10,
+            "test": "tests/autosave-mobile-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/highlight-multiline-regression.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/plugin-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/learning-domain.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/learning-host.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/vocabulary-transactions.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/vocabulary-review-transaction-integration.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          },
+          {
+            "round": 10,
+            "test": "tests/vocabulary-v2-runtime.test.mjs",
+            "execution": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "spawnError": null,
+            "skipCount": 0,
+            "logContainsFailure": false
+          }
+        ]
+      }
+    ]
+  }
+}
