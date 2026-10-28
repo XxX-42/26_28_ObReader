@@ -2653,12 +2653,21 @@ async function main() {
     const initialMode = await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode);
     assert.equal(initialMode, 0, "Selection control must start in the normal Reader mode.");
     const normal = await selectTextByPointer({ frame, pathValue: fixtures.pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
+    report.selectionAB = { normal, acceptance: "DIAGNOSTIC_ONLY" };
+    await checkpoint("selection-ab-normal-complete");
     await recordScreen("selection-ab-normal");
     await frame.click("#editorHighlightButton");
-    await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
+    try {
+      await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
+    } catch (firstClickError) {
+      if (await frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode) !== 9) {
+        await frame.click("#editorHighlightButton");
+        await frame.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 9, { timeout: 8_000 });
+      }
+    }
     const highlight = await selectTextByPointer({ frame, pathValue: fixtures.pdfPath, text: HIGHLIGHT_TEXT, mode: "selection" });
     await recordScreen("selection-ab-highlight");
-    report.selectionAB = { normal, highlight, acceptance: "DIAGNOSTIC_ONLY" };
+    report.selectionAB.highlight = highlight;
     report.status = "diagnostic-complete";
     report.completedAt = new Date().toISOString();
     report.recommendation = "Compare native selection in Reader and Highlight modes; this run is not route acceptance.";
