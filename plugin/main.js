@@ -179,6 +179,15 @@ function normalizeAnnotationToolMode(value) {
   return Number.isInteger(value) && PERSISTABLE_ANNOTATION_TOOL_MODES.has(value) ? value : 0;
 }
 
+function normalizeAnnotationToolColors(value) {
+  const colors = {};
+  for (const mode of PERSISTABLE_ANNOTATION_TOOL_MODES) {
+    const color = value?.[mode];
+    if (typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)) colors[mode] = color.toUpperCase();
+  }
+  return colors;
+}
+
 function normalizeVocabularyHighlightLevels(value) {
   const normalize = (items) => Array.isArray(items)
     ? [...new Set(items.filter((item) => Number.isInteger(item) && item >= 1 && item <= 5))].sort((a, b) => a - b)
@@ -2932,6 +2941,13 @@ class PdfReaderView extends EditableFileView {
     });
   }
 
+  setAnnotationToolColors(colors) {
+    if (!this.ready || !this.iframe || !this.documentId || !Number.isInteger(this.openRequest)) return false;
+    return this.postToViewer({ channel: CHANNEL, token: this.token,
+      type: "annotation-tool-color-preference-update", documentId: this.documentId,
+      openRequest: this.openRequest, colors: normalizeAnnotationToolColors(colors) });
+  }
+
   refreshVocabularyPages(change = null) {
     if (!this.plugin.settings.vocabularyEnabled || !this.ready || !this.iframe ||
         !this.documentId || !Number.isInteger(this.openRequest)) return false;
@@ -3708,6 +3724,15 @@ class PdfReaderView extends EditableFileView {
       return;
     }
 
+    if (message.type === "annotation-tool-color-preference-request") {
+      if (message.rendererGeneration !== this.rendererGeneration ||
+          message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
+          !PERSISTABLE_ANNOTATION_TOOL_MODES.has(message.mode) ||
+          typeof message.color !== "string" || !/^#[0-9a-f]{6}$/i.test(message.color) || this.teardownStarted) return;
+      void this.plugin.setAnnotationToolColor(message.mode, message.color);
+      return;
+    }
+
     if (message.type === "annotation-tool-preference-request") {
       if (message.rendererGeneration !== this.rendererGeneration ||
           message.documentId !== this.documentId || message.openRequest !== this.openRequest ||
@@ -3770,6 +3795,11 @@ class PdfReaderView extends EditableFileView {
           this.rendererStateUnknown = false;
         }
         this.openAcknowledged = true;
+        // A preference may have changed while the viewer was parsing the open
+        // message, before its document identity was ready to receive updates.
+        if (message.rendererGeneration === this.rendererGeneration) {
+          this.setAnnotationToolColors(this.plugin.settings.annotationToolColors);
+        }
         this.setStatus(this.file ? `已打开：${this.file.path}` : "");
         this.releasePendingOpenAdmission(message.documentId, message.openRequest);
         this.pendingOpenGeneration = null;
@@ -3876,6 +3906,7 @@ class PdfReaderView extends EditableFileView {
       vocabularyDisplayMode: normalizeVocabularyDisplayMode(this.plugin.settings.vocabularyDisplayMode),
       vocabularyWordDisplayMode: this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole",
       preferredAnnotationToolMode: normalizeAnnotationToolMode(this.plugin.settings.lastAnnotationToolMode),
+      preferredAnnotationToolColors: normalizeAnnotationToolColors(this.plugin.settings.annotationToolColors),
       heavyLeaseRequired: this.plugin.isMobileRuntime,
       revision: restore?.revision ?? this.currentRevision,
       confirmedRevision:
@@ -4210,6 +4241,9 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings.vocabularyHighlightLevels = normalizeVocabularyHighlightLevels(this.settings.vocabularyHighlightLevels);
     this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(this.settings.vocabularyDisplayMode);
     this.settings.vocabularyWordDisplayMode = this.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole";
+    if (this.settings.annotationToolColors != null) {
+      this.settings.annotationToolColors = normalizeAnnotationToolColors(this.settings.annotationToolColors);
+    }
     this.vocabularyService = null;
     this.vocabularyDictionary = null;
     this.vocabularyDictionaryStatus = { phase: "idle", count: 0, total: 0 };
@@ -6273,9 +6307,19 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     });
   }
 
+  enqueueSettingsWrite(write) {
+    const operation = (this.settingsWriteQueue || Promise.resolve()).then(write, write);
+    this.settingsWriteQueue = operation;
+    return operation;
+  }
+
+  saveSettings() {
+    return this.enqueueSettingsWrite(() => this.saveData({ ...this.settings }));
+  }
+
   async setAutoSaveEnabled(enabled) {
     this.settings.autoSave = Boolean(enabled);
-    await this.saveData(this.settings);
+    await this.saveSettings();
     for (const view of this.views) {
       view.postToViewer({
         channel: CHANNEL,
@@ -6292,7 +6336,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     for (const view of this.views) {
       view.setStatusBarEnabled(this.settings.showStatusBar);
     }
-    await this.saveData(this.settings);
+    await this.saveSettings();
   }
 
   getVocabularyService() {
@@ -6681,7 +6725,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       this.scheduleVocabularyDictionaryWarmup();
     }
     try {
-      await this.saveData(this.settings);
+      await this.saveSettings();
     } catch (error) {
       new Notice(`词汇设置无法保存：${error.message || error}`, 8000);
     } finally {
@@ -6693,7 +6737,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
   async setVocabularyDisplayMode(mode) {
     this.settings.vocabularyDisplayMode = normalizeVocabularyDisplayMode(mode);
     try {
-      await this.saveData(this.settings);
+      await this.saveSettings();
     } catch (error) {
       new Notice(`LingQ 显示模式无法保存：${error.message || error}`, 8000);
     } finally {
@@ -6710,7 +6754,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
       const previous = this.settings.vocabularyWordDisplayMode;
       this.settings.vocabularyWordDisplayMode = mode;
       try {
-        await this.saveData({ ...this.settings });
+        await this.saveSettings();
       } catch (error) {
         this.settings.vocabularyWordDisplayMode = previous;
         new Notice(`构词显示模式无法保存：${error.message || error}`, 8000);
@@ -6722,12 +6766,31 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return this.vocabularyWordModeQueue;
   }
 
+  async setAnnotationToolColor(mode, color) {
+    if (!PERSISTABLE_ANNOTATION_TOOL_MODES.has(mode) || typeof color !== "string" ||
+        !/^#[0-9a-f]{6}$/i.test(color)) return false;
+    const update = async () => {
+      const previous = normalizeAnnotationToolColors(this.settings.annotationToolColors);
+      const next = { ...previous, [mode]: color.toUpperCase() };
+      try {
+        await this.saveData({ ...this.settings, annotationToolColors: next });
+        this.settings.annotationToolColors = next;
+      } catch (error) {
+        new Notice(`批注颜色偏好无法保存：${error.message || error}`, 8000);
+      }
+      for (const view of this.views) view.setAnnotationToolColors(this.settings.annotationToolColors);
+      return this.settings.annotationToolColors[mode] === next[mode];
+    };
+    this.annotationToolColorQueue = this.enqueueSettingsWrite(update);
+    return this.annotationToolColorQueue;
+  }
+
   async setLastAnnotationToolMode(mode) {
     const normalized = normalizeAnnotationToolMode(mode);
     if (!normalized) return false;
     this.settings.lastAnnotationToolMode = normalized;
     try {
-      await this.saveData(this.settings);
+      await this.saveSettings();
       return true;
     } catch (error) {
       new Notice(`批注工具偏好无法保存：${error.message || error}`, 8000);
@@ -6745,7 +6808,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     levels[key] = [...selected].sort((a, b) => a - b);
     this.settings.vocabularyHighlightLevels = levels;
     try {
-      await this.saveData(this.settings);
+      await this.saveSettings();
     } catch (error) {
       new Notice(`词汇高亮设置无法保存：${error.message || error}`, 8000);
     } finally {

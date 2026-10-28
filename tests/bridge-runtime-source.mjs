@@ -16,6 +16,8 @@ const inputRuntimeFiles = [
   "desktop-input-policy.js",
   "ios-input-policy.js",
   "input-router.js",
+  "annotation-tool-colors.js",
+  "tool-wheel-color-controller.js",
 ];
 
 export async function readBridgeRuntimeSource(bridgePath = path.join(

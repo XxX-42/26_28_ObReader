@@ -33,6 +33,8 @@ const inputRuntimeFiles = [
   "input/desktop-input-policy.js",
   "input/ios-input-policy.js",
   "input/input-router.js",
+  "input/annotation-tool-colors.js",
+  "input/tool-wheel-color-controller.js",
 ];
 
 function sha256(data) {

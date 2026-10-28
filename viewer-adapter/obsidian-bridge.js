@@ -227,6 +227,42 @@
     vocabularyReadModeToolChoice: null,
     vocabularyController: null,
   };
+
+  const wheelToolKeys = new Map([[3, "freetext"], [5, "square"], [9, "highlight"], [10, "underline"], [15, "ink"]]);
+  const wheelToolModes = new Map([...wheelToolKeys].map(([mode, key]) => [key, mode]));
+  const annotationToolColors = window.PdfReaderInputRuntime?.AnnotationToolColors && new window.PdfReaderInputRuntime.AnnotationToolColors({
+    getManager: () => state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager,
+    getEventBus: () => state.app?.eventBus,
+    getIdentity: () => ({ documentId: state.activeDocumentId, openRequest: state.activeOpenRequest, rendererGeneration }),
+    getFallbackColor: (mode) => {
+      const manager = state.app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
+      if (!manager?.hasSelection && !manager?.getActive?.()) {
+        const id = new Map([[3, "editorFreeTextColor"], [5, "editorSquareColor"], [10, "editorUnderlineColor"], [15, "editorInkColor"]]).get(mode);
+        const value = id && document.getElementById(id)?.value;
+        if (value) return value;
+      }
+      return mode === 9 ? "#FFFF98" : "#000000";
+    },
+    postPreference: (mode, color) => postToHost("annotation-tool-color-preference-request", {
+      mode, color, documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
+    }),
+  });
+  const wheelColors = window.PdfReaderInputRuntime?.ToolWheelColorController && new window.PdfReaderInputRuntime.ToolWheelColorController({
+    getWheel: () => (state.app || window.PDFViewerApplication)?._toolWheel,
+    getToolKey: item => wheelToolKeys.get(item.mode),
+    getColor: key => annotationToolColors?.get(wheelToolModes.get(key)),
+    commit: ({ item, color, wheel }) => {
+      const app = state.app;
+      if (!app || app._toolWheel !== wheel || state.readOnly || state.disposed || item.disabled) return;
+      app._toolWheel = null;
+      app._toolWheelPointer = null;
+      app._toolWheelSuppressUntil = performanceNow() + 1000;
+      app.eventBus.dispatch("hideannotationeditorparams", { source: window });
+      app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: item.mode, isFromKeyboard: true, createNewEditor: false });
+      annotationToolColors?.choose(item.mode, color);
+    },
+  });
+  wheelColors?.install();
   if (document.documentElement?.dataset) {
     document.documentElement.dataset.vocabularyEnabled = String(state.vocabularyEnabled === true);
   }
@@ -9601,6 +9637,7 @@
   }
 
   function onBridgeFocusOut(event) {
+    setDeferredTimeout(() => annotationToolColors?.onEditorStatesChanged(), 0);
     if (state.backlinkInteractionController?.handleBadgeFocus?.(event)) return;
     if (
       !isFreeTextTarget(event.target) &&
@@ -10677,6 +10714,7 @@
       state.activeOpenRequest = Number.isInteger(message.openRequest)
         ? message.openRequest
         : null;
+      annotationToolColors?.applySnapshot(message.preferredAnnotationToolColors);
       bindVocabularyToOpenedDocument(documentId, state.activeOpenRequest);
       // Source identity is asynchronous; never accept edits before the host
       // confirms the source hash and ordered page identity after PDF parse.
@@ -10917,6 +10955,15 @@
         return;
       }
       queueOpen(message);
+      return;
+    }
+
+    if (message.type === "annotation-tool-color-preference-update") {
+      if (message.rendererGeneration === rendererGeneration &&
+          message.documentId === state.activeDocumentId &&
+          message.openRequest === state.activeOpenRequest) {
+        annotationToolColors?.applySnapshot(message.colors);
+      }
       return;
     }
 
@@ -11554,6 +11601,7 @@
         app.eventBus?._on(
           "annotationeditormodechanged",
           ({ mode, isFromKeyboard }) => runAnnotationObserver("viewer.editor-mode", () => {
+            annotationToolColors?.onEditorModeChanged(mode);
             if (mode !== 0 && isFromKeyboard) state.annotationController?.cancelPendingReadMode?.();
             cancelManualMomentum();
             invalidatePendingPenHighlight();
@@ -11579,6 +11627,7 @@
             setDeferredTimeout(() => {
               if (state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
                   state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest) return;
+              annotationToolColors?.onEditorModeChanged(mode);
               runAnnotationObserver("viewer.editor-mode-deferred", () => observeAccessibilityManagers(app));
               // Enabling a PDF.js tool recreates native source editors without
               // emitting a new page-layer render. Reapply verified tombstones.
@@ -11600,6 +11649,8 @@
         app.eventBus?._on(
           "editingstateschanged",
           ({ details = {} }) => runAnnotationObserver("viewer.editor-history", () => {
+            annotationToolColors?.onEditorStatesChanged(details);
+            setDeferredTimeout(() => annotationToolColors?.onEditorStatesChanged(details), 0);
             if (typeof details.hasSomethingToUndo === "boolean") {
               state.editorHistory.canUndo = details.hasSomethingToUndo;
             }
@@ -11613,6 +11664,10 @@
           }),
           { signal: state.eventAbortController.signal },
         );
+        app.eventBus?._on("annotationeditorparamschanged", ({ details }) => annotationToolColors?.onParamsChanged(details),
+          { signal: state.eventAbortController.signal });
+        app.eventBus?._on("switchannotationeditorparams", event => annotationToolColors?.onSwitchParams(event),
+          { signal: state.eventAbortController.signal });
         window.addEventListener("focusin", onBridgeFocusIn, {
           capture: true,
           signal: state.eventAbortController.signal,
@@ -11789,6 +11844,8 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    wheelColors?.destroy();
+    annotationToolColors?.dispose();
     state.annotationSidebarController?.dispose();
     state.annotationSidebarController = null;
     state.backlinkInteractionController?.dispose?.();

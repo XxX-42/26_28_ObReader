@@ -5661,3 +5661,112 @@ test("PDF routing leaves non-PDF view state and ephemeral links untouched", asyn
     assert.equal(leaf.lastViewState.state.readerTarget, undefined);
   } finally { harness.plugin.onunload(); }
 });
+
+test("annotation colors validate, persist, broadcast, and serialize failed writes", async () => {
+  const harness = createHarness();
+  harness.plugin.persistedData = { annotationToolColors: { 3: "#abcdef", 5: "bad", 99: "#123456" } };
+  await harness.plugin.onload();
+  assert.deepEqual(harness.plugin.settings.annotationToolColors, { 3: "#ABCDEF" });
+  const readers = [harness.createView(), harness.createView()];
+  const frames = readers.map((view, index) => {
+    view.ready = true;
+    view.documentId = `color-${index}`;
+    view.openRequest = 2;
+    view.rendererGeneration = `generation-${index}`;
+    const frame = { sent: [], postMessage(message) { this.sent.push(message); } };
+    view.iframe = { contentWindow: frame };
+    return frame;
+  });
+  const [view] = readers;
+  const send = (overrides) => view.onMessage({ source: frames[0], data: {
+    channel: "pdf-web-reader", token: view.token, type: "annotation-tool-color-preference-request",
+    rendererGeneration: view.rendererGeneration, documentId: view.documentId, openRequest: view.openRequest,
+    mode: 5, color: "#123abc", ...overrides,
+  } });
+  send({ rendererGeneration: "stale" });
+  send({ color: "#123" });
+  send({ mode: 99 });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(harness.plugin.settings.annotationToolColors, { 3: "#ABCDEF" });
+  send({});
+  await harness.plugin.annotationToolColorQueue;
+  assert.deepEqual(harness.plugin.persistedData.annotationToolColors, { 3: "#ABCDEF", 5: "#123ABC" });
+  assert.ok(frames.every((frame) => frame.sent.at(-1)?.type === "annotation-tool-color-preference-update" && frame.sent.at(-1).colors[5] === "#123ABC"));
+  const save = harness.plugin.saveData.bind(harness.plugin);
+  let release;
+  harness.plugin.saveData = async (data) => {
+    if (data.annotationToolColors[9]) {
+      await new Promise((resolve) => { release = resolve; });
+      throw new Error("write failed");
+    }
+    return save(data);
+  };
+  const failed = harness.plugin.setAnnotationToolColor(9, "#112233");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const next = harness.plugin.setAnnotationToolColor(10, "#445566");
+  release();
+  assert.equal(await failed, false);
+  assert.equal(await next, true);
+  assert.deepEqual(harness.plugin.settings.annotationToolColors, { 3: "#ABCDEF", 5: "#123ABC", 10: "#445566" });
+  assert.deepEqual(harness.plugin.persistedData.annotationToolColors, harness.plugin.settings.annotationToolColors);
+  const file = new harness.TFile("Books/colors.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  view.file = file;
+  view.pendingBytes = Uint8Array.from([1, 2, 3]).buffer;
+  view.sendPendingDocument();
+  assert.deepEqual(frames[0].sent.at(-1).preferredAnnotationToolColors, harness.plugin.settings.annotationToolColors);
+  harness.plugin.onunload();
+});
+
+test("opening Reader receives the latest confirmed colors after parsing", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const view = harness.createView();
+  const frame = { sent: [], postMessage(message) { this.sent.push(message); } };
+  view.documentId = "opening-colors";
+  view.openRequest = 8;
+  view.rendererGeneration = "opening-generation";
+  view.iframe = { contentWindow: frame };
+  view.ready = true;
+  const file = new harness.TFile("Books/opening-colors.pdf", [1, 2, 3]);
+  harness.files.set(file.path, file);
+  view.file = file;
+  view.pendingBytes = Uint8Array.from([1, 2, 3]).buffer;
+  view.sendPendingDocument();
+  assert.deepEqual(frame.sent.at(-1).preferredAnnotationToolColors, {});
+  await harness.plugin.setAnnotationToolColor(3, "#123456");
+  const opened = { channel: "pdf-web-reader", token: view.token, type: "opened",
+    documentId: view.documentId, openRequest: view.openRequest, rendererGeneration: view.rendererGeneration };
+  view.onMessage({ source: frame, data: opened });
+  assert.equal(view.openAcknowledged, true);
+  assert.equal(frame.sent.at(-1).type, "annotation-tool-color-preference-update");
+  assert.deepEqual(frame.sent.at(-1).colors, { 3: "#123456" });
+  harness.plugin.onunload();
+});
+
+test("concurrent color and other settings writes preserve both preferences", async () => {
+  const harness = createHarness();
+  await harness.plugin.onload();
+  const save = harness.plugin.saveData.bind(harness.plugin);
+  let release;
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let calls = 0;
+  harness.plugin.saveData = async data => {
+    if (++calls === 1) {
+      entered();
+      await new Promise(resolve => { release = resolve; });
+    }
+    return save(data);
+  };
+  const color = harness.plugin.setAnnotationToolColor(3, "#123456");
+  await started;
+  const mode = harness.plugin.setLastAnnotationToolMode(15);
+  const status = harness.plugin.setStatusBarEnabled(true);
+  release();
+  await Promise.all([color, mode, status]);
+  assert.deepEqual(harness.plugin.persistedData.annotationToolColors, { 3: "#123456" });
+  assert.equal(harness.plugin.persistedData.lastAnnotationToolMode, 15);
+  assert.equal(harness.plugin.persistedData.showStatusBar, true);
+  harness.plugin.onunload();
+});
