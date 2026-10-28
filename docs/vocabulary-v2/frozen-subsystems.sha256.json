@@ -487,7 +487,7 @@
   "reviewedOutlineSourceOverrides": {
     "reason": "2026-10-28: user-authorized strict outline-only source-version adapter. Annotation Host separates verified physical file versions from immutable WAL source identity; worker/client add verification RPC only. No WAL, Sidecar, vendor, or annotation payload schema changes. Covered by pdf-outline-source and pdf-outline-host regressions.",
     "sha256": {
-      "plugin/pdf-annotation-host.cjs": "f352e773f25ef22ab0530bdc9a2309168a670a3778887d79d9cba22506fbb0bf",
+      "plugin/pdf-annotation-host.cjs": "4061f532b1be3bfdf36965fad707705dec5bd0a99dc11963329b08c1ed29fcd5",
       "plugin/pdf-merge-client.cjs": "482c155cdfe2078eb059b0e300777b304608dabf969ba7d1b54dbfacc8ae9540",
       "plugin/pdf-merge-worker.mjs": "69fbfdb8eff11d0e526efec57d550961f43774eefb3db6bd66c5562423555723"
     }

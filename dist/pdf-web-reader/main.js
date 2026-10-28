@@ -11584,53 +11584,6 @@ var __PDFReaderAnnotationHost = (() => {
           let legacyIdentityScanUncertain = registered.sourceMismatch === true;
           let inspectedLegacyTombstones = [];
           let appendedLegacyTombstones = false;
-          if (!registered.sourceMismatch && !registered.legacyIdentityScanComplete) {
-            const legacyMarkerFound = containsAscii(bytes, "/ObReaderMerge") || containsAscii(bytes, "/ObReaderId");
-            let identities = [];
-            if (legacyMarkerFound) {
-              if (typeof inspectLegacy !== "function") {
-                legacyIdentityScanUncertain = true;
-              } else {
-                try {
-                  const inspected = await inspectLegacy(bytes);
-                  if (!Array.isArray(inspected?.identities)) {
-                    throw codedError("PDF_ANNOTATION_LEGACY_INSPECT_INVALID", "The legacy annotation identity inspector returned an invalid result.");
-                  }
-                  const eligible = inspected.identities.filter(
-                    (entry) => entry && typeof entry.uuid === "string" && !entry.uuid.startsWith("legacy-") && !entry.uuid.startsWith("session-") && (entry.deleted === true || typeof entry.ref === "string" && entry.ref.trim()) && Number.isSafeInteger(entry.pageIndex) && ["freetext", "square", "underline", "highlight", "ink"].includes(String(entry.kind).toLowerCase())
-                  );
-                  identities = eligible.filter((entry) => entry.deleted !== true);
-                  inspectedLegacyTombstones = eligible.filter((entry) => entry.deleted === true);
-                } catch (error) {
-                  legacyIdentityScanUncertain = true;
-                  log("legacy-annotation-identity-scan-failed", {
-                    path: sourcePath,
-                    code: error.code || "unknown"
-                  });
-                }
-              }
-            }
-            if (!legacyIdentityScanUncertain) {
-              try {
-                currentDocument = await store.updateLegacyIdentities({ document: registered, identities });
-              } catch (error) {
-                legacyIdentityScanUncertain = true;
-                log("legacy-annotation-identity-migration-failed", {
-                  documentId: registered.documentId,
-                  path: sourcePath,
-                  code: error.code || "unknown"
-                });
-              }
-            }
-            log("legacy-annotation-identity-scan", {
-              documentId: registered.documentId,
-              markerFound: legacyMarkerFound,
-              importedIdentityCount: identities.length,
-              tombstoneCount: inspectedLegacyTombstones.length,
-              complete: !legacyIdentityScanUncertain,
-              payloadMigration: "LAZY_ON_EDIT_EXACT_REF"
-            });
-          }
           if (!registered.sourceMismatch && !legacyIdentityScanUncertain) {
             const tombstoneRows = [
               ...(currentDocument.legacyIdentities || []).filter((entry) => entry.deleted === true),
@@ -12438,26 +12391,6 @@ ${entry.actorId || "legacy"}`
           watchDeletionRetention,
           dispose
         };
-      }
-      function containsAscii(bytes, needle) {
-        if (!needle || bytes.byteLength < needle.length) return false;
-        const encoded = new Uint8Array(needle.length);
-        for (let index = 0; index < needle.length; index += 1) encoded[index] = needle.charCodeAt(index);
-        let offset = 0;
-        while (offset <= bytes.byteLength - encoded.length) {
-          offset = bytes.indexOf(encoded[0], offset);
-          if (offset < 0 || offset > bytes.byteLength - encoded.length) return false;
-          let matches = true;
-          for (let index = 0; index < encoded.length; index += 1) {
-            if (bytes[offset + index] !== encoded[index]) {
-              matches = false;
-              break;
-            }
-          }
-          if (matches) return true;
-          offset += 1;
-        }
-        return false;
       }
       function validateQuarantinedRecovery(message, document) {
         const source = document.source || {};
