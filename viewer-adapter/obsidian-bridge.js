@@ -10779,6 +10779,12 @@
         });
       });
       if (!isSyncApply) {
+        if (message.deferredAnnotationInitialization === true) {
+          // Give the page its first completed paint before the host starts
+          // annotation hashing and JSONL reads.
+          await waitForOpenSession(app.pdfViewer.onePageRendered, session);
+          await waitForOpenSession(new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))), session);
+        }
         const startupTimings = captureOpenStartupTimings({
           startedAt,
           parseStartedAt,

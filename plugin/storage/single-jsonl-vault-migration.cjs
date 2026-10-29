@@ -13,7 +13,7 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 // The caller must ensure that Readers are closed and synchronization is
 // paused for the entire operation. This function never creates backups.
-function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid,root='00_Archive/20_PDFData'}){
+function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid,verifyOutlineUpdate=null,root='00_Archive/20_PDFData'}){
   if(!app?.vault?.adapter||!hashRuntime?.fingerprint||typeof uuid!=='function')throw TypeError('A vault, hash runtime and UUID generator are required.');
   const adapter=app.vault.adapter;
   const common={adapter,root,deviceId,uuid,hash:hashRuntime.fingerprint,identityHash,verifyHash:hashRuntime.matches};
@@ -21,11 +21,21 @@ function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,
   const store=createSingleJsonlStore({adapter,root,deviceId,token:uuid});
   const registry=createSingleJsonlRegistry({adapter,store,root});
   const deferred=createSingleJsonlDeferredIndex({adapter,root});
+  const legacySources=new Map();
+  async function verifyMigrationSource(bytes,expected){
+    if(hashRuntime.matches(bytes,expected))return true;
+    const source=legacySources.get(expected);
+    if(!source||typeof verifyOutlineUpdate!=='function')return false;
+    const proof=await verifyOutlineUpdate({bytes,source});
+    return proof?.status==='VERIFIED'&&proof.beforeHash===expected&&
+      proof.beforeSize===source.size&&proof.afterSize===bytes.byteLength&&
+      hashRuntime.matches(bytes,proof.afterHash);
+  }
   function file(path){const item=app.vault.getAbstractFileByPath(path);if(!item||item.path!==path)throw fail('V15_SOURCE_MISSING',`PDF is unavailable: ${path}`);return item;}
   const journalRoot=`${app.vault.configDir||'.obsidian'}/plugins/pdf-web-reader/.v15-migration`;
   const runner=createSingleJsonlMigrationRunner({adapter,store,
     journalRoot,
-    verifySource:(bytes,expected)=>typeof hashRuntime.matches==='function'?hashRuntime.matches(bytes,expected):hashRuntime.fingerprint(bytes)===expected,
+    verifySource:verifyMigrationSource,
     readPdf:async path=>app.vault.readBinary(file(path)),
     writePdf:async(path,bytes)=>appendPairUpdate(app.vault,file(path),bytes),
   });
@@ -33,6 +43,7 @@ function createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,
     const effective=await legacy.readEffective(identity,{readOnly:true});
     if(effective.errors?.length||effective.sidecarError)throw fail('V15_LEGACY_UNVERIFIED',`Legacy annotations cannot be verified: ${path}`);
     const snapshot=await legacy.readDocument(effective.document,{readOnly:true});
+    legacySources.set(effective.document.source.sourceHash,effective.document.source);
     return {document:effective.document,snapshot};
   }});
   async function migrate(){

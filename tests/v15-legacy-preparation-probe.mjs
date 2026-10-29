@@ -30,6 +30,13 @@ const effective=await legacy.readEffective(identity,{readOnly:true});assert.equa
 const snapshot=await legacy.readDocument(effective.document,{readOnly:true});
 assert.ok(!snapshot.syncPending);
 const original=await readFile(resolve(relativePdf)),before=sha(original);
+if(process.argv.includes('--verify-outline')){
+ const {verifyOutlineUpdate}=require('../plugin/pdf-outline-source.cjs');
+ const proof=await verifyOutlineUpdate({bytes:original,source:effective.document.source});
+ assert.equal(sha(await readFile(resolve(relativePdf))),before);
+ console.log(JSON.stringify({pdf:relativePdf,counts:{annotations:snapshot.annotations.length,tombstones:snapshot.tombstones.length},source:effective.document.source,proof,sourceUnchanged:true,publication:false}));
+ process.exit(0);
+}
 const result=await prepareSingleJsonlMigration({sourceBytes:original,document:effective.document,snapshot,verifySource:runtime.matches});
 assert.deepEqual(result.current.annotations,snapshot.annotations);assert.deepEqual(result.current.tombstones,snapshot.tombstones);
 assert.equal(await readPairId(result.pdf.bytes),result.pairId);

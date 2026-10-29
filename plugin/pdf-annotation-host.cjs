@@ -1224,7 +1224,7 @@ function createPdfAnnotationHost({
     if (migrationRunning || documentViews.size || queues.size || maintenanceRequests.size || snapshotReads.size)
       throw codedError("V15_READERS_OPEN", "Close all PDF Readers and wait for pending work before migration.");
     migrationRunning = true;
-    try { return await createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid:makeToken}).migrate(); }
+    try { return await createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid:makeToken,verifyOutlineUpdate}).migrate(); }
     finally { migrationRunning = false; }
   }
   async function recoverPairing(sourcePath) {
