@@ -4277,7 +4277,8 @@ class PdfReaderView extends EditableFileView {
     status.empty?.();
     status.setText?.(this.lastStatusMessage);
     const labels = { resourcesMs: "资源准备", modulesMs: "阅读器启动", openMs: "打开完成",
-      pdfParseMs: "PDF 解析", firstPageAnnotationLayerMs: "首页批注层就绪", toolsUsableMs: "工具可用" };
+      pdfParseMs: "PDF.js 打开等待", pdfPagesInitMs: "页面初始化", pdfDocumentLoadedMs: "文档加载事件",
+      pdfFirstRenderMs: "首个页面绘制", firstPageAnnotationLayerMs: "首页批注层就绪", toolsUsableMs: "工具可用" };
     const timings = { ...this.startupTimings, ...this.startupTimings?.viewer };
     const parts = Object.entries(labels).filter(([key]) => Number.isFinite(timings[key]) && timings[key] >= 0)
       .map(([key, label]) => `${label} ${(timings[key] / 1000).toFixed(2)} 秒`);

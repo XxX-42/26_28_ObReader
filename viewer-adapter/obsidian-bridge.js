@@ -10706,6 +10706,13 @@
       const provisionalExternal = validateExternalAnnotations(message.externalAnnotations);
       const restoreSetDocument = installInitialDeletionMask(app, session, provisionalExternal, message.sourceHashConfirmed);
       const parseStartedAt = performance.now();
+      const pdfOpenStages = {};
+      const stageListeners = [["pagesinit", "pdfPagesInitMs"], ["documentloaded", "pdfDocumentLoadedMs"],
+        ["pagerendered", "pdfFirstRenderMs"]].map(([event, key]) => {
+        const listener = () => { if (!Number.isFinite(pdfOpenStages[key])) pdfOpenStages[key] = Math.max(0, performance.now() - parseStartedAt); };
+        app.eventBus?._on?.(event, listener);
+        return [event, listener];
+      });
       session.previousLoadingTask = app.pdfLoadingTask;
       session.previousPdfDocument = app.pdfDocument;
       try {
@@ -10720,6 +10727,7 @@
         );
         await waitForOpenSession(session.pdfJsOpenPromise, session);
       } finally {
+        for (const [event, listener] of stageListeners) app.eventBus?._off?.(event, listener);
         restoreSetDocument();
       }
       session.loadingTask = app.pdfLoadingTask;
@@ -10811,6 +10819,7 @@
           app,
           pdfDocument,
         });
+        Object.assign(startupTimings, pdfOpenStages);
         const openedPosted = postToHost("opened", {
           documentId,
           documentPath,
