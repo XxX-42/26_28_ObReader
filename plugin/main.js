@@ -4292,16 +4292,21 @@ class PdfReaderView extends EditableFileView {
     const parts = Object.entries(labels).filter(([key]) => Number.isFinite(timings[key]) && timings[key] >= 0)
       .map(([key, label]) => `${label} ${(timings[key] / 1000).toFixed(2)} 秒`);
     if (parts.length && typeof status.createEl === "function") {
-      for (const [key, label] of [["openMs", "打开"], ["pdfParseMs", "PDF.js"], ["firstPageAnnotationLayerMs", "批注层"]]) {
-        if (Number.isFinite(timings[key]) && timings[key] >= 0) {
-          status.createEl("span", { cls: "pdf-reader-timing-pill", text: `${label} ${(timings[key] / 1000).toFixed(2)}秒` });
+      const groups = [
+        ["打开", "open", "openMs", ["resourcesMs", "modulesMs"]],
+        ["PDF.js", "pdf", "pdfParseMs", ["pdfLoadingTaskPromiseMs", "pdfViewerLoadMs", "pdfPreviousCloseMs"]],
+        ["Worker", "worker", "worker_parseMs", ["worker_checkHeaderMs", "worker_parseStartXRefMs", "worker_parseNormalMs", "worker_parseRecoveryMs", "worker_indexStringMs", "worker_indexScanMs", "worker_checkFirstPageMs", "worker_checkLastPageMs", "worker_numPagesMs", "worker_fingerprintsMs", "worker_isPureXfaMs"]],
+        ["页面", "page", "firstPageAnnotationLayerMs", ["pdfPagesInitMs", "pdfDocumentLoadedMs", "pdfFirstRenderMs", "toolsUsableMs"]],
+      ];
+      for (const [title, color, parent, keys] of groups) {
+        const available = [parent, ...keys].filter(key => Number.isFinite(timings[key]) && timings[key] >= 0);
+        if (!available.length) continue;
+        const row = status.createEl("div", { cls: `pdf-reader-timing-row pdf-reader-timing-${color}` });
+        const total = Number.isFinite(timings[parent]) ? ` ${(timings[parent] / 1000).toFixed(2)}秒` : "";
+        row?.createEl?.("span", { cls: "pdf-reader-timing-parent", text: `${title}${total}` });
+        for (const key of keys) if (available.includes(key)) {
+          row?.createEl?.("span", { cls: "pdf-reader-timing-function", text: `${labels[key]} ${(timings[key] / 1000).toFixed(2)}秒` });
         }
-      }
-      const details = status.createEl("details", { cls: "pdf-reader-timing-details" });
-      if (typeof details?.createEl === "function") {
-        details.createEl("summary", { text: "详细耗时" });
-        const list = details.createEl("div", { cls: "pdf-reader-timing-list" });
-        for (const part of parts) list?.createEl?.("span", { cls: "pdf-reader-timing-pill", text: part });
       }
     }
     if (this.statusRecoveryAction && typeof status.createEl === "function") {
