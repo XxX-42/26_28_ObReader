@@ -35773,6 +35773,20 @@ ${xrefOffset}
               });
               if (version) Object.assign(source, version.logicalSource);
             }
+            if (store.sourceProtocol === "obreader-current-v15" && prior?.pairId && prior.source?.sourceHash !== source.sourceHash && await require_pdf_pair_id().readPairId(bytes) === prior.pairId) {
+              assertOpenCurrent();
+              const updated = await store.updateSourceIdentity({
+                document: prior,
+                pairId: prior.pairId,
+                allowVerifiedSourceTransition: true,
+                ...source,
+                pageCount: prior.source.pageCount,
+                orderedPageIdentities: prior.source.orderedPageIdentities,
+                pairing: { pairedSha256: null }
+              });
+              if (updated.sourceMismatch) throw codedError("SOURCE_MISMATCH", "The paired PDF source could not be updated.");
+              prior = updated.document;
+            }
             registered = await store.registerDocument({ sourcePath, source });
             assertOpenCurrent();
           } catch (error) {

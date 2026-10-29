@@ -327,6 +327,19 @@ function createPdfAnnotationHost({
         });
         if (version) Object.assign(source, version.logicalSource);
       }
+      // A paired PDF may be edited by another reader. Keep its existing
+      // external annotations associated with the same pair on the next open.
+      if (store.sourceProtocol === "obreader-current-v15" && prior?.pairId &&
+          prior.source?.sourceHash !== source.sourceHash &&
+          await require("./pdf-pair-id.cjs").readPairId(bytes) === prior.pairId) {
+        assertOpenCurrent();
+        const updated = await store.updateSourceIdentity({ document: prior, pairId: prior.pairId,
+          allowVerifiedSourceTransition: true, ...source,
+          pageCount: prior.source.pageCount, orderedPageIdentities: prior.source.orderedPageIdentities,
+          pairing: { pairedSha256: null } });
+        if (updated.sourceMismatch) throw codedError("SOURCE_MISMATCH", "The paired PDF source could not be updated.");
+        prior = updated.document;
+      }
       registered = await store.registerDocument({ sourcePath, source });
       assertOpenCurrent();
     } catch (error) {
