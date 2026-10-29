@@ -8667,7 +8667,8 @@ class FloatingToolbar {
     }
     this.#hoverPeer.#selectedText = this.#selectedText;
     this.#hoverPeer.#toolbar.style.setProperty("--pdf-reader-selection-highlight-color", this.#toolbar.style.getPropertyValue("--pdf-reader-selection-highlight-color"));
-    this.#hoverZone.style.insetInlineEnd = `${100 * x}%`;
+    this.#hoverZone.style.insetInlineEnd = "auto";
+    this.#hoverZone.style.left = `clamp(0px, calc(${100 * selectionX}% - 59px), max(0px, calc(100% - 118px)))`;
     this.#hoverZone.style.top = `calc(${100 * y}% + var(--editor-toolbar-vert-offset))`;
     parent.append(this.#hoverZone);
   }
