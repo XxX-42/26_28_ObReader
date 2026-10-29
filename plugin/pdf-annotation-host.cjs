@@ -759,6 +759,7 @@ function createPdfAnnotationHost({
         quarantined: result.quarantined === true,
       });
       view.failureNoticeShown = false;
+      if (!recovery) view.recordSaveTiming?.({ requestId: message.requestId, documentId: captured.documentId, status: "saved", elapsedMs: now() - startedAt });
     } catch (error) {
       post(view, {
         type: "error",
@@ -778,6 +779,7 @@ function createPdfAnnotationHost({
         elapsedMs: now() - startedAt,
         code: error.code || "unknown",
       });
+      if (!recovery) view.recordSaveTiming?.({ requestId: message.requestId, documentId: captured.documentId, status: "error", elapsedMs: now() - startedAt });
       if (!view.failureNoticeShown) {
         view.failureNoticeShown = true;
         if (typeof Notice === "function") new Notice(`PDF 批注记录失败：${error.message}。操作仍保留在当前阅读器中。`, 8000);

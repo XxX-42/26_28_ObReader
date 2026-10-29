@@ -7224,6 +7224,7 @@
     let heavyLease = null;
     const finishSavePhase = () => {
       if (!saveStarted) return;
+      document.documentElement.removeAttribute("data-pdf-reader-saving");
       app._saveInProgress = false;
       app._updateOverwriteOriginalState?.();
       app.setTitle?.();
@@ -7266,6 +7267,7 @@
       requestId = makeSaveRequestId();
       app._saveInProgress = true;
       saveStarted = true;
+      document.documentElement.setAttribute("data-pdf-reader-saving", "");
       app._updateOverwriteOriginalState?.();
       const hasStructuralChanges =
         app.pdfThumbnailViewer?.hasStructuralChanges?.() || false;
@@ -10651,6 +10653,7 @@
     stopOpenStartupObserver();
     const session = createOpenSession(documentId);
     state.openSession = session;
+    document.documentElement.setAttribute("data-pdf-reader-opening", "");
     if (isSyncApply) {
       syncApplyControl.applyingSession = session;
     }
@@ -10906,6 +10909,7 @@
     } finally {
       if (state.openSession === session) {
         state.openSession = null;
+        document.documentElement.removeAttribute("data-pdf-reader-opening");
       }
     }
   }

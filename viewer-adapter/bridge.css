@@ -928,3 +928,15 @@ body {
 }
 .pdfReaderVocabularyMorphologyParts { overflow-wrap: anywhere; line-height: 1.6; }
 .pdfReaderVocabularyMorphologyNote { font-size: .8em; color: inherit; opacity: .78; }
+/* The tools button becomes a single rotating gear while work is in flight. */
+html[data-pdf-reader-opening] #secondaryToolbarToggleButton::before,
+html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.4 13a8.4 8.4 0 0 0 0-2l2-1.5-2-3.5-2.4 1a8 8 0 0 0-1.7-1L15 3H9L8.6 6a8 8 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a8.4 8.4 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a8 8 0 0 0 1.7 1L9 21h6l.4-3a8 8 0 0 0 1.7-1l2.4 1 2-3.5zM12 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6'/%3E%3C/svg%3E") !important;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19.4 13a8.4 8.4 0 0 0 0-2l2-1.5-2-3.5-2.4 1a8 8 0 0 0-1.7-1L15 3H9L8.6 6a8 8 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a8.4 8.4 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a8 8 0 0 0 1.7 1L9 21h6l.4-3a8 8 0 0 0 1.7-1l2.4 1 2-3.5zM12 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6'/%3E%3C/svg%3E") !important;
+  animation: pdf-reader-gear-spin 1s linear infinite;
+}
+@keyframes pdf-reader-gear-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-pdf-reader-opening] #secondaryToolbarToggleButton::before,
+  html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before { animation: none; }
+}

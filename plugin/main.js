@@ -2846,6 +2846,7 @@ class PdfReaderView extends EditableFileView {
     const request = ++this.openRequest;
     this.openAcknowledged = false;
     this.openStartedAt = Date.now();
+    this.lastSaveTiming = null;
     this.documentFile = file;
     this.requestedPath = file.path;
       this.annotationLegacyIdentityUncertain = false;
@@ -4082,6 +4083,9 @@ class PdfReaderView extends EditableFileView {
 
   async saveFile(value, documentId, requestId, revision = null, origin = "manual", annotationSync = null) {
     const request = this.captureSaveRequest();
+    const saveStartedAt = performance.now();
+    this.lastSaveTiming = { requestId, origin, status: "saving" };
+    this.renderStatus();
     this.pendingSaves += 1;
     try {
       if (!request.file || !request.documentId || documentId !== request.documentId) {
@@ -4100,6 +4104,7 @@ class PdfReaderView extends EditableFileView {
       };
       await this.plugin.annotationHost.handleMessage(this, message);
     } catch (error) {
+      this.recordSaveTiming({ requestId, documentId, status: "error", elapsedMs: performance.now() - saveStartedAt });
       this.postToViewer({
         channel: CHANNEL, token: this.token, type: "error",
         code: error.code || "save-failed", message: error.message,
@@ -4108,6 +4113,12 @@ class PdfReaderView extends EditableFileView {
     } finally {
       this.pendingSaves = Math.max(0, this.pendingSaves - 1);
     }
+  }
+
+  recordSaveTiming({ requestId, documentId, status, elapsedMs }) {
+    if (documentId !== this.documentId || this.lastSaveTiming?.requestId !== requestId) return;
+    this.lastSaveTiming = { ...this.lastSaveTiming, status, elapsedMs };
+    this.renderStatus();
   }
 
   async recoverFile(value, documentId, requestId, revision, reason, annotationSync = null) {
@@ -4309,13 +4320,21 @@ class PdfReaderView extends EditableFileView {
         }
       }
     }
+    if (this.lastSaveTiming && typeof status.createEl === "function") {
+      const save = this.lastSaveTiming;
+      const row = status.createEl("div", { cls: "pdf-reader-timing-row pdf-reader-timing-save" });
+      row?.createEl?.("span", { cls: "pdf-reader-timing-parent", text: "保存" });
+      const label = save.status === "saving" ? "保存中" : save.status === "error" ? "保存失败" : "保存完成";
+      const elapsed = Number.isFinite(save.elapsedMs) ? ` ${(save.elapsedMs / 1000).toFixed(2)}秒` : "";
+      row?.createEl?.("span", { cls: "pdf-reader-timing-function", text: `${save.origin === "auto" ? "自动" : "手动"} · ${label}${elapsed}` });
+    }
     if (this.statusRecoveryAction && typeof status.createEl === "function") {
       status.createEl("button", { text: "恢复本地副本" })
         .addEventListener("click", () => void this.plugin.restoreLatestRecovery());
     }
     status.toggleClass?.(
       "is-hidden",
-      !this.lastStatusMessage && !this.statusRecoveryAction && !parts.length,
+      !this.lastStatusMessage && !this.statusRecoveryAction && !parts.length && !this.lastSaveTiming,
     );
   }
 
