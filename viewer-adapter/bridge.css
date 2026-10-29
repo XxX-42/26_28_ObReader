@@ -1017,7 +1017,7 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
 .pdf-reader-outline-header, .pdf-reader-outline-tree { position: relative; }
 .pdf-reader-outline-panel[hidden] { display: none; }
 .pdf-reader-outline-panel:not([hidden]) { display: flex; flex-direction: column; height: auto; max-height: calc(100dvh - var(--toolbar-height, 40px) - 24px); }
-.pdf-reader-outline-header { display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.4rem; }
+.pdf-reader-outline-header { display: none; }
 .pdf-reader-outline-header input { flex: 1 1 auto; width: 0; min-width: 0; box-sizing: border-box; }
 .pdf-reader-outline-header button { flex: 0 0 auto; cursor: pointer; }
 .pdf-reader-outline-peek { max-width: min(260px, 60vw); padding: 0.35em 0.65em; border-radius: 8px; background: var(--toolbar-bg-color, #f5f5f5); color: var(--toolbar-fg-color, #333); box-shadow: 0 3px 12px #0003; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
