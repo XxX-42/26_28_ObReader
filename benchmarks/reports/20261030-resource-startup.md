@@ -56,3 +56,23 @@ The build now supplies an optional single gzip startup pack in addition to exist
 The WASM Worker uses exact bundled Blob URL fetch mappings. Its single known JPEG2000 fallback import URL is routed to the verified fallback Blob; the frozen vendor files remain unchanged and an unexpected loader pattern fails closed. Browser acceptance imports that fallback before disk writes are released. All persistent cache readback/SHA/final-marker checks are unchanged and continue in the background.
 
 Final affected tests: 178/178 Host/asset/packaging, full browser 3/3 with zero skips/cancellations, additional JPEG2000 import assertion PASS, offline smoke PASS. The Windows browser case blocks **all** disk-cache writes until the page renders and asserts initial bytesWritten=0, verificationReads=0 and no .complete.json. No existing assertion/timeout was relaxed. Earlier red attempts remain in artifacts. Full Fast gate's previously recorded platform-skip/frozen-host-hash limitations have not been resolved by this resource patch.
+
+## Native result for a366a0b
+
+Production vault, fresh empty active cache, full Obsidian restart, Principles (357 pages). The CLI open request was retried only while the app had not yet registered its eval command; one accepted document open was measured. The page renderingState=3 plus two animation frames was reached in **3,440 ms**, below the five-second target for this observation. This is a CLI-open/render-completion measurement, not a physical mouse-click/compositor trace or a statistical latency guarantee.
+
+| Stage | Time |
+| --- | ---: |
+| Open request to rendered page | 3,440 ms |
+| All 406 startup assets decoded and individually verified during fresh in-process prewarm | 161 ms |
+| Aggregate gzip decode | 129.6 ms |
+| Startup per-file SHA-256 cumulative concurrent work | 50.7 ms |
+| Reader wait for prepared resources | 1 ms |
+| Modules (Reader diagnostic) | 1,061 ms |
+| PDF parse (Viewer relative) | 781 ms |
+| First page annotation layer (Viewer relative) | 1,507.8 ms |
+| Full persistent cache rebuild, background | 26,744 ms |
+
+Stages overlap and must not be summed. Startup release had no cache writes/readbacks or per-file stats, and diskCacheStillBuilding=true at page display. Full background result: 406 decoded/written/readback-verified files, 14,349,693 bytes written, 1,218 helper stats; marker committed only after the existing checks. Full elapsed remains a limitation; the result demonstrates removal of that delay from the display dependency, not elimination of background filesystem work.
+
+Reader after completion: ready=true, annotationHydrationAllowed=true, sourceMismatch=false, syncPending=false, currentRevision=confirmedRevision=12. PDF SHA-256 before/after: C4628B003E5740FE264C1EF77CC0B30AFEDA507657D2DE6F4944A178DFC5DB3C. Three installed release files match the build. Installed main.js SHA-256: 15F8743FE6FF30623E947B87F8054C16BB6487E6108C6459D3342CB9CDA7EB81. Raw receipts: tests/artifacts/asset-packed-native-cold-open.log and asset-packed-native-final.log (local artifacts).
