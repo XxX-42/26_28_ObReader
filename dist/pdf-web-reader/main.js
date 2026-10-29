@@ -64675,7 +64675,7 @@ class PdfReaderView extends EditableFileView {
     if (!this.lastStatusMessage && !this.statusRecoveryAction) {
       this.setStatus("正在加载 PDF 阅读器…");
     }
-    this.setStatusBarEnabled(this.plugin.settings.showStatusBar);
+    this.setStatusBarEnabled(true);
     this.iframe = this.contentEl.createEl("iframe", {
       cls: "pdf-web-reader-frame",
       attr: {
@@ -66939,6 +66939,7 @@ class PdfReaderView extends EditableFileView {
         this.pendingOpenGeneration = null;
         this.startupTimings.openMs = this.openStartedAt ? Date.now() - this.openStartedAt : null;
         this.startupTimings.viewer = message.startupTimings || null;
+        this.renderStatus();
         if (this.pendingReaderTarget && this.annotationPageIdentity) void this.applyPendingReaderTarget();
         break;
       case "startup-timings": {
@@ -66949,6 +66950,7 @@ class PdfReaderView extends EditableFileView {
           if (Number.isFinite(value) && value >= 0) timings[key] = value;
         }
         this.startupTimings.viewer = timings;
+        this.renderStatus();
         break;
       }
       case "save":
@@ -67323,13 +67325,21 @@ class PdfReaderView extends EditableFileView {
     if (!status) return;
     status.empty?.();
     status.setText?.(this.lastStatusMessage);
+    const labels = { resourcesMs: "资源准备", modulesMs: "阅读器启动", openMs: "打开完成",
+      pdfParseMs: "PDF 解析", firstPageAnnotationLayerMs: "首页批注层就绪", toolsUsableMs: "工具可用" };
+    const timings = { ...this.startupTimings, ...this.startupTimings?.viewer };
+    const parts = Object.entries(labels).filter(([key]) => Number.isFinite(timings[key]) && timings[key] >= 0)
+      .map(([key, label]) => `${label} ${(timings[key] / 1000).toFixed(2)} 秒`);
+    if (parts.length && typeof status.createEl === "function") {
+      status.createEl("span", { text: `　${parts.join(" · ")}` });
+    }
     if (this.statusRecoveryAction && typeof status.createEl === "function") {
       status.createEl("button", { text: "恢复本地副本" })
         .addEventListener("click", () => void this.plugin.restoreLatestRecovery());
     }
     status.toggleClass?.(
       "is-hidden",
-      !this.lastStatusMessage && !this.statusRecoveryAction,
+      !this.lastStatusMessage && !this.statusRecoveryAction && !parts.length,
     );
   }
 
