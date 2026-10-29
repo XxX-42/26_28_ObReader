@@ -332,7 +332,7 @@ function writeObject(buffer, offset, ref, object) {
   return offset;
 }
 
-function createIncrementalPatch({ sourceBytes, document, snapshot }) {
+function createIncrementalPatch({ sourceBytes, document, snapshot, allowInfoChange = false }) {
   const base = asBytes(sourceBytes);
   if (!snapshot || snapshot.baseLength !== base.length || snapshot.baseFingerprint !== fingerprint(base)) {
     fail("PDF_INCREMENTAL_BASE_MISMATCH", "The incremental snapshot does not belong to these exact source bytes.");
@@ -369,7 +369,13 @@ function createIncrementalPatch({ sourceBytes, document, snapshot }) {
   const trailerDict = PDFDict.withContext(context);
   trailerDict.set(PDFName.of("Size"), PDFNumber.of(size));
   trailerDict.set(PDFName.of("Root"), trailer.root);
-  if (trailer.info !== undefined) trailerDict.set(PDFName.of("Info"), trailer.info);
+  const info = allowInfoChange ? context.trailerInfo.Info : trailer.info;
+  if (info !== undefined) {
+    if (allowInfoChange && (!(info instanceof PDFRef) || !(context.lookup(info) instanceof PDFDict))) {
+      fail("PDF_INCREMENTAL_INVALID_INFO", "The replacement Info must reference a dictionary.");
+    }
+    trailerDict.set(PDFName.of("Info"), info);
+  }
   if (trailer.id !== undefined) {
     if (!(trailer.id instanceof PDFArray)) fail("PDF_INCREMENTAL_INVALID_TRAILER", "The final trailer /ID value is not an array.");
     trailerDict.set(PDFName.of("ID"), trailer.id);

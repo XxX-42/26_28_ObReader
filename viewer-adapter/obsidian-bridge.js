@@ -4175,6 +4175,12 @@
       ? "KNOWN"
       : "UNKNOWN";
     const source = externalAnnotations?.source;
+    let pairId = null;
+    if (externalAnnotations?.requiresPairValidation === true) {
+      const metadata = await pdfDocument.getMetadata();
+      const candidate = metadata?.info?.Custom?.ObReaderPairId;
+      pairId = typeof candidate === "string" && /^[a-f0-9]{32}$/.test(candidate) ? candidate : null;
+    }
     const actualIdentity = {
       pageCount,
       orderedPageIdentities: identities,
@@ -4191,6 +4197,7 @@
       documentId,
       openRequest,
       sourceHash: actualIdentity.sourceHash,
+      ...(externalAnnotations?.requiresPairValidation === true ? { pairId } : {}),
       pageCount,
       orderedPageIdentities: identities,
       identityStatus,
@@ -10756,7 +10763,7 @@
       if (state.activeDocumentId !== documentId || state.disposed) {
         return false;
       }
-      void reportAnnotationSourceIdentity(pdfDocument, message.externalAnnotations).catch((error) => {
+      if (message.deferredAnnotationInitialization !== true) void reportAnnotationSourceIdentity(pdfDocument, message.externalAnnotations).catch((error) => {
         runtimeLogRecord("annotation-source-identity.error", {
           documentId,
           openRequest: state.activeOpenRequest,
@@ -11173,6 +11180,28 @@
         probeId: message.probeId, documentId: state.activeDocumentId, openRequest: state.activeOpenRequest,
         idle: !state.disposed && document.visibilityState !== "hidden" && !isEditBoundaryBusy() &&
           !isDirty() && !state.savePromise && !state.recoveryPromise && !state.closeControl,
+      });
+      return;
+    }
+
+    if (message.type === "annotation-initialize-late") {
+      if (message.rendererGeneration !== rendererGeneration ||
+          message.previousDocumentId !== state.activeDocumentId ||
+          message.openRequest !== state.activeOpenRequest ||
+          typeof message.documentId !== "string" || !state.readOnly ||
+          !state.app?.pdfDocument) return;
+      const snapshot = validateExternalAnnotations(message.externalAnnotations);
+      state.activeDocumentId = message.documentId;
+      if (state.nativeAnnotationGateToken) state.nativeAnnotationGateToken.documentId = message.documentId;
+      state.externalSource = snapshot.source;
+      state.compactInkEncoding = snapshot.compactInkEncoding === true;
+      applyLegacyAnnotationIdentities(snapshot.legacyIdentities);
+      bindVocabularyToOpenedDocument(message.documentId, message.openRequest);
+      void reportAnnotationSourceIdentity(state.app.pdfDocument, message.externalAnnotations).catch((error) => {
+        sendError(error.message || "Could not verify PDF annotations.", {
+          documentId: message.documentId, openRequest: message.openRequest,
+          code: "annotation-source-identity-failed",
+        });
       });
       return;
     }
@@ -11596,6 +11625,19 @@
               if (backlinks?.pageNumber === pageNumber) void applyReaderBacklinkPageResults(backlinks);
             }
           }),
+          { signal: state.eventAbortController.signal },
+        );
+        app.eventBus?._on(
+          "switchannotationeditormode",
+          ({ mode }) => {
+            // PDF.js completes mode changes asynchronously. Stop touch
+            // momentum when eraser selection is requested, before that await.
+            if (mode === 17 && iosInputPolicy) {
+              state.viewportController?.interruptNativeScroll(
+                document.getElementById("viewerContainer"),
+              );
+            }
+          },
           { signal: state.eventAbortController.signal },
         );
         app.eventBus?._on(

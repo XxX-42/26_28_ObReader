@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
@@ -264,7 +265,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     return window;
   }
 
-  const adapter = {
+  const adapter = withAtomicProcess({
     async read(assetPath) {
       if (stored.has(assetPath)) return new TextDecoder().decode(stored.get(assetPath).bytes);
       const relative = assetPath.slice(`${cacheRoot}/`.length);
@@ -312,7 +313,7 @@ function makeHarness({ appMobile = true, platformMobile = false, platformIos = f
     },
     async writeBinary() {},
     async remove() {},
-  };
+  });
   const vault = {
     configDir: ".obsidian",
     adapter,

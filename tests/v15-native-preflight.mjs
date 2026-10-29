@@ -1,0 +1,4 @@
+import {nativeEvalJson,nativeIdentityExpression,assertNativeVaultIdentity} from './native-config.mjs';
+if(process.argv.includes('--enable'))nativeEvalJson(`(async()=>{if(app.vault.adapter.basePath!==${JSON.stringify(process.env.OBSIDIAN_VAULT_PATH)})throw Error('Wrong vault');await app.plugins.enablePluginAndSave('pdf-web-reader');return JSON.stringify({ok:true})})()`);
+const state=nativeEvalJson(nativeIdentityExpression(`version:app.plugins.plugins['pdf-web-reader']?.manifest?.version||null,manifest:app.plugins.manifests['pdf-web-reader']?.version||null,enabled:app.plugins.enabledPlugins.has('pdf-web-reader'),safeMode:app.plugins.restrictedMode,visibility:document.visibilityState,readers:app.workspace.getLeavesOfType('pdf-web-reader-view').length,modals:[...document.querySelectorAll('.modal-container')].map(x=>x.innerText.slice(0,800)),`));
+assertNativeVaultIdentity(state);console.log(JSON.stringify(state));

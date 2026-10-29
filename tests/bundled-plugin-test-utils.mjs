@@ -304,6 +304,7 @@ export function loadBundledPlugin(
 export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
   const rootPath = path.resolve(tempRoot);
   let writeCount = 0;
+  const processQueues = new Map();
   function resolve(vaultPath) {
     assert.equal(typeof vaultPath, "string");
     const normalized = vaultPath.replaceAll("\\", "/");
@@ -398,6 +399,19 @@ export function createDiskAdapter(tempRoot, { failWrite = null } = {}) {
     async write(vaultPath, value) {
       await mkdir(path.dirname(resolve(vaultPath)), { recursive: true });
       await writeFile(resolve(vaultPath), value, "utf8");
+    },
+    async process(vaultPath, fn) {
+      const previous = processQueues.get(vaultPath) || Promise.resolve();
+      const task = previous.catch(() => {}).then(async () => {
+        const current = await readFile(resolve(vaultPath), "utf8");
+        const next = fn(current);
+        await writeFile(resolve(vaultPath), next, "utf8");
+        return next;
+      });
+      const tail = task.then(() => {}, () => {});
+      processQueues.set(vaultPath, tail);
+      tail.then(() => { if (processQueues.get(vaultPath) === tail) processQueues.delete(vaultPath); });
+      return task;
     },
     async append(vaultPath, value) {
       await mkdir(path.dirname(resolve(vaultPath)), { recursive: true });

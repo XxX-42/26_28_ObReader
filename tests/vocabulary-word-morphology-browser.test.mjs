@@ -9,6 +9,7 @@ import puppeteer from "puppeteer-core";
 import { launchTestBrowser } from "./browser-test-launch.mjs";
 import { attachCleanupErrors, cleanupBrowserTestResources } from "./browser-test-cleanup.mjs";
 import { resolveBrowserPath } from "./browser-path.mjs";
+import { listenBrowserSafe } from "./browser-safe-port.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const browserPath = resolveBrowserPath();
@@ -31,7 +32,7 @@ test("card word modes remain reachable on desktop and narrow touch viewports", {
     window.show=()=>{card.showEntryPill({page:{pageNumber:1,tokens:[]},entry:{rawSurface:'subscription',surfaceKey:'subscription',type:'word',startIndex:0,endIndex:1},requestId:'entry',x:innerWidth/2,y:innerHeight*.6});
       card.updatePillRecord({key:'subscription',type:'word',hasPersonalRecord:false,translation:'n. 订阅，订购',dictionaryLookupState:'found'});};
     show();</script>`));
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await listenBrowserSafe(server);
   let browser, page, primaryError, cleanup;
   try {
     browser = await launchTestBrowser(puppeteer, { executablePath: browserPath, headless: true,

@@ -103,6 +103,22 @@ async function createPdfHashRuntime({ forceSha256 = false } = {}) {
       : normalizedExpected;
     return sha256Hex(bytes) === expectedSha.toLowerCase();
   };
+  const matchesAsync = async (value, expected) => {
+    if (!isSupportedHash(expected)) return false;
+    const bytes = bytesView(value), normalizedExpected = expected.toLowerCase();
+    if (XXH64.test(normalizedExpected)) return matches(bytes, normalizedExpected);
+    const expectedSha = normalizedExpected.startsWith(SHA256_PREFIX)
+      ? normalizedExpected.slice(SHA256_PREFIX.length) : normalizedExpected;
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle || typeof subtle.digest !== "function") return matches(bytes, normalizedExpected);
+    try {
+      const result = await subtle.digest("SHA-256", bytes);
+      return toHex(new Uint8Array(result)) === expectedSha;
+    } catch {
+      // Keep the existing complete verification if Web Crypto is unavailable.
+      return matches(bytes, normalizedExpected);
+    }
+  };
   const compare = (left, right) => {
     const a = bytesView(left);
     const b = bytesView(right);
@@ -123,6 +139,7 @@ async function createPdfHashRuntime({ forceSha256 = false } = {}) {
     fingerprintChunks,
     createAccumulator,
     matches,
+    matchesAsync,
     compare,
     hashFileKey,
     isSupportedHash,

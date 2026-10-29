@@ -1440,6 +1440,17 @@ test(
             editing:boolMethod(activeEditor, "isInEditMode"),
             empty:boolMethod(activeEditor, "isEmpty"),
           } : null,
+          pageEditors:Array.from(traceManager.getEditors?.(tracePageView.id - 1) || []).map(editor => ({
+            id:editor.id,
+            pageIndex:editor.pageIndex,
+            parentPageIndex:editor.parent?.pageIndex ?? null,
+            parentMatchesPageLayer:editor.parent === tracePageLayer,
+            attached:Boolean(editor.isAttachedToDOM),
+            selected:Boolean(editor.div?.classList.contains('selectedEditor')),
+            editing:boolMethod(editor, 'isInEditMode'),
+            empty:boolMethod(editor, 'isEmpty'),
+            text:editor.div?.querySelector('.internal')?.textContent?.replace(/\u200b/g, '') ?? null,
+          })),
           targetEditor:targetEditor ? {
             id:targetEditor.id,
             pageIndex:targetEditor.pageIndex,
@@ -2994,6 +3005,7 @@ test(
             pageLayerConnected:entry.pageLayerConnected === true,
             managerCurrentLayerMatchesPage:entry.managerCurrentLayerMatchesPage === true,
             activeEditor:entry.activeEditor || null,
+            pageEditors:entry.pageEditors || [],
             activeElement:entry.activeElement || null,
           })) ?? [],
         manualCalls:window.__mouseManualPauseResumeCalls.slice(),
@@ -3046,16 +3058,22 @@ test(
       if (event.paused === true) {
         return event.stack.some((frame) => frame.includes("PDFPageView.reset"));
       }
+      const blurredEditor = event.activeElement?.id === 'secondaryToolbarToggleButton' &&
+        event.pageEditors.filter(editor => editor.id === pausedFreeText.editorId).length === 1 &&
+        event.pageEditors.find(editor => editor.id === pausedFreeText.editorId);
+      const editor = event.activeEditor || blurredEditor;
       return event.paused === false &&
         event.stack.some((frame) => frame.includes("AnnotationEditorLayerBuilder.show")) &&
         event.pageIndex === pausedFreeText.pageIndex &&
         event.pageLayerConnected && event.managerCurrentLayerMatchesPage &&
-        event.activeEditor?.id === pausedFreeText.editorId &&
-        event.activeEditor?.parentPageIndex === pausedFreeText.pageIndex &&
-        event.activeEditor?.parentMatchesPageLayer === true &&
-        event.activeEditor?.attached === true && event.activeEditor?.selected === true &&
-        event.activeEditor?.empty === false &&
-        event.activeElement?.editable === (event.activeEditor?.editing === true);
+        editor?.id === pausedFreeText.editorId &&
+        editor?.parentPageIndex === pausedFreeText.pageIndex &&
+        editor?.parentMatchesPageLayer === true &&
+        editor?.attached === true && editor?.selected === true &&
+        editor?.empty === false &&
+        (event.activeEditor
+          ? event.activeElement?.editable === (editor.editing === true)
+          : event.activeElement?.editable === false && editor.editing === false && editor.text === typedFreeText.text);
     }), `Every post-toolbar pause must be either a page-reset hide or a PDF.js show that preserves this attached, selected, nonempty editor without contradicting its editability: ${JSON.stringify(resumedFreeText.pauseEvents)}`);
     assert.equal(resumedFreeText.pauseEvents.at(-1)?.paused, false,
       `Both toolbar and redraw pauses must finish with the layer resumed: ${JSON.stringify(resumedFreeText.pauseEvents)}`);

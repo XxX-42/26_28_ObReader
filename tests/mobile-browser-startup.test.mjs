@@ -1,4 +1,5 @@
 import { launchTestBrowser } from "./browser-test-launch.mjs";
+import { listenBrowserSafe } from "./browser-safe-port.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -12,6 +13,7 @@ import { cleanupBrowserTestResources, attachCleanupErrors } from "./browser-test
 
 const root = path.resolve(import.meta.dirname, "..");
 const { createPdfHashRuntime } = createRequire(import.meta.url)("../plugin/pdf-hash-runtime.cjs");
+const { readPairId } = createRequire(import.meta.url)("../plugin/pdf-pair-id.cjs");
 const hashRuntime = await createPdfHashRuntime();
 
 for (const blockDirectScripts of [false, true]) {
@@ -64,7 +66,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
       res.end(bytes);
     } catch (error) { res.writeHead(500).end(error.message); }
   });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  await listenBrowserSafe(server);
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
     browser = await launchTestBrowser(puppeteer, { executablePath: resolveBrowserPath(), headless: true, args: ["--no-sandbox"], defaultViewport: { width: 1100, height: 850 } }, { testName: "mobile-browser-startup" });
@@ -95,11 +97,19 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         if (!response.ok) throw Error(`Adapter ${op} failed`);
         return op === "read" ? response.arrayBuffer() : response.json();
       };
+      const processQueues = new Map();
       const adapter = {
         exists: target => api("exists", target), mkdir: target => api("mkdir", target),
         readBinary: target => api("read", target), writeBinary: (target, bytes) => api("write", target, bytes),
         read: async target => new TextDecoder().decode(await api("read", target)),
         write: (target, text) => api("write", target, text), remove: target => api("remove", target),
+        process: (target, fn) => {
+          const previous = processQueues.get(target) || Promise.resolve();
+          const task = previous.catch(() => {}).then(async () => { const current = await adapter.read(target); const next = fn(current); await adapter.write(target, next); return next; });
+          const tail = task.then(() => {}, () => {}); processQueues.set(target, tail);
+          tail.then(() => { if (processQueues.get(target) === tail) processQueues.delete(target); });
+          return task;
+        },
         append: (target, text) => api("append", target, text),
         rename: (from, to) => fetch(`${base}/adapter?op=rename&path=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then(response => { if (!response.ok) throw Error("Adapter rename failed"); return response.json(); }),
         list: target => api("list", target),
@@ -146,6 +156,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         isMobile: true,
         vault: { adapter, configDir: ".obsidian", on: () => ({}), getAbstractFileByPath: target => vaultFiles.get(target) || null,
           readBinary: file => adapter.readBinary(file.path), modifyBinary: (file, data) => adapter.writeBinary(file.path, data),
+          appendBinary: (file, data) => api("append", file.path, data),
           async createFolder(target) { await adapter.mkdir(target); vaultFiles.set(target, { path: target }); },
           async create(target, text) { await adapter.write(target, text); const file = new TFile(target); vaultFiles.set(target, file); return file; },
           async createBinary(target, data) { await adapter.writeBinary(target, data); const file = new TFile(target); vaultFiles.set(target, file); return file; },
@@ -198,18 +209,48 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     await page.mouse.move(iframeBox.x + position.x, iframeBox.y + position.y); await page.mouse.down();
     await page.mouse.move(iframeBox.x + position.x + 90, iframeBox.y + position.y + 65, { steps: 10 }); await page.mouse.up();
     await page.waitForFunction(() => { const v = fixtureLeaves[0].view; return v.currentRevision > 0 && v.confirmedRevision === v.currentRevision && !v.saving; }, { timeout: 20_000 });
+    const selectFixtureText=async()=>frame.evaluate(()=>{
+      const spans=[...document.querySelectorAll('.page[data-page-number="1"] .textLayer span')].filter(el=>el.firstChild?.nodeType===Node.TEXT_NODE);
+      if(spans.length<2)throw Error('Fixture text layer is unavailable');
+      const range=document.createRange();range.setStart(spans[0].firstChild,0);range.setEnd(spans[1].firstChild,spans[1].textContent.length);
+      document.getSelection().removeAllRanges();document.getSelection().addRange(range);
+      window.dispatchEvent(new PointerEvent('pointerup',{button:0,bubbles:true}));
+    });
+    for(const [mode,kind] of [[10,'Underline'],[9,'Highlight']]){
+      await frame.evaluate(mode=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{mode}),mode);
+      await selectFixtureText();
+      await page.waitForFunction(kind=>fixtureLeaves[0].view.annotationSnapshot?.annotations?.some(row=>row.kind===kind),{timeout:20_000},kind);
+    }
+    await frame.evaluate(()=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{mode:15}));
+    await page.mouse.move(iframeBox.x+position.x+160,iframeBox.y+position.y+100);await page.mouse.down();
+    await page.mouse.move(iframeBox.x+position.x+220,iframeBox.y+position.y+145,{steps:8});await page.mouse.up();
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>fixtureLeaves[0].view.annotationSnapshot?.annotations?.some(row=>row.kind==='Ink'),{timeout:20_000});
+    await frame.evaluate(()=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{mode:3}));
+    await page.mouse.click(iframeBox.x+position.x+100,iframeBox.y+position.y+200);
+    await frame.waitForSelector('.freeTextEditor.selectedEditor .internal');
+    await frame.type('.freeTextEditor.selectedEditor .internal','v15 browser text');await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>{
+      const v=fixtureLeaves[0].view,rows=v.annotationSnapshot?.annotations||[];
+      return ['Underline','Square','Highlight','Ink','FreeText'].every(kind=>rows.some(row=>row.kind===kind))&&v.confirmedRevision===v.currentRevision&&!v.saving;
+    },{timeout:20_000});
+    const expectedRows=await page.evaluate(()=>fixtureLeaves[0].view.annotationSnapshot.annotations.map(({uuid,kind,pageIndex,payload})=>({uuid,kind,pageIndex,payload})).sort((a,b)=>a.uuid.localeCompare(b.uuid)));
+    assert.equal(expectedRows.length,5);assert.equal(new Set(expectedRows.map(row=>row.uuid)).size,5);
+    const textEditor=expectedRows.find(row=>row.kind==='FreeText')?.payload?.editor;
+    assert.equal(textEditor?.value,'v15 browser text');assert.ok(textEditor.rect[2]>textEditor.rect[0]&&textEditor.rect[3]>textEditor.rect[1]);
     assert.ok(annotationWrites > 0, "Annotation operations must be persisted to the external store");
-    assert.equal(sourcePdfWrites, 0, "The original PDF must remain immutable");
-    assert.deepEqual(files.get("sample.pdf"), fixture, "The source PDF bytes must be unchanged");
+    assert.equal(sourcePdfWrites, 1, "Only first-time pair metadata may modify the PDF");
+    assert.deepEqual(files.get("sample.pdf").subarray(0, fixture.length), fixture, "Pairing must preserve the original PDF prefix");
+    assert.match(await readPairId(files.get("sample.pdf")), /^[a-f0-9]{32}$/);
     const sourceAfter = files.get("sample.pdf");
     const sourceSha256After = createHash("sha256").update(sourceAfter).digest("hex");
     const sourceXxh64After = hashRuntime.fingerprint(sourceAfter);
-    assert.equal(sourceSha256After, sourceSha256Before);
-    assert.equal(sourceXxh64After, sourceXxh64Before);
+    assert.notEqual(sourceSha256After, sourceSha256Before);
+    assert.notEqual(sourceXxh64After, sourceXxh64Before);
     report.checks.saved = {
       annotationWrites,
       sourcePdfWrites,
-      sourceBytesUnchanged: true,
+      originalBytesPreserved: true,
       sourceSha256Before,
       sourceSha256After,
       sourceXxh64Before,
@@ -272,8 +313,53 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     report.checks.protocol = await page.evaluate(() => fixtureProtocol);
     report.checks.hostMessages = await page.evaluate(() => fixtureHostMessages);
     assert.ok(report.checks.reopened.square >= 1, JSON.stringify(report.checks.reopened));
+    const actualRows=await page.evaluate(()=>fixtureReopenedView.annotationSnapshot.annotations.map(({uuid,kind,pageIndex,payload})=>({uuid,kind,pageIndex,payload})).sort((a,b)=>a.uuid.localeCompare(b.uuid)));
+    assert.deepEqual(actualRows,expectedRows,'All five annotation UUIDs and payloads must survive reopening');
+    assert.equal(sourcePdfWrites, 1, "Reopening the paired PDF must not write it again");
+    assert.equal(createHash("sha256").update(files.get("sample.pdf")).digest("hex"), sourceSha256After);
+    assert.equal(hashRuntime.fingerprint(files.get("sample.pdf")), sourceXxh64After);
+    const reopenedFrame=(await page.frames()).find(f=>f!==frame&&f.parentFrame()===page.mainFrame());
+    assert.ok(reopenedFrame,'The reopened PDF must have its own Viewer frame');
+    await reopenedFrame.evaluate(()=>PDFViewerApplication.eventBus.dispatch('switchannotationeditormode',{mode:0}));
+    await reopenedFrame.click('.page[data-page-number="1"] .annotationEditorLayer [data-l10n-id="pdfjs-editor-square-editor"]');
+    report.checks.deleteTarget=await reopenedFrame.evaluate(()=>({
+      selected:[...document.querySelectorAll('.annotationEditorLayer .selectedEditor')].map(el=>({className:el.className,label:el.getAttribute('data-l10n-id')})),
+      active:document.activeElement?.outerHTML?.slice(0,300),mode:PDFViewerApplication.pdfViewer.annotationEditorMode,
+      point:(()=>{const el=document.querySelector('[data-l10n-id="pdfjs-editor-square-editor"]'),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {x:r.x+r.width/2,y:r.y+r.height/2,hit:hit?.outerHTML?.slice(0,300)}})()
+    }));
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => {
+      const view=fixtureReopenedView;
+      return view.currentRevision>0&&view.confirmedRevision===view.currentRevision&&!view.saving&&
+        (view.annotationSnapshot?.tombstones||[]).length>0;
+    }, {timeout:20_000});
+    const squareUuid=expectedRows.find(row=>row.kind==='Square').uuid;
+    await reopenedFrame.waitForSelector('#pdfReaderBridgeUndoButton:not([disabled])');
+    await reopenedFrame.click('#pdfReaderBridgeUndoButton');
+    await page.waitForFunction(uuid=>{
+      const v=fixtureReopenedView,s=v.annotationSnapshot;
+      return v.currentRevision===v.confirmedRevision&&!v.saving&&s?.annotations?.some(row=>row.uuid===uuid)&&!s.tombstones?.some(row=>row.uuid===uuid);
+    },{timeout:20_000},squareUuid);
+    await reopenedFrame.waitForSelector('#pdfReaderBridgeRedoButton:not([disabled])');
+    await reopenedFrame.click('#pdfReaderBridgeRedoButton');
+    await page.waitForFunction(uuid=>{
+      const v=fixtureReopenedView,s=v.annotationSnapshot;
+      return v.currentRevision===v.confirmedRevision&&!v.saving&&!s?.annotations?.some(row=>row.uuid===uuid)&&s?.tombstones?.some(row=>row.uuid===uuid);
+    },{timeout:20_000},squareUuid);
+    await page.evaluate(async()=>{
+      const leaf=fixtureApp.workspace.getLeaf(true);
+      await leaf.setViewState({type:'pdf-web-reader-view',active:true,state:{file:'sample.pdf'}});
+      window.fixtureDeletedReopen=leaf.view;
+    });
+    await page.waitForFunction(()=>fixtureDeletedReopen?.ready&&fixtureDeletedReopen.annotationHydrationAllowed,{timeout:40_000});
+    const deletion=await page.evaluate(()=>({mismatch:fixtureDeletedReopen.annotationSourceMismatch,
+      annotations:fixtureDeletedReopen.annotationSnapshot?.annotations?.length,
+      tombstones:fixtureDeletedReopen.annotationSnapshot?.tombstones?.length}));
+    assert.equal(deletion.mismatch,false,JSON.stringify(deletion));assert.equal(deletion.annotations,4,JSON.stringify(deletion));
+    assert.equal(deletion.tombstones,1,JSON.stringify(deletion));assert.equal(sourcePdfWrites,1);
     await page.evaluate(async () => {
       fixtureClosedViews.push(fixtureReopenedView);
+      fixtureClosedViews.push(fixtureDeletedReopen);
       await Promise.all([...new Set(fixtureClosedViews)].map(view => view.onClose()));
       fixturePlugin.onunload();
     });
@@ -297,6 +383,9 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
       paused: window.fixtureLeaves?.[0]?.view.autoSavePaused,
       annotationSnapshot: window.fixtureLeaves?.[0]?.view.annotationSnapshot ?? null,
       annotationHydrationAllowed: window.fixtureLeaves?.[0]?.view.annotationHydrationAllowed,
+      deletedProbe: window.fixtureReopenedView ? { revision:window.fixtureReopenedView.currentRevision,
+        confirmed:window.fixtureReopenedView.confirmedRevision,saving:window.fixtureReopenedView.saving,
+        snapshot:window.fixtureReopenedView.annotationSnapshot,status:window.fixtureReopenedView.lastStatusMessage } : null,
       notices: window.notices || [],
       frameHeight: document.querySelector("iframe")?.getBoundingClientRect().height,
     })).catch(() => null);

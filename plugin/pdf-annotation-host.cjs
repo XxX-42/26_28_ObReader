@@ -2,6 +2,10 @@
 "use strict";
 
 const { createWalAnnotationStore } = require("./storage/wal-annotation-store.cjs");
+const { createSingleJsonlAnnotationStore } = require("./storage/single-jsonl-annotation-store.cjs");
+const { createSingleJsonlMigrationRunner } = require("./storage/single-jsonl-migration-runner.cjs");
+const { createSingleJsonlVaultMigration } = require("./storage/single-jsonl-vault-migration.cjs");
+const { appendPairUpdate } = require("./pdf-pair-id.cjs");
 const { createSourceVersions } = require("./pdf-source-versions.cjs");
 
 const ANNOTATION_ROOT = "00_Archive/20_PDFData";
@@ -19,6 +23,8 @@ function createPdfAnnotationHost({
   log = () => {},
   storeFactory = createWalAnnotationStore,
   enableJsonl = false,
+  enableSingleJsonl = false,
+  pairDocument = null,
   verifyOutlineUpdate = null,
   reopenVerifiedView = null,
 }) {
@@ -184,7 +190,9 @@ function createPdfAnnotationHost({
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
-  const store = storeFactory({
+  const chosenStoreFactory = enableSingleJsonl && storeFactory === createWalAnnotationStore
+    ? createSingleJsonlAnnotationStore : storeFactory;
+  const store = chosenStoreFactory({
     adapter,
     coordinationAdapter: backingAdapter,
     sourceExists: (path) => Boolean(app.vault.getAbstractFileByPath(path)),
@@ -196,11 +204,13 @@ function createPdfAnnotationHost({
     verifyHash: typeof hashRuntime.matches === "function" ? hashRuntime.matches : undefined,
     deviceId,
     jsonlMode: enableJsonl,
+    pairDocument: enableSingleJsonl ? (pairDocument || pairNewDocument) : pairDocument,
     onTiming: (details) => log("annotation-performance", details),
   });
   const queues = new Map();
   const documentViews = new Map();
   const sourceStates = new Map();
+  const pairingWrites = new Map();
   const sourceVersions = createSourceVersions({ adapter: backingAdapter, makeToken });
   const outlineJobs = new Map();
   const snapshotReads = new Map();
@@ -209,9 +219,48 @@ function createPdfAnnotationHost({
   const maintenanceByDocument = new Map();
   const pendingSidecarChecks = new Map();
   let disposed = false;
+  let migrationRunning = false;
   let logicalClock = 0;
 
+  async function pairNewDocument(document) {
+    const state = sourceStates.get(document.documentId);
+    const file = state?.file;
+    if (!state || !file || normalizePath(file.path) !== state.path || app.vault.getAbstractFileByPath(state.path) !== file) {
+      throw codedError("PDF_ANNOTATION_SOURCE_MISSING", "The PDF is no longer available for pairing.");
+    }
+    const runner = createSingleJsonlMigrationRunner({
+      adapter: backingAdapter, store: store.core,
+      journalRoot: `${app.vault.configDir || ".obsidian"}/plugins/pdf-web-reader/.v15-migration`,
+      verifySource: (bytes, expected) => typeof hashRuntime.matches === "function"
+        ? hashRuntime.matches(bytes, expected) : hashRuntime.fingerprint(bytes) === expected,
+      readPdf: async () => app.vault.readBinary(file),
+      writePdf: async (_path, value) => {
+        const expected = hashRuntime.fingerprint(value);
+        const pending = { expectedHash: expected, bytes: value, originalSize: state.physicalSource.size };
+        pairingWrites.set(state.path, pending);
+        try {
+          await appendPairUpdate(app.vault, file, value);
+          state.physicalSource = sourceMetadata(value, file, hashRuntime, state.path);
+        } catch (error) {
+          // A partially written increment is recoverable only when every byte
+          // still matches the prepared PDF and the original prefix is intact.
+          try {
+            const partial = new Uint8Array(await app.vault.readBinary(file));
+            if (pairingPrefixMatches(partial, pending)) state.physicalSource = sourceMetadata(partial, file, hashRuntime, state.path);
+            else pairingWrites.delete(state.path);
+          } catch { pairingWrites.delete(state.path); }
+          throw error;
+        }
+      },
+    });
+    const result = await runner.migrate({ document, snapshot: { annotations: [], tombstones: [], deletionGuards: [] } });
+    state.document = result.document;
+    for (const view of documentViews.get(document.documentId) || []) view.annotationDocument = result.document;
+    return result;
+  }
+
   async function initializeView(view, value) {
+    if (migrationRunning) throw codedError("V15_MIGRATION_IN_PROGRESS", "Wait for annotation migration to finish before opening a PDF.");
     assertLive();
     const bytes = bytesView(value);
     const file = view.documentFile || view.file;
@@ -220,11 +269,27 @@ function createPdfAnnotationHost({
     const source = sourceMetadata(bytes, file, hashRuntime, sourcePath);
     const physicalSource = { ...source };
     const openRequest = view.openRequest;
+    const assertOpenCurrent = () => {
+      if (disposed || view.openRequest !== openRequest || view.teardownStarted ||
+          (view.documentFile || view.file) !== file || normalizePath(file.path) !== sourcePath)
+        throw codedError("PDF_ANNOTATION_SESSION_CHANGED", "The PDF Reader session changed while opening.");
+    };
     let prior;
     let registered;
     let sourceHashCompatMatch = false;
     try {
       prior = await store.documentForPath(sourcePath);
+      if (store.sourceProtocol === "obreader-current-v15" && prior?.pairing?.pairedSha256 &&
+          typeof hashRuntime.matches === "function" && (typeof hashRuntime.matchesAsync === "function"
+            ? await hashRuntime.matchesAsync(bytes, prior.pairing.pairedSha256)
+            : hashRuntime.matches(bytes, prior.pairing.pairedSha256))) {
+        // Pairing appends PDF metadata once. Preserve the pre-pairing logical
+        // source used by existing annotations and links only after the paired
+        // physical PDF bytes have been verified against the migration receipt.
+        Object.assign(source, prior.source);
+        sourceHashCompatMatch = true;
+      }
+      assertOpenCurrent();
       if (prior?.source?.sourceHash && prior.source.sourceHash !== source.sourceHash &&
           typeof hashRuntime.matches === "function" && hashRuntime.matches(bytes, prior.source.sourceHash)) {
         // A previous build may have recorded SHA-256 while this runtime now
@@ -242,7 +307,9 @@ function createPdfAnnotationHost({
         if (version) Object.assign(source, version.logicalSource);
       }
       registered = await store.registerDocument({ sourcePath, source });
+      assertOpenCurrent();
     } catch (error) {
+      if (error?.code === "PDF_ANNOTATION_SESSION_CHANGED") throw error;
       // Identity collisions, incomplete Sync shards, and corrupt metadata are
       // annotation-store failures, not PDF decode failures. Give this open
       // attempt an ephemeral non-persistent identity so the immutable source
@@ -310,7 +377,7 @@ function createPdfAnnotationHost({
             )).split(":").at(-1)}`,
           },
         }));
-      if (legacyTombstones.length) {
+      if (legacyTombstones.length && store.sourceProtocol !== "obreader-current-v15") {
         const digest = hashRuntime.fingerprint(utf8(legacyTombstones
           .map((entry) => `${entry.uuid}:${entry.clock.timestamp}:${entry.clock.logical}:${entry.clock.opId}`)
           .sort().join("\n"))).split(":").at(-1);
@@ -348,11 +415,12 @@ function createPdfAnnotationHost({
         });
       }
     }
+    assertOpenCurrent();
     const hasStoredPageIdentity = Number.isSafeInteger(registered.source.pageCount) &&
       Array.isArray(registered.source.orderedPageIdentities) &&
       registered.source.orderedPageIdentities.length === registered.source.pageCount;
     const hydrationAllowed = ["MATCH", "BASELINE_ESTABLISHED"].includes(registered.sourceMatch) &&
-      !registered.sourceMismatch && !snapshotReadError && hasStoredPageIdentity;
+      !registered.sourceMismatch && !snapshotReadError && hasStoredPageIdentity && snapshot.requiresPairValidation !== true;
     view.annotationDocument = currentDocument;
     view.annotationLegacyIdentityUncertain = legacyIdentityScanUncertain;
     view.annotationSourceHash = source.sourceHash;
@@ -386,6 +454,11 @@ function createPdfAnnotationHost({
     });
     if (hydrationAllowed) return snapshot;
     const provisional = emptySnapshot(currentDocument, source);
+    if (snapshot.requiresPairValidation === true && !snapshotReadError && !registered.sourceMismatch) {
+      // Deletion masking remains available before first paint; editors remain
+      // absent until the Viewer confirms the pair ID and ordered pages.
+      return { ...snapshot, annotations: [], requiresPairValidation: true };
+    }
     if (registered.sourceMismatch || snapshotReadError) provisional.legacyIdentities = [];
     if (snapshotReadError) provisional.syncPending = true;
     return provisional;
@@ -451,6 +524,7 @@ function createPdfAnnotationHost({
     }
     const identityInput = {
       document: doc,
+      ...(store.sourceProtocol === "obreader-current-v15" ? { pairId: message.pairId ?? null } : {}),
       sourceHash: view.annotationSourceHash,
       size: sourceStates.get(doc.documentId)?.source?.size,
       tailHash64k: sourceStates.get(doc.documentId)?.source?.tailHash64k,
@@ -735,7 +809,28 @@ function createPdfAnnotationHost({
 
   function readSnapshot(document) {
     const previous = snapshotReads.get(document.documentId) || Promise.resolve();
-    const task = previous.catch(() => {}).then(() => store.readDocument(document));
+    const task = previous.catch(() => {}).then(async () => {
+      const snapshot = await store.readDocument(document);
+      if (store.sourceProtocol !== "obreader-current-v15") return snapshot;
+      // Old embedded deletion identities may predate the sidecar ledger. Keep
+      // them as a read-only mask, without manufacturing a new save on open.
+      const seen = new Set([...(snapshot.annotations || []), ...(snapshot.tombstones || []),
+        ...(snapshot.deletionGuards || [])].map(row => row.uuid));
+      const identities = document.legacyIdentities || [];
+      const activeRefs = new Set(identities.filter(row => row.deleted !== true && row.ref)
+        .map(row => `${row.pageIndex}\0${canonicalRef(row.ref)}`));
+      const projected = [];
+      for (const row of identities) {
+        if (row.deleted !== true || !row.uuid || seen.has(row.uuid)) continue;
+        seen.add(row.uuid);
+        const timestamp = Number.isSafeInteger(row.timestamp) && row.timestamp >= 0 ? row.timestamp : 0;
+        const logical = Number.isSafeInteger(row.logical) && row.logical >= 0 ? row.logical : 0;
+        const embeddedRef = row.ref && !activeRefs.has(`${row.pageIndex}\0${canonicalRef(row.ref)}`) ? row.ref : null;
+        projected.push({ uuid: row.uuid, kind: legacyOperationKind(row.kind), pageIndex: row.pageIndex,
+          embeddedRef, clock: { timestamp, logical, deviceId: row.actorId || "legacy", opId: row.operationId || `legacy-mask:${row.uuid}` } });
+      }
+      return projected.length ? { ...snapshot, tombstones: [...(snapshot.tombstones || []), ...projected] } : snapshot;
+    });
     snapshotReads.set(document.documentId, task);
     void task.finally(() => {
       if (snapshotReads.get(document.documentId) === task) snapshotReads.delete(document.documentId);
@@ -943,6 +1038,12 @@ function createPdfAnnotationHost({
       if (state.path !== path) continue;
       const bytes = new Uint8Array(await app.vault.readBinary(file));
       const currentHash = hashRuntime.fingerprint(bytes);
+      const ownPair = pairingWrites.get(path);
+      if (ownPair && pairingPrefixMatches(bytes, ownPair)) {
+        if (currentHash === ownPair.expectedHash) pairingWrites.delete(path);
+        state.physicalSource = sourceMetadata(bytes, file, hashRuntime, path);
+        return true;
+      }
       const physical = state.physicalSource || state.source;
       const unchanged = typeof hashRuntime.matches === "function"
         ? hashRuntime.matches(bytes, physical.sourceHash)
@@ -969,13 +1070,23 @@ function createPdfAnnotationHost({
     return false;
   }
 
+  function pairingPrefixMatches(bytes, pending) {
+    if (!pending || bytes.length < pending.originalSize || bytes.length > pending.bytes.length) return false;
+    for (let i = 0; i < bytes.length; i++) if (bytes[i] !== pending.bytes[i]) return false;
+    return true;
+  }
+
   async function renamed(file, oldPath) {
     if (!file || !oldPath) return false;
     const fromPath = normalizePath(oldPath);
     const toPath = normalizePath(file.path);
     const views = [...documentViews.values()].flatMap((set) => [...set]);
     const view = views.find((candidate) => candidate.annotationDocument?.sourcePath === fromPath || candidate.requestedPath === fromPath);
-    const previousDocument = view?.annotationDocument || await store.documentForPath(fromPath);
+    let previousDocument = view?.annotationDocument || await store.documentForPath(fromPath);
+    if (!previousDocument && store.sourceProtocol === "obreader-current-v15" &&
+        typeof store.documentForInterruptedRename === "function") {
+      previousDocument = await store.documentForInterruptedRename({ fromPath, toPath });
+    }
     if (!previousDocument) return false;
     const document = await store.renameDocument({
       documentId: previousDocument.documentId,
@@ -1107,6 +1218,24 @@ function createPdfAnnotationHost({
   }
 
   function assertLive() { if (disposed) throw codedError("PDF_ANNOTATION_HOST_DISPOSED", "The annotation host has been disposed."); }
+  async function migrateLegacyVault() {
+    assertLive();
+    if (!enableSingleJsonl) throw codedError("V15_NOT_ENABLED", "The v15 store is not enabled.");
+    if (migrationRunning || documentViews.size || queues.size || maintenanceRequests.size || snapshotReads.size)
+      throw codedError("V15_READERS_OPEN", "Close all PDF Readers and wait for pending work before migration.");
+    migrationRunning = true;
+    try { return await createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid:makeToken}).migrate(); }
+    finally { migrationRunning = false; }
+  }
+  async function recoverPairing(sourcePath) {
+    assertLive();
+    if (!enableSingleJsonl) throw codedError("V15_NOT_ENABLED", "The v15 store is not enabled.");
+    if (migrationRunning || documentViews.size || queues.size || maintenanceRequests.size || snapshotReads.size)
+      throw codedError("V15_READERS_OPEN", "Close all PDF Readers and wait for pending work before recovery.");
+    migrationRunning = true;
+    try { return await createSingleJsonlVaultMigration({app,hashRuntime,identityHash,deviceId,uuid:makeToken}).recoverPairing(sourcePath); }
+    finally { migrationRunning = false; }
+  }
   function dispose() {
     disposed = true;
     for (const pending of maintenanceRequests.values()) pending.resolve?.(false);
@@ -1130,6 +1259,8 @@ function createPdfAnnotationHost({
     acceptOutlineUpdate,
     broadcastDocument,
     watchDeletionRetention,
+    migrateLegacyVault,
+    recoverPairing,
     dispose,
   };
 }

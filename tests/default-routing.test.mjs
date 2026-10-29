@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { withAtomicProcess } from "./atomic-adapter-process.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRequire = createRequire(path.join(root, "plugin", "main.js"));
@@ -195,7 +196,7 @@ function createHarness() {
   const app = {
     vault: {
       configDir: ".obsidian",
-      adapter: {
+      adapter: withAtomicProcess({
         exists: async (target) => files.has(target),
         mkdir: async (target) => { if (!files.has(target)) files.set(target, { directory: true }); },
         read: async (target) => {
@@ -216,7 +217,7 @@ function createHarness() {
           files: [...files.keys()].filter((key) => key.startsWith(`${target}/`) && !key.slice(target.length + 1).includes("/")),
           folders: [],
         }),
-      },
+      }),
       getAbstractFileByPath: (filePath) => files.get(filePath) ?? null,
       readBinary: async (file) => {
         file.reads += 1;

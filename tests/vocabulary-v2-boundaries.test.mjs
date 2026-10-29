@@ -60,9 +60,14 @@ test("frozen subsystems retain baseline bytes except reviewed platform and displ
   assert.deepEqual(Object.keys(manifest.reviewedOutlineSourceOverrides?.sha256 || {}).sort(), [
     "plugin/pdf-annotation-host.cjs", "plugin/pdf-merge-client.cjs", "plugin/pdf-merge-worker.mjs",
   ]);
+  assert.deepEqual(Object.keys(manifest.reviewedV15PairIdentityOverrides?.sha256 || {}).sort(), [
+    "plugin/pdf-annotation-host.cjs",
+    "plugin/pdf-hash-runtime.cjs",
+    "plugin/pdf-incremental.cjs",
+  ]);
   for (const [file, expected] of Object.entries(manifest.sha256)) {
     const actual = createHash("sha256").update(await readFile(path.join(root, file))).digest("hex");
-    const reviewed = manifest.reviewedOutlineSourceOverrides?.sha256?.[file] || manifest.reviewedDisplayOverrides?.sha256?.[file] || manifest.reviewedDeletionRetentionOverrides?.sha256?.[file] || manifest.reviewedUpstreamOverrides?.sha256?.[file] || manifest.reviewedBacklinkOverrides?.sha256?.[file] || manifest.reviewedReliabilityOverrides?.sha256?.[file];
+    const reviewed = manifest.reviewedV15PairIdentityOverrides?.sha256?.[file] || manifest.reviewedOutlineSourceOverrides?.sha256?.[file] || manifest.reviewedDisplayOverrides?.sha256?.[file] || manifest.reviewedDeletionRetentionOverrides?.sha256?.[file] || manifest.reviewedUpstreamOverrides?.sha256?.[file] || manifest.reviewedBacklinkOverrides?.sha256?.[file] || manifest.reviewedReliabilityOverrides?.sha256?.[file];
     assert.equal(actual, reviewed || expected, `frozen subsystem changed outside the reviewed upstream change: ${file}`);
   }
 });

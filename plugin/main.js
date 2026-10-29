@@ -1673,6 +1673,8 @@ class PdfReaderView extends EditableFileView {
 
   async onClose() {
     this.teardownStarted = true;
+    this.annotationOpenWaiter?.resolve(false);
+    this.annotationOpenWaiter = null;
     this.cancelVocabularyEntryLookups();
     this.readerTargetApplySequence += 1;
     for (const pending of this.pendingReaderAnchorCaptures.values()) globalThis.clearTimeout(pending.timer);
@@ -2763,6 +2765,8 @@ class PdfReaderView extends EditableFileView {
     if (!isPdfFile(file)) {
       throw new Error("Only PDF files can be opened in this view.");
     }
+    this.annotationOpenWaiter?.resolve(false);
+    this.annotationOpenWaiter = null;
     this.cancelVocabularyEntryLookups();
     if ((this.documentFile || this.file) !== file || this.requestedPath !== file.path) {
       this.cancelVocabularyWork();
@@ -2803,6 +2807,21 @@ class PdfReaderView extends EditableFileView {
           this.app.vault.getAbstractFileByPath(openingPath) !== file) {
         throw new Error("PDF 在读取期间已移动或被替换；批注尚未写入外置记录。");
       }
+      // Send an independent transferable buffer before touching annotation I/O.
+      // Annotation initialization starts only after the Viewer acknowledges open.
+      const previewDocumentId = this.documentId;
+      this.annotationHydrationAllowed = false;
+      this.annotationSyncState = null;
+      this.annotationLoading = true;
+      this.pendingBytes = bytes.slice(0);
+      this.lastOpenSentRequest = null;
+      const opened = new Promise((resolve) => {
+        this.annotationOpenWaiter?.resolve(false);
+        this.annotationOpenWaiter = { request, resolve };
+      });
+      if (this.ready) this.sendPendingDocument();
+      void opened.then(async (isOpened) => {
+      if (!isOpened || request !== this.openRequest || this.teardownStarted) return;
       const externalAnnotations = await this.plugin.annotationHost.initializeView(this, bytes);
       if (request !== this.openRequest) {
         this.plugin.annotationHost.releaseView(this);
@@ -2814,11 +2833,12 @@ class PdfReaderView extends EditableFileView {
         sourcePath: openingPath,
       };
       this.annotationSyncState = externalAnnotations;
+      this.annotationLoading = false;
       this.originalBytes = null;
       this.loadedBaseBytes = null;
-      this.pendingBytes = bytes;
+      this.pendingBytes = null;
       this.pendingOpenState = null;
-      this.lastOpenSentRequest = null;
+      this.lastOpenSentRequest = request;
       this.setStatus(this.annotationStorageUnavailable
         ? "外置批注数据无法验证；PDF 已只读打开，批注数据保留且未应用。修复同步数据后重新打开。"
         : this.annotationSyncPending
@@ -2828,7 +2848,16 @@ class PdfReaderView extends EditableFileView {
               ? "PDF 来源已变化；外置批注已暂停，Reader 以只读模式打开。"
               : "检测到旧版 PDF 批注，但无法验证其身份；已进入只读模式，原 PDF 未修改。")
             : `正在打开：${file.path}`);
-      if (this.ready) this.sendPendingDocument();
+      this.postToViewer({ channel: CHANNEL, token: this.token,
+        type: "annotation-initialize-late", previousDocumentId: previewDocumentId,
+        documentId: this.documentId, openRequest: request,
+        externalAnnotations });
+      }).catch((error) => {
+        if (request !== this.openRequest || this.teardownStarted) return;
+        this.annotationHydrationAllowed = false;
+        this.annotationStorageUnavailable = true;
+        this.showError(`批注加载失败；PDF 保持只读：${error.message}`);
+      });
     } catch (error) {
       if (request === this.openRequest) {
         this.showError(`无法读取 ${file.path}：${error.message}`);
@@ -3795,6 +3824,11 @@ class PdfReaderView extends EditableFileView {
           this.rendererStateUnknown = false;
         }
         this.openAcknowledged = true;
+        if (this.annotationOpenWaiter?.request === this.openRequest) {
+          const waiter = this.annotationOpenWaiter;
+          this.annotationOpenWaiter = null;
+          waiter.resolve(true);
+        }
         // A preference may have changed while the viewer was parsing the open
         // message, before its document identity was ready to receive updates.
         if (message.rendererGeneration === this.rendererGeneration) {
@@ -3849,6 +3883,10 @@ class PdfReaderView extends EditableFileView {
       case "error":
         if ((message.code === "open-failed" || String(message.code || "").startsWith("open-blocked-")) &&
             typeof message.documentId === "string" && Number.isSafeInteger(message.openRequest)) {
+          if (this.annotationOpenWaiter?.request === message.openRequest && message.documentId === this.documentId) {
+            this.annotationOpenWaiter.resolve(false);
+            this.annotationOpenWaiter = null;
+          }
           const released = this.releasePendingOpenAdmission(message.documentId, message.openRequest);
           if (released) {
             this.openAcknowledged = false;
@@ -3917,9 +3955,10 @@ class PdfReaderView extends EditableFileView {
       // confirmed by the host. Keep all editing disabled until the verified
       // external-annotations-update handshake arrives.
       readOnly: true,
+      deferredAnnotationInitialization: this.annotationLoading === true,
       // initializeView verified these exact bytes against the stored source.
       // Allow the Viewer to suppress confirmed deletions before its first draw.
-      sourceHashConfirmed: this.annotationSourceMismatch === false &&
+      sourceHashConfirmed: this.annotationLoading !== true && this.annotationSourceMismatch === false &&
         this.annotationLegacyIdentityUncertain !== true && this.annotationSyncPending !== true,
       externalAnnotations: this.annotationHydrationAllowed === false
         ? { ...this.annotationSyncState, annotations: [] }
@@ -4290,6 +4329,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.annotationHost = createPdfAnnotationHost({
       app: this.app,
       enableJsonl: true,
+      enableSingleJsonl: true,
       hashRuntime: this.pdfHashRuntime,
       identityHash: (bytes) => sha256Bytes(bytes),
       inspectLegacy: (bytes) => this.getLegacyMergeClient().inspect({ bytes, fastOpen: true }),
@@ -4335,6 +4375,32 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           void this.openPdf(file);
         }
         return true;
+      },
+    });
+    this.addCommand({
+      id: "migrate-annotations-v15",
+      name: "迁移 PDF 批注到 v15 单文件格式",
+      callback: () => {
+        let open = false;
+        this.app.workspace.iterateAllLeaves(leaf => { if (leaf.view instanceof PdfReaderView) open = true; });
+        if (open) return new Notice("请先关闭所有 PDF 阅读器。", 8000);
+        void this.annotationHost.migrateLegacyVault().then(rows => {
+          new Notice(`PDF 批注迁移完成：${rows.length} 本。清单：${rows.reportPath}`, 12000);
+        }).catch(error => new Notice(`PDF 批注迁移停止：${error.message || error}${error.reportPath ? `；清单：${error.reportPath}` : ''}`, 12000));
+      },
+    });
+    this.addCommand({
+      id: "recover-pdf-pairing-v15",
+      name: "恢复当前 PDF 中断的批注配对",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!isPdfFile(file)) return new Notice("请先选中需要恢复的 PDF。", 8000);
+        let open = false;
+        this.app.workspace.iterateAllLeaves(leaf => { if (leaf.view instanceof PdfReaderView) open = true; });
+        if (open) return new Notice("请先关闭所有 PDF 阅读器。", 8000);
+        void this.annotationHost.recoverPairing(file.path).then(result => {
+          new Notice(result.registryDeferred ? "PDF 配对已恢复；请继续完成旧批注迁移。" : "PDF 配对已恢复。", 8000);
+        }).catch(error => new Notice(`PDF 配对恢复停止：${error.message || error}`, 12000));
       },
     });
     this.addCommand({
@@ -5529,6 +5595,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         new TextEncoder().encode(JSON.stringify(pageIdentities)),
       );
       if (!isCurrent()) return true;
+      if (typeof this.annotationHost.store.ensureDocumentIdentity === "function") {
+        await this.annotationHost.store.ensureDocumentIdentity(document);
+        if (!isCurrent()) return true;
+      }
       const anchor = await this.readerAnchorStore.create({
         anchorId: makeToken(),
         docKey: document.docKey,
@@ -5562,6 +5632,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     } else {
       respondClient(false, "Reader 返回了不支持的链接目标。");
       return true;
+    }
+    if (capture.kind !== "selection" && typeof this.annotationHost.store.ensureDocumentIdentity === "function") {
+      await this.annotationHost.store.ensureDocumentIdentity(document);
+      if (!isCurrent()) return true;
     }
     const fragment = encodeReaderLinkFragment({ pageNumber: pageIndex + 1, selection,
       docKey: document.docKey, documentId: document.documentId, target });
@@ -5638,6 +5712,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     await runtime.contexts.validateSentence({ familyKey: pending.familyKey,
       surface: pending.surface, sentence: pending.capture.exactQuote });
     if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+    if (typeof this.annotationHost.store.ensureDocumentIdentity === "function") {
+      await this.annotationHost.store.ensureDocumentIdentity(document);
+      if (!isCurrent()) throw Object.assign(new Error("Reader 会话已变化；语境没有保存。"), { code: "VOCAB_CONTEXT_CAPTURE_STALE" });
+    }
 
     if (!pending.anchor) {
       const orderedPageIdentityDigest = await this.pdfHashRuntime.fingerprint(

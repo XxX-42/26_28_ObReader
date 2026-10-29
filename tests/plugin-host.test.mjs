@@ -431,6 +431,11 @@ function createHarness({
         const { createPdfAnnotationStore } = sourceRequire("./pdf-annotation-store.cjs");
         return { createPdfAnnotationHost: (options) => createPdfAnnotationHost({ ...options, storeFactory: createPdfAnnotationStore }) };
       }
+      if (name === "./pdf-annotation-host.cjs" && storageProtocol === "wal") {
+        // Legacy WAL fixtures exercise compatibility independently of the v15 default.
+        const { createPdfAnnotationHost } = sourceRequire(name);
+        return { createPdfAnnotationHost: options => createPdfAnnotationHost({ ...options, enableSingleJsonl: false }) };
+      }
       return sourceRequire(name);
     },
     moduleObject,
@@ -603,7 +608,7 @@ const awaitSource = await readFile(
   "utf8",
 );
 
-test("WAL production host saves, reopens and renames without source writes or Format 3 output", async () => {
+test("legacy WAL host saves, reopens and renames without source writes or Format 3 output", async () => {
   const storedFiles = new Map(), directories = new Set([".obsidian"]);
   const first = createHarness({ storedFiles, directories, storageProtocol: "wal" });
   await first.plugin.onload();
@@ -640,7 +645,7 @@ test("WAL production host saves, reopens and renames without source writes or Fo
   reopened.plugin.onunload();
 });
 
-test("WAL production multi-view saves are serialized and close only after the matching confirmation", async () => {
+test("legacy WAL multi-view saves are serialized and close only after the matching confirmation", async () => {
   const harness = createHarness({ storageProtocol: "wal" });
   await harness.plugin.onload();
   const file = new harness.TFile("Books/wal-multiview.pdf", [1, 2, 3]);
@@ -1171,7 +1176,7 @@ test("ACTIVE_EXPLICIT_EXPORT creates a separate PDF only after an explicit Viewe
   harness.plugin.onunload();
 });
 
-test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without editing the PDF", async () => {
+test("ACTIVE_LEGACY_MIGRATION reads existing external identities without scanning or editing the PDF", async () => {
   const storedFiles = new Map();
   const directories = new Set([".obsidian"]);
   const original = new TextEncoder().encode("%PDF-1.7\n/ObReaderMerge\nlegacy annotation fixture\n%%EOF");
@@ -1190,16 +1195,27 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
   const harness = createHarness({ storedFiles, directories, inspectLegacy });
   await harness.plugin.onload();
   const file = new harness.TFile("Books/legacy-sidecar.pdf", original);
+  harness.files.set(file.path, file);
+  const registered = await harness.plugin.annotationHost.store.registerDocument({
+    sourcePath: file.path,
+    source: { sourceHash: harness.plugin.pdfHashRuntime.fingerprint(original), size: original.byteLength,
+      pageCount: 1, orderedPageIdentities: ["9 0 R"] },
+  });
+  await harness.plugin.annotationHost.store.updateLegacyIdentities({ document: registered, identities: [
+    { uuid: "migrated-live-ink", ref: "42 0 R", pageIndex: 0, kind: "ink", deleted: false },
+    { uuid: "migrated-deleted-mark", ref: "43 0 R", pageIndex: 0, kind: "highlight", deleted: true,
+      timestamp: 100, logical: 1, actorId: "old-device", operationId: "old-delete-op" },
+  ] });
   const reader = await createSidecarReader(harness, file, {
     pageCount: 1,
     orderedPageIdentities: ["9 0 R"],
   });
 
-  assert.equal(inspections, 1);
+  assert.equal(inspections, 0, "opening must not scan old annotation markers in the source PDF");
   assert.equal(reader.view.annotationLegacyIdentityUncertain, false);
   assert.equal(reader.view.annotationHydrationAllowed, true);
   assert.equal(reader.view.annotationDocument.legacyIdentityScanComplete, true);
-  assert.deepEqual(reader.view.annotationDocument.legacyIdentities.map(({ uuid, ref }) => ({ uuid, ref })), [
+  assert.deepEqual(reader.view.annotationDocument.legacyIdentities.filter(row => !row.deleted).map(({ uuid, ref }) => ({ uuid, ref })), [
     { uuid: "migrated-live-ink", ref: "42 0 R" },
   ]);
   const stored = await harness.plugin.annotationHost.store.readDocument(reader.view.annotationDocument);
@@ -1218,8 +1234,8 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
     orderedPageIdentities: ["9 0 R"],
   });
   assert.equal(reopened.view.annotationDocument.legacyIdentityScanComplete, true,
-    "the completed inspection is durable and is not repeated at the next open");
-  assert.equal(inspections, 1);
+    "the existing external identity metadata remains durable after reopening");
+  assert.equal(inspections, 0);
   assert.deepEqual(reopenedFile.bytes, original);
   reopenedHarness.plugin.onunload();
 });
@@ -2275,6 +2291,31 @@ test("LingQ occurrence backlink query never starts a cold full-Vault index scan"
     message: "反向链接索引仍在准备中，请稍后重试。",
   }]);
   harness.plugin.onunload();
+});
+
+test("a selection link before the first annotation keeps its v15 identity after restart", async () => {
+  const harness = createHarness({ storageProtocol: "v15" });
+  await harness.plugin.onload();
+  try {
+    const file = new harness.TFile("Books/unannotated-link.pdf", Uint8Array.from([37, 80, 68, 70, 9, 8, 7]));
+    const { view } = await createSidecarReader(harness, file, { pageCount: 1, orderedPageIdentities: ["page-one"] });
+    const document = view.annotationDocument, requestId = "first-link-before-annotation";
+    let copied = ""; harness.plugin.copyReaderText = async text => { copied = text; };
+    view.pendingReaderAnchorCaptures.set(requestId, { documentId:view.documentId, openRequest:view.openRequest,
+      rendererGeneration:view.rendererGeneration, mode:"link", timer:null });
+    const capture = { kind:"selection", pageIndex:0, pageNumber:1, pageIdentity:"page-one",
+      sourceHash:view.annotationSourceHash, exactQuote:"selected words", prefix:"", suffix:"",
+      textPosition:{start:0,end:14}, geometry:{x:0.1,y:0.2,width:0.4,height:0.03} };
+    assert.equal(await harness.plugin.handleReaderAnchorCapture(view,{requestId,rendererGeneration:view.rendererGeneration,
+      documentId:view.documentId,openRequest:view.openRequest,capture}),true);
+    assert.match(copied,/obreader=sel\./);
+    assert.equal([...harness.storedFiles.keys()].some(path=>path.endsWith('.jsonl')),false);
+    const {createSingleJsonlAnnotationStore}=sourceRequire('./storage/single-jsonl-annotation-store.cjs');
+    const restarted=createSingleJsonlAnnotationStore({adapter:harness.app.vault.adapter,
+      identityHash:bytes=>'sha256-v1:'+createHash('sha256').update(bytes).digest('hex')});
+    const route=await restarted.documentForIdentity({docKey:document.docKey,documentId:document.documentId});
+    assert.equal(route.sourcePath,file.path);assert.equal(route.pairId,undefined);
+  } finally { harness.plugin.onunload(); }
 });
 
 test("new Reader links hide internal identities and follow the PDF route updated on rename", async () => {
@@ -3393,8 +3434,8 @@ test("LingQ-style vocabulary setting renders off, persists across reload, and to
   disabledReload.plugin.onunload();
 });
 
-test("Context capture stays bound to the confirmed Reader and saves one verified Anchor-backed citation", async () => {
-  const harness = createHarness({ storageProtocol: "wal" });
+for (const storageProtocol of ["wal", "v15"]) test(`Context capture stays bound to the confirmed Reader and saves one verified Anchor-backed citation (${storageProtocol})`, async () => {
+  const harness = createHarness({ storageProtocol });
   await harness.plugin.onload();
   harness.plugin.settings.vocabularyEnabled = true;
   await harness.plugin.getVocabularyService().upsertTerm("walk", { status: 2 });
@@ -3445,6 +3486,14 @@ test("Context capture stays bound to the confirmed Reader and saves one verified
   assert.ok(contextPaths.some((item) => item.endsWith("/manifest.json")));
   assert.equal(file.writes, 0, "context capture and save never write the source PDF");
   assert.deepEqual(file.bytes, sourceBytes);
+  if (storageProtocol === "v15") {
+    const {createSingleJsonlAnnotationStore}=sourceRequire('./storage/single-jsonl-annotation-store.cjs');
+    const restarted=createSingleJsonlAnnotationStore({adapter:harness.app.vault.adapter,
+      identityHash:bytes=>'sha256-v1:'+createHash('sha256').update(bytes).digest('hex')});
+    const route=await restarted.documentForIdentity({docKey:view.annotationDocument.docKey,documentId:view.annotationDocument.documentId});
+    assert.equal(route.sourcePath,file.path);
+    assert.equal([...harness.storedFiles.keys()].some(path=>path.endsWith('.jsonl')),false);
+  }
   harness.plugin.onunload();
 });
 

@@ -117,6 +117,14 @@ test("legacy SHA-256 records remain readable and new hashes are tagged", async (
   assert.equal(runtime.matches(Uint8Array.from([0]), current), false);
 });
 
+test("asynchronous source verification matches the existing complete hash checks", async () => {
+  const runtime=await createPdfHashRuntime(), bytes=Uint8Array.from([9,1,2,3,8]).subarray(1,4);
+  const sha=createHash('sha256').update(bytes).digest('hex'), xxh=runtime.fingerprint(bytes);
+  for(const expected of [sha,`sha256-v1:${sha}`,`SHA256-V1:${sha.toUpperCase()}`,xxh,`sha256-v1:${'0'.repeat(64)}`,'invalid'])
+    assert.equal(await runtime.matchesAsync(bytes,expected),runtime.matches(bytes,expected));
+  assert.equal(await runtime.matchesAsync(Uint8Array.from([1,2,4]),sha),false);
+});
+
 test("WASM fallback writes tagged SHA and can read legacy SHA records", async () => {
   const runtime = await createPdfHashRuntime({ forceSha256: true });
   const bytes = new TextEncoder().encode("fallback");

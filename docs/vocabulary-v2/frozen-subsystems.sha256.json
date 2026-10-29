@@ -491,5 +491,13 @@
       "plugin/pdf-merge-client.cjs": "482c155cdfe2078eb059b0e300777b304608dabf969ba7d1b54dbfacc8ae9540",
       "plugin/pdf-merge-worker.mjs": "69fbfdb8eff11d0e526efec57d550961f43774eefb3db6bd66c5562423555723"
     }
+  },
+  "reviewedV15PairIdentityOverrides": {
+    "reason": "2026-10-29 user-approved v15 pairing: optional Info reference replacement, host pairing-confirmation gate, asynchronous full SHA-256 verification, and verified interrupted-rename recovery at the host boundary. Covered by pair-identity, hash, and legacy host regressions.",
+    "sha256": {
+      "plugin/pdf-incremental.cjs": "8792997c9dfed347646853c3625186f61ef60b20ab403720954ff8712768d83a",
+      "plugin/pdf-annotation-host.cjs": "1ee16981d92546d7eddc98e751f2e1f2eb30fa43cf58eaa1200bfaaf001556d7",
+      "plugin/pdf-hash-runtime.cjs": "61ca5cade0aac3d21790f0b7e9976dff7199432a0976323c81d7a96d95993a28"
+    }
   }
 }

@@ -11,13 +11,11 @@ body {
   min-width: 0;
 }
 
-/* Do not paint source-PDF annotations until the host has verified the
-   document identity and the exact sidecar tombstones have been applied.
-   Source APs can also be painted into Canvas. Hold that surface until the
-   verified mask is installed and its replacement render has completed. */
+/* Keep the native annotation layer hidden during identity verification.
+   The page canvas remains visible; embedded appearances may briefly show
+   until the verified deletion mask has been applied. */
 :root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer,
 :root.pdfReaderNativeAnnotationLayersPending #viewerContainer .annotationLayer *,
-:root.pdfReaderNativeAnnotationLayersPending #viewerContainer .canvasWrapper,
 #viewerContainer [data-pdf-reader-mask-pending] .canvasWrapper {
   visibility: hidden !important;
 }

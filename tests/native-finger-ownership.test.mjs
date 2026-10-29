@@ -251,6 +251,18 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
 
     const momentumBeforeEraser = await viewer.evaluate(async () => {
       const container = document.getElementById("viewerContainer");
+      // Force PDF.js's async mode transition to yield after updating the UI.
+      // A pending transition must not let the old native scroll carry on.
+      const manager = PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager;
+      const updateMode = manager.updateMode;
+      manager.updateMode = async function (...args) {
+        const result = await updateMode.apply(this, args);
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        return result;
+      };
+      const events = [];
+      const onModeChanged = ({ mode }) => events.push({ mode, top: container.scrollTop, at: performance.now() });
+      PDFViewerApplication.eventBus._on("annotationeditormodechanged", onModeChanged);
       const initial = container.scrollTop;
       container.scrollTo({ top: initial + 500, behavior: "smooth" });
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -260,7 +272,10 @@ test("native touch ownership keeps page scrolling browser-owned and suppresses f
       });
       const stopped = container.scrollTop;
       await new Promise((resolve) => setTimeout(resolve, 150));
+      manager.updateMode = updateMode;
+      PDFViewerApplication.eventBus._off("annotationeditormodechanged", onModeChanged);
       return { initial, moving, stopped, later: container.scrollTop,
+        events,
         eraser: document.body.classList.contains("editorEraserMode"),
         maxScrollTop: container.scrollHeight - container.clientHeight,
         scrollBehavior: getComputedStyle(container).scrollBehavior,

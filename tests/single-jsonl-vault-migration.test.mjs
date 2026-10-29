@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {createRequire} from 'node:module';
+import {createHash,randomUUID} from 'node:crypto';
+import {fixture} from './pdf-outline-fixtures.mjs';
+const require=createRequire(import.meta.url);
+const {createPdfHashRuntime}=require('../plugin/pdf-hash-runtime.cjs');
+const {createWalAnnotationStore}=require('../plugin/storage/wal-annotation-store.cjs');
+const {createSingleJsonlVaultMigration}=require('../plugin/storage/single-jsonl-vault-migration.cjs');
+const {createSingleJsonlStore}=require('../plugin/storage/single-jsonl-store.cjs');
+const {createSingleJsonlAnnotationStore}=require('../plugin/storage/single-jsonl-annotation-store.cjs');
+const {readPairId}=require('../plugin/pdf-pair-id.cjs');
+const {appendPairUpdate}=require('../plugin/pdf-pair-id.cjs');
+const {createSingleJsonlMigrationRunner}=require('../plugin/storage/single-jsonl-migration-runner.cjs');
+const sha=b=>'sha256-v1:'+createHash('sha256').update(b).digest('hex');
+
+test('actual legacy WAL migrates in an isolated vault without a backup',async()=>{
+ const original=await fixture(),runtime=await createPdfHashRuntime(),files=new Map(),dirs=new Set();let bytes=Uint8Array.from(original.bytes),pdfWrites=0,partial=true;
+ const adapter={async exists(p){return files.has(p)||dirs.has(p)},async mkdir(p){dirs.add(p)},async read(p){if(!files.has(p))throw Error('missing '+p);return files.get(p)},async write(p,t){files.set(p,t)},async process(p,fn){files.set(p,fn(files.get(p)))},async append(p,t){files.set(p,(files.get(p)||'')+t)},async rename(a,b){files.set(b,files.get(a));files.delete(a)},async remove(p){files.delete(p)},async list(p){return {files:[...files.keys()].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/')),folders:[...dirs].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/'))}}};
+ const file={path:'Books/old.pdf',stat:{size:bytes.length,mtime:1}};
+ const app={vault:{adapter,configDir:'.obsidian',getAbstractFileByPath:p=>p===file.path?file:null,async readBinary(){return bytes.slice().buffer},async appendBinary(_f,value){let suffix=new Uint8Array(value);if(partial)suffix=suffix.subarray(0,Math.floor(suffix.length/2));const combined=new Uint8Array(bytes.length+suffix.length);combined.set(bytes);combined.set(suffix,bytes.length);bytes=combined;pdfWrites++;if(partial){partial=false;throw Error('injected interrupted append')}}}};
+ const legacy=createWalAnnotationStore({adapter,deviceId:'old',uuid:randomUUID,hash:runtime.fingerprint,identityHash:sha,verifyHash:runtime.matches,jsonlMode:true});
+ const document=await legacy.registerDocument({sourcePath:file.path,source:{...original.source,sourceHash:runtime.fingerprint(bytes)}});
+ await legacy.appendOperations({document,operations:[{uuid:'legacy-highlight',kind:'Highlight',pageIndex:0,payload:{targetText:'hello'}}]});
+ const old=await legacy.readDocument(document,{readOnly:true});assert.equal(old.annotations.length,1);
+ const legacyFiles=new Map(files);
+ const migration=createSingleJsonlVaultMigration({app,hashRuntime:runtime,identityHash:sha,deviceId:'v15',uuid:randomUUID});
+ let failure;await assert.rejects(migration.migrate(),error=>{failure=error;return error.failures?.[0]?.message==='injected interrupted append'});
+ assert.ok(failure.reportPath,'Failed migrations must provide a retained per-document report');
+ const failureReport=JSON.parse(files.get(failure.reportPath));assert.equal(failureReport.status,'failed');assert.equal(failureReport.failures[0].path,file.path);
+ assert.deepEqual(bytes.slice(0,original.bytes.length),Uint8Array.from(original.bytes));
+ const recovered=await migration.recoverPairing(file.path);assert.equal(recovered.registryDeferred,true);
+ const result=await migration.migrate();assert.equal(result.length,1);assert.equal(pdfWrites,2);
+ assert.ok(result.reportPath,'Successful migrations must provide a retained per-document report');
+ const report=JSON.parse(files.get(result.reportPath));assert.equal(report.status,'complete');assert.equal(report.documents[0].path,file.path);
+ assert.equal(JSON.stringify(report).includes('legacy-highlight'),false,'Reports do not duplicate annotation payloads');
+ assert.equal(result[0].originalSha256,sha(original.bytes));assert.equal(result[0].pairedSha256,sha(bytes));
+ assert.equal(result[0].annotationPath,'00_Archive/20_PDFData/annotations/Books/old.jsonl');
+ assert.equal(result[0].historyPath,'00_Archive/20_PDFData/history/Books/old.jsonl');
+ const id=await readPairId(bytes);assert.equal(id,result[0].pairId);
+ const store=createSingleJsonlStore({adapter,token:randomUUID});const state=await store.readCurrent(file.path,id);
+ assert.deepEqual(state.annotations,old.annotations);assert.deepEqual(state.tombstones,old.tombstones);
+ assert.deepEqual(bytes.slice(0,original.bytes.length),Uint8Array.from(original.bytes));
+ assert.equal(JSON.parse(files.get('00_Archive/20_PDFData/_registry.json')).schemaVersion,15);
+ for(const [path,value] of legacyFiles)if(!path.endsWith('/_registry.json'))assert.equal(files.get(path),value,`legacy file changed: ${path}`);
+ assert.equal([...files.keys()].some(p=>/backup|\.bak$/i.test(p)),false);
+});
+
+test('a fresh Vault session recovers a first-pair partial append without an old registry',async()=>{
+ const original=await fixture(),runtime=await createPdfHashRuntime(),files=new Map(),dirs=new Set();let bytes=Uint8Array.from(original.bytes),partial=true;
+ const adapter={async exists(p){return files.has(p)||dirs.has(p)},async mkdir(p){dirs.add(p)},async read(p){if(!files.has(p))throw Error('missing '+p);return files.get(p)},async write(p,t){files.set(p,t)},async process(p,fn){files.set(p,fn(files.get(p)))},async append(p,t){files.set(p,(files.get(p)||'')+t)},async rename(a,b){if(files.has(b))throw Error('exists');files.set(b,files.get(a));files.delete(a)},async remove(p){files.delete(p)},async list(p){return {files:[...files.keys()].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/')),folders:[...dirs].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/'))}}};
+ const file={path:'Books/new.pdf'};
+ const app={vault:{adapter,configDir:'.obsidian',getAbstractFileByPath:p=>p===file.path?file:null,async readBinary(){return bytes.slice().buffer},async appendBinary(_f,value){let suffix=new Uint8Array(value);if(partial)suffix=suffix.subarray(0,Math.floor(suffix.length/2));const next=new Uint8Array(bytes.length+suffix.length);next.set(bytes);next.set(suffix,bytes.length);bytes=next;if(partial){partial=false;throw Error('interrupted')}}}};
+ const store=createSingleJsonlStore({adapter,token:randomUUID});
+ const document={sourcePath:file.path,docKey:'123456abcdef',documentId:'new-id',source:{...original.source,sourceHash:runtime.fingerprint(bytes)}};
+ const runner=createSingleJsonlMigrationRunner({adapter,store,journalRoot:'.obsidian/plugins/pdf-web-reader/.v15-migration',verifySource:runtime.matches,readPdf:()=>app.vault.readBinary(file),writePdf:(_path,value)=>appendPairUpdate(app.vault,file,value)});
+ await assert.rejects(runner.migrate({document,snapshot:{annotations:[],tombstones:[],deletionGuards:[]}}),/interrupted/);
+ const fresh=createSingleJsonlVaultMigration({app,hashRuntime:runtime,identityHash:sha,deviceId:'v15',uuid:randomUUID});
+ const recovered=await fresh.recoverPairing(file.path);assert.equal(recovered.registryDeferred,false);
+ assert.equal(await readPairId(bytes),recovered.pairId);assert.equal(JSON.parse(files.get('00_Archive/20_PDFData/_registry.json')).schemaVersion,15);
+ assert.deepEqual((await store.readCurrent(file.path,recovered.pairId)).annotations,[]);
+});
+
+test('a report failure after registry publication is surfaced as completed data with missing report',async()=>{
+ const path='00_Archive/20_PDFData/_registry.json',files=new Map([[path,JSON.stringify({schemaVersion:1,entries:{}})]]),dirs=new Set();
+ const adapter={async exists(p){return files.has(p)||dirs.has(p)},async mkdir(p){dirs.add(p)},async read(p){if(!files.has(p))throw Error('missing');return files.get(p)},async write(p,t){if(p.includes('/reports/'))throw Error('report disk failure');files.set(p,t)},async process(p,fn){files.set(p,fn(files.get(p)))},async append(){},async rename(){},async remove(){},async list(){return {files:[],folders:[]}}};
+ const migration=createSingleJsonlVaultMigration({app:{vault:{adapter,configDir:'.obsidian'}},hashRuntime:{fingerprint:()=>''},identityHash:sha,deviceId:'v15',uuid:randomUUID});
+ await assert.rejects(migration.migrate(),error=>{assert.equal(error.code,'V15_MIGRATION_REPORT_FAILED');assert.deepEqual(error.results,[]);return true});
+ assert.equal(JSON.parse(files.get(path)).schemaVersion,15,'The error must not pretend the already-published registry was rolled back');
+});
+
+test('an unannotated legacy PDF stays unchanged and retains its document identity until its first annotation',async()=>{
+ const original=await fixture(),runtime=await createPdfHashRuntime(),files=new Map(),dirs=new Set();let pdf=Uint8Array.from(original.bytes),writes=0;
+ const adapter={async exists(p){return files.has(p)||dirs.has(p)},async mkdir(p){dirs.add(p)},async read(p){if(!files.has(p))throw Error('missing');return files.get(p)},async write(p,t){files.set(p,t)},async process(p,fn){files.set(p,fn(files.get(p)))},async append(p,t){files.set(p,(files.get(p)||'')+t)},async rename(a,b){if(files.has(b))throw Error('exists');files.set(b,files.get(a));files.delete(a)},async remove(p){files.delete(p)},async list(p){return {files:[...files.keys()].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/')),folders:[...dirs].filter(x=>x.startsWith(p+'/')&&!x.slice(p.length+1).includes('/'))}}};
+ const file={path:'Books/empty.pdf'},app={vault:{adapter,configDir:'.obsidian',getAbstractFileByPath:p=>p===file.path?file:null,async readBinary(){return pdf.slice().buffer},async appendBinary(_file,value){writes++;const suffix=new Uint8Array(value),next=new Uint8Array(pdf.length+suffix.length);next.set(pdf);next.set(suffix,pdf.length);pdf=next}}};
+ const source={...original.source,sourceHash:runtime.fingerprint(pdf)};
+ const legacy=createWalAnnotationStore({adapter,deviceId:'old',uuid:randomUUID,hash:runtime.fingerprint,identityHash:sha,verifyHash:runtime.matches,jsonlMode:true});
+ const old=await legacy.registerDocument({sourcePath:file.path,source});
+ const migration=createSingleJsonlVaultMigration({app,hashRuntime:runtime,identityHash:sha,deviceId:'v15',uuid:randomUUID});
+ const result=await migration.migrate();assert.equal(result.length,1);assert.equal(result[0].status,'deferred');assert.equal(writes,0);assert.deepEqual(pdf,Uint8Array.from(original.bytes));
+ const core=createSingleJsonlStore({adapter,token:randomUUID});
+ const runner=createSingleJsonlMigrationRunner({adapter,store:core,journalRoot:'.obsidian/plugins/pdf-web-reader/.v15-migration',verifySource:runtime.matches,readPdf:()=>app.vault.readBinary(file),writePdf:(_path,value)=>appendPairUpdate(app.vault,file,value)});
+ const store=createSingleJsonlAnnotationStore({adapter,identityHash:sha,hash:runtime.fingerprint,uuid:randomUUID,pairDocument:document=>runner.migrate({document,snapshot:{annotations:[],tombstones:[],deletionGuards:[]}})});
+ const current=await store.registerDocument({sourcePath:file.path,source});assert.equal(current.documentId,old.documentId);assert.equal(current.docKey,old.docKey);
+ assert.equal((await store.readDocument(current)).annotations.length,0);assert.equal(writes,0);
+ assert.equal((await store.documentForIdentity({docKey:old.docKey,documentId:old.documentId})).sourcePath,file.path);
+ const moved=await store.renameDocument({documentId:old.documentId,fromPath:file.path,toPath:'Books/renamed.pdf'});file.path='Books/renamed.pdf';
+ assert.equal((await store.documentForIdentity({docKey:old.docKey,documentId:old.documentId})).sourcePath,file.path);
+ const resultSave=await store.appendOperations({document:moved,sourceHash:source.sourceHash,operations:[{uuid:'first-highlight',kind:'Highlight',pageIndex:0,payload:{targetText:'first annotation'}}]});
+ assert.equal(resultSave.acknowledged,true);assert.equal(writes,1);assert.ok(await readPairId(pdf));
+ const reopened=createSingleJsonlAnnotationStore({adapter,identityHash:sha,hash:runtime.fingerprint,uuid:randomUUID});
+ const paired=await reopened.documentForPath(file.path);assert.equal(paired.documentId,old.documentId);assert.equal(paired.docKey,old.docKey);
+ assert.equal((await reopened.readDocument(paired)).annotations[0].uuid,'first-highlight');
+ assert.equal((await reopened.documentForIdentity({docKey:old.docKey,documentId:old.documentId})).sourcePath,file.path);
+ assert.equal(writes,1,'Reopening must not write the PDF again');
+});
