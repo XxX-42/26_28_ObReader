@@ -8672,8 +8672,9 @@ class FloatingToolbar {
     this.#hoverZone.style.insetInlineEnd = "auto";
     const hoverX = Number.isFinite(pointerPosition?.x) ? pointerPosition.x - pageRect.left : pageRect.width * selectionX;
     const hoverY = Number.isFinite(pointerPosition?.y) ? pointerPosition.y - pageRect.top : pageRect.height * y;
+    const lineHeight = Math.max(12, (boxes.at(-1)?.height || 0) * pageRect.height);
     this.#hoverZone.style.left = `clamp(0px, ${hoverX - 59}px, max(0px, calc(100% - 118px)))`;
-    this.#hoverZone.style.top = `clamp(0px, ${hoverY - 17}px, max(0px, calc(100% - 34px)))`;
+    this.#hoverZone.style.top = `clamp(0px, ${hoverY + lineHeight / 2}px, max(0px, calc(100% - 34px)))`;
     parent.append(this.#hoverZone);
   }
   hide() {
