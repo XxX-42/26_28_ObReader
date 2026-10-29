@@ -956,10 +956,26 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
 }
 /* Text selection actions use the current PDF.js highlight color. */
 .textLayer .editToolbar .highlightButton::before {
-  background-color: var(--pdf-reader-selection-highlight-color, #fff066) !important;
+  background-color: #111 !important;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 11.5 8.8 4.7 11.3 7.2 4.5 14H2zM9.6 3.9l1-1a1.8 1.8 0 0 1 2.5 2.5l-1 1z' fill='none' stroke='black' stroke-width='1.25' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 11.5 8.8 4.7 11.3 7.2 4.5 14H2zM9.6 3.9l1-1a1.8 1.8 0 0 1 2.5 2.5l-1 1z' fill='none' stroke='black' stroke-width='1.25' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  -webkit-mask-size: 16px 16px !important;
+  mask-size: 16px 16px !important;
+}
+.textLayer .editToolbar .highlightButton { position: relative; }
+.textLayer .editToolbar .highlightButton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--pdf-reader-selection-highlight-color, #fff066);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 11.6 8.8 5.8 10.2 7.2 4.3 13H3z'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 11.6 8.8 5.8 10.2 7.2 4.3 13H3z'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  pointer-events: none;
 }
 .textLayer .editToolbar .pdfReaderSelectionCopy::before {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 2h8v10H5zM3 4H2v10h8v-1' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 2h8v10H5zM3 4H2v10h8v-1' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E");
+  -webkit-mask-size: 14px 14px !important;
+  mask-size: 14px 14px !important;
 }
 .textLayer .editToolbar .pdfReaderSelectionPlaceholder::before { display: none !important; }
