@@ -10707,6 +10707,19 @@
       const restoreSetDocument = installInitialDeletionMask(app, session, provisionalExternal, message.sourceHashConfirmed);
       const parseStartedAt = performance.now();
       const pdfOpenStages = {};
+      const originalLoad = app.load;
+      const originalClose = app.close;
+      if (typeof originalLoad === "function") app.load = function (...args) {
+        const entered = performance.now();
+        pdfOpenStages.pdfLoadingTaskPromiseMs = Math.max(0, entered - parseStartedAt);
+        try { return originalLoad.apply(this, args); }
+        finally { pdfOpenStages.pdfViewerLoadMs = Math.max(0, performance.now() - entered); }
+      };
+      if (typeof originalClose === "function") app.close = async function (...args) {
+        const entered = performance.now();
+        try { return await originalClose.apply(this, args); }
+        finally { pdfOpenStages.pdfPreviousCloseMs = Math.max(0, performance.now() - entered); }
+      };
       const stageListeners = [["pagesinit", "pdfPagesInitMs"], ["documentloaded", "pdfDocumentLoadedMs"],
         ["pagerendered", "pdfFirstRenderMs"]].map(([event, key]) => {
         const listener = () => { if (!Number.isFinite(pdfOpenStages[key])) pdfOpenStages[key] = Math.max(0, performance.now() - parseStartedAt); };
@@ -10727,6 +10740,8 @@
         );
         await waitForOpenSession(session.pdfJsOpenPromise, session);
       } finally {
+        app.load = originalLoad;
+        app.close = originalClose;
         for (const [event, listener] of stageListeners) app.eventBus?._off?.(event, listener);
         restoreSetDocument();
       }
