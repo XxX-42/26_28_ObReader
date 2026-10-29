@@ -8636,7 +8636,7 @@ class FloatingToolbar {
     }
     return [isLTR ? 1 - lastX : lastX, lastY];
   }
-  show(parent, boxes, isLTR) {
+  show(parent, boxes, isLTR, pointerPosition = null) {
     this.#selectedText = window.getSelection()?.toString() || "";
     const [x, y] = this.#getLastPoint(boxes, isLTR);
     const {
@@ -8670,8 +8670,10 @@ class FloatingToolbar {
     this.#hoverPeer.#selectedText = this.#selectedText;
     this.#hoverPeer.#toolbar.style.setProperty("--pdf-reader-selection-highlight-color", this.#toolbar.style.getPropertyValue("--pdf-reader-selection-highlight-color"));
     this.#hoverZone.style.insetInlineEnd = "auto";
-    this.#hoverZone.style.left = `clamp(0px, calc(${100 * selectionX}% - 59px), max(0px, calc(100% - 118px)))`;
-    this.#hoverZone.style.top = `calc(${100 * y}% + var(--editor-toolbar-vert-offset))`;
+    const hoverX = Number.isFinite(pointerPosition?.x) ? pointerPosition.x - pageRect.left : pageRect.width * selectionX;
+    const hoverY = Number.isFinite(pointerPosition?.y) ? pointerPosition.y - pageRect.top : pageRect.height * y;
+    this.#hoverZone.style.left = `clamp(0px, ${hoverX - 59}px, max(0px, calc(100% - 118px)))`;
+    this.#hoverZone.style.top = `clamp(0px, ${hoverY - 17}px, max(0px, calc(100% - 34px)))`;
     parent.append(this.#hoverZone);
   }
   hide() {
@@ -9712,7 +9714,7 @@ class AnnotationEditorUIManager {
     this.commitOrRemove();
     this.currentLayer?.endDrawingSession(false);
   }
-  #displayFloatingToolbar() {
+  #displayFloatingToolbar(pointerPosition = null) {
     const selection = document.getSelection();
     if (!selection || selection.isCollapsed) {
       return;
@@ -9724,7 +9726,7 @@ class AnnotationEditorUIManager {
       return;
     }
     this.#floatingToolbar ||= new FloatingToolbar(this);
-    this.#floatingToolbar.show(textLayer, boxes, this.direction === "ltr");
+    this.#floatingToolbar.show(textLayer, boxes, this.direction === "ltr", pointerPosition);
   }
   getAndRemoveDataFromAnnotationStorage(annotationId) {
     if (!this.#annotationStorage) {
@@ -9814,7 +9816,7 @@ class AnnotationEditorUIManager {
           ac.abort();
           activeLayer?.toggleDrawing(true);
           if (e.type === "pointerup") {
-            this.#onSelectEnd("main_toolbar");
+            this.#onSelectEnd("main_toolbar", { x: e.clientX, y: e.clientY });
           }
         };
         window.addEventListener("pointerup", pointerup, {
@@ -9829,14 +9831,14 @@ class AnnotationEditorUIManager {
       }
     }
   }
-  #onSelectEnd(methodOfCreation = "") {
+  #onSelectEnd(methodOfCreation = "", pointerPosition = null) {
     if (this.#selectionPointerButton !== null && this.#selectionPointerButton !== 0) {
       return;
     }
     if (this.#mode === AnnotationEditorType.HIGHLIGHT || this.#mode === AnnotationEditorType.UNDERLINE) {
       this.highlightSelection(methodOfCreation);
     } else if (this.#enableHighlightFloatingButton) {
-      this.#displayFloatingToolbar();
+      this.#displayFloatingToolbar(pointerPosition);
     }
   }
   #addSelectionListener() {
