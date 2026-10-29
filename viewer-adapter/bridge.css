@@ -954,3 +954,12 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   html[data-pdf-reader-opening] #secondaryToolbarToggleButton::before,
   html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before { animation: none; }
 }
+/* Text selection actions use the current PDF.js highlight color. */
+.textLayer .editToolbar .highlightButton::before {
+  background-color: var(--pdf-reader-selection-highlight-color, #fff066) !important;
+}
+.textLayer .editToolbar .pdfReaderSelectionCopy::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 2h8v10H5zM3 4H2v10h8v-1' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5 2h8v10H5zM3 4H2v10h8v-1' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.textLayer .editToolbar .pdfReaderSelectionPlaceholder::before { display: none !important; }

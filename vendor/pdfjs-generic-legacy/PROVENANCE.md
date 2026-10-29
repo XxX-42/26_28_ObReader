@@ -129,3 +129,7 @@ updated vendored bundle is pinned in `SHA256SUMS.json`.
 
 Instrument document load stages for ObReader diagnostics; preserves PDF.js parsing behavior.
 Recovery-mode token searching uses Uint8Array.indexOf for the first byte; equivalent matching is retained.
+
+## Local selection toolbar
+
+Adds copy and reserved actions and reflects the active highlight color.

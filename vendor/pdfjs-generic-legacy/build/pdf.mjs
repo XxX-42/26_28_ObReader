@@ -8564,6 +8564,7 @@ class FloatingToolbar {
   #buttons = null;
   #toolbar = null;
   #uiManager;
+  #selectedText = "";
   constructor(uiManager) {
     this.#uiManager = uiManager;
   }
@@ -8588,6 +8589,25 @@ class FloatingToolbar {
     this.#makeButton("highlightButton", `pdfjs-highlight-floating-button1`, "pdfjs-highlight-floating-button-label", () => {
       this.#uiManager.highlightSelection("floating_button");
     });
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "basic pdfReaderSelectionCopy";
+    copy.title = copy.ariaLabel = "复制选中文字";
+    copy.addEventListener("pointerdown", event => event.preventDefault());
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(this.#selectedText); }
+      catch { alert("复制失败，请使用 Ctrl+C 或系统复制功能。"); }
+    });
+    buttons.append(copy);
+    for (let i = 1; i <= 2; i++) {
+      const placeholder = document.createElement("button");
+      placeholder.type = "button";
+      placeholder.className = "basic pdfReaderSelectionPlaceholder";
+      placeholder.disabled = true;
+      placeholder.title = placeholder.ariaLabel = `预留功能 ${i}`;
+      placeholder.textContent = "·";
+      buttons.append(placeholder);
+    }
     return editToolbar;
   }
   #getLastPoint(boxes, isLTR) {
@@ -8615,11 +8635,13 @@ class FloatingToolbar {
     return [isLTR ? 1 - lastX : lastX, lastY];
   }
   show(parent, boxes, isLTR) {
+    this.#selectedText = window.getSelection()?.toString() || "";
     const [x, y] = this.#getLastPoint(boxes, isLTR);
     const {
       style
     } = this.#toolbar ||= this.#render();
     parent.append(this.#toolbar);
+    this.#toolbar.style.setProperty("--pdf-reader-selection-highlight-color", document.documentElement.style.getPropertyValue("--pdf-reader-highlight-color") || HighlightEditor._defaultColor || "#fff066");
     style.insetInlineEnd = `${100 * x}%`;
     style.top = `calc(${100 * y}% + var(--editor-toolbar-vert-offset))`;
   }

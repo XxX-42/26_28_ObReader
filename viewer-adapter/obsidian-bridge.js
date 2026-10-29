@@ -261,6 +261,7 @@
       app.eventBus.dispatch("hideannotationeditorparams", { source: window });
       app.eventBus.dispatch("switchannotationeditormode", { source: window, mode: item.mode, isFromKeyboard: true, createNewEditor: false });
       annotationToolColors?.choose(item.mode, color);
+      if (item.mode === 9) document.documentElement.style.setProperty("--pdf-reader-highlight-color", color);
     },
   });
   wheelColors?.install();
@@ -10788,6 +10789,7 @@
         ? message.openRequest
         : null;
       annotationToolColors?.applySnapshot(message.preferredAnnotationToolColors);
+      document.documentElement.style.setProperty("--pdf-reader-highlight-color", annotationToolColors?.get(9) || "#fff066");
       bindVocabularyToOpenedDocument(documentId, state.activeOpenRequest);
       // Source identity is asynchronous; never accept edits before the host
       // confirms the source hash and ordered page identity after PDF parse.
@@ -11044,6 +11046,7 @@
           message.documentId === state.activeDocumentId &&
           message.openRequest === state.activeOpenRequest) {
         annotationToolColors?.applySnapshot(message.colors);
+        document.documentElement.style.setProperty("--pdf-reader-highlight-color", annotationToolColors?.get(9) || "#fff066");
       }
       return;
     }
@@ -11800,7 +11803,7 @@
           }),
           { signal: state.eventAbortController.signal },
         );
-        app.eventBus?._on("annotationeditorparamschanged", ({ details }) => annotationToolColors?.onParamsChanged(details),
+        app.eventBus?._on("annotationeditorparamschanged", ({ details }) => { annotationToolColors?.onParamsChanged(details); const color = annotationToolColors?.get(9); if (color) document.documentElement.style.setProperty("--pdf-reader-highlight-color", color); },
           { signal: state.eventAbortController.signal });
         app.eventBus?._on("switchannotationeditorparams", event => annotationToolColors?.onSwitchParams(event),
           { signal: state.eventAbortController.signal });
