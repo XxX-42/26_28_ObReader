@@ -1029,6 +1029,6 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
 .pdf-reader-outline-expand { flex: 0 0 1.5rem; }
 .pdf-reader-outline-title { flex: 1 1 auto; min-width: 0; text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .pdf-reader-outline-title:disabled { opacity: 0.65; cursor: default; }
-.pdf-reader-outline-page { flex: 0 0 auto; margin-inline-start: 0.7em; padding-inline-end: 0.3em; opacity: 0.65; font-variant-numeric: tabular-nums; }
+.pdf-reader-outline-page { flex: 0 0 auto; margin-inline-start: 0.7em; padding-inline-end: 0.3em; opacity: 0.4; font-variant-numeric: tabular-nums; }
 .pdf-reader-outline-title.is-active { border-inline-start: 3px solid var(--interactive-accent, #6652d3); background: color-mix(in srgb, var(--interactive-accent, #6652d3) 9%, transparent); font-weight: bold; }
 @media (pointer: coarse) { .pdf-reader-outline-row, .pdf-reader-outline-row button { min-height: 42px; } .pdf-reader-outline-rail { min-height: 44px; } }
