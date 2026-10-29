@@ -7,9 +7,27 @@ const { createSingleJsonlMigrationRunner } = require("./storage/single-jsonl-mig
 const { createSingleJsonlVaultMigration } = require("./storage/single-jsonl-vault-migration.cjs");
 const { appendPairUpdate } = require("./pdf-pair-id.cjs");
 const { createSourceVersions } = require("./pdf-source-versions.cjs");
+const { prepareNativeErase, prepareNativeRestore, getNativeAnnotationIndex } = require("./pdf-native-erase.cjs");
+const { digestMigrationBytes } = require("./storage/single-jsonl-migration.cjs");
 
 const ANNOTATION_ROOT = "00_Archive/20_PDFData";
 const TAIL_SAMPLE_BYTES = 64 * 1024;
+
+function encodeBase64(bytes) {
+  if (typeof Uint8Array.prototype.toBase64 === "function") return bytes.toBase64();
+  let binary = "";
+  for (let start = 0; start < bytes.length; start += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(start, Math.min(bytes.length, start + 0x8000)));
+  }
+  return globalThis.btoa(binary);
+}
+
+function decodeBase64(value) {
+  if (typeof Uint8Array.fromBase64 === "function") return Uint8Array.fromBase64(value);
+  const binary = globalThis.atob(value), bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
 
 function createPdfAnnotationHost({
   app,
@@ -210,6 +228,7 @@ function createPdfAnnotationHost({
   const queues = new Map();
   const documentViews = new Map();
   const sourceStates = new Map();
+  const nativeEraseHistory = new Map();
   const pairingWrites = new Map();
   const sourceVersions = createSourceVersions({ adapter: backingAdapter, makeToken });
   const outlineJobs = new Map();
@@ -262,11 +281,11 @@ function createPdfAnnotationHost({
   async function initializeView(view, value) {
     if (migrationRunning) throw codedError("V15_MIGRATION_IN_PROGRESS", "Wait for annotation migration to finish before opening a PDF.");
     assertLive();
-    const bytes = bytesView(value);
+    let bytes = bytesView(value);
     const file = view.documentFile || view.file;
     if (!file || typeof file.path !== "string") throw codedError("PDF_ANNOTATION_SOURCE_MISSING", "The source PDF is no longer available.");
     const sourcePath = normalizePath(file.path);
-    const source = sourceMetadata(bytes, file, hashRuntime, sourcePath);
+    let source = sourceMetadata(bytes, file, hashRuntime, sourcePath);
     const physicalSource = { ...source };
     const openRequest = view.openRequest;
     const assertOpenCurrent = () => {
@@ -279,6 +298,8 @@ function createPdfAnnotationHost({
     let sourceHashCompatMatch = false;
     try {
       prior = await store.documentForPath(sourcePath);
+      const recovered = await recoverNativeEraseJournal(sourcePath, file, prior, bytes);
+      if (recovered) { bytes = recovered.bytes; source = sourceMetadata(bytes, file, hashRuntime, sourcePath); Object.assign(physicalSource, source); }
       if (store.sourceProtocol === "obreader-current-v15" && prior?.pairing?.pairedSha256 &&
           typeof hashRuntime.matches === "function" && (typeof hashRuntime.matchesAsync === "function"
             ? await hashRuntime.matchesAsync(bytes, prior.pairing.pairedSha256)
@@ -338,6 +359,7 @@ function createPdfAnnotationHost({
       log("annotation-storage-unavailable", {
         path: sourcePath,
         code: error?.code || "ANNOTATION_STORAGE_UNAVAILABLE",
+        reason: String(error?.message || error).slice(0, 512),
       });
       return snapshot;
     }
@@ -604,6 +626,7 @@ function createPdfAnnotationHost({
   }
 
   async function persist(view, message, recovery) {
+    const nativeJournalPaths = [];
     const captured = {
       document: view.annotationDocument,
       documentId: view.documentId,
@@ -638,6 +661,30 @@ function createPdfAnnotationHost({
           view.annotationHydrationAllowed = false;
         }
         if (quarantined) validateQuarantinedRecovery(message, captured.document);
+        const nativeDeletes = operations.filter((operation) => operation.deleted === true && operation.provenance === "embedded");
+        const nativeRestores = operations.filter((operation) => operation.provenance === "embedded" && operation.deleted !== true);
+        const nativeOperations = [...nativeDeletes, ...nativeRestores];
+        if (nativeDeletes.length && nativeRestores.length)
+          throw codedError("PDF_NATIVE_ERASE_MIXED_ACTIONS", "A single save cannot combine native erase and restore actions.");
+        if (nativeOperations.length && (recovery || quarantined || view.annotationSourceMismatch))
+          throw codedError("PDF_NATIVE_ERASE_SOURCE_CHANGED", "Embedded annotation changes are paused while PDF source recovery is quarantined.");
+        const externalOperations = operations.filter((operation) => !nativeOperations.includes(operation));
+        if (nativeDeletes.length) {
+          const erased = await eraseEmbeddedAnnotations(captured.document, nativeDeletes);
+          if (erased?.journalPath) nativeJournalPaths.push(erased.journalPath);
+          captured.document = view.annotationDocument || captured.document;
+        }
+        if (nativeRestores.length) {
+          const restored = await restoreEmbeddedAnnotations(captured.document, nativeRestores);
+          if (restored?.journalPath) nativeJournalPaths.push(restored.journalPath);
+          captured.document = view.annotationDocument || captured.document;
+        }
+        if (!externalOperations.length) {
+          return { acknowledged: true, operationCount: nativeOperations.length,
+          batchId: nativeOperations.map(operation => operation.operationId || operation.clock?.opId).filter(Boolean).join("+") || null,
+          nativeJournalPaths,
+            snapshotPending: false, quarantined };
+        }
         if (!operations.length) {
           return { acknowledged: true, operationCount: 0, batchId: null, snapshotPending: false, quarantined };
         }
@@ -645,7 +692,7 @@ function createPdfAnnotationHost({
           ? message.batchId : makeToken();
         const result = await store.appendOperations({
           document: captured.document,
-          operations,
+          operations: externalOperations,
           batchId,
           sourceHash: captured.document.source.sourceHash,
           quarantined,
@@ -656,7 +703,9 @@ function createPdfAnnotationHost({
           immediate: result.pendingSinceCheckpoint >= 100,
         });
         void broadcastDocument(captured.document, view);
-        return result;
+        return nativeOperations.length ? { ...result, operationCount: result.operationCount + nativeOperations.length,
+          batchId: [...nativeOperations.map(operation => operation.operationId || operation.clock?.opId).filter(Boolean), result.batchId].filter(Boolean).join("+"),
+          nativeJournalPaths } : result;
       });
       const queued = task.finally(() => {
         if (queues.get(enqueueKey) === queued) queues.delete(enqueueKey);
@@ -678,11 +727,13 @@ function createPdfAnnotationHost({
         confirmedRevision: view.confirmedRevision,
         batchId: result.batchId,
         operationCount: store.sourceProtocol?.startsWith("wal-sidecar-v3.") ? operations.length : result.operationCount,
+        ...(result.nativeJournalPaths?.length ? { nativeSourceHash: captured.document.source.sourceHash } : {}),
         external: true,
         quarantined: result.quarantined === true,
       });
       view.setStatus?.(result.quarantined ? "PDF 来源已变化；批注操作已隔离保存，未应用到当前 PDF" :
         recovery ? "恢复操作已安全写入外置记录" : "批注已保存到外置记录", true);
+      for (const path of result.nativeJournalPaths || []) await backingAdapter.remove?.(path);
       log(recovery ? "annotation-recovered" : "annotation-saved", {
         storageProtocol: store.sourceProtocol || "format3",
         documentId: captured.documentId,
@@ -742,6 +793,132 @@ function createPdfAnnotationHost({
       throw codedError("PDF_ANNOTATION_SOURCE_CHANGED", "The PDF changed outside the Reader; annotation persistence is paused.");
     }
     return sizeChanged || mtimeChanged;
+  }
+
+  async function eraseEmbeddedAnnotations(document, operations) {
+    const state = sourceStates.get(document.documentId);
+    const missing = [];
+    if (!state) missing.push("当前文档的来源状态");
+    else if (!state.file) missing.push("当前 PDF 文件");
+    if (!Array.isArray(operations) || !operations.length) missing.push("要擦除的批注列表");
+    else operations.forEach((operation, index) => {
+      if (!operation.ref && operation.embeddedRef) operation.ref = operation.embeddedRef;
+      if (!operation.ref) missing.push(`第 ${index + 1} 条批注的 PDF 内部引用编号`);
+      if (!Number.isSafeInteger(operation.pageIndex) || operation.pageIndex < 0) missing.push(`第 ${index + 1} 条批注的有效页码`);
+      if (!operation.kind) missing.push(`第 ${index + 1} 条批注的类型`);
+    });
+    if (missing.length) throw codedError("PDF_NATIVE_ERASE_IDENTITY_INVALID", `无法擦除 PDF 内嵌批注：缺少或无效的信息：${missing.join("、")}。原 PDF 未修改。`);
+    let bytes = bytesView(await app.vault.readBinary(state.file));
+    if (hashRuntime.fingerprint(bytes) !== state.physicalSource.sourceHash) {
+      throw codedError("PDF_NATIVE_ERASE_SOURCE_CHANGED", "The PDF changed before the embedded annotation could be erased.");
+    }
+    let activeDocument = document;
+    if (!activeDocument.pairId) {
+      // Validate the complete batch against the current unpaired bytes before
+      // invoking the existing journaled first-pair migration.
+      let previewBytes = bytes;
+      for (const operation of operations) {
+        const preview = await prepareNativeErase({ sourceBytes: previewBytes, pairId: null, allowUnpairedPreview: true,
+          pageIndex: operation.pageIndex, ref: operation.ref, kind: operation.kind });
+        previewBytes = preview.bytes;
+      }
+      await store.appendOperations({ document: activeDocument, operations: [], sourceHash: activeDocument.source?.sourceHash });
+      activeDocument = state.document;
+      if (!activeDocument?.pairId) throw codedError("PDF_NATIVE_ERASE_PAIRING_REQUIRED", "The PDF could not be paired before native erasure.");
+      bytes = bytesView(await app.vault.readBinary(state.file));
+      if (hashRuntime.fingerprint(bytes) !== state.physicalSource.sourceHash)
+        throw codedError("PDF_NATIVE_ERASE_SOURCE_CHANGED", "The PDF changed during first-pair migration.");
+    }
+    const originalTargets = await Promise.all(operations.map(operation => getNativeAnnotationIndex({sourceBytes:bytes,
+      pairId:activeDocument.pairId,pageIndex:operation.pageIndex,ref:operation.ref,kind:operation.kind})));
+    let preparedBytes = bytes;
+    const preparedTargets = [];
+    for (let i=0;i<operations.length;i++) {
+      const operation=operations[i];
+      const prepared = await prepareNativeErase({ sourceBytes: preparedBytes, pairId: activeDocument.pairId,
+        pageIndex: operation.pageIndex, ref: operation.ref, kind: operation.kind });
+      preparedBytes = prepared.bytes;
+      preparedTargets.push({ pageIndex: operation.pageIndex, ref: prepared.ref, kind: prepared.kind,
+        uuid: operation.uuid, index: originalTargets[i].index,
+        operationId: operation.operationId || operation.clock?.opId || null });
+    }
+    const journalRoot = `${app.vault.configDir || ".obsidian"}/plugins/pdf-web-reader/.v15-native-erase`;
+    const journalPath = `${journalRoot}/${activeDocument.docKey}.json`;
+    if (await backingAdapter.exists(journalPath)) {
+      throw codedError("PDF_NATIVE_ERASE_RECOVERY_REQUIRED", "An earlier embedded annotation erase needs recovery before another erase.");
+    }
+    if (!await backingAdapter.exists(journalRoot)) await backingAdapter.mkdir(journalRoot);
+    const nextSource = sourceMetadata(preparedBytes, state.file, hashRuntime, state.path);
+    const journal = { schemaVersion: 1, phase: "prepared", documentId: activeDocument.documentId, docKey: activeDocument.docKey,
+      pairId: activeDocument.pairId, path: state.path, targets: preparedTargets,
+      oldLength: bytes.length, newLength: preparedBytes.length, oldHash: hashRuntime.fingerprint(bytes), newHash: hashRuntime.fingerprint(preparedBytes),
+      suffix: encodeBase64(preparedBytes.subarray(bytes.length)),
+      source: state.source, nextSource, pairing: { ...(activeDocument.pairing || {}), pairedSha256: await digestMigrationBytes(preparedBytes), pairedSize: nextSource.size } };
+    await backingAdapter.write(journalPath, JSON.stringify(journal));
+    if (await backingAdapter.read(journalPath) !== JSON.stringify(journal)) throw codedError("PDF_NATIVE_ERASE_JOURNAL_UNVERIFIED", "The embedded erase recovery record could not be verified.");
+    try {
+      const pendingWrite = { expectedHash: journal.newHash, bytes: preparedBytes, originalSize: bytes.length };
+      pairingWrites.set(state.path, pendingWrite);
+      await appendPairUpdate(app.vault, state.file, preparedBytes);
+      const confirmed = bytesView(await app.vault.readBinary(state.file));
+      if (hashRuntime.fingerprint(confirmed) !== journal.newHash) throw codedError("PDF_NATIVE_ERASE_PDF_UNVERIFIED", "The PDF erase append could not be verified.");
+      if (pairingWrites.get(state.path) === pendingWrite) pairingWrites.delete(state.path);
+      nextSource.mtime = Number.isFinite(state.file.stat?.mtime) ? state.file.stat.mtime : nextSource.mtime;
+      const identity = await store.updateSourceIdentity({ document: activeDocument, pairId: activeDocument.pairId, allowVerifiedSourceTransition: true,
+        sourceHash: nextSource.sourceHash, size: nextSource.size, tailHash64k: nextSource.tailHash64k,
+        pageCount: document.source.pageCount, orderedPageIdentities: document.source.orderedPageIdentities,
+        pairing: journal.pairing });
+      if (identity.sourceMismatch || !["MATCH", "BASELINE_ESTABLISHED"].includes(identity.sourceMatch))
+        throw codedError("PDF_NATIVE_ERASE_JSONL_UNVERIFIED", "The annotation source identity did not advance with the PDF.");
+      state.source = nextSource; state.physicalSource = nextSource; state.document = identity.document;
+      for (const view of documentViews.get(activeDocument.documentId) || []) {
+        view.annotationDocument = identity.document; view.annotationSourceHash = nextSource.sourceHash;
+      }
+      for (const target of preparedTargets) nativeEraseHistory.set(`${activeDocument.documentId}\0${target.uuid}`,
+        { ...target, pairId: activeDocument.pairId, status: "deleted", sourceHash: nextSource.sourceHash });
+      // Keep the receipt through the Viewer ACK. If the process stops after
+      // the PDF/JSONL commit, open-time recovery verifies and clears it.
+    } catch (error) {
+      log("annotation-native-erase-recovery-required", { documentId: activeDocument.documentId, docKey: activeDocument.docKey, code: error.code || "unknown" });
+      throw error;
+    }
+    return { journalPath };
+  }
+
+  async function recoverNativeEraseJournal(path, file, prior, initialBytes) {
+    const root = `${app.vault.configDir || ".obsidian"}/plugins/pdf-web-reader/.v15-native-erase`;
+    const journalPath = `${root}/${prior?.docKey || "unknown"}.json`;
+    if (!await backingAdapter.exists(journalPath)) return null;
+    let journal;
+    try { journal = JSON.parse(await backingAdapter.read(journalPath)); }
+    catch { throw codedError("PDF_NATIVE_ERASE_JOURNAL_INVALID", "The embedded erase recovery record is unreadable."); }
+    if (journal.schemaVersion !== 1 || journal.path !== path || journal.documentId !== prior?.documentId ||
+        journal.docKey !== prior?.docKey || journal.pairId !== prior?.pairId ||
+        !Number.isSafeInteger(journal.oldLength) || !Number.isSafeInteger(journal.newLength) || journal.newLength <= journal.oldLength)
+      throw codedError("PDF_NATIVE_ERASE_JOURNAL_IDENTITY_MISMATCH", "The embedded erase recovery record does not match this PDF.");
+    const suffix = decodeBase64(journal.suffix);
+    if (suffix.length !== journal.newLength - journal.oldLength) throw codedError("PDF_NATIVE_ERASE_JOURNAL_INVALID", "The embedded erase recovery bytes are incomplete.");
+    let current = bytesView(await app.vault.readBinary(file));
+    if (current.length < journal.oldLength || hashRuntime.fingerprint(current.subarray(0, journal.oldLength)) !== journal.oldHash || current.length > journal.newLength)
+      throw codedError("PDF_NATIVE_ERASE_RECOVERY_CONFLICT", "The PDF differs from both recorded erase states; recovery stopped without overwriting it.");
+    for (let i = journal.oldLength; i < current.length; i++) if (current[i] !== suffix[i - journal.oldLength])
+      throw codedError("PDF_NATIVE_ERASE_RECOVERY_CONFLICT", "The partial PDF append differs from the prepared erase; recovery stopped.");
+    if (current.length < journal.newLength) {
+      const rest = suffix.subarray(current.length - journal.oldLength);
+      await app.vault.appendBinary(file, rest.buffer.slice(rest.byteOffset, rest.byteOffset + rest.byteLength));
+      current = bytesView(await app.vault.readBinary(file));
+    }
+    if (current.length !== journal.newLength || hashRuntime.fingerprint(current) !== journal.newHash || await require("./pdf-pair-id.cjs").readPairId(current) !== journal.pairId)
+      throw codedError("PDF_NATIVE_ERASE_RECOVERY_CONFLICT", "The recovered PDF did not match the prepared erase.");
+    if (prior.source?.sourceHash !== journal.nextSource.sourceHash) {
+      const result = await store.updateSourceIdentity({ document: prior, pairId: prior.pairId, allowVerifiedSourceTransition: true,
+        sourceHash: journal.nextSource.sourceHash, size: journal.nextSource.size, tailHash64k: journal.nextSource.tailHash64k,
+        pageCount: prior.source.pageCount, orderedPageIdentities: prior.source.orderedPageIdentities, pairing: journal.pairing });
+      if (result.sourceMismatch || result.document.source?.sourceHash !== journal.nextSource.sourceHash)
+        throw codedError("PDF_NATIVE_ERASE_RECOVERY_CONFLICT", "The paired annotation identity could not be recovered.");
+    }
+    await backingAdapter.remove?.(journalPath);
+    return { bytes: current };
   }
 
   async function scheduleSnapshotMaterialization(document, { immediate = false } = {}) {

@@ -93,12 +93,20 @@ function createSingleJsonlAnnotationStore({adapter,root='00_Archive/20_PDFData',
       tombstones:(loaded?.tombstones||[]).map(({deleted,...row})=>row),
       deletionGuards:loaded?.deletionGuards||[]};
   }
-  async function updateSourceIdentity({document,pairId,...source}){
+  async function updateSourceIdentity({document,pairId,pairing,allowVerifiedSourceTransition=false,...source}){
     if(document.pairId&&pairId!==document.pairId)return {document,sourceMatch:'MISMATCH',sourceMismatch:true};
     if(!document.pairId&&pairId)return {document,sourceMatch:'MISMATCH',sourceMismatch:true};
     const old=document.source||{};
     for(const key of ['pageCount','orderedPageIdentities'])if(old[key]!==undefined&&source[key]!==undefined&&canonicalJson(old[key])!==canonicalJson(source[key]))return {document,sourceMatch:'MISMATCH',sourceMismatch:true};
     if(!document.pairId){const updated={...document,source:{...old,...source}};provisional.set(document.sourcePath,updated);return {document:updated,sourceMatch:'BASELINE_ESTABLISHED'}}
+    if(source.sourceHash&&source.sourceHash!==old.sourceHash){
+      if(!allowVerifiedSourceTransition||!document.pairId||typeof core.updateSourceIdentity!=='function')return {document,sourceMatch:'MISMATCH',sourceMismatch:true};
+      const current=await core.updateSourceIdentity({sourcePath:document.sourcePath,pairId:document.pairId,
+        documentId:document.documentId,docKey:document.docKey,expectedSourceHash:old.sourceHash,source,pairing});
+      await registry.remember(current);
+      const updated={...current.document,pairId:current.pairId};
+      return {document:updated,sourceMatch:'MATCH'};
+    }
     return {document,sourceMatch:'MATCH'};
   }
   async function appendOperations({document,operations,sourceHash,quarantined=false}){

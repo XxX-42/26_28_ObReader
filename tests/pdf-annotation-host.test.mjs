@@ -6,6 +6,9 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createPdfAnnotationHost: createHost } = require("../plugin/pdf-annotation-host.cjs");
 const { createPdfAnnotationStore } = require("../plugin/pdf-annotation-store.cjs");
+const { createHash } = await import("node:crypto");
+const { PDFDocument, PDFDict, PDFName, PDFArray } = require("pdf-lib");
+const { createPdfHashRuntime } = require("../plugin/pdf-hash-runtime.cjs");
 // Keep the Format 3 golden tests intact; wal-host.test.mjs exercises the new default.
 const createPdfAnnotationHost = (options) => createHost({ ...options, storeFactory: createPdfAnnotationStore });
 
@@ -18,6 +21,7 @@ function makeAdapter() {
     async mkdir(path) { dirs.add(path); },
     async read(path) { if (!files.has(path)) throw new Error(`missing ${path}`); return files.get(path); },
     async write(path, value) { files.set(path, value); },
+    async remove(path) { files.delete(path); },
     async rename(from, to) {
       if (!files.has(from)) throw new Error(`missing rename source: ${from}`);
       if (files.has(to)) throw new Error(`rename target exists: ${to}`);
@@ -82,9 +86,60 @@ function makeApp(adapter) {
       bytes: null,
       getAbstractFileByPath(path) { return this.file?.path === path ? this.file : null; },
       async readBinary() { return this.bytes.slice(0); },
+      async appendBinary(file, suffix) {
+        const prior = new Uint8Array(this.bytes), added = new Uint8Array(suffix), next = new Uint8Array(prior.length + added.length);
+        next.set(prior); next.set(added, prior.length); this.bytes = next.buffer;
+        file.stat.size = next.length; file.stat.mtime += 1;
+      },
     },
   };
 }
+
+test("v15 embedded erase writes only the source PDF, advances paired source identity, and returns a durable ACK", async () => {
+  const adapter = makeAdapter(), app = makeApp(adapter);
+  const hashRuntime = await createPdfHashRuntime();
+  const pdf = await PDFDocument.create(), page = pdf.addPage([320, 420]), ctx = pdf.context;
+  const mark = PDFDict.withContext(ctx); mark.set(PDFName.of("Type"), PDFName.of("Annot")); mark.set(PDFName.of("Subtype"), PDFName.of("Highlight"));
+  const markRef = ctx.register(mark); const mark2=PDFDict.withContext(ctx);mark2.set(PDFName.of("Type"),PDFName.of("Annot"));mark2.set(PDFName.of("Subtype"),PDFName.of("Underline"));
+  const mark2Ref=ctx.register(mark2);const annots = PDFArray.withContext(ctx); annots.push(markRef);annots.push(mark2Ref); page.node.set(PDFName.of("Annots"), annots);
+  const source = new Uint8Array(await pdf.save({ useObjectStreams: false }));
+  const host = createHost({ app, enableSingleJsonl: true, hashRuntime,
+    identityHash: bytes => createHash("sha256").update(bytes).digest("hex"),
+    makeToken: (() => { let n=0; return () => `native-erase-${++n}-token`; })(), deviceId: "native-erase-device" });
+  const view = makeView(app, "Books/native-erase.pdf", source);
+  const initial = await host.initializeView(view, view.sourceBytes); view.documentId = initial.documentId;
+  assert.match(initial.source.sourceHash, /^xxh64-v1:/, "the fixture exercises the production XXH64 source fingerprint");
+  await confirmPageIdentity(host, view);
+  await host.handleMessage(view, { type: "save", documentId: view.documentId, openRequest: 1, requestId: "pair-save", revision: 1,
+    batchId: "pairing-operation", operations: [{ uuid: "external-live", kind: "Highlight", pageIndex: 0, deleted: false,
+      clock: { timestamp: 10, logical: 1, deviceId: "viewer", opId: "external-live-op" }, payload: { editor: { type: "highlight", color: [1,1,0] } } }] });
+  const paired = new Uint8Array(app.vault.bytes), pairId = await require("../plugin/pdf-pair-id.cjs").readPairId(paired);
+  assert.ok(pairId, JSON.stringify(view.messages));
+  await host.handleMessage(view, { type: "save", documentId: view.documentId, openRequest: 1, requestId: "native-delete", revision: 2,
+    batchId: "native-delete-op", operations: [{ uuid: "embedded-mark", kind: "Highlight", pageIndex: 0, embeddedRef: markRef.toString(),
+      provenance: "embedded", deleted: true, operationId: "native-delete-op",
+      clock: { timestamp: 11, logical: 1, deviceId: "viewer", opId: "native-delete-op" } },
+    { uuid: "embedded-mark-2", kind: "Underline", pageIndex: 0, ref: mark2Ref.toString(), provenance: "embedded", deleted: true,
+      operationId: "native-delete-op-2", clock: { timestamp: 11, logical: 3, deviceId: "viewer", opId: "native-delete-op-2" } },
+    { uuid: "external-live", kind: "Highlight", pageIndex: 0, provenance: "external", deleted: true,
+      clock: { timestamp: 11, logical: 2, deviceId: "viewer", opId: "external-delete-op" } }] });
+  const ack = view.messages.findLast(message => message.requestId === "native-delete");
+  assert.equal(ack?.type, "saved", JSON.stringify(ack)); assert.equal(ack?.operationCount, 3); assert.match(ack?.batchId || "", /native-delete-op/);
+  await host.handleMessage(view, { type: "save", documentId: view.documentId, openRequest: 1, requestId: "post-erase-save", revision: 3,
+    batchId: "post-erase-operation", operations: [{ uuid: "external-live", kind: "Highlight", pageIndex: 0, deleted: false,
+      clock: { timestamp: 12, logical: 1, deviceId: "viewer", opId: "post-erase-op" }, payload: { editor: { type: "highlight", color: [0,1,0] } } }] });
+  assert.equal(view.messages.findLast(message => message.requestId === "post-erase-save")?.type, "saved",
+    JSON.stringify(view.messages.findLast(message => message.requestId === "post-erase-save")));
+  const result = await PDFDocument.load(app.vault.bytes, { updateMetadata: false });
+  assert.equal(await require("../plugin/pdf-pair-id.cjs").readPairId(new Uint8Array(app.vault.bytes)), pairId);
+  assert.equal(result.getPages()[0].node.lookupMaybe(PDFName.of("Annots"), PDFArray).size(), 0);
+  const sidecarPaths = [...adapter.files.keys()].filter(path => path.endsWith(".jsonl"));
+  assert.ok(sidecarPaths.length >= 1, "paired current JSONL remains present");
+  const sidecar = sidecarPaths.map(path => adapter.files.get(path)).join("\n");
+  assert.match(sidecar, /external-live/); assert.doesNotMatch(sidecar, /embedded-mark/);
+  assert.ok(![...adapter.files.keys()].some(path => path.includes(".v15-native-erase") && path.endsWith(".json")), "committed journal is cleared after ACK");
+  host.dispose();
+});
 
 async function confirmPageIdentity(host, view) {
   await host.handleMessage(view, {
@@ -93,8 +148,117 @@ async function confirmPageIdentity(host, view) {
     openRequest: view.openRequest,
     pageCount: 1,
     orderedPageIdentities: ["4 0 R"],
+    ...(view.annotationDocument?.pairId ? { pairId: view.annotationDocument.pairId } : {}),
   });
 }
+
+async function setupPairedNativeErase(path,{pair=true}={}) {
+  const adapter=makeAdapter(),app=makeApp(adapter),hashRuntime=await createPdfHashRuntime();
+  const logs=[];
+  const pdf=await PDFDocument.create(),page=pdf.addPage([320,420]),ctx=pdf.context;
+  const mark=PDFDict.withContext(ctx);mark.set(PDFName.of("Type"),PDFName.of("Annot"));mark.set(PDFName.of("Subtype"),PDFName.of("Highlight"));
+  const markRef=ctx.register(mark),mark2=PDFDict.withContext(ctx);mark2.set(PDFName.of("Type"),PDFName.of("Annot"));mark2.set(PDFName.of("Subtype"),PDFName.of("Underline"));
+  const mark2Ref=ctx.register(mark2),annots=PDFArray.withContext(ctx);annots.push(markRef);annots.push(mark2Ref);page.node.set(PDFName.of("Annots"),annots);
+  const source=new Uint8Array(await pdf.save({useObjectStreams:false}));
+  const options={app,enableSingleJsonl:true,hashRuntime,
+    identityHash:bytes=>createHash("sha256").update(bytes).digest("hex"),
+    makeToken:(()=>{let n=0;const key=path.replace(/[^a-z0-9]/gi,"");return()=>`nativeerase${key}${++n}token`;})(),deviceId:`native-erase-${path.replace(/[^a-z0-9]/gi,"")}-device`,log:(event,data)=>logs.push({event,data})};
+  const host=createHost(options),view=makeView(app,path,source),initial=await host.initializeView(view,view.sourceBytes);view.documentId=initial.documentId;
+  await confirmPageIdentity(host,view);
+  if(pair){
+    await host.handleMessage(view,{type:"save",documentId:view.documentId,openRequest:1,requestId:"pair-save",revision:1,batchId:"pair-operation",
+      operations:[{uuid:"external-live",kind:"Highlight",pageIndex:0,deleted:false,
+        clock:{timestamp:10,logical:1,deviceId:"viewer",opId:"external-live-op"},payload:{editor:{type:"highlight",color:[1,1,0]}}}]});
+    assert.ok(await require("../plugin/pdf-pair-id.cjs").readPairId(new Uint8Array(app.vault.bytes)));
+  }
+  return {adapter,app,hashRuntime,options,host,view,markRefs:[markRef,mark2Ref],logs};
+}
+
+test("native erase journal resumes after restart from old, partial, and complete PDF append states",async()=>{
+  for(const state of ["old","partial","complete"]){
+    const f=await setupPairedNativeErase(`Books/recover-${state}.pdf`),originalAppend=f.app.vault.appendBinary.bind(f.app.vault);
+    f.app.vault.appendBinary=async function(file,suffix){
+      if(state==="old")throw new Error("simulated stop before append");
+      if(state==="complete"){await originalAppend(file,suffix);throw new Error("simulated stop after append");}
+      const bytes=new Uint8Array(suffix),half=Math.max(1,Math.floor(bytes.length/2));
+      await originalAppend(file,bytes.subarray(0,half));throw new Error("simulated stop during append");
+    };
+    await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:`erase-${state}`,revision:2,
+      batchId:`erase-${state}-op`,operations:[{uuid:"embedded-mark",kind:"Highlight",pageIndex:0,ref:f.markRefs[0].toString(),
+        provenance:"embedded",deleted:true,operationId:`erase-${state}-op`,
+        clock:{timestamp:11,logical:1,deviceId:"viewer",opId:`erase-${state}-op`}},
+      {uuid:"embedded-mark-2",kind:"Underline",pageIndex:0,ref:f.markRefs[1].toString(),provenance:"embedded",deleted:true,
+        operationId:`erase-${state}-op-2`,clock:{timestamp:11,logical:2,deviceId:"viewer",opId:`erase-${state}-op-2`}}]});
+    assert.equal(f.view.messages.findLast(m=>m.requestId===`erase-${state}`)?.type,"error");
+    const journalPath=[...f.adapter.files.keys()].find(path=>path.includes(".v15-native-erase/")&&path.endsWith(".json"));
+    assert.ok(journalPath,`${state} state leaves its recovery receipt`);
+    const beforeRestartDoc=await f.host.store.documentForPath(`Books/recover-${state}.pdf`);
+    f.host.dispose();
+    f.app.vault.appendBinary=originalAppend;
+    const restarted=createHost(f.options),reopened=makeView(f.app,`Books/recover-${state}.pdf`,new Uint8Array(f.app.vault.bytes));
+    const snapshot=await restarted.initializeView(reopened,reopened.sourceBytes);reopened.documentId=snapshot.documentId;
+    assert.equal(snapshot.documentId,f.view.documentId);assert.equal(snapshot.docKey,f.view.annotationDocument.docKey);
+    assert.ok(!f.adapter.files.has(journalPath),`${state} receipt is removed only after recovery verifies both sides: ${journalPath} vs ${[...f.adapter.files.keys()].filter(p=>p.includes(".v15-native-erase"))}; status=${reopened.lastStatus}; prior=${JSON.stringify(beforeRestartDoc)}; logs=${JSON.stringify(f.logs)}`);
+    const pdf=await PDFDocument.load(f.app.vault.bytes,{updateMetadata:false});
+    assert.equal(pdf.getPages()[0].node.lookupMaybe(PDFName.of("Annots"),PDFArray).size(),0);
+    await confirmPageIdentity(restarted,reopened);
+    await restarted.handleMessage(reopened,{type:"save",documentId:reopened.documentId,openRequest:1,requestId:`next-${state}`,revision:1,
+      batchId:`next-${state}-op`,operations:[{uuid:"external-after-recovery",kind:"Highlight",pageIndex:0,deleted:false,
+        clock:{timestamp:12,logical:1,deviceId:"viewer",opId:`next-${state}-op"`},payload:{editor:{type:"highlight",color:[0,1,0]}}}]});
+    assert.equal(reopened.messages.findLast(m=>m.requestId===`next-${state}`)?.type,"saved",
+      `${JSON.stringify(reopened.messages.findLast(m=>m.requestId===`next-${state}`))}; mismatch=${reopened.annotationSourceMismatch}; hydrated=${reopened.annotationHydrationAllowed}; status=${reopened.lastStatus}; logs=${JSON.stringify(f.logs)}`);
+    restarted.dispose();
+  }
+});
+
+test("native erase validates every target before the single PDF write",async()=>{
+  const f=await setupPairedNativeErase("Books/invalid-second-target.pdf"),before=new Uint8Array(f.app.vault.bytes),beforeHash=f.hashRuntime.fingerprint(before);
+  await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:"invalid-second",revision:2,
+    batchId:"invalid-second-batch",operations:[
+      {uuid:"embedded-mark",kind:"Highlight",pageIndex:0,ref:f.markRefs[0].toString(),provenance:"embedded",deleted:true,
+        operationId:"valid-first",clock:{timestamp:11,logical:1,deviceId:"viewer",opId:"valid-first"}},
+      {uuid:"embedded-mark-2",kind:"Square",pageIndex:0,ref:f.markRefs[1].toString(),provenance:"embedded",deleted:true,
+        operationId:"invalid-second",clock:{timestamp:11,logical:2,deviceId:"viewer",opId:"invalid-second"}},
+    ]});
+  assert.equal(f.view.messages.findLast(m=>m.requestId==="invalid-second")?.type,"error");
+  assert.equal(f.hashRuntime.fingerprint(new Uint8Array(f.app.vault.bytes)),beforeHash,"invalid second target leaves source PDF byte-identical");
+  assert.ok(![...f.adapter.files.keys()].some(path=>path.includes(".v15-native-erase")),"invalid batches do not create a journal");
+  f.host.dispose();
+});
+
+test("unpaired native erase preflights first, then uses the migration pair pipeline and reopens",async()=>{
+  const rejected=await setupPairedNativeErase("Books/unpaired-invalid.pdf",{pair:false}),unchanged=new Uint8Array(rejected.app.vault.bytes),
+    rejectedHash=rejected.hashRuntime.fingerprint(unchanged);
+  await rejected.host.handleMessage(rejected.view,{type:"save",documentId:rejected.view.documentId,openRequest:1,requestId:"unpaired-invalid",revision:1,
+    batchId:"unpaired-invalid",operations:[
+      {uuid:"native-first",kind:"Highlight",pageIndex:0,ref:rejected.markRefs[0].toString(),provenance:"embedded",deleted:true,
+        operationId:"unpaired-valid-first",clock:{timestamp:1,logical:1,deviceId:"viewer",opId:"unpaired-valid-first"}},
+      {uuid:"native-second",kind:"Square",pageIndex:0,ref:rejected.markRefs[1].toString(),provenance:"embedded",deleted:true,
+        operationId:"unpaired-invalid-second",clock:{timestamp:1,logical:2,deviceId:"viewer",opId:"unpaired-invalid-second"}},
+    ]});
+  assert.equal(rejected.view.messages.findLast(m=>m.requestId==="unpaired-invalid")?.type,"error");
+  assert.equal(rejected.hashRuntime.fingerprint(new Uint8Array(rejected.app.vault.bytes)),rejectedHash,"invalid unpaired batch does not even add a pair ID");
+  rejected.host.dispose();
+
+  const f=await setupPairedNativeErase("Books/unpaired-valid.pdf",{pair:false});
+  await f.host.handleMessage(f.view,{type:"save",documentId:f.view.documentId,openRequest:1,requestId:"unpaired-valid",revision:1,
+    batchId:"unpaired-valid",operations:[
+      {uuid:"native-first",kind:"Highlight",pageIndex:0,ref:f.markRefs[0].toString(),provenance:"embedded",deleted:true,
+        operationId:"unpaired-valid-first",clock:{timestamp:1,logical:1,deviceId:"viewer",opId:"unpaired-valid-first"}},
+      {uuid:"native-second",kind:"Underline",pageIndex:0,ref:f.markRefs[1].toString(),provenance:"embedded",deleted:true,
+        operationId:"unpaired-valid-second",clock:{timestamp:1,logical:2,deviceId:"viewer",opId:"unpaired-valid-second"}},
+    ]});
+  assert.equal(f.view.messages.findLast(m=>m.requestId==="unpaired-valid")?.type,"saved",JSON.stringify(f.view.messages));
+  const pairId=await require("../plugin/pdf-pair-id.cjs").readPairId(new Uint8Array(f.app.vault.bytes));assert.ok(pairId);
+  const reopenedHost=createHost(f.options),reopened=makeView(f.app,"Books/unpaired-valid.pdf",new Uint8Array(f.app.vault.bytes));
+  const snapshot=await reopenedHost.initializeView(reopened,reopened.sourceBytes);reopened.documentId=snapshot.documentId;
+  assert.equal(snapshot.documentId,f.view.documentId);assert.equal(snapshot.docKey,f.view.annotationDocument.docKey);
+  await confirmPageIdentity(reopenedHost,reopened);
+  const pdf=await PDFDocument.load(f.app.vault.bytes,{updateMetadata:false});
+  assert.equal(pdf.getPages()[0].node.lookupMaybe(PDFName.of("Annots"),PDFArray).size(),0);
+  assert.equal(await require("../plugin/pdf-pair-id.cjs").readPairId(new Uint8Array(f.app.vault.bytes)),pairId);
+  f.host.dispose();reopenedHost.dispose();
+});
 
 test("daily save persists only immutable annotation operations and leaves the PDF source untouched", async () => {
   const adapter = makeAdapter();

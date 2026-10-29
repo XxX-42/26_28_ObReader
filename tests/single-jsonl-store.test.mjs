@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createSingleJsonlStore } = require('../plugin/storage/single-jsonl-store.cjs');
+const { createPdfHashRuntime } = require('../plugin/pdf-hash-runtime.cjs');
 const pairId = '12'.repeat(16);
 const document = { documentId:'old-document',docKey:'123456abcdef',sourcePath:'12_books/戒烟.pdf',source:{sourceHash:'sha256-v1:'+'1'.repeat(64)} };
 const annotation = (uuid, text = uuid) => ({uuid,kind:'Highlight',pageIndex:4,embeddedRef:null,payload:{editor:{rect:[1,2,3,4],color:[1,2,3]},targetText:text}});
@@ -34,6 +35,21 @@ test('current JSONL preserves rows and deletions, with no operation history or d
   assert.equal([...w.files.keys()].some(x=>x.includes('/wal/')||x.includes('/checkpoints/')),false);
   w.calls.length=0;await s.readCurrent(document.sourcePath,pairId);
   assert.deepEqual(w.calls,[['read',paths.current]],'opening reads exactly the current file');
+});
+
+test('verified source identity transition preserves pair and rows and rejects stale hash',async()=>{
+  const runtime=await createPdfHashRuntime();const w=world(),s=w.store(),before={...document,source:{...document.source,
+    sourceHash:runtime.fingerprint(new TextEncoder().encode('old paired PDF bytes')),pageCount:1,orderedPageIdentities:['page-a']}};
+  await s.initialize({document:{...before,pairing:{originalSha256:'a'.repeat(64),pairedSha256:'1'.repeat(64),pairedSize:10}},pairId,annotations:[annotation('keep')]});
+  const nextSource={...before.source,sourceHash:runtime.fingerprint(new TextEncoder().encode('new paired PDF bytes')),size:42,
+    tailHash64k:runtime.fingerprint(new TextEncoder().encode('new tail'))};
+  const next=await s.updateSourceIdentity({sourcePath:before.sourcePath,pairId,documentId:before.documentId,docKey:before.docKey,
+    expectedSourceHash:before.source.sourceHash,source:nextSource,pairing:{pairedSha256:'2'.repeat(64),pairedSize:42},allowVerifiedSourceTransition:true});
+  assert.equal(next.pairId,pairId);assert.equal(next.document.documentId,before.documentId);assert.equal(next.document.docKey,before.docKey);
+  assert.equal(next.document.source.sourceHash,nextSource.sourceHash);assert.deepEqual(next.annotations.map(row=>row.uuid),['keep']);
+  assert.equal(next.document.pairing.originalSha256,'a'.repeat(64));assert.equal(next.document.pairing.pairedSha256,'2'.repeat(64));
+  await assert.rejects(s.updateSourceIdentity({sourcePath:before.sourcePath,pairId,documentId:before.documentId,docKey:before.docKey,
+    expectedSourceHash:before.source.sourceHash,source:{...nextSource,sourceHash:runtime.fingerprint(new TextEncoder().encode('wrong paired PDF bytes'))},allowVerifiedSourceTransition:true}),{code:'V15_STALE_SOURCE_IDENTITY'});
 });
 
 test('120 changes retain current state and exactly the last 100 before/after records',async()=>{

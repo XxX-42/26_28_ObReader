@@ -161,6 +161,7 @@
     annotationRefByRuntimeId: new Map(),
     annotationUuidByPdfRef: new Map(),
     annotationRuntimeBindings: new Map(),
+    annotationProvenanceByUuid: new Map(),
     annotationTrackingFailure: null,
     annotationSnapshot: new Map(),
     externalDeletionGuards: new Map(),
@@ -2415,6 +2416,7 @@
       ref: target.ref || null,
       pageIndex: target.pageIndex,
       kind: target.kind,
+      provenance: target.source === "embedded" ? "embedded" : "external",
       deleted,
       action: deleted ? "delete" : "upsert",
       ...stamp,
@@ -2439,6 +2441,7 @@
       replaceAnnotationOperation(operation, revision);
       state.externalAnnotationRows?.set(target.uuid, {
         uuid: target.uuid, pageIndex: target.pageIndex, kind: target.kind,
+        provenance: target.source === "embedded" ? "embedded" : "external",
         embeddedRef: target.ref || null, deleted,
         editor: deleted ? null : target.editorPayload,
         clock: { timestamp: operation.timestamp, logical: operation.logical,
@@ -3419,6 +3422,7 @@
         pageIndex: row.pageIndex,
         embeddedRef,
         deleted,
+        ...(row.provenance === "embedded" || row.provenance === "external" ? { provenance: row.provenance } : {}),
         authoritative: value.storageProtocol === "wal-sidecar-v3.1",
         clock: {
           timestamp: row.clock.timestamp,
@@ -3915,6 +3919,7 @@
       : normalizedSyncState;
     if (reset) {
       state.annotationUuidByRuntimeId.clear();
+      state.annotationProvenanceByUuid.clear();
       state.annotationTargetTextByRuntimeId.clear();
       state.pendingHighlightSelection = null;
       state.annotationRefByRuntimeId.clear();
@@ -4084,6 +4089,7 @@
       kind,
       pageIndex: operation.pageIndex,
       deleted,
+      ...(operation.provenance === "embedded" || operation.provenance === "external" ? { provenance: operation.provenance } : {}),
       embeddedRef: canonicalPdfAnnotationRef(operation.embeddedRef || operation.ref),
       clock: { timestamp, logical, deviceId, opId },
       ...(!deleted ? { payload: { editor } } : {}),
@@ -4250,6 +4256,9 @@
     const layer = pageView?.div;
     if (!layer || !reference) return false;
     const canonical = canonicalPdfAnnotationRef(reference);
+    const owners = externalAnnotationMaskRows().filter(row => row.pageIndex === pageIndex &&
+      canonicalPdfAnnotationRef(row.embeddedRef) === canonical);
+    if (!owners.some(row => row.deleted === true && row.provenance === "embedded")) return false;
     const element = [...layer.querySelectorAll("[data-annotation-id]")].find((candidate) => {
       const value = candidate.getAttribute("data-annotation-id");
       return canonicalPdfAnnotationRef(value) === canonical || value === reference;
@@ -4343,7 +4352,8 @@
     }
     const rows = externalAnnotationMaskRows();
     const deletedRefs = [...new Set(rows
-      .filter((row) => row.deleted === true && row.embeddedRef)
+      .filter((row) => row.deleted === true && row.embeddedRef &&
+        row.provenance === "embedded")
       .map((row) => canonicalPdfAnnotationRef(row.embeddedRef))
       .filter(Boolean))];
     const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(
@@ -4592,11 +4602,6 @@
     const manager = getAnnotationEditorManager(app);
     const layer = getAnnotationEditorLayer(app, row.pageIndex);
     if (!manager || !layer) return false;
-    if (row.embeddedRef && !suppressEmbeddedAnnotation(row.pageIndex, row.embeddedRef)) {
-      // The reference is exact, but the source layer did not expose its node.
-      // Do not add an overlay that could duplicate a visible base annotation.
-      return false;
-    }
     const currentBinding = state.externalAnnotationHydration.get(row.uuid);
     if (
       !replace && currentBinding &&
@@ -4852,6 +4857,7 @@
     if (!rows.length) return true;
     const deletedRefs = externalAnnotationMaskRows()
       .filter(row => row.deleted && row.embeddedRef &&
+        row.provenance === "embedded" &&
         (!state.dirtyAnnotationRevisions.has(row.uuid) || state.pendingBulkDeletedUuids.has(row.uuid)))
       .map(row => canonicalPdfAnnotationRef(row.embeddedRef)).filter(Boolean);
     const maskChanged = state.annotationController?.setEmbeddedDeletionMask?.(state.app?.pdfDocument?.annotationStorage, deletedRefs);
@@ -4869,7 +4875,7 @@
         const binding = state.externalAnnotationHydration.get(row.uuid);
         const manager = getAnnotationEditorManager();
         const deletedEditor = manager?.getEditor?.(binding?.runtimeId) ||
-          (row.embeddedRef ? findEmbeddedEditor(manager, pageIndex, row.embeddedRef) : null);
+          (row.embeddedRef && row.provenance === "embedded" ? findEmbeddedEditor(manager, pageIndex, row.embeddedRef) : null);
         if (deletedEditor) {
           // PDF.js may recreate original editors when a tool is enabled. Bind
           // this exact source editor before removing it so its retained delete
@@ -5202,6 +5208,7 @@
       pageIndex: identity.pageIndex,
       kind: identity.kind,
       deleted: action === "delete",
+      provenance: state.annotationProvenanceByUuid.get(identity.uuid) || "external",
       action,
       ...stamp,
       serialized: action === "delete" ? { deleted: true } : serialized,
@@ -5302,6 +5309,7 @@
           ? normalizeSyncKind(currentRow.kind)
           : before?.kind || "Unknown",
         deleted,
+        provenance: state.annotationProvenanceByUuid.get(currentRow.uuid) || "external",
         action: deleted ? "delete" : "upsert",
         ...stamp,
         ...(deleted
@@ -6653,8 +6661,8 @@
     return false;
   }
 
-  function rememberAnnotationEditorIdentity(editor) {
-    if (state.hydratingExternalAnnotations || !editor || editor.deleted || typeof editor.id !== "string" || !editor.id ||
+  function rememberAnnotationEditorIdentity(editor, { deletingNative = false } = {}) {
+    if (state.hydratingExternalAnnotations || !editor || typeof editor.id !== "string" || !editor.id ||
         !Number.isSafeInteger(editor.pageIndex) || editor.pageIndex < 0) return;
     const kind = normalizeSyncKind(editor.editorType);
     if (!EXTERNAL_ANNOTATION_KINDS.has(kind)) return;
@@ -6665,9 +6673,18 @@
       pdfAnnotationRefKey(candidate?.ref) === referenceKey);
     let uuid = state.annotationUuidByRuntimeId.get(runtimeId) ||
       (referenceKey && state.annotationUuidByPdfRef.get(referenceKey)) || identity?.uuid;
+    if (!uuid && referenceKey && deletingNative && state.externalSourceConfirmed && state.activeDocumentId) {
+      uuid = `embedded-v1:${state.activeDocumentId}:${editor.pageIndex}:${reference}`;
+    }
+    if (uuid) {
+      const externalOwner = state.externalAnnotationRows?.get(uuid)?.deleted === false || state.externalAnnotationHydration?.has(uuid);
+      const previousProvenance = state.annotationProvenanceByUuid.get(uuid);
+      state.annotationProvenanceByUuid.set(uuid, externalOwner ? "external" : previousProvenance ||
+        (identity || referenceKey && deletingNative ? "embedded" : "external"));
+    }
     // Native editor registration can precede the source-identity handshake.
     // Only genuinely new, reference-free editors may allocate a UUID here.
-    if (!uuid && referenceKey) return;
+    if (!uuid && (referenceKey || editor.deleted)) return;
     uuid ||= makeSyncUuid();
     state.annotationUuidByRuntimeId.set(runtimeId, uuid);
     state.annotationRuntimeBindings ||= new Map();
@@ -7909,7 +7926,9 @@
         manager,
         methodName,
         (original, args) => {
-          runAnnotationObserver("editor.deletion-identity", () => rememberAnnotationEditorIdentity(args[0]));
+          runAnnotationObserver("editor.deletion-identity", () => rememberAnnotationEditorIdentity(args[0], {
+            deletingNative: methodName === "addDeletedAnnotationElement",
+          }));
           const result = original.apply(manager, args);
           runAnnotationObserver("editor.deletion", () => noteMutation());
           return result;
@@ -10339,7 +10358,7 @@
   function installInitialDeletionMask(app, session, snapshot, sourceHashConfirmed) {
     const viewer = app.pdfViewer;
     if (sourceHashConfirmed !== true || !viewer || typeof viewer.setDocument !== "function") return () => {};
-    const refs = [...snapshot.annotations.filter(row => row.deleted), ...(snapshot.deletionGuards || [])]
+    const refs = [...snapshot.annotations.filter(row => row.deleted && row.provenance === "embedded")]
       .filter(row => row.embeddedRef).map(row => row.embeddedRef);
     if (!refs.length) return () => {};
     const original = viewer.setDocument;
@@ -11438,6 +11457,12 @@
           pending.reject(error);
           return;
         }
+        if (typeof message.nativeSourceHash === "string" && state.activeDocumentId === pending.documentId) {
+          if (state.externalSource) state.externalSource = { ...state.externalSource, sourceHash: message.nativeSourceHash };
+          if (state.actualSourceIdentity) state.actualSourceIdentity = { ...state.actualSourceIdentity, sourceHash: message.nativeSourceHash };
+          state.externalSourceConfirmed = true;
+          state.externalSourceMismatch = false;
+        }
         runtimeLogRecord("annotation-operation.ack", {
           phase: "save",
           revision: message.revision,
@@ -11602,7 +11627,8 @@
             if (state.activeDocumentId && Number.isInteger(pageNumber)) {
               const pageIndex = pageNumber - 1;
               for (const row of externalAnnotationMaskRows()) {
-                if (row.pageIndex === pageIndex && row.embeddedRef) {
+                if (row.pageIndex === pageIndex && row.embeddedRef &&
+                    (row.deleted !== true || row.provenance === "external" || row.provenance === "embedded")) {
                   suppressEmbeddedAnnotation(pageIndex, row.embeddedRef);
                 }
               }

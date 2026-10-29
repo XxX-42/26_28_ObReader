@@ -4,6 +4,7 @@ const { sha256 } = require('@noble/hashes/sha256');
 const { canonicalJson } = require('./canonical.cjs');
 const { normalizeInitialPath } = require('./document-identity.cjs');
 const { validatePairId } = require('../pdf-pair-id.cjs');
+const { isSupportedHash } = require('../pdf-hash-runtime.cjs');
 const FORMAT = 'obreader-current-v15', HISTORY = 'obreader-history-v15';
 const KINDS = new Set(['Highlight','Underline','Square','Ink','InkHighlight','FreeText']);
 const error = (code,message) => Object.assign(new Error(message),{code});
@@ -141,6 +142,34 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       return {operationCount:entries.length,batchId:commitId,revision};
     });
   }
+  async function updateSourceIdentity({sourcePath,pairId,documentId,docKey,expectedSourceHash,source,pairing}){
+    validatePairId(pairId);const paths=pathsFor(sourcePath);
+    if(!source||!isSupportedHash(source.sourceHash)||
+      !Number.isSafeInteger(source.pageCount)||!Array.isArray(source.orderedPageIdentities)||source.orderedPageIdentities.length!==source.pageCount)
+      throw error('V15_SOURCE_IDENTITY_INVALID','The verified PDF source identity is incomplete.');
+    let updatedText=null;
+    await queued(paths.current,async()=>{
+      await adapter.process(paths.current,currentText=>{
+        const current=currentFrom(currentText,sourcePath,pairId);
+        if(current.document.documentId!==documentId||current.document.docKey!==docKey)
+          throw error('V15_IDENTITY_CONFLICT','The source identity belongs to a different paired document.');
+        if(current.document.source?.sourceHash!==expectedSourceHash)
+          throw error('V15_STALE_SOURCE_IDENTITY','The PDF source identity changed before the update.');
+        const old=current.document.source||{};
+        if((old.pageCount!==undefined&&old.pageCount!==source.pageCount)||
+          (old.orderedPageIdentities!==undefined&&canonicalJson(old.orderedPageIdentities)!==canonicalJson(source.orderedPageIdentities)))
+          throw error('V15_SOURCE_PAGE_IDENTITY_MISMATCH','The PDF page identity changed.');
+        const nextPairing=pairing?{...(current.document.pairing||{}),...clone(pairing)}:current.document.pairing;
+        const document={...current.document,source:{...old,...clone(source)},...(nextPairing?{pairing:nextPairing}:{})};
+        const {integrity,...header}=current.header;
+        updatedText=encode({...header,document},stateRows(current));
+        currentFrom(updatedText,sourcePath,pairId);
+        return updatedText;
+      });
+      if(await raw(paths.current)!==updatedText)throw error('V15_WRITE_UNVERIFIED','The source identity update could not be verified.');
+    });
+    return readCurrent(sourcePath,pairId);
+  }
   async function renameDocument({fromPath,toPath,pairId}){
     validatePairId(pairId);fromPath=normalizeInitialPath(fromPath);toPath=normalizeInitialPath(toPath);
     const from=pathsFor(fromPath),to=pathsFor(toPath);
@@ -178,6 +207,6 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       return currentFrom(next,toPath,pairId);
     }));
   }
-  return Object.freeze({pathsFor,initialize,readCurrent,readHistory,save,renameDocument,sourceProtocol:FORMAT});
+  return Object.freeze({pathsFor,initialize,readCurrent,readHistory,save,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
 }
 module.exports={createSingleJsonlStore,FORMAT};
