@@ -11,6 +11,7 @@ const MAX_CONCURRENT_ASSET_OPERATIONS = 4;
 const activeLocks = new WeakMap();
 const directoryLocks = new WeakMap();
 const encoder = new TextEncoder();
+const assetNow = () => globalThis.performance?.now?.() ?? Date.now();
 let activeAssetOperations = 0;
 const waitingAssetOperations = [];
 
@@ -306,10 +307,15 @@ async function decompressBounded(compressed, file) {
   }
 }
 
-async function decodePayloadFile(file) {
+async function decodePayloadFile(file, metrics = null) {
+  const started = assetNow();
   const compressed = decodeCanonicalBase64(file.gzipBase64, file.path);
   const bytes = await decompressBounded(compressed, file);
-  if (sha256Bytes(bytes) !== file.sha256) {
+  if (metrics) metrics.decompressMs += assetNow() - started;
+  const hashing = assetNow();
+  const actualHash = sha256Bytes(bytes);
+  if (metrics) metrics.hashMs += assetNow() - hashing;
+  if (actualHash !== file.sha256) {
     throw new Error(
       `Embedded viewer asset failed integrity verification: ${file.path}`,
     );
@@ -491,12 +497,15 @@ function sameStatTuple(left, right) {
 async function fileStat(adapter, fullPath, metrics) {
   if (typeof adapter.stat !== "function") return null;
   metrics.statChecks += 1;
+  const started = assetNow();
   try {
     return readStatTuple(await adapter.stat(fullPath));
   } catch {
     // A missing/unavailable stat is not evidence that a file is valid. The
     // caller falls back to reading and hashing it.
     return null;
+  } finally {
+    metrics.statMs += assetNow() - started;
   }
 }
 
@@ -548,10 +557,11 @@ async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
     return {
       matches: false,
       stable: true,
-      stat: await fileStat(adapter, fullPath, metrics),
+      stat: null,
     };
   }
   let actual;
+  const reading = assetNow();
   try {
     actual = bytesView(await adapter.readBinary(fullPath), fullPath);
     metrics.verificationReads += 1;
@@ -560,19 +570,23 @@ async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
       return {
         matches: false,
         stable: true,
-        stat: await fileStat(adapter, fullPath, metrics),
+        stat: null,
       };
     }
     throw error;
+  } finally {
+    metrics.readbackMs += assetNow() - reading;
   }
   const afterStat = await fileStat(adapter, fullPath, metrics);
   const hasComparableStats = Boolean(beforeStat && afterStat);
   const stable = hasComparableStats
     ? sameStatTuple(beforeStat, afterStat)
     : true;
+  const hashing = assetNow();
+  const matches = stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256;
+  metrics.hashMs += assetNow() - hashing;
   return {
-    matches:
-      stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256,
+    matches,
     stable,
     // One missing/unusable stat makes this a hash-only verification. Do not
     // persist the surviving half as if it bracketed the read; the null row
@@ -624,6 +638,15 @@ function assetCacheRoot(pluginRoot, payload, compactPath) {
 }
 
 async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {}) {
+  // A directory is prepared once per extraction, not once per file. If it is
+  // removed externally afterwards, the write still fails and no marker commits.
+  const preparedDirectories = new Map();
+  const prepareDirectory = (parentPath) => {
+    if (!preparedDirectories.has(parentPath)) {
+      preparedDirectories.set(parentPath, ensureDirectory(adapter, parentPath));
+    }
+    return preparedDirectories.get(parentPath);
+  };
   const markerPath = `${rootPath}/.complete.json`;
   const expectedManifest = manifestMarker(verifiedPayload);
   const startedAt = Date.now();
@@ -636,6 +659,7 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
     repairedFiles: 0,
     decodedBytes: 0,
     bytesWritten: 0,
+    decompressMs: 0, hashMs: 0, writeMs: 0, readbackMs: 0, statMs: 0, directoryMs: 0,
   };
 
   try {
@@ -703,13 +727,17 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
     const repairFiles = verifiedPayload.files.filter((file) => repair.has(file.path));
     const hadRepairs = repairFiles.length > 0;
     await forEachConcurrent(repairFiles, async (file) => {
-      const bytes = await decodePayloadFile(file);
+      const bytes = await decodePayloadFile(file, metrics);
       metrics.decodedFiles += 1;
       metrics.decodedBytes += bytes.byteLength;
       const fullPath = `${rootPath}/${file.path}`;
       const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
-      await ensureDirectory(adapter, parentPath);
-      await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+      const directoryStarted = assetNow();
+      await prepareDirectory(parentPath);
+      metrics.directoryMs += assetNow() - directoryStarted;
+      const writeStarted = assetNow();
+      try { await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes)); }
+      finally { metrics.writeMs += assetNow() - writeStarted; }
       metrics.bytesWritten += bytes.byteLength;
       metrics.repairedFiles += 1;
       touched.add(file.path);
@@ -760,13 +788,17 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
       await forEachConcurrent(
         verifiedPayload.files.filter((file) => finalRepair.has(file.path)),
         async (file) => {
-          const bytes = await decodePayloadFile(file);
+          const bytes = await decodePayloadFile(file, metrics);
           metrics.decodedFiles += 1;
           metrics.decodedBytes += bytes.byteLength;
           const fullPath = `${rootPath}/${file.path}`;
           const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
-          await ensureDirectory(adapter, parentPath);
-          await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+          const directoryStarted = assetNow();
+          await prepareDirectory(parentPath);
+          metrics.directoryMs += assetNow() - directoryStarted;
+          const writeStarted = assetNow();
+          try { await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes)); }
+          finally { metrics.writeMs += assetNow() - writeStarted; }
           metrics.bytesWritten += bytes.byteLength;
           metrics.repairedFiles += 1;
           touched.add(file.path);

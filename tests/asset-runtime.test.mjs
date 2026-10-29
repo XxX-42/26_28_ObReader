@@ -83,6 +83,12 @@ test("built main extracts every manifest asset once, serializes concurrent reque
       harness.plugin.ensureViewerAssets(),
     ]);
     assert.deepEqual(first, concurrent);
+    assert.ok(first.metrics.statChecks <= payload.files.length * 4,
+      'missing resources do not require a second stat before their verified replacement');
+    for (const key of ['decompressMs','hashMs','writeMs','readbackMs','statMs','directoryMs']) {
+      assert.equal(typeof first.metrics[key], 'number', key);
+      assert.ok(Number.isFinite(first.metrics[key]) && first.metrics[key] >= 0, key);
+    }
     assert.equal(
       first.rootPath,
       `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`,

@@ -7143,6 +7143,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return Object.fromEntries([
       "checkedFiles", "verificationReads", "statChecks", "statCacheFiles",
       "decodedFiles", "repairedFiles", "decodedBytes", "bytesWritten", "elapsedMs",
+      "decompressMs", "hashMs", "writeMs", "readbackMs", "statMs", "directoryMs",
     ].filter((key) => typeof metrics?.[key] === "number" &&
       Number.isFinite(metrics[key]) && metrics[key] >= 0)
       .map((key) => [key, metrics[key]]));
@@ -7223,6 +7224,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         verificationReads: 0, statChecks: 0, statCacheFiles: 0,
         decodedFiles: 0, repairedFiles: 0, decodedBytes: 0,
         bytesWritten: 0, elapsedMs: 0,
+        decompressMs: 0, hashMs: 0, writeMs: 0, readbackMs: 0, statMs: 0, directoryMs: 0,
       } });
     }
     if (forceVerify && this.viewerAssetsPromise) {
