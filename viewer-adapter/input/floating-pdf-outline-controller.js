@@ -93,7 +93,9 @@
         const button = document.createElement('button'); button.type = 'button'; button.className = 'pdf-reader-outline-title'; button.textContent = node.title || '未命名'; button.title = node.title; button.disabled = node.page === null;
         if (node === this.active) button.classList.add('is-active');
         button.addEventListener('click', () => { if (this.current() && node.page !== null) this.app.pdfLinkService.goToDestination(node.dest); });
-        node.element = button; row.append(expander, button); target.append(row);
+        node.element = button; row.append(expander, button);
+        if (node.page !== null) { const page = document.createElement('span'); page.className = 'pdf-reader-outline-page'; page.textContent = String(node.page); page.setAttribute('aria-label', `第 ${node.page} 页`); row.append(page); }
+        target.append(row);
         if (node.children.length && (query ? !this.searchCollapsed.has(node) : this.expanded.has(node))) for (const child of node.children) renderNode(child, target, depth + 1);
       };
       for (const node of this.nodes) node.element = null;
