@@ -4,6 +4,15 @@ const {captureIncrementalSnapshot,createIncrementalPatch,materializeIncrementalR
 const {validatePairId,readPairId}=require('./pdf-pair-id.cjs');
 const SUPPORTED=new Set(['Highlight','Underline','Square','Ink','InkHighlight','FreeText']);
 const fail=(code,message)=>Object.assign(new Error(message),{code});
+// PDF.js can expose a native Ink annotation through its freehand highlight
+// editor. The exact page/ref remains authoritative; do not allow Link or other
+// subtypes through this compatibility mapping.
+function matchesSubtype(target,kind){
+  if(!(target instanceof PDFDict))return false;
+  const subtype=target.get(PDFName.of('Subtype'));
+  return subtype===PDFName.of(kind==='InkHighlight'?'Highlight':kind)||
+    ((kind==='Highlight'||kind==='InkHighlight')&&subtype===PDFName.of('Ink'));
+}
 
 // Produces an append-only patch that removes one exact supported annotation
 // reference from one page. It never rewrites the annotation object or links.
@@ -33,9 +42,8 @@ async function prepareNativeErase({sourceBytes,pairId,pageIndex,ref,kind,allowUn
   for(let i=0;i<annots.size();i++){const item=annots.get(i);if(item instanceof PDFRef&&item.toString()===normalizedRef)matches.push(i);}
   if(matches.length!==1)throw fail('PDF_NATIVE_ERASE_REFERENCE_AMBIGUOUS','The target reference is missing or duplicated on this page.');
   const targetRef=annots.get(matches[0]),target=pdf.context.lookup(targetRef);
-  const expectedSubtype=kind==='InkHighlight'?'Highlight':kind;
-  if(!(target instanceof PDFDict)||target.get(PDFName.of('Subtype'))!==PDFName.of(expectedSubtype))
-    throw fail('PDF_NATIVE_ERASE_KIND_MISMATCH','The target reference does not identify the expected annotation kind.');
+  if(!matchesSubtype(target,kind))
+    throw fail('PDF_NATIVE_ERASE_KIND_MISMATCH',`无法擦除 PDF 内嵌批注：第 ${pageIndex+1} 页引用 ${normalizedRef} 的实际类型为 ${target instanceof PDFDict ? String(target.get(PDFName.of('Subtype'))||'未知') : '非批注对象'}，与编辑器类型 ${kind} 不匹配。原 PDF 未修改。`);
   const snapshot=captureIncrementalSnapshot({sourceBytes:bytes,document:pdf});
   annots.remove(matches[0]);
   const patch=createIncrementalPatch({sourceBytes:bytes,document:pdf,snapshot});
@@ -60,8 +68,8 @@ async function getNativeAnnotationIndex({sourceBytes,pairId,pageIndex,ref,kind})
   const matches=[];
   for(let i=0;i<annots.size();i++)if(annots.get(i) instanceof PDFRef&&annots.get(i).toString()===normalizedRef)matches.push(i);
   const target=matches.length===1?pdf.context.lookup(annots.get(matches[0])):null;
-  if(!(target instanceof PDFDict)||target.get(PDFName.of('Subtype'))!==PDFName.of(kind==='InkHighlight'?'Highlight':kind))
-    throw fail('PDF_NATIVE_ERASE_KIND_MISMATCH','The target reference does not identify the expected annotation kind.');
+  if(!matchesSubtype(target,kind))
+    throw fail('PDF_NATIVE_ERASE_KIND_MISMATCH',`无法擦除 PDF 内嵌批注：第 ${pageIndex+1} 页引用 ${normalizedRef} 的实际类型为 ${target instanceof PDFDict ? String(target.get(PDFName.of('Subtype'))||'未知') : '非批注对象'}，与编辑器类型 ${kind} 不匹配。原 PDF 未修改。`);
   return {index:matches[0],ref:normalizedRef,pageIndex,kind};
 }
 
@@ -86,7 +94,7 @@ async function prepareNativeRestore({sourceBytes,pairId,pageIndex,ref,kind,index
   if(Array.from({length:annots.size()},(_,i)=>annots.get(i)).some(item=>item instanceof PDFRef&&item.toString()===normalizedRef))
     throw fail('PDF_NATIVE_RESTORE_REFERENCE_PRESENT','The native annotation is already present on this page.');
   const target=pdf.context.lookup(PDFRef.of(...normalizedRef.match(/^(\d+)\s+(\d+)\s+R$/).slice(1,3).map(Number)));
-  if(!(target instanceof PDFDict)||target.get(PDFName.of('Subtype'))!==PDFName.of(kind==='InkHighlight'?'Highlight':kind))
+  if(!matchesSubtype(target,kind))
     throw fail('PDF_NATIVE_RESTORE_PROOF_INVALID','The referenced source annotation cannot be verified.');
   if(index>annots.size())throw fail('PDF_NATIVE_RESTORE_INDEX_INVALID','The original annotation position is no longer available.');
   const snapshot=captureIncrementalSnapshot({sourceBytes:bytes,document:pdf});

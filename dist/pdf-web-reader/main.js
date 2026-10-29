@@ -35328,6 +35328,11 @@ ${xrefOffset}
       var { validatePairId, readPairId } = require_pdf_pair_id();
       var SUPPORTED = /* @__PURE__ */ new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
       var fail = (code, message) => Object.assign(new Error(message), { code });
+      function matchesSubtype(target, kind) {
+        if (!(target instanceof PDFDict)) return false;
+        const subtype = target.get(PDFName.of("Subtype"));
+        return subtype === PDFName.of(kind === "InkHighlight" ? "Highlight" : kind) || (kind === "Highlight" || kind === "InkHighlight") && subtype === PDFName.of("Ink");
+      }
       async function prepareNativeErase({ sourceBytes, pairId, pageIndex, ref, kind, allowUnpairedPreview = false }) {
         const bytes = sourceBytes instanceof Uint8Array ? sourceBytes : new Uint8Array(sourceBytes);
         const normalizedRef = typeof ref === "string" && /^\d+R$/.test(ref) ? ref.replace(/R$/, " 0 R") : ref;
@@ -35357,9 +35362,8 @@ ${xrefOffset}
         }
         if (matches.length !== 1) throw fail("PDF_NATIVE_ERASE_REFERENCE_AMBIGUOUS", "The target reference is missing or duplicated on this page.");
         const targetRef = annots.get(matches[0]), target = pdf.context.lookup(targetRef);
-        const expectedSubtype = kind === "InkHighlight" ? "Highlight" : kind;
-        if (!(target instanceof PDFDict) || target.get(PDFName.of("Subtype")) !== PDFName.of(expectedSubtype))
-          throw fail("PDF_NATIVE_ERASE_KIND_MISMATCH", "The target reference does not identify the expected annotation kind.");
+        if (!matchesSubtype(target, kind))
+          throw fail("PDF_NATIVE_ERASE_KIND_MISMATCH", `\u65E0\u6CD5\u64E6\u9664 PDF \u5185\u5D4C\u6279\u6CE8\uFF1A\u7B2C ${pageIndex + 1} \u9875\u5F15\u7528 ${normalizedRef} \u7684\u5B9E\u9645\u7C7B\u578B\u4E3A ${target instanceof PDFDict ? String(target.get(PDFName.of("Subtype")) || "\u672A\u77E5") : "\u975E\u6279\u6CE8\u5BF9\u8C61"}\uFF0C\u4E0E\u7F16\u8F91\u5668\u7C7B\u578B ${kind} \u4E0D\u5339\u914D\u3002\u539F PDF \u672A\u4FEE\u6539\u3002`);
         const snapshot = captureIncrementalSnapshot({ sourceBytes: bytes, document: pdf });
         annots.remove(matches[0]);
         const patch = createIncrementalPatch({ sourceBytes: bytes, document: pdf, snapshot });
@@ -35393,8 +35397,8 @@ ${xrefOffset}
         const matches = [];
         for (let i = 0; i < annots.size(); i++) if (annots.get(i) instanceof PDFRef && annots.get(i).toString() === normalizedRef) matches.push(i);
         const target = matches.length === 1 ? pdf.context.lookup(annots.get(matches[0])) : null;
-        if (!(target instanceof PDFDict) || target.get(PDFName.of("Subtype")) !== PDFName.of(kind === "InkHighlight" ? "Highlight" : kind))
-          throw fail("PDF_NATIVE_ERASE_KIND_MISMATCH", "The target reference does not identify the expected annotation kind.");
+        if (!matchesSubtype(target, kind))
+          throw fail("PDF_NATIVE_ERASE_KIND_MISMATCH", `\u65E0\u6CD5\u64E6\u9664 PDF \u5185\u5D4C\u6279\u6CE8\uFF1A\u7B2C ${pageIndex + 1} \u9875\u5F15\u7528 ${normalizedRef} \u7684\u5B9E\u9645\u7C7B\u578B\u4E3A ${target instanceof PDFDict ? String(target.get(PDFName.of("Subtype")) || "\u672A\u77E5") : "\u975E\u6279\u6CE8\u5BF9\u8C61"}\uFF0C\u4E0E\u7F16\u8F91\u5668\u7C7B\u578B ${kind} \u4E0D\u5339\u914D\u3002\u539F PDF \u672A\u4FEE\u6539\u3002`);
         return { index: matches[0], ref: normalizedRef, pageIndex, kind };
       }
       async function prepareNativeRestore({ sourceBytes, pairId, pageIndex, ref, kind, index }) {
@@ -35417,7 +35421,7 @@ ${xrefOffset}
         if (Array.from({ length: annots.size() }, (_, i) => annots.get(i)).some((item) => item instanceof PDFRef && item.toString() === normalizedRef))
           throw fail("PDF_NATIVE_RESTORE_REFERENCE_PRESENT", "The native annotation is already present on this page.");
         const target = pdf.context.lookup(PDFRef.of(...normalizedRef.match(/^(\d+)\s+(\d+)\s+R$/).slice(1, 3).map(Number)));
-        if (!(target instanceof PDFDict) || target.get(PDFName.of("Subtype")) !== PDFName.of(kind === "InkHighlight" ? "Highlight" : kind))
+        if (!matchesSubtype(target, kind))
           throw fail("PDF_NATIVE_RESTORE_PROOF_INVALID", "The referenced source annotation cannot be verified.");
         if (index > annots.size()) throw fail("PDF_NATIVE_RESTORE_INDEX_INVALID", "The original annotation position is no longer available.");
         const snapshot = captureIncrementalSnapshot({ sourceBytes: bytes, document: pdf });

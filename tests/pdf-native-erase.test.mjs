@@ -6,9 +6,9 @@ const {PDFDocument,PDFDict,PDFName,PDFArray,PDFString}=require('pdf-lib');
 const {ensurePairId}=require('../plugin/pdf-pair-id.cjs');
 const {prepareNativeErase}=require('../plugin/pdf-native-erase.cjs');
 
-async function fixture(){
+async function fixture(subtype='Highlight'){
   const pdf=await PDFDocument.create(),page=pdf.addPage([300,400]),ctx=pdf.context;
-  const mark=PDFDict.withContext(ctx);mark.set(PDFName.of('Type'),PDFName.of('Annot'));mark.set(PDFName.of('Subtype'),PDFName.of('Highlight'));mark.set(PDFName.of('Contents'),PDFString.of('keep source text'));
+  const mark=PDFDict.withContext(ctx);mark.set(PDFName.of('Type'),PDFName.of('Annot'));mark.set(PDFName.of('Subtype'),PDFName.of(subtype));mark.set(PDFName.of('Contents'),PDFString.of('keep source text'));
   const markRef=ctx.register(mark);
   const link=PDFDict.withContext(ctx);link.set(PDFName.of('Type'),PDFName.of('Annot'));link.set(PDFName.of('Subtype'),PDFName.of('Link'));
   const linkRef=ctx.register(link);
@@ -28,4 +28,12 @@ test('native erase appends exact Annots deletion and preserves pair, content, an
   assert.equal(before.getPages()[0].node.lookupMaybe(PDFName.of('Annots'),PDFArray).size(),2);
   assert.equal(after.context.lookup(after.getPages()[0].node.lookupMaybe(PDFName.of('Annots'),PDFArray).get(0)).get(PDFName.of('Subtype')).toString(),'/Link');
   await assert.rejects(prepareNativeErase({sourceBytes:f.bytes,pairId:f.pairId,pageIndex:0,ref:f.linkRef,kind:'Highlight'}),{code:'PDF_NATIVE_ERASE_KIND_MISMATCH'});
+});
+
+test('PDF.js highlight editor may erase exact Ink reference without touching links',async()=>{
+  const f=await fixture('Ink'),result=await prepareNativeErase({sourceBytes:f.bytes,pairId:f.pairId,ref:f.ref,pageIndex:0,kind:'Highlight'});
+  const pdf=await PDFDocument.load(result.bytes,{updateMetadata:false});
+  const annots=pdf.getPages()[0].node.lookupMaybe(PDFName.of('Annots'),PDFArray);
+  assert.equal(annots.size(),1);assert.equal(annots.get(0).toString(),f.linkRef);
+  await assert.rejects(prepareNativeErase({sourceBytes:f.bytes,pairId:f.pairId,ref:f.linkRef,pageIndex:0,kind:'Highlight'}),{code:'PDF_NATIVE_ERASE_KIND_MISMATCH'});
 });
