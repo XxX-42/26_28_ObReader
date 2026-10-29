@@ -188,6 +188,7 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/single-jsonl-filesystem.test.mjs",
     "tests/deploy-no-backup.test.mjs",
     "tests/single-jsonl-registry.test.mjs",
+    "tests/single-jsonl-finalize.test.mjs",
     "tests/single-jsonl-host-adapter.test.mjs",
     "tests/single-jsonl-host-gate.test.mjs",
     "tests/pdf-journal.test.mjs",
