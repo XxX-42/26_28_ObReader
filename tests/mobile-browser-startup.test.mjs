@@ -16,8 +16,9 @@ const { createPdfHashRuntime } = createRequire(import.meta.url)("../plugin/pdf-h
 const { readPairId } = createRequire(import.meta.url)("../plugin/pdf-pair-id.cjs");
 const hashRuntime = await createPdfHashRuntime();
 
-for (const blockDirectScripts of [false, true]) {
-test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectScripts ? "forced Blob fallback" : "resource imports"})`, { timeout: 120_000 }, async () => {
+for (const blockDirectScripts of [false, true, "windows-memory"]) {
+const windowsMemory = blockDirectScripts === "windows-memory";
+test(`release real browser without Node: PDF/save/reopen (${windowsMemory ? "Windows verified memory startup" : blockDirectScripts ? "forced Blob fallback" : "resource imports"})`, { timeout: 120_000 }, async () => {
   const manifest = JSON.parse(await readFile(path.join(root, "dist/pdf-web-reader/manifest.json"), "utf8"));
   const source = await readFile(path.join(root, "dist/pdf-web-reader/main.js"), "utf8");
   const styles = await readFile(path.join(root, "dist/pdf-web-reader/styles.css"), "utf8");
@@ -26,6 +27,8 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
   const sourceXxh64Before = hashRuntime.fingerprint(fixture);
   const files = new Map([["sample.pdf", fixture]]), directories = new Set([".obsidian"]);
   let sourcePdfWrites = 0, annotationWrites = 0, browser, page, primaryError;
+  let releaseBackground;
+  const backgroundGate = new Promise(resolve => { releaseBackground = resolve; });
   const report = { status: "running", mode: "real-browser-no-node/mobile", physicalIpadValidated: false, blockDirectScripts, checks: {}, errors: [] };
   const server = createServer(async (req, res) => {
     try {
@@ -36,7 +39,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
       const key = url.searchParams.get("path") || decodeURIComponent(url.pathname.slice("/resource/".length));
       if (!key || key.split("/").some(s => s === "..") || key.startsWith("/")) throw Error("Invalid fixture adapter path");
       const op = url.searchParams.get("op");
-      if (blockDirectScripts && url.pathname.startsWith("/resource/") && /\.(mjs|js)$/.test(key)) { res.writeHead(415).end("Fixture simulates unsupported script resource URLs"); return; }
+      if (blockDirectScripts === true && url.pathname.startsWith("/resource/") && /\.(mjs|js)$/.test(key)) { res.writeHead(415).end("Fixture simulates unsupported script resource URLs"); return; }
       if (url.pathname === "/adapter") {
         if (op === "exists") { res.end(JSON.stringify(files.has(key) || directories.has(key))); return; }
         if (op === "mkdir") { directories.add(key); res.end("null"); return; }
@@ -51,6 +54,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
           res.end(JSON.stringify({ files: [...files.keys()].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")), folders: [...directories].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")) })); return;
         }
         if (op === "write" || op === "append") {
+          if (windowsMemory && key.includes("/.asset-cache/") && !key.includes("/web/wasm/")) await backgroundGate;
           const chunks = []; for await (const chunk of req) chunks.push(chunk);
           if (op === "append" && !files.has(key)) throw Error("Missing fixture append target");
           files.set(key, Buffer.concat(op === "append" ? [files.get(key), ...chunks] : chunks));
@@ -73,7 +77,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     page = await browser.newPage();
     page.on("pageerror", error => report.errors.push(error.message));
     await page.goto(base);
-    report.checks.boot = await page.evaluate(async ({ manifest, base }) => {
+    report.checks.boot = await page.evaluate(async ({ manifest, base, windowsMemory }) => {
       if (typeof Buffer !== "undefined" || typeof process !== "undefined" || typeof require !== "undefined") throw Error("Node globals leaked into browser");
       const augment = (element) => {
         element.empty = () => element.replaceChildren();
@@ -151,9 +155,9 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         addToggle(fn) { const toggle = { setValue: () => toggle, onChange: () => toggle }; fn(toggle); return this; }
         addButton(fn) { const button = { setButtonText: () => button, onClick: () => button }; fn(button); return this; }
       }
-      const obsidian = { EditableFileView, WorkspaceLeaf, Plugin, TFile, Modal: class Modal {}, PluginSettingTab, Setting, Platform: { isMobile: true, isDesktop: false, isIosApp: true }, Notice: class { constructor(text) { (window.notices ||= []).push(text); } }, normalizePath: target => target.replaceAll("\\", "/") };
+      const obsidian = { EditableFileView, WorkspaceLeaf, Plugin, TFile, Modal: class Modal {}, PluginSettingTab, Setting, Platform: { isMobile: !windowsMemory, isDesktop: windowsMemory, isWin: windowsMemory, isIosApp: !windowsMemory }, Notice: class { constructor(text) { (window.notices ||= []).push(text); } }, normalizePath: target => target.replaceAll("\\", "/") };
       const app = {
-        isMobile: true,
+        isMobile: !windowsMemory,
         vault: { adapter, configDir: ".obsidian", on: () => ({}), getAbstractFileByPath: target => vaultFiles.get(target) || null,
           readBinary: file => adapter.readBinary(file.path), modifyBinary: (file, data) => adapter.writeBinary(file.path, data),
           appendBinary: (file, data) => api("append", file.path, data),
@@ -187,14 +191,19 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
         return originalOnMessage(event);
       };
       return { nodeGlobalsAbsent: typeof Buffer === "undefined" && typeof process === "undefined", mobile: plugin.isMobileRuntime, settingsOpened: true, pluginLoaded: true };
-    }, { manifest, base });
-    assert.equal(report.checks.boot.nodeGlobalsAbsent, true); assert.equal(report.checks.boot.mobile, true);
+    }, { manifest, base, windowsMemory });
+    assert.equal(report.checks.boot.nodeGlobalsAbsent, true); assert.equal(report.checks.boot.mobile, !windowsMemory);
     await page.waitForFunction(() => window.fixtureLeaves[0]?.view.ready || window.fixtureLeaves[0]?.view.mobileRuntime.lastError, { timeout: 40_000 });
     const startup = await page.evaluate(() => ({ ready: !!fixtureLeaves[0]?.view.ready, runtime: fixtureLeaves[0]?.view.mobileRuntime, notices: window.notices || [] }));
     assert.equal(startup.ready, true, JSON.stringify(startup));
     const frame = (await page.frames()).find(f => f.parentFrame() === page.mainFrame()); assert.ok(frame);
     await frame.waitForFunction(() => window.PDFViewerApplication?.pdfDocument?.numPages === 14 && document.querySelector('.page[data-page-number="1"] canvas'), { timeout: 30_000 });
     report.checks.viewer = await frame.evaluate(() => ({ pages: PDFViewerApplication.pdfDocument.numPages, canvas: document.querySelector(".page canvas").width, worker: !!PDFViewerApplication.pdfLoadingTask?._worker?.port }));
+    if (windowsMemory) {
+      assert.ok(report.checks.viewer.canvas > 0, "page rendered while non-WASM cache publication was blocked");
+      assert.equal([...files.keys()].some(key => key.endsWith("/.complete.json")), false);
+    }
+    releaseBackground();
     // Editing is fail-closed until the host confirms source bytes and ordered
     // page references. Wait for that handshake before synthesizing input.
     await frame.waitForFunction(() => {
@@ -391,6 +400,7 @@ test(`release real browser without Node: mobile PDF/save/reopen (${blockDirectSc
     })).catch(() => null);
   }
   finally {
+    releaseBackground();
     report.cleanup = await cleanupBrowserTestResources({ browser, ownedPages: page ? [page] : [], server });
     if (report.cleanup.errors.length) { primaryError ||= new Error("Browser cleanup failed"); attachCleanupErrors(primaryError, report.cleanup); report.status = "failed"; }
     await mkdir(path.join(root, "tests/artifacts"), { recursive: true });

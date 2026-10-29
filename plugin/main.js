@@ -1115,7 +1115,7 @@ function createMobileBootScript(serializedConfig) {
       const beforeResourceImport = captureModuleState();
       try {
         await import(config.moduleUrls[name]);
-        loaded(name, "resource");
+        loaded(name, config.moduleUrls[name].startsWith("blob:") ? "blob" : "resource");
       } catch {
         // An ESM import that rejects after publishing globals is not safe to
         // evaluate again under a blob URL: the second module has a distinct
@@ -2501,7 +2501,10 @@ class PdfReaderView extends EditableFileView {
     const viewerCssWithInlineImages = await this.inlineViewerCssImageResources(viewerCss);
     const viewerUrl = this.app.vault.adapter.getResourcePath(viewerHtmlPath);
     const webBase = new URL("./", viewerUrl).href;
-    return this.plugin.runtimeAdapter.createViewerDocument(this, {
+    const createDocument = assets.memoryFiles
+      ? (view, resources) => view.createMobileViewerDocument(resources)
+      : this.plugin.runtimeAdapter.createViewerDocument;
+    return createDocument(this, {
       assets, viewerHtml, viewerCss: viewerCssWithInlineImages, bridgeCss, viewerUrl, webBase,
     });
   }
@@ -2657,6 +2660,38 @@ class PdfReaderView extends EditableFileView {
       );
       createdUrls.set("worker", workerUrl);
 
+      let memoryFetchScript = "";
+      let memoryLocaleUrl = null;
+      const memoryBase = "https://obreader-resources.invalid/";
+      if (assets.memoryFiles) {
+        const urls = {};
+        for (const [relativePath, bytes] of assets.memoryFiles) {
+          if (!relativePath.startsWith("web/")) continue;
+          const mime = relativePath.endsWith(".json") ? "application/json" : "application/octet-stream";
+          const url = blobApi.createObjectURL(new globalThis.Blob([bytes], { type: mime }));
+          createdUrls.set(`asset:${relativePath}`, url);
+          const relative = relativePath.slice(4);
+          urls[new URL(relative, webBase).href] = url;
+          urls[new URL(relative, memoryBase).href] = url;
+        }
+        // PDF.js uses fetch for HTTP cmap/font URLs. Resolve only exact bundled
+        // URLs locally; no request to the reserved .invalid host is necessary.
+        memoryFetchScript = `<script>(()=>{const urls=${JSON.stringify(urls).replaceAll("<", "\\u003c")};const original=window.fetch.bind(window);window.fetch=(input,init)=>{const key=new URL(typeof input==='string'?input:(input.url||input.href),document.baseURI).href;return original(urls[key]||input,init);};})();</script>`;
+        const localeIndex = assets.memoryFiles.get("web/locale/locale.json");
+        if (localeIndex) {
+          const available = {};
+          for (const [lang, path] of Object.entries(JSON.parse(new TextDecoder().decode(localeIndex)))) {
+            const url = urls[new URL(`locale/${path}`, webBase).href];
+            if (url) available[lang] = url;
+          }
+          memoryLocaleUrl = blobApi.createObjectURL(new globalThis.Blob([JSON.stringify(available)], { type: "application/json" }));
+          createdUrls.set("locale-index", memoryLocaleUrl);
+        }
+        scriptPaths.bridge = bridgeFallbackUrl;
+        scriptPaths.pdf = pdfModuleUrl;
+        scriptPaths.viewer = viewerModuleUrl;
+      }
+
       if (this.teardownStarted || !this.iframe) {
         for (const url of createdUrls.values()) blobApi.revokeObjectURL?.(url);
         throw new Error("The PDF viewer closed while its resources were loading.");
@@ -2667,9 +2702,9 @@ class PdfReaderView extends EditableFileView {
       bridgeUrl.searchParams.set("v", this.token);
       const resourceUrls = {
         workerSrc: workerUrl,
-        cMapUrl: new URL("cmaps/", webBase).href,
-        iccUrl: new URL("iccs/", webBase).href,
-        fontUrl: new URL("standard_fonts/", webBase).href,
+        cMapUrl: new URL("cmaps/", assets.memoryFiles ? memoryBase : webBase).href,
+        iccUrl: new URL("iccs/", assets.memoryFiles ? memoryBase : webBase).href,
+        fontUrl: new URL("standard_fonts/", assets.memoryFiles ? memoryBase : webBase).href,
         wasmUrl: new URL("wasm/", webBase).href,
         imageResourcesPath: new URL("images/", webBase).href,
       };
@@ -2714,10 +2749,13 @@ class PdfReaderView extends EditableFileView {
         `data-vocabulary-word-display-mode="${this.plugin.settings.vocabularyWordDisplayMode === "roots" ? "roots" : "whole"}" ` +
         `data-renderer-generation="${escapeAttribute(generation)}" ` +
         `data-base-url="${escapeAttribute(webBase)}" ` +
-        `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'resource';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
+        `onload="window.__PDF_READER_BRIDGE_LOADED__=true;window.__PDF_READER_BRIDGE_SOURCE__=window.__PDF_READER_BRIDGE_SOURCE__||'${assets.memoryFiles ? "blob" : "resource"}';window.parent.postMessage({channel:'${CHANNEL}',token:'${escapeAttribute(this.token)}',rendererGeneration:'${escapeAttribute(generation)}',type:'mobile-module-loaded',module:'bridge',source:window.__PDF_READER_BRIDGE_SOURCE__},'*')" ` +
         `onerror="window.__PDF_READER_BRIDGE_RESOURCE_FAILED__=true"></script>`;
       let viewerCssInserted = false;
       let htmlWithInlineStyles = viewerHtml.replace(/<link\b[^>]*>/gi, (tag) => {
+        if (memoryLocaleUrl && /\btype=["']application\/l10n["']/i.test(tag)) {
+          return tag.replace(/\bhref=["'][^"']*["']/i, `href="${escapeAttribute(memoryLocaleUrl)}"`);
+        }
         const relMatch = /\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
         const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag);
         const rel = relMatch?.[1] ?? relMatch?.[2] ?? relMatch?.[3] ?? "";
@@ -2744,6 +2782,7 @@ class PdfReaderView extends EditableFileView {
         inlineViewerCss +
         inlineBridgeCss +
         inlineThemeCss +
+        memoryFetchScript +
         bridgeScript +
         bootScript;
       if (headMatch) {
@@ -7244,8 +7283,12 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
             { forceVerify, compactPath: Platform?.isWin === true,
+              memoryStartup: Platform?.isWin === true && !forceVerify,
               language: globalThis.navigator?.language || "en-US",
               onStartupReady: forceVerify ? undefined : (assets) => {
+                for (const [path, bytes] of assets.memoryFiles || []) {
+                  this.verifiedAssetBytes.set(path, Promise.resolve(bytes));
+                }
                 if (!this.isUnloading) this.viewerAssetsResult = { adapter, pluginRoot,
                   contentHash: VIEWER_ASSET_PAYLOAD?.contentHash, assets };
                 releaseStartup(assets);

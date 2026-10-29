@@ -761,11 +761,18 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
     const groups = options.onStartupReady
       ? [repairFiles.filter(isStartup), repairFiles.filter(file => !isStartup(file))]
       : [repairFiles];
-    for (let group = 0; group < groups.length; group += 1) {
-    await forEachConcurrent(groups[group], async (file) => {
+    const memoryFiles = new Map();
+    const written = new Set();
+    const decode = async file => {
+      if (memoryFiles.has(file.path)) return memoryFiles.get(file.path);
       const bytes = await decodePayloadFile(file, metrics);
       metrics.decodedFiles += 1;
       metrics.decodedBytes += bytes.byteLength;
+      return bytes;
+    };
+    const repairFile = async file => {
+      if (written.has(file.path)) return;
+      const bytes = await decode(file);
       const fullPath = `${rootPath}/${file.path}`;
       const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
       const directoryStarted = assetNow();
@@ -785,12 +792,27 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
         );
       }
       verified.set(file.path, { stat: result.stat });
-    });
+      written.add(file.path);
+    };
+    const releaseStartup = () => options.onStartupReady({ rootPath, webRoot: `${rootPath}/web`,
+      version: verifiedPayload.id, contentHash: verifiedPayload.contentHash,
+      ...(memoryFiles.size ? { memoryFiles } : {}),
+      metrics: { ...metrics, startupReadyMs: Date.now() - startedAt,
+        elapsedMs: Date.now() - startedAt, deferredFiles: repairFiles.filter(file => !isStartup(file)).length } });
+    const memoryStartup = rootMissing && options.memoryStartup && options.onStartupReady;
+    if (memoryStartup) {
+      await forEachConcurrent(verifiedPayload.files.filter(isStartup), async file => {
+        memoryFiles.set(file.path, await decode(file));
+      });
+      // PDF.js can dynamically import its WASM fallback JS. Keep this small
+      // directory on disk; scripts, fonts, cmaps and locale use verified blobs.
+      await forEachConcurrent(repairFiles.filter(file => file.path.startsWith("web/wasm/")), repairFile);
+      releaseStartup();
+    }
+    for (let group = 0; group < groups.length; group += 1) {
+    await forEachConcurrent(groups[group], repairFile);
     if (group === 0 && options.onStartupReady) {
-      options.onStartupReady({ rootPath, webRoot: `${rootPath}/web`,
-        version: verifiedPayload.id, contentHash: verifiedPayload.contentHash,
-        metrics: { ...metrics, startupReadyMs: Date.now() - startedAt,
-          elapsedMs: Date.now() - startedAt, deferredFiles: repairFiles.filter(file => !isStartup(file)).length } });
+      if (!memoryStartup) releaseStartup();
     }
     }
 
@@ -968,6 +990,7 @@ function startAssetExtraction(
         forceVerify,
         language: options.language,
         onStartupReady: options.onStartupReady,
+        memoryStartup: options.memoryStartup,
       }),
     )
     .finally(() => {

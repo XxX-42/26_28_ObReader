@@ -129,6 +129,28 @@ test("a deferred translation failure leaves no complete marker and is repairable
   assert.equal(await adapter.exists(`${ready.rootPath}/.complete.json`), true);
 });
 
+test("verified memory startup precedes cache writes without publishing a partial marker", async () => {
+  const payload = makePayload("memory-startup", 2);
+  const adapter = createMemoryAdapter();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const write = adapter.writeBinary.bind(adapter);
+  adapter.writeBinary = async (...args) => { await gate; return write(...args); };
+  let notify;
+  const ready = new Promise(resolve => { notify = resolve; });
+  const full = ensureViewerAssets(adapter, ".obsidian/plugins/pdf-web-reader", payload,
+    { memoryStartup: true, onStartupReady: notify });
+  const initial = await ready;
+  try {
+    assert.equal(initial.metrics.repairedFiles, 0);
+    assert.equal(initial.memoryFiles.size, 2);
+    for (const file of payload.files) assert.equal(sha256(initial.memoryFiles.get(file.path)), file.sha256);
+    assert.equal(await adapter.exists(`${initial.rootPath}/.complete.json`), false);
+  } finally { release(); }
+  assert.equal((await full).metrics.repairedFiles, 2);
+  assert.equal(await adapter.exists(`${initial.rootPath}/.complete.json`), true);
+});
+
 test("compact resource paths preserve full bundle identity within Windows resource URL limits", async () => {
   const adapter = createMemoryAdapter();
   const pluginRoot = ".obsidian/plugins/pdf-web-reader";
