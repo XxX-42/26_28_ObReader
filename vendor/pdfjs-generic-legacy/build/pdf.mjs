@@ -8663,6 +8663,8 @@ class FloatingToolbar {
       const horizontal = peer.#render();
       horizontal.classList.remove("pdfReaderSelectionToolbar");
       horizontal.classList.add("pdfReaderSelectionHoverToolbar");
+      const firstPlaceholder = horizontal.querySelector(".pdfReaderSelectionPlaceholder");
+      if (firstPlaceholder) peer.#buttons.insertBefore(firstPlaceholder, peer.#buttons.firstChild);
       zone.append(horizontal);
     }
     this.#hoverPeer.#selectedText = this.#selectedText;
