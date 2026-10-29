@@ -10795,7 +10795,7 @@
         const Controller = window.PdfReaderInputRuntime?.FloatingPdfOutlineController;
         if (Controller) {
           const outline = state.floatingPdfOutline = new Controller(app, () =>
-            !state.disposed && state.activeDocumentId === documentId && state.activeOpenRequest === currentRequest && state.requestedDocumentId === documentId && state.requestedOpenRequest === currentRequest);
+            !state.disposed && app.pdfDocument === pdfDocument && state.activeOpenRequest === currentRequest && state.requestedOpenRequest === currentRequest);
           void outline.start();
         }
       }
