@@ -65121,7 +65121,7 @@ class PdfReaderView extends EditableFileView {
         this.annotationOpenWaiter = { request, resolve };
       });
       if (this.ready) this.sendPendingDocument();
-      void opened.then(async (isOpened) => {
+      this.annotationInitializationPromise = opened.then(async (isOpened) => {
       if (!isOpened || request !== this.openRequest || this.teardownStarted) return;
       const externalAnnotations = await this.plugin.annotationHost.initializeView(this, bytes);
       if (request !== this.openRequest) {
@@ -66261,7 +66261,7 @@ class PdfReaderView extends EditableFileView {
       // Allow the Viewer to suppress confirmed deletions before its first draw.
       sourceHashConfirmed: this.annotationLoading !== true && this.annotationSourceMismatch === false &&
         this.annotationLegacyIdentityUncertain !== true && this.annotationSyncPending !== true,
-      externalAnnotations: this.annotationHydrationAllowed === false
+      externalAnnotations: this.annotationLoading === true ? null : this.annotationHydrationAllowed === false
         ? { ...this.annotationSyncState, annotations: [] }
         : this.annotationSyncState,
     };
@@ -66334,6 +66334,9 @@ class PdfReaderView extends EditableFileView {
     try {
       if (!request.file || !request.documentId || documentId !== request.documentId) {
         throw Object.assign(new Error("保存请求对应的 PDF 与当前打开的文件不一致。"), { code: "document-mismatch" });
+      }
+      if (this.annotationLoading === true) {
+        throw Object.assign(new Error("批注仍在加载和校验，暂不能保存。"), { code: "PDF_ANNOTATION_PAGE_IDENTITY_UNCONFIRMED" });
       }
       const message = {
         ...(annotationSync && typeof annotationSync === "object" ? annotationSync : {}),

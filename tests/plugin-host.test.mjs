@@ -782,6 +782,7 @@ async function createSidecarReader(harness, file, identity = {}) {
       restorePaused: false,
     },
   });
+  await view.annotationInitializationPromise;
   await confirmViewerPageIdentity(harness, reader, identity);
   return reader;
 }
@@ -793,6 +794,21 @@ async function waitForSentMessage(reader, predicate, attempts = 100) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   assert.fail("Timed out waiting for the expected Viewer bridge message");
+}
+
+async function completeDeferredAnnotationOpen(reader) {
+  const {view, frame} = reader;
+  const open = reader.sent.filter(m => m.type === 'open' && m.openRequest === view.openRequest).at(-1);
+  assert.ok(open);
+  assert.equal(open.readOnly, true);
+  assert.equal(open.externalAnnotations, null);
+  view.onMessage({source:frame,data:{channel:'pdf-web-reader',token:view.token,type:'opened',
+    documentId:open.documentId,openRequest:open.openRequest,revision:open.revision,
+    confirmedRevision:open.confirmedRevision,dirty:open.restoreDirty,restorePaused:open.restorePaused}});
+  await view.annotationInitializationPromise;
+  const late=reader.sent.filter(m=>m.type==='annotation-initialize-late'&&m.openRequest===view.openRequest).at(-1);
+  assert.ok(late,'annotations arrive in a second message after the PDF open');
+  return late.externalAnnotations;
 }
 
 function makeWrappedVocabularyFixture() {
@@ -2740,6 +2756,7 @@ test("a queued annotation save stays with its source PDF when the Reader switche
   assert.equal(oldBatches.length, 1, "the in-flight batch remains under the original annotation identity");
   const oldSnapshot = await harness.plugin.annotationHost.store.readDocument(originalDocument);
   assert.ok(oldSnapshot.annotations.some((operation) => operation.uuid === "queued-old-annotation"));
+  await completeDeferredAnnotationOpen(reader);
   const currentSnapshot = await harness.plugin.annotationHost.store.readDocument(view.annotationDocument);
   assert.deepEqual(currentSnapshot.annotations, [], "the old edit is never hydrated into the newly selected PDF");
   assert.deepEqual(first.bytes, Uint8Array.from([1, 2, 3]));
@@ -2886,6 +2903,7 @@ test("sidecar saves require the matching opened ACK and exact Viewer page-identi
   await save("before-identity-handshake");
   assert.equal(frame.sent.at(-1).code, "PDF_ANNOTATION_PAGE_IDENTITY_UNCONFIRMED");
 
+  await view.annotationInitializationPromise;
   await confirmViewerPageIdentity(harness, { view }, {
     pageCount: 1,
     orderedPageIdentities: ["4 0 R"],
@@ -3008,7 +3026,7 @@ test("popout migration reopens the unchanged PDF and rehydrates confirmed sideca
   assert.equal(open.openRequest, view.openRequest);
   assert.equal(open.revision, confirmedRevision);
   assert.equal(open.confirmedRevision, confirmedRevision);
-  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid),
+  assert.deepEqual((await completeDeferredAnnotationOpen(reader)).annotations.map((operation) => operation.uuid),
     ["popout-confirmed-highlight"], "confirmed operations are replayed into the new renderer");
   assert.ok(popoutRoot.win.messageSenderCalls > 0, "open must be posted from the popout realm");
   view.onMessage({
@@ -3173,7 +3191,7 @@ test("popout migration restores confirmed recovery operations without replacing 
   assert.equal(open.documentId, documentId);
   assert.equal(open.revision, recoveredRevision);
   assert.equal(open.confirmedRevision, recoveredRevision);
-  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid).sort(), [
+  assert.deepEqual((await completeDeferredAnnotationOpen(reader)).annotations.map((operation) => operation.uuid).sort(), [
     "popout-before-recovery",
     "popout-recovered-operation",
   ]);
@@ -3297,7 +3315,7 @@ test("an unexpected renderer reload reopens the confirmed PDF and sidecar log, n
   assert.equal(open.revision, view.confirmedRevision);
   assert.equal(open.confirmedRevision, view.confirmedRevision);
   assert.equal(open.restoreDirty, false);
-  assert.deepEqual(open.externalAnnotations.annotations.map((operation) => operation.uuid),
+  assert.deepEqual((await completeDeferredAnnotationOpen(reader)).annotations.map((operation) => operation.uuid),
     ["reload-confirmed-highlight"], "the replacement renderer rehydrates the durable sidecar operation");
   assert.equal(file.writes, 0);
   assert.deepEqual(file.bytes, Uint8Array.from([1, 2, 3]));
@@ -4001,6 +4019,7 @@ test("queued recovery keeps its sidecar batch with the source PDF when the view 
   assert.equal(oldBatches.length, 1, "the queued immutable batch remains under the source document identity");
   const oldBatch = JSON.parse(await adapter.read(oldBatches[0]));
   assert.equal(oldBatch.operations[0].uuid, "queued-recovery-annotation");
+  await completeDeferredAnnotationOpen(reader);
   const currentSnapshot = await harness.plugin.annotationHost.store.readDocument(view.annotationDocument);
   assert.deepEqual(currentSnapshot.annotations, [], "the old recovery operation is not misapplied to the newly selected PDF");
 });
