@@ -8565,6 +8565,8 @@ class FloatingToolbar {
   #toolbar = null;
   #uiManager;
   #selectedText = "";
+  #hoverZone = null;
+  #hoverPeer = null;
   constructor(uiManager) {
     this.#uiManager = uiManager;
   }
@@ -8654,9 +8656,24 @@ class FloatingToolbar {
       ? leftSpace >= width + 4 ? `-${width + 4}px` : "4px"
       : rightSpace >= width + 4 ? "calc(100% + 4px)" : `calc(100% - ${width + 4}px)`;
     style.top = `clamp(4px, calc(${100 * y}% - ${this.#toolbar.offsetHeight / 2}px), max(4px, calc(100% - ${this.#toolbar.offsetHeight + 4}px)))`;
+    if (!this.#hoverZone) {
+      const zone = this.#hoverZone = document.createElement("div");
+      zone.className = "pdfReaderSelectionHoverZone";
+      const peer = this.#hoverPeer = new FloatingToolbar(this.#uiManager);
+      const horizontal = peer.#render();
+      horizontal.classList.remove("pdfReaderSelectionToolbar");
+      horizontal.classList.add("pdfReaderSelectionHoverToolbar");
+      zone.append(horizontal);
+    }
+    this.#hoverPeer.#selectedText = this.#selectedText;
+    this.#hoverPeer.#toolbar.style.setProperty("--pdf-reader-selection-highlight-color", this.#toolbar.style.getPropertyValue("--pdf-reader-selection-highlight-color"));
+    this.#hoverZone.style.insetInlineEnd = `${100 * x}%`;
+    this.#hoverZone.style.top = `calc(${100 * y}% + var(--editor-toolbar-vert-offset))`;
+    parent.append(this.#hoverZone);
   }
   hide() {
     this.#toolbar.remove();
+    this.#hoverZone?.remove();
   }
   #makeButton(buttonClass, l10nId, labelL10nId, clickHandler) {
     const button = document.createElement("button");

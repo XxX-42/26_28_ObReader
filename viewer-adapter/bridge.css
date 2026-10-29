@@ -992,3 +992,20 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   flex-direction: column !important;
   height: auto !important;
 }
+.textLayer .pdfReaderSelectionHoverZone {
+  position: absolute;
+  width: 118px;
+  height: 34px;
+  z-index: 10;
+  pointer-events: auto;
+}
+.textLayer .pdfReaderSelectionHoverZone .pdfReaderSelectionHoverToolbar {
+  visibility: hidden;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+}
+.textLayer .pdfReaderSelectionHoverZone:hover .pdfReaderSelectionHoverToolbar,
+.textLayer .pdfReaderSelectionHoverZone:focus-within .pdfReaderSelectionHoverToolbar {
+  visibility: visible;
+  pointer-events: auto;
+}

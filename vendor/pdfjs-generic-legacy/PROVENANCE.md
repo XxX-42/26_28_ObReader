@@ -135,3 +135,5 @@ Recovery-mode token searching uses Uint8Array.indexOf for the first byte; equiva
 Adds copy and reserved actions and reflects the active highlight color.
 
 The selection toolbar is vertical and positioned outside the selected side of the page.
+
+The previous horizontal selection position remains a hover target for a second toolbar.
