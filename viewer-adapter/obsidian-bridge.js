@@ -2713,6 +2713,16 @@
       return;
     }
     hideUnusedToolbarControls();
+    const statusBarButton = document.createElement("button");
+    statusBarButton.id = "pdfReaderStatusBarToggle";
+    statusBarButton.type = "button";
+    statusBarButton.className = "toolbarButton labeled";
+    statusBarButton.setAttribute("aria-pressed", "false");
+    const statusBarLabel = document.createElement("span");
+    statusBarLabel.textContent = "显示状态栏";
+    statusBarButton.append(statusBarLabel);
+    statusBarButton.addEventListener("click", () => postToHost("status-bar-toggle"));
+    secondaryContainer.insertBefore(statusBarButton, saveButton);
     const group = document.createElement("div");
     group.className = "toolbarHorizontalGroup pdfReaderBridgeControls";
     group.setAttribute("aria-label", "PDF 撤销与重做");
@@ -11045,6 +11055,16 @@
       return;
     }
 
+    if (message.type === "status-bar-preference") {
+      const button = document.getElementById("pdfReaderStatusBarToggle");
+      if (button) {
+        const enabled = message.enabled === true;
+        button.setAttribute("aria-pressed", String(enabled));
+        const label = button.querySelector("span");
+        if (label) label.textContent = enabled ? "隐藏状态栏" : "显示状态栏";
+      }
+      return;
+    }
     if (message.type === "configure-auto-save") {
       if (typeof message.enabled !== "boolean") {
         return;

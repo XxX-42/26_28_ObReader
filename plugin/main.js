@@ -1626,7 +1626,7 @@ class PdfReaderView extends EditableFileView {
     if (!this.lastStatusMessage && !this.statusRecoveryAction) {
       this.setStatus("正在加载 PDF 阅读器…");
     }
-    this.setStatusBarEnabled(true);
+    this.setStatusBarEnabled(this.plugin.settings.showStatusBar);
     this.iframe = this.contentEl.createEl("iframe", {
       cls: "pdf-web-reader-frame",
       attr: {
@@ -3841,7 +3841,12 @@ class PdfReaderView extends EditableFileView {
         this.startupTimings.modulesMs = this.viewerBootStartedAt ? Date.now() - this.viewerBootStartedAt : null;
         this.setMobileLoaderStage("ready");
         this.clearBridgeTimeout();
+        this.postToViewer({ channel: CHANNEL, token: this.token, type: "status-bar-preference", enabled: this.plugin.settings.showStatusBar });
         this.sendPendingDocument();
+        break;
+      case "status-bar-toggle":
+        if (message.rendererGeneration !== this.rendererGeneration || this.teardownStarted) return;
+        void this.plugin.setStatusBarEnabled(!this.plugin.settings.showStatusBar);
         break;
       case "opened":
         if (
@@ -6525,6 +6530,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     this.settings.showStatusBar = Boolean(enabled);
     for (const view of this.views) {
       view.setStatusBarEnabled(this.settings.showStatusBar);
+      view.postToViewer({ channel: CHANNEL, token: view.token, type: "status-bar-preference", enabled: this.settings.showStatusBar });
     }
     await this.saveSettings();
   }
