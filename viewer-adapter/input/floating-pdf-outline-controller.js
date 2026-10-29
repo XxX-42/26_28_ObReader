@@ -58,12 +58,20 @@
           if (!viewer) return;
           const rect = viewer.getBoundingClientRect();
           const atEdge = event.clientX >= rect.left && event.clientX <= rect.left + 28 && event.clientY >= rect.top && event.clientY <= rect.bottom;
-          if (atEdge) { clearTimeout(this.timer); this.timer = null; if (this.panel.hidden) this.setOpen(true); }
+          if (atEdge) {
+            clearTimeout(this.timer); this.timer = null;
+            if (!this.explicit) {
+              this.edgeY = event.clientY;
+              if (this.panel.hidden) this.setOpen(true);
+              this.positionAtEdge();
+            }
+          }
           else if (!this.panel.hidden && !this.explicit && !root.contains(event.target) && !this.timer) {
             this.timer = setTimeout(() => { this.timer = null; if (!this.explicit) this.setOpen(false); }, 50);
           }
         }, { signal, passive: true });
       }
+      window.addEventListener?.('resize', () => this.positionAtEdge(), { signal, passive: true });
       document.addEventListener('pointerdown', event => { if (!root.contains(event.target) && (!this.explicit || event.pointerType === 'touch' || !this.hoverCapable)) { this.explicit = false; this.syncPin(); this.setOpen(false); } }, { signal, capture: true });
       document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.panel.hidden) { this.explicit = false; this.syncPin(); this.setOpen(false); } }, { signal });
       tree.addEventListener('keydown', event => {
@@ -77,7 +85,17 @@
       this.app.eventBus._on('pagechanging', this.onPage); this.render();
     }
     syncPin() { this.pin?.setAttribute('aria-pressed', String(this.explicit)); if (this.pin) this.pin.textContent = this.explicit ? '取消固定' : '固定'; }
-    setOpen(open) { if (!this.current() || !this.panel) return; this.panel.hidden = !open; this.rail.setAttribute('aria-expanded', String(open)); if (open) { clearTimeout(this.peekTimer); this.peek.hidden = true; this.keepActiveVisible(); } }
+    setOpen(open) { if (!this.current() || !this.panel) return; this.panel.hidden = !open; this.rail.setAttribute('aria-expanded', String(open)); if (open) { clearTimeout(this.peekTimer); this.peek.hidden = true; this.positionAtEdge(); this.keepActiveVisible(); } }
+    positionAtEdge() {
+      if (!this.current() || !this.panel || this.panel.hidden || !Number.isFinite(this.edgeY)) return;
+      const viewer = document.getElementById('viewerContainer');
+      const bounds = viewer?.getBoundingClientRect();
+      if (!bounds) return;
+      const height = this.root.getBoundingClientRect().height;
+      const minimum = Math.max(0, bounds.top);
+      const maximum = Math.max(minimum, Math.min(window.innerHeight, bounds.bottom) - height);
+      this.root.style.top = `${Math.max(minimum, Math.min(maximum, this.edgeY - height / 2))}px`;
+    }
     render() {
       if (!this.current() || !this.tree) return;
       const query = this.search.value.normalize('NFKC').toLocaleLowerCase().trim();
@@ -100,7 +118,7 @@
       };
       for (const node of this.nodes) node.element = null;
       for (const root of this.roots) renderNode(root, fragment, 0);
-      this.tree.replaceChildren(fragment); this.keepActiveVisible();
+      this.tree.replaceChildren(fragment); this.positionAtEdge(); this.keepActiveVisible();
     }
     updateActive(page, showPeek = true) {
       let best = null; for (const node of this.nodes) if (node.page !== null && node.page <= page && (!best || node.page > best.page || node.page === best.page && node.order > best.order)) best = node;
