@@ -35,6 +35,7 @@ const inputRuntimeFiles = [
   "input/input-router.js",
   "input/annotation-tool-colors.js",
   "input/tool-wheel-color-controller.js",
+  "input/floating-pdf-outline-controller.js",
 ];
 
 function sha256(data) {

@@ -10334,6 +10334,8 @@
     if (state.disposed) {
       return;
     }
+    state.floatingPdfOutline?.dispose();
+    state.floatingPdfOutline = null;
     // Any queued open invalidates a pending destructive confirmation before
     // the new document can become active in this iframe.
     state.bulkDeleteDialog?.close?.();
@@ -10788,6 +10790,15 @@
       state.activeOpenRequest = Number.isInteger(message.openRequest)
         ? message.openRequest
         : null;
+      {
+        const currentRequest = state.activeOpenRequest;
+        const Controller = window.PdfReaderInputRuntime?.FloatingPdfOutlineController;
+        if (Controller) {
+          const outline = state.floatingPdfOutline = new Controller(app, () =>
+            !state.disposed && state.activeDocumentId === documentId && state.activeOpenRequest === currentRequest && state.requestedDocumentId === documentId && state.requestedOpenRequest === currentRequest);
+          void outline.start();
+        }
+      }
       annotationToolColors?.applySnapshot(message.preferredAnnotationToolColors);
       document.documentElement.style.setProperty("--pdf-reader-highlight-color", annotationToolColors?.get(9) || "#fff066");
       bindVocabularyToOpenedDocument(documentId, state.activeOpenRequest);
@@ -11983,6 +11994,8 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    state.floatingPdfOutline?.dispose();
+    state.floatingPdfOutline = null;
     wheelColors?.destroy();
     annotationToolColors?.dispose();
     state.annotationSidebarController?.dispose();
