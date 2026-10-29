@@ -1337,7 +1337,8 @@
     setVocabularyDisplayMode(matchesPending ? pending.displayMode : message.vocabularyDisplayMode);
     state.vocabularyWordDisplayMode = (matchesPending ? pending.wordDisplayMode : message.vocabularyWordDisplayMode) === "roots" ? "roots" : "whole";
     state.vocabularyController?.setWordDisplayMode?.(state.vocabularyWordDisplayMode);
-    state.preferredAnnotationToolMode = normalizeAnnotationToolMode(message.preferredAnnotationToolMode);
+    // Every newly opened document starts in the ordinary selection tool.
+    state.preferredAnnotationToolMode = 0;
     state.restoredAnnotationToolIdentity = null;
     syncVocabularyMenuButton();
   }
@@ -10771,6 +10772,10 @@
       if (session.signal.aborted || state.disposed) {
         return false;
       }
+      if (!isSyncApply) {
+        app.eventBus?.dispatch("switchannotationeditormode", { source: window, mode: 0, isFromKeyboard: false, createNewEditor: false });
+        app.eventBus?.dispatch("switchcursortool", { source: window, tool: 0 });
+      }
       cleanupStorageObserver();
       state.activeDocumentId = documentId;
       updatePageNumberWidth(pdfDocument.numPages);
@@ -11755,6 +11760,9 @@
             setDeferredTimeout(() => {
               if (state.disposed || state.app !== app || app.pdfDocument !== pdfDocument ||
                   state.activeDocumentId !== documentId || state.activeOpenRequest !== openRequest) return;
+              if (mode === 0 && state.editorMode === 0) {
+                app.eventBus?.dispatch("switchcursortool", { source: window, tool: 0 });
+              }
               annotationToolColors?.onEditorModeChanged(mode);
               runAnnotationObserver("viewer.editor-mode-deferred", () => observeAccessibilityManagers(app));
               // Enabling a PDF.js tool recreates native source editors without
