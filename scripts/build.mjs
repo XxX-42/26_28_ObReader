@@ -300,6 +300,7 @@ for (let index = 1; index < runtimeInputs.length; index += 1) {
 
 const schema = 1;
 const files = [];
+const startupChunks = [];
 const vocabularyRuntimeBundle = await buildBundle({
   entryPoints: [path.join(adapters, "vocabulary", "runtime-entry.js")],
   bundle: true,
@@ -329,12 +330,19 @@ for (const input of runtimeInputs) {
     sha256: sha256(data),
     gzipBase64: compressed.toString("base64"),
   });
+  startupChunks.push(data);
 }
+// One bounded inflate avoids hundreds of stream/Blob scheduling round trips.
+// Individual manifest SHA-256 checks remain authoritative after unpacking.
+const startupCompressed = gzipSync(Buffer.concat(startupChunks), { level: 9, mtime: 0 });
+startupCompressed.writeUInt32LE(0, 4);
+startupCompressed[9] = 255;
 const payload = {
   schema,
   id: assetBundleId,
   contentHash: computeContentHash(schema, assetBundleId, files),
   files,
+  startupPack: startupCompressed.toString("base64"),
 };
 assert.equal(
   files.length,

@@ -176,13 +176,12 @@ function hasCanonicalBase64Padding(base64) {
 }
 
 function decodeCanonicalBase64(base64, label) {
+  const padding = typeof base64 === "string" ? (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0) : 0;
   if (
     typeof base64 !== "string" ||
     base64.length === 0 ||
     base64.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      base64,
-    ) ||
+    /[^A-Za-z0-9+/]/.test(base64.slice(0, base64.length - padding)) ||
     !hasCanonicalBase64Padding(base64)
   ) {
     throw new Error(`Non-canonical base64 data for viewer asset ${label}.`);
@@ -273,7 +272,7 @@ function validatePayload(payload) {
     throw new Error("The viewer asset manifest content hash does not match.");
   }
 
-  return { schema: 1, id, contentHash: payload.contentHash, files };
+  return { schema: 1, id, contentHash: payload.contentHash, files, startupPack: payload.startupPack };
 }
 
 async function decompressBounded(compressed, file) {
@@ -801,12 +800,33 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
         elapsedMs: Date.now() - startedAt, deferredFiles: repairFiles.filter(file => !isStartup(file)).length } });
     const memoryStartup = rootMissing && options.memoryStartup && options.onStartupReady;
     if (memoryStartup) {
-      await forEachConcurrent(verifiedPayload.files.filter(isStartup), async file => {
-        memoryFiles.set(file.path, await decode(file));
-      });
-      // PDF.js can dynamically import its WASM fallback JS. Keep this small
-      // directory on disk; scripts, fonts, cmaps and locale use verified blobs.
-      await forEachConcurrent(repairFiles.filter(file => file.path.startsWith("web/wasm/")), repairFile);
+      if (verifiedPayload.startupPack) {
+        if (typeof verifiedPayload.startupPack !== "string" || verifiedPayload.startupPack.length > Math.ceil(MAX_TOTAL_SIZE / 3) * 4) {
+          throw new Error("Invalid startup asset pack size");
+        }
+        const decompressStarted = assetNow();
+        const packed = await decompressBounded(decodeCanonicalBase64(verifiedPayload.startupPack, "startup pack"),
+          { path: "startup pack", size: verifiedPayload.files.reduce((size, file) => size + file.size, 0) });
+        metrics.decompressMs += assetNow() - decompressStarted;
+        let offset = 0;
+        const entries = verifiedPayload.files.map(file => {
+          const bytes = packed.subarray(offset, offset + file.size);
+          offset += file.size;
+          return { file, bytes };
+        });
+        await forEachConcurrent(entries, async ({ file, bytes }) => {
+          const started = assetNow();
+          if (await assetDigest(bytes) !== file.sha256) throw new Error(`Startup asset failed integrity verification: ${file.path}`);
+          metrics.hashMs += assetNow() - started;
+          metrics.decodedFiles += 1;
+          metrics.decodedBytes += bytes.byteLength;
+          memoryFiles.set(file.path, bytes);
+        });
+      } else {
+        await forEachConcurrent(verifiedPayload.files.filter(isStartup), async file => {
+          memoryFiles.set(file.path, await decode(file));
+        });
+      }
       releaseStartup();
     }
     for (let group = 0; group < groups.length; group += 1) {

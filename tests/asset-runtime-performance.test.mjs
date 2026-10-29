@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 
 const require = createRequire(import.meta.url);
 const { computeContentHash, ensureViewerAssets } = require(
@@ -149,6 +149,20 @@ test("verified memory startup precedes cache writes without publishing a partial
   } finally { release(); }
   assert.equal((await full).metrics.repairedFiles, 2);
   assert.equal(await adapter.exists(`${initial.rootPath}/.complete.json`), true);
+});
+
+test("packed startup verifies every file and rejects valid gzip containing changed bytes before release", async () => {
+  const payload = makePayload("packed-integrity", 3);
+  const bytes = Buffer.concat(payload.files.map(file => gunzipSync(Buffer.from(file.gzipBase64, "base64"))));
+  bytes[0] ^= 1;
+  payload.startupPack = gzipSync(bytes).toString("base64");
+  const adapter = createMemoryAdapter();
+  let released = false;
+  await assert.rejects(ensureViewerAssets(adapter, ".obsidian/plugins/pdf-web-reader", payload,
+    { memoryStartup: true, onStartupReady: () => { released = true; } }), /Startup asset failed integrity verification/);
+  assert.equal(released, false);
+  assert.deepEqual(adapter.binaryWrites, []);
+  assert.equal(await adapter.exists(`${assetRoot(".obsidian/plugins/pdf-web-reader", payload)}/.complete.json`), false);
 });
 
 test("compact resource paths preserve full bundle identity within Windows resource URL limits", async () => {

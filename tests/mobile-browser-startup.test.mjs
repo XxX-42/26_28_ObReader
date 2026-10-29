@@ -54,7 +54,7 @@ test(`release real browser without Node: PDF/save/reopen (${windowsMemory ? "Win
           res.end(JSON.stringify({ files: [...files.keys()].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")), folders: [...directories].filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")) })); return;
         }
         if (op === "write" || op === "append") {
-          if (windowsMemory && key.includes("/.asset-cache/") && !key.includes("/web/wasm/")) await backgroundGate;
+          if (windowsMemory && key.includes("/.asset-cache/")) await backgroundGate;
           const chunks = []; for await (const chunk of req) chunks.push(chunk);
           if (op === "append" && !files.has(key)) throw Error("Missing fixture append target");
           files.set(key, Buffer.concat(op === "append" ? [files.get(key), ...chunks] : chunks));
@@ -200,8 +200,16 @@ test(`release real browser without Node: PDF/save/reopen (${windowsMemory ? "Win
     await frame.waitForFunction(() => window.PDFViewerApplication?.pdfDocument?.numPages === 14 && document.querySelector('.page[data-page-number="1"] canvas'), { timeout: 30_000 });
     report.checks.viewer = await frame.evaluate(() => ({ pages: PDFViewerApplication.pdfDocument.numPages, canvas: document.querySelector(".page canvas").width, worker: !!PDFViewerApplication.pdfLoadingTask?._worker?.port }));
     if (windowsMemory) {
-      assert.ok(report.checks.viewer.canvas > 0, "page rendered while non-WASM cache publication was blocked");
+      assert.ok(report.checks.viewer.canvas > 0, "page rendered while every disk cache write was blocked");
       assert.equal([...files.keys()].some(key => key.endsWith("/.complete.json")), false);
+      const resourceMetrics = await page.evaluate(() => fixtureLeaves[0].view.startupTimings.resources);
+      assert.equal(resourceMetrics.bytesWritten, 0);
+      assert.equal(resourceMetrics.verificationReads, 0);
+      const fallbackType = await page.evaluate(async () => {
+        const url = fixtureLeaves[0].view.mobileResourceLease.urls.get("asset:web/wasm/openjpeg_nowasm_fallback.js");
+        return typeof (await import(url)).default;
+      });
+      assert.equal(fallbackType, "function", "the verified JPEG2000 fallback remains importable before disk writes");
     }
     releaseBackground();
     // Editing is fail-closed until the host confirms source bytes and ordered

@@ -2655,10 +2655,10 @@ class PdfReaderView extends EditableFileView {
         new globalThis.Blob([scripts.viewer], { type: "text/javascript" }),
       );
       createdUrls.set("viewer", viewerModuleUrl);
-      const workerUrl = blobApi.createObjectURL(
+      let workerUrl = !assets.memoryFiles ? blobApi.createObjectURL(
         new globalThis.Blob([scripts.worker], { type: "text/javascript" }),
-      );
-      createdUrls.set("worker", workerUrl);
+      ) : null;
+      if (workerUrl) createdUrls.set("worker", workerUrl);
 
       let memoryFetchScript = "";
       let memoryLocaleUrl = null;
@@ -2667,7 +2667,9 @@ class PdfReaderView extends EditableFileView {
         const urls = {};
         for (const [relativePath, bytes] of assets.memoryFiles) {
           if (!relativePath.startsWith("web/")) continue;
-          const mime = relativePath.endsWith(".json") ? "application/json" : "application/octet-stream";
+          const mime = relativePath.endsWith(".json") ? "application/json" :
+            relativePath.endsWith(".wasm") ? "application/wasm" :
+            /\.(?:m?js)$/.test(relativePath) ? "text/javascript" : "application/octet-stream";
           const url = blobApi.createObjectURL(new globalThis.Blob([bytes], { type: mime }));
           createdUrls.set(`asset:${relativePath}`, url);
           const relative = relativePath.slice(4);
@@ -2677,6 +2679,16 @@ class PdfReaderView extends EditableFileView {
         // PDF.js uses fetch for HTTP cmap/font URLs. Resolve only exact bundled
         // URLs locally; no request to the reserved .invalid host is necessary.
         memoryFetchScript = `<script>(()=>{const urls=${JSON.stringify(urls).replaceAll("<", "\\u003c")};const original=window.fetch.bind(window);window.fetch=(input,init)=>{const key=new URL(typeof input==='string'?input:(input.url||input.href),document.baseURI).href;return original(urls[key]||input,init);};})();</script>`;
+        const fallbackPath = '`${this.#wasmUrl}openjpeg_nowasm_fallback.js`';
+        const workerText = new TextDecoder().decode(scripts.worker);
+        if (workerText.split(fallbackPath).length !== 2) throw new Error("Unexpected PDF.js WASM fallback loader");
+        const fallbackUrl = urls[new URL("wasm/openjpeg_nowasm_fallback.js", memoryBase).href];
+        if (!fallbackUrl) throw new Error("Missing verified WASM fallback module");
+        const workerFetch = `const __obReaderAssetUrls=${JSON.stringify(urls)};const __obReaderFetch=self.fetch.bind(self);self.fetch=(input,init)=>__obReaderFetch(__obReaderAssetUrls[new URL(typeof input==='string'?input:(input.url||input.href),${JSON.stringify(memoryBase)}).href]||input,init);\n`;
+        workerUrl = blobApi.createObjectURL(new globalThis.Blob([
+          workerFetch, workerText.replace(fallbackPath, JSON.stringify(fallbackUrl)),
+        ], { type: "text/javascript" }));
+        createdUrls.set("worker", workerUrl);
         const localeIndex = assets.memoryFiles.get("web/locale/locale.json");
         if (localeIndex) {
           const available = {};
@@ -2705,7 +2717,7 @@ class PdfReaderView extends EditableFileView {
         cMapUrl: new URL("cmaps/", assets.memoryFiles ? memoryBase : webBase).href,
         iccUrl: new URL("iccs/", assets.memoryFiles ? memoryBase : webBase).href,
         fontUrl: new URL("standard_fonts/", assets.memoryFiles ? memoryBase : webBase).href,
-        wasmUrl: new URL("wasm/", webBase).href,
+        wasmUrl: new URL("wasm/", assets.memoryFiles ? memoryBase : webBase).href,
         imageResourcesPath: new URL("images/", webBase).href,
       };
       this.mobileResourceLease = {
