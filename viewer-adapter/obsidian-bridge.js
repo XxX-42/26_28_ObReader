@@ -10791,11 +10791,10 @@
         ? message.openRequest
         : null;
       {
-        const currentRequest = state.activeOpenRequest;
         const Controller = window.PdfReaderInputRuntime?.FloatingPdfOutlineController;
         if (Controller) {
           const outline = state.floatingPdfOutline = new Controller(app, () =>
-            !state.disposed && app.pdfDocument === pdfDocument && state.activeOpenRequest === currentRequest && state.requestedOpenRequest === currentRequest);
+            !state.disposed && app.pdfDocument === pdfDocument);
           void outline.start();
         }
       }
