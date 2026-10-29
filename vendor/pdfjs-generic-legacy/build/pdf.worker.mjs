@@ -68484,8 +68484,11 @@ class XRef {
     function skipUntil(data, offset, what) {
       const length = what.length,
         dataLength = data.length;
-      let skipped = 0;
+      const start = offset;
       while (offset < dataLength) {
+        const next = data.indexOf(what[0], offset);
+        if (next < 0) return dataLength - start;
+        offset = next;
         let i = 0;
         while (i < length && data[offset + i] === what[i]) {
           ++i;
@@ -68494,9 +68497,8 @@ class XRef {
           break;
         }
         offset++;
-        skipped++;
       }
-      return skipped;
+      return offset - start;
     }
     const gEndobjRegExp = /\b(endobj|\d+\s+\d+\s+obj|xref|trailer\s*<<)\b/g;
     const gStartxrefRegExp = /\b(startxref|\d+\s+\d+\s+obj)\b/g;
@@ -68508,9 +68510,11 @@ class XRef {
     this._cacheMap.clear();
     const stream = this.stream;
     stream.pos = 0;
+    const obreaderIndexStart = performance.now();
     const buffer = stream.getBytes(),
       bufferStr = (0,util.bytesToString)(buffer),
       length = buffer.length;
+    const obreaderStringEnd = performance.now();
     let position = stream.start;
     const trailers = [],
       xrefStms = [];
@@ -68605,6 +68609,10 @@ class XRef {
       } else {
         position += token.length + 1;
       }
+    }
+    if (this.pdfManager._obreaderTimings) {
+      this.pdfManager._obreaderTimings.indexString = obreaderStringEnd - obreaderIndexStart;
+      this.pdfManager._obreaderTimings.indexScan = performance.now() - obreaderStringEnd;
     }
     for (const xrefStm of xrefStms) {
       this.startXRefQueue.push(xrefStm);
@@ -73824,25 +73832,40 @@ class WorkerMessageHandler {
       task.finish();
       WorkerTasks.delete(task);
     }
+    const obreaderWorkerTimings = Object.create(null);
+    let obreaderRecoveryMode = false;
+    async function obreaderTimedEnsure(name, args) {
+      const started = performance.now();
+      pdfManager._obreaderTimings = obreaderWorkerTimings;
+      try { return await pdfManager.ensureDoc(name, args); }
+      finally {
+        const elapsed = performance.now() - started;
+        obreaderWorkerTimings[name] = (obreaderWorkerTimings[name] || 0) + elapsed;
+        if (name === "parse") obreaderWorkerTimings[obreaderRecoveryMode ? "parseRecovery" : "parseNormal"] = elapsed;
+      }
+    }
     async function loadDocument(recoveryMode) {
-      await pdfManager.ensureDoc("checkHeader");
-      await pdfManager.ensureDoc("parseStartXRef");
-      await pdfManager.ensureDoc("parse", [recoveryMode]);
-      await pdfManager.ensureDoc("checkFirstPage", [recoveryMode]);
-      await pdfManager.ensureDoc("checkLastPage", [recoveryMode]);
-      const isPureXfa = await pdfManager.ensureDoc("isPureXfa");
+      obreaderRecoveryMode = recoveryMode;
+      if (recoveryMode) obreaderWorkerTimings.recoveryMode = 1;
+      await obreaderTimedEnsure("checkHeader");
+      await obreaderTimedEnsure("parseStartXRef");
+      await obreaderTimedEnsure("parse", [recoveryMode]);
+      await obreaderTimedEnsure("checkFirstPage", [recoveryMode]);
+      await obreaderTimedEnsure("checkLastPage", [recoveryMode]);
+      const isPureXfa = await obreaderTimedEnsure("isPureXfa");
       if (isPureXfa) {
         const task = new WorkerTask("loadXfaResources");
         startWorkerTask(task);
         await pdfManager.ensureDoc("loadXfaResources", [handler, task]);
         finishWorkerTask(task);
       }
-      const [numPages, fingerprints] = await Promise.all([pdfManager.ensureDoc("numPages"), pdfManager.ensureDoc("fingerprints")]);
+      const [numPages, fingerprints] = await Promise.all([obreaderTimedEnsure("numPages"), obreaderTimedEnsure("fingerprints")]);
       const htmlForXfa = isPureXfa ? await pdfManager.ensureDoc("htmlForXfa") : null;
       return {
         numPages,
         fingerprints,
-        htmlForXfa
+        htmlForXfa,
+        obreaderWorkerTimings
       };
     }
     async function getPdfManager({

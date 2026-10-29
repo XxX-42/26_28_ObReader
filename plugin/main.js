@@ -4279,6 +4279,12 @@ class PdfReaderView extends EditableFileView {
     const labels = { resourcesMs: "资源准备", modulesMs: "阅读器启动", openMs: "打开完成",
       pdfParseMs: "PDF.js 打开等待", pdfPagesInitMs: "页面初始化", pdfDocumentLoadedMs: "文档加载事件",
       pdfLoadingTaskPromiseMs: "PDFLoadingTask.promise 等待", pdfViewerLoadMs: "PDFViewerApplication.load", pdfPreviousCloseMs: "PDFViewerApplication.close",
+      worker_checkHeaderMs: "Worker.checkHeader", worker_parseStartXRefMs: "Worker.parseStartXRef",
+      worker_parseMs: "Worker.parse", worker_checkFirstPageMs: "Worker.checkFirstPage",
+      worker_checkLastPageMs: "Worker.checkLastPage", worker_numPagesMs: "Worker.numPages",
+      worker_fingerprintsMs: "Worker.fingerprints", worker_isPureXfaMs: "Worker.isPureXfa",
+      worker_indexStringMs: "indexObjects.转换", worker_indexScanMs: "indexObjects.扫描",
+      worker_parseNormalMs: "parse.正常模式", worker_parseRecoveryMs: "parse.恢复模式",
       pdfFirstRenderMs: "首个页面绘制", firstPageAnnotationLayerMs: "首页批注层就绪", toolsUsableMs: "工具可用" };
     const timings = { ...this.startupTimings, ...this.startupTimings?.viewer };
     const parts = Object.entries(labels).filter(([key]) => Number.isFinite(timings[key]) && timings[key] >= 0)

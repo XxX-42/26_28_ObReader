@@ -10712,6 +10712,12 @@
       if (typeof originalLoad === "function") app.load = function (...args) {
         const entered = performance.now();
         pdfOpenStages.pdfLoadingTaskPromiseMs = Math.max(0, entered - parseStartedAt);
+        const workerTimings = args[0]?._pdfInfo?.obreaderWorkerTimings;
+        if (workerTimings && typeof workerTimings === "object") {
+          for (const [name, value] of Object.entries(workerTimings)) {
+            if (Number.isFinite(value)) pdfOpenStages[`worker_${name}Ms`] = value;
+          }
+        }
         try { return originalLoad.apply(this, args); }
         finally { pdfOpenStages.pdfViewerLoadMs = Math.max(0, performance.now() - entered); }
       };

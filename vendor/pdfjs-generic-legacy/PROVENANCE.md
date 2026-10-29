@@ -124,3 +124,8 @@ storage state, and focus outline; freehand Highlight/Ink paths are excluded.
 Scale, rotation, editor rebuild, and removal reschedule the page calculation.
 This is a local display-only adaptation, not an upstream PDF.js backport; the
 updated vendored bundle is pinned in `SHA256SUMS.json`.
+
+## Local Worker open timing
+
+Instrument document load stages for ObReader diagnostics; preserves PDF.js parsing behavior.
+Recovery-mode token searching uses Uint8Array.indexOf for the first byte; equivalent matching is retained.
