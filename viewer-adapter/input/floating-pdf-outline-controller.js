@@ -50,7 +50,7 @@
       pin.addEventListener('click', () => { this.explicit = !this.explicit; this.syncPin(); if (!this.explicit) this.setOpen(false); }, { signal });
       close.addEventListener('click', () => { this.explicit = false; this.syncPin(); this.setOpen(false); }, { signal });
       if (this.hoverCapable) {
-        root.addEventListener('pointerenter', event => { if (event.pointerType === 'touch') return; clearTimeout(this.timer); this.timer = null; this.setOpen(true); }, { signal });
+        root.addEventListener('pointerenter', event => { if (event.pointerType === 'touch') return; clearTimeout(this.timer); this.timer = null; if (this.panel.hidden) { this.edgeY = event.clientY; this.setOpen(true); } }, { signal });
         root.addEventListener('pointerleave', () => { clearTimeout(this.timer); this.timer = null; if (!this.explicit) this.timer = setTimeout(() => { this.timer = null; this.setOpen(false); }, 50); }, { signal });
         document.addEventListener('pointermove', event => {
           if (event.pointerType !== 'mouse' || !this.current()) return;
@@ -60,10 +60,9 @@
           const atEdge = event.clientX >= rect.left && event.clientX <= rect.left + 28 && event.clientY >= rect.top && event.clientY <= rect.bottom;
           if (atEdge) {
             clearTimeout(this.timer); this.timer = null;
-            if (!this.explicit) {
+            if (!this.explicit && this.panel.hidden) {
               this.edgeY = event.clientY;
-              if (this.panel.hidden) this.setOpen(true);
-              this.positionAtEdge();
+              this.setOpen(true);
             }
           }
           else if (!this.panel.hidden && !this.explicit && !root.contains(event.target) && !this.timer) {
