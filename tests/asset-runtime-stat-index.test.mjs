@@ -116,10 +116,15 @@ test("a fresh adapter uses the persistent index for a zero-binary-read warm rest
   const state = createState();
   const payload = makePayload();
   const firstAdapter = createStatAdapter(state);
+  const existenceChecks = [];
+  const exists = firstAdapter.exists.bind(firstAdapter);
+  firstAdapter.exists = async path => { existenceChecks.push(path); return exists(path); };
   const first = await ensureViewerAssets(firstAdapter, pluginRoot, payload);
   assert.equal(first.metrics.cacheHit, false);
   assert.equal(first.metrics.statChecks, payload.files.length * 3,
     "an absent cache root needs no per-file missing stat; readback remains bracketed and rechecked");
+  assert.equal(existenceChecks.filter(path => payload.files.some(file => path.endsWith(`/${file.path}`))).length, 0,
+    "a valid bracketing stat already proves existence; cold write readback must not stat again via exists");
 
   const marker = JSON.parse(storedMarker(state, first).text);
   assert.equal(marker.statIndexVersion, 1);

@@ -66,6 +66,14 @@ function sha256Bytes(value) {
     .join("");
 }
 
+async function assetDigest(bytes) {
+  // Same SHA-256 contract, executed by the browser rather than on the UI thread.
+  // Test/older runtimes without SubtleCrypto retain the verified portable path.
+  if (!globalThis.crypto?.subtle) return sha256Bytes(bytes);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function validatePathSegment(segment, label) {
   if (
     !segment ||
@@ -313,7 +321,7 @@ async function decodePayloadFile(file, metrics = null) {
   const bytes = await decompressBounded(compressed, file);
   if (metrics) metrics.decompressMs += assetNow() - started;
   const hashing = assetNow();
-  const actualHash = sha256Bytes(bytes);
+  const actualHash = await assetDigest(bytes);
   if (metrics) metrics.hashMs += assetNow() - hashing;
   if (actualHash !== file.sha256) {
     throw new Error(
@@ -553,7 +561,7 @@ function readStatIndex(marker, payload) {
 }
 
 async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
-  if (!(await adapter.exists(fullPath))) {
+  if (!beforeStat && !(await adapter.exists(fullPath))) {
     return {
       matches: false,
       stable: true,
@@ -583,7 +591,7 @@ async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
     ? sameStatTuple(beforeStat, afterStat)
     : true;
   const hashing = assetNow();
-  const matches = stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256;
+  const matches = stable && actual.byteLength === file.size && await assetDigest(actual) === file.sha256;
   metrics.hashMs += assetNow() - hashing;
   return {
     matches,
@@ -638,6 +646,7 @@ function assetCacheRoot(pluginRoot, payload, compactPath) {
 }
 
 async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {}) {
+  let rootMissing = false;
   // A directory is prepared once per extraction, not once per file. If it is
   // removed externally afterwards, the write still fails and no marker commits.
   const preparedDirectories = new Map();
@@ -647,7 +656,12 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
       preparedDirectories.set(parentPath, (async () => {
         if (parentPath.startsWith(`${rootPath}/`)) await prepareDirectory(parent);
         else return ensureDirectory(adapter, parentPath);
-        if (!(await adapter.exists(parentPath))) await adapter.mkdir(parentPath);
+        // Descendants of an absent content-addressed root cannot pre-exist.
+        // Still tolerate a concurrent creator, checking only after mkdir fails.
+        if (rootMissing) {
+          try { await adapter.mkdir(parentPath); }
+          catch (error) { if (!(await adapter.exists(parentPath))) throw error; }
+        } else if (!(await adapter.exists(parentPath))) await adapter.mkdir(parentPath);
       })());
     }
     return preparedDirectories.get(parentPath);
@@ -668,7 +682,7 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
   };
 
   try {
-    const rootMissing = !(await adapter.exists(rootPath));
+    rootMissing = !(await adapter.exists(rootPath));
     const markerExists = await adapter.exists(markerPath);
     let marker = null;
     if (markerExists) {

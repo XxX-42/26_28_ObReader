@@ -1620,6 +1620,11 @@ var __PDFReaderAssetRuntime = (() => {
         const bytes = bytesView(value, "SHA-256 input");
         return Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
+      async function assetDigest(bytes) {
+        if (!globalThis.crypto?.subtle) return sha256Bytes(bytes);
+        const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
       function validatePathSegment(segment, label) {
         if (!segment || segment === "." || segment === ".." || /[\0\\/:<>"|?*]/.test(segment) || /[. ]$/.test(segment) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)) {
           throw new Error(
@@ -1799,7 +1804,7 @@ ${rows}`;
         const bytes = await decompressBounded(compressed, file);
         if (metrics) metrics.decompressMs += assetNow() - started;
         const hashing = assetNow();
-        const actualHash = sha256Bytes(bytes);
+        const actualHash = await assetDigest(bytes);
         if (metrics) metrics.hashMs += assetNow() - hashing;
         if (actualHash !== file.sha256) {
           throw new Error(
@@ -1965,7 +1970,7 @@ ${rows}`;
         return index;
       }
       async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
-        if (!await adapter.exists(fullPath)) {
+        if (!beforeStat && !await adapter.exists(fullPath)) {
           return {
             matches: false,
             stable: true,
@@ -1993,7 +1998,7 @@ ${rows}`;
         const hasComparableStats = Boolean(beforeStat && afterStat);
         const stable = hasComparableStats ? sameStatTuple(beforeStat, afterStat) : true;
         const hashing = assetNow();
-        const matches = stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256;
+        const matches = stable && actual.byteLength === file.size && await assetDigest(actual) === file.sha256;
         metrics.hashMs += assetNow() - hashing;
         return {
           matches,
@@ -2030,6 +2035,7 @@ ${rows}`;
         return `${pluginRoot}/.asset-cache/v2/${identityHash}`;
       }
       async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {}) {
+        let rootMissing = false;
         const preparedDirectories = /* @__PURE__ */ new Map();
         const prepareDirectory = (parentPath) => {
           if (!preparedDirectories.has(parentPath)) {
@@ -2037,7 +2043,13 @@ ${rows}`;
             preparedDirectories.set(parentPath, (async () => {
               if (parentPath.startsWith(`${rootPath}/`)) await prepareDirectory(parent);
               else return ensureDirectory(adapter, parentPath);
-              if (!await adapter.exists(parentPath)) await adapter.mkdir(parentPath);
+              if (rootMissing) {
+                try {
+                  await adapter.mkdir(parentPath);
+                } catch (error) {
+                  if (!await adapter.exists(parentPath)) throw error;
+                }
+              } else if (!await adapter.exists(parentPath)) await adapter.mkdir(parentPath);
             })());
           }
           return preparedDirectories.get(parentPath);
@@ -2062,7 +2074,7 @@ ${rows}`;
           directoryMs: 0
         };
         try {
-          const rootMissing = !await adapter.exists(rootPath);
+          rootMissing = !await adapter.exists(rootPath);
           const markerExists = await adapter.exists(markerPath);
           let marker = null;
           if (markerExists) {
