@@ -355,7 +355,7 @@ test("one discovery caps WAL directory listings and JSONL header reads at four",
   for (let index = 0; index < 8; index++) {
     const directory = `${ROOT}/wal/device-${index}`;
     await adapter.mkdir(directory);
-    await adapter.write(`${directory}/header-${index}.jsonl`, "{}");
+    await adapter.write(`${directory}/${index.toString(16).padStart(12, "0")}.jsonl`, "{}");
   }
   const originalList = adapter.list.bind(adapter);
   const originalRead = adapter.read.bind(adapter);
@@ -377,7 +377,8 @@ test("one discovery caps WAL directory listings and JSONL header reads at four",
     try { return await originalRead(file); }
     finally { activeReads--; }
   };
-  await makeWalStore(adapter, "jsonl-discovery-device", { jsonlMode: true }).documentForPath("Books/missing.pdf");
+  await assert.rejects(makeWalStore(adapter, "jsonl-discovery-device", { jsonlMode: true }).documentForPath("Books/missing.pdf"),
+    { code: "WAL_SYNC_PENDING" }, "incomplete WAL headers cannot prove that a missing route is safe to create");
   assert.equal(maxLists, 4, "WAL directory listing concurrency is capped at four");
   assert.equal(maxReads, 4, "flattened JSONL header reads share the same four-operation cap");
 });

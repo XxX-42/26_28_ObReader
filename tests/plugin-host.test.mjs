@@ -471,6 +471,11 @@ function createHarness({
           storedFiles.set(toPath, storedFiles.get(fromPath));
           storedFiles.delete(fromPath);
         },
+        async copy(fromPath, toPath) {
+          if (!storedFiles.has(fromPath)) throw new Error(`Missing copy source: ${fromPath}`);
+          if (storedFiles.has(toPath) || directories.has(toPath)) throw new Error(`Copy target exists: ${toPath}`);
+          storedFiles.set(toPath, storedFiles.get(fromPath));
+        },
         async read(filePath) {
           if (!storedFiles.has(filePath)) throw new Error(`Missing ${filePath}`);
           return String(storedFiles.get(filePath));
@@ -638,6 +643,39 @@ test("WAL production host saves, reopens and renames without source writes or Fo
   assert.equal(await reopened.plugin.annotationHost.store.documentForPath(oldPath), null);
   assert.equal(reopenedFile.writes, 0);
   reopened.plugin.onunload();
+});
+
+test("sidecar change invalidates cached routes before asynchronous event coalescing", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  const store = harness.plugin.annotationHost.store;
+  const invalidate = store.invalidateRegistry;
+  const invalidateExternal = store.invalidateExternal;
+  let calls = 0;
+  const externalPaths = [];
+  store.invalidateRegistry = () => { calls++; return invalidate(); };
+  store.invalidateExternal = (path) => { externalPaths.push(path); return invalidateExternal(path); };
+  const pending = harness.plugin.annotationHost.handleSidecarChange({ path: "00_Archive/20_PDFData/main-routes/new-route.json" });
+  assert.equal(calls, 1, "a sync event must invalidate routes before it waits for file settlement");
+  assert.deepEqual(externalPaths, ["00_Archive/20_PDFData/main-routes/new-route.json"],
+    "durable-state caches must also be invalidated before event coalescing");
+  await pending;
+  harness.plugin.onunload();
+});
+
+test("opening a clean WAL Reader observes known devices without waiting for an edit", async () => {
+  const harness = createHarness({ storageProtocol: "wal" });
+  await harness.plugin.onload();
+  const store = harness.plugin.annotationHost.store;
+  const observe = store.observeKnownMainDevices;
+  let observedResolve;
+  const observed = new Promise((resolve) => { observedResolve = resolve; });
+  store.observeKnownMainDevices = async () => { const result = await observe(); observedResolve(result); return result; };
+  const file = new harness.TFile("Books/reader-presence.pdf", [1, 2, 3]);
+  await createSidecarReader(harness, file);
+  await observed;
+  assert.equal(file.writes, 0);
+  harness.plugin.onunload();
 });
 
 test("WAL production multi-view saves are serialized and close only after the matching confirmation", async () => {
@@ -1171,7 +1209,7 @@ test("ACTIVE_EXPLICIT_EXPORT creates a separate PDF only after an explicit Viewe
   harness.plugin.onunload();
 });
 
-test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without editing the PDF", async () => {
+test("opening never scans PDF markers and externally stored legacy identities survive reopen", async () => {
   const storedFiles = new Map();
   const directories = new Set([".obsidian"]);
   const original = new TextEncoder().encode("%PDF-1.7\n/ObReaderMerge\nlegacy annotation fixture\n%%EOF");
@@ -1187,7 +1225,7 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
         timestamp: 100, logical: 1, actorId: "old-device", operationId: "old-delete-op" },
     ] };
   };
-  const harness = createHarness({ storedFiles, directories, inspectLegacy });
+  const harness = createHarness({ storedFiles, directories, inspectLegacy, storageProtocol: "wal" });
   await harness.plugin.onload();
   const file = new harness.TFile("Books/legacy-sidecar.pdf", original);
   const reader = await createSidecarReader(harness, file, {
@@ -1195,13 +1233,18 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
     orderedPageIdentities: ["9 0 R"],
   });
 
-  assert.equal(inspections, 1);
+  assert.equal(inspections, 0, "ordinary open must not inspect embedded legacy markers");
   assert.equal(reader.view.annotationLegacyIdentityUncertain, false);
   assert.equal(reader.view.annotationHydrationAllowed, true);
-  assert.equal(reader.view.annotationDocument.legacyIdentityScanComplete, true);
-  assert.deepEqual(reader.view.annotationDocument.legacyIdentities.map(({ uuid, ref }) => ({ uuid, ref })), [
-    { uuid: "migrated-live-ink", ref: "42 0 R" },
-  ]);
+  assert.deepEqual(reader.view.annotationDocument.legacyIdentities, []);
+  const document = await harness.plugin.annotationHost.store.updateLegacyIdentities({
+    document: reader.view.annotationDocument,
+    identities: [{ uuid: "migrated-live-ink", ref: "42 0 R", pageIndex: 0, kind: "ink" }],
+  });
+  await harness.plugin.annotationHost.store.appendOperations({ document,
+    sourceHash: document.source.sourceHash, operations: [{ uuid: "migrated-deleted-mark", kind: "Highlight",
+      pageIndex: 0, deleted: true, embeddedRef: "43 0 R",
+      clock: { timestamp: 100, logical: 1, deviceId: "old-device", opId: "old-delete-op" } }] });
   const stored = await harness.plugin.annotationHost.store.readDocument(reader.view.annotationDocument);
   const deleted = stored.tombstones.find((operation) => operation.uuid === "migrated-deleted-mark");
   assert.ok(deleted, "legacy deleted identity becomes a durable sidecar tombstone");
@@ -1210,7 +1253,7 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
   assert.equal(file.writes, 0);
   harness.plugin.onunload();
 
-  const reopenedHarness = createHarness({ storedFiles, directories, inspectLegacy });
+  const reopenedHarness = createHarness({ storedFiles, directories, inspectLegacy, storageProtocol: "wal" });
   await reopenedHarness.plugin.onload();
   const reopenedFile = new reopenedHarness.TFile("Books/legacy-sidecar.pdf", original);
   const reopened = await createSidecarReader(reopenedHarness, reopenedFile, {
@@ -1218,8 +1261,13 @@ test("ACTIVE_LEGACY_MIGRATION imports inspected annotation identity without edit
     orderedPageIdentities: ["9 0 R"],
   });
   assert.equal(reopened.view.annotationDocument.legacyIdentityScanComplete, true,
-    "the completed inspection is durable and is not repeated at the next open");
-  assert.equal(inspections, 1);
+    "externally stored identity metadata remains durable without inspecting the PDF");
+  assert.deepEqual(reopened.view.annotationDocument.legacyIdentities.map(({ uuid, ref }) => ({ uuid, ref })), [
+    { uuid: "migrated-live-ink", ref: "42 0 R" },
+  ]);
+  const reopenedState = await reopenedHarness.plugin.annotationHost.store.readDocument(reopened.view.annotationDocument);
+  assert.equal(reopenedState.tombstones.find((row) => row.uuid === "migrated-deleted-mark").embeddedRef, "43 0 R");
+  assert.equal(inspections, 0);
   assert.deepEqual(reopenedFile.bytes, original);
   reopenedHarness.plugin.onunload();
 });

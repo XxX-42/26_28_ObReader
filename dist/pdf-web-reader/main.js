@@ -7485,7 +7485,19 @@ var __PDFReaderAnnotationHost = (() => {
           } catch {
           }
         }
-        async function writeJsonAtomic(path, value, { validate, createOnly = false } = {}) {
+        async function verifiedDuplicateStage(path) {
+          const marker = path.lastIndexOf(".pending-");
+          if (marker < 0) return false;
+          try {
+            const staged = await readRaw(path), published = await readRaw(path.slice(0, marker));
+            if (staged === null || staged !== published) return false;
+            await decodeRaw(published, { path: path.slice(0, marker) });
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        async function writeJsonAtomic(path, value, { validate, createOnly = false, uniquePending = false, acceptConcurrent = false } = {}) {
           if (!safePath(path)) throw codedError("WAL_PATH_INVALID", "A storage path is unsafe.");
           const serialized = canonicalJson(await seal(value, hash));
           const sealedValue = JSON.parse(serialized);
@@ -7501,23 +7513,32 @@ var __PDFReaderAnnotationHost = (() => {
             } catch {
             }
           }
-          if (createOnly && oldIsValid) {
-            throw codedError("WAL_SIDECAR_EXISTS", `A valid sidecar already exists at ${path}.`);
+          if (createOnly && current !== null) {
+            throw codedError("WAL_SIDECAR_EXISTS", `A file already exists at ${path}; its bytes are retained.`);
           }
           const operationToken = String(token());
           if (!operationToken || operationToken.includes("/") || operationToken.includes("..")) {
             throw codedError("WAL_TOKEN_INVALID", "A temporary file token is invalid.");
           }
-          const pendingPath = `${path}.pending`;
+          const uniqueStaging = uniquePending || createOnly;
+          if (uniqueStaging && !/^[A-Za-z0-9_-]{1,256}$/.test(operationToken)) {
+            throw codedError("WAL_TOKEN_INVALID", "A unique temporary file token is invalid.");
+          }
+          const pendingPath = uniqueStaging ? `${path}.pending-${operationToken}` : `${path}.pending`;
           await ensureDirectory(path);
           try {
+            if (uniqueStaging && await adapter.exists(pendingPath)) throw codedError("WAL_PENDING_EXISTS", "A unique temporary file already exists.");
             await adapter.write(pendingPath, serialized);
             const staged = await readRaw(pendingPath);
             if (staged !== serialized) throw codedError("WAL_WRITE_UNVERIFIED", `Temporary write verification failed at ${pendingPath}.`);
             await decodeRaw(staged, { path: pendingPath, validate });
             try {
-              await adapter.rename(pendingPath, path);
+              if (createOnly) {
+                if (typeof adapter.copy !== "function") throw codedError("WAL_CREATE_ONLY_UNAVAILABLE", "The adapter cannot publish a create-only file safely.");
+                await adapter.copy(pendingPath, path);
+              } else await adapter.rename(pendingPath, path);
             } catch (renameError) {
+              if (createOnly) throw renameError;
               try {
                 await adapter.write(path, serialized);
               } catch (replacementError) {
@@ -7532,9 +7553,9 @@ var __PDFReaderAnnotationHost = (() => {
               }
             }
             const confirmed = await readRaw(path);
-            if (confirmed !== serialized) throw codedError("WAL_WRITE_UNVERIFIED", `Atomic replacement verification failed at ${path}.`);
+            if (confirmed !== serialized && !acceptConcurrent) throw codedError("WAL_WRITE_UNVERIFIED", `Atomic replacement verification failed at ${path}.`);
             const result = await decodeRaw(confirmed, { path, validate });
-            await removeIfPresent(pendingPath);
+            if (!createOnly) await removeIfPresent(pendingPath);
             return result;
           } catch (error) {
             if (oldIsValid && oldRaw !== null) {
@@ -7572,6 +7593,7 @@ var __PDFReaderAnnotationHost = (() => {
           readJson,
           readJsonWithDocumentIdentity,
           writeJsonAtomic,
+          verifiedDuplicateStage,
           list,
           safePath
         });
@@ -9111,6 +9133,11 @@ var __PDFReaderAnnotationHost = (() => {
             routing: state.routing || null
           };
           return io.writeJsonAtomic(snapshotPath(document), value, {
+            // This file is a rebuildable cache. Separate temporary paths prevent
+            // different devices from trampling each other's staging writes. A
+            // different verified cache winning the final rename is also acceptable.
+            uniquePending: true,
+            acceptConcurrent: true,
             validate: (candidate) => {
               if (candidate?.documentId !== document.documentId || candidate?.docKey !== document.docKey || candidate?.sourceHash !== document.source.sourceHash || !Array.isArray(candidate.annotations) || !Array.isArray(candidate.tombstones)) {
                 throw codedError("WAL_JSONL_SNAPSHOT_INVALID", "Derived snapshot identity or content is invalid.");
@@ -9234,6 +9261,705 @@ var __PDFReaderAnnotationHost = (() => {
     }
   });
 
+  // plugin/storage/main-snapshot-candidate.cjs
+  var require_main_snapshot_candidate = __commonJS({
+    "plugin/storage/main-snapshot-candidate.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson } = require_canonical();
+      var { joinOperations } = require_merge_engine();
+      var { validateVersion } = require_version();
+      function receiptCovers(current, previous) {
+        if (!current || !previous) return false;
+        const { version: currentVersion, deletedAt: currentDeletedAt, ...currentBase } = current;
+        const { version: previousVersion, deletedAt: previousDeletedAt, ...previousBase } = previous;
+        return canonicalJson(currentBase) === canonicalJson(previousBase) && (previousVersion === void 0 || currentVersion !== void 0 && canonicalJson(currentVersion) === canonicalJson(previousVersion)) && (previousDeletedAt === void 0 || currentDeletedAt === previousDeletedAt);
+      }
+      function fail(message) {
+        return Object.assign(new Error(message), { code: "MAIN_SNAPSHOT_INVALID" });
+      }
+      function identity(document) {
+        if (!document || !/^[a-f0-9]{12}$/.test(document.docKey || "") || typeof document.documentId !== "string" || !document.documentId || typeof document.source?.sourceHash !== "string" || !document.source.sourceHash) {
+          throw fail("A complete verified document identity is required.");
+        }
+        return {
+          docKey: document.docKey,
+          documentId: document.documentId,
+          sourceHash: document.source.sourceHash
+        };
+      }
+      function winnerOperations(state) {
+        return [
+          ...Object.values(state.annotations),
+          ...Object.values(state.tombstones),
+          ...state.routing ? [state.routing] : []
+        ].sort((a, b) => {
+          const keyA = a.type === "ROUTE_SET" ? "\uFFFFroute" : a.uuid;
+          const keyB = b.type === "ROUTE_SET" ? "\uFFFFroute" : b.uuid;
+          return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+        });
+      }
+      async function makeMainSnapshotCandidate({ document, operations, parents = [], segments = [], receipts = [], hash }) {
+        const id = identity(document);
+        if (!Array.isArray(operations) || !Array.isArray(parents) || !Array.isArray(segments) || !Array.isArray(receipts) || typeof hash !== "function") {
+          throw fail("Operations, parents, segments and a SHA-256 implementation are required.");
+        }
+        const parentIds = [...new Set(parents)].sort();
+        if (parentIds.some((value2) => typeof value2 !== "string" || !/^sha256-v1:[a-f0-9]{64}$/.test(value2))) {
+          throw fail("Snapshot parents must use full SHA-256 identities.");
+        }
+        const segmentRows = segments.map((segment) => {
+          if (!segment || typeof segment.deviceId !== "string" || !segment.deviceId || !Number.isSafeInteger(segment.firstSeq) || segment.firstSeq < 0 || !Number.isSafeInteger(segment.lastSeq) || segment.lastSeq < segment.firstSeq || !/^sha256-v1:[a-f0-9]{64}$/.test(segment.digest || "")) {
+            throw fail("A segment needs a device, sequence range and full SHA-256 digest.");
+          }
+          return {
+            deviceId: segment.deviceId,
+            firstSeq: segment.firstSeq,
+            lastSeq: segment.lastSeq,
+            digest: segment.digest
+          };
+        }).sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0) || a.firstSeq - b.firstSeq || a.lastSeq - b.lastSeq || (a.digest < b.digest ? -1 : a.digest > b.digest ? 1 : 0));
+        for (let i = 1; i < segmentRows.length; i++) {
+          const a = segmentRows[i - 1], b = segmentRows[i];
+          if (a.deviceId === b.deviceId && b.firstSeq <= a.lastSeq) throw fail("Segment ranges overlap.");
+        }
+        const receiptMap = /* @__PURE__ */ new Map();
+        for (const entry of receipts) {
+          if (!entry || typeof entry.deviceId !== "string" || !entry.deviceId || typeof entry.uuid !== "string" || !entry.uuid || typeof entry.originOpId !== "string" || !entry.originOpId || typeof entry.opId !== "string" || !entry.opId || !/^sha256-v1:[a-f0-9]{64}$/.test(entry.inputHash || "")) throw fail("Invalid durable operation receipt.");
+          const row = {
+            deviceId: entry.deviceId,
+            uuid: entry.uuid,
+            originOpId: entry.originOpId,
+            opId: entry.opId,
+            inputHash: entry.inputHash,
+            ...entry.version === void 0 ? {} : { version: validateVersion(entry.version) },
+            ...entry.deletedAt === void 0 ? {} : { deletedAt: entry.deletedAt }
+          };
+          if (row.version && row.version.deviceId !== row.deviceId) throw fail("Receipt version owner differs.");
+          if (row.deletedAt !== void 0 && (!Number.isSafeInteger(row.deletedAt) || row.deletedAt < 0)) throw fail("Receipt deletion time is invalid.");
+          const key = canonicalJson([row.deviceId, row.uuid, row.originOpId]);
+          const prior = receiptMap.get(key);
+          if (prior && !receiptCovers(prior, row) && !receiptCovers(row, prior)) throw fail("Durable operation receipt collision.");
+          receiptMap.set(key, prior && receiptCovers(prior, row) ? prior : row);
+        }
+        const receiptRows = [...receiptMap.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, row]) => row);
+        const value = {
+          schemaVersion: 1,
+          kind: "pdf-reader-main-snapshot-candidate",
+          ...id,
+          parents: parentIds,
+          segments: segmentRows,
+          receipts: receiptRows,
+          operations: winnerOperations(joinOperations(operations))
+        };
+        const snapshotId = await hash(new TextEncoder().encode(canonicalJson(value)));
+        if (!/^sha256-v1:[a-f0-9]{64}$/.test(snapshotId || "")) throw fail("Snapshot hashing must use SHA-256.");
+        return { snapshotId, value };
+      }
+      async function verifyMainSnapshotCandidate({ document, snapshotId, value, hash }) {
+        if (!value || value.kind !== "pdf-reader-main-snapshot-candidate" || value.schemaVersion !== 1 || value.docKey !== document?.docKey || value.documentId !== document?.documentId || value.sourceHash !== document?.source?.sourceHash) throw fail("Snapshot identity or source differs.");
+        const rebuilt = await makeMainSnapshotCandidate({
+          document,
+          operations: value.operations,
+          parents: value.parents,
+          segments: value.segments,
+          receipts: value.receipts,
+          hash
+        });
+        if (rebuilt.snapshotId !== snapshotId || canonicalJson(rebuilt.value) !== canonicalJson(value)) {
+          throw fail("Snapshot bytes or identity failed validation.");
+        }
+        return rebuilt.value;
+      }
+      async function mergeMainSnapshotOperations(document, snapshots, extraOperations = [], hash) {
+        identity(document);
+        if (!Array.isArray(snapshots) || !Array.isArray(extraOperations)) throw fail("Invalid snapshot branches.");
+        const sources = [];
+        for (const snapshot of snapshots) {
+          const verified = await verifyMainSnapshotCandidate({
+            document,
+            snapshotId: snapshot?.snapshotId,
+            value: snapshot?.value,
+            hash
+          });
+          sources.push(verified.operations);
+        }
+        return joinOperations(...sources, extraOperations);
+      }
+      function containsReceipts(current, previous) {
+        const records = new Map((current.receipts || []).map((row) => [canonicalJson([row.deviceId, row.uuid, row.originOpId]), row]));
+        return (previous.receipts || []).every((row) => receiptCovers(records.get(canonicalJson([row.deviceId, row.uuid, row.originOpId])), row));
+      }
+      module.exports = { makeMainSnapshotCandidate, verifyMainSnapshotCandidate, mergeMainSnapshotOperations, containsReceipts };
+    }
+  });
+
+  // plugin/storage/main-snapshot-store.cjs
+  var require_main_snapshot_store = __commonJS({
+    "plugin/storage/main-snapshot-store.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson } = require_canonical();
+      var { verifyMainSnapshotCandidate } = require_main_snapshot_candidate();
+      function error(code, message) {
+        return Object.assign(new Error(message), { code });
+      }
+      function createMainSnapshotStore({ adapter, root, hash, token }) {
+        if (!adapter || !["exists", "read", "write", "mkdir", "rename"].every((key) => typeof adapter[key] === "function") || typeof root !== "string" || !root || typeof hash !== "function" || typeof token !== "function") {
+          throw new TypeError("A storage adapter, root, SHA-256 function and unique token are required.");
+        }
+        const segment = (value) => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value);
+        const pathFor = (document, snapshotId) => {
+          if (!/^[a-f0-9]{12}$/.test(document?.docKey || "") || !/^sha256-v1:[a-f0-9]{64}$/.test(snapshotId || "")) {
+            throw error("MAIN_SNAPSHOT_INVALID", "Invalid snapshot identity or path.");
+          }
+          return `${root}/main-snapshots/${document.docKey}/${snapshotId.slice("sha256-v1:".length)}.json`;
+        };
+        async function ensure(path) {
+          const parts = path.split("/").slice(0, -1);
+          let current = "";
+          for (const part of parts) {
+            if (!part || part === "." || part === ".." || part.includes("\\")) throw error("MAIN_SNAPSHOT_INVALID", "Unsafe directory.");
+            current = current ? `${current}/${part}` : part;
+            if (!await adapter.exists(current)) {
+              try {
+                await adapter.mkdir(current);
+              } catch (e) {
+                if (!await adapter.exists(current)) throw e;
+              }
+            }
+          }
+        }
+        async function decode(document, snapshotId, path) {
+          const raw = await adapter.read(path);
+          let envelope;
+          try {
+            envelope = JSON.parse(raw);
+          } catch {
+            throw error("MAIN_SNAPSHOT_CORRUPT", "Snapshot JSON is incomplete.");
+          }
+          if (envelope?.snapshotId !== snapshotId || !envelope.value) throw error("MAIN_SNAPSHOT_CORRUPT", "Snapshot envelope differs.");
+          const value = await verifyMainSnapshotCandidate({ document, snapshotId, value: envelope.value, hash });
+          return { snapshotId, value };
+        }
+        async function read(document, snapshotId) {
+          const path = pathFor(document, snapshotId);
+          return await adapter.exists(path) ? decode(document, snapshotId, path) : null;
+        }
+        async function publish(document, candidate) {
+          await verifyMainSnapshotCandidate({ document, snapshotId: candidate?.snapshotId, value: candidate?.value, hash });
+          const path = pathFor(document, candidate.snapshotId);
+          await ensure(path);
+          if (await adapter.exists(path)) return decode(document, candidate.snapshotId, path);
+          const id = String(token());
+          if (!segment(id)) throw error("MAIN_SNAPSHOT_INVALID", "Unsafe publication token.");
+          const pending = `${path}.pending-${id}`;
+          if (await adapter.exists(pending)) throw error("MAIN_SNAPSHOT_PENDING_EXISTS", "Publication token already exists.");
+          const bytes = canonicalJson(candidate);
+          await adapter.write(pending, bytes);
+          await decode(document, candidate.snapshotId, pending);
+          try {
+            if (typeof adapter.copy !== "function") throw error("MAIN_SNAPSHOT_CREATE_ONLY_UNAVAILABLE", "A no-replace copy is required.");
+            await adapter.copy(pending, path);
+          } catch (e) {
+            if (!await adapter.exists(path)) throw e;
+          }
+          const result = await decode(document, candidate.snapshotId, path);
+          return result;
+        }
+        return Object.freeze({ pathFor, read, publish });
+      }
+      module.exports = { createMainSnapshotStore };
+    }
+  });
+
+  // plugin/storage/main-snapshot-maintenance.cjs
+  var require_main_snapshot_maintenance = __commonJS({
+    "plugin/storage/main-snapshot-maintenance.cjs"(exports, module) {
+      "use strict";
+      function planMainSnapshotMaintenance({ snapshots, archives, maxFiles = 3 } = {}) {
+        if (!Array.isArray(snapshots) || !Array.isArray(archives) || !Number.isSafeInteger(maxFiles) || maxFiles < 3) {
+          throw new TypeError("Snapshots and archives must be arrays and the file limit must be at least three.");
+        }
+        const paths = /* @__PURE__ */ new Set();
+        for (const item of [...snapshots, ...archives]) {
+          if (!item || typeof item.path !== "string" || !item.path || paths.has(item.path)) {
+            throw new TypeError("Every file must have a distinct path.");
+          }
+          paths.add(item.path);
+        }
+        const fileCount = snapshots.length + archives.length;
+        if (fileCount <= maxFiles) return { fileCount, needed: false, mergeArchives: [] };
+        const eligible = archives.filter((item) => item.sealed === true && item.verified === true);
+        for (const item of eligible) {
+          if (typeof item.deviceId !== "string" || !item.deviceId || !Number.isSafeInteger(item.firstSeq) || !Number.isSafeInteger(item.lastSeq) || item.firstSeq < 0 || item.lastSeq < item.firstSeq || !Number.isSafeInteger(item.firstObservedAt) || item.firstObservedAt < 0) {
+            throw new TypeError("Verified sealed archives need a device, sequence range and observed time.");
+          }
+        }
+        eligible.sort((a, b) => a.firstObservedAt - b.firstObservedAt || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        const mergeArchives = eligible.slice(0, Math.max(0, eligible.length - 1));
+        return { fileCount, needed: true, mergeArchives: mergeArchives.map((item) => item.path) };
+      }
+      function coveredByCheckpointPair({ current, previous, archive, activeDeviceIds, acknowledgements } = {}) {
+        if (!current || !previous || current.snapshotId === previous.snapshotId || !archive || !Array.isArray(activeDeviceIds) || !Array.isArray(acknowledgements) || !activeDeviceIds.length) return false;
+        if (archive.sealed !== true || archive.verified !== true || !/^sha256-v1:[a-f0-9]{64}$/.test(archive.digest || "")) return false;
+        const covers = (snapshot) => Array.isArray(snapshot.value?.segments) && snapshot.value.segments.some((segment) => segment.deviceId === archive.deviceId && segment.firstSeq === archive.firstSeq && segment.lastSeq === archive.lastSeq && segment.digest === archive.digest);
+        if (!covers(current) || !covers(previous)) return false;
+        const roster = new Set(activeDeviceIds);
+        if (roster.size !== activeDeviceIds.length || [...roster].some((id) => typeof id !== "string" || !id)) return false;
+        return [...roster].every((deviceId) => acknowledgements.some((ack) => ack.deviceId === deviceId && ack.snapshotId === current.snapshotId && ack.verified === true));
+      }
+      function planSnapshotRetention({ snapshots, maxSnapshots = 10 } = {}) {
+        if (!Array.isArray(snapshots) || !Number.isSafeInteger(maxSnapshots) || maxSnapshots < 2) {
+          throw new TypeError("Snapshot retention requires an array and at least two slots.");
+        }
+        const paths = /* @__PURE__ */ new Set();
+        for (const item of snapshots) {
+          if (!item || typeof item.path !== "string" || !item.path || paths.has(item.path)) {
+            throw new TypeError("Every snapshot must have a distinct path.");
+          }
+          paths.add(item.path);
+        }
+        const excess = Math.max(0, snapshots.length - maxSnapshots);
+        const eligible = snapshots.filter((item) => item.verified === true && item.acknowledged === true && item.coveredByRecoveryPair === true && item.protected !== true && Number.isSafeInteger(item.firstObservedAt) && item.firstObservedAt >= 0).sort((a, b) => a.firstObservedAt - b.firstObservedAt || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        const removable = eligible.slice(0, Math.min(excess, Math.max(0, snapshots.length - 2)));
+        return {
+          snapshotCount: snapshots.length,
+          maxSnapshots,
+          candidates: removable.map((item) => item.path),
+          deferred: excess - removable.length
+        };
+      }
+      module.exports = { planMainSnapshotMaintenance, coveredByCheckpointPair, planSnapshotRetention };
+    }
+  });
+
+  // plugin/storage/main-snapshot-recovery.cjs
+  var require_main_snapshot_recovery = __commonJS({
+    "plugin/storage/main-snapshot-recovery.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson } = require_canonical();
+      var { joinOperations } = require_merge_engine();
+      var { createStorageIo } = require_io();
+      var { coveredByCheckpointPair } = require_main_snapshot_maintenance();
+      var { containsReceipts } = require_main_snapshot_candidate();
+      var fail = (message) => Object.assign(new Error(message), { code: "MAIN_RECOVERY_INVALID" });
+      function createMainRecoveryStore({ adapter, root, hash, token, snapshots }) {
+        const io = createStorageIo({ adapter, hash, token });
+        const directory = (document) => {
+          if (!/^[a-f0-9]{12}$/.test(document?.docKey || "")) throw fail("Invalid document key.");
+          return `${root}/main-recovery/${document.docKey}`;
+        };
+        async function validate(document, record) {
+          if (!record || record.schemaVersion !== 1 || record.kind !== "pdf-reader-main-recovery" || record.docKey !== document.docKey || record.documentId !== document.documentId || !/^((sha256-v1:[a-f0-9]{64})|(xxh64-v1:[a-f0-9]{16}))$/.test(record.sourceHash || "") || document.source?.sourceHash && record.sourceHash !== document.source.sourceHash || !Array.isArray(record.archives) || !record.archives.length || !Array.isArray(record.devices) || !Array.isArray(record.acknowledgements)) throw fail("Invalid recovery certificate.");
+          if (record.supersedes !== void 0 && (!Array.isArray(record.supersedes) || record.supersedes.some((id) => !/^sha256-v1:[a-f0-9]{64}$/.test(id)) || new Set(record.supersedes).size !== record.supersedes.length)) throw fail("Invalid superseded certificates.");
+          const identity = { ...document, source: { ...document.source || {}, sourceHash: record.sourceHash } };
+          const current = await snapshots.read(identity, record.current);
+          const previous = await snapshots.read(identity, record.previous);
+          if (!current || !previous || !current.value.parents.includes(previous.snapshotId)) throw fail("Recovery checkpoint pair is incomplete.");
+          if (current.value.segments.some((segment) => !record.devices.includes(segment.deviceId))) {
+            throw fail("A checkpoint participant is absent from the acknowledgement roster.");
+          }
+          const state = joinOperations(current.value.operations);
+          if (canonicalJson(joinOperations(current.value.operations, previous.value.operations)) !== canonicalJson(state)) {
+            throw fail("Current checkpoint omits previous state.");
+          }
+          if (!containsReceipts(current.value, previous.value)) throw fail("Current checkpoint omits prior operation receipts.");
+          for (const archive of record.archives) {
+            const owner = archive.deviceId;
+            if (!/^[A-Za-z0-9_-]{1,256}$/.test(owner || "") || archive.path !== `${root}/wal/${owner}/${document.docKey}.jsonl.archive.${archive.firstSeq}-${archive.lastSeq}.json` || !coveredByCheckpointPair({
+              current,
+              previous,
+              archive,
+              activeDeviceIds: record.devices,
+              acknowledgements: record.acknowledgements
+            })) throw fail("Archive deletion evidence differs.");
+          }
+          return { record, current, previous, state };
+        }
+        async function publish(document, record) {
+          await validate(document, record);
+          const id = await hash(new TextEncoder().encode(canonicalJson(record)));
+          if (!/^sha256-v1:[a-f0-9]{64}$/.test(id)) throw fail("SHA-256 is required.");
+          const path = `${directory(document)}/${id.slice(10)}.json`;
+          const existing = await io.readJson(path);
+          if (existing) {
+            if (canonicalJson(existing) !== canonicalJson(record)) throw fail("Recovery hash collision.");
+          } else await io.writeJsonAtomic(path, record, { createOnly: true });
+          return { path, id, ...await validate(document, await io.readJson(path)) };
+        }
+        async function read(document) {
+          const dir = directory(document);
+          const records = [], errors = [];
+          if (!await adapter.exists(dir)) return { records, errors };
+          for (const path of (await adapter.list(dir)).files.sort()) {
+            if (/\/[a-f0-9]{64}\.json\.pending-[A-Za-z0-9_-]+$/.test(path) && await io.verifiedDuplicateStage(path)) continue;
+            if (/\/[a-f0-9]{64}\.json\.(?:gc-[A-Za-z0-9_-]+|pending(?:-[A-Za-z0-9_-]+)?)$/.test(path)) {
+              errors.push({ path, code: "MAIN_RECOVERY_PENDING", message: "Interrupted recovery operation requires inspection." });
+              continue;
+            }
+            const match = /\/([a-f0-9]{64})\.json$/.exec(path);
+            if (!match) continue;
+            try {
+              const record = await io.readJson(path);
+              const id = await hash(new TextEncoder().encode(canonicalJson(record)));
+              if (id !== `sha256-v1:${match[1]}`) throw fail("Recovery filename differs from its contents.");
+              records.push({ path, id, ...await validate(document, record) });
+            } catch (error) {
+              errors.push({ path, id: `sha256-v1:${match[1]}`, code: error.code || "MAIN_RECOVERY_INVALID", message: error.message });
+            }
+          }
+          const superseded = new Set(records.flatMap((entry) => entry.record.supersedes || []));
+          return {
+            records: records.filter((entry) => !superseded.has(entry.id)),
+            errors: errors.filter((entry) => !superseded.has(entry.id))
+          };
+        }
+        return { publish, read };
+      }
+      module.exports = { createMainRecoveryStore };
+    }
+  });
+
+  // plugin/storage/main-snapshot-device-observation.cjs
+  var require_main_snapshot_device_observation = __commonJS({
+    "plugin/storage/main-snapshot-device-observation.cjs"(exports, module) {
+      "use strict";
+      var RETIRE_AFTER_MS = 7 * 24 * 60 * 60 * 1e3;
+      function observeDevice(previous, { digest, now } = {}) {
+        if (!/^sha256-v1:[a-f0-9]{64}$/.test(digest || "") || !Number.isSafeInteger(now) || now < 0) {
+          throw new TypeError("A device observation requires a SHA-256 digest and a valid local time.");
+        }
+        if (previous) {
+          if (!/^sha256-v1:[a-f0-9]{64}$/.test(previous.digest || "") || !Number.isSafeInteger(previous.firstObservedAt) || !Number.isSafeInteger(previous.lastObservedAt) || previous.firstObservedAt < 0 || previous.lastObservedAt < previous.firstObservedAt) {
+            throw new TypeError("Invalid prior device observation.");
+          }
+          if (now < previous.lastObservedAt) return { ...previous, clockUncertain: true };
+          if (previous.clockUncertain === true) {
+            return { digest, firstObservedAt: now, lastObservedAt: now, clockUncertain: false };
+          }
+          if (digest === previous.digest) {
+            return { digest, firstObservedAt: previous.firstObservedAt, lastObservedAt: now, clockUncertain: false };
+          }
+        }
+        return { digest, firstObservedAt: now, lastObservedAt: now, clockUncertain: false };
+      }
+      function isRetirementCandidate(observation, now) {
+        return Boolean(observation && observation.clockUncertain === false && Number.isSafeInteger(now) && /^sha256-v1:[a-f0-9]{64}$/.test(observation.digest || "") && now >= 0 && Number.isSafeInteger(observation.firstObservedAt) && Number.isSafeInteger(observation.lastObservedAt) && observation.firstObservedAt >= 0 && now === observation.lastObservedAt && observation.lastObservedAt >= observation.firstObservedAt && now - observation.firstObservedAt >= RETIRE_AFTER_MS);
+      }
+      module.exports = { RETIRE_AFTER_MS, observeDevice, isRetirementCandidate };
+    }
+  });
+
+  // plugin/storage/main-device-observation-store.cjs
+  var require_main_device_observation_store = __commonJS({
+    "plugin/storage/main-device-observation-store.cjs"(exports, module) {
+      "use strict";
+      var { createStorageIo } = require_io();
+      var { canonicalJson } = require_canonical();
+      var { observeDevice, isRetirementCandidate } = require_main_snapshot_device_observation();
+      function createMainDeviceObservationStore({ adapter, root, hash, identityHash, verifyHash, deviceId, token, clock = Date.now }) {
+        if (!/^[A-Za-z0-9_-]{1,256}$/.test(deviceId || "") || typeof identityHash !== "function") {
+          throw new TypeError("A safe observer device identity and SHA-256 are required.");
+        }
+        const io = createStorageIo({ adapter, hash, verifyHash, token });
+        const path = `${root}/main-device-observations/${deviceId}.json`;
+        const presencePath = (id) => `${root}/main-device-presence/${id}.json`;
+        const validatePresence = (id) => (value) => {
+          if (!value || value.schemaVersion !== 1 || value.kind !== "pdf-reader-device-presence" || value.deviceId !== id || typeof value.activityId !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(value.activityId)) {
+            throw new Error("MAIN_DEVICE_PRESENCE_INVALID");
+          }
+        };
+        const validate = (value) => {
+          if (!value || value.schemaVersion !== 1 || value.kind !== "pdf-reader-device-observations" || value.observer !== deviceId || !Array.isArray(value.entries)) throw new Error("MAIN_DEVICE_OBSERVATION_INVALID");
+          const seen = /* @__PURE__ */ new Set();
+          for (const entry of value.entries) {
+            if (!/^[A-Za-z0-9_-]{1,256}$/.test(entry.deviceId || "") || seen.has(entry.deviceId)) throw new Error("MAIN_DEVICE_OBSERVATION_INVALID");
+            seen.add(entry.deviceId);
+            observeDevice(entry.observation, { digest: entry.observation.digest, now: entry.observation.lastObservedAt });
+          }
+        };
+        async function read() {
+          return await io.readJson(path, { validate }) || { schemaVersion: 1, kind: "pdf-reader-device-observations", observer: deviceId, entries: [] };
+        }
+        async function publishPresence() {
+          const value = { schemaVersion: 1, kind: "pdf-reader-device-presence", deviceId, activityId: String(token()) };
+          const previous = await io.readJson(presencePath(deviceId), { validate: validatePresence(deviceId) });
+          if (previous?.activityId === value.activityId) {
+            throw Object.assign(new Error("A new device activity must have a unique identity."), { code: "MAIN_DEVICE_PRESENCE_ID_COLLISION" });
+          }
+          return io.writeJsonAtomic(presencePath(deviceId), value, { validate: validatePresence(deviceId) });
+        }
+        async function knownDevices() {
+          const directory = `${root}/main-device-presence`;
+          if (!await adapter.exists(directory)) return [];
+          const listing = await adapter.list(directory);
+          const ids = /* @__PURE__ */ new Set();
+          for (const file of listing.files) {
+            const leaf = file.slice(file.lastIndexOf("/") + 1);
+            const match = /^([A-Za-z0-9_-]{1,256})\.json(?:\.pending)?$/.exec(leaf);
+            if (!match) throw Object.assign(new Error("Unrecognized device presence file."), { code: "MAIN_DEVICE_PRESENCE_INVALID" });
+            if (leaf.endsWith(".json.pending")) throw Object.assign(new Error("A device presence update is incomplete."), { code: "MAIN_DEVICE_PRESENCE_PENDING" });
+            ids.add(match[1]);
+          }
+          for (const id of ids) {
+            if (!await io.readJson(presencePath(id), { validate: validatePresence(id) })) {
+              throw Object.assign(new Error("Device presence changed during discovery."), { code: "MAIN_DEVICE_PRESENCE_MISSING" });
+            }
+            if (await adapter.exists(`${presencePath(id)}.pending`)) {
+              throw Object.assign(new Error("A device presence update is incomplete."), { code: "MAIN_DEVICE_PRESENCE_PENDING" });
+            }
+          }
+          return [...ids].sort();
+        }
+        async function observe({ deviceId: observed }) {
+          if (!/^[A-Za-z0-9_-]{1,256}$/.test(observed || "") || observed === deviceId) {
+            throw new TypeError("A safe identity for another device is required.");
+          }
+          const ensureSettled = async () => {
+            if (await adapter.exists(`${presencePath(observed)}.pending`)) {
+              throw Object.assign(new Error("A device presence update is incomplete."), { code: "MAIN_DEVICE_PRESENCE_PENDING" });
+            }
+          };
+          await ensureSettled();
+          const presence = await io.readJson(presencePath(observed), { validate: validatePresence(observed) });
+          await ensureSettled();
+          if (!presence) throw Object.assign(new Error("Device presence is unavailable."), { code: "MAIN_DEVICE_PRESENCE_MISSING" });
+          const digest = await identityHash(new TextEncoder().encode(canonicalJson(presence)));
+          const now = clock();
+          const current = await read();
+          const entries = current.entries.filter((entry) => entry.deviceId !== observed);
+          const prior = current.entries.find((entry) => entry.deviceId === observed);
+          const observation = observeDevice(prior?.observation, { digest, now });
+          entries.push({ deviceId: observed, observation });
+          entries.sort((a, b) => a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0);
+          const next = { ...current, entries };
+          await io.writeJsonAtomic(path, next, { validate });
+          if (!isRetirementCandidate(observation, now)) return { observation, retirementCandidate: false };
+          const latest = await io.readJson(presencePath(observed), { validate: validatePresence(observed) });
+          await ensureSettled();
+          if (!latest) throw Object.assign(new Error("Device presence disappeared."), { code: "MAIN_DEVICE_PRESENCE_MISSING" });
+          const latestDigest = await identityHash(new TextEncoder().encode(canonicalJson(latest)));
+          return {
+            observation,
+            retirementCandidate: latestDigest === digest,
+            ...latestDigest === digest ? {} : { reason: "presence-changed" }
+          };
+        }
+        return Object.freeze({ path, presencePath, read, observe, publishPresence, knownDevices });
+      }
+      module.exports = { createMainDeviceObservationStore };
+    }
+  });
+
+  // plugin/storage/main-route-claim-store.cjs
+  var require_main_route_claim_store = __commonJS({
+    "plugin/storage/main-route-claim-store.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson } = require_canonical();
+      var { normalizeInitialPath, validateFullSourceHash } = require_document_identity();
+      var { validateOperation } = require_merge_engine();
+      var { createStorageIo } = require_io();
+      var error = (message) => Object.assign(new Error(message), { code: "MAIN_ROUTE_CLAIM_INVALID" });
+      function createMainRouteClaimStore({ adapter, root, hash, token, deviceId }) {
+        if (!/^[A-Za-z0-9_-]{1,256}$/.test(deviceId || "")) throw error("Invalid reporter identity.");
+        const io = createStorageIo({ adapter, hash, token });
+        const sha = async (value) => {
+          const id = await hash(new TextEncoder().encode(value));
+          if (!/^sha256-v1:[a-f0-9]{64}$/.test(id || "")) throw error("SHA-256 is required.");
+          return id.slice(10);
+        };
+        const directory = async (path) => `${root}/main-routes/${await sha(normalizeInitialPath(path))}`;
+        function validate(value, indexedPath, reporter) {
+          if (!value || value.schemaVersion !== 1 || value.kind !== "pdf-reader-main-route-claim" || value.indexedPath !== indexedPath || value.reporter !== reporter || !/^[a-f0-9]{12}$/.test(value.docKey || "") || typeof value.documentId !== "string" || !value.documentId) {
+            throw error("Route claim identity differs.");
+          }
+          validateFullSourceHash(value.sourceHash);
+          const route = validateOperation(value.route);
+          if (route.type !== "ROUTE_SET" || !route.payload.source || route.payload.source.sourceHash !== value.sourceHash) throw error("Route claim source differs.");
+          return value;
+        }
+        async function publish({ indexedPath, document, route }) {
+          const path = normalizeInitialPath(indexedPath);
+          const value = {
+            schemaVersion: 1,
+            kind: "pdf-reader-main-route-claim",
+            indexedPath: path,
+            reporter: deviceId,
+            docKey: document?.docKey,
+            documentId: document?.documentId,
+            sourceHash: document?.source?.sourceHash,
+            route
+          };
+          validate(value, path, deviceId);
+          const digest = await sha(canonicalJson(value));
+          const target = `${await directory(path)}/${deviceId}/${value.docKey}.${digest}.json`;
+          const previous = await io.readJson(target, { validate: (row) => validate(row, path, deviceId) });
+          if (previous) {
+            if (canonicalJson(previous) !== canonicalJson(value)) throw error("Route claim digest collision.");
+            return { path: target, value: previous };
+          }
+          await io.writeJsonAtomic(target, value, { createOnly: true, validate: (row) => validate(row, path, deviceId) });
+          return { path: target, value };
+        }
+        async function query(indexedPath) {
+          const path = normalizeInitialPath(indexedPath), base = await directory(path), claims = [], errors = [];
+          if (!await adapter.exists(base)) return { claims, errors };
+          for (const folder of (await adapter.list(base)).folders.sort()) {
+            const reporter = folder.slice(folder.lastIndexOf("/") + 1);
+            if (!/^[A-Za-z0-9_-]{1,256}$/.test(reporter)) {
+              errors.push({ path: folder, code: "MAIN_ROUTE_CLAIM_INVALID" });
+              continue;
+            }
+            for (const file of (await adapter.list(folder)).files.sort()) {
+              const match = /\/([a-f0-9]{12})\.([a-f0-9]{64})\.json$/.exec(file);
+              if (!match) {
+                if (/\.json\.pending-[A-Za-z0-9_-]+$/.test(file) && await io.verifiedDuplicateStage(file)) continue;
+                if (/\.json\.pending(?:-[A-Za-z0-9_-]+)?$/.test(file)) errors.push({ path: file, code: "MAIN_ROUTE_CLAIM_PENDING" });
+                else if (/\.json$/.test(file)) errors.push({ path: file, code: "MAIN_ROUTE_CLAIM_INVALID" });
+                continue;
+              }
+              try {
+                const value = await io.readJson(file, { validate: (row) => validate(row, path, reporter) });
+                if (!value || value.docKey !== match[1] || await sha(canonicalJson(value)) !== match[2]) throw error("Route claim filename differs.");
+                claims.push(value);
+              } catch (cause) {
+                errors.push({ path: file, code: cause.code || "MAIN_ROUTE_CLAIM_INVALID" });
+              }
+            }
+          }
+          return { claims, errors };
+        }
+        return Object.freeze({ directory, publish, query });
+      }
+      module.exports = { createMainRouteClaimStore };
+    }
+  });
+
+  // plugin/storage/main-retirement-proposal.cjs
+  var require_main_retirement_proposal = __commonJS({
+    "plugin/storage/main-retirement-proposal.cjs"(exports, module) {
+      "use strict";
+      var { isRetirementCandidate } = require_main_snapshot_device_observation();
+      var { verifyMainSnapshotCandidate } = require_main_snapshot_candidate();
+      var pending = (message) => Object.assign(new Error(message), { code: "MAIN_RETIREMENT_PENDING" });
+      var safeId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,256}$/.test(id);
+      async function makeRetirementProposal({
+        document,
+        checkpoint,
+        deviceId,
+        observerId,
+        now,
+        presenceDigest,
+        observation,
+        deviceIds,
+        acknowledgements,
+        hash
+      } = {}) {
+        if (!safeId(deviceId) || !safeId(observerId) || deviceId === observerId || !Array.isArray(deviceIds) || !Array.isArray(acknowledgements) || !deviceIds.length || deviceIds.some((id) => !safeId(id)) || new Set(deviceIds).size !== deviceIds.length || !deviceIds.includes(deviceId) || !deviceIds.includes(observerId)) {
+          throw pending("A complete observed device set and a different observer are required.");
+        }
+        if (!/^sha256-v1:[a-f0-9]{64}$/.test(presenceDigest || "") || observation?.digest !== presenceDigest || !isRetirementCandidate(observation, now)) throw pending("The device inactivity observation is stale or incomplete.");
+        const snapshot = await verifyMainSnapshotCandidate({ document, snapshotId: checkpoint?.snapshotId, value: checkpoint?.value, hash });
+        for (const id of deviceIds.filter((candidate) => candidate !== deviceId)) {
+          if (!acknowledgements.some((ack) => ack?.deviceId === id && ack.snapshotId === checkpoint.snapshotId && ack.verified === true)) {
+            throw pending("Every other observed device must confirm the exact checkpoint.");
+          }
+        }
+        const seqs = [
+          0,
+          ...snapshot.segments.filter((row) => row.deviceId === deviceId).map((row) => row.lastSeq),
+          ...snapshot.operations.filter((row) => row.version.deviceId === deviceId).map((row) => row.seq),
+          ...snapshot.receipts.filter((row) => row.deviceId === deviceId && row.version).map((row) => row.version.seq)
+        ];
+        return {
+          schemaVersion: 1,
+          kind: "pdf-reader-retirement-proposal",
+          documentId: document.documentId,
+          docKey: document.docKey,
+          sourceHash: document.source.sourceHash,
+          checkpointId: checkpoint.snapshotId,
+          deviceId,
+          observerId,
+          deviceIds: [...deviceIds].sort(),
+          presenceDigest,
+          observedSince: observation.firstObservedAt,
+          observedAt: now,
+          throughSeq: Math.max(...seqs)
+        };
+      }
+      module.exports = { makeRetirementProposal };
+    }
+  });
+
+  // plugin/storage/main-retirement-proposal-store.cjs
+  var require_main_retirement_proposal_store = __commonJS({
+    "plugin/storage/main-retirement-proposal-store.cjs"(exports, module) {
+      "use strict";
+      var { canonicalJson } = require_canonical();
+      var { createStorageIo } = require_io();
+      var { makeRetirementProposal } = require_main_retirement_proposal();
+      var invalid = (message) => Object.assign(new Error(message), { code: "MAIN_RETIREMENT_INVALID" });
+      function createRetirementProposalStore({ adapter, root, hash, token, snapshots }) {
+        const io = createStorageIo({ adapter, hash, token });
+        function pathFor(document, id) {
+          if (!/^[a-f0-9]{12}$/.test(document?.docKey || "") || !/^sha256-v1:[a-f0-9]{64}$/.test(id || "")) {
+            throw invalid("Invalid proposal identity.");
+          }
+          return `${root}/main-retirement-proposals/${document.docKey}/${id.slice(10)}.json`;
+        }
+        async function validate(document, value) {
+          if (!value || value.docKey !== document.docKey || value.documentId !== document.documentId || value.sourceHash !== document.source?.sourceHash) throw invalid("Proposal document identity differs.");
+          const checkpoint = await snapshots.read(document, value.checkpointId);
+          if (!checkpoint) throw invalid("Proposal checkpoint is unavailable.");
+          const acknowledgements = Array.isArray(value.deviceIds) ? value.deviceIds.filter((id) => id !== value.deviceId).map((deviceId) => ({ deviceId, snapshotId: value.checkpointId, verified: true })) : [];
+          const rebuilt = await makeRetirementProposal({
+            document,
+            checkpoint,
+            deviceId: value.deviceId,
+            observerId: value.observerId,
+            now: value.observedAt,
+            presenceDigest: value.presenceDigest,
+            observation: { digest: value.presenceDigest, firstObservedAt: value.observedSince, lastObservedAt: value.observedAt, clockUncertain: false },
+            deviceIds: value.deviceIds,
+            acknowledgements,
+            hash
+          });
+          if (canonicalJson(value) !== canonicalJson(rebuilt)) throw invalid("Proposal content differs from its verified checkpoint.");
+        }
+        async function read(document, id) {
+          const path = pathFor(document, id);
+          let value;
+          try {
+            value = await io.readJson(path, { validate: (row) => validate(document, row) });
+          } catch (error) {
+            if (error?.cause?.code === "MAIN_RETIREMENT_INVALID") throw error.cause;
+            throw error;
+          }
+          if (!value) return null;
+          const actual = await hash(new TextEncoder().encode(canonicalJson(value)));
+          if (actual !== id) throw invalid("Proposal identity does not match its contents.");
+          return { id, path, value };
+        }
+        async function publish(document, value) {
+          await validate(document, value);
+          const id = await hash(new TextEncoder().encode(canonicalJson(value)));
+          const path = pathFor(document, id);
+          const existing = await read(document, id);
+          if (existing) return existing;
+          try {
+            await io.writeJsonAtomic(path, value, { uniquePending: true, createOnly: true, validate: (row) => validate(document, row) });
+          } catch (error) {
+            if (error.code !== "WAL_SIDECAR_EXISTS") throw error;
+          }
+          const result = await read(document, id);
+          if (!result) throw invalid("Proposal publication could not be verified.");
+          return result;
+        }
+        return { pathFor, read, publish };
+      }
+      module.exports = { createRetirementProposalStore };
+    }
+  });
+
   // plugin/storage/wal-annotation-store.cjs
   var require_wal_annotation_store = __commonJS({
     "plugin/storage/wal-annotation-store.cjs"(exports, module) {
@@ -9242,6 +9968,7 @@ var __PDFReaderAnnotationHost = (() => {
       var { canonicalJson, verify } = require_canonical();
       var { deriveDocumentIdentity, normalizeInitialPath, validateFullSourceHash } = require_document_identity();
       var { buildEffectiveState } = require_effective_state();
+      var { joinOperations } = require_merge_engine();
       var { createSidecarStore } = require_sidecar_store();
       var { createWalStore } = require_wal_store();
       var { createWalWriterCoordinator } = require_wal_writer_coordinator();
@@ -9251,6 +9978,14 @@ var __PDFReaderAnnotationHost = (() => {
       var { createJsonlCheckpointStore } = require_jsonl_checkpoint();
       var { createDeletionRetention } = require_deletion_retention();
       var { activateJsonlProtocol } = require_protocol_barrier();
+      var { makeMainSnapshotCandidate, containsReceipts } = require_main_snapshot_candidate();
+      var { createMainSnapshotStore } = require_main_snapshot_store();
+      var { createStorageIo } = require_io();
+      var { createMainRecoveryStore } = require_main_snapshot_recovery();
+      var { createMainDeviceObservationStore } = require_main_device_observation_store();
+      var { createMainRouteClaimStore } = require_main_route_claim_store();
+      var { makeRetirementProposal } = require_main_retirement_proposal();
+      var { createRetirementProposalStore } = require_main_retirement_proposal_store();
       var PROTOCOL = "wal-sidecar-v3.1";
       var KINDS = /* @__PURE__ */ new Set(["Highlight", "Underline", "Square", "Ink", "InkHighlight", "FreeText"]);
       var EMPTY_JSONL_HEADER = Symbol("empty-jsonl-header");
@@ -9315,6 +10050,21 @@ var __PDFReaderAnnotationHost = (() => {
         const jsonl = jsonlMode ? createObsidianStorageBridge({ adapter, root, hash, verifyHash }) : null;
         const jsonlCheckpoints = jsonlMode ? createJsonlCheckpointStore({ adapter, root, hash, verifyHash, token: uuid }) : null;
         const deletionRetention = jsonlMode ? createDeletionRetention({ adapter, root, deviceId, hash, verifyHash, token: uuid, clock }) : null;
+        const mainSnapshots = jsonlMode ? createMainSnapshotStore({ adapter, root, hash: stableHash, token: uuid }) : null;
+        const retirementProposals = jsonlMode ? createRetirementProposalStore({ adapter, root, hash: stableHash, token: uuid, snapshots: mainSnapshots }) : null;
+        const mainSnapshotIo = jsonlMode ? createStorageIo({ adapter, hash, verifyHash, token: uuid }) : null;
+        const mainRecovery = jsonlMode ? createMainRecoveryStore({ adapter, root, hash: stableHash, token: uuid, snapshots: mainSnapshots }) : null;
+        const mainDeviceObservations = jsonlMode ? createMainDeviceObservationStore({
+          adapter,
+          root,
+          hash,
+          identityHash: stableHash,
+          verifyHash,
+          deviceId,
+          token: uuid,
+          clock
+        }) : null;
+        const mainRouteClaims = jsonlMode ? createMainRouteClaimStore({ adapter, root, hash: stableHash, token: uuid, deviceId }) : null;
         const coordinator = createWalWriterCoordinator();
         const legacy = createPdfAnnotationStore({ adapter, root, hash, identityHash, deviceId, uuid, clock, ...legacyOptions });
         const importer = createFormat3Importer({ legacyStore: legacy, sidecarStore: sidecars, stableHash });
@@ -9322,6 +10072,9 @@ var __PDFReaderAnnotationHost = (() => {
         const documents = /* @__PURE__ */ new Map();
         const receipts = /* @__PURE__ */ new Map();
         const hotDocuments = /* @__PURE__ */ new Map();
+        let pendingSaveActivity = false;
+        let saveActivityTask = null;
+        let lastSaveActivityAt = null;
         let routingGeneration = 0;
         let verifiedRoutingGeneration = -1;
         let epochActivation = null;
@@ -9337,6 +10090,33 @@ var __PDFReaderAnnotationHost = (() => {
           await epochActivation;
         }
         const queued = (key, work) => coordinator.run(coordinationAdapter, deviceId, `host:${key}`, work);
+        function scheduleSaveActivity() {
+          const observedAt = clock();
+          if (!saveActivityTask && lastSaveActivityAt !== null && Number.isSafeInteger(observedAt) && observedAt >= lastSaveActivityAt && observedAt - lastSaveActivityAt < 6e4) return;
+          pendingSaveActivity = true;
+          if (saveActivityTask) return;
+          saveActivityTask = (async () => {
+            let followupUsed = false;
+            while (pendingSaveActivity) {
+              pendingSaveActivity = false;
+              try {
+                await signalMainDeviceActivity();
+                const publishedAt = clock();
+                lastSaveActivityAt = Number.isSafeInteger(publishedAt) && publishedAt >= 0 ? publishedAt : null;
+              } catch (error) {
+                try {
+                  onTiming({ phase: "device-presence-error", code: error?.code || "UNKNOWN" });
+                } catch {
+                }
+              }
+              if (pendingSaveActivity && followupUsed) pendingSaveActivity = false;
+              else if (pendingSaveActivity) followupUsed = true;
+            }
+          })().finally(() => {
+            saveActivityTask = null;
+            if (pendingSaveActivity) scheduleSaveActivity();
+          });
+        }
         async function ensureDirectory(path) {
           let current = "";
           for (const segment of path.split("/")) {
@@ -9356,28 +10136,71 @@ var __PDFReaderAnnotationHost = (() => {
         function opsFor(state) {
           return [...Object.values(state.annotations), ...Object.values(state.tombstones), ...state.routing ? [state.routing] : []];
         }
-        function localizeSeedOperations(document, operations) {
+        function recoveredSequences(document, snapshots) {
+          return snapshots.flatMap((entry) => [
+            ...entry.value.segments.filter((segment) => segment.deviceId === deviceId).map((segment) => segment.lastSeq),
+            ...entry.value.operations.filter((operation) => operation.version.deviceId === deviceId).map((operation) => operation.seq),
+            ...(entry.value.receipts || []).filter((receipt) => receipt.deviceId === deviceId).map((receipt) => {
+              const prefix = `${deviceId}:${document.docKey}:`;
+              const suffix = receipt.opId.startsWith(prefix) ? receipt.opId.slice(prefix.length) : "";
+              const seq = /^\d+$/.test(suffix) ? Number(suffix) : NaN;
+              if (!Number.isSafeInteger(seq) || seq < 1) throw failure("MAIN_SNAPSHOT_INVALID", "Invalid recovery receipt sequence.");
+              return seq;
+            })
+          ]);
+        }
+        function localizeSeedOperations(document, operations, sequenceFloor = 0, removeOriginalRequest = false) {
           return operations.slice().sort((left, right) => {
             const leftKey = left.type === "ROUTE_SET" ? "\uFFFFroute" : left.uuid;
             const rightKey = right.type === "ROUTE_SET" ? "\uFFFFroute" : right.uuid;
             return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
           }).map((operation, index) => {
-            const seq = index + 1;
+            const seq = sequenceFloor + index + 1;
+            if (!Number.isSafeInteger(seq)) throw failure("WAL_SEQ_REGRESSION", "Device sequence space exhausted.");
+            const { originOpId: _originalRequest, ...withoutRequest } = operation;
+            const seed = removeOriginalRequest ? withoutRequest : operation;
             return {
-              ...operation,
+              ...seed,
               seq,
               opId: `${deviceId}:${document.docKey}:${seq}`,
               version: { rev: operation.version?.rev || 1, deviceId, seq }
             };
           });
         }
+        async function collectDurableReceipts(loaded) {
+          const receipts2 = [...(loaded.recovery?.records || []).map((item) => item.current), ...loaded.mainSnapshotCandidates || []].flatMap((entry) => entry.value.receipts || []);
+          for (const operation of [
+            ...loaded.valid.flatMap((wal) => [...wal.anchor.operations, ...wal.tail]),
+            ...loaded.jsonlAnchors.flatMap((entry) => entry.anchor.operations),
+            ...loaded.jsonlArchives.flatMap((entry) => entry.archive.operations),
+            ...loaded.jsonlRows.flatMap((entry) => entry.operations)
+          ]) {
+            if (!operation.originOpId || !operation.uuid) continue;
+            const { seq: _seq, version: _version, opId: _opId, deletedAt: _deletedAt, ...input } = operation;
+            receipts2.push({
+              deviceId: operation.version.deviceId,
+              uuid: operation.uuid,
+              originOpId: operation.originOpId,
+              opId: operation.opId,
+              inputHash: await stableHash(new TextEncoder().encode(canonicalJson(input))),
+              version: operation.version,
+              ...operation.deletedAt === void 0 ? {} : { deletedAt: operation.deletedAt }
+            });
+          }
+          return receipts2;
+        }
         async function ensureOwnJsonlBaseline(document) {
           const loaded = await readEffective(document);
           if (!loaded.document) throw failure("WAL_DOCUMENT_MISSING", "The document baseline is unavailable for JSONL migration.");
-          if (loaded.errors.length) throw failure("WAL_SYNC_PENDING", "An incomplete document shard blocks JSONL baseline migration.");
+          if (loaded.errors.length || loaded.sidecarError) throw failure("WAL_SYNC_PENDING", "An incomplete document shard blocks JSONL baseline migration.");
           const hasOwnContribution = (loaded.jsonlAnchors || []).some((entry) => entry.deviceId === deviceId) || (loaded.jsonlArchives || []).some((entry) => entry.deviceId === deviceId) || (loaded.jsonlRows || []).some((entry) => entry.deviceId === deviceId && entry.operations.length > 0);
           if (hasOwnContribution) return loaded.document;
-          const seeded = localizeSeedOperations(loaded.document, opsFor(loaded.state));
+          const sequenceFloor = Math.max(0, ...recoveredSequences(
+            loaded.document,
+            [...(loaded.recovery?.records || []).map((entry) => entry.current), ...loaded.mainSnapshotCandidates || []]
+          ));
+          const hasCheckpointReceipts = Boolean(loaded.recovery?.records?.length || loaded.mainSnapshotCandidates?.length);
+          const seeded = localizeSeedOperations(loaded.document, opsFor(loaded.state), sequenceFloor, hasCheckpointReceipts);
           if (!seeded.length) throw failure("WAL_DOCUMENT_METADATA_MISSING", "The effective legacy state has no route or annotation baseline.");
           await jsonlCheckpoints.writeAnchor(loaded.document, deviceId, seeded, null);
           const watermarks = {};
@@ -9395,7 +10218,7 @@ var __PDFReaderAnnotationHost = (() => {
             entry.operations.at(-1)?.seq || 0
           );
           watermarks[deviceId] = Math.max(watermarks[deviceId] || 0, seeded.at(-1)?.seq || 0);
-          await jsonlCheckpoints.writeSnapshot(loaded.document, loaded.state, watermarks);
+          if (!hasCheckpointReceipts) await jsonlCheckpoints.writeSnapshot(loaded.document, loaded.state, watermarks);
           hotDocuments.delete(document.docKey);
           advanceJsonlGeneration(coordinationAdapter, document.docKey);
           documents.set(loaded.document.documentId, loaded.document);
@@ -9407,8 +10230,8 @@ var __PDFReaderAnnotationHost = (() => {
           const absolute = (entry) => entry.startsWith(`${path}/`) ? entry : `${path}/${entry}`;
           return { files: result.files.map(absolute), folders: result.folders.map(absolute) };
         }
-        async function readJsonlHeader(path) {
-          const text = await adapter.read(path);
+        async function readJsonlHeader(path, reader = adapter) {
+          const text = await reader.read(path);
           if (path.endsWith(".jsonl")) {
             if (text === "") return EMPTY_JSONL_HEADER;
             const newline = text.indexOf("\n");
@@ -9417,34 +10240,139 @@ var __PDFReaderAnnotationHost = (() => {
           }
           return JSON.parse(text);
         }
-        async function discover() {
+        async function discover({ allowPartial = false, protectedPath = null, protectedIdentity = null } = {}) {
           const scanGeneration = routingGeneration;
           const keys = /* @__PURE__ */ new Map();
+          let unknownCheckpointHeader = false;
+          const cached = { read: /* @__PURE__ */ new Map(), exists: /* @__PURE__ */ new Map(), list: /* @__PURE__ */ new Map() };
+          const listedChildren = /* @__PURE__ */ new Map();
+          const scanAdapter = new Proxy(adapter, { get(target, key) {
+            const value = target[key];
+            if (typeof value !== "function") return value;
+            if (!Object.hasOwn(cached, key)) return value.bind(target);
+            return (path) => {
+              if (key === "exists") {
+                const separator = path.lastIndexOf("/");
+                const parent = separator < 0 ? "" : path.slice(0, separator);
+                const children = listedChildren.get(parent);
+                if (children) return Promise.resolve(children.has(path));
+              }
+              if (!cached[key].has(path)) cached[key].set(path, Promise.resolve().then(() => value.call(target, path)).then((result2) => {
+                if (key === "list" && Array.isArray(result2?.files) && Array.isArray(result2?.folders)) {
+                  const absolute = (entry) => entry.startsWith(`${path}/`) ? entry : `${path}/${entry}`;
+                  listedChildren.set(path, new Set([...result2.files, ...result2.folders].map(absolute)));
+                }
+                return result2;
+              }));
+              return cached[key].get(path);
+            };
+          } });
+          const scanList = async (path) => {
+            if (!await scanAdapter.exists(path)) return { files: [], folders: [] };
+            const rows = await scanAdapter.list(path);
+            const absolute = (entry) => entry.startsWith(`${path}/`) ? entry : `${path}/${entry}`;
+            return { files: rows.files.map(absolute), folders: rows.folders.map(absolute) };
+          };
+          const scanSidecars = createSidecarStore({ adapter: scanAdapter, root, hash, verifyHash, token: uuid });
+          const scanWals = createWalStore({ adapter: scanAdapter, root, hash, verifyHash, deviceId, token: uuid, sidecarStore: scanSidecars });
+          const scanJsonl = jsonlMode ? createObsidianStorageBridge({ adapter: scanAdapter, root, hash, verifyHash }) : null;
+          const scanCheckpoints = jsonlMode ? createJsonlCheckpointStore({ adapter: scanAdapter, root, hash, verifyHash, token: uuid }) : null;
+          const scanIo = jsonlMode ? createStorageIo({ adapter: scanAdapter, hash, verifyHash, token: uuid }) : null;
+          const scanMainSnapshots = jsonlMode ? createMainSnapshotStore({ adapter: scanAdapter, root, hash: stableHash, token: uuid }) : null;
+          const scanRecovery = jsonlMode ? createMainRecoveryStore({ adapter: scanAdapter, root, hash: stableHash, token: uuid, snapshots: scanMainSnapshots }) : null;
+          const scan = {
+            adapter: scanAdapter,
+            list: scanList,
+            sidecars: scanSidecars,
+            wals: scanWals,
+            jsonl: scanJsonl,
+            checkpoints: scanCheckpoints,
+            recovery: scanRecovery,
+            mainSnapshots: scanMainSnapshots
+          };
+          if (scanMainSnapshots) {
+            const directories = (await scanList(`${root}/main-snapshots`)).folders.sort();
+            const entries = await mapLimit(directories, DISCOVERY_IO_CONCURRENCY, async (directory) => {
+              const docKey = directory.slice(directory.lastIndexOf("/") + 1);
+              if (!/^[a-f0-9]{12}$/.test(docKey)) return [];
+              return (await scanList(directory)).files.sort().filter((path) => /\/[a-f0-9]{64}\.json(?:\.gc-[A-Za-z0-9_-]+|\.pending(?:-[A-Za-z0-9_-]+)?)?$/.test(path)).map((path) => ({ path, docKey }));
+            });
+            const hints = await mapLimit(entries.flat(), DISCOVERY_IO_CONCURRENCY, async ({ path, docKey }) => {
+              const pending = /\/([a-f0-9]{64})\.json\.pending-[A-Za-z0-9_-]+$/.exec(path);
+              if (/\.json\.(?:gc-|pending)/.test(path) && !pending) return null;
+              try {
+                const raw = await scanAdapter.read(path);
+                const row = JSON.parse(raw)?.value;
+                if (pending) {
+                  const finalPath = path.slice(0, path.lastIndexOf(".pending-"));
+                  if (raw !== await scanAdapter.read(finalPath) || row?.docKey !== docKey || !row?.documentId || !row?.sourceHash || !await scanMainSnapshots.read({ ...identityOnly(row), source: { sourceHash: row.sourceHash } }, `sha256-v1:${pending[1]}`)) return null;
+                }
+                if (row?.docKey === docKey && typeof row.documentId === "string" && row.documentId) return identityOnly(row);
+              } catch {
+              }
+              return null;
+            });
+            unknownCheckpointHeader ||= hints.some((row) => !row);
+            for (const row of hints) {
+              if (row) keys.set(`${row.docKey}:${row.documentId}`, row);
+            }
+          }
+          if (mainRecovery) {
+            const directories = (await scanList(`${root}/main-recovery`)).folders.sort();
+            const entries = await mapLimit(directories, DISCOVERY_IO_CONCURRENCY, async (directory) => (await scanList(directory)).files.sort().filter((path) => /\/[a-f0-9]{64}\.json(?:\.gc-[A-Za-z0-9_-]+|\.pending(?:-[A-Za-z0-9_-]+)?)?$/.test(path)));
+            const hints = await mapLimit(entries.flat(), DISCOVERY_IO_CONCURRENCY, async (path) => {
+              if (/\.json\.(?:gc-|pending)/.test(path) && !await scanIo.verifiedDuplicateStage(path)) return null;
+              try {
+                const row = JSON.parse(await scanAdapter.read(path));
+                if (/^[a-f0-9]{12}$/.test(row.docKey || "") && typeof row.documentId === "string") return identityOnly(row);
+              } catch {
+              }
+              return null;
+            });
+            unknownCheckpointHeader ||= hints.some((row) => !row);
+            for (const row of hints) {
+              if (row) keys.set(`${row.docKey}:${row.documentId}`, row);
+            }
+          }
           const [sidecarListing, walListing] = await mapLimit([
             `${root}/sidecars`,
             `${root}/wal`
-          ], 2, (directory) => list(directory));
-          const paths = sidecarListing.files.filter((candidate) => /\.annot\.json(?:\.pending)?$/.test(candidate)).sort();
+          ], 2, (directory) => scanList(directory));
+          const paths = sidecarListing.files.filter((candidate) => /\.annot\.json(?:\.pending(?:-[A-Za-z0-9_-]+)?)?$/.test(candidate)).sort();
           const directoryResults = await mapLimit(
             walListing.folders.slice().sort(),
             DISCOVERY_IO_CONCURRENCY,
             async (directory) => {
-              const files = (await list(directory)).files.slice().sort();
-              const jsonlCandidates2 = jsonl ? files.filter((candidate) => /\.jsonl(?:\.anchor\.json|\.archive\.\d+-\d+\.json)?$/.test(candidate)) : [];
+              const files = (await scanList(directory)).files.slice().sort();
+              const jsonlCandidates2 = jsonl ? files.filter((candidate) => /\/[a-f0-9]{12}\.jsonl(?:\.anchor\.json(?:\.pending)?|\.archive\.\d+-\d+\.json)?$/.test(candidate)) : [];
               return {
-                paths: files.filter((candidate) => /\.json(?:\.pending)?$/.test(candidate)),
-                jsonlCandidates: jsonlCandidates2
+                paths: files.filter((candidate) => /\/[a-f0-9]{12}\.json(?:\.pending)?$/i.test(candidate)),
+                jsonlCandidates: jsonlCandidates2,
+                pendingArchives: files.filter((candidate) => /\/[a-f0-9]{12}\.jsonl\.archive\.\d+-\d+\.json\.pending(?:-[A-Za-z0-9_-]+)?$/.test(candidate)),
+                pendingWals: files.filter((candidate) => /\/[a-f0-9]{12}\.jsonl\.pending$/.test(candidate))
               };
+            }
+          );
+          const pendingWalStates = await mapLimit(
+            directoryResults.flatMap((directory) => directory.pendingWals),
+            DISCOVERY_IO_CONCURRENCY,
+            async (path) => {
+              try {
+                return (await scanAdapter.read(path)).length > 0;
+              } catch {
+                return true;
+              }
             }
           );
           const jsonlCandidates = directoryResults.flatMap((directory) => directory.jsonlCandidates);
           const headers = await mapLimit(jsonlCandidates, DISCOVERY_IO_CONCURRENCY, async (candidate) => {
             try {
-              return await readJsonlHeader(candidate);
+              return await readJsonlHeader(candidate, scanAdapter);
             } catch {
               return null;
             }
           });
+          const unknownJsonlHeader = headers.some((header) => header !== EMPTY_JSONL_HEADER && (!header || !/^[a-f0-9]{12}$/.test(header.docKey || "") || typeof header.documentId !== "string" || !header.documentId));
           for (const directory of directoryResults) {
             paths.push(...directory.paths);
           }
@@ -9456,7 +10384,7 @@ var __PDFReaderAnnotationHost = (() => {
           paths.sort();
           const verifiedPaths = await mapLimit(paths, DISCOVERY_VERIFY_CONCURRENCY, async (path) => {
             try {
-              const value = JSON.parse(await adapter.read(path));
+              const value = JSON.parse(await scanAdapter.read(path));
               const header = value.document || value;
               if (!/^[a-f0-9]{12}$/.test(header.docKey || "") || typeof header.documentId !== "string") return null;
               let verified;
@@ -9478,15 +10406,32 @@ var __PDFReaderAnnotationHost = (() => {
           const result = [];
           const verifiedKeys = /* @__PURE__ */ new Map();
           const candidates = [...keys.values()];
-          for (const candidate of candidates) {
-            let loaded;
+          const states = await mapLimit(candidates, DISCOVERY_IO_CONCURRENCY, async (candidate) => {
             try {
-              loaded = await readEffective(candidate);
+              return await readEffective(candidate, { readOnly: true, scan });
             } catch (error) {
               if (["VERSION_COLLISION", "DOC_KEY_COLLISION"].includes(error.code)) throw error;
-              continue;
+              return null;
             }
-            if (loaded.document) {
+          });
+          const unknownCanonicalSidecar = paths.some((path, index) => /\.annot\.json(?:\.pending-[A-Za-z0-9_-]+)?$/.test(path) && !verifiedPaths[index]);
+          const archiveStageChecks = await mapLimit(
+            directoryResults.flatMap((directory) => directory.pendingArchives),
+            DISCOVERY_IO_CONCURRENCY,
+            async (path) => {
+              if (await scanIo.verifiedDuplicateStage(path)) return true;
+              for (const state of states) {
+                if (await coveredArchiveStage(path, scanAdapter, state?.recovery)) return true;
+              }
+              return false;
+            }
+          );
+          const incomplete = unknownCheckpointHeader || unknownJsonlHeader || unknownCanonicalSidecar || pendingWalStates.some(Boolean) || archiveStageChecks.some((valid) => !valid) || states.some((loaded) => !loaded?.document || loaded.sidecarError || loaded.errors?.length);
+          if (incomplete && !allowPartial) throw failure("WAL_SYNC_PENDING", "Incomplete document data prevents a verified registry rebuild.");
+          for (let index = 0; index < candidates.length; index++) {
+            const candidate = candidates[index];
+            const loaded = states[index];
+            if (loaded?.document) {
               const prior = verifiedKeys.get(candidate.docKey);
               if (prior && prior !== candidate.documentId) throw failure("DOC_KEY_COLLISION", "Verified records assign this docKey to different full identities.");
               verifiedKeys.set(candidate.docKey, candidate.documentId);
@@ -9494,44 +10439,128 @@ var __PDFReaderAnnotationHost = (() => {
               result.push(loaded.document);
             }
           }
+          if (routingGeneration !== scanGeneration) throw failure("WAL_SYNC_PENDING", "Routing changed during discovery; retry after synchronization.");
+          if (protectedPath && !result.some((document) => document.sourcePath === protectedPath || protectedIdentity && document.docKey === protectedIdentity.docKey && document.documentId === protectedIdentity.documentId)) {
+            throw failure("WAL_SYNC_PENDING", "An indexed route has no verified backing state; wait for synchronization.");
+          }
+          if (incomplete) {
+            Object.defineProperty(result, "incomplete", { value: true });
+            return result;
+          }
           try {
             await registry.replace(result);
           } catch (error) {
             if (error.code === "IDENTITY_ROUTE_CONFLICT") throw error;
             onTiming({ phase: "registry-cache", code: error.code || "CACHE_WRITE_FAILED" });
           }
-          if (routingGeneration === scanGeneration) verifiedRoutingGeneration = scanGeneration;
+          if (routingGeneration !== scanGeneration) throw failure("WAL_SYNC_PENDING", "Routing changed while publishing discovery; retry after synchronization.");
+          verifiedRoutingGeneration = scanGeneration;
           return result;
         }
-        async function readEffective(document, { readOnly = false } = {}) {
+        async function coveredArchiveStage(path, reader, recovery) {
+          const marker = path.lastIndexOf(".pending-");
+          if (marker < 0 || recovery?.errors?.length) return false;
+          const original = path.slice(0, marker);
+          const evidence = (recovery?.records || []).flatMap((entry) => entry.record.archives).filter((archive) => archive.path === original);
+          if (!evidence.length) return false;
+          try {
+            const digest = await stableHash(new TextEncoder().encode(await reader.read(path)));
+            return evidence.some((archive) => archive.digest === digest);
+          } catch {
+            return false;
+          }
+        }
+        async function readEffective(document, { readOnly = false, scan = null } = {}) {
           const start = monotonic();
+          const reader = scan?.adapter || adapter;
+          const readList = scan?.list || list;
+          const readSidecars = scan?.sidecars || sidecars;
+          const readWals = scan?.wals || wals;
+          const readJsonl = scan?.jsonl || jsonl;
+          const readCheckpoints = scan?.checkpoints || jsonlCheckpoints;
+          const readRecovery = scan?.recovery || mainRecovery;
+          const readMainSnapshots = scan?.mainSnapshots || mainSnapshots;
+          const recovery = readRecovery ? await readRecovery.read(document) : { records: [], errors: [] };
+          const recoveryOperations = recovery.records.flatMap((entry) => entry.current.value.operations);
+          const recoveredArchives = new Set(recovery.records.flatMap((entry) => entry.record.archives.map((archive) => archive.path)));
           let sidecar = null;
           let sidecarError = null;
           try {
-            sidecar = await sidecars.loadSidecar(document);
+            sidecar = await readSidecars.loadSidecar(document);
           } catch (error) {
             sidecarError = error;
           }
           if (sidecarError?.code === "DOC_KEY_COLLISION") throw sidecarError;
-          const loadedWals = await wals.loadWals(document);
+          const loadedWals = await readWals.loadWals(document);
           const valid = loadedWals.valid.map((entry) => entry.wal || entry);
-          const errors = [...loadedWals.errors];
+          const errors = [...loadedWals.errors, ...recovery.errors];
           if (errors.some((error) => error.code === "DOC_KEY_COLLISION")) throw failure("DOC_KEY_COLLISION", "Verified WAL records assign this key to another full document identity.");
           const jsonlRows = [];
           const jsonlAnchors = [];
           const jsonlArchives = [];
+          const gcStages = [];
           const jsonlSources = /* @__PURE__ */ new Set();
           if (jsonl) {
-            for (const directory of (await list(`${root}/wal`)).folders) {
+            for (const directory of (await readList(`${root}/wal`)).folders) {
               const owner = directory.slice(`${root}/wal/`.length);
               if (!owner || owner.includes("/") || owner.includes("\\")) continue;
-              const path = jsonl.pathsFor(document.docKey, owner).wal;
-              const anchorPath = jsonlCheckpoints.anchorPath(document, owner);
-              const files = (await list(directory)).files.filter((candidate) => candidate.endsWith(`/${document.docKey}.jsonl`) || candidate.endsWith(`/${document.docKey}.jsonl.anchor.json`) || new RegExp(`/${document.docKey}\\.jsonl\\.archive\\.\\d+-\\d+\\.json$`).test(candidate));
+              const path = readJsonl.pathsFor(document.docKey, owner).wal;
+              const anchorPath = readCheckpoints.anchorPath(document, owner);
+              const directoryFiles = (await readList(directory)).files;
+              if (directoryFiles.includes(`${path}.pending`)) {
+                let unsettled = true;
+                try {
+                  unsettled = (await reader.read(`${path}.pending`)).length > 0;
+                } catch {
+                }
+                if (unsettled) errors.push({
+                  deviceId: owner,
+                  path: `${path}.pending`,
+                  code: "WAL_SYNC_PENDING",
+                  message: "An unpublished WAL replacement requires recovery."
+                });
+              }
+              if (directoryFiles.includes(anchorPath) && directoryFiles.includes(`${anchorPath}.pending`)) {
+                errors.push({
+                  deviceId: owner,
+                  path: `${anchorPath}.pending`,
+                  code: "WAL_SYNC_PENDING",
+                  message: "An unpublished anchor update requires recovery."
+                });
+              }
+              const pendingArchive = new RegExp(`/${document.docKey}\\.jsonl\\.archive\\.\\d+-\\d+\\.json\\.pending(?:-[A-Za-z0-9_-]+)?$`);
+              for (const candidate of directoryFiles.filter((item) => pendingArchive.test(item))) {
+                const readerIo = scan ? createStorageIo({ adapter: reader, hash, verifyHash, token: uuid }) : mainSnapshotIo;
+                if (await readerIo.verifiedDuplicateStage(candidate) || await coveredArchiveStage(candidate, reader, recovery)) continue;
+                errors.push({
+                  deviceId: owner,
+                  path: candidate,
+                  code: "WAL_SYNC_PENDING",
+                  message: "An unpublished archive requires recovery."
+                });
+              }
+              const gcStage = new RegExp(`/${document.docKey}\\.jsonl\\.archive\\.\\d+-\\d+\\.json\\.gc-[A-Za-z0-9_-]+$`);
+              for (const candidate of directoryFiles.filter((item) => gcStage.test(item))) {
+                gcStages.push(candidate);
+                const originalPath = candidate.slice(0, candidate.lastIndexOf(".gc-"));
+                const evidence = recovery.records.flatMap((entry) => entry.record.archives).find((item) => item.path === originalPath);
+                let matches = false;
+                try {
+                  matches = Boolean(evidence && await stableHash(new TextEncoder().encode(await reader.read(candidate))) === evidence.digest);
+                } catch {
+                }
+                if (!matches) errors.push({
+                  deviceId: owner,
+                  path: candidate,
+                  code: "MAIN_RECOVERY_PENDING",
+                  message: "An interrupted or conflicting archive cleanup requires recovery."
+                });
+              }
+              const files = directoryFiles.filter((candidate) => candidate.endsWith(`/${document.docKey}.jsonl`) || candidate.endsWith(`/${document.docKey}.jsonl.anchor.json`) || new RegExp(`/${document.docKey}\\.jsonl\\.archive\\.\\d+-\\d+\\.json$`).test(candidate));
               const sourceHashes = /* @__PURE__ */ new Set();
               for (const candidatePath of files) {
                 try {
-                  const header = await readJsonlHeader(candidatePath);
+                  const header = await readJsonlHeader(candidatePath, reader);
                   if (header === EMPTY_JSONL_HEADER) continue;
                   if (!header || typeof header !== "object") {
                     errors.push({
@@ -9580,7 +10609,7 @@ var __PDFReaderAnnotationHost = (() => {
                 source: { ...document.source || {}, sourceHash }
               };
               try {
-                for (const archived of await jsonlCheckpoints.loadArchives(jsonlDocument, owner)) {
+                for (const archived of await readCheckpoints.loadArchives(jsonlDocument, owner)) {
                   jsonlArchives.push({ deviceId: owner, ...archived });
                 }
               } catch (error) {
@@ -9591,13 +10620,13 @@ var __PDFReaderAnnotationHost = (() => {
                   message: String(error?.message || error)
                 });
               }
-              if (await adapter.exists(anchorPath) || await adapter.exists(`${anchorPath}.pending`)) {
+              if (await reader.exists(anchorPath) || await reader.exists(`${anchorPath}.pending`)) {
                 try {
-                  const anchor = await jsonlCheckpoints.readAnchor(jsonlDocument, owner);
+                  const anchor = await readCheckpoints.readAnchor(jsonlDocument, owner);
                   if (anchor) {
                     jsonlAnchors.push({ deviceId: owner, path: anchorPath, anchor });
                     for (const reference of anchor.archives) {
-                      if (!jsonlArchives.some((entry) => entry.path === reference.path)) {
+                      if (!jsonlArchives.some((entry) => entry.path === reference.path) && !recoveredArchives.has(reference.path)) {
                         errors.push({
                           deviceId: owner,
                           path: reference.path,
@@ -9616,9 +10645,9 @@ var __PDFReaderAnnotationHost = (() => {
                   });
                 }
               }
-              if (!await adapter.exists(path)) continue;
+              if (!await reader.exists(path)) continue;
               try {
-                const rows = await jsonl.readOperationRows(
+                const rows = await readJsonl.readOperationRows(
                   jsonlDocument,
                   owner,
                   { repairOwnTail: !readOnly && owner === deviceId }
@@ -9639,14 +10668,85 @@ var __PDFReaderAnnotationHost = (() => {
             code: "SOURCE_MISMATCH",
             message: "JSONL contributors disagree about the immutable source hash."
           });
-          const state = buildEffectiveState({
+          const priorState = buildEffectiveState({
             sidecar,
             anchors: [
+              recoveryOperations,
               ...valid.map((wal) => wal.anchor),
               ...jsonlAnchors.map((entry) => entry.anchor.operations),
               ...jsonlArchives.map((entry) => entry.archive.operations)
             ],
             tails: [...valid.map((wal) => wal.tail), ...jsonlRows.map((entry) => entry.operations)]
+          });
+          const mainSnapshotCandidates = [];
+          if (readMainSnapshots) {
+            for (const path of (await readList(`${root}/main-snapshots/${document.docKey}`)).files.sort()) {
+              const pendingMatch = /\/([a-f0-9]{64})\.json\.pending-[A-Za-z0-9_-]+$/.exec(path);
+              if (pendingMatch) {
+                try {
+                  const finalPath = path.slice(0, path.lastIndexOf(".pending-"));
+                  const stageBytes = await reader.read(path);
+                  const finalBytes = await reader.read(finalPath);
+                  const header = JSON.parse(finalBytes)?.value;
+                  const sourceHash = validateFullSourceHash(header?.sourceHash);
+                  if (document.source?.sourceHash && document.source.sourceHash !== sourceHash) throw failure("SOURCE_MISMATCH", "Checkpoint belongs to another PDF source.");
+                  const candidateDocument = { ...document, source: { ...document.source || {}, sourceHash } };
+                  if (stageBytes === finalBytes && await readMainSnapshots.read(candidateDocument, `sha256-v1:${pendingMatch[1]}`)) continue;
+                } catch {
+                }
+                errors.push({ path, code: "MAIN_RECOVERY_PENDING", message: "Checkpoint staging is not covered by a verified final snapshot." });
+                continue;
+              }
+              if (/\/[a-f0-9]{64}\.json\.(?:gc-[A-Za-z0-9_-]+|pending)$/.test(path)) {
+                errors.push({ path, code: "MAIN_RECOVERY_PENDING", message: "Interrupted checkpoint operation requires recovery." });
+                continue;
+              }
+              const match = /\/([a-f0-9]{64})\.json$/.exec(path);
+              if (!match) continue;
+              try {
+                const header = JSON.parse(await reader.read(path))?.value;
+                if (header?.docKey !== document.docKey || header?.documentId !== document.documentId) {
+                  throw failure("DOC_KEY_COLLISION", "Checkpoint belongs to another document identity.");
+                }
+                const sourceHash = validateFullSourceHash(header.sourceHash);
+                if (document.source?.sourceHash && document.source.sourceHash !== sourceHash) {
+                  throw failure("SOURCE_MISMATCH", "Checkpoint belongs to another PDF source.");
+                }
+                const candidate = await readMainSnapshots.read({ ...document, source: { ...document.source || {}, sourceHash } }, `sha256-v1:${match[1]}`);
+                if (!candidate) throw failure("MAIN_SNAPSHOT_MISSING", "Checkpoint disappeared while loading.");
+                jsonlSources.add(sourceHash);
+                mainSnapshotCandidates.push(candidate);
+              } catch (error) {
+                if (error.code === "DOC_KEY_COLLISION") throw error;
+                errors.push({ path, code: error.code || "MAIN_SNAPSHOT_CORRUPT", message: String(error.message || error) });
+              }
+            }
+          }
+          const hasOtherState = Boolean(sidecar || valid.length || jsonlRows.length || jsonlAnchors.length || jsonlArchives.length || recovery.records.length);
+          const semanticWinners = (value) => opsFor(value).map(({ seq, opId, originOpId, version, deletedAt, ...operation }) => operation).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+          const coveredCandidates = hasOtherState ? mainSnapshotCandidates.filter((candidate) => canonicalJson(semanticWinners(joinOperations(opsFor(priorState), candidate.value.operations))) === canonicalJson(semanticWinners(priorState))) : mainSnapshotCandidates;
+          if (coveredCandidates.length !== mainSnapshotCandidates.length) {
+            errors.push({
+              path: `${root}/main-snapshots/${document.docKey}`,
+              code: "MAIN_SNAPSHOT_SYNC_PENDING",
+              message: "Checkpoint contains a branch not yet present in verified logs."
+            });
+          }
+          const state = buildEffectiveState({
+            sidecar,
+            anchors: [
+              recoveryOperations,
+              ...coveredCandidates.map((entry) => entry.value.operations),
+              ...valid.map((wal) => wal.anchor),
+              ...jsonlAnchors.map((entry) => entry.anchor.operations),
+              ...jsonlArchives.map((entry) => entry.archive.operations)
+            ],
+            tails: [...valid.map((wal) => wal.tail), ...jsonlRows.map((entry) => entry.operations)]
+          });
+          if (jsonlSources.size > 1) errors.push({
+            path: `${root}/main-snapshots/${document.docKey}`,
+            code: "SOURCE_MISMATCH",
+            message: "Checkpoint and log sources differ."
           });
           const routing = state.routing?.payload || {};
           const metadata = sidecar?.document || valid.find((wal) => wal.document)?.document || (routing.sourcePath ? {
@@ -9657,7 +10757,7 @@ var __PDFReaderAnnotationHost = (() => {
             legacyIdentities: routing.legacyIdentities || [],
             legacyIdentityScanComplete: routing.legacyIdentityScanComplete === true
           } : null);
-          if (!sidecar && !valid.length && !jsonlRows.length && !jsonlAnchors.length && !jsonlArchives.length) {
+          if (!hasOtherState && !mainSnapshotCandidates.length) {
             if (sidecarError) throw sidecarError;
             return { document: null, state: buildEffectiveState(), sidecar: null, valid, errors };
           }
@@ -9692,6 +10792,9 @@ var __PDFReaderAnnotationHost = (() => {
             jsonlRows,
             jsonlAnchors,
             jsonlArchives,
+            gcStages,
+            recovery,
+            mainSnapshotCandidates,
             errors,
             sidecarError
           };
@@ -9707,17 +10810,44 @@ var __PDFReaderAnnotationHost = (() => {
         }
         async function documentForPath(sourcePath) {
           const path = normalizeInitialPath(sourcePath);
-          const hint = verifiedRoutingGeneration === routingGeneration ? await registry.lookup(path) : null;
+          const lookupGeneration = routingGeneration;
+          const indexed = await registry.lookup(path);
+          let claimsPending = false;
+          const claimedRoutes = /* @__PURE__ */ new Map();
+          if (mainRouteClaims) {
+            try {
+              const evidence = await mainRouteClaims.query(path);
+              claimsPending = evidence.errors.length > 0;
+              for (const row of evidence.claims) {
+                const key = canonicalJson([row.docKey, row.documentId]);
+                if (!claimedRoutes.has(key)) claimedRoutes.set(key, []);
+                claimedRoutes.get(key).push(row.route);
+              }
+            } catch {
+              claimsPending = true;
+            }
+          }
+          const activeClaims = [...claimedRoutes.entries()].filter(([, operations]) => joinOperations(operations).routing?.payload?.sourcePath === path).map(([key]) => key);
+          const indexedKey = indexed && canonicalJson([indexed.docKey, indexed.documentId]);
+          const conflictingClaims = activeClaims.some((key) => key !== indexedKey);
+          const hint = !claimsPending && !conflictingClaims && verifiedRoutingGeneration === lookupGeneration && lookupGeneration === routingGeneration ? indexed : null;
           if (hint) {
             try {
               const verified = await readEffective(hint);
-              if (verified.document?.sourcePath === path) return verified.document;
+              if (lookupGeneration === routingGeneration && verified.document?.sourcePath === path && !verified.errors?.length && !verified.sidecarError) return verified.document;
             } catch (error) {
               if (error.code === "VERSION_COLLISION") throw error;
             }
           }
-          const matches = (await discover()).filter((doc) => doc.sourcePath === path);
+          const discovered = await discover({ allowPartial: true, protectedPath: indexed ? path : null, protectedIdentity: indexed });
+          const matches = discovered.filter((doc) => doc.sourcePath === path);
+          if (lookupGeneration !== routingGeneration) throw failure("WAL_SYNC_PENDING", "Routing changed while the path was being checked.");
+          if (discovered.incomplete && !matches.length) throw failure("WAL_SYNC_PENDING", "Incomplete routing data cannot establish a new identity.");
           if (matches.length > 1) throw failure("IDENTITY_ROUTE_CONFLICT", "Multiple documents route to this PDF.");
+          const matchedKey = matches[0] && canonicalJson([matches[0].docKey, matches[0].documentId]);
+          if (claimsPending || activeClaims.some((key) => key !== matchedKey)) {
+            throw failure("WAL_SYNC_PENDING", "A path claim is incomplete or conflicts with the verified route.");
+          }
           return matches[0] || null;
         }
         async function documentForIdentity({ docKey, documentId } = {}) {
@@ -9850,16 +10980,21 @@ var __PDFReaderAnnotationHost = (() => {
         async function loadForWrite(document) {
           const effective = await readEffective(document);
           if (!effective.document) throw failure("WAL_DOCUMENT_MISSING", "The document recovery state has not arrived.");
-          if (effective.errors.length) throw failure("WAL_SYNC_PENDING", "A WAL shard is incomplete or invalid; editing is paused.");
+          if (effective.errors.length || effective.sidecarError) throw failure("WAL_SYNC_PENDING", "A WAL shard or sidecar is incomplete or invalid; editing is paused.");
           const own = await wals.readWal(document) || newWal(effective.document);
           const ownJsonl = effective.jsonlRows?.find((entry) => entry.deviceId === deviceId);
           const ownAnchor = effective.jsonlAnchors?.find((entry) => entry.deviceId === deviceId);
           const ownArchives = effective.jsonlArchives?.filter((entry) => entry.deviceId === deviceId) || [];
+          const recoverySequences = recoveredSequences(document, [
+            ...(effective.recovery?.records || []).map((entry) => entry.current),
+            ...effective.mainSnapshotCandidates || []
+          ]);
           own.nextSeq = Math.max(
             own.nextSeq,
             (ownJsonl?.operations.at(-1)?.seq || 0) + 1,
             (ownAnchor?.anchor.throughSeq || 0) + 1,
-            ...ownArchives.map((entry) => entry.archive.lastSeq + 1)
+            ...ownArchives.map((entry) => entry.archive.lastSeq + 1),
+            ...recoverySequences.map((seq) => seq + 1)
           );
           if (!jsonlMode && effective.sidecar?.watermark?.[deviceId] >= own.nextSeq) {
             throw failure("WAL_SEQ_REGRESSION", "This device WAL regressed behind its observed watermark.");
@@ -9886,9 +11021,22 @@ var __PDFReaderAnnotationHost = (() => {
             const appended = [];
             let acknowledgedOpId = null;
             const durableByOrigin = useCache ? cached.durableByOrigin : /* @__PURE__ */ new Map();
+            const durableReceipts = /* @__PURE__ */ new Map();
+            for (const entry of [...(effective.recovery?.records || []).map((item) => item.current), ...effective.mainSnapshotCandidates || []]) {
+              for (const receipt of entry.value.receipts || []) {
+                const key = canonicalJson([receipt.deviceId, receipt.uuid, receipt.originOpId]);
+                const prior = durableReceipts.get(key);
+                if (prior && !containsReceipts({ receipts: [prior] }, { receipts: [receipt] }) && !containsReceipts({ receipts: [receipt] }, { receipts: [prior] })) {
+                  throw failure("WAL_OPERATION_COLLISION", "Recovery records contain conflicting input receipts.");
+                }
+                if (!prior || containsReceipts({ receipts: [receipt] }, { receipts: [prior] })) durableReceipts.set(key, receipt);
+              }
+            }
             const appendedByOrigin = /* @__PURE__ */ new Map();
             if (!useCache) {
               for (const operation of [
+                ...(effective.recovery?.records || []).flatMap((entry) => entry.current.value.operations),
+                ...(effective.mainSnapshotCandidates || []).flatMap((entry) => entry.value.operations),
                 ...effective.valid.flatMap((wal) => [...wal.anchor.operations, ...wal.tail]),
                 ...(effective.jsonlAnchors || []).flatMap((entry) => entry.anchor.operations),
                 ...(effective.jsonlArchives || []).flatMap((entry) => entry.archive.operations),
@@ -9906,6 +11054,15 @@ var __PDFReaderAnnotationHost = (() => {
                 const inputHash = await hash(new TextEncoder().encode(canonicalJson(input)));
                 if (inputHash !== receipt.inputHash) throw failure("WAL_OPERATION_COLLISION", "An acknowledged input ID names different content.");
                 acknowledgedOpId = receipt.opId;
+                continue;
+              }
+              const recoveredReceipt = input.originOpId && input.uuid && durableReceipts.get(canonicalJson([deviceId, input.uuid, input.originOpId]));
+              if (recoveredReceipt) {
+                const inputHash = await stableHash(new TextEncoder().encode(canonicalJson(input)));
+                if (inputHash !== recoveredReceipt.inputHash) {
+                  throw failure("WAL_OPERATION_COLLISION", "An acknowledged input ID names different content.");
+                }
+                acknowledgedOpId = recoveredReceipt.opId;
                 continue;
               }
               const originKey = receiptKey && `${deviceId}:${input.uuid}:${input.originOpId}`;
@@ -10018,6 +11175,9 @@ var __PDFReaderAnnotationHost = (() => {
           });
           const captureMs = monotonic() - captureStarted;
           const result = await commit(document, inputs);
+          if (jsonl && result.operationCount > 0) {
+            scheduleSaveActivity();
+          }
           return { ...result, quarantined, timings: { ...result.timings, captureMs } };
         }
         async function updateMetadata(document, delta) {
@@ -10058,7 +11218,20 @@ var __PDFReaderAnnotationHost = (() => {
           const target = await documentForPath(toPath);
           if (target && target.documentId !== documentId) throw failure("IDENTITY_ROUTE_CONFLICT", "Rename destination already has another identity.");
           hotDocuments.delete(prior.docKey);
-          return updateMetadata(prior, { sourcePath: normalizeInitialPath(toPath) });
+          const updated = await updateMetadata(prior, { sourcePath: normalizeInitialPath(toPath) });
+          if (mainRouteClaims) {
+            try {
+              const state = await readEffective(updated, { readOnly: true });
+              if (!state.errors.length && state.state.routing) {
+                for (const indexedPath of [normalizeInitialPath(fromPath), updated.sourcePath]) {
+                  await mainRouteClaims.publish({ indexedPath, document: updated, route: state.state.routing });
+                }
+              }
+            } catch (error) {
+              onTiming({ phase: "main-route-claim", code: error.code || "CLAIM_WRITE_FAILED" });
+            }
+          }
+          return updated;
         }
         async function readDocument(document, { readOnly = false } = {}) {
           if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "Cannot hydrate annotations onto a changed source PDF.");
@@ -10076,7 +11249,7 @@ var __PDFReaderAnnotationHost = (() => {
           const projection = deletionRetention ? await deletionRetention.project(
             loaded.document,
             loaded.state,
-            { readOnly: readOnly || loaded.errors.length > 0 }
+            { readOnly: readOnly || loaded.errors.length > 0 || Boolean(loaded.sidecarError) }
           ) : { tombstones: loaded.state.tombstones, deletionGuards: [] };
           const rows = (map, deleted) => Object.values(map).map((op) => ({
             uuid: op.uuid,
@@ -10106,6 +11279,26 @@ var __PDFReaderAnnotationHost = (() => {
             compactInkEncoding: true,
             revision: (() => {
               const maximum = /* @__PURE__ */ new Map();
+              for (const entry of loaded.recovery?.records || []) {
+                for (const segment of entry.current.value.segments) maximum.set(
+                  segment.deviceId,
+                  Math.max(maximum.get(segment.deviceId) || 0, segment.lastSeq)
+                );
+                for (const op of entry.current.value.operations) maximum.set(
+                  op.version.deviceId,
+                  Math.max(maximum.get(op.version.deviceId) || 0, op.seq)
+                );
+              }
+              for (const entry of loaded.mainSnapshotCandidates || []) {
+                for (const segment of entry.value.segments) maximum.set(
+                  segment.deviceId,
+                  Math.max(maximum.get(segment.deviceId) || 0, segment.lastSeq)
+                );
+                for (const op of entry.value.operations) maximum.set(
+                  op.version.deviceId,
+                  Math.max(maximum.get(op.version.deviceId) || 0, op.seq)
+                );
+              }
               for (const wal of loaded.valid) maximum.set(wal.deviceId, Math.max(maximum.get(wal.deviceId) || 0, wal.nextSeq - 1));
               for (const entry of loaded.jsonlAnchors || []) maximum.set(
                 entry.deviceId,
@@ -10124,14 +11317,546 @@ var __PDFReaderAnnotationHost = (() => {
             annotations: rows(loaded.state.annotations, false),
             tombstones: rows(projection.tombstones, true),
             ...projection.deletionGuards.length ? { deletionGuards: projection.deletionGuards } : {},
-            ...loaded.errors.length ? { syncPending: true } : {}
+            ...loaded.errors.length || loaded.sidecarError ? { syncPending: true } : {}
           };
         }
+        async function createMainCheckpoint(document, { forceRecovery = false } = {}) {
+          if (!mainSnapshots) throw failure("MAIN_SNAPSHOT_UNAVAILABLE", "JSONL storage is required.");
+          if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "A changed PDF cannot be checkpointed.");
+          return queued(document.docKey, async () => {
+            const loaded = await readEffective(document, { readOnly: true });
+            if (!loaded.document) throw failure("WAL_DOCUMENT_MISSING", "Document recovery state is unavailable.");
+            if (loaded.errors.length || loaded.sidecarError) {
+              if (loaded.errors.some((entry) => entry.code === "MAIN_SNAPSHOT_SYNC_PENDING")) {
+                throw failure("MAIN_SNAPSHOT_SYNC_PENDING", "A checkpoint branch has not arrived in verified logs.");
+              }
+              throw failure("WAL_SYNC_PENDING", "All referenced records must verify before publishing a candidate.");
+            }
+            const segments = [];
+            const seenSegments = /* @__PURE__ */ new Map();
+            for (const entry of [...(loaded.recovery?.records || []).map((item) => item.current), ...loaded.mainSnapshotCandidates || []]) {
+              for (const segment of entry.value.segments) {
+                const key = `${segment.deviceId}:${segment.firstSeq}:${segment.lastSeq}`;
+                const prior = seenSegments.get(key);
+                if (prior && prior.digest !== segment.digest) throw failure("MAIN_RECOVERY_INVALID", "Recovered segment conflict.");
+                if (!prior) {
+                  seenSegments.set(key, segment);
+                  segments.push(segment);
+                }
+              }
+            }
+            for (const entry of loaded.jsonlArchives || []) {
+              const raw = await adapter.read(entry.path);
+              let reread;
+              try {
+                reread = JSON.parse(raw);
+              } catch {
+                throw failure("WAL_SYNC_PENDING", "Archive changed while checkpointing.");
+              }
+              const { integrity, ...unsigned } = reread;
+              if (typeof integrity !== "string" || canonicalJson(unsigned) !== canonicalJson(entry.archive)) {
+                throw failure("WAL_SYNC_PENDING", "Archive changed while checkpointing.");
+              }
+              const valid = verifyHash ? await verifyHash(new TextEncoder().encode(canonicalJson(unsigned)), integrity) : Boolean(await verify(reread, hash));
+              if (!valid) throw failure("WAL_SYNC_PENDING", "Archive integrity changed while checkpointing.");
+              const bytes = new TextEncoder().encode(raw);
+              const digest = await stableHash(bytes);
+              if (!/^sha256-v1:[a-f0-9]{64}$/.test(digest)) throw failure("MAIN_SNAPSHOT_HASH_UNAVAILABLE", "SHA-256 is required.");
+              const segment = { deviceId: entry.deviceId, firstSeq: entry.archive.firstSeq, lastSeq: entry.archive.lastSeq, digest };
+              const key = `${segment.deviceId}:${segment.firstSeq}:${segment.lastSeq}`;
+              const prior = seenSegments.get(key);
+              if (prior && prior.digest !== digest) throw failure("MAIN_RECOVERY_INVALID", "Restored archive conflict.");
+              if (!prior) {
+                seenSegments.set(key, segment);
+                segments.push(segment);
+              }
+            }
+            const receipts2 = await collectDurableReceipts(loaded);
+            const provisional = await makeMainSnapshotCandidate({
+              document: loaded.document,
+              operations: opsFor(loaded.state),
+              parents: [],
+              segments,
+              receipts: receipts2,
+              hash: stableHash
+            });
+            const directory = `${root}/main-snapshots/${document.docKey}`;
+            const parents = [];
+            let equivalent = null;
+            const segmentSignature = (rows) => canonicalJson(rows.map((row) => canonicalJson(row)).sort());
+            for (const path of (await list(directory)).files.sort()) {
+              const match = /\/([a-f0-9]{64})\.json$/.exec(path);
+              if (!match) continue;
+              const snapshotId = `sha256-v1:${match[1]}`;
+              const parent = await mainSnapshots.read(loaded.document, snapshotId);
+              const joined = joinOperations(parent.value.operations, opsFor(loaded.state));
+              if (canonicalJson(joined) !== canonicalJson(loaded.state)) {
+                throw failure("MAIN_SNAPSHOT_SYNC_PENDING", "A checkpoint branch contains operations not yet present in verified logs.");
+              }
+              if (canonicalJson(joinOperations(parent.value.operations)) === canonicalJson(loaded.state) && segmentSignature(parent.value.segments) === segmentSignature(segments) && canonicalJson(parent.value.receipts) === canonicalJson(provisional.value.receipts) && (!equivalent || parent.value.parents.length > equivalent.value.parents.length)) equivalent = parent;
+              parents.push(snapshotId);
+            }
+            if (equivalent && !forceRecovery) return equivalent;
+            if (parents.length >= 10) throw failure("MAIN_SNAPSHOT_RETENTION_PENDING", "Ten checkpoints are retained; safe retention must complete before publishing another.");
+            const candidate = await makeMainSnapshotCandidate({
+              document: loaded.document,
+              operations: opsFor(loaded.state),
+              parents,
+              segments,
+              receipts: receipts2,
+              hash: stableHash
+            });
+            return mainSnapshots.publish(loaded.document, candidate);
+          });
+        }
+        async function ackMainCheckpoint(document, snapshotId) {
+          if (!mainSnapshots || !/^[A-Za-z0-9_-]{1,256}$/.test(deviceId || "")) {
+            throw failure("MAIN_SNAPSHOT_UNAVAILABLE", "JSONL storage and a safe device identity are required.");
+          }
+          return queued(document.docKey, async () => {
+            const snapshot = await mainSnapshots.read(document, snapshotId);
+            if (!snapshot) throw failure("MAIN_SNAPSHOT_MISSING", "The checkpoint is unavailable for acknowledgement.");
+            const effective = await readEffective(document, { readOnly: true });
+            if (!effective.document || effective.errors.length || effective.sidecarError || (effective.jsonlRows || []).some((row) => row.operations.length)) {
+              throw failure("MAIN_SNAPSHOT_STALE", "Live or incomplete records must be settled before acknowledgement.");
+            }
+            const checkpointState = joinOperations(snapshot.value.operations);
+            const mergedState = joinOperations(snapshot.value.operations, opsFor(effective.state));
+            if (canonicalJson(checkpointState) !== canonicalJson(mergedState)) {
+              throw failure("MAIN_SNAPSHOT_STALE", "The checkpoint does not include the latest verified state.");
+            }
+            if (!containsReceipts(snapshot.value, { receipts: await collectDurableReceipts(effective) })) {
+              throw failure("MAIN_SNAPSHOT_STALE", "The checkpoint omits durable operation receipts.");
+            }
+            for (const entry of effective.jsonlArchives || []) {
+              const digest = await stableHash(new TextEncoder().encode(await adapter.read(entry.path)));
+              if (!snapshot.value.segments.some((segment) => segment.deviceId === entry.deviceId && segment.firstSeq === entry.archive.firstSeq && segment.lastSeq === entry.archive.lastSeq && segment.digest === digest)) {
+                throw failure("MAIN_SNAPSHOT_STALE", "A verified archive is not covered by the checkpoint.");
+              }
+            }
+            const path = `${root}/main-acks/${document.docKey}/${snapshotId.slice("sha256-v1:".length)}/${deviceId}.json`;
+            const value = {
+              schemaVersion: 1,
+              kind: "pdf-reader-main-snapshot-ack",
+              docKey: document.docKey,
+              documentId: document.documentId,
+              sourceHash: document.source.sourceHash,
+              snapshotId,
+              deviceId
+            };
+            const validate = (row) => {
+              if (canonicalJson(row) !== canonicalJson(value)) throw failure("MAIN_SNAPSHOT_ACK_INVALID", "Acknowledgement identity differs.");
+            };
+            const existing = await mainSnapshotIo.readJson(path, { validate });
+            if (existing) return existing;
+            return mainSnapshotIo.writeJsonAtomic(path, value, { validate, createOnly: true });
+          });
+        }
+        async function prepareMainRetirement({ document, deviceId: target, snapshotId } = {}) {
+          if (!mainSnapshots || !mainDeviceObservations || !document || document.sourceMismatch) {
+            throw failure("MAIN_RETIREMENT_PENDING", "A verified document and JSONL storage are required.");
+          }
+          return queued(document.docKey, async () => {
+            const observeTarget = async () => {
+              try {
+                return await queued("main-device-observation", () => mainDeviceObservations.observe({ deviceId: target }));
+              } catch (error) {
+                if (error?.code === "MAIN_DEVICE_PRESENCE_PENDING") throw failure("MAIN_RETIREMENT_PENDING", "A device presence update is incomplete.");
+                throw error;
+              }
+            };
+            const observed = await observeTarget();
+            if (!observed.retirementCandidate) throw failure("MAIN_RETIREMENT_PENDING", "The device is not a current inactivity candidate.");
+            const loaded = await readEffective(document, { readOnly: true });
+            if (!loaded.document || loaded.errors.length || loaded.sidecarError || loaded.valid.length || loaded.jsonlRows.some((row) => row.operations.length)) {
+              throw failure("MAIN_RETIREMENT_PENDING", "Unsettled document data prevents retirement planning.");
+            }
+            const checkpoint = await mainSnapshots.read(document, snapshotId);
+            if (!checkpoint || canonicalJson(joinOperations(checkpoint.value.operations, opsFor(loaded.state))) !== canonicalJson(joinOperations(checkpoint.value.operations)) || !containsReceipts(checkpoint.value, { receipts: await collectDurableReceipts(loaded) })) {
+              throw failure("MAIN_RETIREMENT_PENDING", "The checkpoint does not cover the verified state.");
+            }
+            for (const entry of loaded.jsonlArchives) {
+              const digest = await stableHash(new TextEncoder().encode(await adapter.read(entry.path)));
+              if (!checkpoint.value.segments.some((segment) => segment.deviceId === entry.deviceId && segment.firstSeq === entry.archive.firstSeq && segment.lastSeq === entry.archive.lastSeq && segment.digest === digest)) {
+                throw failure("MAIN_RETIREMENT_PENDING", "The checkpoint does not cover an archive.");
+              }
+            }
+            const devices = [.../* @__PURE__ */ new Set([
+              deviceId,
+              ...await mainDeviceObservations.knownDevices(),
+              ...(loaded.recovery?.records || []).flatMap((row) => row.record.devices),
+              ...loaded.jsonlAnchors.map((row) => row.deviceId),
+              ...loaded.jsonlRows.map((row) => row.deviceId),
+              ...loaded.jsonlArchives.map((row) => row.deviceId),
+              ...checkpoint.value.segments.map((row) => row.deviceId)
+            ])].sort();
+            const acknowledgements = [];
+            async function requireAck(owner) {
+              const path = `${root}/main-acks/${document.docKey}/${snapshotId.slice(10)}/${owner}.json`;
+              if (await adapter.exists(`${path}.pending`)) throw failure("MAIN_RETIREMENT_PENDING", "A device ACK update is incomplete.");
+              const ack = await mainSnapshotIo.readJson(path);
+              if (!ack || ack.kind !== "pdf-reader-main-snapshot-ack" || ack.schemaVersion !== 1 || ack.docKey !== document.docKey || ack.documentId !== document.documentId || ack.sourceHash !== document.source.sourceHash || ack.snapshotId !== snapshotId || ack.deviceId !== owner) throw failure("MAIN_RETIREMENT_PENDING", "A device ACK is missing or invalid.");
+              if (await adapter.exists(`${path}.pending`)) throw failure("MAIN_RETIREMENT_PENDING", "A device ACK update is incomplete.");
+            }
+            for (const owner of devices.filter((id) => id !== target)) {
+              await requireAck(owner);
+              acknowledgements.push({ deviceId: owner, snapshotId, verified: true });
+            }
+            const latestDevices = await mainDeviceObservations.knownDevices();
+            if (latestDevices.some((id) => !devices.includes(id))) {
+              throw failure("MAIN_RETIREMENT_PENDING", "The observed device set changed while checking acknowledgements.");
+            }
+            const latest = await observeTarget();
+            if (!latest.retirementCandidate || latest.observation.digest !== observed.observation.digest || latest.observation.firstObservedAt !== observed.observation.firstObservedAt) {
+              throw failure("MAIN_RETIREMENT_PENDING", "The target device became active while checking acknowledgements.");
+            }
+            const finalState = await readEffective(document, { readOnly: true });
+            if (!finalState.document || finalState.errors.length || finalState.sidecarError || finalState.valid.length || finalState.jsonlRows.some((row) => row.operations.length) || canonicalJson(joinOperations(checkpoint.value.operations, opsFor(finalState.state))) !== canonicalJson(joinOperations(checkpoint.value.operations)) || !containsReceipts(checkpoint.value, { receipts: await collectDurableReceipts(finalState) })) {
+              throw failure("MAIN_RETIREMENT_PENDING", "Document state changed while checking retirement evidence.");
+            }
+            for (const entry of finalState.jsonlArchives) {
+              const digest = await stableHash(new TextEncoder().encode(await adapter.read(entry.path)));
+              if (!checkpoint.value.segments.some((segment) => segment.deviceId === entry.deviceId && segment.firstSeq === entry.archive.firstSeq && segment.lastSeq === entry.archive.lastSeq && segment.digest === digest)) {
+                throw failure("MAIN_RETIREMENT_PENDING", "A newly published archive is not covered by the checkpoint.");
+              }
+            }
+            for (const owner of devices.filter((id) => id !== target)) await requireAck(owner);
+            const finalDevices = await mainDeviceObservations.knownDevices();
+            if (finalDevices.some((id) => !devices.includes(id))) {
+              throw failure("MAIN_RETIREMENT_PENDING", "The observed device set changed during final verification.");
+            }
+            const finalObservation = await observeTarget();
+            if (!finalObservation.retirementCandidate || finalObservation.observation.digest !== observed.observation.digest || finalObservation.observation.firstObservedAt !== observed.observation.firstObservedAt) {
+              throw failure("MAIN_RETIREMENT_PENDING", "The target device became active during final verification.");
+            }
+            return makeRetirementProposal({
+              document,
+              checkpoint,
+              deviceId: target,
+              observerId: deviceId,
+              observation: finalObservation.observation,
+              now: finalObservation.observation.lastObservedAt,
+              presenceDigest: finalObservation.observation.digest,
+              deviceIds: devices,
+              acknowledgements,
+              hash: stableHash
+            });
+          });
+        }
+        async function readMainCheckpoint(document, snapshotId) {
+          if (!mainSnapshots) throw failure("MAIN_SNAPSHOT_UNAVAILABLE", "JSONL storage is required.");
+          if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "Cannot recover onto a changed source PDF.");
+          const candidate = await mainSnapshots.read(document, snapshotId);
+          if (!candidate) throw failure("MAIN_SNAPSHOT_MISSING", "The requested checkpoint is unavailable.");
+          return {
+            snapshotId: candidate.snapshotId,
+            documentId: document.documentId,
+            docKey: document.docKey,
+            state: joinOperations(candidate.value.operations),
+            segments: candidate.value.segments
+          };
+        }
+        async function publishMainRetirementProposal(input) {
+          if (!retirementProposals) throw failure("MAIN_RETIREMENT_PENDING", "JSONL storage is required.");
+          const proposal = await prepareMainRetirement(input);
+          return retirementProposals.publish(input.document, proposal);
+        }
+        async function revalidateMainRetirementProposal(document, id) {
+          if (!retirementProposals) throw failure("MAIN_RETIREMENT_PENDING", "JSONL storage is required.");
+          const stored = await retirementProposals.read(document, id);
+          if (!stored || stored.value.observerId !== deviceId) {
+            throw failure("MAIN_RETIREMENT_PENDING", "The observer's retirement evidence is unavailable.");
+          }
+          const current = await prepareMainRetirement({ document, deviceId: stored.value.deviceId, snapshotId: stored.value.checkpointId });
+          const { observedAt: _pastTime, ...previous } = stored.value;
+          const { observedAt: _currentTime, ...latest } = current;
+          if (canonicalJson(previous) !== canonicalJson(latest)) {
+            throw failure("MAIN_RETIREMENT_PENDING", "Retirement evidence has changed since the proposal was published.");
+          }
+          return stored;
+        }
+        async function pruneCoveredArchives({ document, current, previous, paths }) {
+          if (!mainRecovery || !Array.isArray(paths) || !paths.length || new Set(paths).size !== paths.length) {
+            throw failure("MAIN_RECOVERY_INVALID", "A nonempty distinct archive list is required.");
+          }
+          if (document.sourceMismatch) throw failure("SOURCE_MISMATCH", "A changed PDF cannot be compacted.");
+          return queued(document.docKey, async () => {
+            const loaded = await readEffective(document, { readOnly: true });
+            const failedRecoverySnapshot = loaded.errors.find((entry) => [current, previous].some((id) => typeof id === "string" && entry.path?.endsWith(`/${id.slice(10)}.json`)));
+            if (failedRecoverySnapshot) throw failure("MAIN_SNAPSHOT_CORRUPT", "A recovery checkpoint failed verification.");
+            if (!loaded.document || loaded.errors.length || loaded.sidecarError || loaded.valid.length || (loaded.jsonlRows || []).some((row) => row.operations.length)) {
+              throw failure("MAIN_RECOVERY_PENDING", "Legacy, incomplete or live records prevent archive cleanup.");
+            }
+            const checkpoint = await mainSnapshots.read(document, current);
+            const backup = await mainSnapshots.read(document, previous);
+            if (!checkpoint || !backup || current === previous || canonicalJson(joinOperations(checkpoint.value.operations, opsFor(loaded.state))) !== canonicalJson(joinOperations(checkpoint.value.operations))) {
+              throw failure("MAIN_RECOVERY_PENDING", "The recovery pair does not cover the latest state.");
+            }
+            if (!containsReceipts(checkpoint.value, { receipts: await collectDurableReceipts(loaded) })) {
+              throw failure("MAIN_RECOVERY_PENDING", "The current checkpoint omits durable operation receipts.");
+            }
+            const knownDevices = await mainDeviceObservations.knownDevices();
+            const devices = [.../* @__PURE__ */ new Set([
+              deviceId,
+              ...knownDevices,
+              ...(loaded.recovery?.records || []).flatMap((row) => row.record.devices),
+              ...loaded.jsonlAnchors.map((row) => row.deviceId),
+              ...loaded.jsonlRows.map((row) => row.deviceId),
+              ...loaded.jsonlArchives.map((row) => row.deviceId),
+              ...checkpoint.value.segments.map((row) => row.deviceId)
+            ])].sort();
+            async function checkKnownDevices() {
+              const latestDevices = await mainDeviceObservations.knownDevices();
+              if (latestDevices.some((id) => !devices.includes(id))) {
+                throw failure("MAIN_RECOVERY_ACK_PENDING", "A newly observed device has not acknowledged this checkpoint.");
+              }
+            }
+            const acknowledgements = [];
+            for (const owner of devices) {
+              if (!/^[A-Za-z0-9_-]{1,256}$/.test(owner)) throw failure("MAIN_RECOVERY_INVALID", "Invalid device identity.");
+              const ack = await mainSnapshotIo.readJson(`${root}/main-acks/${document.docKey}/${current.slice(10)}/${owner}.json`);
+              if (!ack || ack.kind !== "pdf-reader-main-snapshot-ack" || ack.schemaVersion !== 1 || ack.documentId !== document.documentId || ack.docKey !== document.docKey || ack.sourceHash !== document.source.sourceHash || ack.deviceId !== owner || ack.snapshotId !== current) {
+                throw failure("MAIN_RECOVERY_ACK_PENDING", "An active device has not acknowledged this exact checkpoint.");
+              }
+              acknowledgements.push({ deviceId: owner, snapshotId: current, verified: true });
+            }
+            const archives = [];
+            for (const entry of loaded.recovery?.records || []) {
+              if (!containsReceipts(checkpoint.value, entry.current.value) || !containsReceipts(backup.value, entry.current.value)) {
+                throw failure("MAIN_RECOVERY_PENDING", "The recovery pair omits previously confirmed operation receipts.");
+              }
+              for (const archive of entry.record.archives) {
+                const prior = archives.find((row) => row.path === archive.path);
+                if (prior && canonicalJson(prior) !== canonicalJson(archive)) {
+                  throw failure("MAIN_RECOVERY_INVALID", "Archived recovery evidence conflicts.");
+                }
+                if (!prior) archives.push(archive);
+              }
+            }
+            for (const path of paths) {
+              const entry = loaded.jsonlArchives.find((row) => row.path === path);
+              if (!entry) throw failure("MAIN_RECOVERY_INVALID", "Only verified sealed archives can be deleted.");
+              const archivedReceipts = await collectDurableReceipts({ valid: [], jsonlAnchors: [], jsonlRows: [], jsonlArchives: [entry] });
+              if (![checkpoint, backup].every((item) => containsReceipts(item.value, { receipts: archivedReceipts }))) {
+                throw failure("MAIN_RECOVERY_PENDING", "Both recovery checkpoints must retain archived request receipts.");
+              }
+              const digest = await stableHash(new TextEncoder().encode(await adapter.read(path)));
+              const archive = {
+                path,
+                deviceId: entry.deviceId,
+                firstSeq: entry.archive.firstSeq,
+                lastSeq: entry.archive.lastSeq,
+                digest,
+                sealed: true,
+                verified: true
+              };
+              const prior = archives.find((row) => row.path === path);
+              if (prior && canonicalJson(prior) !== canonicalJson(archive)) throw failure("MAIN_RECOVERY_INVALID", "Archived recovery evidence conflicts.");
+              if (!prior) archives.push(archive);
+            }
+            const supersedes = [...new Set((loaded.recovery?.records || []).flatMap((row) => [row.id, ...row.record.supersedes || []]))].sort();
+            const published = await mainRecovery.publish(document, {
+              schemaVersion: 1,
+              kind: "pdf-reader-main-recovery",
+              documentId: document.documentId,
+              docKey: document.docKey,
+              sourceHash: document.source.sourceHash,
+              current,
+              previous,
+              devices,
+              acknowledgements,
+              archives,
+              supersedes
+            });
+            let removedCount = 0;
+            for (const archive of archives.filter((item) => paths.includes(item.path))) {
+              await checkKnownDevices();
+              const raw = await adapter.read(archive.path);
+              if (await stableHash(new TextEncoder().encode(raw)) !== archive.digest) {
+                throw failure("MAIN_RECOVERY_PENDING", "An archive changed before deletion.");
+              }
+              const pair = await mainRecovery.read(document);
+              if (pair.errors.length) throw failure("MAIN_RECOVERY_PENDING", "Recovery evidence changed before deletion.");
+              const token = String(uuid());
+              if (!/^[A-Za-z0-9_-]{1,256}$/.test(token)) throw failure("MAIN_RECOVERY_INVALID", "Invalid cleanup token.");
+              const staged = `${archive.path}.gc-${token}`;
+              if (await adapter.exists(staged)) throw failure("MAIN_RECOVERY_PENDING", "A cleanup staging path already exists.");
+              await adapter.rename(archive.path, staged);
+              const stagedRaw = await adapter.read(staged);
+              if (await stableHash(new TextEncoder().encode(stagedRaw)) !== archive.digest) {
+                throw failure("MAIN_RECOVERY_PENDING", "An archive changed at the cleanup boundary; bytes are retained in staging.");
+              }
+              await checkKnownDevices();
+              await adapter.remove(staged);
+              removedCount++;
+            }
+            async function removeVerifiedEntry(path, expectedRaw) {
+              const token = String(uuid());
+              if (!/^[A-Za-z0-9_-]{1,256}$/.test(token)) throw failure("MAIN_RECOVERY_INVALID", "Invalid cleanup token.");
+              const staged = `${path}.gc-${token}`;
+              if (await adapter.exists(staged)) throw failure("MAIN_RECOVERY_PENDING", "A cleanup staging path already exists.");
+              await adapter.rename(path, staged);
+              if (await adapter.read(staged) !== expectedRaw) {
+                throw failure("MAIN_RECOVERY_PENDING", "Cleanup target changed; bytes are retained in staging.");
+              }
+              await checkKnownDevices();
+              await adapter.remove(staged);
+            }
+            for (const old of loaded.recovery?.records || []) {
+              await checkKnownDevices();
+              const currentRecovery = await mainRecovery.read(document);
+              if (currentRecovery.errors.length || !currentRecovery.records.some((row) => row.id === published.id)) {
+                throw failure("MAIN_RECOVERY_PENDING", "Cumulative recovery evidence is unavailable.");
+              }
+              const rawText = await adapter.read(old.path);
+              const raw = JSON.parse(rawText);
+              const { integrity, ...unsigned } = raw;
+              if (await stableHash(new TextEncoder().encode(canonicalJson(unsigned))) !== old.id) {
+                throw failure("MAIN_RECOVERY_PENDING", "Prior recovery evidence changed before cleanup.");
+              }
+              await removeVerifiedEntry(old.path, rawText);
+            }
+            const directory = `${root}/main-snapshots/${document.docKey}`;
+            const snapshotRows = [];
+            for (const path of (await list(directory)).files.sort()) {
+              const match = /\/([a-f0-9]{64})\.json$/.exec(path);
+              if (match) snapshotRows.push({ path, value: await mainSnapshots.read(document, `sha256-v1:${match[1]}`) });
+            }
+            const referenced = new Set(snapshotRows.flatMap((row) => row.value.value.parents));
+            const frontier = new Set(snapshotRows.filter((row) => !referenced.has(row.value.snapshotId)).map((row) => row.value.snapshotId));
+            let excess = Math.max(0, snapshotRows.length - 9);
+            for (const row of snapshotRows.sort((a, b) => a.value.value.parents.length - b.value.value.parents.length)) {
+              if (!excess || row.value.snapshotId === current || row.value.snapshotId === previous || frontier.has(row.value.snapshotId)) continue;
+              await checkKnownDevices();
+              const old = row.value.value;
+              const dominated = [checkpoint, backup].every((newer) => canonicalJson(joinOperations(newer.value.operations, old.operations)) === canonicalJson(joinOperations(newer.value.operations)) && containsReceipts(newer.value, old) && old.segments.every((segment) => newer.value.segments.some((candidate) => canonicalJson(candidate) === canonicalJson(segment))));
+              if (!dominated) continue;
+              const recovery = await mainRecovery.read(document);
+              if (recovery.errors.length || !recovery.records.some((entry) => entry.id === published.id)) {
+                throw failure("MAIN_RECOVERY_PENDING", "Checkpoint recovery evidence changed during cleanup.");
+              }
+              await mainSnapshots.read(document, row.value.snapshotId);
+              const rawText = await adapter.read(row.path);
+              if (rawText !== canonicalJson(row.value)) throw failure("MAIN_RECOVERY_PENDING", "Checkpoint changed before cleanup.");
+              await removeVerifiedEntry(row.path, rawText);
+              excess--;
+            }
+            hotDocuments.delete(document.docKey);
+            advanceJsonlGeneration(coordinationAdapter, document.docKey);
+            return { removedCount };
+          });
+        }
+        async function resumeMainArchiveCleanup(document) {
+          if (!mainRecovery || !document || document.sourceMismatch) throw failure("MAIN_RECOVERY_PENDING", "A verified JSONL document is required.");
+          return queued(document.docKey, async () => {
+            const loaded = await readEffective(document, { readOnly: true });
+            if (!loaded.document || loaded.errors.length || loaded.sidecarError || loaded.valid.length || loaded.jsonlRows.some((row) => row.operations.length)) {
+              throw failure("MAIN_RECOVERY_PENDING", "Unsettled data prevents resuming archive cleanup.");
+            }
+            const observed = [.../* @__PURE__ */ new Set([
+              deviceId,
+              ...await mainDeviceObservations.knownDevices(),
+              ...loaded.jsonlAnchors.map((row) => row.deviceId),
+              ...loaded.jsonlRows.map((row) => row.deviceId),
+              ...loaded.jsonlArchives.map((row) => row.deviceId)
+            ])];
+            const pattern = new RegExp(`/${document.docKey}\\.jsonl\\.archive\\.\\d+-\\d+\\.json\\.gc-[A-Za-z0-9_-]+$`);
+            const stages = [];
+            for (const directory of (await list(`${root}/wal`)).folders) {
+              stages.push(...(await list(directory)).files.filter((path) => pattern.test(path)));
+            }
+            let removedCount = 0;
+            for (const staged of stages.sort()) {
+              const original = staged.slice(0, staged.lastIndexOf(".gc-"));
+              const record = loaded.recovery.records.find((entry) => entry.record.archives.some((item) => item.path === original));
+              const archive = record?.record.archives.find((item) => item.path === original);
+              if (!record || observed.some((id) => !record.record.devices.includes(id))) {
+                throw failure("MAIN_RECOVERY_PENDING", "Recovery evidence or device acknowledgement is incomplete.");
+              }
+              for (const owner of record.record.devices) {
+                const ack = await mainSnapshotIo.readJson(`${root}/main-acks/${document.docKey}/${record.record.current.slice(10)}/${owner}.json`);
+                if (!ack || ack.kind !== "pdf-reader-main-snapshot-ack" || ack.schemaVersion !== 1 || ack.docKey !== document.docKey || ack.documentId !== document.documentId || ack.sourceHash !== document.source.sourceHash || ack.snapshotId !== record.record.current || ack.deviceId !== owner) {
+                  throw failure("MAIN_RECOVERY_PENDING", "A recovery checkpoint acknowledgement is missing or invalid.");
+                }
+              }
+              if (await stableHash(new TextEncoder().encode(await adapter.read(staged))) !== archive.digest) {
+                throw failure("MAIN_RECOVERY_PENDING", "A staged archive differs from the recovery certificate.");
+              }
+              const token = String(uuid());
+              if (!/^[A-Za-z0-9_-]{1,256}$/.test(token)) throw failure("MAIN_RECOVERY_INVALID", "Invalid cleanup token.");
+              const isolated = `${original}.gc-${token}`;
+              if (await adapter.exists(isolated)) throw failure("MAIN_RECOVERY_PENDING", "A cleanup staging path already exists.");
+              await adapter.rename(staged, isolated);
+              if (await stableHash(new TextEncoder().encode(await adapter.read(isolated))) !== archive.digest || (await mainDeviceObservations.knownDevices()).some((id) => !record.record.devices.includes(id))) {
+                throw failure("MAIN_RECOVERY_PENDING", "Staged content or the device set changed; bytes are retained.");
+              }
+              await adapter.remove(isolated);
+              removedCount++;
+            }
+            return { removedCount };
+          });
+        }
+        async function maintainMainSnapshots(document) {
+          if (!mainSnapshots) return { status: "not-applicable" };
+          return queued(`main-maintenance:${document.docKey}`, async () => {
+            const loaded = await readEffective(document, { readOnly: true });
+            if (!loaded.document || loaded.errors.length || loaded.sidecarError || loaded.jsonlRows.some((row) => row.operations.length)) return { status: "sync-pending" };
+            if (loaded.gcStages?.length) {
+              return { status: "deferred", reason: "MAIN_DISTRIBUTED_GC_UNVERIFIED" };
+            }
+            if (loaded.state.routing) await mainRouteClaims.publish({
+              indexedPath: loaded.document.sourcePath,
+              document: loaded.document,
+              route: loaded.state.routing
+            });
+            await signalMainDeviceActivity();
+            const existing = [];
+            for (const path of (await list(`${root}/main-snapshots/${document.docKey}`)).files.sort()) {
+              const match = /\/([a-f0-9]{64})\.json$/.exec(path);
+              if (match) existing.push(await mainSnapshots.read(loaded.document, `sha256-v1:${match[1]}`));
+            }
+            const derived = await adapter.exists(jsonlCheckpoints.snapshotPath(document)) ? 1 : 0;
+            const fileCount = existing.length + loaded.jsonlArchives.length + derived;
+            if (fileCount <= 3) return { status: "below-threshold", fileCount };
+            try {
+              let current = await createMainCheckpoint(loaded.document);
+              let previous = existing.filter((row) => row.snapshotId !== current.snapshotId && current.value.parents.includes(row.snapshotId)).sort((a, b) => b.value.parents.length - a.value.parents.length)[0];
+              if (!previous) {
+                previous = current;
+                current = await createMainCheckpoint(loaded.document, { forceRecovery: true });
+              }
+              await ackMainCheckpoint(loaded.document, current.snapshotId);
+              const newest = /* @__PURE__ */ new Map();
+              for (const entry of loaded.jsonlArchives) {
+                const prior = newest.get(entry.deviceId);
+                if (!prior || prior.archive.lastSeq < entry.archive.lastSeq) newest.set(entry.deviceId, entry);
+              }
+              const paths = loaded.jsonlArchives.filter((entry) => newest.get(entry.deviceId) !== entry && previous.value.segments.some((segment) => segment.deviceId === entry.deviceId && segment.firstSeq === entry.archive.firstSeq && segment.lastSeq === entry.archive.lastSeq)).map((entry) => entry.path);
+              if (!paths.length) return { status: "checkpointed", fileCount, snapshotId: current.snapshotId, removedCount: 0 };
+              return {
+                status: "deferred",
+                fileCount,
+                snapshotId: current.snapshotId,
+                reason: "MAIN_DISTRIBUTED_GC_UNVERIFIED",
+                removedCount: 0
+              };
+            } catch (error) {
+              if ([
+                "MAIN_RECOVERY_ACK_PENDING",
+                "MAIN_RECOVERY_PENDING",
+                "MAIN_SNAPSHOT_STALE",
+                "MAIN_SNAPSHOT_SYNC_PENDING",
+                "MAIN_SNAPSHOT_RETENTION_PENDING"
+              ].includes(error.code)) return { status: "deferred", fileCount, reason: error.code };
+              throw error;
+            }
+          });
+        }
         async function materializeSnapshot(document) {
-          await activateEpoch();
           return queued(document.docKey, async () => {
             const loaded = await readEffective(document);
-            if (loaded.errors.length) return readDocument(document);
+            if (loaded.errors.length || loaded.sidecarError) return readDocument(document, { readOnly: true });
+            await activateEpoch();
             const own = await wals.readWal(document);
             if (jsonl) {
               const ownRows = loaded.jsonlRows.find((entry) => entry.deviceId === deviceId)?.operations || [];
@@ -10188,6 +11913,7 @@ var __PDFReaderAnnotationHost = (() => {
         function affectsPath(document, path) {
           if (path === registry.path || path === pathsFor(document).snapshot) return true;
           if (jsonl) {
+            if (["main-snapshots", "main-recovery", "main-acks"].some((directory) => path.startsWith(`${root}/${directory}/${document.docKey}/`))) return true;
             if (path === jsonlCheckpoints.snapshotPath(document)) return true;
             if (path.startsWith(`${root}/wal/`)) {
               const leaf = path.slice(path.lastIndexOf("/") + 1);
@@ -10207,6 +11933,21 @@ var __PDFReaderAnnotationHost = (() => {
             isCurrent: wal.deviceId === deviceId
           })), errors: loaded.errors };
         }
+        function signalMainDeviceActivity() {
+          return mainDeviceObservations ? queued("main-device-presence", () => mainDeviceObservations.publishPresence()) : Promise.resolve();
+        }
+        function observeKnownMainDevices() {
+          if (!mainDeviceObservations) return Promise.resolve([]);
+          return queued("main-device-observation", async () => {
+            const known = await mainDeviceObservations.knownDevices();
+            const observations = [];
+            for (const other of known) {
+              if (other === deviceId) continue;
+              observations.push({ deviceId: other, ...await mainDeviceObservations.observe({ deviceId: other }) });
+            }
+            return observations;
+          });
+        }
         return {
           registerDocument,
           documentForPath,
@@ -10214,6 +11955,20 @@ var __PDFReaderAnnotationHost = (() => {
           appendOperations,
           readDocument,
           materializeSnapshot,
+          createMainCheckpoint,
+          ackMainCheckpoint,
+          prepareMainRetirement,
+          publishMainRetirementProposal,
+          revalidateMainRetirementProposal,
+          readMainRetirementProposal: (document, id) => retirementProposals?.read(document, id),
+          readMainCheckpoint,
+          pruneCoveredArchives,
+          resumeMainArchiveCleanup,
+          maintainMainSnapshots,
+          signalMainDeviceActivity,
+          observeKnownMainDevices,
+          lookupMainRouteClaims: (path) => mainRouteClaims ? mainRouteClaims.query(path) : Promise.resolve({ claims: [], errors: [] }),
+          observeMainDevice: (otherDeviceId) => queued("main-device-observation", () => mainDeviceObservations.observe({ deviceId: otherDeviceId })),
           updateSourceIdentity,
           updateLegacyIdentities,
           renameDocument,
@@ -10227,8 +11982,9 @@ var __PDFReaderAnnotationHost = (() => {
           },
           invalidateExternal: (path) => {
             if (!jsonl || typeof path !== "string") return;
-            for (const [docKey] of hotDocuments) {
-              if (path.includes(`/${docKey}.`)) {
+            const globalRouteChange = path === registry.path || path.startsWith(`${root}/main-routes/`);
+            for (const [docKey, cached] of hotDocuments) {
+              if (globalRouteChange || cached.effective?.document && affectsPath(cached.effective.document, path)) {
                 hotDocuments.delete(docKey);
                 advanceJsonlGeneration(coordinationAdapter, docKey);
               }
@@ -11308,11 +13064,705 @@ var __PDFReaderAnnotationHost = (() => {
     }
   });
 
+  // plugin/asset-runtime.cjs
+  var require_asset_runtime = __commonJS({
+    "plugin/asset-runtime.cjs"(exports, module) {
+      var { sha256 } = require_sha2();
+      var MAX_FILE_SIZE = 128 * 1024 * 1024;
+      var MAX_TOTAL_SIZE = 512 * 1024 * 1024;
+      var MAX_CONCURRENT_ASSET_OPERATIONS = 4;
+      var activeLocks = /* @__PURE__ */ new WeakMap();
+      var directoryLocks = /* @__PURE__ */ new WeakMap();
+      var encoder = new TextEncoder();
+      var activeAssetOperations = 0;
+      var waitingAssetOperations = [];
+      async function withAssetOperationSlot(operation, shouldRun) {
+        if (activeAssetOperations >= MAX_CONCURRENT_ASSET_OPERATIONS) {
+          await new Promise((resolve) => waitingAssetOperations.push(resolve));
+        } else {
+          activeAssetOperations += 1;
+        }
+        try {
+          if (!shouldRun()) return;
+          return await operation();
+        } finally {
+          const next = waitingAssetOperations.shift();
+          if (next) next();
+          else activeAssetOperations -= 1;
+        }
+      }
+      function comparePaths(left, right) {
+        return left < right ? -1 : left > right ? 1 : 0;
+      }
+      function isPlainObject(value) {
+        if (!value || typeof value !== "object") {
+          return false;
+        }
+        const prototype = Object.getPrototypeOf(value);
+        return prototype === Object.prototype || prototype === null;
+      }
+      function bytesView(value, label) {
+        if (Object.prototype.toString.call(value) === "[object ArrayBuffer]") {
+          return new Uint8Array(value);
+        }
+        if (ArrayBuffer.isView(value)) {
+          return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        }
+        throw new Error(`${label} did not return binary data.`);
+      }
+      function bytesToArrayBuffer(bytes) {
+        return bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        );
+      }
+      function sha256Bytes(value) {
+        const bytes = bytesView(value, "SHA-256 input");
+        return Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      }
+      function validatePathSegment(segment, label) {
+        if (!segment || segment === "." || segment === ".." || /[\0\\/:<>"|?*]/.test(segment) || /[. ]$/.test(segment) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)) {
+          throw new Error(
+            `Invalid ${label} path segment: ${JSON.stringify(segment)}`
+          );
+        }
+      }
+      function validateAssetPath(assetPath) {
+        if (typeof assetPath !== "string" || !assetPath || assetPath.startsWith("/") || assetPath.includes("\\") || assetPath.includes("\0")) {
+          throw new Error(`Invalid viewer asset path: ${JSON.stringify(assetPath)}`);
+        }
+        const segments = assetPath.split("/");
+        for (const segment of segments) {
+          validatePathSegment(segment, "viewer asset");
+        }
+        if (assetPath.toLowerCase() === ".complete.json") {
+          throw new Error("The viewer asset path is reserved for the cache marker.");
+        }
+        return segments.join("/");
+      }
+      function validatePluginRoot(pluginRoot) {
+        if (typeof pluginRoot !== "string" || !pluginRoot || pluginRoot.startsWith("/") || pluginRoot.includes("\\") || pluginRoot.includes("\0")) {
+          throw new Error("The plugin root must be a vault-relative path.");
+        }
+        const segments = pluginRoot.split("/");
+        for (const segment of segments) {
+          validatePathSegment(segment, "plugin root");
+        }
+        return segments.join("/");
+      }
+      function validateAssetId(id) {
+        if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id === "." || id === "..") {
+          throw new Error("The viewer asset payload has an invalid id.");
+        }
+        validatePathSegment(id, "asset id");
+        return id;
+      }
+      function canonicalManifest(payload, files) {
+        const rows = [...files].sort((left, right) => comparePaths(left.path, right.path)).map((file) => `${file.path}	${file.size}	${file.sha256}
+`).join("");
+        return `pdf-web-reader-assets
+${payload.schema}
+${payload.id}
+${rows}`;
+      }
+      function computeContentHash(payload) {
+        if (!isPlainObject(payload) || payload.schema !== 1) {
+          throw new Error("Unsupported viewer asset payload schema.");
+        }
+        validateAssetId(payload.id);
+        if (!Array.isArray(payload.files)) {
+          throw new Error("The viewer asset payload has no file manifest.");
+        }
+        const files = payload.files.map((file) => ({
+          path: validateAssetPath(file?.path),
+          size: file?.size,
+          sha256: file?.sha256
+        }));
+        return sha256Bytes(encoder.encode(canonicalManifest(payload, files)));
+      }
+      function hasCanonicalBase64Padding(base64) {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        if (base64.endsWith("==")) {
+          return (alphabet.indexOf(base64.at(-3)) & 15) === 0;
+        }
+        if (base64.endsWith("=")) {
+          return (alphabet.indexOf(base64.at(-2)) & 3) === 0;
+        }
+        return true;
+      }
+      function decodeCanonicalBase64(base64, label) {
+        if (typeof base64 !== "string" || base64.length === 0 || base64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+          base64
+        ) || !hasCanonicalBase64Padding(base64)) {
+          throw new Error(`Non-canonical base64 data for viewer asset ${label}.`);
+        }
+        let binary;
+        try {
+          binary = atob(base64);
+        } catch (error) {
+          throw new Error(
+            `Unable to decode base64 viewer asset ${label}: ${error.message}`
+          );
+        }
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+      }
+      function validatePayload(payload) {
+        if (!isPlainObject(payload) || payload.schema !== 1) {
+          throw new Error("Unsupported viewer asset payload schema.");
+        }
+        const id = validateAssetId(payload.id);
+        if (typeof payload.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(payload.contentHash)) {
+          throw new Error("The viewer asset payload has an invalid content hash.");
+        }
+        if (!Array.isArray(payload.files) || payload.files.length === 0) {
+          throw new Error("The viewer asset payload is empty.");
+        }
+        const seenPaths = /* @__PURE__ */ new Set();
+        let totalSize = 0;
+        const files = payload.files.map((file, index) => {
+          if (!isPlainObject(file)) {
+            throw new Error(`Invalid viewer asset manifest entry at index ${index}.`);
+          }
+          const path = validateAssetPath(file.path);
+          const foldedPath = path.toLowerCase();
+          if (seenPaths.has(foldedPath)) {
+            throw new Error(`Duplicate viewer asset path: ${path}`);
+          }
+          seenPaths.add(foldedPath);
+          if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_SIZE) {
+            throw new Error(`Invalid viewer asset size for ${path}.`);
+          }
+          totalSize += file.size;
+          if (totalSize > MAX_TOTAL_SIZE) {
+            throw new Error("The viewer asset payload exceeds the size limit.");
+          }
+          if (typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256)) {
+            throw new Error(`Invalid viewer asset SHA-256 for ${path}.`);
+          }
+          if (typeof file.gzipBase64 !== "string" || file.gzipBase64.length === 0 || file.gzipBase64.length > Math.ceil(MAX_FILE_SIZE * 4 / 3) + 8 || file.gzipBase64.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+            file.gzipBase64
+          ) || !hasCanonicalBase64Padding(file.gzipBase64)) {
+            throw new Error(`Invalid compressed viewer asset data for ${path}.`);
+          }
+          return {
+            path,
+            size: file.size,
+            sha256: file.sha256,
+            gzipBase64: file.gzipBase64
+          };
+        });
+        if (computeContentHash({ schema: payload.schema, id, files }) !== payload.contentHash) {
+          throw new Error("The viewer asset manifest content hash does not match.");
+        }
+        return { schema: 1, id, contentHash: payload.contentHash, files };
+      }
+      async function decompressBounded(compressed, file) {
+        if (typeof Blob !== "function" || typeof DecompressionStream !== "function") {
+          throw new Error("This environment does not support gzip decompression.");
+        }
+        let reader;
+        try {
+          const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+          reader = stream.getReader();
+          const output = new Uint8Array(file.size);
+          let offset = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = bytesView(value, `Decompressed viewer asset ${file.path}`);
+            if (chunk.byteLength > file.size - offset) {
+              await reader.cancel();
+              throw new Error(`Decompressed output exceeds the declared size.`);
+            }
+            output.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          if (offset !== file.size) {
+            throw new Error(`Decompressed output size does not match the manifest.`);
+          }
+          return output;
+        } catch (error) {
+          throw new Error(
+            `Unable to decompress viewer asset ${file.path}: ${error.message}`
+          );
+        } finally {
+          reader?.releaseLock();
+        }
+      }
+      async function decodePayloadFile(file) {
+        const compressed = decodeCanonicalBase64(file.gzipBase64, file.path);
+        const bytes = await decompressBounded(compressed, file);
+        if (sha256Bytes(bytes) !== file.sha256) {
+          throw new Error(
+            `Embedded viewer asset failed integrity verification: ${file.path}`
+          );
+        }
+        return bytes;
+      }
+      function assertAdapter(adapter) {
+        const requiredMethods = [
+          "exists",
+          "mkdir",
+          "readBinary",
+          "writeBinary",
+          "remove",
+          "read",
+          "write"
+        ];
+        if (!adapter || typeof adapter !== "object" && typeof adapter !== "function" || requiredMethods.some((method) => typeof adapter[method] !== "function")) {
+          throw new Error("The vault adapter is missing a required file operation.");
+        }
+      }
+      function ensureDirectory(adapter, directoryPath) {
+        let adapterLocks = directoryLocks.get(adapter);
+        if (!adapterLocks) {
+          adapterLocks = /* @__PURE__ */ new Map();
+          directoryLocks.set(adapter, adapterLocks);
+        }
+        const pending = adapterLocks.get(directoryPath);
+        if (pending) return pending;
+        const separator = directoryPath.lastIndexOf("/");
+        const parentPath = separator < 0 ? "" : directoryPath.slice(0, separator);
+        const creation = Promise.resolve().then(async () => {
+          if (parentPath) await ensureDirectory(adapter, parentPath);
+          if (!await adapter.exists(directoryPath)) {
+            await adapter.mkdir(directoryPath);
+          }
+        }).finally(() => {
+          if (adapterLocks.get(directoryPath) === creation) {
+            adapterLocks.delete(directoryPath);
+          }
+          if (adapterLocks.size === 0) directoryLocks.delete(adapter);
+        });
+        adapterLocks.set(directoryPath, creation);
+        return creation;
+      }
+      async function forEachConcurrent(items, operation) {
+        let nextIndex = 0;
+        let firstError;
+        let hasError = false;
+        const workerCount = Math.min(
+          MAX_CONCURRENT_ASSET_OPERATIONS,
+          items.length
+        );
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (!hasError) {
+            const index = nextIndex;
+            nextIndex += 1;
+            if (index >= items.length) return;
+            try {
+              await withAssetOperationSlot(
+                () => operation(items[index], index),
+                () => !hasError
+              );
+            } catch (error) {
+              if (!hasError) {
+                hasError = true;
+                firstError = error;
+              }
+            }
+          }
+        });
+        await Promise.all(workers);
+        if (hasError) throw firstError;
+      }
+      function manifestMarker(payload) {
+        const manifestFiles = [...payload.files].map(({ path, size, sha256: sha2562 }) => ({ path, size, sha256: sha2562 })).sort((left, right) => comparePaths(left.path, right.path));
+        return {
+          schema: payload.schema,
+          id: payload.id,
+          contentHash: payload.contentHash,
+          fileCount: manifestFiles.length,
+          files: manifestFiles
+        };
+      }
+      function markerContent(payload, statIndex) {
+        const marker = manifestMarker(payload);
+        if (statIndex) {
+          marker.statIndexVersion = 1;
+          marker.statIndex = statIndex;
+        }
+        return `${JSON.stringify(marker, null, 2)}
+`;
+      }
+      function markerMatchesManifest(marker, expected) {
+        if (!isPlainObject(marker)) return false;
+        const keys = Object.keys(marker).sort(comparePaths);
+        const baseKeys = Object.keys(expected).sort(comparePaths);
+        const indexedKeys = [...baseKeys, "statIndex", "statIndexVersion"].sort(
+          comparePaths
+        );
+        if (keys.length !== baseKeys.length && keys.length !== indexedKeys.length) {
+          return false;
+        }
+        if (!keys.every((key, index) => key === baseKeys[index]) && !keys.every((key, index) => key === indexedKeys[index])) {
+          return false;
+        }
+        if (marker.schema !== expected.schema || marker.id !== expected.id || marker.contentHash !== expected.contentHash || marker.fileCount !== expected.fileCount || !Array.isArray(marker.files) || marker.files.length !== expected.files.length) {
+          return false;
+        }
+        return marker.files.every((entry, index) => {
+          const expectedEntry = expected.files[index];
+          return isPlainObject(entry) && Object.keys(entry).sort(comparePaths).join("\0") === "path\0sha256\0size" && entry.path === expectedEntry.path && entry.size === expectedEntry.size && entry.sha256 === expectedEntry.sha256;
+        });
+      }
+      function readStatTuple(stat) {
+        if (!stat || typeof stat !== "object" || stat.type !== "file") return null;
+        const size = stat.size;
+        const mtime = typeof stat.mtime === "number" ? stat.mtime : stat.mtimeMs;
+        const ctime = typeof stat.ctime === "number" ? stat.ctime : stat.ctimeMs;
+        if (!Number.isSafeInteger(size) || size < 0 || typeof mtime !== "number" || !Number.isFinite(mtime) || mtime <= 0 || typeof ctime !== "number" || !Number.isFinite(ctime) || ctime < 0) {
+          return null;
+        }
+        return { size, mtime, ctime };
+      }
+      function sameStatTuple(left, right) {
+        return Boolean(
+          left && right && left.size === right.size && left.mtime === right.mtime && left.ctime === right.ctime
+        );
+      }
+      async function fileStat(adapter, fullPath, metrics) {
+        if (typeof adapter.stat !== "function") return null;
+        metrics.statChecks += 1;
+        try {
+          return readStatTuple(await adapter.stat(fullPath));
+        } catch {
+          return null;
+        }
+      }
+      function readStatIndex(marker, payload) {
+        if (!isPlainObject(marker) || marker.statIndexVersion !== 1 || !Array.isArray(marker.statIndex) || marker.statIndex.length !== payload.files.length) {
+          return null;
+        }
+        const expectedFiles = [...payload.files].sort(
+          (a, b) => comparePaths(a.path, b.path)
+        );
+        const index = /* @__PURE__ */ new Map();
+        for (let position = 0; position < marker.statIndex.length; position += 1) {
+          const row = marker.statIndex[position];
+          const expected = expectedFiles[position];
+          if (!isPlainObject(row) || Object.keys(row).sort(comparePaths).join("\0") !== "ctime\0mtime\0path\0sha256\0size" || row.path !== expected.path || row.sha256 !== expected.sha256 || row.size !== expected.size || row.mtime !== null && (typeof row.mtime !== "number" || !Number.isFinite(row.mtime) || row.mtime <= 0) || row.ctime !== null && (typeof row.ctime !== "number" || !Number.isFinite(row.ctime) || row.ctime < 0)) {
+            return null;
+          }
+          index.set(row.path, {
+            size: row.size,
+            mtime: row.mtime,
+            ctime: row.ctime
+          });
+        }
+        return index;
+      }
+      async function inspectAsset(adapter, fullPath, file, beforeStat, metrics) {
+        if (!await adapter.exists(fullPath)) {
+          return {
+            matches: false,
+            stable: true,
+            stat: await fileStat(adapter, fullPath, metrics)
+          };
+        }
+        let actual;
+        try {
+          actual = bytesView(await adapter.readBinary(fullPath), fullPath);
+          metrics.verificationReads += 1;
+        } catch (error) {
+          if (!await adapter.exists(fullPath)) {
+            return {
+              matches: false,
+              stable: true,
+              stat: await fileStat(adapter, fullPath, metrics)
+            };
+          }
+          throw error;
+        }
+        const afterStat = await fileStat(adapter, fullPath, metrics);
+        const hasComparableStats = Boolean(beforeStat && afterStat);
+        const stable = hasComparableStats ? sameStatTuple(beforeStat, afterStat) : true;
+        return {
+          matches: stable && actual.byteLength === file.size && sha256Bytes(actual) === file.sha256,
+          stable,
+          // One missing/unusable stat makes this a hash-only verification. Do not
+          // persist the surviving half as if it bracketed the read; the null row
+          // forces another safe SHA check on the next startup.
+          stat: hasComparableStats && stable ? afterStat : null
+        };
+      }
+      function statIndexRows(payload, verified) {
+        return [...payload.files].sort((a, b) => comparePaths(a.path, b.path)).map((file) => {
+          const tuple = verified.get(file.path)?.stat || null;
+          return {
+            path: file.path,
+            size: file.size,
+            sha256: file.sha256,
+            mtime: tuple?.mtime ?? null,
+            ctime: tuple?.ctime ?? null
+          };
+        });
+      }
+      function sameStatIndexRows(left, right) {
+        return Boolean(
+          Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((row, index) => {
+            const other = right[index];
+            return row.path === other?.path && row.size === other?.size && row.sha256 === other?.sha256 && row.mtime === other?.mtime && row.ctime === other?.ctime;
+          })
+        );
+      }
+      function assetCacheRoot(pluginRoot, payload, compactPath) {
+        if (!compactPath) return `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
+        const identityHash = sha256Bytes(encoder.encode(JSON.stringify([payload.id, payload.contentHash])));
+        return `${pluginRoot}/.asset-cache/v2/${identityHash}`;
+      }
+      async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {}) {
+        const markerPath = `${rootPath}/.complete.json`;
+        const expectedManifest = manifestMarker(verifiedPayload);
+        const startedAt = Date.now();
+        const metrics = {
+          cacheHit: false,
+          checkedFiles: verifiedPayload.files.length,
+          verificationReads: 0,
+          statChecks: 0,
+          decodedFiles: 0,
+          repairedFiles: 0,
+          decodedBytes: 0,
+          bytesWritten: 0
+        };
+        try {
+          const markerExists = await adapter.exists(markerPath);
+          let marker = null;
+          if (markerExists) {
+            try {
+              marker = JSON.parse(await adapter.read(markerPath));
+            } catch {
+              marker = null;
+            }
+          }
+          const manifestMatches = markerMatchesManifest(marker, expectedManifest);
+          const indexed = manifestMatches ? readStatIndex(marker, verifiedPayload) : null;
+          const useIndex = Boolean(indexed) && options.forceVerify !== true;
+          const verified = /* @__PURE__ */ new Map();
+          const repair = /* @__PURE__ */ new Set();
+          const touched = /* @__PURE__ */ new Set();
+          let skippedStatFiles = 0;
+          await forEachConcurrent(verifiedPayload.files, async (file) => {
+            const fullPath = `${rootPath}/${file.path}`;
+            const beforeStat = await fileStat(adapter, fullPath, metrics);
+            const indexedStat = useIndex ? indexed.get(file.path) : null;
+            if (indexedStat && indexedStat.size === file.size && beforeStat && sameStatTuple(indexedStat, beforeStat) && beforeStat.size === file.size) {
+              skippedStatFiles += 1;
+              verified.set(file.path, { stat: beforeStat });
+              return;
+            }
+            touched.add(file.path);
+            const result = await inspectAsset(adapter, fullPath, file, beforeStat, metrics);
+            verified.set(file.path, { stat: result.stat });
+            if (!result.matches || !result.stable) repair.add(file.path);
+          });
+          const observedIndex = statIndexRows(verifiedPayload, verified);
+          if (manifestMatches && useIndex && repair.size === 0 && sameStatIndexRows(marker.statIndex, observedIndex)) {
+            metrics.cacheHit = true;
+            metrics.statCacheFiles = skippedStatFiles;
+            metrics.elapsedMs = Date.now() - startedAt;
+            return {
+              rootPath,
+              webRoot: `${rootPath}/web`,
+              version: verifiedPayload.id,
+              contentHash: verifiedPayload.contentHash,
+              metrics
+            };
+          }
+          if (markerExists) await adapter.remove(markerPath);
+          const repairFiles = verifiedPayload.files.filter((file) => repair.has(file.path));
+          const hadRepairs = repairFiles.length > 0;
+          await forEachConcurrent(repairFiles, async (file) => {
+            const bytes = await decodePayloadFile(file);
+            metrics.decodedFiles += 1;
+            metrics.decodedBytes += bytes.byteLength;
+            const fullPath = `${rootPath}/${file.path}`;
+            const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
+            await ensureDirectory(adapter, parentPath);
+            await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+            metrics.bytesWritten += bytes.byteLength;
+            metrics.repairedFiles += 1;
+            touched.add(file.path);
+            const writeStat = await fileStat(adapter, fullPath, metrics);
+            const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
+            if (!result.matches || !result.stable) {
+              throw new Error(
+                `Viewer asset failed verification after writing: ${file.path}`
+              );
+            }
+            verified.set(file.path, { stat: result.stat });
+          });
+          const finalRepair = /* @__PURE__ */ new Set();
+          const touchedFiles = verifiedPayload.files.filter(
+            (file) => touched.has(file.path)
+          );
+          await forEachConcurrent(touchedFiles, async (file) => {
+            const fullPath = `${rootPath}/${file.path}`;
+            const priorStat = verified.get(file.path)?.stat || null;
+            const currentStat = await fileStat(adapter, fullPath, metrics);
+            if (priorStat && currentStat && sameStatTuple(priorStat, currentStat)) {
+              verified.set(file.path, { stat: currentStat });
+              return;
+            }
+            if (!priorStat && !currentStat) {
+              if (!hadRepairs) return;
+              const result2 = await inspectAsset(adapter, fullPath, file, null, metrics);
+              verified.set(file.path, { stat: result2.stat });
+              if (!result2.matches || !result2.stable) finalRepair.add(file.path);
+              return;
+            }
+            const result = await inspectAsset(adapter, fullPath, file, currentStat, metrics);
+            verified.set(file.path, { stat: result.stat });
+            if (!result.matches || !result.stable) finalRepair.add(file.path);
+          });
+          if (finalRepair.size > 0) {
+            await forEachConcurrent(
+              verifiedPayload.files.filter((file) => finalRepair.has(file.path)),
+              async (file) => {
+                const bytes = await decodePayloadFile(file);
+                metrics.decodedFiles += 1;
+                metrics.decodedBytes += bytes.byteLength;
+                const fullPath = `${rootPath}/${file.path}`;
+                const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
+                await ensureDirectory(adapter, parentPath);
+                await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+                metrics.bytesWritten += bytes.byteLength;
+                metrics.repairedFiles += 1;
+                touched.add(file.path);
+                const writeStat = await fileStat(adapter, fullPath, metrics);
+                const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
+                if (!result.matches || !result.stable) {
+                  throw new Error(`Viewer asset changed while repairing: ${file.path}`);
+                }
+                verified.set(file.path, { stat: result.stat });
+              }
+            );
+            for (const file of verifiedPayload.files.filter(
+              (entry) => finalRepair.has(entry.path)
+            )) {
+              const previous = verified.get(file.path)?.stat || null;
+              const current = await fileStat(adapter, `${rootPath}/${file.path}`, metrics);
+              if (previous && current && !sameStatTuple(previous, current)) {
+                throw new Error(`Viewer asset changed before cache commit: ${file.path}`);
+              }
+            }
+          }
+          const expectedMarker = markerContent(
+            verifiedPayload,
+            statIndexRows(verifiedPayload, verified)
+          );
+          await adapter.write(markerPath, expectedMarker);
+        } catch (error) {
+          try {
+            if (await adapter.exists(markerPath)) {
+              await adapter.remove(markerPath);
+            }
+          } catch {
+          }
+          throw error;
+        }
+        metrics.elapsedMs = Date.now() - startedAt;
+        return {
+          rootPath,
+          webRoot: `${rootPath}/web`,
+          version: verifiedPayload.id,
+          contentHash: verifiedPayload.contentHash,
+          metrics
+        };
+      }
+      function ensureViewerAssets(adapter, pluginRoot, payload, options = {}) {
+        let safePluginRoot;
+        let verifiedPayload;
+        try {
+          assertAdapter(adapter);
+          safePluginRoot = validatePluginRoot(pluginRoot);
+          verifiedPayload = validatePayload(payload);
+        } catch (error) {
+          return Promise.reject(error);
+        }
+        const rootPath = assetCacheRoot(safePluginRoot, verifiedPayload, options?.compactPath === true);
+        let adapterLocks = activeLocks.get(adapter);
+        if (!adapterLocks) {
+          adapterLocks = /* @__PURE__ */ new Map();
+          activeLocks.set(adapter, adapterLocks);
+        }
+        const pending = adapterLocks.get(rootPath);
+        if (pending) {
+          const forceVerify = options?.forceVerify === true;
+          if (forceVerify && pending.forceVerify !== true) {
+            return pending.catch(() => void 0).then(async () => {
+              while (true) {
+                const currentLocks = activeLocks.get(adapter);
+                const active = currentLocks?.get(rootPath);
+                if (active?.forceVerify === true) return active;
+                if (!active) {
+                  return startAssetExtraction(
+                    adapter,
+                    currentLocks || adapterLocks,
+                    rootPath,
+                    safePluginRoot,
+                    verifiedPayload,
+                    true
+                  );
+                }
+                await active.catch(() => void 0);
+              }
+            });
+          }
+          return pending;
+        }
+        return startAssetExtraction(
+          adapter,
+          adapterLocks,
+          rootPath,
+          safePluginRoot,
+          verifiedPayload,
+          options?.forceVerify === true
+        );
+      }
+      function startAssetExtraction(adapter, adapterLocks, rootPath, safePluginRoot, verifiedPayload, forceVerify) {
+        let currentLocks = activeLocks.get(adapter);
+        if (!currentLocks) {
+          currentLocks = adapterLocks || /* @__PURE__ */ new Map();
+          activeLocks.set(adapter, currentLocks);
+        }
+        const alreadyActive = currentLocks.get(rootPath);
+        if (alreadyActive) return alreadyActive;
+        const extraction = Promise.resolve().then(
+          () => extractOrRepair(adapter, rootPath, verifiedPayload, {
+            forceVerify
+          })
+        ).finally(() => {
+          if (currentLocks.get(rootPath) === extraction) {
+            currentLocks.delete(rootPath);
+          }
+          if (currentLocks.size === 0 && activeLocks.get(adapter) === currentLocks) {
+            activeLocks.delete(adapter);
+          }
+        });
+        extraction.forceVerify = forceVerify;
+        currentLocks.set(rootPath, extraction);
+        return extraction;
+      }
+      module.exports = {
+        computeContentHash,
+        ensureViewerAssets,
+        sha256Bytes,
+        validateAssetPath
+      };
+    }
+  });
+
   // plugin/pdf-annotation-host.cjs
   var require_pdf_annotation_host = __commonJS({
     "plugin/pdf-annotation-host.cjs"(exports, module) {
       var { createWalAnnotationStore } = require_wal_annotation_store();
       var { createSourceVersions } = require_pdf_source_versions();
+      var { sha256Bytes } = require_asset_runtime();
       var ANNOTATION_ROOT = "00_Archive/20_PDFData";
       var TAIL_SAMPLE_BYTES = 64 * 1024;
       function createPdfAnnotationHost({
@@ -11508,7 +13958,7 @@ var __PDFReaderAnnotationHost = (() => {
           normalizePath,
           uuid: makeToken,
           hash: hashRuntime.fingerprint,
-          identityHash: identityHash || hashRuntime.fingerprint,
+          identityHash: identityHash || sha256Bytes,
           verifyHash: typeof hashRuntime.matches === "function" ? hashRuntime.matches : void 0,
           deviceId,
           jsonlMode: enableJsonl,
@@ -11665,6 +14115,11 @@ ${entry.actorId || "legacy"}`
           const state = { document: currentDocument, source, physicalSource, file, path: sourcePath };
           sourceStates.set(currentDocument.documentId, state);
           addView(currentDocument.documentId, view);
+          if (!registered.sourceMismatch && !snapshotReadError && !snapshot.syncPending) {
+            void Promise.resolve(store.signalMainDeviceActivity?.()).then(() => store.observeKnownMainDevices?.()).catch((error) => {
+              log("annotation-device-presence-failed", { code: error?.code || "unknown" });
+            });
+          }
           log("annotation-open", {
             storageProtocol: store.sourceProtocol || "format3",
             documentId: currentDocument.documentId,
@@ -11991,6 +14446,10 @@ ${entry.actorId || "legacy"}`
               return;
             }
             log("annotation-snapshot-materialized", { documentId: document.documentId });
+            if (typeof store.maintainMainSnapshots === "function") {
+              const maintenance = await store.maintainMainSnapshots(document);
+              log("annotation-main-maintained", { documentId: document.documentId, ...maintenance });
+            }
           } catch (error) {
             log("annotation-snapshot-materialize-failed", { documentId: document.documentId, code: error.code || "unknown" });
           }
@@ -12005,6 +14464,14 @@ ${entry.actorId || "legacy"}`
         }
         async function watchDeletionRetention() {
           if (disposed || store.sourceProtocol !== "wal-sidecar-v3.2-jsonl") return;
+          if ([...documentViews.values()].some((views) => [...views].some((view) => !view.teardownStarted && !view.annotationSourceMismatch && !view.annotationSyncPending && !view.annotationStorageUnavailable))) {
+            try {
+              await store.signalMainDeviceActivity?.();
+              await store.observeKnownMainDevices?.();
+            } catch (error) {
+              log("annotation-device-presence-failed", { code: error?.code || "unknown" });
+            }
+          }
           for (const [id, state] of sourceStates) {
             const views = [...documentViews.get(id) || []].filter((view) => !view.teardownStarted);
             if (!views.length || views.some((view) => view.annotationSourceMismatch || view.annotationSyncPending || view.annotationStorageUnavailable)) continue;
@@ -12047,6 +14514,8 @@ ${entry.actorId || "legacy"}`
           if (disposed || !file?.path) return false;
           const changedPath = normalizePath(file.path);
           if (!changedPath.startsWith(`${ANNOTATION_ROOT}/`)) return false;
+          store.invalidateRegistry?.();
+          store.invalidateExternal?.(changedPath);
           const current = pendingSidecarChecks.get(changedPath);
           if (current) {
             current.generation += 1;
@@ -12077,7 +14546,6 @@ ${entry.actorId || "legacy"}`
           return pending.promise;
         }
         async function inspectSidecarChange(changedPath, pending, generation) {
-          store.invalidateRegistry?.();
           const affectedDocuments = [];
           for (const [documentId, state] of sourceStates) {
             const paths = store.pathsFor(state.document);
@@ -12109,7 +14577,6 @@ ${entry.actorId || "legacy"}`
             if (selfSidecarWrites.get(changedPath) === expectedSelfWrite) selfSidecarWrites.delete(changedPath);
           }
           if (pending.generation !== generation) return;
-          store.invalidateExternal?.(changedPath);
           for (const { documentId, document } of affectedDocuments) {
             await broadcastDocument(document);
             log("annotation-sidecar-changed", { documentId, path: changedPath });

@@ -255,6 +255,13 @@ export const GATE_MANIFEST = Object.freeze({
     "tests/wal-v32-crash.test.mjs",
     "tests/wal-v32-engine.test.mjs",
     "tests/wal-v32-store-integration.test.mjs",
+    "tests/main-snapshot-candidate.test.mjs",
+    "tests/main-snapshot-device-observation.test.mjs",
+      "tests/main-retirement-classifier.test.mjs",
+      "tests/main-retirement-proposal.test.mjs",
+    "tests/main-snapshot-maintenance.test.mjs",
+    "tests/main-snapshot-store.test.mjs",
+    "tests/main-route-claim-store.test.mjs",
     "tests/test-gate-runner.test.mjs",
   ]),
   browser: Object.freeze([

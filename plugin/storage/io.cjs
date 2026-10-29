@@ -165,7 +165,18 @@ function createStorageIo({ adapter, hash, verifyHash, token = makeToken } = {}) 
     } catch { /* Best-effort cleanup; pending files are never treated as records. */ }
   }
 
-  async function writeJsonAtomic(path, value, { validate, createOnly = false } = {}) {
+  async function verifiedDuplicateStage(path) {
+    const marker = path.lastIndexOf(".pending-");
+    if (marker < 0) return false;
+    try {
+      const staged = await readRaw(path), published = await readRaw(path.slice(0, marker));
+      if (staged === null || staged !== published) return false;
+      await decodeRaw(published, { path: path.slice(0, marker) });
+      return true;
+    } catch { return false; }
+  }
+
+  async function writeJsonAtomic(path, value, { validate, createOnly = false, uniquePending = false, acceptConcurrent = false } = {}) {
     if (!safePath(path)) throw codedError("WAL_PATH_INVALID", "A storage path is unsafe.");
     const serialized = canonicalJson(await seal(value, hash));
     const sealedValue = JSON.parse(serialized);
@@ -181,25 +192,39 @@ function createStorageIo({ adapter, hash, verifyHash, token = makeToken } = {}) 
         oldIsValid = true;
       } catch { /* A corrupt target can be repaired from a verified new value. */ }
     }
-    if (createOnly && oldIsValid) {
-      throw codedError("WAL_SIDECAR_EXISTS", `A valid sidecar already exists at ${path}.`);
+    if (createOnly && current !== null) {
+      throw codedError("WAL_SIDECAR_EXISTS", `A file already exists at ${path}; its bytes are retained.`);
     }
 
     const operationToken = String(token());
     if (!operationToken || operationToken.includes("/") || operationToken.includes("..")) {
       throw codedError("WAL_TOKEN_INVALID", "A temporary file token is invalid.");
     }
-    const pendingPath = `${path}.pending`;
+    const uniqueStaging = uniquePending || createOnly;
+    if (uniqueStaging && !/^[A-Za-z0-9_-]{1,256}$/.test(operationToken)) {
+      throw codedError("WAL_TOKEN_INVALID", "A unique temporary file token is invalid.");
+    }
+    const pendingPath = uniqueStaging ? `${path}.pending-${operationToken}` : `${path}.pending`;
     await ensureDirectory(path);
     try {
+      if (uniqueStaging && await adapter.exists(pendingPath)) throw codedError("WAL_PENDING_EXISTS", "A unique temporary file already exists.");
       await adapter.write(pendingPath, serialized);
       const staged = await readRaw(pendingPath);
       if (staged !== serialized) throw codedError("WAL_WRITE_UNVERIFIED", `Temporary write verification failed at ${pendingPath}.`);
       await decodeRaw(staged, { path: pendingPath, validate });
 
       try {
-        await adapter.rename(pendingPath, path);
+        if (createOnly) {
+          // The public adapter copy contract refuses an existing destination.
+          // Do not silently fall back to a rename that can replace its target.
+          if (typeof adapter.copy !== "function") throw codedError("WAL_CREATE_ONLY_UNAVAILABLE", "The adapter cannot publish a create-only file safely.");
+          await adapter.copy(pendingPath, path);
+        } else await adapter.rename(pendingPath, path);
       } catch (renameError) {
+        // A create-only write must never fall back to unconditional overwrite:
+        // another participant may have published a file after the initial read.
+        // Keep the staged bytes and let the caller inspect/retry safely.
+        if (createOnly) throw renameError;
         // Adapters that refuse rename over an existing file can still replace
         // it with their atomic write primitive after the pending file verifies.
         try { await adapter.write(path, serialized); }
@@ -214,9 +239,11 @@ function createStorageIo({ adapter, hash, verifyHash, token = makeToken } = {}) 
       }
 
       const confirmed = await readRaw(path);
-      if (confirmed !== serialized) throw codedError("WAL_WRITE_UNVERIFIED", `Atomic replacement verification failed at ${path}.`);
+      if (confirmed !== serialized && !acceptConcurrent) throw codedError("WAL_WRITE_UNVERIFIED", `Atomic replacement verification failed at ${path}.`);
       const result = await decodeRaw(confirmed, { path, validate });
-      await removeIfPresent(pendingPath);
+      // A sync client may have replaced a create-only copy's source. Without
+      // conditional delete, retaining it is the only safe option.
+      if (!createOnly) await removeIfPresent(pendingPath);
       return result;
     } catch (error) {
       if (oldIsValid && oldRaw !== null) {
@@ -242,7 +269,7 @@ function createStorageIo({ adapter, hash, verifyHash, token = makeToken } = {}) 
   }
 
   return Object.freeze({ adapter, hash, verifyHash, ensureDirectory, readRaw, decodeRaw, readJson,
-    readJsonWithDocumentIdentity, writeJsonAtomic, list, safePath });
+    readJsonWithDocumentIdentity, writeJsonAtomic, verifiedDuplicateStage, list, safePath });
 }
 
 module.exports = { createStorageIo, safePath };

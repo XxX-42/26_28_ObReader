@@ -3,6 +3,7 @@
 
 const { createWalAnnotationStore } = require("./storage/wal-annotation-store.cjs");
 const { createSourceVersions } = require("./pdf-source-versions.cjs");
+const { sha256Bytes } = require("./asset-runtime.cjs");
 
 const ANNOTATION_ROOT = "00_Archive/20_PDFData";
 const TAIL_SAMPLE_BYTES = 64 * 1024;
@@ -192,7 +193,7 @@ function createPdfAnnotationHost({
     normalizePath,
     uuid: makeToken,
     hash: hashRuntime.fingerprint,
-    identityHash: identityHash || hashRuntime.fingerprint,
+    identityHash: identityHash || sha256Bytes,
     verifyHash: typeof hashRuntime.matches === "function" ? hashRuntime.matches : undefined,
     deviceId,
     jsonlMode: enableJsonl,
@@ -373,6 +374,11 @@ function createPdfAnnotationHost({
     const state = { document: currentDocument, source, physicalSource, file, path: sourcePath };
     sourceStates.set(currentDocument.documentId, state);
     addView(currentDocument.documentId, view);
+    if (!registered.sourceMismatch && !snapshotReadError && !snapshot.syncPending) {
+      void Promise.resolve(store.signalMainDeviceActivity?.()).then(() => store.observeKnownMainDevices?.()).catch((error) => {
+        log("annotation-device-presence-failed", { code: error?.code || "unknown" });
+      });
+    }
     log("annotation-open", {
       storageProtocol: store.sourceProtocol || "format3",
       documentId: currentDocument.documentId,
@@ -707,6 +713,10 @@ function createPdfAnnotationHost({
         return;
       }
       log("annotation-snapshot-materialized", { documentId: document.documentId });
+      if (typeof store.maintainMainSnapshots === "function") {
+        const maintenance = await store.maintainMainSnapshots(document);
+        log("annotation-main-maintained", { documentId: document.documentId, ...maintenance });
+      }
     } catch (error) {
       // The immutable operation batch is already durable and authoritative.
       log("annotation-snapshot-materialize-failed", { documentId: document.documentId, code: error.code || "unknown" });
@@ -724,6 +734,14 @@ function createPdfAnnotationHost({
 
   async function watchDeletionRetention() {
     if (disposed || store.sourceProtocol !== "wal-sidecar-v3.2-jsonl") return;
+    if ([...documentViews.values()].some((views) => [...views].some((view) =>
+      !view.teardownStarted && !view.annotationSourceMismatch && !view.annotationSyncPending && !view.annotationStorageUnavailable))) {
+      try {
+        await store.signalMainDeviceActivity?.();
+        await store.observeKnownMainDevices?.();
+      }
+      catch (error) { log("annotation-device-presence-failed", { code: error?.code || "unknown" }); }
+    }
     for (const [id, state] of sourceStates) {
       const views = [...(documentViews.get(id) || [])].filter(view => !view.teardownStarted);
       if (!views.length || views.some(view => view.annotationSourceMismatch || view.annotationSyncPending ||
@@ -772,6 +790,10 @@ function createPdfAnnotationHost({
     if (disposed || !file?.path) return false;
     const changedPath = normalizePath(file.path);
     if (!changedPath.startsWith(`${ANNOTATION_ROOT}/`)) return false;
+    // Route lookups must see the invalidation before the delayed/coalesced
+    // sidecar inspection yields; a sync event may have introduced a conflict.
+    store.invalidateRegistry?.();
+    store.invalidateExternal?.(changedPath);
     const current = pendingSidecarChecks.get(changedPath);
     if (current) {
       current.generation += 1;
@@ -811,7 +833,6 @@ function createPdfAnnotationHost({
   }
 
   async function inspectSidecarChange(changedPath, pending, generation) {
-    store.invalidateRegistry?.();
     const affectedDocuments = [];
     for (const [documentId, state] of sourceStates) {
       const paths = store.pathsFor(state.document);
@@ -849,7 +870,6 @@ function createPdfAnnotationHost({
       if (selfSidecarWrites.get(changedPath) === expectedSelfWrite) selfSidecarWrites.delete(changedPath);
     }
     if (pending.generation !== generation) return;
-    store.invalidateExternal?.(changedPath);
     for (const { documentId, document } of affectedDocuments) {
       await broadcastDocument(document);
       log("annotation-sidecar-changed", { documentId, path: changedPath });

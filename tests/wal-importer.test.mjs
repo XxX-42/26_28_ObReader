@@ -37,6 +37,11 @@ function makeAdapter(shared = { files: new Map(), folders: new Set(), writes: []
       files.delete(from);
       renames.push([from, to]);
     },
+    async copy(from, to) {
+      if (!files.has(from)) throw new Error(`missing copy source: ${from}`);
+      if (files.has(to) || folders.has(to)) throw new Error(`copy target exists: ${to}`);
+      files.set(to, files.get(from));
+    },
     async remove(path) {
       files.delete(path);
       removes.push(path);

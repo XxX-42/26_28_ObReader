@@ -164,6 +164,11 @@ function createJsonlCheckpointStore({ adapter, root, hash, verifyHash, token } =
       ...(state.deletionGuards?.length ? { deletionGuards: state.deletionGuards } : {}),
       routing: state.routing || null };
     return io.writeJsonAtomic(snapshotPath(document), value, {
+      // This file is a rebuildable cache. Separate temporary paths prevent
+      // different devices from trampling each other's staging writes. A
+      // different verified cache winning the final rename is also acceptable.
+      uniquePending: true,
+      acceptConcurrent: true,
       validate: (candidate) => {
         if (candidate?.documentId !== document.documentId || candidate?.docKey !== document.docKey ||
             candidate?.sourceHash !== document.source.sourceHash || !Array.isArray(candidate.annotations) ||
