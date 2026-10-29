@@ -10795,7 +10795,10 @@
         if (Controller) {
           const outline = state.floatingPdfOutline = new Controller(app, () =>
             !state.disposed && app.pdfDocument === pdfDocument);
-          void outline.start();
+          // Do not compete with the first page render for PDF worker time.
+          Promise.resolve(app.pdfViewer.onePageRendered).then(() => {
+            if (state.floatingPdfOutline === outline && !state.disposed && app.pdfDocument === pdfDocument) void outline.start();
+          }).catch(() => {});
         }
       }
       annotationToolColors?.applySnapshot(message.preferredAnnotationToolColors);
