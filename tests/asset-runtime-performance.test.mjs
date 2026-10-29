@@ -76,6 +76,59 @@ function assetRoot(pluginRoot, payload) {
   return `${pluginRoot}/.asset-cache/${payload.id}/${payload.contentHash}`;
 }
 
+test("startup releases verified PDF dependencies before unrelated translations and never commits a partial cache", async () => {
+  const paths = ["web/viewer.html", "build/pdf.mjs", "web/cmaps/a.bcmap",
+    "web/locale/en-US/viewer.ftl", "web/locale/zh-CN/viewer.ftl", "web/locale/fr/viewer.ftl"];
+  const payload = makePayload("startup-priority", paths.length);
+  payload.files.forEach((file, index) => { file.path = paths[index]; });
+  payload.contentHash = computeContentHash(payload);
+  const adapter = createMemoryAdapter();
+  let releaseTail;
+  const tail = new Promise(resolve => { releaseTail = resolve; });
+  const write = adapter.writeBinary.bind(adapter);
+  adapter.writeBinary = async (path, bytes) => {
+    if (path.endsWith("/fr/viewer.ftl")) await tail;
+    return write(path, bytes);
+  };
+  let releaseReady;
+  const ready = new Promise(resolve => { releaseReady = resolve; });
+  const completion = ensureViewerAssets(adapter, ".obsidian/plugins/pdf-web-reader", payload,
+    { language: "zh-CN", onStartupReady: releaseReady });
+  const startup = await ready;
+  try {
+    assert.equal(startup.metrics.deferredFiles, 1);
+    for (const file of paths.slice(0, -1)) {
+      assert.equal(await adapter.exists(`${startup.rootPath}/${file}`), true, file);
+    }
+    assert.equal(await adapter.exists(`${startup.rootPath}/.complete.json`), false);
+  } finally { releaseTail(); }
+  const full = await completion;
+  assert.equal(full.metrics.repairedFiles, paths.length);
+  assert.equal(await adapter.exists(`${full.rootPath}/.complete.json`), true);
+});
+
+test("a deferred translation failure leaves no complete marker and is repairable", async () => {
+  const payload = makePayload("startup-tail-failure", 2);
+  payload.files[0].path = "web/viewer.html";
+  payload.files[1].path = "web/locale/fr/viewer.ftl";
+  payload.contentHash = computeContentHash(payload);
+  const adapter = createMemoryAdapter();
+  const write = adapter.writeBinary.bind(adapter);
+  adapter.writeBinary = async (path, bytes) => {
+    if (path.endsWith("fr/viewer.ftl")) throw Error("deferred disk error");
+    return write(path, bytes);
+  };
+  let ready;
+  await assert.rejects(ensureViewerAssets(adapter, ".obsidian/plugins/pdf-web-reader", payload,
+    { onStartupReady: value => { ready = value; } }), /deferred disk error/);
+  assert.ok(ready, "the verified initial stage was released before the failure");
+  assert.equal(await adapter.exists(`${ready.rootPath}/.complete.json`), false);
+  adapter.writeBinary = write;
+  const repaired = await ensureViewerAssets(adapter, ".obsidian/plugins/pdf-web-reader", payload);
+  assert.equal(repaired.metrics.repairedFiles, 1);
+  assert.equal(await adapter.exists(`${ready.rootPath}/.complete.json`), true);
+});
+
 test("compact resource paths preserve full bundle identity within Windows resource URL limits", async () => {
   const adapter = createMemoryAdapter();
   const pluginRoot = ".obsidian/plugins/pdf-web-reader";

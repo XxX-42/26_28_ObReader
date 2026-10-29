@@ -2479,7 +2479,7 @@ class PdfReaderView extends EditableFileView {
   async loadViewerDocument() {
     const started = Date.now();
     if (this.plugin.isMobileRuntime) this.setMobileLoaderStage("assets-loading");
-    const assets = await this.plugin.ensureViewerAssets();
+    const assets = await this.plugin.ensureViewerAssets({ startupOnly: true });
     this.startupTimings.resourcesMs = Date.now() - started;
     this.startupTimings.resources = assets.metrics || null;
     this._assetCache = Object.freeze({ ...assets });
@@ -7214,9 +7214,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return pending;
   }
 
-  ensureViewerAssets({ forceVerify = false } = {}) {
+  ensureViewerAssets({ forceVerify = false, startupOnly = false } = {}) {
     const pluginRoot = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
     const adapter = this.app.vault.adapter;
+    if (!forceVerify && !startupOnly && this.viewerAssetsCompletion) return this.viewerAssetsCompletion;
     const result = this.viewerAssetsResult;
     if (!forceVerify && result && result.adapter === adapter && result.pluginRoot === pluginRoot && result.contentHash === VIEWER_ASSET_PAYLOAD?.contentHash) {
       return Promise.resolve({ ...result.assets, metrics: {
@@ -7227,20 +7228,28 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         decompressMs: 0, hashMs: 0, writeMs: 0, readbackMs: 0, statMs: 0, directoryMs: 0,
       } });
     }
-    if (forceVerify && this.viewerAssetsPromise) {
-      return this.viewerAssetsPromise.catch(() => {}).then(() =>
+    if (forceVerify && this.viewerAssetsCompletion) {
+      return this.viewerAssetsCompletion.catch(() => {}).then(() =>
         this.ensureViewerAssets({ forceVerify: true }),
       );
     }
     if (forceVerify) this.invalidateViewerAssets();
     if (!this.viewerAssetsPromise) {
+      let releaseStartup;
+      const startup = new Promise(resolve => { releaseStartup = resolve; });
       const pending = Promise.resolve()
         .then(() =>
           ensureViewerAssets(
             adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
-            { forceVerify, compactPath: Platform?.isWin === true },
+            { forceVerify, compactPath: Platform?.isWin === true,
+              language: globalThis.navigator?.language || "en-US",
+              onStartupReady: forceVerify ? undefined : (assets) => {
+                if (!this.isUnloading) this.viewerAssetsResult = { adapter, pluginRoot,
+                  contentHash: VIEWER_ASSET_PAYLOAD?.contentHash, assets };
+                releaseStartup(assets);
+              } },
           ),
         )
         .then((assets) => {
@@ -7248,13 +7257,20 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           return assets;
         }, (error) => { this.invalidateViewerAssets(); throw error; })
         .finally(() => {
+          if (this.viewerAssetsCompletion === pending) this.viewerAssetsCompletion = null;
           if (this.viewerAssetsPromise === pending) {
             this.viewerAssetsPromise = null;
           }
         });
+      // The full verified cache continues in the background. It alone may
+      // publish .complete.json; a ready Viewer needs no unrelated translations.
+      this.viewerAssetsCompletion = pending;
       this.viewerAssetsPromise = pending;
+      this.viewerStartupPromise = forceVerify ? pending : Promise.race([startup, pending]);
+      this.viewerStartupPromise.catch(() => {});
+      pending.catch(() => {});
     }
-    return this.viewerAssetsPromise;
+    return startupOnly ? this.viewerStartupPromise : this.viewerAssetsCompletion;
   }
 
   invalidateViewerAssets() {
@@ -7268,7 +7284,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pending = (async () => {
       const entry = VIEWER_ASSET_PAYLOAD?.files?.find((file) => file.path === relativePath);
       if (!entry) throw new Error(`Missing bundled resource: ${relativePath}`);
-      const assets = await this.ensureViewerAssets();
+      const assets = await this.ensureViewerAssets({ startupOnly: true });
       const path = `${assets.rootPath}/${relativePath}`;
       let raw;
       try { raw = await this.app.vault.adapter.readBinary(path); }

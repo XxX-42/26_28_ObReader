@@ -2033,7 +2033,12 @@ ${rows}`;
         const preparedDirectories = /* @__PURE__ */ new Map();
         const prepareDirectory = (parentPath) => {
           if (!preparedDirectories.has(parentPath)) {
-            preparedDirectories.set(parentPath, ensureDirectory(adapter, parentPath));
+            const parent = parentPath.slice(0, parentPath.lastIndexOf("/"));
+            preparedDirectories.set(parentPath, (async () => {
+              if (parentPath.startsWith(`${rootPath}/`)) await prepareDirectory(parent);
+              else return ensureDirectory(adapter, parentPath);
+              if (!await adapter.exists(parentPath)) await adapter.mkdir(parentPath);
+            })());
           }
           return preparedDirectories.get(parentPath);
         };
@@ -2057,6 +2062,7 @@ ${rows}`;
           directoryMs: 0
         };
         try {
+          const rootMissing = !await adapter.exists(rootPath);
           const markerExists = await adapter.exists(markerPath);
           let marker = null;
           if (markerExists) {
@@ -2074,6 +2080,10 @@ ${rows}`;
           const touched = /* @__PURE__ */ new Set();
           let skippedStatFiles = 0;
           await forEachConcurrent(verifiedPayload.files, async (file) => {
+            if (rootMissing) {
+              repair.add(file.path);
+              return;
+            }
             const fullPath = `${rootPath}/${file.path}`;
             const beforeStat = await fileStat(adapter, fullPath, metrics);
             const indexedStat = useIndex ? indexed.get(file.path) : null;
@@ -2103,33 +2113,52 @@ ${rows}`;
           if (markerExists) await adapter.remove(markerPath);
           const repairFiles = verifiedPayload.files.filter((file) => repair.has(file.path));
           const hadRepairs = repairFiles.length > 0;
-          await forEachConcurrent(repairFiles, async (file) => {
-            const bytes = await decodePayloadFile(file, metrics);
-            metrics.decodedFiles += 1;
-            metrics.decodedBytes += bytes.byteLength;
-            const fullPath = `${rootPath}/${file.path}`;
-            const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
-            const directoryStarted = assetNow();
-            await prepareDirectory(parentPath);
-            metrics.directoryMs += assetNow() - directoryStarted;
-            const writeStarted = assetNow();
-            try {
-              await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
-            } finally {
-              metrics.writeMs += assetNow() - writeStarted;
+          const language = String(options.language || "en-US").toLowerCase().split("-")[0];
+          const isStartup = (file) => !file.path.startsWith("web/locale/") || !file.path.endsWith("/viewer.ftl") || file.path.toLowerCase().startsWith("web/locale/en-us/") || file.path.toLowerCase().startsWith(`web/locale/${language}-`) || file.path.toLowerCase().startsWith(`web/locale/${language}/`);
+          const groups = options.onStartupReady ? [repairFiles.filter(isStartup), repairFiles.filter((file) => !isStartup(file))] : [repairFiles];
+          for (let group = 0; group < groups.length; group += 1) {
+            await forEachConcurrent(groups[group], async (file) => {
+              const bytes = await decodePayloadFile(file, metrics);
+              metrics.decodedFiles += 1;
+              metrics.decodedBytes += bytes.byteLength;
+              const fullPath = `${rootPath}/${file.path}`;
+              const parentPath = fullPath.slice(0, fullPath.lastIndexOf("/"));
+              const directoryStarted = assetNow();
+              await prepareDirectory(parentPath);
+              metrics.directoryMs += assetNow() - directoryStarted;
+              const writeStarted = assetNow();
+              try {
+                await adapter.writeBinary(fullPath, bytesToArrayBuffer(bytes));
+              } finally {
+                metrics.writeMs += assetNow() - writeStarted;
+              }
+              metrics.bytesWritten += bytes.byteLength;
+              metrics.repairedFiles += 1;
+              touched.add(file.path);
+              const writeStat = await fileStat(adapter, fullPath, metrics);
+              const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
+              if (!result.matches || !result.stable) {
+                throw new Error(
+                  `Viewer asset failed verification after writing: ${file.path}`
+                );
+              }
+              verified.set(file.path, { stat: result.stat });
+            });
+            if (group === 0 && options.onStartupReady) {
+              options.onStartupReady({
+                rootPath,
+                webRoot: `${rootPath}/web`,
+                version: verifiedPayload.id,
+                contentHash: verifiedPayload.contentHash,
+                metrics: {
+                  ...metrics,
+                  startupReadyMs: Date.now() - startedAt,
+                  elapsedMs: Date.now() - startedAt,
+                  deferredFiles: repairFiles.filter((file) => !isStartup(file)).length
+                }
+              });
             }
-            metrics.bytesWritten += bytes.byteLength;
-            metrics.repairedFiles += 1;
-            touched.add(file.path);
-            const writeStat = await fileStat(adapter, fullPath, metrics);
-            const result = await inspectAsset(adapter, fullPath, file, writeStat, metrics);
-            if (!result.matches || !result.stable) {
-              throw new Error(
-                `Viewer asset failed verification after writing: ${file.path}`
-              );
-            }
-            verified.set(file.path, { stat: result.stat });
-          });
+          }
           const finalRepair = /* @__PURE__ */ new Set();
           const touchedFiles = verifiedPayload.files.filter(
             (file) => touched.has(file.path)
@@ -2262,10 +2291,11 @@ ${rows}`;
           rootPath,
           safePluginRoot,
           verifiedPayload,
-          options?.forceVerify === true
+          options?.forceVerify === true,
+          options
         );
       }
-      function startAssetExtraction(adapter, adapterLocks, rootPath, safePluginRoot, verifiedPayload, forceVerify) {
+      function startAssetExtraction(adapter, adapterLocks, rootPath, safePluginRoot, verifiedPayload, forceVerify, options = {}) {
         let currentLocks = activeLocks.get(adapter);
         if (!currentLocks) {
           currentLocks = adapterLocks || /* @__PURE__ */ new Map();
@@ -2275,7 +2305,9 @@ ${rows}`;
         if (alreadyActive) return alreadyActive;
         const extraction = Promise.resolve().then(
           () => extractOrRepair(adapter, rootPath, verifiedPayload, {
-            forceVerify
+            forceVerify,
+            language: options.language,
+            onStartupReady: options.onStartupReady
           })
         ).finally(() => {
           if (currentLocks.get(rootPath) === extraction) {
@@ -64831,7 +64863,7 @@ class PdfReaderView extends EditableFileView {
   async loadViewerDocument() {
     const started = Date.now();
     if (this.plugin.isMobileRuntime) this.setMobileLoaderStage("assets-loading");
-    const assets = await this.plugin.ensureViewerAssets();
+    const assets = await this.plugin.ensureViewerAssets({ startupOnly: true });
     this.startupTimings.resourcesMs = Date.now() - started;
     this.startupTimings.resources = assets.metrics || null;
     this._assetCache = Object.freeze({ ...assets });
@@ -69566,9 +69598,10 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     return pending;
   }
 
-  ensureViewerAssets({ forceVerify = false } = {}) {
+  ensureViewerAssets({ forceVerify = false, startupOnly = false } = {}) {
     const pluginRoot = normalizePath(`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
     const adapter = this.app.vault.adapter;
+    if (!forceVerify && !startupOnly && this.viewerAssetsCompletion) return this.viewerAssetsCompletion;
     const result = this.viewerAssetsResult;
     if (!forceVerify && result && result.adapter === adapter && result.pluginRoot === pluginRoot && result.contentHash === VIEWER_ASSET_PAYLOAD?.contentHash) {
       return Promise.resolve({ ...result.assets, metrics: {
@@ -69579,20 +69612,28 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
         decompressMs: 0, hashMs: 0, writeMs: 0, readbackMs: 0, statMs: 0, directoryMs: 0,
       } });
     }
-    if (forceVerify && this.viewerAssetsPromise) {
-      return this.viewerAssetsPromise.catch(() => {}).then(() =>
+    if (forceVerify && this.viewerAssetsCompletion) {
+      return this.viewerAssetsCompletion.catch(() => {}).then(() =>
         this.ensureViewerAssets({ forceVerify: true }),
       );
     }
     if (forceVerify) this.invalidateViewerAssets();
     if (!this.viewerAssetsPromise) {
+      let releaseStartup;
+      const startup = new Promise(resolve => { releaseStartup = resolve; });
       const pending = Promise.resolve()
         .then(() =>
           ensureViewerAssets(
             adapter,
             pluginRoot,
             VIEWER_ASSET_PAYLOAD,
-            { forceVerify, compactPath: Platform?.isWin === true },
+            { forceVerify, compactPath: Platform?.isWin === true,
+              language: globalThis.navigator?.language || "en-US",
+              onStartupReady: forceVerify ? undefined : (assets) => {
+                if (!this.isUnloading) this.viewerAssetsResult = { adapter, pluginRoot,
+                  contentHash: VIEWER_ASSET_PAYLOAD?.contentHash, assets };
+                releaseStartup(assets);
+              } },
           ),
         )
         .then((assets) => {
@@ -69600,13 +69641,20 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
           return assets;
         }, (error) => { this.invalidateViewerAssets(); throw error; })
         .finally(() => {
+          if (this.viewerAssetsCompletion === pending) this.viewerAssetsCompletion = null;
           if (this.viewerAssetsPromise === pending) {
             this.viewerAssetsPromise = null;
           }
         });
+      // The full verified cache continues in the background. It alone may
+      // publish .complete.json; a ready Viewer needs no unrelated translations.
+      this.viewerAssetsCompletion = pending;
       this.viewerAssetsPromise = pending;
+      this.viewerStartupPromise = forceVerify ? pending : Promise.race([startup, pending]);
+      this.viewerStartupPromise.catch(() => {});
+      pending.catch(() => {});
     }
-    return this.viewerAssetsPromise;
+    return startupOnly ? this.viewerStartupPromise : this.viewerAssetsCompletion;
   }
 
   invalidateViewerAssets() {
@@ -69620,7 +69668,7 @@ module.exports = class PdfWebReaderPlugin extends Plugin {
     const pending = (async () => {
       const entry = VIEWER_ASSET_PAYLOAD?.files?.find((file) => file.path === relativePath);
       if (!entry) throw new Error(`Missing bundled resource: ${relativePath}`);
-      const assets = await this.ensureViewerAssets();
+      const assets = await this.ensureViewerAssets({ startupOnly: true });
       const path = `${assets.rootPath}/${relativePath}`;
       let raw;
       try { raw = await this.app.vault.adapter.readBinary(path); }

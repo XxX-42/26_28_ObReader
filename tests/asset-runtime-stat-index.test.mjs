@@ -118,6 +118,8 @@ test("a fresh adapter uses the persistent index for a zero-binary-read warm rest
   const firstAdapter = createStatAdapter(state);
   const first = await ensureViewerAssets(firstAdapter, pluginRoot, payload);
   assert.equal(first.metrics.cacheHit, false);
+  assert.equal(first.metrics.statChecks, payload.files.length * 3,
+    "an absent cache root needs no per-file missing stat; readback remains bracketed and rechecked");
 
   const marker = JSON.parse(storedMarker(state, first).text);
   assert.equal(marker.statIndexVersion, 1);

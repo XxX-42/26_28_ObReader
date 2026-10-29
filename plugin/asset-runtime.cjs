@@ -643,7 +643,12 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
   const preparedDirectories = new Map();
   const prepareDirectory = (parentPath) => {
     if (!preparedDirectories.has(parentPath)) {
-      preparedDirectories.set(parentPath, ensureDirectory(adapter, parentPath));
+      const parent = parentPath.slice(0, parentPath.lastIndexOf("/"));
+      preparedDirectories.set(parentPath, (async () => {
+        if (parentPath.startsWith(`${rootPath}/`)) await prepareDirectory(parent);
+        else return ensureDirectory(adapter, parentPath);
+        if (!(await adapter.exists(parentPath))) await adapter.mkdir(parentPath);
+      })());
     }
     return preparedDirectories.get(parentPath);
   };
@@ -663,6 +668,7 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
   };
 
   try {
+    const rootMissing = !(await adapter.exists(rootPath));
     const markerExists = await adapter.exists(markerPath);
     let marker = null;
     if (markerExists) {
@@ -681,6 +687,10 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
     let skippedStatFiles = 0;
 
     await forEachConcurrent(verifiedPayload.files, async (file) => {
+      if (rootMissing) {
+        repair.add(file.path);
+        return;
+      }
       const fullPath = `${rootPath}/${file.path}`;
       const beforeStat = await fileStat(adapter, fullPath, metrics);
       const indexedStat = useIndex ? indexed.get(file.path) : null;
@@ -726,7 +736,19 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
 
     const repairFiles = verifiedPayload.files.filter((file) => repair.has(file.path));
     const hadRepairs = repairFiles.length > 0;
-    await forEachConcurrent(repairFiles, async (file) => {
+    // Only unrelated translations may be deferred. Keep every PDF parser,
+    // font, cmap, image and fallback language available before releasing a Viewer.
+    const language = String(options.language || "en-US").toLowerCase().split("-")[0];
+    const isStartup = (file) => !file.path.startsWith("web/locale/") ||
+      !file.path.endsWith("/viewer.ftl") ||
+      file.path.toLowerCase().startsWith("web/locale/en-us/") ||
+      file.path.toLowerCase().startsWith(`web/locale/${language}-`) ||
+      file.path.toLowerCase().startsWith(`web/locale/${language}/`);
+    const groups = options.onStartupReady
+      ? [repairFiles.filter(isStartup), repairFiles.filter(file => !isStartup(file))]
+      : [repairFiles];
+    for (let group = 0; group < groups.length; group += 1) {
+    await forEachConcurrent(groups[group], async (file) => {
       const bytes = await decodePayloadFile(file, metrics);
       metrics.decodedFiles += 1;
       metrics.decodedBytes += bytes.byteLength;
@@ -750,6 +772,13 @@ async function extractOrRepair(adapter, rootPath, verifiedPayload, options = {})
       }
       verified.set(file.path, { stat: result.stat });
     });
+    if (group === 0 && options.onStartupReady) {
+      options.onStartupReady({ rootPath, webRoot: `${rootPath}/web`,
+        version: verifiedPayload.id, contentHash: verifiedPayload.contentHash,
+        metrics: { ...metrics, startupReadyMs: Date.now() - startedAt,
+          elapsedMs: Date.now() - startedAt, deferredFiles: repairFiles.filter(file => !isStartup(file)).length } });
+    }
+    }
 
     // Before committing the marker, recheck only files that needed hashing or
     // repair. Unchanged indexed files already had one current stat read, and a
@@ -899,6 +928,7 @@ function ensureViewerAssets(adapter, pluginRoot, payload, options = {}) {
     safePluginRoot,
     verifiedPayload,
     options?.forceVerify === true,
+    options,
   );
 }
 
@@ -909,6 +939,7 @@ function startAssetExtraction(
   safePluginRoot,
   verifiedPayload,
   forceVerify,
+  options = {},
 ) {
   let currentLocks = activeLocks.get(adapter);
   if (!currentLocks) {
@@ -921,6 +952,8 @@ function startAssetExtraction(
     .then(() =>
       extractOrRepair(adapter, rootPath, verifiedPayload, {
         forceVerify,
+        language: options.language,
+        onStartupReady: options.onStartupReady,
       }),
     )
     .finally(() => {
