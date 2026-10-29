@@ -979,3 +979,11 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   mask-size: 18.48px 18.48px !important;
 }
 .textLayer .editToolbar .pdfReaderSelectionPlaceholder::before { display: none !important; }
+.textLayer:has(> .pdfReaderSelectionToolbar) { overflow: visible; }
+.textLayer .pdfReaderSelectionToolbar {
+  height: auto;
+}
+.textLayer .pdfReaderSelectionToolbar .buttons {
+  flex-direction: column;
+  height: auto;
+}

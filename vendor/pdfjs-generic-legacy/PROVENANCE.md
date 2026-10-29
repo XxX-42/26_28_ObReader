@@ -133,3 +133,5 @@ Recovery-mode token searching uses Uint8Array.indexOf for the first byte; equiva
 ## Local selection toolbar
 
 Adds copy and reserved actions and reflects the active highlight color.
+
+The selection toolbar is vertical and positioned outside the selected side of the page.

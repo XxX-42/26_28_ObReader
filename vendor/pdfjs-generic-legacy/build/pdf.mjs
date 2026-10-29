@@ -8570,7 +8570,7 @@ class FloatingToolbar {
   }
   #render() {
     const editToolbar = this.#toolbar = document.createElement("div");
-    editToolbar.className = "editToolbar";
+    editToolbar.className = "editToolbar pdfReaderSelectionToolbar";
     editToolbar.setAttribute("role", "toolbar");
     const signal = this.#uiManager._signal;
     if (signal instanceof AbortSignal && !signal.aborted) {
@@ -8642,8 +8642,11 @@ class FloatingToolbar {
     } = this.#toolbar ||= this.#render();
     parent.append(this.#toolbar);
     this.#toolbar.style.setProperty("--pdf-reader-selection-highlight-color", document.documentElement.style.getPropertyValue("--pdf-reader-highlight-color") || HighlightEditor._defaultColor || "#fff066");
-    style.insetInlineEnd = `${100 * x}%`;
-    style.top = `calc(${100 * y}% + var(--editor-toolbar-vert-offset))`;
+    // Keep the controls outside the text page on the side of the selection.
+    const selectionX = isLTR ? 1 - x : x;
+    style.insetInlineEnd = "auto";
+    style.left = selectionX < 0.5 ? `-${this.#toolbar.offsetWidth + 4}px` : "calc(100% + 4px)";
+    style.top = `clamp(4px, calc(${100 * y}% - ${this.#toolbar.offsetHeight / 2}px), max(4px, calc(100% - ${this.#toolbar.offsetHeight + 4}px)))`;
   }
   hide() {
     this.#toolbar.remove();
