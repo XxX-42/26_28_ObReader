@@ -11073,6 +11073,10 @@
       return;
     }
 
+    if (message.type === "outline-font-preference") {
+      if (typeof message.size === "string" && /^\d+(?:\.\d+)?(?:px|rem|em)$/.test(message.size)) document.documentElement.style.setProperty("--font-text-size", message.size);
+      return;
+    }
     if (message.type === "status-bar-preference") {
       const button = document.getElementById("pdfReaderStatusBarToggle");
       if (button) {

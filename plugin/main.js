@@ -3841,6 +3841,7 @@ class PdfReaderView extends EditableFileView {
         this.startupTimings.modulesMs = this.viewerBootStartedAt ? Date.now() - this.viewerBootStartedAt : null;
         this.setMobileLoaderStage("ready");
         this.clearBridgeTimeout();
+        this.postToViewer({ channel: CHANNEL, token: this.token, type: "outline-font-preference", size: globalThis.getComputedStyle?.(this.contentEl)?.getPropertyValue("--font-text-size")?.trim() || "" });
         this.postToViewer({ channel: CHANNEL, token: this.token, type: "status-bar-preference", enabled: this.plugin.settings.showStatusBar });
         this.sendPendingDocument();
         break;
