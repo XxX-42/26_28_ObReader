@@ -4275,7 +4275,9 @@ class PdfReaderView extends EditableFileView {
     const status = this.statusEl;
     if (!status) return;
     status.empty?.();
-    status.setText?.(this.lastStatusMessage);
+    if (typeof status.createEl === "function") {
+      status.createEl("span", { cls: "pdf-reader-status-message", text: this.lastStatusMessage });
+    } else status.setText?.(this.lastStatusMessage);
     const labels = { resourcesMs: "资源准备", modulesMs: "阅读器启动", openMs: "打开完成",
       pdfParseMs: "PDF.js 打开等待", pdfPagesInitMs: "页面初始化", pdfDocumentLoadedMs: "文档加载事件",
       pdfLoadingTaskPromiseMs: "PDFLoadingTask.promise 等待", pdfViewerLoadMs: "PDFViewerApplication.load", pdfPreviousCloseMs: "PDFViewerApplication.close",
@@ -4290,7 +4292,17 @@ class PdfReaderView extends EditableFileView {
     const parts = Object.entries(labels).filter(([key]) => Number.isFinite(timings[key]) && timings[key] >= 0)
       .map(([key, label]) => `${label} ${(timings[key] / 1000).toFixed(2)} 秒`);
     if (parts.length && typeof status.createEl === "function") {
-      status.createEl("span", { text: `　${parts.join(" · ")}` });
+      for (const [key, label] of [["openMs", "打开"], ["pdfParseMs", "PDF.js"], ["firstPageAnnotationLayerMs", "批注层"]]) {
+        if (Number.isFinite(timings[key]) && timings[key] >= 0) {
+          status.createEl("span", { cls: "pdf-reader-timing-pill", text: `${label} ${(timings[key] / 1000).toFixed(2)}秒` });
+        }
+      }
+      const details = status.createEl("details", { cls: "pdf-reader-timing-details" });
+      if (typeof details?.createEl === "function") {
+        details.createEl("summary", { text: "详细耗时" });
+        const list = details.createEl("div", { cls: "pdf-reader-timing-list" });
+        for (const part of parts) list?.createEl?.("span", { cls: "pdf-reader-timing-pill", text: part });
+      }
     }
     if (this.statusRecoveryAction && typeof status.createEl === "function") {
       status.createEl("button", { text: "恢复本地副本" })
