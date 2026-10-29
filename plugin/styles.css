@@ -32,11 +32,10 @@
 
 .pdf-reader-timing-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4em;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 .pdf-reader-timing-parent {
   display: inline-flex;
