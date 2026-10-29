@@ -979,11 +979,16 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   mask-size: 18.48px 18.48px !important;
 }
 .textLayer .editToolbar .pdfReaderSelectionPlaceholder::before { display: none !important; }
+.textLayer .editToolbar .pdfReaderSelectionPlaceholder {
+  color: var(--editor-toolbar-fg-color, #444) !important;
+  font-size: 16px;
+  opacity: 0.45;
+}
 .textLayer:has(> .pdfReaderSelectionToolbar) { overflow: visible; }
 .textLayer .pdfReaderSelectionToolbar {
-  height: auto;
+  height: auto !important;
 }
 .textLayer .pdfReaderSelectionToolbar .buttons {
-  flex-direction: column;
-  height: auto;
+  flex-direction: column !important;
+  height: auto !important;
 }

@@ -8605,7 +8605,7 @@ class FloatingToolbar {
       placeholder.className = "basic pdfReaderSelectionPlaceholder";
       placeholder.disabled = true;
       placeholder.title = placeholder.ariaLabel = `预留功能 ${i}`;
-      placeholder.textContent = "·";
+      placeholder.textContent = "+";
       buttons.append(placeholder);
     }
     return editToolbar;
@@ -8645,7 +8645,14 @@ class FloatingToolbar {
     // Keep the controls outside the text page on the side of the selection.
     const selectionX = isLTR ? 1 - x : x;
     style.insetInlineEnd = "auto";
-    style.left = selectionX < 0.5 ? `-${this.#toolbar.offsetWidth + 4}px` : "calc(100% + 4px)";
+    const pageRect = parent.getBoundingClientRect();
+    const viewport = document.getElementById("viewerContainer")?.getBoundingClientRect();
+    const width = this.#toolbar.offsetWidth;
+    const leftSpace = pageRect.left - (viewport?.left ?? 0);
+    const rightSpace = (viewport?.right ?? document.documentElement.clientWidth) - pageRect.right;
+    style.left = selectionX < 0.5
+      ? leftSpace >= width + 4 ? `-${width + 4}px` : "4px"
+      : rightSpace >= width + 4 ? "calc(100% + 4px)" : `calc(100% - ${width + 4}px)`;
     style.top = `clamp(4px, calc(${100 * y}% - ${this.#toolbar.offsetHeight / 2}px), max(4px, calc(100% - ${this.#toolbar.offsetHeight + 4}px)))`;
   }
   hide() {
