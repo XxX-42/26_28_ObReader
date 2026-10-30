@@ -612,6 +612,29 @@ body {
   box-sizing: border-box;
 }
 
+.pdfReaderAnnotationDockButton {
+  margin-inline-start: auto;
+  margin-inline-end: 8px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pdfReaderAnnotationSidebarMenu.pdfReaderAnnotationSidebarDocked:not(.hidden) {
+  position: fixed !important;
+  inset: var(--toolbar-height, 40px) 0 0 auto !important;
+  width: min(360px, 42vw);
+  min-width: 0;
+  max-height: none;
+  border-radius: 0;
+}
+.pdfReaderAnnotationSidebarDocked > #editorCommentsSidebar {
+  height: 100%;
+  max-height: 100%;
+}
+.pdfReaderAnnotationsDocked #viewerContainer {
+  inset-inline-end: min(360px, 42vw) !important;
+}
+
 #editorCommentsSidebarResizer {
   display: none !important;
 }

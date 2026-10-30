@@ -2188,6 +2188,22 @@
     onAddToReview = null,
   }) {
     let open = false;
+    let docked = false;
+    const dockButton = document.createElement("button");
+    dockButton.type = "button";
+    dockButton.className = "pdfReaderAnnotationDockButton";
+    dockButton.textContent = "停靠右侧";
+    dockButton.title = "将批注面板停靠在阅读区右侧";
+    closeButton.before(dockButton);
+    function syncDock() {
+      document.documentElement.classList.toggle("pdfReaderAnnotationsDocked", open && docked);
+      menu.classList.toggle("pdfReaderAnnotationSidebarDocked", docked);
+      dockButton.textContent = docked ? "恢复浮窗" : "停靠右侧";
+      dockButton.setAttribute("aria-pressed", String(docked));
+      window.dispatchEvent(new Event("resize"));
+    }
+    function onDockClick() { docked = !docked; syncDock(); }
+    dockButton.addEventListener("click", onDockClick);
     let refreshFrame = null;
     let pendingTargetRefresh = false;
     let selectedUuid = null;
@@ -2440,6 +2456,7 @@
       if (button.disabled) return false;
       open = true;
       menu.classList.remove("hidden");
+      syncDock();
       button.setAttribute("aria-expanded", "true");
       if (listNeedsRender) scheduleRender({ reloadTargets: true });
       return true;
@@ -2455,6 +2472,7 @@
       refreshFrame = null;
       pendingTargetRefresh = false;
       menu.classList.add("hidden");
+      syncDock();
       button.setAttribute("aria-expanded", "false");
       return true;
     }
@@ -2564,9 +2582,9 @@
 
     function onOutsidePointerDown(event) {
       if (contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
-      if (open && !menu.contains(event.target) && !button.contains(event.target)) close();
+      if (open && !docked && !menu.contains(event.target) && !button.contains(event.target)) close();
     }
-    function onWindowBlur() { if (open) close(); }
+    function onWindowBlur() { if (open && !docked) close(); }
     document.addEventListener("pointerdown", onOutsidePointerDown, true);
     window.addEventListener("blur", onWindowBlur);
     button.addEventListener("click", onButtonClick);
@@ -2595,6 +2613,8 @@
       createReviewDraft,
       dispose() {
         closeAndClear();
+        dockButton.removeEventListener("click", onDockClick);
+        dockButton.remove();
         document.removeEventListener("pointerdown", onOutsidePointerDown, true);
         window.removeEventListener("blur", onWindowBlur);
         button.removeEventListener("click", onButtonClick);
