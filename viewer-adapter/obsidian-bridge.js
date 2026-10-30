@@ -9561,9 +9561,53 @@
     });
     state.inputRouter = router;
     state.pointerAbortController = router.start();
+    installPageLayoutContextMenu(state.pointerAbortController.signal);
     if (state.vocabularyEnabled && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       requestVocabularyReadMode(state.activeDocumentId, state.activeOpenRequest);
     }
+  }
+
+  function installPageLayoutContextMenu(signal) {
+    const viewer = document.getElementById("viewerContainer");
+    if (!viewer || !signal) return;
+    const menu = document.createElement("div");
+    menu.className = "pdfReaderPageContextMenu";
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    document.body.append(menu);
+    const groups = [
+      ["页面显示", [["单页滚动", "scrollPage"], ["纵向滚动", "scrollVertical"], ["横向滚动", "scrollHorizontal"], ["多页平铺", "scrollWrapped"]]],
+      ["跨页显示", [["单页", "spreadNone"], ["双页（奇数页开始）", "spreadOdd"], ["双页（偶数页开始）", "spreadEven"]]],
+      ["页面铺满", [["适合页面", "page-fit"], ["适合宽度", "page-width"], ["实际大小", "page-actual"]]],
+    ];
+    for (const [title, options] of groups) {
+      const label = document.createElement("div");
+      label.className = "pdfReaderPageContextHeading";
+      label.textContent = title;
+      menu.append(label);
+      for (const [text, value] of options) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "menuitem");
+        button.textContent = text;
+        button.addEventListener("click", () => {
+          if (value.startsWith("page-")) state.app.pdfViewer.currentScaleValue = value;
+          else document.getElementById(value)?.click();
+          menu.hidden = true;
+        }, { signal });
+        menu.append(button);
+      }
+    }
+    viewer.addEventListener("contextmenu", event => {
+      if (!state.app?.pdfDocument || event.target.closest?.("input,textarea,select,[contenteditable=true],[role=dialog]")) return;
+      event.preventDefault();
+      menu.hidden = false;
+      menu.style.left = `${Math.max(0, Math.min(event.clientX, innerWidth - menu.offsetWidth))}px`;
+      menu.style.top = `${Math.max(0, Math.min(event.clientY, innerHeight - menu.offsetHeight))}px`;
+    }, { signal });
+    document.addEventListener("pointerdown", event => { if (!menu.contains(event.target)) menu.hidden = true; }, { capture: true, signal });
+    document.addEventListener("keydown", event => { if (event.key === "Escape") menu.hidden = true; }, { signal });
+    signal.addEventListener("abort", () => menu.remove(), { once: true });
   }
 
   function onBridgeWheel() {

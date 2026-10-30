@@ -1179,6 +1179,18 @@ test(
     await click("#editorSquareButton");
     await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 5);
 
+    const priorMenuScale = await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue);
+    const menuBounds = await squareBounds();
+    const menuOffset = await iframeOffset();
+    await page.mouse.click(menuOffset.x + menuBounds.x - 50, menuOffset.y + menuBounds.y, {button:"right"});
+    await viewer.waitForFunction(() => !document.querySelector(".pdfReaderPageContextMenu")?.hidden);
+    await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextMenu button")].find(b => b.textContent === "适合宽度").click());
+    assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue), "page-width");
+    assert.equal(await viewer.evaluate(() => document.querySelector(".pdfReaderPageContextMenu").hidden), true);
+
+    await viewer.evaluate(scale => { PDFViewerApplication.pdfViewer.currentScaleValue = scale; }, priorMenuScale);
+    await viewer.waitForFunction(() => window.__getSquareEditors().length === 1);
+
     // Right-button drag temporarily switches to the native eraser and restores
     // the active tool. The bridge doesn't capture this pointer; PDF.js owns its
     // internal viewerContainer capture and cancelTemporaryStroke release path.

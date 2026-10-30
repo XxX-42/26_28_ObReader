@@ -1034,3 +1034,9 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
 @media (pointer: coarse) { .pdf-reader-outline-row, .pdf-reader-outline-row button { min-height: 42px; } .pdf-reader-outline-rail { min-height: 44px; } }
 html.pdf-reader-chord-pan #viewerContainer,
 html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user-select: none !important; }
+
+.pdfReaderPageContextMenu { position: fixed; z-index: 100010; min-width: 200px; padding: 6px; border: 1px solid var(--border-color, #ccc); border-radius: 6px; background: var(--body-bg-color, #fff); color: var(--main-color, #222); box-shadow: 0 4px 16px #0003; }
+.pdfReaderPageContextMenu[hidden] { display: none; }
+.pdfReaderPageContextHeading { padding: 6px 8px 3px; opacity: .6; font-size: 12px; }
+.pdfReaderPageContextMenu button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.pdfReaderPageContextMenu button:hover, .pdfReaderPageContextMenu button:focus-visible { background: #8883; }
