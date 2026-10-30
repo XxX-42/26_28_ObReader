@@ -9,6 +9,30 @@
 (() => {
   "use strict";
 
+  // PDF text layers insert line breaks at visual line ends. Preserve blank
+  // lines as paragraph boundaries; join CJK lines without inventing spaces.
+  function normalizeCopiedPdfText(value) {
+    const lines = String(value).replace(/\r\n?/g, "\n").split("\n");
+    const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\u3000-\u303f\uff00-\uffef]/u;
+    let result = lines[0];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i - 1].trim() || !lines[i].trim()) { result += `\n${lines[i]}`; continue; }
+      const left = result.trimEnd();
+      const right = lines[i].trimStart();
+      result = left + (cjk.test(left.at(-1)) || cjk.test(right[0]) ? "" : " ") + right;
+    }
+    return result;
+  }
+
+  function selectedPdfText() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString()) return null;
+    const elementFor = (node) => node?.nodeType === 1 ? node : node?.parentElement;
+    if (!elementFor(selection.anchorNode)?.closest?.('.textLayer') ||
+        !elementFor(selection.focusNode)?.closest?.('.textLayer')) return null;
+    return normalizeCopiedPdfText(selection.toString());
+  }
+
   const bridgeScript = document.currentScript;
   if (!bridgeScript || window.parent === window) {
     return;
@@ -11796,6 +11820,21 @@
         }
         clearTimeout(state.startupTimer);
         state.eventAbortController = new AbortController();
+        window.addEventListener("copy", (event) => {
+          const text = selectedPdfText();
+          if (text === null || !event.clipboardData) return;
+          event.clipboardData.setData("text/plain", text);
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }, { capture: true, signal: state.eventAbortController.signal });
+        window.addEventListener("click", (event) => {
+          if (!event.target?.closest?.(".pdfReaderSelectionCopy")) return;
+          const text = selectedPdfText();
+          if (text === null || !navigator.clipboard?.writeText) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          navigator.clipboard.writeText(text).catch(() => alert("复制失败，请使用 Ctrl+C 或系统复制功能。"));
+        }, { capture: true, signal: state.eventAbortController.signal });
         if (state.vocabularyEnabled) ensureVocabularyController();
         ensureBacklinkInteractionController();
         app.eventBus?._on(
