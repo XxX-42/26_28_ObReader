@@ -85,7 +85,7 @@
 
     decorate(wheel) {
       if (!wheel.colorLayoutPositioned) {
-        const margin = 36;
+        const margin = 40;
         const maxRadius = Math.min(this.host.innerWidth, this.host.innerHeight) / 2 - margin;
         // Existing wheel geometry remains intact; in very small windows the
         // arc is fitted by show() without changing the sector geometry.
@@ -141,7 +141,7 @@
       const preferred = angle;
       const half = diameter / 2;
       let positions = null;
-      for (let radius = wheel.radius + half + 5; radius >= 0 && !positions; radius -= 2) {
+      for (let radius = wheel.radius + half + 14; radius >= 0 && !positions; radius -= 2) {
         for (let step = 0; step <= 180 && !positions; step++) {
           for (const direction of step ? [1, -1] : [1]) {
             const middle = preferred + direction * step * Math.PI / 180;

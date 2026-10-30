@@ -26626,11 +26626,11 @@ function onToolWheelDown(evt) {
   evt.stopImmediatePropagation();
   this._toolWheelPointer = evt.pointerId;
   this._toolWheelSuppressUntil = performance.now() + 1000;
-  const radius = Math.min(96, Math.floor(Math.min(window.innerWidth, window.innerHeight) / 2) - 36);
+  const radius = Math.min(96, Math.floor(Math.min(window.innerWidth, window.innerHeight) / 2) - 40);
   if (radius < 48) {
     return;
   }
-  const safeMargin = radius + 36;
+  const safeMargin = radius + 40;
   const wheelX = Math.max(safeMargin, Math.min(window.innerWidth - safeMargin, evt.clientX));
   const wheelY = Math.max(safeMargin, Math.min(window.innerHeight - safeMargin, evt.clientY));
   const element = document.createElement("div");

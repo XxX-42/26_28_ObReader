@@ -153,3 +153,5 @@ LingQ mode uses the same six equal wheel sectors, retaining disabled placeholder
 Wheel icons and captions use 120% of their previous font sizes.
 
 LingQ mode retains its original four sectors; wheel text and icons use 105% of their earlier size.
+
+Wheel safe margins accommodate the gap outside the color indicators.
