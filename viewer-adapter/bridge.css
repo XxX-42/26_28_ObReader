@@ -605,7 +605,7 @@ body {
 
 .pdfReaderAnnotationSidebarMenu > #editorCommentsSidebar {
   width: 100%;
-  height: min(68vh, calc(var(--viewer-container-height) - var(--toolbar-height) - 12px));
+  height: calc(100dvh - var(--toolbar-height, 40px) - 16px);
   max-height: inherit;
   overflow: hidden;
   padding: 0;
@@ -1053,10 +1053,13 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfToolWheelPointer.isPointerHot .pointerPad { fill: #4776aaee; }
 
 #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList > li.sidebarComment { padding: 8px 10px; gap: 4px; align-items: stretch; }
-.pdfReaderAnnotationRowHeader { display: flex; align-items: center; gap: 6px; min-height: 24px; }
-#editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationPagePill { flex: none; box-sizing: border-box; height: 24px; display: inline-flex; align-items: center; width: auto; margin: 0; padding: 2px 9px; border-radius: 999px; background: #427db52b; color: #27639b; font: inherit; font-size: 12px; line-height: 20px; }
+.pdfReaderAnnotationRowHeader { display: flex; align-items: center; gap: 6px; min-height: 24px; width: 100%; min-width: 0; }
+#editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationPagePill { flex: 0 0 auto !important; box-sizing: border-box; height: 24px; display: inline-flex; align-items: center; width: max-content !important; min-width: 0 !important; margin: 0; padding: 2px 9px; border-radius: 999px; background: #427db52b; color: #27639b; font: inherit; font-size: 12px; line-height: 20px; }
 .pdfReaderAnnotationPagePill::before, .pdfReaderAnnotationPagePill::after { display: none !important; }
 #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationReviewButton { flex: none; box-sizing: border-box; height: 24px; align-self: auto; margin: 0; padding: 2px 9px; border-radius: 999px; border: 0; background: #3b956d26; color: #23754f; font-size: 12px; line-height: 20px; }
 .pdfReaderAnnotationKind { margin-inline-start: auto; opacity: .55; font-size: 11px; }
 .pdfReaderAnnotationSidebarNavigate { flex: none; width: 100%; padding: 0; }
 @media (prefers-color-scheme: dark) { #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationPagePill { flex: none; box-sizing: border-box; height: 24px; color: #9ccfff; } #editorCommentsSidebar #editorCommentsSidebarListContainer #editorCommentsSidebarList .pdfReaderAnnotationReviewButton { flex: none; box-sizing: border-box; height: 24px; color: #9de3b9; } }
+
+#editorCommentsSidebarListContainer { overflow-x: hidden !important; }
+.pdfReaderAnnotationRowHeader .pdfReaderAnnotationKind { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

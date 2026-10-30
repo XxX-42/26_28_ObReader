@@ -2086,8 +2086,8 @@
         navigateButton.setAttribute("aria-pressed", String(item.uuid === selectedUuid));
         navigateButton.tabIndex = item.uuid === selectedUuid ? 0 : -1;
         const pageLabel = `第 ${item.pageIndex + 1} 页 · ${item.kind}`;
-        const page = document.createElement("time");
-        page.textContent = String(item.pageIndex + 1);
+        const page = document.createElement("span");
+        page.textContent = `p${item.pageIndex + 1}`;
         page.className = "pdfReaderAnnotationPagePill";
         page.setAttribute("aria-label", pageLabel);
         const text = document.createElement("div");

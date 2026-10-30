@@ -2991,7 +2991,7 @@ test(
         const row=document.querySelector(`#editorCommentsSidebarList li.sidebarComment[data-uuid="${uuid}"]`);
         const page=row.querySelector(".pdfReaderAnnotationPagePill"), review=row.querySelector(".pdfReaderAnnotationReviewButton");
         const a=page.getBoundingClientRect(),b=review.getBoundingClientRect();
-        if (!(page.textContent===String(Number(row.dataset.pageIndex)+1) && page.parentElement===review.parentElement && b.left>a.right && Math.abs(a.top-b.top)<2)) throw Error(JSON.stringify({page:page.textContent,index:row.dataset.pageIndex,a:a.toJSON(),b:b.toJSON()}));
+        if (!(page.textContent===`p${Number(row.dataset.pageIndex)+1}` && page.parentElement===review.parentElement && b.left>a.right && a.width<70 && b.right<=row.getBoundingClientRect().right && Math.abs(a.top-b.top)<2)) throw Error(JSON.stringify({page:page.textContent,index:row.dataset.pageIndex,a:a.toJSON(),b:b.toJSON()}));
         return true;
       }, savedHighlight.uuid),true,"Page and review capsules share one compact header row");
       assert.equal(await viewer.$eval(reviewButton, (button) => button.disabled), false,
