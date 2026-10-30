@@ -2989,10 +2989,7 @@
         option.textContent = label;
         typeFilter.append(option);
       }
-      const filterHelp = document.createElement("p");
-      filterHelp.className = "pdfReaderAnnotationSidebarHelp";
-      filterHelp.textContent = "仅检索已保存文字及已渲染页面可恢复文字";
-      filters.append(searchInput, typeFilter, filterHelp);
+      filters.append(searchInput, typeFilter);
       if (annotationSidebarListContainer?.parentElement === annotationSidebar) {
         annotationSidebar.insertBefore(filters, annotationSidebarListContainer);
       } else {
