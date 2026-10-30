@@ -1048,3 +1048,6 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfToolWheelPointer .pointerPad { fill: #545b68aa; stroke: none; pointer-events: auto; filter: blur(.5px); }
 .pdfToolWheelPointer .pointerGlyph { fill: white; stroke: none; pointer-events: none; }
 .pdfToolWheel .pdfToolWheelPointer:hover { opacity: .9; }
+
+.pdfToolWheel .pdfToolWheelPointer.isPointerHot { opacity: 1; filter: drop-shadow(0 0 8px #ffffffaa); }
+.pdfToolWheelPointer.isPointerHot .pointerPad { fill: #4776aaee; }

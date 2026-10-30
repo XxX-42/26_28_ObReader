@@ -202,6 +202,13 @@
         return;
       }
       this.decorate(wheel);
+      const overPointer = this.pointerHit(wheel, event);
+      wheel.pointerControl?.classList.toggle("isPointerHot", overPointer);
+      if (overPointer) {
+        this.clear();
+        wheel.sectors?.forEach(sector => sector.classList.remove("active"));
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
       // A clamped palette can overlap the wheel; preserve it while over a swatch.
       const hit = this.palette?.wheel === wheel && this.hit(event.clientX, event.clientY);
       if (!hit) {
@@ -224,14 +231,19 @@
 
     pointerHit(wheel, event) {
       const rect = wheel?.pointerControl?.getBoundingClientRect();
-      return rect && event.clientX >= rect.left && event.clientX <= rect.right &&
-        event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (!rect || !this.activatePointer) return false;
+      // Pad the whole control rather than requiring the faint SVG stroke.
+      // Real color buttons still own their precise circular hit regions.
+      if (this.hit(event.clientX, event.clientY)) return false;
+      const outsideWheel = Math.hypot(event.clientX - wheel.x, event.clientY - wheel.y) > wheel.radius + 4;
+      return outsideWheel && event.clientX >= rect.left - 14 && event.clientX <= rect.right + 14 &&
+        event.clientY >= rect.top - 14 && event.clientY <= rect.bottom + 14;
     }
 
     down(event) {
       const wheel = this.getWheel();
       if (event.button === 0 && this.pointerHit(wheel, event)) {
-        event.preventDefault(); event.stopImmediatePropagation();
+        event.preventDefault(); event.stopImmediatePropagation(); this.clear(); this.activatePointer(wheel);
       }
     }
 

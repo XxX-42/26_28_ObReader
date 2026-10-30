@@ -4364,6 +4364,7 @@ test(
     }), true, "Color choices must not obscure the pointer shortcut");
     const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
     await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);
+    assert.equal(await viewer.evaluate(() => document.querySelector(".pdfToolWheelPointer").classList.contains("isPointerHot")),true,"Pointer shortcut must visibly acknowledge the mouse before release");
     await page.mouse.up({button:"middle"});
     await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0);
     await viewer.evaluate(() => { PDFViewerApplication.pdfViewer.currentPageNumber = 2; });
