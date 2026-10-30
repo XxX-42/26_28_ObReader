@@ -84,6 +84,20 @@
     }
 
     decorate(wheel) {
+      if (!wheel.colorLayoutPositioned) {
+        const margin = 36;
+        const maxRadius = Math.min(this.host.innerWidth, this.host.innerHeight) / 2 - margin;
+        // Existing wheel geometry remains intact; in very small windows the
+        // arc is fitted by show() without changing the sector geometry.
+        if (maxRadius >= wheel.radius) {
+          const safe = wheel.radius + margin;
+          wheel.x = Math.max(safe, Math.min(this.host.innerWidth - safe, wheel.x));
+          wheel.y = Math.max(safe, Math.min(this.host.innerHeight - safe, wheel.y));
+          wheel.element.style.left = `${wheel.x - wheel.radius}px`;
+          wheel.element.style.top = `${wheel.y - wheel.radius}px`;
+        }
+        wheel.colorLayoutPositioned = true;
+      }
       wheel.items.forEach((item, index) => {
         const key = this.getToolKey(item, index);
         const color = key && this.getColor(key);
@@ -111,34 +125,31 @@
       // Clamp its center to the viewport, including narrow/small windows.
       const angle = (item.startAngle + item.endAngle) * Math.PI / 360;
       const diameter = Math.max(14, Math.min(26, (Math.max(this.host.innerWidth, this.host.innerHeight) - 16) / 5));
-      const gap = 4, length = 5 * diameter + 4 * gap;
-      const desiredX = wheel.x + Math.cos(angle) * (wheel.radius + diameter / 2 + 5);
-      const desiredY = wheel.y + Math.sin(angle) * (wheel.radius + diameter / 2 + 5);
-      const clamp = (value, max) => Math.max(0, Math.min(Math.max(0, max), value));
-      // Prefer a strip wholly outside the wheel. Evaluate both orientations
-      // and choose the visible one closest to the hovered sector.
-      const candidates = [
-        { x: desiredX - length / 2, y: wheel.y - wheel.radius - diameter - 4, w: length, h: diameter, vertical: false },
-        { x: desiredX - length / 2, y: wheel.y + wheel.radius + 4, w: length, h: diameter, vertical: false },
-        { x: wheel.x - wheel.radius - diameter - 4, y: desiredY - length / 2, w: diameter, h: length, vertical: true },
-        { x: wheel.x + wheel.radius + 4, y: desiredY - length / 2, w: diameter, h: length, vertical: true },
-      ].map(candidate => {
-        const x = clamp(candidate.x, this.host.innerWidth - candidate.w);
-        const y = clamp(candidate.y, this.host.innerHeight - candidate.h);
-        const outside = x + candidate.w <= wheel.x - wheel.radius || x >= wheel.x + wheel.radius ||
-          y + candidate.h <= wheel.y - wheel.radius || y >= wheel.y + wheel.radius;
-        const overflow = Math.max(0, candidate.w - this.host.innerWidth) + Math.max(0, candidate.h - this.host.innerHeight);
-        const distance = Math.hypot(x + candidate.w / 2 - desiredX, y + candidate.h / 2 - desiredY);
-        return { ...candidate, x, y, score: (outside ? 0 : wheel.radius * 0.5) + overflow * 100 + distance };
-      }).sort((a, b) => a.score - b.score);
-      const layout = candidates[0];
-      element.style.cssText = `position:absolute;left:${layout.x - (wheel.x - wheel.radius)}px;top:${layout.y - (wheel.y - wheel.radius)}px;display:flex;flex-direction:${layout.vertical ? "column" : "row"};gap:${gap}px;z-index:2147483647;pointer-events:none`;
-      const swatches = colors.map(color => {
+      // Place the five centres on the same circle around the wheel. Rotate
+      // the arc inward near viewport edges, retaining a circular layout.
+      const preferred = angle;
+      const half = diameter / 2;
+      let positions = null;
+      for (let radius = wheel.radius + half + 5; radius >= 0 && !positions; radius -= 2) {
+        for (let step = 0; step <= 180 && !positions; step++) {
+          for (const direction of step ? [1, -1] : [1]) {
+            const middle = preferred + direction * step * Math.PI / 180;
+            const points = colors.map((_, i) => {
+              const theta = middle + (i - 2) * 0.36;
+              return { x: wheel.x + radius * Math.cos(theta), y: wheel.y + radius * Math.sin(theta) };
+            });
+            if (points.every(p => p.x >= half && p.y >= half && p.x <= this.host.innerWidth - half && p.y <= this.host.innerHeight - half)) { positions = points; break; }
+          }
+        }
+      }
+      if (!positions) return;
+      element.style.cssText = `position:absolute;left:0;top:0;z-index:2147483647;pointer-events:none`;
+      const swatches = colors.map((color, index) => {
         const swatch = doc.createElement("span");
         swatch.dataset.color = color;
         swatch.setAttribute("role", "img");
         swatch.setAttribute("aria-label", `${item.label}颜色 ${color}`);
-        swatch.style.cssText = `display:block;box-sizing:border-box;width:${diameter}px;height:${diameter}px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 1px #333`;
+        swatch.style.cssText = `position:absolute;left:${positions[index].x - (wheel.x - wheel.radius) - half}px;top:${positions[index].y - (wheel.y - wheel.radius) - half}px;display:block;box-sizing:border-box;width:${diameter}px;height:${diameter}px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 0 0 1px #333`;
         element.append(swatch);
         return swatch;
       });

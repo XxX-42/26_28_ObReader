@@ -26,18 +26,21 @@ test('wheel swatches remain visible and selectable near viewport edges', { skip:
         Object.assign(element.style, { left: `${x-radius}px`, top: `${y-radius}px`, width: `${radius*2}px`, height: `${radius*2}px` });
         element.innerHTML = Array.from({length:6}, (_, i) => `<button data-sector="${i}">tool</button>`).join('') + '<svg>' + '<path></path>'.repeat(6) + '</svg>'; 
         document.body.append(element);
-        window.wheel = { element, x, y, radius, pointerId: 1, items: Array.from({length:6}, (_, i) => ({label: `tool ${i}`, key: i === 0 ? 'highlight' : `tool${i}`, startAngle:240+i*60, endAngle:300+i*60})), sectors:[...element.querySelectorAll('path')] };
+        window.wheel = { element, x, y, radius, pointerId: 1, items: Array.from({length:6}, (_, i) => ({label: `tool ${i}`, key: i === 0 ? 'highlight' : `tool${i}`, startAngle:240+i*60, endAngle:300+i*60})), sectors:[...element.querySelectorAll('path')] }; window.controller.decorate(window.wheel);
       };
     });
     for (const [x, y, radius] of [[160,120,80], [64,64,60], [256,64,60], [64,176,60], [256,176,60]]) {
       await page.evaluate(({x,y,radius}) => window.makeWheel(x,y,radius), {x,y,radius});
-      await page.mouse.move(x, y);
+      const center = await page.evaluate(() => ({x:window.wheel.x, y:window.wheel.y}));
+      await page.mouse.move(center.x, center.y);
       await page.mouse.down({ button: 'middle' });
-      await page.mouse.move(x, y-radius*0.7);
+      await page.mouse.move(center.x, center.y-radius*0.7);
       const rects = await page.$$eval('.pdfToolWheelColors span', nodes => nodes.map(node => {
         const r=node.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height };
       }));
       assert.equal(rects.length, 5);
+      const radii = rects.map(r => Math.hypot(r.x + r.width / 2 - center.x, r.y + r.height / 2 - center.y));
+      assert.ok(Math.max(...radii) - Math.min(...radii) < 1, JSON.stringify({x,y,radii}));
       for (const r of rects) {
         assert.ok(r.x >= 0 && r.y >= 0 && r.x+r.width <= 320 && r.y+r.height <= 240, JSON.stringify({x,y,r}));
         assert.ok(r.width >= 18 && r.height >= 18);

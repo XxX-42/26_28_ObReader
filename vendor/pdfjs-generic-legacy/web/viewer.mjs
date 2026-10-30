@@ -26633,21 +26633,18 @@ function onToolWheelDown(evt) {
   evt.stopImmediatePropagation();
   this._toolWheelPointer = evt.pointerId;
   this._toolWheelSuppressUntil = performance.now() + 1000;
-  const radius = Math.min(
-    96,
-    evt.clientX,
-    evt.clientY,
-    window.innerWidth - evt.clientX,
-    window.innerHeight - evt.clientY,
-  );
+  const radius = Math.min(96, Math.floor(Math.min(window.innerWidth, window.innerHeight) / 2) - 36);
   if (radius < 48) {
     return;
   }
+  const safeMargin = radius + 36;
+  const wheelX = Math.max(safeMargin, Math.min(window.innerWidth - safeMargin, evt.clientX));
+  const wheelY = Math.max(safeMargin, Math.min(window.innerHeight - safeMargin, evt.clientY));
   const element = document.createElement("div");
   element.className = "pdfToolWheel";
   element.setAttribute("role", "menu");
   element.setAttribute("aria-label", "批注工具圆盘");
-  element.style.cssText = `left:${evt.clientX - radius}px;top:${evt.clientY - radius}px;width:${radius * 2}px;height:${radius * 2}px;--tool-wheel-scale:${radius / 120}`;
+  element.style.cssText = `left:${wheelX - radius}px;top:${wheelY - radius}px;width:${radius * 2}px;height:${radius * 2}px;--tool-wheel-scale:${radius / 120}`;
   // The bridge mirrors the acknowledged, persisted vocabularyEnabled state
   // onto this document root; the wheel reads that single source at open time.
   const layoutItems = toolWheelItemsForState(
@@ -26714,8 +26711,8 @@ function onToolWheelDown(evt) {
   this._toolWheel = {
     element,
     sectors,
-    x: evt.clientX,
-    y: evt.clientY,
+    x: wheelX,
+    y: wheelY,
     radius,
     items,
     pointerId: evt.pointerId,

@@ -88,11 +88,14 @@ test('palette uses available space outside wheel near an edge', () => {
   const s = setup();
   s.wheel.x = 80;
   s.listeners.get('pointermove')({ pointerId: 7, clientX: 80, clientY: 60 });
-  const style = s.controller.palette.element.style.cssText;
-  const left = Number(style.match(/left:([\d.-]+)px/)[1]) + s.wheel.x - s.wheel.radius;
-  const top = Number(style.match(/top:([\d.-]+)px/)[1]) + s.wheel.y - s.wheel.radius;
-  assert.ok(left >= 0 && top >= 0);
-  assert.ok(left >= s.wheel.x + s.wheel.radius || top >= s.wheel.y + s.wheel.radius || top + 26 <= s.wheel.y - s.wheel.radius);
+  const radii = s.controller.palette.swatches.map(swatch => {
+    const style = swatch.style.cssText;
+    const left = Number(style.match(/left:([\d.-]+)px/)[1]) + s.wheel.x - s.wheel.radius;
+    const top = Number(style.match(/top:([\d.-]+)px/)[1]) + s.wheel.y - s.wheel.radius;
+    return Math.hypot(left + 13 - s.wheel.x, top + 13 - s.wheel.y);
+  });
+  assert.ok(Math.max(...radii) - Math.min(...radii) < 0.01);
+  assert.ok(Math.min(...radii) > s.wheel.radius);
 });
 
 

@@ -139,3 +139,5 @@ The selection toolbar is vertical and positioned outside the selected side of th
 The previous horizontal selection position remains a hover target for a second toolbar.
 
 The selection hover toolbar trigger is raised by half a measured text line.
+
+The middle-button wheel shifts inside the viewport to leave room for its color arc.
