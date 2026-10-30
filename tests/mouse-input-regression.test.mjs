@@ -4355,6 +4355,13 @@ test(
     await page.mouse.move(pointerFrame.x+pointerWheelPoint.x,pointerFrame.y+pointerWheelPoint.y);
     await page.mouse.down({button:"middle"});
     await viewer.waitForSelector(".pdfToolWheelPointer");
+    const squareSectorPoint = await viewer.evaluate(() => { const w=PDFViewerApplication._toolWheel;return {x:w.x+Math.cos(Math.PI*5/6)*w.radius*.7,y:w.y+Math.sin(Math.PI*5/6)*w.radius*.7}; });
+    await page.mouse.move(pointerFrame.x+squareSectorPoint.x,pointerFrame.y+squareSectorPoint.y);
+    await viewer.waitForSelector(".pdfToolWheelColors");
+    assert.equal(await viewer.evaluate(() => {
+      const pointer=document.querySelector(".pdfToolWheelPointer").getBoundingClientRect();
+      return [...document.querySelectorAll(".pdfToolWheelColors span")].every(node=>{const r=node.getBoundingClientRect();return r.right < pointer.left || r.left > pointer.right || r.bottom < pointer.top || r.top > pointer.bottom;});
+    }), true, "Color choices must not obscure the pointer shortcut");
     const pointerPoint = await viewer.$eval(".pdfToolWheelPointer .pointerPad", el => {const r=el.getBoundingClientRect();return {x:r.left+r.width*.55,y:r.top+r.height*.75};});
     await page.mouse.move(pointerFrame.x+pointerPoint.x,pointerFrame.y+pointerPoint.y);
     await page.mouse.up({button:"middle"});

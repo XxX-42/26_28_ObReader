@@ -152,6 +152,10 @@
       // the arc inward near viewport edges, retaining a circular layout.
       const preferred = angle;
       const half = diameter / 2;
+      const pointerBounds = wheel.pointerControl?.getBoundingClientRect();
+      const clearsPointer = p => !pointerBounds ||
+        p.x + half + 6 < pointerBounds.left || p.x - half - 6 > pointerBounds.right ||
+        p.y + half + 6 < pointerBounds.top || p.y - half - 6 > pointerBounds.bottom;
       let positions = null;
       for (let radius = wheel.radius + half + 14; radius >= 0 && !positions; radius -= 2) {
         for (let step = 0; step <= 180 && !positions; step++) {
@@ -162,7 +166,7 @@
               const theta = middle + (i - 2) * spacing;
               return { x: wheel.x + radius * Math.cos(theta), y: wheel.y + radius * Math.sin(theta) };
             });
-            if (points.every(p => p.x >= half && p.y >= half && p.x <= this.host.innerWidth - half && p.y <= this.host.innerHeight - half)) { positions = points; break; }
+            if (points.every(p => p.x >= half && p.y >= half && p.x <= this.host.innerWidth - half && p.y <= this.host.innerHeight - half && clearsPointer(p))) { positions = points; break; }
           }
         }
       }
