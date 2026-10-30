@@ -136,6 +136,7 @@
     bridgeControls: null,
     annotationSidebarController: null,
     annotationSidebarTextGeometryCache: new WeakMap(),
+    annotationSidebarOffscreenPages: new Map(),
     annotationTargetTextByRuntimeId: new Map(),
     annotationSelectionGroups: new Map(),
     pendingHighlightSelection: null,
@@ -2046,11 +2047,16 @@
       const stride = item.kind === "Square" ? 4 : 8;
       if (!Array.isArray(coords) || coords.length < stride || coords.length % stride || !coords.every(Number.isFinite)) continue;
       const view = state.app.pdfViewer.getPageView?.(item.pageIndex);
-      const root = view?.div, layer = textLayerForPage(root), viewport = view?.viewport;
-      const bounds = root?.getBoundingClientRect?.();
-      if (!layer || !viewport || !bounds?.width || !bounds?.height) continue;
+      const root = view?.div, layer = textLayerForPage(root);
+      const cached = state.annotationSidebarOffscreenPages?.get(item.pageIndex);
+      const liveBounds = root?.getBoundingClientRect?.();
+      const liveGlyphs = layer && view?.viewport && liveBounds?.width && liveBounds?.height
+        ? annotationSidebarTextGlyphs(layer, root, view.viewport) : null;
+      const viewport = liveGlyphs?.length ? view.viewport : cached?.viewport;
+      const bounds = liveGlyphs?.length ? liveBounds : cached?.bounds;
+      const glyphs = liveGlyphs?.length ? liveGlyphs : cached?.glyphs;
+      if (!viewport || !bounds?.width || !bounds?.height || !glyphs?.length) continue;
       const sx = bounds.width / viewport.width, sy = bounds.height / viewport.height;
-      const glyphs = annotationSidebarTextGlyphs(layer, root, viewport);
       for (let offset = 0; offset < coords.length; offset += stride) {
         let points;
         try {
@@ -2156,6 +2162,59 @@
     let selectedUuid = null;
     let items = [];
     let visibleItems = [];
+    let backgroundGeneration = 0;
+    let backgroundPreparing = false;
+    const backgroundFailedPages = new Set();
+
+    async function prepareSidebarTextPages() {
+      if (!open || backgroundPreparing || !window.pdfjsLib?.TextLayer) return;
+      const pdf = state.app?.pdfDocument;
+      if (!pdf) return;
+      const generation = backgroundGeneration;
+      const guard = createSessionGuard();
+      backgroundPreparing = true;
+      try {
+        while (open && generation === backgroundGeneration && guard() && state.app?.pdfDocument === pdf) {
+          const pageIndex = items.find((item) => {
+            if (item.kind !== "Square" && item.kind !== "Highlight") return false;
+            if (state.annotationSidebarOffscreenPages.has(item.pageIndex) || backgroundFailedPages.has(item.pageIndex)) return false;
+            const root = state.app?.pdfViewer?.getPageView?.(item.pageIndex)?.div;
+            return !textLayerForPage(root)?.querySelector?.("span");
+          })?.pageIndex;
+          if (!Number.isSafeInteger(pageIndex)) break;
+          let root = null;
+          try {
+            const page = await pdf.getPage(pageIndex + 1);
+            if (!open || generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
+            const viewport = page.getViewport({ scale: 1 });
+            root = document.createElement("div");
+            root.style.cssText = `position:fixed;left:-100000px;top:0;width:${viewport.width}px;height:${viewport.height}px;visibility:hidden;pointer-events:none;--scale-factor:1;--total-scale-factor:1`;
+            const layer = document.createElement("div");
+            layer.className = "textLayer";
+            root.append(layer);
+            document.body.append(root);
+            const textLayer = new window.pdfjsLib.TextLayer({
+              textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
+              container: layer, viewport,
+            });
+            await textLayer.render();
+            if (!open || generation !== backgroundGeneration || !guard() || state.app?.pdfDocument !== pdf) break;
+            const bounds = root.getBoundingClientRect();
+            const glyphs = annotationSidebarTextGlyphs(layer, root, viewport);
+            if (glyphs?.length) {
+              state.annotationSidebarOffscreenPages.set(pageIndex, { viewport, bounds: { width: bounds.width, height: bounds.height }, glyphs });
+              scheduleRender({ reloadTargets: true });
+            } else backgroundFailedPages.add(pageIndex);
+          } catch (error) {
+            backgroundFailedPages.add(pageIndex);
+            console.warn("Could not prepare annotation text for page", pageIndex + 1, error);
+          } finally { root?.remove(); }
+        }
+      } finally {
+        backgroundPreparing = false;
+        if (open && generation !== backgroundGeneration) void prepareSidebarTextPages();
+      }
+    }
     let selectionMode = false;
     const checkedUuids = new Set();
     let contextMenu = null;
@@ -2328,6 +2387,7 @@
       count.textContent = String(visibleItems.length);
       setSelected(selectedUuid);
       updateSelectionBar();
+      void prepareSidebarTextPages();
     }
 
     function scheduleRender({ reloadTargets = false } = {}) {
@@ -2354,6 +2414,9 @@
 
     function close() {
       open = false;
+      backgroundGeneration++;
+      backgroundFailedPages.clear();
+      state.annotationSidebarOffscreenPages?.clear();
       closeContextMenu();
       selectionBar?.remove(); selectionBar = null;
       selectionMode = false; checkedUuids.clear();
