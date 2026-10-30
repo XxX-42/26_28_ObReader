@@ -180,8 +180,12 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
           fill: sector && getComputedStyle(sector).fill,
           labelColor: label && getComputedStyle(label).color,
           fontWeight: label && getComputedStyle(label).fontWeight,
+          count: document.querySelectorAll(".pdfToolWheel svg > path").length,
+          captions: [...document.querySelectorAll(".pdfToolWheel button[data-sector]")].map(b => b.textContent.trim()),
         };
       });
+      assert.equal(appearance.count, 6);
+      if (expectedEnabled) assert.deepEqual(appearance.captions.slice(1), Array(5).fill("…预留"));
       assert.equal(appearance.enabled, expectedEnabled,
         "The wheel appearance must reflect the bridge's acknowledged vocabulary state.");
       assert.equal(appearance.fill, expectedEnabled ? "rgb(105, 87, 213)" : "rgba(48, 52, 59, 0.933)",
