@@ -118,7 +118,7 @@
         const gradient = end <= 360
           ? `transparent 0deg ${start}deg, ${color} ${start}deg ${end}deg, transparent ${end}deg 360deg`
           : `${color} 0deg ${end - 360}deg, transparent ${end - 360}deg ${start}deg, ${color} ${start}deg 360deg`;
-        ring.style.cssText = `position:absolute;inset:-5px;border-radius:50%;pointer-events:none;background:conic-gradient(${gradient});mask:radial-gradient(circle,transparent calc(100% - 5px),#000 calc(100% - 5px));-webkit-mask:radial-gradient(circle,transparent calc(100% - 5px),#000 calc(100% - 5px))`;
+        ring.style.cssText = `position:absolute;inset:-5px;border-radius:50%;pointer-events:none;background:conic-gradient(${gradient});mask:radial-gradient(circle closest-side,transparent calc(100% - 5px),#000 calc(100% - 5px));-webkit-mask:radial-gradient(circle closest-side,transparent calc(100% - 5px),#000 calc(100% - 5px))`;
       });
     }
 
