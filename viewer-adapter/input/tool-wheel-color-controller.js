@@ -104,7 +104,21 @@
         const button = wheel.element.querySelector(`button[data-sector="${index}"]`);
         if (!button || !color || item.disabled) return;
         button.style.color = "#ffffff";
-
+        if (!wheel.colorRings) wheel.colorRings = new Map();
+        let ring = wheel.colorRings.get(index);
+        if (!ring) {
+          ring = wheel.element.ownerDocument.createElement("div");
+          ring.className = "pdfToolWheelColorRing";
+          ring.setAttribute("aria-hidden", "true");
+          wheel.element.append(ring);
+          wheel.colorRings.set(index, ring);
+        }
+        const start = ((item.startAngle + 90) % 360 + 360) % 360;
+        const end = start + item.endAngle - item.startAngle;
+        const gradient = end <= 360
+          ? `transparent 0deg ${start}deg, ${color} ${start}deg ${end}deg, transparent ${end}deg 360deg`
+          : `${color} 0deg ${end - 360}deg, transparent ${end - 360}deg ${start}deg, ${color} ${start}deg 360deg`;
+        ring.style.cssText = `position:absolute;inset:-5px;border-radius:50%;pointer-events:none;background:conic-gradient(${gradient});mask:radial-gradient(circle,transparent calc(100% - 5px),#000 calc(100% - 5px));-webkit-mask:radial-gradient(circle,transparent calc(100% - 5px),#000 calc(100% - 5px))`;
       });
     }
 
@@ -132,7 +146,8 @@
           for (const direction of step ? [1, -1] : [1]) {
             const middle = preferred + direction * step * Math.PI / 180;
             const points = colors.map((_, i) => {
-              const theta = middle + (i - 2) * 0.36;
+              const spacing = Math.max(0.28, 2 * Math.asin(Math.min(1, (diameter + 2) / (2 * Math.max(radius, 1)))));
+              const theta = middle + (i - 2) * spacing;
               return { x: wheel.x + radius * Math.cos(theta), y: wheel.y + radius * Math.sin(theta) };
             });
             if (points.every(p => p.x >= half && p.y >= half && p.x <= this.host.innerWidth - half && p.y <= this.host.innerHeight - half)) { positions = points; break; }

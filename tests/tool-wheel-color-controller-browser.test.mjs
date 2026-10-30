@@ -35,6 +35,9 @@ test('wheel swatches remain visible and selectable near viewport edges', { skip:
       await page.mouse.move(center.x, center.y);
       await page.mouse.down({ button: 'middle' });
       await page.mouse.move(center.x, center.y-radius*0.7);
+      const ring = await page.$eval('.pdfToolWheelColorRing', node => ({ background:getComputedStyle(node).backgroundImage, pointerEvents:getComputedStyle(node).pointerEvents }));
+      assert.match(ring.background, /255, 255, 152/);
+      assert.equal(ring.pointerEvents, 'none');
       const rects = await page.$$eval('.pdfToolWheelColors span', nodes => nodes.map(node => {
         const r=node.getBoundingClientRect(); return { x:r.x,y:r.y,width:r.width,height:r.height };
       }));
