@@ -11,13 +11,13 @@ class Element {
   remove() { this.removed = true; } getBoundingClientRect() { return { top: 0, bottom: 100 }; } scrollIntoView() {}
 }
 function setup(outline) {
-  const body = new Element('body'), listeners = new Map(), calls = [];
-  const document = { body, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment'), addEventListener() {} };
+  const body = new Element('body'), listeners = new Map(), domListeners = new Map(), calls = [];
+  const document = { body, createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment'), addEventListener(name, fn) { domListeners.set(name, fn); } };
   const window = {}; const context = { window, document, AbortController, matchMedia: () => ({ matches: false }), setTimeout, clearTimeout };
   vm.runInNewContext(source, context);
   const pdf = { numPages: 4, getOutline: async () => outline, getDestination: async name => name === 'chapter' ? [{ num: 3, gen: 0 }, { name: 'XYZ' }, 1, 2, 3] : null, getPageIndex: async ref => ref.num - 1 };
   const app = { pdfDocument: pdf, pdfViewer: { currentPageNumber: 1 }, pdfLinkService: { goToDestination: value => calls.push(value) }, eventBus: { _on: (n,f) => listeners.set(n,f), _off: n => listeners.delete(n) } };
-  return { Controller: window.PdfReaderInputRuntime.FloatingPdfOutlineController, app, body, listeners, calls };
+  return { Controller: window.PdfReaderInputRuntime.FloatingPdfOutlineController, app, body, listeners, domListeners, calls };
 }
 test('empty and unnavigable outline leave no rail', async () => {
   for (const outline of [null, [], [{ title: 'heading', dest: null }]]) { const h=setup(outline); const c=new h.Controller(h.app,()=>true); await c.start(); assert.equal(h.body.children.length,0); c.dispose(); }
@@ -27,4 +27,14 @@ test('tree search preserves parents, navigation uses original destination and di
 });
 test('late outline cannot mount after disposal', async () => {
   let resolve; const h=setup([]); h.app.pdfDocument.getOutline=()=>new Promise(r=>{resolve=r}); const c=new h.Controller(h.app,()=>true); const pending=c.start(); c.dispose(); resolve([{title:'old',dest:'chapter'}]); await pending; assert.equal(h.body.children.length,0);
+});
+
+test('leaving reader closes even a pinned outline without reacting to internal movement', async () => {
+  const h = setup([{title:'Chapter',dest:'chapter'}]);
+  const c = new h.Controller(h.app, () => true); await c.start();
+  c.explicit = true; c.setOpen(true);
+  h.domListeners.get('pointerout')({pointerType:'mouse', relatedTarget:{}});
+  assert.equal(c.panel.hidden, false);
+  h.domListeners.get('pointerout')({pointerType:'mouse', relatedTarget:null});
+  assert.equal(c.panel.hidden, true); assert.equal(c.explicit, false); c.dispose();
 });

@@ -70,6 +70,11 @@
           }
         }, { signal, passive: true });
       }
+      document.addEventListener('pointerout', event => {
+        if (event.pointerType !== 'mouse' || event.relatedTarget || !this.current()) return;
+        clearTimeout(this.timer); this.timer = null;
+        this.explicit = false; this.syncPin(); this.setOpen(false);
+      }, { signal });
       window.addEventListener?.('resize', () => this.positionAtEdge(), { signal, passive: true });
       document.addEventListener('pointerdown', event => { if (!root.contains(event.target) && (!this.explicit || event.pointerType === 'touch' || !this.hoverCapable)) { this.explicit = false; this.syncPin(); this.setOpen(false); } }, { signal, capture: true });
       document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.panel.hidden) { this.explicit = false; this.syncPin(); this.setOpen(false); } }, { signal });
