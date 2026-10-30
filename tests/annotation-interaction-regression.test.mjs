@@ -1999,9 +1999,10 @@ test(
       );
       assert.ok(
         await viewer.evaluate(() =>
-          window.__rightMenus.some((event) => !event.prevented),
+          window.__rightMenus.some((event) => event.prevented) &&
+          document.querySelector(".pdfReaderPageContextMenu")?.hidden === false,
         ),
-        "Ordinary contextmenu stays available",
+        "Ordinary right-click opens the page-layout context menu",
       );
       await page.keyboard.press("Escape");
 
@@ -2986,6 +2987,13 @@ test(
           row?.classList.contains("selected");
       }, { timeout: 15_000 }, savedHighlight);
       const reviewButton = `#editorCommentsSidebarList li.sidebarComment[data-uuid="${savedHighlight.uuid}"] .pdfReaderAnnotationReviewButton`;
+      assert.equal(await viewer.evaluate(uuid => {
+        const row=document.querySelector(`#editorCommentsSidebarList li.sidebarComment[data-uuid="${uuid}"]`);
+        const page=row.querySelector(".pdfReaderAnnotationPagePill"), review=row.querySelector(".pdfReaderAnnotationReviewButton");
+        const a=page.getBoundingClientRect(),b=review.getBoundingClientRect();
+        if (!(page.textContent===String(Number(row.dataset.pageIndex)+1) && page.parentElement===review.parentElement && b.left>a.right && Math.abs(a.top-b.top)<2)) throw Error(JSON.stringify({page:page.textContent,index:row.dataset.pageIndex,a:a.toJSON(),b:b.toJSON()}));
+        return true;
+      }, savedHighlight.uuid),true,"Page and review capsules share one compact header row");
       assert.equal(await viewer.$eval(reviewButton, (button) => button.disabled), false,
         "the persisted Highlight text enables the explicit review request");
       const reviewRequestCount = await page.evaluate(() => window.__hostState.reviewDraftRequests.length);

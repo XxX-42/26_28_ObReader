@@ -2085,9 +2085,10 @@
         navigateButton.className = "pdfReaderAnnotationSidebarNavigate";
         navigateButton.setAttribute("aria-pressed", String(item.uuid === selectedUuid));
         navigateButton.tabIndex = item.uuid === selectedUuid ? 0 : -1;
-        const pageLabel = `p${String(item.pageIndex + 1).padStart(3, "0")} · ${item.kind}`;
+        const pageLabel = `第 ${item.pageIndex + 1} 页 · ${item.kind}`;
         const page = document.createElement("time");
-        page.textContent = pageLabel;
+        page.textContent = String(item.pageIndex + 1);
+        page.className = "pdfReaderAnnotationPagePill";
         page.setAttribute("aria-label", pageLabel);
         const text = document.createElement("div");
         text.className = "sidebarCommentText";
@@ -2095,8 +2096,14 @@
         text.title = item.displayText;
         text.setAttribute("aria-label", item.displayText);
         navigateButton.setAttribute("aria-label", `${pageLabel} · ${item.displayText}`);
-        navigateButton.append(page, text);
-        row.append(navigateButton);
+        const header = document.createElement("div");
+        header.className = "pdfReaderAnnotationRowHeader";
+        header.append(page);
+        const kind = document.createElement("span");
+        kind.className = "pdfReaderAnnotationKind";
+        kind.textContent = item.kind;
+        navigateButton.append(text);
+        row.append(header, navigateButton);
         if (item.kind === "Highlight") {
           const reviewButton = document.createElement("button");
           reviewButton.type = "button";
@@ -2108,8 +2115,9 @@
           reviewButton.title = !item.targetText || item.targetTextSource === "unavailable"
             ? "目标文字暂不可用，无法加入复习"
             : typeof onAddToReview !== "function" ? "复习功能尚未连接" : "加入复习";
-          row.append(reviewButton);
+          header.append(reviewButton);
         }
+        header.append(kind);
         fragment.append(row);
       }
       list.replaceChildren(fragment);
