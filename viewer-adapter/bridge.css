@@ -628,6 +628,8 @@ body {
   border-radius: 0;
 }
 .pdfReaderAnnotationSidebarDocked > #editorCommentsSidebar {
+  position: relative !important;
+  inset: 0 auto auto 0 !important;
   height: 100%;
   max-height: 100%;
 }
