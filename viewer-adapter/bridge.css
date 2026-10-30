@@ -629,11 +629,14 @@ body {
 .pdfReaderAnnotationContextMenu button:hover { background: var(--background-modifier-hover, #8883); }
 .pdfReaderAnnotationSelectionCheckbox { flex: none; margin-inline-end: 5px; }
 .sidebarCommentText .pdfReaderSentenceBox {
-  outline: 1px solid #e44848;
-  outline-offset: 1px;
+  padding: 1px 2px;
+  border: 1px solid #d66b50;
+  border-radius: 4px;
+  background: rgba(236, 131, 99, 0.14);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+.sidebarCommentText:has(.pdfReaderSentenceBox) { line-height: 1.65; }
 
 .pdfReaderAnnotationSidebarFilters {
   display: grid;
