@@ -1,0 +1,19 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+const source = readFileSync(new URL("../viewer-adapter/obsidian-bridge.js", import.meta.url), "utf8");
+const start = source.indexOf("  function annotationSentenceForRect(");
+const end = source.indexOf("\n  function groupSidebarSentenceBoxes(", start);
+assert.ok(start >= 0 && end > start);
+const sentenceForRect = vm.runInNewContext(`(${source.slice(start, end).trim()})`);
+
+test("separate boxes in one sentence resolve to the same full original sentence", () => {
+  const text = "前文。原则是根本性的真理，它构成了行动的基础，通过行动实现愿望。下一句。";
+  const glyphs = [...text].map((character, i) => ({ character, rects: [{left:i*10, right:i*10+9, top:0, bottom:10}] }));
+  const rect = (s) => { const i = text.indexOf(s); return {left:i*10, right:(i+s.length)*10, top:0, bottom:10}; };
+  const result = ["根本性", "基础", "通过"].map((word) => sentenceForRect(glyphs, rect(word)));
+  for (const row of result) assert.equal(row.text, "原则是根本性的真理，它构成了行动的基础，通过行动实现愿望。");
+  assert.equal(new Set(result.map((row) => `${row.start}:${row.end}`)).size, 1);
+  assert.equal(sentenceForRect(glyphs, {left:-50,right:-40,top:0,bottom:10}), null);
+});

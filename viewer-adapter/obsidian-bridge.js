@@ -2009,8 +2009,62 @@
     return "（目标文字暂不可用）";
   }
 
+  function annotationSentenceForRect(glyphs, box) {
+    if (!Array.isArray(glyphs) || !box) return null;
+    const hits = [];
+    for (let i = 0; i < glyphs.length; i++) {
+      if (/^\s$/u.test(glyphs[i].character)) continue;
+      if (glyphs[i].rects.some((r) => {
+        const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
+        return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+      })) hits.push(i);
+    }
+    if (!hits.length) return null;
+    const separator = /[。！？!?\n\r]/u;
+    let start = hits[0], end = hits.at(-1) + 1;
+    while (start > 0 && !separator.test(glyphs[start - 1].character)) start--;
+    while (end < glyphs.length && !separator.test(glyphs[end].character)) end++;
+    if (end < glyphs.length && /[。！？!?]/u.test(glyphs[end].character)) end++;
+    const text = glyphs.slice(start, end).map((g) => g.character).join("").replace(/\s+/gu, " ").trim();
+    return text ? { start, end, text } : null;
+  }
+
+  function groupSidebarSentenceBoxes(items) {
+    if (typeof state === "undefined" || !state?.app?.pdfViewer) return items;
+    const groups = new Map();
+    for (const item of items) {
+      if (item.kind !== "Square") continue;
+      const rect = item.editorPayload?.rect;
+      if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) continue;
+      const view = state.app.pdfViewer.getPageView?.(item.pageIndex);
+      const root = view?.div, layer = textLayerForPage(root), viewport = view?.viewport;
+      const bounds = root?.getBoundingClientRect?.();
+      if (!layer || !viewport || !bounds?.width || !bounds?.height) continue;
+      let a, b;
+      try { a = viewport.convertToViewportPoint(rect[0], rect[1]); b = viewport.convertToViewportPoint(rect[2], rect[3]); }
+      catch { continue; }
+      const sx = bounds.width / viewport.width, sy = bounds.height / viewport.height;
+      const box = { left: Math.min(a[0], b[0]) * sx, right: Math.max(a[0], b[0]) * sx,
+        top: Math.min(a[1], b[1]) * sy, bottom: Math.max(a[1], b[1]) * sy };
+      const sentence = annotationSentenceForRect(annotationSidebarTextGlyphs(layer, root, viewport), box);
+      if (!sentence) continue;
+      const key = `${item.pageIndex}:${sentence.start}:${sentence.end}`;
+      const group = groups.get(key) || { sentence, items: [] };
+      group.items.push(item); groups.set(key, group);
+    }
+    const removed = new Set();
+    for (const { sentence, items: group } of groups.values()) {
+      if (group.length < 2) continue;
+      const first = group[0];
+      first.uuids = group.map((item) => item.uuid);
+      first.displayText = sentence.text;
+      for (const item of group.slice(1)) removed.add(item.uuid);
+    }
+    return items.filter((item) => !removed.has(item.uuid));
+  }
+
   function buildAnnotationSidebarViewModels(targets, textEvidence = getAnnotationSidebarTargetTextEvidence(targets)) {
-    return [...(targets?.values?.() || [])]
+    const items = [...(targets?.values?.() || [])]
       .filter((row) => row && row.deleted !== true && typeof row.uuid === "string" &&
         row.uuid && Number.isSafeInteger(row.pageIndex) && row.pageIndex >= 0)
       .map((row) => {
@@ -2034,6 +2088,7 @@
       })
       .sort((left, right) => left.pageIndex - right.pageIndex ||
         (left.uuid < right.uuid ? -1 : left.uuid > right.uuid ? 1 : 0));
+    return groupSidebarSentenceBoxes(items);
   }
 
   function createAnnotationSidebarController({
@@ -2097,7 +2152,10 @@
     }
 
     function requestSidebarDelete(uuids) {
-      const targets = uuids.filter((uuid) => items.some((item) => item.uuid === uuid));
+      const targets = [...new Set(uuids.flatMap((uuid) => {
+        const item = items.find((candidate) => candidate.uuid === uuid);
+        return item ? item.uuids || [uuid] : [];
+      }))];
       if (!targets.length || !window.confirm(`确定删除所选的 ${targets.length} 条批注？`)) return;
       closeContextMenu();
       const session = captureBulkDeleteSession();
