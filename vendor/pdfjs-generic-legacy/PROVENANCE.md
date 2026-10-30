@@ -149,3 +149,5 @@ Wheel glyphs use solid forms and no caption shadows.
 Restore the original wheel glyphs; bridge renders the labels in solid white.
 
 LingQ mode uses the same six equal wheel sectors, retaining disabled placeholders.
+
+Wheel icons and captions use 120% of their previous font sizes.
