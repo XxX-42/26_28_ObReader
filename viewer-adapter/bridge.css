@@ -1038,5 +1038,10 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfReaderPageContextMenu { position: fixed; z-index: 100010; min-width: 200px; padding: 6px; border: 1px solid var(--border-color, #ccc); border-radius: 6px; background: var(--body-bg-color, #fff); color: var(--main-color, #222); box-shadow: 0 4px 16px #0003; }
 .pdfReaderPageContextMenu[hidden] { display: none; }
 .pdfReaderPageContextHeading { padding: 6px 8px 3px; opacity: .6; font-size: 12px; }
-.pdfReaderPageContextMenu button { display: block; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.pdfReaderPageContextRow { display: flex; align-items: center; gap: 4px; }
+.pdfReaderPageContextMenu button { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.pdfReaderPageContextMenu .pdfReaderPageContextIcon { width: 36px; height: 32px; }
+.pdfReaderPageContextIcon::before { content: ""; width: 16px; height: 16px; background: currentColor; mask: var(--context-icon) center / contain no-repeat; -webkit-mask: var(--context-icon) center / contain no-repeat; }
+.pdfReaderPageContextMenu button.is-active { background: #8884; }
+.pdfReaderPageContextText { white-space: nowrap; font-size: 12px; }
 .pdfReaderPageContextMenu button:hover, .pdfReaderPageContextMenu button:focus-visible { background: #8883; }

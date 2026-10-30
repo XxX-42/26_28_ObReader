@@ -1184,7 +1184,12 @@ test(
     const menuOffset = await iframeOffset();
     await page.mouse.click(menuOffset.x + menuBounds.x - 50, menuOffset.y + menuBounds.y, {button:"right"});
     await viewer.waitForFunction(() => !document.querySelector(".pdfReaderPageContextMenu")?.hidden);
-    await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextMenu button")].find(b => b.textContent === "适合宽度").click());
+    assert.equal(await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextRow")].every(row => {
+      const buttons = [...row.querySelectorAll("button")];
+      return buttons.length >= 3 && buttons.every(button => button.getBoundingClientRect().top === buttons[0].getBoundingClientRect().top);
+    })), true);
+    assert.equal(await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextIcon")].every(button => getComputedStyle(button, "::before").maskImage !== "none")), true);
+    await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextMenu button")].find(b => b.dataset.layoutAction === "page-width").click());
     assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue), "page-width");
     assert.equal(await viewer.evaluate(() => document.querySelector(".pdfReaderPageContextMenu").hidden), true);
 

@@ -9584,23 +9584,42 @@
       const label = document.createElement("div");
       label.className = "pdfReaderPageContextHeading";
       label.textContent = title;
-      menu.append(label);
+      const row = document.createElement("div");
+      row.className = "pdfReaderPageContextRow";
+      menu.append(label, row);
       for (const [text, value] of options) {
         const button = document.createElement("button");
         button.type = "button";
         button.setAttribute("role", "menuitem");
-        button.textContent = text;
+        button.title = text;
+        button.setAttribute("aria-label", text);
+        button.dataset.layoutAction = value;
+        const original = document.getElementById(value);
+        if (original && !value.startsWith("page-")) {
+          button.className = "pdfReaderPageContextIcon";
+          button.style.setProperty("--context-icon", getComputedStyle(original, "::before").maskImage);
+        } else {
+          button.className = "pdfReaderPageContextText";
+          button.textContent = text;
+        }
         button.addEventListener("click", () => {
           if (value.startsWith("page-")) state.app.pdfViewer.currentScaleValue = value;
           else document.getElementById(value)?.click();
           menu.hidden = true;
         }, { signal });
-        menu.append(button);
+        row.append(button);
       }
     }
     viewer.addEventListener("contextmenu", event => {
       if (!state.app?.pdfDocument || event.target.closest?.("input,textarea,select,[contenteditable=true],[role=dialog]")) return;
       event.preventDefault();
+      for (const button of menu.querySelectorAll("[data-layout-action]")) {
+        const action = button.dataset.layoutAction;
+        const original = document.getElementById(action);
+        const active = original ? original.getAttribute("aria-checked") === "true" : state.app.pdfViewer.currentScaleValue === action;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-checked", String(active));
+      }
       menu.hidden = false;
       menu.style.left = `${Math.max(0, Math.min(event.clientX, innerWidth - menu.offsetWidth))}px`;
       menu.style.top = `${Math.max(0, Math.min(event.clientY, innerHeight - menu.offsetHeight))}px`;
