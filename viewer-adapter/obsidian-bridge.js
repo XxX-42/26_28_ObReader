@@ -9445,6 +9445,10 @@
     if (state.pointerAbortController || state.disposed) {
       return;
     }
+    state.mouseChordPan = new window.PdfReaderInputRuntime.MouseChordPanController({
+      targetWindow: window, targetDocument: document, getApp: () => state.app,
+      cancelTracked: () => { state.inputRouter?.clearActivePointers(); state.inputRouter?.clearManualPointers(); },
+    });
     state.textSelectionController =
       new window.PdfReaderInputRuntime.TextSelectionController({
         documentRef: document,
@@ -10334,6 +10338,7 @@
     if (state.disposed) {
       return;
     }
+    state.mouseChordPan?.reset();
     state.floatingPdfOutline?.dispose();
     state.floatingPdfOutline = null;
     // Any queued open invalidates a pending destructive confirmation before
@@ -12000,6 +12005,7 @@
     postLifecycleToHost("renderer-unloaded");
     cancelPendingHeavyLeaseWaiters("The PDF view was closed.");
     state.disposed = true;
+    state.mouseChordPan?.dispose();
     state.floatingPdfOutline?.dispose();
     state.floatingPdfOutline = null;
     wheelColors?.destroy();

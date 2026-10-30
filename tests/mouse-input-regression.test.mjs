@@ -1127,6 +1127,58 @@ test(
       { timeout: 12_000 },
     );
 
+    // The second mouse press may be a pointermove, not a pointerdown.
+    for (const chordMode of [5, 15]) {
+      if (chordMode === 15) {
+        await click("#editorInkButton");
+        await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 15);
+      }
+      for (const first of ["left", "right"]) {
+        const second = first === "left" ? "right" : "left";
+        const beforeChord = await viewer.evaluate(() => {
+          const app = PDFViewerApplication;
+          const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+          return { rows:manager.getEditors(0).map(editor => editor.serialize()),
+            mode:app.pdfViewer.annotationEditorMode,
+            scroll:document.getElementById("viewerContainer").scrollTop };
+        });
+        const bounds = await squareBounds();
+        const frameOffset = await iframeOffset();
+        const x = frameOffset.x + bounds.x - 40;
+        const y = frameOffset.y + bounds.y + bounds.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down({button:first});
+        // Start a real left drawing; right stays below its eraser threshold.
+        await page.mouse.move(x + (first === "left" ? 10 : 2), y);
+        await page.mouse.down({button:second});
+        assert.equal(await viewer.evaluate(() =>
+          getComputedStyle(document.getElementById("viewerContainer")).cursor), "grabbing");
+        await page.mouse.move(x + 65, y - 50, {steps:8});
+        await page.mouse.up({button:first});
+        await page.mouse.move(x + 70, y - 55);
+        await page.mouse.up({button:second});
+        const afterChord = await viewer.evaluate(async () => {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          const app = PDFViewerApplication;
+          const manager = app.pdfViewer._layerProperties.annotationEditorUIManager;
+          return { rows:manager.getEditors(0).map(editor => editor.serialize()),
+            mode:app.pdfViewer.annotationEditorMode,
+            scroll:document.getElementById("viewerContainer").scrollTop,
+            erasing:document.body.classList.contains("editorEraserMode"),
+            grabbing:document.documentElement.classList.contains("pdf-reader-chord-pan") };
+        });
+        assert.deepEqual(afterChord.rows, beforeChord.rows, `${first}-first chord must not draw or erase`);
+        assert.equal(afterChord.mode, beforeChord.mode);
+        assert.equal(afterChord.erasing, false);
+        assert.equal(afterChord.grabbing, false);
+        assert.ok(afterChord.scroll > beforeChord.scroll, "Chord must actually pan the PDF");
+        await viewer.evaluate(top => { document.getElementById("viewerContainer").scrollTop = top; }, beforeChord.scroll);
+      }
+
+    }
+    await click("#editorSquareButton");
+    await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 5);
+
     // Right-button drag temporarily switches to the native eraser and restores
     // the active tool. The bridge doesn't capture this pointer; PDF.js owns its
     // internal viewerContainer capture and cancelTemporaryStroke release path.
