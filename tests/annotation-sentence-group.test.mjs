@@ -53,3 +53,21 @@ test("square colors and highlight quads share the same original sentence", () =>
   ]);
   assert.deepEqual(Array.from(result[0].sentenceChars.slice(0, 3), s => s.owner), [0,1,2]);
 });
+
+test("a saved whole-sentence highlight includes spaces and final punctuation", () => {
+  const groupStart = source.indexOf("  function groupSidebarSentenceBoxes(");
+  const groupEnd = source.indexOf("\n  function buildAnnotationSidebarViewModels(", groupStart);
+  const result = vm.runInNewContext(`(() => {
+    const glyphs = [..."甲 乙。"].map((character,i)=>({character,rects:[{left:i*10,right:i*10+10,top:0,bottom:10}]}));
+    const viewport = {width:100,height:100,convertToViewportPoint:(x,y)=>[x,y]};
+    const root = {getBoundingClientRect:()=>({width:100,height:100})};
+    const state = {app:{pdfViewer:{getPageView:()=>({div:root,viewport})}}};
+    function textLayerForPage() { return {}; }
+    function annotationSidebarTextGlyphs() { return glyphs; }
+    ${source.slice(start, end)}
+    ${source.slice(groupStart, groupEnd)}
+    return groupSidebarSentenceBoxes([{uuid:"a",pageIndex:0,kind:"Highlight",editorPayload:{quadPoints:[0,0,25,0,0,10,25,10],text:"甲 乙。",color:[255,255,0]}}]);
+  })()`);
+  assert.equal(result[0].sentenceChars.map(c=>c.character).join(""), "甲 乙。");
+  assert.deepEqual(Array.from(result[0].sentenceChars, c=>c.owner), [0,0,0,0]);
+});

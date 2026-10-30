@@ -2034,7 +2034,7 @@
     while (end < glyphs.length && !separator.test(glyphs[end].character)) end++;
     if (end < glyphs.length && /[。！？!?]/u.test(glyphs[end].character)) end++;
     const text = glyphs.slice(start, end).map((g) => g.character).join("").replace(/\s+/gu, " ").trim();
-    return text ? { start, end, text, covered } : null;
+    return text ? { start, end, text, covered, hits } : null;
   }
 
   function groupSidebarSentenceBoxes(items) {
@@ -2071,7 +2071,7 @@
         const group = groups.get(key) || { sentence, items: [], selections: [], glyphs };
         let index = group.items.indexOf(item);
         if (index < 0) { index = group.items.push(item) - 1; group.selections.push([]); }
-        group.selections[index].push(...sentence.covered);
+        group.selections[index].push(...(item.kind === "Highlight" ? sentence.hits : sentence.covered));
         groups.set(key, group);
       }
     }
@@ -2090,6 +2090,12 @@
       const first = group[0];
       if (group.length > 1) first.uuids = group.map((item) => item.uuid);
       first.displayText = sentence.text;
+      for (let i = 0; i < group.length; i++) {
+        const saved = group[i].kind === "Highlight" ? group[i].editorPayload?.text : null;
+        if (typeof saved === "string" && saved.replace(/\s+/gu, "") === sentence.text.replace(/\s+/gu, "")) {
+          selections[i] = Array.from({ length: sentence.end - sentence.start }, (_, index) => sentence.start + index);
+        }
+      }
       const owners = new Map();
       selections.forEach((indexes, index) => indexes.forEach((glyphIndex) => {
         if (!owners.has(glyphIndex)) owners.set(glyphIndex, index);
@@ -2102,6 +2108,11 @@
         } else chars.push({ character, owner: owners.get(i) ?? null });
       }
       if (chars.at(-1)?.character === " ") chars.pop();
+      for (let i = 1; i + 1 < chars.length; i++) {
+        if (chars[i].character === " " && chars[i - 1].owner !== null && chars[i - 1].owner === chars[i + 1].owner) {
+          chars[i].owner = chars[i - 1].owner;
+        }
+      }
       first.sentenceChars = chars;
       first.sentenceStyles = group.map((item) => {
         const rawColor = item.editorPayload?.color;
