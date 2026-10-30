@@ -65,6 +65,12 @@ test('new wheel is decorated immediately and observer is disconnected on cleanup
   s.button.style.color = '';
   s.wheel.element.classList = { contains: value => value === 'pdfToolWheel' };
   s.observer.callback([{ addedNodes: [s.wheel.element] }]);
+  assert.equal(s.button.style.color, '#FFFF98');
+  s.controller.getColor = () => '#000000';
+  s.controller.decorate(s.wheel);
+  assert.equal(s.button.style.color, '#ffffff');
+  s.controller.getColor = () => '#ffffff';
+  s.controller.decorate(s.wheel);
   assert.equal(s.button.style.color, '#ffffff');
   assert.ok(!s.button.style.webkitTextStroke);
   assert.ok(!s.button.style.textShadow);

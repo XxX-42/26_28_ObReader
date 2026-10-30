@@ -103,7 +103,9 @@
         const color = key && this.getColor(key);
         const button = wheel.element.querySelector(`button[data-sector="${index}"]`);
         if (!button || !color || item.disabled) return;
-        button.style.color = "#ffffff";
+        const normalized = color.trim().toLowerCase();
+        const neutral = ["#000", "#000000", "#fff", "#ffffff", "black", "white", "rgb(0, 0, 0)", "rgb(255, 255, 255)"].includes(normalized);
+        button.style.color = neutral ? "#ffffff" : color;
         if (!wheel.colorRings) wheel.colorRings = new Map();
         let ring = wheel.colorRings.get(index);
         if (!ring) {
