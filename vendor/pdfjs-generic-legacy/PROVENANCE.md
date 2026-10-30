@@ -137,3 +137,5 @@ Adds copy and reserved actions and reflects the active highlight color.
 The selection toolbar is vertical and positioned outside the selected side of the page.
 
 The previous horizontal selection position remains a hover target for a second toolbar.
+
+The selection hover toolbar trigger is raised by half a measured text line.
