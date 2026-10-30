@@ -1189,6 +1189,7 @@ test(
       return buttons.length >= 3 && buttons.every(button => button.getBoundingClientRect().top === buttons[0].getBoundingClientRect().top);
     })), true);
     assert.equal(await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextIcon")].every(button => getComputedStyle(button, "::before").maskImage !== "none")), true);
+    assert.equal(await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextRow button")].every(button => button.textContent.trim().length === 2 && button.classList.contains("pdfReaderPageContextIcon"))), true);
     await viewer.evaluate(() => [...document.querySelectorAll(".pdfReaderPageContextMenu button")].find(b => b.dataset.layoutAction === "page-width").click());
     assert.equal(await viewer.evaluate(() => PDFViewerApplication.pdfViewer.currentScaleValue), "page-width");
     assert.equal(await viewer.evaluate(() => document.querySelector(".pdfReaderPageContextMenu").hidden), true);

@@ -9580,6 +9580,12 @@
       ["跨页显示", [["单页", "spreadNone"], ["双页（奇数页开始）", "spreadOdd"], ["双页（偶数页开始）", "spreadEven"]]],
       ["页面铺满", [["适合页面", "page-fit"], ["适合宽度", "page-width"], ["实际大小", "page-actual"]]],
     ];
+    const shortLabels = { scrollPage:"单页", scrollVertical:"纵向", scrollHorizontal:"横向", scrollWrapped:"平铺", spreadNone:"单页", spreadOdd:"奇数", spreadEven:"偶数", "page-fit":"整页", "page-width":"页宽", "page-actual":"原大" };
+    const scaleIcons = {
+      "page-fit": "<rect x='5' y='3' width='14' height='18' rx='1'/><path d='M8 7h8M8 10h8M8 13h6'/>",
+      "page-width": "<path d='M3 5v14M21 5v14M5 12h14M8 9l-3 3 3 3M16 9l3 3-3 3'/>",
+      "page-actual": "<rect x='5' y='3' width='14' height='18' rx='1'/><path d='M9 9h1v6M13 9h1v6'/>",
+    };
     for (const [title, options] of groups) {
       const label = document.createElement("div");
       label.className = "pdfReaderPageContextHeading";
@@ -9595,13 +9601,16 @@
         button.setAttribute("aria-label", text);
         button.dataset.layoutAction = value;
         const original = document.getElementById(value);
+        button.className = "pdfReaderPageContextIcon";
         if (original && !value.startsWith("page-")) {
-          button.className = "pdfReaderPageContextIcon";
           button.style.setProperty("--context-icon", getComputedStyle(original, "::before").maskImage);
-        } else {
-          button.className = "pdfReaderPageContextText";
-          button.textContent = text;
+        } else if (scaleIcons[value]) {
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${scaleIcons[value]}</svg>`;
+          button.style.setProperty("--context-icon", `url("data:image/svg+xml,${encodeURIComponent(svg)}")`);
         }
+        const caption = document.createElement("span");
+        caption.textContent = shortLabels[value];
+        button.append(caption);
         button.addEventListener("click", () => {
           if (value.startsWith("page-")) state.app.pdfViewer.currentScaleValue = value;
           else document.getElementById(value)?.click();

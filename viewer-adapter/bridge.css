@@ -1040,7 +1040,7 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfReaderPageContextHeading { padding: 6px 8px 3px; opacity: .6; font-size: 12px; }
 .pdfReaderPageContextRow { display: flex; align-items: center; gap: 4px; }
 .pdfReaderPageContextMenu button { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
-.pdfReaderPageContextMenu .pdfReaderPageContextIcon { width: 36px; height: 32px; }
+.pdfReaderPageContextMenu .pdfReaderPageContextIcon { flex-direction: column; gap: 3px; width: 44px; min-height: 48px; padding: 4px; font-size: 11px; white-space: nowrap; }
 .pdfReaderPageContextIcon::before { content: ""; width: 16px; height: 16px; background: currentColor; mask: var(--context-icon) center / contain no-repeat; -webkit-mask: var(--context-icon) center / contain no-repeat; }
 .pdfReaderPageContextMenu button.is-active { background: #8884; }
 .pdfReaderPageContextText { white-space: nowrap; font-size: 12px; }
