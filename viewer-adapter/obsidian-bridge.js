@@ -2045,7 +2045,7 @@
       else if (i >= hits.at(-1)) { end = i + 1; break; }
     }
     const text = glyphs.slice(start, end).map((g) => g.character).join("").replace(/\s+/gu, " ").trim();
-    return text ? { start, end, text, covered, hits } : null;
+    return text && text.length <= 180 ? { start, end, text, covered, hits } : null;
   }
 
   function groupSidebarSentenceBoxes(items) {
@@ -2133,7 +2133,16 @@
       });
       for (const item of group.slice(1)) removed.add(item.uuid);
     }
-    return items.filter((item) => !removed.has(item.uuid));
+    return items.filter((item) => !removed.has(item.uuid)).map((item) => {
+      if (item.kind !== "Highlight" || item.sentenceChars || !item.targetText) return item;
+      const raw = item.editorPayload?.color;
+      const color = Array.isArray(raw) || ArrayBuffer.isView(raw) ? Array.from(raw).slice(0, 3) : null;
+      item.displayText = item.targetText.replace(/\s+/gu, " ").trim();
+      item.sentenceChars = [...item.displayText].map(character => ({ character, owner: 0 }));
+      item.sentenceStyles = [{ kind: "Highlight", color: color?.length === 3 && color.every(n => Number.isFinite(n) && n >= 0 && n <= 255)
+        ? `rgb(${color.map(Math.round).join(", ")})` : "#fff066" }];
+      return item;
+    });
   }
 
   function buildAnnotationSidebarViewModels(targets, textEvidence = getAnnotationSidebarTargetTextEvidence(targets)) {
