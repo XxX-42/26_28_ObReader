@@ -17,3 +17,13 @@ test("separate boxes in one sentence resolve to the same full original sentence"
   assert.equal(new Set(result.map((row) => `${row.start}:${row.end}`)).size, 1);
   assert.equal(sentenceForRect(glyphs, {left:-50,right:-40,top:0,bottom:10}), null);
 });
+
+test("a character is marked only when at least 90 percent of its area is covered", () => {
+  const glyphs = [..."甲乙。"].map((character, i) => ({character, rects:[{left:i*10,right:i*10+10,top:0,bottom:10}]}));
+  const atThreshold = sentenceForRect(glyphs, {left:1,right:20,top:0,bottom:10});
+  assert.deepEqual(Array.from(atThreshold.covered), [0, 1]);
+  const belowThreshold = sentenceForRect(glyphs, {left:1.1,right:20,top:0,bottom:10});
+  assert.deepEqual(Array.from(belowThreshold.covered), [1]);
+  const vertical = sentenceForRect(glyphs, {left:0,right:20,top:1.1,bottom:10});
+  assert.deepEqual(Array.from(vertical.covered), []);
+});

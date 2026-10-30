@@ -2012,12 +2012,19 @@
   function annotationSentenceForRect(glyphs, box) {
     if (!Array.isArray(glyphs) || !box) return null;
     const hits = [];
+    const covered = [];
     for (let i = 0; i < glyphs.length; i++) {
       if (/^\s$/u.test(glyphs[i].character)) continue;
       if (glyphs[i].rects.some((r) => {
         const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2;
         return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
       })) hits.push(i);
+      if (glyphs[i].rects.some((r) => {
+        const area = (r.right - r.left) * (r.bottom - r.top);
+        const overlap = Math.max(0, Math.min(r.right, box.right) - Math.max(r.left, box.left)) *
+          Math.max(0, Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top));
+        return area > 0 && overlap / area >= 0.9;
+      })) covered.push(i);
     }
     if (!hits.length) return null;
     const separator = /[。！？!?\n\r]/u;
@@ -2026,7 +2033,7 @@
     while (end < glyphs.length && !separator.test(glyphs[end].character)) end++;
     if (end < glyphs.length && /[。！？!?]/u.test(glyphs[end].character)) end++;
     const text = glyphs.slice(start, end).map((g) => g.character).join("").replace(/\s+/gu, " ").trim();
-    return text ? { start, end, text } : null;
+    return text ? { start, end, text, covered } : null;
   }
 
   function groupSidebarSentenceBoxes(items) {
@@ -2049,15 +2056,27 @@
       const sentence = annotationSentenceForRect(annotationSidebarTextGlyphs(layer, root, viewport), box);
       if (!sentence) continue;
       const key = `${item.pageIndex}:${sentence.start}:${sentence.end}`;
-      const group = groups.get(key) || { sentence, items: [] };
-      group.items.push(item); groups.set(key, group);
+      const group = groups.get(key) || { sentence, items: [], selections: [], glyphs: annotationSidebarTextGlyphs(layer, root, viewport) };
+      group.items.push(item); group.selections.push(sentence.covered); groups.set(key, group);
     }
     const removed = new Set();
-    for (const { sentence, items: group } of groups.values()) {
-      if (group.length < 2) continue;
+    for (const { sentence, items: group, selections, glyphs } of groups.values()) {
       const first = group[0];
-      first.uuids = group.map((item) => item.uuid);
+      if (group.length > 1) first.uuids = group.map((item) => item.uuid);
       first.displayText = sentence.text;
+      const owners = new Map();
+      selections.forEach((indexes, index) => indexes.forEach((glyphIndex) => {
+        if (!owners.has(glyphIndex)) owners.set(glyphIndex, index);
+      }));
+      const chars = [];
+      for (let i = sentence.start; i < sentence.end; i++) {
+        const character = glyphs[i].character;
+        if (/\s/u.test(character)) {
+          if (chars.length && chars.at(-1).character !== " ") chars.push({ character: " ", owner: null });
+        } else chars.push({ character, owner: owners.get(i) ?? null });
+      }
+      if (chars.at(-1)?.character === " ") chars.pop();
+      first.sentenceChars = chars;
       for (const item of group.slice(1)) removed.add(item.uuid);
     }
     return items.filter((item) => !removed.has(item.uuid));
@@ -2226,7 +2245,18 @@
         page.setAttribute("aria-label", pageLabel);
         const text = document.createElement("div");
         text.className = "sidebarCommentText";
-        text.textContent = item.displayText;
+        if (Array.isArray(item.sentenceChars)) {
+          let run = null, owner = null;
+          for (const part of item.sentenceChars) {
+            if (!run || part.owner !== owner) {
+              owner = part.owner;
+              run = document.createElement("span");
+              if (owner !== null) run.className = "pdfReaderSentenceBox";
+              text.append(run);
+            }
+            run.textContent += part.character;
+          }
+        } else text.textContent = item.displayText;
         text.title = item.displayText;
         text.setAttribute("aria-label", item.displayText);
         navigateButton.setAttribute("aria-label", `${pageLabel} · ${item.displayText}`);

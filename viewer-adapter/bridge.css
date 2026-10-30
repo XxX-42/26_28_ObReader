@@ -628,6 +628,12 @@ body {
 .pdfReaderAnnotationContextMenu button { display: block; width: 100%; padding: 7px 10px; text-align: start; border: 0; background: transparent; color: inherit; }
 .pdfReaderAnnotationContextMenu button:hover { background: var(--background-modifier-hover, #8883); }
 .pdfReaderAnnotationSelectionCheckbox { flex: none; margin-inline-end: 5px; }
+.sidebarCommentText .pdfReaderSentenceBox {
+  outline: 1px solid #e44848;
+  outline-offset: 1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 
 .pdfReaderAnnotationSidebarFilters {
   display: grid;
