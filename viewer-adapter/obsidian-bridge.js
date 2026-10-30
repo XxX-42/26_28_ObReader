@@ -19,6 +19,8 @@
       if (!lines[i - 1].trim() || !lines[i].trim()) { result += `\n${lines[i]}`; continue; }
       const left = result.trimEnd();
       const right = lines[i].trimStart();
+      // Text layers often represent a paragraph boundary as just one newline.
+      if (/[。！？][”’」』》）)]?$/u.test(left)) { result = `${left}\n${right}`; continue; }
       result = left + (cjk.test(left.at(-1)) || cjk.test(right[0]) ? "" : " ") + right;
     }
     return result;
@@ -11828,12 +11830,20 @@
           event.stopImmediatePropagation();
         }, { capture: true, signal: state.eventAbortController.signal });
         window.addEventListener("click", (event) => {
-          if (!event.target?.closest?.(".pdfReaderSelectionCopy")) return;
+          const button = event.target?.closest?.(".pdfReaderSelectionCopy");
+          if (!button) return;
           const text = selectedPdfText();
           if (text === null || !navigator.clipboard?.writeText) return;
           event.preventDefault();
           event.stopImmediatePropagation();
-          navigator.clipboard.writeText(text).catch(() => alert("复制失败，请使用 Ctrl+C 或系统复制功能。"));
+          navigator.clipboard.writeText(text).then(() => {
+            button.classList.add("pdfReaderSelectionCopied");
+            button.title = button.ariaLabel = "已复制";
+            setTimeout(() => {
+              button.classList.remove("pdfReaderSelectionCopied");
+              button.title = button.ariaLabel = "复制选中文字";
+            }, 1500);
+          }).catch(() => alert("复制失败，请使用 Ctrl+C 或系统复制功能。"));
         }, { capture: true, signal: state.eventAbortController.signal });
         if (state.vocabularyEnabled) ensureVocabularyController();
         ensureBacklinkInteractionController();

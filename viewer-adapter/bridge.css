@@ -974,6 +974,10 @@ html[data-pdf-reader-saving] #secondaryToolbarToggleButton::before {
   -webkit-mask-size: 18.48px 18.48px !important;
   mask-size: 18.48px 18.48px !important;
 }
+.textLayer .editToolbar .pdfReaderSelectionCopy.pdfReaderSelectionCopied::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8.2 6.3 12 13.5 4.5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 8.2 6.3 12 13.5 4.5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+}
 .textLayer .editToolbar .pdfReaderSelectionPlaceholder::before { display: none !important; }
 .textLayer .editToolbar .pdfReaderSelectionPlaceholder {
   color: var(--editor-toolbar-fg-color, #444) !important;

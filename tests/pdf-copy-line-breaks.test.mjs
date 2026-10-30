@@ -17,3 +17,8 @@ test("PDF copy joins Chinese visual lines and keeps punctuation", () => {
 test("PDF copy preserves blank paragraph breaks and word spacing", () => {
   assert.equal(normalize("First line\r\nsecond line\n\n下一段\n文字。"), "First line second line\n\n下一段文字。");
 });
+
+test("PDF copy keeps a paragraph break after a Chinese sentence ending", () => {
+  assert.equal(normalize("其中一本就是《别毙了那\n只狗》。\n这本书被美国宠物犬训练师协会"),
+    "其中一本就是《别毙了那只狗》。\n这本书被美国宠物犬训练师协会");
+});
