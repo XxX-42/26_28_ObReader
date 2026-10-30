@@ -2227,9 +2227,15 @@
       event.preventDefault();
       const next = [...list.querySelectorAll("li.sidebarComment")]
         .find((candidate) => candidate.dataset.uuid === visibleItems[nextIndex].uuid);
-      next?.children?.[0]?.focus();
+      next?.querySelector?.(".pdfReaderAnnotationSidebarNavigate")?.focus();
     }
 
+    function onOutsidePointerDown(event) {
+      if (open && !menu.contains(event.target) && !button.contains(event.target)) close();
+    }
+    function onWindowBlur() { if (open) close(); }
+    document.addEventListener("pointerdown", onOutsidePointerDown, true);
+    window.addEventListener("blur", onWindowBlur);
     button.addEventListener("click", onButtonClick);
     closeButton.addEventListener("click", onCloseClick);
     list.addEventListener("click", onListClick);
@@ -2255,6 +2261,8 @@
       createReviewDraft,
       dispose() {
         closeAndClear();
+        document.removeEventListener("pointerdown", onOutsidePointerDown, true);
+        window.removeEventListener("blur", onWindowBlur);
         button.removeEventListener("click", onButtonClick);
         closeButton.removeEventListener("click", onCloseClick);
         list.removeEventListener("click", onListClick);
