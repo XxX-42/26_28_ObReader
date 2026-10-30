@@ -1043,7 +1043,7 @@ html.pdf-reader-chord-pan #viewerContainer * { cursor: grabbing !important; user
 .pdfReaderPageContextText { white-space: nowrap; font-size: 15px; }
 .pdfReaderPageContextMenu button:hover, .pdfReaderPageContextMenu button:focus-visible { background: #8883; }
 
-.pdfToolWheel .pdfToolWheelPointer { left: -18%; top: 96%; width: 70px; height: 65px; transform: translate(-20%, -35%); pointer-events: none; opacity: .65; filter: drop-shadow(0 0 5px #ffffff66); }
+.pdfToolWheel .pdfToolWheelPointer { left: -18%; top: 96%; width: 70px; height: 65px; transform: translate(-20%, -35%); pointer-events: auto; opacity: .65; filter: drop-shadow(0 0 5px #ffffff66); }
 .pdfToolWheelPointer svg { overflow: visible; }
 .pdfToolWheelPointer .pointerPad { fill: #545b68aa; stroke: none; pointer-events: auto; filter: blur(.5px); }
 .pdfToolWheelPointer .pointerGlyph { fill: white; stroke: none; pointer-events: none; }

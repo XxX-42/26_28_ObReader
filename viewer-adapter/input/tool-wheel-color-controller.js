@@ -9,6 +9,7 @@
   class ToolWheelColorController {
     constructor({ getWheel, getToolKey, getColor, commit, activatePointer, window: host = window }) {
       Object.assign(this, { getWheel, getToolKey, getColor, commit, activatePointer, host });
+      this.down = this.down.bind(this);
       this.move = this.move.bind(this);
       this.up = this.up.bind(this);
       this.cancel = this.cancel.bind(this);
@@ -21,6 +22,7 @@
     install() {
       if (this.installed) return;
       this.installed = true;
+      this.host.addEventListener("pointerdown", this.down, true);
       this.host.addEventListener("pointermove", this.move, true);
       this.host.addEventListener("pointerup", this.up, true);
       this.host.addEventListener("pointercancel", this.cancel, true);
@@ -58,6 +60,7 @@
       this.host.document?.removeEventListener("DOMContentLoaded", this.observeBody);
       this.observer?.disconnect();
       this.observer = null;
+      this.host.removeEventListener("pointerdown", this.down, true);
       this.host.removeEventListener("pointermove", this.move, true);
       this.host.removeEventListener("pointerup", this.up, true);
       this.host.removeEventListener("pointercancel", this.cancel, true);
@@ -219,9 +222,22 @@
       });
     }
 
+    pointerHit(wheel, event) {
+      const rect = wheel?.pointerControl?.getBoundingClientRect();
+      return rect && event.clientX >= rect.left && event.clientX <= rect.right &&
+        event.clientY >= rect.top && event.clientY <= rect.bottom;
+    }
+
+    down(event) {
+      const wheel = this.getWheel();
+      if (event.button === 0 && this.pointerHit(wheel, event)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }
+
     up(event) {
       const wheel = this.getWheel();
-      if (wheel && (event.target?.closest?.(".pdfToolWheelPointer") || wheel.element.ownerDocument.elementFromPoint?.(event.clientX, event.clientY)?.closest?.(".pdfToolWheelPointer")) && [0, 1].includes(event.button)) {
+      if (wheel && this.pointerHit(wheel, event) && [0, 1].includes(event.button)) {
         event.preventDefault(); event.stopImmediatePropagation(); this.clear(); this.activatePointer?.(wheel); return;
       }
       if (!wheel || wheel !== this.palette?.wheel || event.pointerId !== wheel.pointerId || event.button !== 1) return;
