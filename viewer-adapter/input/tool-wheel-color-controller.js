@@ -104,10 +104,7 @@
         const button = wheel.element.querySelector(`button[data-sector="${index}"]`);
         if (!button || !color || item.disabled) return;
         button.style.color = color;
-        const outline = color.toUpperCase() === "#000000" ? "white" : "#252525";
-        button.style.webkitTextStroke = `0.7px ${outline}`;
-        button.style.paintOrder = "stroke fill";
-        button.style.textShadow = `-1px -1px 0 ${outline}, 1px -1px 0 ${outline}, -1px 1px 0 ${outline}, 1px 1px 0 ${outline}`;
+
       });
     }
 
