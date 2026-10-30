@@ -151,3 +151,5 @@ Restore the original wheel glyphs; bridge renders the labels in solid white.
 LingQ mode uses the same six equal wheel sectors, retaining disabled placeholders.
 
 Wheel icons and captions use 120% of their previous font sizes.
+
+LingQ mode retains its original four sectors; wheel text and icons use 105% of their earlier size.

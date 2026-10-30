@@ -26516,7 +26516,7 @@ function onBeforeUnload(evt) {
 // Clockwise screen coordinates, starting at the top. LingQ toggles on release
 // like the other sectors; labels follow 1–5 counterclockwise while LingQ is
 // disabled. Once enabled, the wheel keeps the top LingQ exit sector and splits
-// the remaining arc into five disabled placeholders.
+// the remaining arc into three disabled placeholders.
 const TOOL_WHEEL_ITEMS = [
   { label: "LingQ", icon: "L", action: "toggle-lingq", mode: null },
   { label: "文字框", icon: "T", mode: AnnotationEditorType.FREETEXT },
@@ -26529,10 +26529,9 @@ function toolWheelItemsForState(vocabularyEnabled) {
   if (vocabularyEnabled) {
     return [
       { ...TOOL_WHEEL_ITEMS[0], label: "退出 LingQ", startAngle: 240, endAngle: 300 },
-      ...Array.from({ length: 5 }, (_, index) => ({
-        label: "预留", icon: "…", disabled: true,
-        startAngle: 300 + index * 60, endAngle: 360 + index * 60,
-      })),
+      { label: "预留 1", icon: "…", disabled: true, startAngle: 300, endAngle: 400 },
+      { label: "预留 2", icon: "…", disabled: true, startAngle: 400, endAngle: 500 },
+      { label: "预留 3", icon: "…", disabled: true, startAngle: 500, endAngle: 600 },
     ];
   }
   return TOOL_WHEEL_ITEMS.map((item, index) => ({

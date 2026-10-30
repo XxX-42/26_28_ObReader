@@ -8921,7 +8921,7 @@ dialog :link{
   font:
     12px system-ui,
     sans-serif;
-  font-size: calc(14.4px * var(--tool-wheel-scale, 1));
+  font-size: calc(12.6px * var(--tool-wheel-scale, 1));
   user-select: none;
   touch-action: none;
   filter: drop-shadow(0 4px 12px #0008);
@@ -8975,7 +8975,7 @@ dialog :link{
 }
 .pdfToolWheelIcon {
   display: block;
-  font-size: calc(26.4px * var(--tool-wheel-scale, 1));
+  font-size: calc(23.1px * var(--tool-wheel-scale, 1));
   line-height: 1;
 }
 .pdfToolWheelLabelText {

@@ -793,19 +793,15 @@ body {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' d='M2 12h12M4 10V7m4 3V4m4 6V2'/%3E%3C/svg%3E");
 }
 
-/* The tool wheel lives in the PDF.js document. Mirror the bridge's single
-   acknowledged vocabularyEnabled state onto the document root so the LingQ
-   sector stays visibly selected when the wheel is opened later. */
-:root[data-vocabulary-enabled="true"] .pdfToolWheel svg > path:first-of-type {
-  fill: var(--interactive-accent, #6957d5);
-  stroke: var(--interactive-accent, #6957d5);
+/* LingQ placeholders keep their disabled behavior while sharing the default
+   wheel palette and opacity. */
+:root[data-vocabulary-enabled="true"] .pdfToolWheel path.disabled {
+  fill: #30343bee;
+  stroke: #aeb5c0;
 }
-
-:root[data-vocabulary-enabled="true"] .pdfToolWheel button[data-sector="0"] {
-  /* The selected wedge is already filled with the accent color; using that
-     same color for its caption makes "退出 LingQ" disappear into the wedge. */
+:root[data-vocabulary-enabled="true"] .pdfToolWheel button[aria-disabled="true"] {
   color: #fff;
-  font-weight: 650;
+  opacity: 1;
 }
 
 #editorStamp[hidden],

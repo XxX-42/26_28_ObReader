@@ -184,12 +184,12 @@ test("middle-button LingQ toggle stays visible through hover and toggles on rele
           captions: [...document.querySelectorAll(".pdfToolWheel button[data-sector]")].map(b => b.textContent.trim()),
         };
       });
-      assert.equal(appearance.count, 6);
-      if (expectedEnabled) assert.deepEqual(appearance.captions.slice(1), Array(5).fill("…预留"));
+      assert.equal(appearance.count, expectedEnabled ? 4 : 6);
+      if (expectedEnabled) assert.deepEqual(appearance.captions.slice(1), ["…预留 1", "…预留 2", "…预留 3"]);
       assert.equal(appearance.enabled, expectedEnabled,
         "The wheel appearance must reflect the bridge's acknowledged vocabulary state.");
-      assert.equal(appearance.fill, expectedEnabled ? "rgb(105, 87, 213)" : "rgba(48, 52, 59, 0.933)",
-        "The LingQ wedge should be visibly selected only while LingQ is enabled.");
+      assert.equal(appearance.fill, "rgba(48, 52, 59, 0.933)",
+        "The LingQ wedge uses the same background in both states.");
       assert.equal(appearance.labelColor, "rgb(255, 255, 255)",
         "The deployed wheel keeps the LingQ caption readable on its accent wedge.");
       assert.equal(await page.evaluate(() => window.__host.toggleRequests.length), countBefore,
