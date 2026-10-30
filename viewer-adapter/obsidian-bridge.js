@@ -2034,7 +2034,7 @@
     for (let i = 0; i < glyphs.length; i++) {
       const ch = glyphs[i].character;
       let boundary = false;
-      if (quote && ch === quote) {
+      if (quote && (ch === quote || (quote === "”" && ch === '"') || (quote === '"' && ch === "”"))) {
         quote = null;
         boundary = i > 0 && terminal.test(glyphs[i - 1].character);
       } else if (!quote && (closes[ch] || ch === '"')) {

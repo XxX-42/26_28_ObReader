@@ -36,6 +36,14 @@ test("question marks inside quotes do not split a highlighted quotation", () => 
   assert.equal(result.text, '转变为：“你站着不动时我可以摸摸你吗？可以？按响片就赏你好吃的东西。”');
 });
 
+test("mixed OCR quotation marks do not hide later sentences", () => {
+  const text = '以前可能强化了“努力"去做某事和"实际"做到某事是不同的，或许小孩哭喊着"我做不到！"。一般而言，在行为出现前给予礼物，也最可能是要求强化物的行为。下一句。';
+  const glyphs = [...text].map((character, i) => ({character, rects:[{left:i*10,right:i*10+10,top:0,bottom:10}]}));
+  const i = text.indexOf("出现前");
+  const result = sentenceForRect(glyphs, {left:i*10,right:(i+3)*10,top:0,bottom:10});
+  assert.equal(result.text, "一般而言，在行为出现前给予礼物，也最可能是要求强化物的行为。");
+});
+
 test("square colors and highlight quads share the same original sentence", () => {
   const groupStart = source.indexOf("  function groupSidebarSentenceBoxes(");
   const groupEnd = source.indexOf("\n  function buildAnnotationSidebarViewModels(", groupStart);
