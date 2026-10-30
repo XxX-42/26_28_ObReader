@@ -346,6 +346,22 @@ test("bulk deletion recognizes confirmed hydrated editors even when unchanged se
   assert.equal(result.sidecarOnly.length, 0);
 });
 
+test("sidebar deletion plan contains only explicitly selected UUIDs", () => {
+  const result = vm.runInNewContext(`(() => {
+    const a = { uuid: "a", pageIndex: 0, kind: "Ink", editorPayload: { pageIndex: 0 } };
+    const b = { uuid: "b", pageIndex: 1, kind: "Ink", editorPayload: { pageIndex: 1 } };
+    const manager = { getEditors: () => [], getEditor: () => null };
+    const state = { app: { pdfDocument: {}, pdfViewer: { _layerProperties: { annotationEditorUIManager: manager } } },
+      externalAnnotationHydration: new Map(), annotationUuidByRuntimeId: new Map() };
+    function collectKnownAnnotationDeletionTargets() { return new Map([["a", a], ["b", b]]); }
+    function getAnnotationStorageRows() { return new Map(); }
+    ${extractFunction("collectManagedAnnotationDeletionPlan")}
+    return collectManagedAnnotationDeletionPlan(null, new Set(["b"]));
+  })()`);
+  assert.deepEqual([...result.targets.keys()], ["b"]);
+  assert.deepEqual(Array.from(result.sidecarOnly, (item) => item.uuid), ["b"]);
+});
+
 test("a stale live snapshot cannot replace a pending bulk tombstone with an upsert", () => {
   const result = vm.runInNewContext(`(() => {
     const deleted = { uuid: "already-deleted", pageIndex: 2, kind: "Ink", action: "delete", deleted: true };

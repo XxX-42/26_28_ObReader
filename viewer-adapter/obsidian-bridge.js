@@ -2056,13 +2056,62 @@
     let selectedUuid = null;
     let items = [];
     let visibleItems = [];
+    let selectionMode = false;
+    const checkedUuids = new Set();
+    let contextMenu = null;
+    let selectionBar = null;
+
+    function closeContextMenu() {
+      contextMenu?.remove();
+      contextMenu = null;
+    }
+
+    function updateSelectionBar() {
+      selectionBar?.remove();
+      selectionBar = null;
+      if (!open || !selectionMode) return;
+      selectionBar = document.createElement("div");
+      selectionBar.className = "pdfReaderAnnotationSelectionBar";
+      const selectAll = document.createElement("input");
+      selectAll.type = "checkbox";
+      selectAll.setAttribute("aria-label", "全选当前列表批注");
+      selectAll.checked = visibleItems.length > 0 && visibleItems.every((item) => checkedUuids.has(item.uuid));
+      selectAll.indeterminate = !selectAll.checked && visibleItems.some((item) => checkedUuids.has(item.uuid));
+      selectAll.addEventListener("change", () => {
+        for (const item of visibleItems) selectAll.checked ? checkedUuids.add(item.uuid) : checkedUuids.delete(item.uuid);
+        render();
+      });
+      const label = document.createElement("span");
+      label.textContent = `全选当前列表 · 已选 ${checkedUuids.size}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "删除所选";
+      remove.disabled = checkedUuids.size === 0;
+      remove.addEventListener("click", () => requestSidebarDelete([...checkedUuids]));
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "取消";
+      cancel.addEventListener("click", () => { selectionMode = false; checkedUuids.clear(); render(); });
+      selectionBar.append(selectAll, label, remove, cancel);
+      list.parentElement.before(selectionBar);
+    }
+
+    function requestSidebarDelete(uuids) {
+      const targets = uuids.filter((uuid) => items.some((item) => item.uuid === uuid));
+      if (!targets.length || !window.confirm(`确定删除所选的 ${targets.length} 条批注？`)) return;
+      closeContextMenu();
+      const session = captureBulkDeleteSession();
+      void deleteManagedAnnotations(null, session, new Set(targets)).then((ok) => {
+        if (ok) { checkedUuids.clear(); selectionMode = false; refreshIfOpen(); }
+      });
+    }
 
     function setSelected(uuid, focus = false) {
       selectedUuid = uuid;
       for (const row of list.querySelectorAll("li.sidebarComment")) {
         const selected = row.dataset.uuid === uuid;
         row.classList.toggle("selected", selected);
-        const navigateButton = row.children?.[0];
+        const navigateButton = row.querySelector?.(".pdfReaderAnnotationSidebarNavigate");
         navigateButton?.classList.toggle("selected", selected);
         navigateButton?.setAttribute("aria-pressed", String(selected));
         if (navigateButton) navigateButton.tabIndex = selected ? 0 : -1;
@@ -2097,6 +2146,7 @@
       if (!open) return;
       if (reloadTargets) items = buildAnnotationSidebarViewModels(collectTargets());
       if (selectedUuid && !items.some((item) => item.uuid === selectedUuid)) selectedUuid = null;
+      for (const uuid of checkedUuids) if (!items.some((item) => item.uuid === uuid)) checkedUuids.delete(uuid);
       visibleItems = filteredItems();
       const fragment = document.createDocumentFragment();
       for (const item of visibleItems) {
@@ -2124,6 +2174,16 @@
         navigateButton.setAttribute("aria-label", `${pageLabel} · ${item.displayText}`);
         const header = document.createElement("div");
         header.className = "pdfReaderAnnotationRowHeader";
+        if (selectionMode) {
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.className = "pdfReaderAnnotationSelectionCheckbox";
+          checkbox.checked = checkedUuids.has(item.uuid);
+          checkbox.setAttribute("aria-label", `选择第 ${item.pageIndex + 1} 页批注`);
+          checkbox.addEventListener("click", (event) => event.stopPropagation());
+          checkbox.addEventListener("change", () => { checkbox.checked ? checkedUuids.add(item.uuid) : checkedUuids.delete(item.uuid); updateSelectionBar(); });
+          header.append(checkbox);
+        }
         header.append(page);
         const kind = document.createElement("span");
         kind.className = "pdfReaderAnnotationKind";
@@ -2149,6 +2209,7 @@
       list.replaceChildren(fragment);
       count.textContent = String(visibleItems.length);
       setSelected(selectedUuid);
+      updateSelectionBar();
     }
 
     function scheduleRender({ reloadTargets = false } = {}) {
@@ -2175,6 +2236,9 @@
 
     function close() {
       open = false;
+      closeContextMenu();
+      selectionBar?.remove(); selectionBar = null;
+      selectionMode = false; checkedUuids.clear();
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       refreshFrame = null;
       pendingTargetRefresh = false;
@@ -2231,6 +2295,27 @@
       void activate(row, false);
     }
 
+    function onListContextMenu(event) {
+      const row = event.target?.closest?.("li.sidebarComment");
+      if (!row || !list.contains(row) || !open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeContextMenu();
+      contextMenu = document.createElement("div");
+      contextMenu.className = "pdfReaderAnnotationContextMenu";
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.textContent = "删除此批注";
+      remove.addEventListener("click", () => requestSidebarDelete([row.dataset.uuid]));
+      const select = document.createElement("button");
+      select.type = "button"; select.textContent = "选择批注";
+      select.addEventListener("click", () => { selectionMode = true; checkedUuids.add(row.dataset.uuid); closeContextMenu(); render(); });
+      contextMenu.append(remove, select);
+      sidebar.append(contextMenu);
+      const rect = sidebar.getBoundingClientRect();
+      contextMenu.style.left = `${Math.max(0, Math.min(event.clientX - rect.left, rect.width - 125))}px`;
+      contextMenu.style.top = `${Math.max(0, Math.min(event.clientY - rect.top, rect.height - 85))}px`;
+    }
+
     function onListKeyDown(event) {
       if (event.target?.closest?.(".pdfReaderAnnotationReviewButton")) return;
       const navigateButton = event.target?.closest?.(".pdfReaderAnnotationSidebarNavigate");
@@ -2257,6 +2342,7 @@
     }
 
     function onOutsidePointerDown(event) {
+      if (contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
       if (open && !menu.contains(event.target) && !button.contains(event.target)) close();
     }
     function onWindowBlur() { if (open) close(); }
@@ -2265,6 +2351,7 @@
     button.addEventListener("click", onButtonClick);
     closeButton.addEventListener("click", onCloseClick);
     list.addEventListener("click", onListClick);
+    list.addEventListener("contextmenu", onListContextMenu);
     list.addEventListener("keydown", onListKeyDown);
     searchInput?.addEventListener("input", onSearchInput);
     typeFilter?.addEventListener("change", onTypeFilterChange);
@@ -2292,6 +2379,7 @@
         button.removeEventListener("click", onButtonClick);
         closeButton.removeEventListener("click", onCloseClick);
         list.removeEventListener("click", onListClick);
+        list.removeEventListener("contextmenu", onListContextMenu);
         list.removeEventListener("keydown", onListKeyDown);
         searchInput?.removeEventListener("input", onSearchInput);
         typeFilter?.removeEventListener("change", onTypeFilterChange);
@@ -2307,18 +2395,20 @@
     return null;
   }
 
-  function collectManagedAnnotationDeletionPlan(pageIndex = null) {
+  function collectManagedAnnotationDeletionPlan(pageIndex = null, selectedUuids = null) {
     const app = state.app;
     const manager = app?.pdfViewer?._layerProperties?.annotationEditorUIManager;
     if (!app?.pdfDocument || !manager?.getEditors) {
       return { targets: new Map(), liveEditors: [], sidecarOnly: [] };
     }
     const targets = collectKnownAnnotationDeletionTargets(pageIndex);
+    if (selectedUuids) for (const uuid of targets.keys()) if (!selectedUuids.has(uuid)) targets.delete(uuid);
     // Refresh runtime-to-stable UUID bindings before looking up editor objects.
     // This enumerates the live PDF.js model once at the user's explicit action.
     const currentRows = getAnnotationStorageRows(app, { includeLiveEditors: true });
     for (const row of currentRows.values()) {
       if (!row?.uuid || row.deleted === true) continue;
+      if (selectedUuids && !selectedUuids.has(row.uuid)) continue;
       if (pageIndex !== null && row.pageIndex !== pageIndex) continue;
       let target = targets.get(row.uuid);
       if (!target) {
@@ -2557,7 +2647,7 @@
     return true;
   }
 
-  async function deleteManagedAnnotations(pageIndex = null, expectedSession = null) {
+  async function deleteManagedAnnotations(pageIndex = null, expectedSession = null, selectedUuids = null) {
     const session = expectedSession || captureBulkDeleteSession();
     if (!isCurrentBulkDeleteSession(session)) return false;
     if (state.readOnly || state.bulkDeleteInProgress || isEditBoundaryBusy() ||
@@ -2570,7 +2660,11 @@
     const manager = session.manager;
     if (!manager) return false;
     if (!(await prepareEmbeddedDeletionTargets(session, pageIndex))) return false;
-    const plan = collectManagedAnnotationDeletionPlan(pageIndex);
+    const plan = collectManagedAnnotationDeletionPlan(pageIndex, selectedUuids);
+    if (selectedUuids && (plan.targets.size !== selectedUuids.size || [...selectedUuids].some((uuid) => !plan.targets.has(uuid)))) {
+      showStatus("批注状态已变化，请重新选择后删除。");
+      return false;
+    }
     if (!plan.targets.size) {
       showStatus(pageIndex === null ? "没有可删除的批注。" : "本页没有可删除的批注。");
       return false;

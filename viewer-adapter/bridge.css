@@ -605,7 +605,7 @@ body {
 
 .pdfReaderAnnotationSidebarMenu > #editorCommentsSidebar {
   width: 100%;
-  height: calc(100dvh - var(--toolbar-height, 40px) - 16px);
+  height: auto;
   max-height: inherit;
   overflow: hidden;
   padding: 0;
@@ -618,8 +618,16 @@ body {
 
 #editorCommentsSidebarListContainer {
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
+
+.pdfReaderAnnotationSelectionBar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; flex: none; }
+.pdfReaderAnnotationSelectionBar span { flex: 1; }
+.pdfReaderAnnotationSelectionBar button, .pdfReaderAnnotationContextMenu button { cursor: pointer; }
+.pdfReaderAnnotationContextMenu { position: absolute; z-index: 10; min-width: 125px; padding: 4px; border-radius: 6px; background: var(--background-primary, Canvas); box-shadow: 0 3px 14px #0004; }
+.pdfReaderAnnotationContextMenu button { display: block; width: 100%; padding: 7px 10px; text-align: start; border: 0; background: transparent; color: inherit; }
+.pdfReaderAnnotationContextMenu button:hover { background: var(--background-modifier-hover, #8883); }
+.pdfReaderAnnotationSelectionCheckbox { flex: none; margin-inline-end: 5px; }
 
 .pdfReaderAnnotationSidebarFilters {
   display: grid;
