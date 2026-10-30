@@ -1,6 +1,7 @@
 /* Copyright 2026 XxX-42 and contributors; SPDX-License-Identifier: Apache-2.0 */
 "use strict";
 const { sha256 } = require('@noble/hashes/sha256');
+const { localDateSuffix, datedJsonlStem } = require('./jsonl-filename.cjs');
 const { canonicalJson } = require('./canonical.cjs');
 const { normalizeInitialPath } = require('./document-identity.cjs');
 const { validatePairId } = require('../pdf-pair-id.cjs');
@@ -38,7 +39,40 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
   normalizeInitialPath(root);
   const queues=new Map();
   function queued(path,fn){const previous=queues.get(path)||Promise.resolve();const work=previous.catch(()=>{}).then(fn);const tail=work.then(()=>{},()=>{});queues.set(path,tail);tail.then(()=>{if(queues.get(path)===tail)queues.delete(path)});return work;}
-  function pathsFor(sourcePath){const path=normalizeInitialPath(sourcePath);if(!/\.pdf$/i.test(path))throw error('V15_PATH_INVALID','A PDF path is required.');const stem=path.slice(0,-4);return {current:`${root}/annotations/${stem}.jsonl`,history:`${root}/history/${stem}.jsonl`,registry:`${root}/_registry.json`};}
+  const routePaths=new Map();
+  function pathsFor(sourcePath){const path=normalizeInitialPath(sourcePath);const stem=datedJsonlStem(path,localDateSuffix());return routePaths.get(path)||{current:`${root}/annotations/${stem}.jsonl`,history:`${root}/history/${stem}.jsonl`,registry:`${root}/_registry.json`};}
+  function bindPath(sourcePath,current){
+    const source=normalizeInitialPath(sourcePath),base=`${root}/annotations/${source.slice(0,-4)}`;
+    if(current!==base+'.jsonl'&&!new RegExp('^\\d{6}\\.jsonl$').test(current.slice(base.length)))throw error('V15_PATH_INVALID','Invalid dated annotation route.');
+    if(!current.startsWith(base))throw error('V15_PATH_INVALID','Invalid annotation route.');
+    const paths={current,history:current.replace(`${root}/annotations/`,`${root}/history/`),registry:`${root}/_registry.json`};routePaths.set(source,paths);return paths;
+  }
+  async function resolvePaths(sourcePath){
+    const path=normalizeInitialPath(sourcePath),fallback=pathsFor(path);
+    if(routePaths.has(path))return routePaths.get(path);
+    const indexText=await raw(fallback.registry);
+    if(indexText){let index;try{index=JSON.parse(indexText)}catch{index={};}
+      const rows=Object.values(index.entries||{}).filter(row=>row?.sourcePath===path&&row.jsonlPath);
+      if(rows.length>1)throw error('V15_PATH_CONFLICT','Multiple annotation routes.');
+      if(rows.length)return bindPath(path,rows[0].jsonlPath);
+    }
+    if(routePaths.has(path))return routePaths.get(path);
+    const legacy=`${root}/annotations/${path.slice(0,-4)}.jsonl`;
+    if(await adapter.exists(legacy))return bindPath(path,legacy);
+    if(await adapter.exists(fallback.current))return bindPath(path,fallback.current);
+    if(typeof adapter.list==='function'){
+      const dir=fallback.current.slice(0,fallback.current.lastIndexOf('/'));
+      if(await adapter.exists(dir)){
+        const listing=await adapter.list(dir),matches=[];
+        for(const file of listing.files){try{bindPath(path,file);matches.push(file)}catch{}}
+        routePaths.delete(path);
+        if(matches.length>1)throw error('V15_PATH_CONFLICT','Multiple dated annotation files.');
+        if(matches.length)return bindPath(path,matches[0]);
+      }
+    }
+    return fallback;
+  }
+
   async function ensure(path){let dir='';for(const part of path.split('/').slice(0,-1)){dir=dir?dir+'/'+part:part;if(!await adapter.exists(dir)){try{await adapter.mkdir(dir)}catch(e){if(!await adapter.exists(dir))throw e}}}}
   async function raw(path){return await adapter.exists(path)?adapter.read(path):null;}
   async function prepare(path,text,id=String(token())){
@@ -72,7 +106,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
     return {header,document,pairId:header.pairId,revision:header.revision,commitId:header.commitId,annotations,tombstones,deletionGuards};
   }
   function stateRows(value){return [...value.annotations.map(value=>({type:'annotation',value})),...value.tombstones.map(value=>({type:'deletion',value})),...value.deletionGuards.map(value=>({type:'deletionGuard',value}))].sort((a,b)=>a.value.uuid<b.value.uuid?-1:a.value.uuid>b.value.uuid?1:0);}
-  async function readCurrent(sourcePath,pairId){const path=pathsFor(sourcePath).current,text=await raw(path);return text===null?null:currentFrom(text,sourcePath,pairId);}
+  async function readCurrent(sourcePath,pairId){const path=(await resolvePaths(sourcePath)).current,text=await raw(path);return text===null?null:currentFrom(text,sourcePath,pairId);}
   function parseHistory(text,current){
     if(text===null)throw error('V15_HISTORY_MISSING','The recent-change file is missing; current annotations remain available.');
     const {header,rows}=decode(text,HISTORY,current.pairId);
@@ -89,7 +123,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
   }
   async function readHistory(sourcePath,pairId){const current=await readCurrent(sourcePath,pairId);if(!current)return [];const found=await historyTextFor(current,pathsFor(sourcePath).history);return parseHistory(found.text,current);}
   async function initialize({document,pairId,annotations=[],tombstones=[],deletionGuards=[]}){
-    validatePairId(pairId);const paths=pathsFor(document.sourcePath);
+    validatePairId(pairId);const paths=await resolvePaths(document.sourcePath);
     return queued(paths.current,async()=>{
       const existing=await readCurrent(document.sourcePath,pairId);
       if(existing){
@@ -107,7 +141,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
     });
   }
   async function save({sourcePath,pairId,changes,expectedRevision}){
-    validatePairId(pairId);if(!Array.isArray(changes))throw TypeError('An annotation change array is required.');const paths=pathsFor(sourcePath);
+    validatePairId(pairId);if(!Array.isArray(changes))throw TypeError('An annotation change array is required.');const paths=await resolvePaths(sourcePath);
     return queued(paths.current,async()=>{
       const beforeText=await raw(paths.current);if(beforeText===null)throw error('V15_DOCUMENT_MISSING','Initialize a paired document before saving.');
       const before=currentFrom(beforeText,sourcePath,pairId);
@@ -143,7 +177,7 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
     });
   }
   async function updateSourceIdentity({sourcePath,pairId,documentId,docKey,expectedSourceHash,source,pairing}){
-    validatePairId(pairId);const paths=pathsFor(sourcePath);
+    validatePairId(pairId);const paths=await resolvePaths(sourcePath);
     if(!source||!isSupportedHash(source.sourceHash)||
       !Number.isSafeInteger(source.pageCount)||!Array.isArray(source.orderedPageIdentities)||source.orderedPageIdentities.length!==source.pageCount)
       throw error('V15_SOURCE_IDENTITY_INVALID','The verified PDF source identity is incomplete.');
@@ -172,7 +206,10 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
   }
   async function renameDocument({fromPath,toPath,pairId}){
     validatePairId(pairId);fromPath=normalizeInitialPath(fromPath);toPath=normalizeInitialPath(toPath);
-    const from=pathsFor(fromPath),to=pathsFor(toPath);
+    const from=await resolvePaths(fromPath);
+    const suffix=from.current.slice(-12,-6);
+    if(/^\d{6}$/.test(suffix))bindPath(toPath,`${root}/annotations/${datedJsonlStem(toPath,suffix)}.jsonl`);
+    const to=pathsFor(toPath);
     if(fromPath===toPath)return readCurrent(fromPath,pairId);
     const locks=[from.current,to.current].sort();
     return queued(locks[0],()=>queued(locks[1],async()=>{
@@ -207,6 +244,6 @@ function createSingleJsonlStore({adapter,root='00_Archive/20_PDFData',token=()=>
       return currentFrom(next,toPath,pairId);
     }));
   }
-  return Object.freeze({pathsFor,initialize,readCurrent,readHistory,save,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
+  return Object.freeze({pathsFor,bindPath,initialize,readCurrent,readHistory,save,updateSourceIdentity,renameDocument,sourceProtocol:FORMAT});
 }
 module.exports={createSingleJsonlStore,FORMAT};

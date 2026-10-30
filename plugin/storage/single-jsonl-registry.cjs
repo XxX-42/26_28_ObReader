@@ -49,6 +49,7 @@ function createSingleJsonlRegistry({adapter,store,root='00_Archive/20_PDFData'})
         if(!file.endsWith('.jsonl'))continue;
         let header;
         try{header=JSON.parse((await adapter.read(file)).split('\n',1)[0]);}catch{throw fail('V15_REGISTRY_REBUILD_INCOMPLETE',`Cannot verify ${file}`)}
+        if(header?.document?.sourcePath)store.bindPath(header.document.sourcePath,file);
         if(!header?.document?.sourcePath||store.pathsFor(header.document.sourcePath).current!==file)throw fail('V15_REGISTRY_REBUILD_INCOMPLETE','Current file path differs from its document route.');
         const current=await store.readCurrent(header.document.sourcePath,header.pairId);if(!current)throw fail('V15_REGISTRY_REBUILD_INCOMPLETE','Current file disappeared during rebuild.');
         if(Object.hasOwn(entries,current.pairId))throw fail('V15_PAIR_DUPLICATE','Multiple current files have the same pair identity.');
@@ -68,7 +69,8 @@ function createSingleJsonlRegistry({adapter,store,root='00_Archive/20_PDFData'})
   }
   async function lookup(pairId){
     validatePairId(pairId);const loaded=await read(),entry=loaded.value?.entries?.[pairId];
-    if(entry&&typeof entry.sourcePath==='string'&&entry.jsonlPath===store.pathsFor(entry.sourcePath).current){
+    if(entry&&typeof entry.sourcePath==='string'){
+      store.bindPath(entry.sourcePath,entry.jsonlPath);
       try{const current=await store.readCurrent(entry.sourcePath,pairId);if(current&&current.document.documentId===entry.documentId&&current.document.docKey===entry.docKey)return current;}catch{/* Resolve only through verified files below. */}
     }
     const rebuilt=await rebuild(),found=rebuilt[pairId];return found?store.readCurrent(found.sourcePath,pairId):null;

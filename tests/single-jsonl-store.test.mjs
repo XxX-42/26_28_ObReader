@@ -28,7 +28,7 @@ test('current JSONL preserves rows and deletions, with no operation history or d
   const got=await w.store().readCurrent(document.sourcePath,pairId);
   assert.deepEqual(got.annotations,[a]);assert.equal(got.tombstones[0].uuid,'D');
   const paths=s.pathsFor(document.sourcePath);
-  assert.equal(paths.current,'00_Archive/20_PDFData/annotations/12_books/戒烟.jsonl');
+  assert.match(paths.current,/annotations\/12_books\/戒烟\d{6}\.jsonl$/);
   const lines=w.files.get(paths.current).trim().split('\n').map(JSON.parse);
   assert.deepEqual(lines.map(x=>x.type),['header','annotation','deletion']);
   assert.equal(lines.some(x=>x.op||x.operations),false);

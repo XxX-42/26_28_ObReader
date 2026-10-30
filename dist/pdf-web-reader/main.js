@@ -11440,6 +11440,23 @@ var __PDFReaderAnnotationHost = (() => {
     }
   });
 
+  // plugin/storage/jsonl-filename.cjs
+  var require_jsonl_filename = __commonJS({
+    "plugin/storage/jsonl-filename.cjs"(exports, module) {
+      "use strict";
+      function localDateSuffix(date = /* @__PURE__ */ new Date()) {
+        if (!(date instanceof Date) || !Number.isFinite(date.getTime())) throw new TypeError("A valid date is required.");
+        const two = (value) => String(value).padStart(2, "0");
+        return `${two(date.getFullYear() % 100)}${two(date.getMonth() + 1)}${two(date.getDate())}`;
+      }
+      function datedJsonlStem(sourcePath, suffix) {
+        if (typeof sourcePath !== "string" || !/\.pdf$/i.test(sourcePath) || !/^\d{6}$/.test(suffix)) throw new TypeError("A PDF path and YYMMDD suffix are required.");
+        return `${sourcePath.slice(0, -4)}${suffix}`;
+      }
+      module.exports = { localDateSuffix, datedJsonlStem };
+    }
+  });
+
   // node_modules/tslib/tslib.es6.js
   var tslib_es6_exports = {};
   __export(tslib_es6_exports, {
@@ -34130,6 +34147,7 @@ ${xrefOffset}
     "plugin/storage/single-jsonl-store.cjs"(exports, module) {
       "use strict";
       var { sha256 } = require_sha256();
+      var { localDateSuffix, datedJsonlStem } = require_jsonl_filename();
       var { canonicalJson } = require_canonical();
       var { normalizeInitialPath } = require_document_identity();
       var { validatePairId } = require_pdf_pair_id();
@@ -34185,11 +34203,56 @@ ${xrefOffset}
           });
           return work;
         }
+        const routePaths = /* @__PURE__ */ new Map();
         function pathsFor(sourcePath) {
           const path = normalizeInitialPath(sourcePath);
-          if (!/\.pdf$/i.test(path)) throw error("V15_PATH_INVALID", "A PDF path is required.");
-          const stem = path.slice(0, -4);
-          return { current: `${root}/annotations/${stem}.jsonl`, history: `${root}/history/${stem}.jsonl`, registry: `${root}/_registry.json` };
+          const stem = datedJsonlStem(path, localDateSuffix());
+          return routePaths.get(path) || { current: `${root}/annotations/${stem}.jsonl`, history: `${root}/history/${stem}.jsonl`, registry: `${root}/_registry.json` };
+        }
+        function bindPath(sourcePath, current) {
+          const source = normalizeInitialPath(sourcePath), base = `${root}/annotations/${source.slice(0, -4)}`;
+          if (current !== base + ".jsonl" && !new RegExp("^\\d{6}\\.jsonl$").test(current.slice(base.length))) throw error("V15_PATH_INVALID", "Invalid dated annotation route.");
+          if (!current.startsWith(base)) throw error("V15_PATH_INVALID", "Invalid annotation route.");
+          const paths = { current, history: current.replace(`${root}/annotations/`, `${root}/history/`), registry: `${root}/_registry.json` };
+          routePaths.set(source, paths);
+          return paths;
+        }
+        async function resolvePaths(sourcePath) {
+          const path = normalizeInitialPath(sourcePath), fallback = pathsFor(path);
+          if (routePaths.has(path)) return routePaths.get(path);
+          const indexText = await raw(fallback.registry);
+          if (indexText) {
+            let index;
+            try {
+              index = JSON.parse(indexText);
+            } catch {
+              index = {};
+            }
+            const rows = Object.values(index.entries || {}).filter((row) => row?.sourcePath === path && row.jsonlPath);
+            if (rows.length > 1) throw error("V15_PATH_CONFLICT", "Multiple annotation routes.");
+            if (rows.length) return bindPath(path, rows[0].jsonlPath);
+          }
+          if (routePaths.has(path)) return routePaths.get(path);
+          const legacy = `${root}/annotations/${path.slice(0, -4)}.jsonl`;
+          if (await adapter.exists(legacy)) return bindPath(path, legacy);
+          if (await adapter.exists(fallback.current)) return bindPath(path, fallback.current);
+          if (typeof adapter.list === "function") {
+            const dir = fallback.current.slice(0, fallback.current.lastIndexOf("/"));
+            if (await adapter.exists(dir)) {
+              const listing = await adapter.list(dir), matches = [];
+              for (const file of listing.files) {
+                try {
+                  bindPath(path, file);
+                  matches.push(file);
+                } catch {
+                }
+              }
+              routePaths.delete(path);
+              if (matches.length > 1) throw error("V15_PATH_CONFLICT", "Multiple dated annotation files.");
+              if (matches.length) return bindPath(path, matches[0]);
+            }
+          }
+          return fallback;
         }
         async function ensure(path) {
           let dir = "";
@@ -34247,7 +34310,7 @@ ${xrefOffset}
           return [...value.annotations.map((value2) => ({ type: "annotation", value: value2 })), ...value.tombstones.map((value2) => ({ type: "deletion", value: value2 })), ...value.deletionGuards.map((value2) => ({ type: "deletionGuard", value: value2 }))].sort((a, b) => a.value.uuid < b.value.uuid ? -1 : a.value.uuid > b.value.uuid ? 1 : 0);
         }
         async function readCurrent(sourcePath, pairId) {
-          const path = pathsFor(sourcePath).current, text = await raw(path);
+          const path = (await resolvePaths(sourcePath)).current, text = await raw(path);
           return text === null ? null : currentFrom(text, sourcePath, pairId);
         }
         function parseHistory(text, current) {
@@ -34272,7 +34335,7 @@ ${xrefOffset}
         }
         async function initialize({ document, pairId, annotations = [], tombstones = [], deletionGuards = [] }) {
           validatePairId(pairId);
-          const paths = pathsFor(document.sourcePath);
+          const paths = await resolvePaths(document.sourcePath);
           return queued(paths.current, async () => {
             const existing = await readCurrent(document.sourcePath, pairId);
             if (existing) {
@@ -34296,7 +34359,7 @@ ${xrefOffset}
         async function save({ sourcePath, pairId, changes, expectedRevision }) {
           validatePairId(pairId);
           if (!Array.isArray(changes)) throw TypeError("An annotation change array is required.");
-          const paths = pathsFor(sourcePath);
+          const paths = await resolvePaths(sourcePath);
           return queued(paths.current, async () => {
             const beforeText = await raw(paths.current);
             if (beforeText === null) throw error("V15_DOCUMENT_MISSING", "Initialize a paired document before saving.");
@@ -34342,7 +34405,7 @@ ${xrefOffset}
         }
         async function updateSourceIdentity({ sourcePath, pairId, documentId, docKey, expectedSourceHash, source, pairing }) {
           validatePairId(pairId);
-          const paths = pathsFor(sourcePath);
+          const paths = await resolvePaths(sourcePath);
           if (!source || !isSupportedHash(source.sourceHash) || !Number.isSafeInteger(source.pageCount) || !Array.isArray(source.orderedPageIdentities) || source.orderedPageIdentities.length !== source.pageCount)
             throw error("V15_SOURCE_IDENTITY_INVALID", "The verified PDF source identity is incomplete.");
           let updatedText = null;
@@ -34371,7 +34434,10 @@ ${xrefOffset}
           validatePairId(pairId);
           fromPath = normalizeInitialPath(fromPath);
           toPath = normalizeInitialPath(toPath);
-          const from = pathsFor(fromPath), to = pathsFor(toPath);
+          const from = await resolvePaths(fromPath);
+          const suffix = from.current.slice(-12, -6);
+          if (/^\d{6}$/.test(suffix)) bindPath(toPath, `${root}/annotations/${datedJsonlStem(toPath, suffix)}.jsonl`);
+          const to = pathsFor(toPath);
           if (fromPath === toPath) return readCurrent(fromPath, pairId);
           const locks = [from.current, to.current].sort();
           return queued(locks[0], () => queued(locks[1], async () => {
@@ -34409,7 +34475,7 @@ ${xrefOffset}
             return currentFrom(next, toPath, pairId);
           }));
         }
-        return Object.freeze({ pathsFor, initialize, readCurrent, readHistory, save, updateSourceIdentity, renameDocument, sourceProtocol: FORMAT });
+        return Object.freeze({ pathsFor, bindPath, initialize, readCurrent, readHistory, save, updateSourceIdentity, renameDocument, sourceProtocol: FORMAT });
       }
       module.exports = { createSingleJsonlStore, FORMAT };
     }
@@ -34491,6 +34557,7 @@ ${xrefOffset}
               } catch {
                 throw fail("V15_REGISTRY_REBUILD_INCOMPLETE", `Cannot verify ${file}`);
               }
+              if (header?.document?.sourcePath) store.bindPath(header.document.sourcePath, file);
               if (!header?.document?.sourcePath || store.pathsFor(header.document.sourcePath).current !== file) throw fail("V15_REGISTRY_REBUILD_INCOMPLETE", "Current file path differs from its document route.");
               const current = await store.readCurrent(header.document.sourcePath, header.pairId);
               if (!current) throw fail("V15_REGISTRY_REBUILD_INCOMPLETE", "Current file disappeared during rebuild.");
@@ -34510,7 +34577,8 @@ ${xrefOffset}
         async function lookup(pairId) {
           validatePairId(pairId);
           const loaded = await read(), entry = loaded.value?.entries?.[pairId];
-          if (entry && typeof entry.sourcePath === "string" && entry.jsonlPath === store.pathsFor(entry.sourcePath).current) {
+          if (entry && typeof entry.sourcePath === "string") {
+            store.bindPath(entry.sourcePath, entry.jsonlPath);
             try {
               const current = await store.readCurrent(entry.sourcePath, pairId);
               if (current && current.document.documentId === entry.documentId && current.document.docKey === entry.docKey) return current;
