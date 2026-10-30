@@ -27,3 +27,29 @@ test("a character is marked only when at least 90 percent of its area is covered
   const vertical = sentenceForRect(glyphs, {left:0,right:20,top:1.1,bottom:10});
   assert.deepEqual(Array.from(vertical.covered), []);
 });
+
+test("square colors and highlight quads share the same original sentence", () => {
+  const groupStart = source.indexOf("  function groupSidebarSentenceBoxes(");
+  const groupEnd = source.indexOf("\n  function buildAnnotationSidebarViewModels(", groupStart);
+  const result = vm.runInNewContext(`(() => {
+    const glyphs = [..."甲乙丙丁。"].map((character,i)=>({character,rects:[{left:i*10,right:i*10+10,top:0,bottom:10}]}));
+    const viewport = {width:100,height:100,convertToViewportPoint:(x,y)=>[x,y]};
+    const root = {getBoundingClientRect:()=>({width:100,height:100})};
+    const state = {app:{pdfViewer:{getPageView:()=>({div:root,viewport})}}};
+    function textLayerForPage() { return {}; }
+    function annotationSidebarTextGlyphs() { return glyphs; }
+    ${source.slice(start, end)}
+    ${source.slice(groupStart, groupEnd)}
+    return groupSidebarSentenceBoxes([
+      {uuid:"a",pageIndex:0,kind:"Square",editorPayload:{rect:[0,0,10,10],color:[255,0,0]}},
+      {uuid:"b",pageIndex:0,kind:"Square",editorPayload:{rect:[10,0,20,10],color:[0,0,255]}},
+      {uuid:"c",pageIndex:0,kind:"Highlight",editorPayload:{quadPoints:[20,0,30,0,20,10,30,10],color:[255,255,0]}}
+    ]);
+  })()`);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].displayText, "甲乙丙丁。");
+  assert.deepEqual(Array.from(result[0].sentenceStyles, s => [s.kind, s.color]), [
+    ["Square", "rgb(255, 0, 0)"], ["Square", "rgb(0, 0, 255)"], ["Highlight", "rgb(255, 255, 0)"]
+  ]);
+  assert.deepEqual(Array.from(result[0].sentenceChars.slice(0, 3), s => s.owner), [0,1,2]);
+});

@@ -631,10 +631,15 @@ body {
 .sidebarCommentText .pdfReaderSentenceBox {
   display: inline-block;
   padding: 0 2px;
-  border: 1.5px solid #d33b30;
+  border: 1.5px solid var(--pdf-reader-sentence-color, #d33b30);
   border-radius: 0;
   background: transparent;
   line-height: 1.35;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.sidebarCommentText .pdfReaderSentenceHighlight {
+  background: color-mix(in srgb, var(--pdf-reader-sentence-color, #fff066) 45%, transparent);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }

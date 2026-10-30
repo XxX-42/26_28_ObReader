@@ -2040,27 +2040,47 @@
     if (typeof state === "undefined" || !state?.app?.pdfViewer) return items;
     const groups = new Map();
     for (const item of items) {
-      if (item.kind !== "Square") continue;
-      const rect = item.editorPayload?.rect;
-      if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) continue;
+      if (item.kind !== "Square" && item.kind !== "Highlight") continue;
+      const raw = item.kind === "Square" ? item.editorPayload?.rect : item.editorPayload?.quadPoints;
+      const coords = ArrayBuffer.isView(raw) ? Array.from(raw) : Array.isArray(raw) ? raw : raw?.values;
+      const stride = item.kind === "Square" ? 4 : 8;
+      if (!Array.isArray(coords) || coords.length < stride || coords.length % stride || !coords.every(Number.isFinite)) continue;
       const view = state.app.pdfViewer.getPageView?.(item.pageIndex);
       const root = view?.div, layer = textLayerForPage(root), viewport = view?.viewport;
       const bounds = root?.getBoundingClientRect?.();
       if (!layer || !viewport || !bounds?.width || !bounds?.height) continue;
-      let a, b;
-      try { a = viewport.convertToViewportPoint(rect[0], rect[1]); b = viewport.convertToViewportPoint(rect[2], rect[3]); }
-      catch { continue; }
       const sx = bounds.width / viewport.width, sy = bounds.height / viewport.height;
-      const box = { left: Math.min(a[0], b[0]) * sx, right: Math.max(a[0], b[0]) * sx,
-        top: Math.min(a[1], b[1]) * sy, bottom: Math.max(a[1], b[1]) * sy };
-      const sentence = annotationSentenceForRect(annotationSidebarTextGlyphs(layer, root, viewport), box);
-      if (!sentence) continue;
-      const key = `${item.pageIndex}:${sentence.start}:${sentence.end}`;
-      const group = groups.get(key) || { sentence, items: [], selections: [], glyphs: annotationSidebarTextGlyphs(layer, root, viewport) };
-      group.items.push(item); group.selections.push(sentence.covered); groups.set(key, group);
+      const glyphs = annotationSidebarTextGlyphs(layer, root, viewport);
+      for (let offset = 0; offset < coords.length; offset += stride) {
+        let points;
+        try {
+          points = [];
+          for (let i = 0; i < stride; i += 2) points.push(viewport.convertToViewportPoint(coords[offset + i], coords[offset + i + 1]));
+        } catch { continue; }
+        const box = { left: Math.min(...points.map(p => p[0])) * sx, right: Math.max(...points.map(p => p[0])) * sx,
+          top: Math.min(...points.map(p => p[1])) * sy, bottom: Math.max(...points.map(p => p[1])) * sy };
+        const sentence = annotationSentenceForRect(glyphs, box);
+        if (!sentence) continue;
+        const key = `${item.pageIndex}:${sentence.start}:${sentence.end}`;
+        const group = groups.get(key) || { sentence, items: [], selections: [], glyphs };
+        let index = group.items.indexOf(item);
+        if (index < 0) { index = group.items.push(item) - 1; group.selections.push([]); }
+        group.selections[index].push(...sentence.covered);
+        groups.set(key, group);
+      }
+    }
+    // A single annotation spanning different sentences must retain its own
+    // original entry; it cannot safely belong to multiple grouped rows.
+    const occurrences = new Map();
+    for (const group of groups.values()) for (const item of group.items) occurrences.set(item.uuid, (occurrences.get(item.uuid) || 0) + 1);
+    for (const group of groups.values()) {
+      for (let i = group.items.length - 1; i >= 0; i--) {
+        if (occurrences.get(group.items[i].uuid) > 1) { group.items.splice(i, 1); group.selections.splice(i, 1); }
+      }
     }
     const removed = new Set();
     for (const { sentence, items: group, selections, glyphs } of groups.values()) {
+      if (!group.length) continue;
       const first = group[0];
       if (group.length > 1) first.uuids = group.map((item) => item.uuid);
       first.displayText = sentence.text;
@@ -2077,6 +2097,12 @@
       }
       if (chars.at(-1)?.character === " ") chars.pop();
       first.sentenceChars = chars;
+      first.sentenceStyles = group.map((item) => {
+        const rawColor = item.editorPayload?.color;
+        const color = Array.isArray(rawColor) || ArrayBuffer.isView(rawColor) ? Array.from(rawColor).slice(0, 3) : null;
+        return { kind: item.kind, color: color?.length === 3 && color.every((n) => Number.isFinite(n) && n >= 0 && n <= 255)
+          ? `rgb(${color.map(Math.round).join(", ")})` : item.kind === "Square" ? "#d33b30" : "#fff066" };
+      });
       for (const item of group.slice(1)) removed.add(item.uuid);
     }
     return items.filter((item) => !removed.has(item.uuid));
@@ -2251,7 +2277,11 @@
             if (!run || part.owner !== owner) {
               owner = part.owner;
               run = document.createElement("span");
-              if (owner !== null) run.className = "pdfReaderSentenceBox";
+              if (owner !== null) {
+                const style = item.sentenceStyles?.[owner];
+                run.className = style?.kind === "Highlight" ? "pdfReaderSentenceHighlight" : "pdfReaderSentenceBox";
+                if (style?.color) run.style.setProperty("--pdf-reader-sentence-color", style.color);
+              }
               text.append(run);
             }
             run.textContent += part.character;
