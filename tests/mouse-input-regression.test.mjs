@@ -4349,6 +4349,40 @@ test(
       crossPageViewportChange,
       hostFocusPauseResume:hostFocusAfterResume,
     }, null, 2), "utf8");
+
+    await click(".pdfReaderPointerTool");
+    await viewer.waitForFunction(() => PDFViewerApplication.pdfViewer.annotationEditorMode === 0);
+    await viewer.evaluate(() => { PDFViewerApplication.pdfViewer.currentPageNumber = 2; });
+    await viewer.waitForSelector('.page[data-page-number="2"] .textLayer span');
+    const crossPageExpected = await viewer.evaluate(() => {
+      const first = document.querySelector('.page[data-page-number="1"] .textLayer');
+      const second = document.querySelector('.page[data-page-number="2"] .textLayer');
+      const textNodes = element => { const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT); const nodes=[]; while(walker.nextNode()) if(walker.currentNode.textContent.trim())nodes.push(walker.currentNode); return nodes; };
+      const a=textNodes(first).at(-1), b=textNodes(second)[0];
+      const range=document.createRange();range.setStart(a,0);range.setEnd(b,b.length);
+      const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+      PDFViewerApplication.pdfViewer._layerProperties.annotationEditorUIManager.highlightSelection("cross-page-test");
+      return [a.textContent,b.textContent];
+    });
+    await viewer.waitForFunction(() => window.__mouseBridgeState.annotationSelectionGroups.size === 2);
+    const groups = await viewer.evaluate(() => [...window.__mouseBridgeState.annotationSelectionGroups.values()]);
+    assert.equal(groups[0].id, groups[1].id);
+    assert.deepEqual(groups.map(g=>g.index), [0,1]);
+    const captured = await viewer.evaluate(() => [...window.__mouseBridgeState.annotationSelectionGroups.keys()].map(id=>window.__mouseBridgeState.annotationTargetTextByRuntimeId.get(id)));
+    assert.deepEqual(captured, crossPageExpected);
+    const saveCount = await page.evaluate(() => window.__host.saves.length);
+    await clickAction("save");
+    await page.waitForFunction(n => window.__host.saves.length > n, {}, saveCount);
+    const savedCrossPage = await page.evaluate(() => window.__browserSidecarHost.operationsFor("mouse-regression-document").filter(row=>row.payload?.editor?.selectionGroup));
+    assert.equal(savedCrossPage.length,2);
+    assert.deepEqual(savedCrossPage.map(row=>row.pageIndex).sort(),[0,1]);
+    assert.ok(savedCrossPage.every(row=>row.payload.editor.quadPoints?.values?.length >= 8 && row.payload.editor.quadPoints.values.every(Number.isFinite)));
+    await page.evaluate(() => window.__host.reopenSaved());
+    await viewer.waitForFunction(() => window.__mouseBridgeState.annotationSelectionGroups.size === 0);
+    await viewer.waitForSelector('.page[data-page-number="1"] .textLayer span');
+    const reopenedCrossPage = await page.evaluate(() => window.__browserSidecarHost.operationsFor("mouse-regression-document").filter(row=>row.payload?.editor?.selectionGroup));
+    assert.deepEqual(reopenedCrossPage,savedCrossPage);
+
     t.diagnostic(`Focus lifecycle evidence: ${focusLifecyclePath}`);
     } catch (error) {
       primaryError = error;

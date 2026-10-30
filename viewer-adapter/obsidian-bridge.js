@@ -111,6 +111,7 @@
     annotationSidebarController: null,
     annotationSidebarTextGeometryCache: new WeakMap(),
     annotationTargetTextByRuntimeId: new Map(),
+    annotationSelectionGroups: new Map(),
     pendingHighlightSelection: null,
     toolbarLayoutResizeObserver: null,
     toolbarLayoutMutationObserver: null,
@@ -3680,6 +3681,9 @@
           .map(normalizeSyncKind).find(candidate => EXTERNAL_ANNOTATION_KINDS.has(candidate)) || kind;
       }
       if (value?.deleted !== true && normalizeSyncKind(kind) === "Highlight") {
+        const selectionGroup = state.annotationSelectionGroups?.get(runtimeId) || value.selectionGroup ||
+          exactRow?.editor?.selectionGroup || exactRow?.editorPayload?.selectionGroup || priorRow?.value?.selectionGroup;
+        if (selectionGroup) value = { ...value, selectionGroup };
         const targetText = state.annotationTargetTextByRuntimeId?.get(runtimeId) ||
           value?.text ||
           exactRow?.editor?.text || exactRow?.editorPayload?.text || priorRow?.value?.text;
@@ -3933,6 +3937,7 @@
       state.annotationUuidByRuntimeId.clear();
       state.annotationProvenanceByUuid.clear();
       state.annotationTargetTextByRuntimeId.clear();
+      state.annotationSelectionGroups.clear();
       state.pendingHighlightSelection = null;
       state.annotationRefByRuntimeId.clear();
       state.annotationUuidByPdfRef.clear();
@@ -7797,6 +7802,40 @@
     // native handler empties it; addEditor associates it with the new runtime
     // ID before the existing addCommands mutation observer persists a row.
     wrapMethod(manager, "highlightSelection", (original, args) => {
+      const liveSelection = window.getSelection();
+      if (liveSelection?.rangeCount === 1 && !liveSelection.isCollapsed && [0, 9].includes(Number(app.pdfViewer?.annotationEditorMode))) {
+        const selected = liveSelection.getRangeAt(0).cloneRange();
+        const parts = [];
+        for (const layer of document.querySelectorAll(".page .textLayer")) {
+          if (!selected.intersectsNode(layer)) continue;
+          const clipped = document.createRange(); clipped.selectNodeContents(layer);
+          if (selected.compareBoundaryPoints(Range.START_TO_START, clipped) > 0) clipped.setStart(selected.startContainer, selected.startOffset);
+          if (selected.compareBoundaryPoints(Range.END_TO_END, clipped) < 0) clipped.setEnd(selected.endContainer, selected.endOffset);
+          if (!clipped.toString().trim()) continue;
+          const pageIndex = readerPageNumberForRoot(layer.closest(".page")) - 1;
+          if (!app.pdfViewer.getPageView(pageIndex)?.annotationEditorLayer?.annotationEditorLayer) return;
+          parts.push({ range: clipped, text: clipped.toString(), pageIndex });
+        }
+        if (parts.length > 1) {
+          const groupId = makeSyncUuid(), session = state.activeOpenRequest, pdfDocument = app.pdfDocument;
+          const create = () => {
+            if (state.disposed || state.activeOpenRequest !== session || app.pdfDocument !== pdfDocument || state.readOnly) return;
+            const prior = state.pendingHighlightSelection;
+            try {
+              parts.forEach((part, index) => {
+                liveSelection.removeAllRanges(); liveSelection.addRange(part.range);
+                state.pendingHighlightSelection = { text: part.text, pageIndex: part.pageIndex, assigned: false,
+                  group: { id: groupId, index, count: parts.length } };
+                original.apply(manager, args);
+              });
+            } finally { state.pendingHighlightSelection = prior; liveSelection.removeAllRanges(); }
+          };
+          if (Number(app.pdfViewer.annotationEditorMode) === 0) manager.switchToMode(9, create);
+          else create();
+          return;
+        }
+      }
+
       const selection = state.textSelectionController?.snapshot?.();
       const text = !selection?.isCollapsed && selection?.rangeCount === 1
         ? selection.text
@@ -7835,6 +7874,7 @@
           normalizeSyncKind(editor?.editorType) === "Highlight" &&
           editor?.pageIndex === pendingSelection.pageIndex && runtimeId) {
         state.annotationTargetTextByRuntimeId.set(runtimeId, pendingSelection.text);
+        if (pendingSelection.group) state.annotationSelectionGroups.set(runtimeId, pendingSelection.group);
         pendingSelection.assigned = true;
       }
       return result;
@@ -9562,6 +9602,18 @@
     state.inputRouter = router;
     state.pointerAbortController = router.start();
     installPageLayoutContextMenu(state.pointerAbortController.signal);
+    const pointerButton = document.createElement("button");
+    pointerButton.type = "button";
+    pointerButton.className = "pdfReaderPointerTool";
+    pointerButton.setAttribute("aria-label", "普通指针工具");
+    pointerButton.title = "普通指针工具";
+    pointerButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 2v16l4-4 3 7 3-1-3-7h6z"/></svg>';
+    document.body.append(pointerButton);
+    pointerButton.addEventListener("click", () => {
+      if (!state.readOnly && state.app?.pdfViewer?.annotationEditorMode !== -1) state.app?.eventBus?.dispatch("switchannotationeditormode", { source: window, mode: 0, isFromKeyboard: false, createNewEditor: false });
+      state.app?.eventBus?.dispatch("switchcursortool", { source: window, tool: 0 });
+    }, { signal: state.pointerAbortController.signal });
+    state.pointerAbortController.signal.addEventListener("abort", () => pointerButton.remove(), { once: true });
     if (state.vocabularyEnabled && state.activeDocumentId && Number.isInteger(state.activeOpenRequest)) {
       requestVocabularyReadMode(state.activeDocumentId, state.activeOpenRequest);
     }
